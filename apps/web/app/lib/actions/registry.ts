@@ -120,6 +120,9 @@ export const recheckAction = (
   return null
 }
 
+// Says that what an action was opened on is gone.
+export const noLongerAvailable = () => host.gone()
+
 export const runAction = async (id: string, ctx: ActionCtx, args: Args = {}): Promise<boolean> => {
   const hit = recheckAction(id, ctx)
   if (!hit) return false

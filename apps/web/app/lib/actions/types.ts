@@ -79,6 +79,22 @@ export type ArgStep =
     }
   | { kind: 'confirm'; title: string; body(ctx: ActionCtx, args: Args): string; confirm: string }
 
+// One row of an action that lists several (a person, a relay): id `<action id>_<key>`. `args`
+// fill the action's steps.
+export interface Expansion {
+  key: string
+  label: string
+  subtitle?: string
+  name?: boolean
+  subtitleName?: boolean
+  icon?: LucideIcon
+  danger?: boolean
+  checked?: boolean
+  radio?: boolean
+  wrap?: boolean
+  args?: Args
+}
+
 export interface Action<A extends Args = Args> {
   id: string
   title: string
@@ -94,6 +110,8 @@ export interface Action<A extends Args = Args> {
   // Text for this context; `title` stays the static, searchable name.
   label?(ctx: ActionCtx): string
   subtitle?(ctx: ActionCtx): string | undefined
+  // The icon for this context; `icon` stays the static one.
+  iconFor?(ctx: ActionCtx): LucideIcon
   wrap?: boolean
   // The label is a name (blurred in streamer mode).
   name?: boolean
@@ -112,4 +130,6 @@ export interface Action<A extends Args = Args> {
   keepOpen?: boolean
   slash?: string
   parse?(text: string): string | null
+  // Rows in place of the action's own, in the palette and in the menus it joins.
+  expand?(ctx: ActionCtx): Expansion[]
 }

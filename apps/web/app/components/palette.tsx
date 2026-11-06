@@ -12,6 +12,7 @@ import {
 import { ArrowLeft, Command, CornerDownLeft, Search } from 'lucide-react'
 import { fuzzyParts } from '../lib/fuzzy'
 import { useHome } from '../lib/home_store'
+import { registerAppActions } from '../lib/actions'
 import { actionsVersion, subscribeActions } from '../lib/actions/registry'
 import { loadApiDoc, loadApiHistory, useApiDoc } from '../lib/api_console'
 import {
@@ -24,7 +25,6 @@ import {
   usePalette,
   type PaletteItem,
 } from '../lib/palette'
-import { registerCoreCommands } from '../lib/palette_commands'
 import { buildSections, flatItems, noApi, type ResultCtx } from '../lib/palette_results'
 import {
   closePalette,
@@ -56,7 +56,7 @@ export function PaletteHost() {
   const owner = useStore(s => s.me?.username ?? (s.guest ? 'guest' : null))
 
   useEffect(() => {
-    registerCoreCommands()
+    registerAppActions()
     registerPalette(() => openPalette())
     const stop = startIndexSync()
     return () => {

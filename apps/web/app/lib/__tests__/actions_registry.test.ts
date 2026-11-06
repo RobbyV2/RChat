@@ -15,7 +15,7 @@ import {
 } from '../actions/registry'
 import { confirmThenRun } from '../actions/steps'
 import type { Action, Args, Target, Via } from '../actions/types'
-import { registerCommands, type PaletteItem } from '../palette'
+import type { PaletteItem } from '../palette'
 import { buildSections, flatItems, type ResultCtx } from '../palette_results'
 import { closePalette, openPaletteAt, usePaletteUi } from '../palette_store'
 import { resetSessionCaches, useStore, type ConfirmRequest } from '../store'
@@ -487,7 +487,7 @@ test('ctxFor resolves the open place, or the place the target names', () => {
   expect(currentList(useStore.getState())).toBe('t3')
 })
 
-test('palette rows come from the registry beside provider rows, without duplicates', () => {
+test('palette rows come from the registry, without duplicates', () => {
   def({
     id: 't_theme',
     title: 'Theme',
@@ -514,11 +514,15 @@ test('palette rows come from the registry beside provider rows, without duplicat
       .filter(r => r.id === 't_theme')
       .map(r => r.title)
   expect(titles()).toEqual(['Switch to dark theme'])
-  const off = registerCommands('t_provider', () => [
-    { id: 't_theme', title: 'Provider theme', group: 'settings', run: () => {} },
-  ])
-  expect(titles()).toEqual(['Provider theme'])
-  off()
+  def({
+    id: 't',
+    title: 'Later',
+    group: 'settings',
+    scope: 'global',
+    ...on,
+    expand: () => [{ key: 'theme', label: 'Later theme' }],
+  })
+  expect(titles()).toEqual(['Switch to dark theme'])
 })
 
 test('palette rows: one step is the argument, a confirm step asks before the run', async () => {

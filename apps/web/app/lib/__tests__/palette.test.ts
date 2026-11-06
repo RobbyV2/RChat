@@ -1,9 +1,13 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { paletteCtx } from '../actions/ctx'
+import { registerAppActions } from '../actions/index'
+import { paletteCommands } from '../actions/palette'
+import { defineAction } from '../actions/registry'
+import type { Action } from '../actions/types'
 import { fuzzy, fuzzyParts } from '../fuzzy'
 import {
   EMPTY_PALETTE,
   USED_MAX,
-  commandsFor,
   frecency,
   noteUse,
   paletteKey,
@@ -11,10 +15,8 @@ import {
   parsePalette,
   parseQuery,
   rank,
-  registerCommands,
   type PaletteItem,
 } from '../palette'
-import { registerCoreCommands } from '../palette_commands'
 import { PaletteIndex } from '../palette_index'
 import { buildSections, flatItems, snippet, type ResultCtx } from '../palette_results'
 import { usePaletteUi } from '../palette_store'
@@ -28,6 +30,8 @@ import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 afterAll(resetSessionCaches)
 
 const has = (list: string[], want: string[]) => want.every(x => list.includes(x))
+
+const commandsFor = (s: RChatState) => paletteCommands(paletteCtx(s))
 
 const item = (id: string, title: string, over: Partial<PaletteItem> = {}): PaletteItem => ({
   id,
@@ -128,27 +132,42 @@ describe('prefixes and prefs', () => {
 })
 
 describe('the command registry', () => {
-  test('providers register, follow the state, skip duplicates and unregister', () => {
-    const off = registerCommands('test', () => [
-      item('t1', 'One'),
-      { ...item('t2', 'Two'), when: st => st.guest },
-      item('t1', 'Duplicate'),
-    ])
+  const action = (id: string, title: string, over: Partial<Action> = {}): Action => ({
+    id,
+    title,
+    scope: 'global',
+    available: () => true,
+    run: () => {},
+    ...over,
+  })
+  test('actions register, follow the state, skip duplicates and unregister', () => {
+    const err = console.error
+    console.error = () => {}
+    const offs = [
+      defineAction(action('t1', 'One')),
+      defineAction(action('t2', 'Two', { available: c => c.s.guest })),
+      defineAction(action('t1', 'Duplicate')),
+    ]
+    console.error = err
     const s = useStore.getState()
     const ids = commandsFor({ ...s, guest: false }).map(c => c.id)
-    expect(ids.filter(i => i.startsWith('t'))).toEqual(['t1'])
+    expect(ids.filter(i => /^t\d$/.test(i))).toEqual(['t1'])
     expect(commandsFor({ ...s, guest: true }).some(c => c.id === 't2')).toBe(true)
-    off()
+    offs.forEach(off => off())
     expect(commandsFor(s).some(c => c.id === 't1')).toBe(false)
   })
 
-  test('a throwing provider does not break the others', () => {
+  test('a throwing available does not break the others', () => {
     const err = console.error
     console.error = () => {}
-    const off = registerCommands('broken', () => {
-      throw new Error('x')
-    })
-    const off2 = registerCommands('fine', () => [item('fine', 'Fine')])
+    const off = defineAction(
+      action('broken', 'Broken', {
+        available: () => {
+          throw new Error('x')
+        },
+      })
+    )
+    const off2 = defineAction(action('fine', 'Fine'))
     expect(commandsFor(useStore.getState()).some(c => c.id === 'fine')).toBe(true)
     off()
     off2()
@@ -189,7 +208,7 @@ describe('sections', () => {
       location: { pathname: '/', href: 'http://x/', origin: 'http://x' },
       innerWidth: 800,
     }
-    registerCoreCommands()
+    registerAppActions()
     useStore.setState({
       token: 'tok',
       me: me('alice', {

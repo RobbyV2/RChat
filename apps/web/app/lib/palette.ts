@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import type { LucideIcon } from 'lucide-react'
 import { fuzzy } from './fuzzy'
-import type { RChatState } from './store_types'
 
 // The command palette registers its opener here; Home and the mobile headers offer it once it did.
 interface PaletteState {
@@ -107,44 +106,11 @@ export interface PaletteItem {
 }
 
 export interface PaletteCommand extends PaletteItem {
-  // Shown only when this holds for the current state.
-  when?: (s: RChatState) => boolean
   // Also offered when the text starts with this after `/` (for example `/poll`).
   slash?: string
   // Reads the whole typed text as this command with its argument ("add friends alice bob"),
   // or null when the text is something else.
   parse?: (text: string) => string | null
-}
-
-// Commands come from providers: functions of the current state, registered by features.
-export type CommandProvider = (s: RChatState) => PaletteCommand[]
-
-const providers = new Map<string, CommandProvider>()
-
-export const registerCommands = (source: string, provider: CommandProvider) => {
-  providers.set(source, provider)
-  return () => {
-    if (providers.get(source) === provider) providers.delete(source)
-  }
-}
-
-export const commandsFor = (s: RChatState): PaletteCommand[] => {
-  const out: PaletteCommand[] = []
-  const seen = new Set<string>()
-  for (const provider of providers.values()) {
-    let list: PaletteCommand[] = []
-    try {
-      list = provider(s)
-    } catch (e) {
-      console.error('palette commands', e)
-    }
-    for (const c of list) {
-      if (seen.has(c.id) || (c.when && !c.when(s))) continue
-      seen.add(c.id)
-      out.push(c)
-    }
-  }
-  return out
 }
 
 // Usage counts per item id, for ranking by frecency.

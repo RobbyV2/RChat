@@ -24,7 +24,6 @@ import { fillPath, type HistoryEntry, type Operation } from './openapi'
 import {
   GROUP_LABELS,
   prefixesFor,
-  commandsFor,
   parseQuery,
   rank,
   type PaletteGroup,
@@ -393,12 +392,7 @@ export const buildSections = (s: RChatState, text: string, ctx: ResultCtx): Sect
   const { mode, q } = parseQuery(text)
   const { usage, now } = ctx
   const out: Section[] = []
-  const seen = new Set<string>()
-  const commands = [...commandsFor(s), ...paletteCommands(paletteCtx(s))].filter(c => {
-    if (seen.has(c.id)) return false
-    seen.add(c.id)
-    return true
-  })
+  const commands = paletteCommands(paletteCtx(s))
   const selection = commands.filter(c => c.group === 'selection')
   const others = commands.filter(c => c.group !== 'selection')
   const r = <T extends PaletteItem>(items: T[], query = q) => rank(items, query, usage, now)

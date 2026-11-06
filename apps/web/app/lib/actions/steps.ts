@@ -1,6 +1,6 @@
 import { useStore } from '../store'
-import { guardAction, runAction } from './registry'
-import type { Action, ActionCtx, ArgStep, Args } from './types'
+import { guardAction, noLongerAvailable, recheckAction, runAction } from './registry'
+import type { Action, ActionCtx, ArgStep, Args, Expansion } from './types'
 
 export type ValueStep = Exclude<ArgStep, { kind: 'confirm' }>
 type ConfirmStep = Extract<ArgStep, { kind: 'confirm' }>
@@ -32,4 +32,22 @@ export const confirmThenRun = async (a: Action, ctx: ActionCtx, args: Args): Pro
     confirm: step.confirm,
     action: () => void runAction(a.id, ctx, args),
   })
+}
+
+export const expansionsOf = (a: Action, ctx: ActionCtx): Expansion[] =>
+  a.expand ? guardAction(a, () => a.expand!(ctx), []) : []
+
+export const iconOf = (a: Action, ctx: ActionCtx) =>
+  a.iconFor ? guardAction(a, () => a.iconFor!(ctx), a.icon) : a.icon
+
+// An expansion row runs with its entry as it is on fresh state, and only while it is still listed.
+export const runExpansion = async (a: Action, ctx: ActionCtx, key: string): Promise<void> => {
+  const hit = recheckAction(a.id, ctx)
+  if (!hit) return
+  const entry = expansionsOf(hit.action, hit.ctx).find(x => x.key === key)
+  if (!entry) {
+    noLongerAvailable()
+    return
+  }
+  await confirmThenRun(hit.action, hit.ctx, entry.args ?? {})
 }
