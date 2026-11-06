@@ -119,7 +119,7 @@ export type ActiveDialog =
   | { kind: 'delete_user_confirm'; username: string }
   | {
       kind: 'settings'
-      focus?: 'bio'
+      focus?: 'bio' | 'p2p_limits'
       section?: 'settings' | 'notifications' | 'privacy' | 'sync' | 'information' | 'palette'
     }
   | { kind: 'rename_folder'; id: string }

@@ -6,11 +6,12 @@ import { EMPTY_NOTIFY, type NotifyPrefs } from '../../notify'
 import type { OwnBadge, P2pStore } from '../db'
 import type { BadgeKeeper, Badges, BadgeSlot } from '../badge'
 import type { Contact } from '../contacts'
-import { AUTO_DAILY, type AutoPause, type Dms, type MissedCall, type P2pMessage } from '../dm'
+import type { AutoPause, Dms, MissedCall, P2pMessage } from '../dm'
 import type { PingLog } from '../ping_log'
 import type { BlobView, Usage } from '../blobs'
 import type { Hashed } from '../hashing'
-import { LOCAL } from '../limits'
+import { LOCAL, type Local } from '../limits'
+import { instanceLocal, withChoice } from '../user_limits'
 import type { Preview } from '../files'
 import type { TabLeader } from '../leader'
 import type { P2pNode, Presence, Status } from '../node'
@@ -53,6 +54,9 @@ export interface RoomSummary {
   unread: number
   pings: number
   lastTs: number
+  // Stored events and bytes: which limit a full conversation reached.
+  count: number
+  bytes: number
   full: boolean
   fullWhy: 'events' | 'bytes' | undefined
   // The other side said its storage is full.
@@ -364,6 +368,9 @@ export let leader: TabLeader | null = null
 
 export let unwatch: (() => void) | null = null
 
+// The limits this account's P2P started with (user_limits.ts).
+export let limits: Readonly<Local> = LOCAL
+
 export let gen = 0
 
 // Follower tabs read the database without running a node; the leader tells them what changed.
@@ -407,6 +414,9 @@ export const put = {
   },
   unwatch: (x: (() => void) | null) => {
     unwatch = x
+  },
+  limits: (x: Readonly<Local>) => {
+    limits = x
   },
   gen: (x: number) => {
     gen = x
@@ -458,11 +468,13 @@ export const p2pHost: P2pHost = {
 // bytes in P2P servers, and at most `daily` bytes per contact per day. { v: 1, dm, server, daily }.
 export const autoKey = (username: string) => `rchat_p2p_auto:${username}`
 
-export const AUTO_DEFAULT = {
-  dm: LOCAL.files.autoDm,
-  server: LOCAL.files.autoServer,
-  daily: AUTO_DAILY,
-}
+export const autoDefaults = (l: Readonly<Local> = LOCAL) => ({
+  dm: l.files.autoDm,
+  server: l.files.autoServer,
+  daily: l.dm.autoDaily,
+})
+
+export const AUTO_DEFAULT = autoDefaults()
 
 export const AUTO_DAILY_OPTIONS = [...LOCAL.files.autoDailyOptions]
 
@@ -470,30 +482,40 @@ export const AUTO_DM = [...LOCAL.files.autoDmOptions]
 
 export const AUTO_SERVER = [...LOCAL.files.autoServerOptions]
 
-export const parseAuto = (raw: string | null) => {
+// The choices, with the defaults the instance set among them.
+export const autoChoices = (l: Readonly<Local> = LOCAL) => ({
+  dm: withChoice(l.files.autoDmOptions, l.files.autoDm),
+  server: withChoice(l.files.autoServerOptions, l.files.autoServer),
+  daily: withChoice(l.files.autoDailyOptions, l.dm.autoDaily),
+})
+
+export const parseAuto = (raw: string | null, l: Readonly<Local> = LOCAL) => {
+  const d = l === LOCAL ? AUTO_DEFAULT : autoDefaults(l)
   try {
     const v = raw
       ? (JSON.parse(raw) as { v?: unknown; dm?: unknown; server?: unknown; daily?: unknown })
       : null
-    if (v?.v !== 1) return AUTO_DEFAULT
+    if (v?.v !== 1) return d
+    const c = autoChoices(l)
+    const pick = (x: unknown, list: number[], def: number) =>
+      list.includes(x as number) ? (x as number) : def
     return {
-      dm: AUTO_DM.includes(v.dm as number) ? (v.dm as number) : AUTO_DEFAULT.dm,
-      server: AUTO_SERVER.includes(v.server as number) ? (v.server as number) : AUTO_DEFAULT.server,
-      daily: AUTO_DAILY_OPTIONS.includes(v.daily as number)
-        ? (v.daily as number)
-        : AUTO_DEFAULT.daily,
+      dm: pick(v.dm, c.dm, d.dm),
+      server: pick(v.server, c.server, d.server),
+      daily: pick(v.daily, c.daily, d.daily),
     }
   } catch {
-    return AUTO_DEFAULT
+    return d
   }
 }
 
 export const readAuto = (username: string | null) => {
-  if (!username) return AUTO_DEFAULT
+  const l = instanceLocal()
+  if (!username) return parseAuto(null, l)
   try {
-    return parseAuto(localStorage.getItem(home.scoped(autoKey(username))))
+    return parseAuto(localStorage.getItem(home.scoped(autoKey(username))), l)
   } catch {
-    return AUTO_DEFAULT
+    return parseAuto(null, l)
   }
 }
 

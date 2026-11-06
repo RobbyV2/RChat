@@ -1,7 +1,7 @@
 import { RULES_VERSION } from '../acl/rules'
 import { emptySummary, type SumDelta, type Summary } from '../acl/summary'
 import type { Carried, PackedRec, Plan } from '../acl_room'
-import type { DevChain, Inserted } from '../dag'
+import { refitFull, type DevChain, type Inserted } from '../dag'
 import type { EventRecord, IdentRecord, P2pDatabase, RoomRecord } from '../db'
 import type { PageOpts } from '../jump'
 import type { Attachment, Fwd, MsgContent } from '../content'
@@ -315,6 +315,15 @@ export class Servers {
       if (r.kind !== 'server') continue
       this.rooms.set(r.id, r)
       await this.load(r)
+    }
+    // Rooms that filled under lower limits than these take events again; one whose rules this
+    // build doesn't run (or doesn't know yet) only within what it stores of it.
+    const { roomCap, roomBytes, serverCap, serverBytes } = this.deps
+    const caps = { roomCap, roomBytes, serverCap, serverBytes }
+    const unknown = (r: RoomRecord) => this.sumOf(r.id).rules !== RULES_VERSION
+    for (const id of await refitFull(this.db, 'server', caps, unknown)) {
+      const r = this.rooms.get(id)
+      if (r) this.rooms.set(id, { ...r, full: false })
     }
     this.started = true
     this.gossip.start()

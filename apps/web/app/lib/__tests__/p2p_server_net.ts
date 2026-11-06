@@ -7,7 +7,7 @@ import { type Wire } from '../p2p/event_v1'
 import { keyId } from '../p2p/keys'
 import { Servers } from '../p2p/server'
 import type { AclHost } from '../p2p/resolve_host'
-import type { P2pNode } from '../p2p/node'
+import type { NodeDeps, P2pNode } from '../p2p/node'
 import type { P2pStore } from '../p2p/db'
 
 // Test members of P2P servers: a real node, DMs and servers over the in-memory hub.
@@ -40,11 +40,13 @@ export const makeMember = async (
   opts: {
     seed?: number
     db?: string
+    node?: Pick<NodeDeps, 'limits' | 'session'>
+    dms?: Partial<ConstructorParameters<typeof Dms>[0]>
     servers?: Partial<ConstructorParameters<typeof Servers>[0]>
   } = {}
 ): Promise<Member> => {
-  const n = await makeNode(hub, name, { clock, db: opts.db })
-  const dms = new Dms({ node: n.node, store: n.store, clock })
+  const n = await makeNode(hub, name, { clock, db: opts.db, ...opts.node })
+  const dms = new Dms({ node: n.node, store: n.store, clock, ...opts.dms })
   const servers = new Servers({
     node: n.node,
     store: n.store,
@@ -54,6 +56,7 @@ export const makeMember = async (
     autoMax: () => 5 * 1024 * 1024,
     ...opts.servers,
   })
+  await dms.start()
   await servers.start()
   await n.node.start()
   const m = { name, ...n, dms, servers }

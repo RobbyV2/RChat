@@ -1,6 +1,15 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { b64u, concat, utf8 } from './canonical'
-import { blankRoom, DAG, insertEvent, type FullWhy, type Inserted, type PingKind } from './dag'
+import {
+  blankRoom,
+  DAG,
+  insertEvent,
+  refitFull,
+  type FullWhy,
+  type InsertCtx,
+  type Inserted,
+  type PingKind,
+} from './dag'
 import {
   fileKey,
   type EventRecord,
@@ -438,6 +447,24 @@ export const FULL_TEXT = (n: number) =>
   `This conversation reached the limit of ${n.toLocaleString()} stored events on this device.`
 export const FULL_BYTES_TEXT = (bytes: number) =>
   `This conversation reached the storage limit of ${fmtSize(bytes)} on this device.`
+export const DMS_FULL_TEXT = (n: number) =>
+  `Direct messages reached the limit of ${n.toLocaleString()} stored events on this device.`
+export const DMS_FULL_BYTES_TEXT = (bytes: number) =>
+  `Direct messages reached the storage limit of ${fmtSize(bytes)} on this device.`
+
+// Which limit a full conversation reached: its own, or, while it has room for the largest event,
+// that of every conversation together.
+export const fullNote = (
+  room: { count: number; bytes?: number; fullWhy?: FullWhy },
+  caps: Required<Pick<InsertCtx, 'roomCap' | 'totalCap' | 'roomBytes' | 'totalBytes'>>
+) =>
+  room.fullWhy === 'bytes'
+    ? (room.bytes ?? 0) + EV.core + EV.attContent > caps.roomBytes
+      ? FULL_BYTES_TEXT(caps.roomBytes)
+      : DMS_FULL_BYTES_TEXT(caps.totalBytes)
+    : room.count >= caps.roomCap
+      ? FULL_TEXT(caps.roomCap)
+      : DMS_FULL_TEXT(caps.totalCap)
 export const STORAGE_FULL_TEXT = "Storage on this device is full. New messages can't be saved."
 export const PEER_FULL_TEXT = 'Their storage is full. Messages wait until there is space.'
 export const TOO_LONG_TEXT = 'This message is too long to send.'
@@ -561,6 +588,13 @@ export class Dms {
       enabled: deps.attachments,
       room: deps.room,
     })
+  }
+
+  // Conversations that filled under lower limits than these take events again.
+  async start() {
+    const { roomCap, totalCap, roomBytes, totalBytes } = this.deps
+    for (const id of await refitFull(this.db, 'dm', { roomCap, totalCap, roomBytes, totalBytes }))
+      this.changed(id)
   }
 
   // The serving gate for files: a mutual contact, in a conversation where a live message carries
@@ -693,6 +727,15 @@ export class Dms {
       : FULL_TEXT(this.deps.roomCap ?? DAG.roomCap)
   }
 
+  private get caps() {
+    return {
+      roomCap: this.deps.roomCap ?? DAG.roomCap,
+      totalCap: this.deps.totalCap ?? DAG.totalCap,
+      roomBytes: this.deps.roomBytes ?? DAG.roomBytes,
+      totalBytes: this.deps.totalBytes ?? DAG.totalBytes,
+    }
+  }
+
   private auth(room: string, peer: string) {
     return {
       room,
@@ -774,7 +817,7 @@ export class Dms {
       this.quota(true)
       throw new DmError(STORAGE_FULL_TEXT)
     }
-    if (res.status === 'full') throw new DmError(this.fullText(res.why))
+    if (res.status === 'full') throw new DmError(fullNote({ ...rec, fullWhy: res.why }, this.caps))
     if (res.status === 'invalid') throw new DmError("Couldn't save the message")
     this.quota(false)
     this.files([res])

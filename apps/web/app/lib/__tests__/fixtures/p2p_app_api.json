@@ -13,6 +13,7 @@
     "PREPARING_TEXT",
     "ServerError",
     "TOO_MANY_FILES",
+    "autoChoices",
     "autoKey",
     "banRequest",
     "callRtc",

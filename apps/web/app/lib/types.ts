@@ -905,6 +905,8 @@ export interface InstanceLimits {
   media_retention_secs: number
   page_size: number
   assertion_ttl_secs: number
+  // P2P_LIMITS: `local.<section>.<key>` and `agreed.<key>` to a number. Absent before 0.4.0.
+  p2p?: Record<string, number>
 }
 
 export interface InstanceInfo {

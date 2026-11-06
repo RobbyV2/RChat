@@ -62,6 +62,8 @@ const summary = (r: RoomRecord): RoomSummary => ({
   unread: r.unread,
   pings: r.pings,
   lastTs: r.lastTs,
+  count: r.count,
+  bytes: r.bytes ?? 0,
   full: r.full,
   fullWhy: r.fullWhy,
   peerFull: !!r.peerFull,

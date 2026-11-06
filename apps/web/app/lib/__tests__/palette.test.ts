@@ -25,6 +25,8 @@ import { resetSessionCaches, useStore } from '../store'
 import { SHORTCUTS, conflicts } from '../shortcuts'
 import { emptySelection, selectAll, toggle } from '../selection'
 import type { RChatState } from '../store_types'
+import { useP2p } from '../p2p/app'
+import { writeUserLimits } from '../p2p/user_limits'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 
 afterAll(resetSessionCaches)
@@ -428,6 +430,22 @@ describe('sections', () => {
     const guest = commandsFor(st()).map(c => c.id)
     expect(guest.some(id => ['add_friends', 'poll', 'logout'].includes(id))).toBe(false)
     expect(guest).toContain('theme')
+  })
+
+  test('P2P limits commands while P2P is on', () => {
+    expect(commandsFor(st()).some(c => c.id.startsWith('p2p_limits'))).toBe(false)
+    useP2p.setState({ account: 'alice', enabled: true })
+    try {
+      expect(commandsFor(st()).find(c => c.id === 'p2p_limits')?.title).toBe('P2P storage settings')
+      expect(commandsFor(st()).some(c => c.id === 'p2p_limits_reset')).toBe(false)
+      writeUserLimits('alice', { v: 1, roomBytes: 64 * 1024 * 1024 })
+      expect(commandsFor(st()).find(c => c.id === 'p2p_limits_reset')?.title).toBe(
+        'Reset P2P limits'
+      )
+    } finally {
+      writeUserLimits('alice', { v: 1 })
+      useP2p.setState({ account: null, enabled: false })
+    }
   })
 
   test('used commands are suggested first', () => {

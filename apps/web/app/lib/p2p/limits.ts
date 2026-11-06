@@ -386,7 +386,7 @@ const DEFAULTS = {
     // Auto-download defaults and choices: files in direct messages, images in P2P servers, and
     // bytes per contact per day.
     autoDm: 10 * MIB,
-    autoServer: 5 * MIB,
+    autoServer: 10 * MIB,
     autoDailyOptions: [256 * MIB, GIB, 4 * GIB, 16 * GIB],
     autoDmOptions: [0, 1, 10, 25, 100].map(n => n * MIB),
     autoServerOptions: [0, 1, 5, 10].map(n => n * MIB),

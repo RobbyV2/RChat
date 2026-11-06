@@ -1,6 +1,12 @@
 import 'fake-indexeddb/auto'
 import { P2pStore } from '../p2p/db'
-import { P2pNode, TransportError, type Transport, type Visibility } from '../p2p/node'
+import {
+  P2pNode,
+  TransportError,
+  type NodeDeps,
+  type Transport,
+  type Visibility,
+} from '../p2p/node'
 import type { Clock, Pipe } from '../p2p/session'
 
 // In-memory transport for P2P tests: a pair of pipes with optional delay, tampering and
@@ -164,7 +170,14 @@ let dbSeq = 0
 export const makeNode = async (
   hub: Hub,
   name: string,
-  opts: { clock?: Clock; host?: string; db?: string; visibility?: Visibility } = {}
+  opts: {
+    clock?: Clock
+    host?: string
+    db?: string
+    visibility?: Visibility
+    limits?: NodeDeps['limits']
+    session?: NodeDeps['session']
+  } = {}
 ) => {
   const db = opts.db ?? `test-${name}-${dbSeq++}-${Math.random()}`
   const store = await P2pStore.open(db)
@@ -175,6 +188,8 @@ export const makeNode = async (
       host: opts.host ?? 'chat.example',
       clock: opts.clock,
       visibility: opts.visibility,
+      limits: opts.limits,
+      session: opts.session,
     },
     { name }
   )) as P2pNode

@@ -1,17 +1,20 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useStore } from '../../lib/store'
-import {
-  AUTO_DAILY_OPTIONS,
-  AUTO_DM,
-  AUTO_SERVER,
-  p2p,
-  p2pBadge,
-  p2pFiles,
-  useP2p,
-} from '../../lib/p2p/app'
+import { autoChoices, p2p, p2pBadge, p2pFiles, useP2p } from '../../lib/p2p/app'
 import { cleanName } from '../../lib/p2p/keys'
+import {
+  applyUser,
+  instanceLocal,
+  LIMITS_LATER,
+  limitChoices,
+  limitText,
+  readUserLimits,
+  valueOf,
+  writeUserLimits,
+  type UserField,
+} from '../../lib/p2p/user_limits'
 import { iceOffer } from '../../lib/ice'
 import { fmtSize } from '../../lib/bytes'
 import { SettingSwitch } from '../admin_panel'
@@ -105,6 +108,9 @@ function BadgeSetting() {
   )
 }
 
+// Never narrower than its choice: on a narrow screen it goes under its label instead.
+const selectCls = fieldCls.replace('min-w-0', 'min-w-fit')
+
 const autoLabel = (n: number) => (n === 0 ? 'Never' : `Up to ${fmtSize(n)}`)
 
 function AutoSelect({
@@ -130,7 +136,7 @@ function AutoSelect({
         id={id}
         value={value}
         onChange={e => onChange(Number(e.target.value))}
-        className={`${fieldCls} w-auto bg-surface-container-high`}
+        className={`${selectCls} w-auto bg-surface-container-high`}
       >
         {options.map(n => (
           <option key={n} value={n}>
@@ -147,13 +153,14 @@ const CLEAR_DAYS = [7, 30, 90]
 // Settings > Peer-to-peer > Storage: how much one contact's files may download by themselves a
 // day.
 function DailySelect() {
+  const info = useStore(s => s.instance)
   const [daily, setDaily] = useState(() => p2pFiles.readAuto().daily)
   return (
     <div className="mt-2" data-p2p-daily>
       <AutoSelect
         label="Automatic downloads per contact per day"
         value={daily}
-        options={AUTO_DAILY_OPTIONS}
+        options={autoChoices(instanceLocal(info)).daily}
         text={n => `Up to ${fmtSize(n)}`}
         onChange={n => {
           setDaily(n)
@@ -175,7 +182,9 @@ function FilesSettings() {
   const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
   const ask = useStore(s => s.askConfirm)
   const toast = useStore(s => s.showToast)
+  const info = useStore(s => s.instance)
   const [auto, setAuto] = useState(p2pFiles.readAuto)
+  const choices = autoChoices(instanceLocal(info))
   useEffect(() => {
     void p2pFiles.usage()
   }, [])
@@ -205,13 +214,13 @@ function FilesSettings() {
       <AutoSelect
         label="Download automatically in direct messages"
         value={auto.dm}
-        options={AUTO_DM}
+        options={choices.dm}
         onChange={dm => save({ dm })}
       />
       <AutoSelect
         label="Download images automatically in P2P servers"
         value={auto.server}
-        options={AUTO_SERVER}
+        options={choices.server}
         onChange={server => save({ server })}
       />
       <p className="text-xs text-on-surface-variant">
@@ -232,6 +241,68 @@ function FilesSettings() {
             {d} days
           </button>
         ))}
+      </div>
+    </div>
+  )
+}
+
+const LIMIT_ROWS: [UserField, string][] = [
+  ['roomBytes', 'Each conversation or server'],
+  ['serverBytes', 'All P2P servers'],
+  ['totalBytes', 'All direct messages'],
+]
+
+// Settings > Peer-to-peer > Advanced: this account's storage budgets and background sync on this
+// device, on top of the instance's (the defaults). Read when P2P starts.
+function AdvancedLimits() {
+  const account = useP2p(s => s.account)
+  const info = useStore(s => s.instance)
+  const focus = useStore(
+    s => s.activeDialog?.kind === 'settings' && s.activeDialog.focus === 'p2p_limits'
+  )
+  const [, bump] = useState(0)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (focus) ref.current?.scrollIntoView({ block: 'start' })
+  }, [focus])
+  if (!account) return null
+  const user = readUserLimits(account)
+  const base = instanceLocal(info)
+  const now = applyUser(base, user)
+  const save = (f: UserField | null, n = 0) => {
+    writeUserLimits(account, f ? { ...readUserLimits(account), [f]: n } : { v: 1 })
+    bump(x => x + 1)
+  }
+  const select = (f: UserField, label: string) => {
+    const def = valueOf(base, f)
+    const cur = valueOf(now, f)
+    return (
+      <AutoSelect
+        key={f}
+        label={label}
+        value={cur}
+        options={limitChoices(f, def, cur)}
+        text={n => (n === def ? `${limitText(f, n)} (Default)` : limitText(f, n))}
+        onChange={n => save(f, n)}
+      />
+    )
+  }
+  return (
+    <div ref={ref} data-p2p-limits className="flex scroll-mt-4 flex-col gap-2 px-2">
+      <p className="text-sm font-medium">Advanced</p>
+      <p className="text-xs text-on-surface-variant">Storage on this device</p>
+      {LIMIT_ROWS.map(([f, label]) => select(f, label))}
+      {select('hiddenPauseMs', 'Keep syncing in the background on phones')}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-on-surface-variant">{LIMITS_LATER}</p>
+        <button
+          data-p2p-limits-reset
+          onClick={() => save(null)}
+          disabled={Object.keys(user).length < 2}
+          className={`${textBtn} disabled:opacity-40`}
+        >
+          Reset to defaults
+        </button>
       </div>
     </div>
   )
@@ -278,14 +349,19 @@ export function P2pSection() {
             Turn on P2P
           </button>
         </div>
-      ) : elsewhere ? (
-        <ElsewhereNotice />
-      ) : loading ? (
-        <p className="px-2 text-sm text-on-surface-variant">Starting…</p>
-      ) : status === 'moved' ? (
-        <div className="flex flex-col gap-3 px-2">
-          <IdentityAlert />
-          <MovedBanner />
+      ) : elsewhere || loading || status === 'moved' ? (
+        <div className="flex flex-col gap-4">
+          {elsewhere ? (
+            <ElsewhereNotice />
+          ) : loading ? (
+            <p className="px-2 text-sm text-on-surface-variant">Starting…</p>
+          ) : (
+            <div className="flex flex-col gap-3 px-2">
+              <IdentityAlert />
+              <MovedBanner />
+            </div>
+          )}
+          <AdvancedLimits />
         </div>
       ) : (
         <div className="flex flex-col gap-4">
@@ -348,6 +424,7 @@ export function P2pSection() {
               to verify you again. Remove it from your P2P servers below.
             </p>
           </div>
+          <AdvancedLimits />
           <DevicesSection />
           <div className="flex flex-wrap gap-2 px-1">
             <button onClick={() => confirmReset(ask)} className={textBtn}>

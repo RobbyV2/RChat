@@ -61,7 +61,7 @@ import {
   verifyCheckText,
   verifyCode,
 } from './safety'
-import { realClock, Session, type Clock, type Pipe } from './session'
+import { realClock, Session, type Clock, type Limits as SessionLimits, type Pipe } from './session'
 
 // A P2P node: this browser's identity, its contacts and its sessions with them. It listens on
 // its own PeerJS id (never the one P2P files use, and never announced to the instance), dials
@@ -112,6 +112,8 @@ export interface Visibility {
 
 export const LIMITS = { ...LOCAL.node }
 
+export type NodeLimits = typeof LIMITS
+
 export const ELSEWHERE = 'Your P2P identity changed in another tab. Reload this page.'
 
 export type Status = 'starting' | 'online' | 'connecting' | 'paused' | 'squatted' | 'moved'
@@ -147,13 +149,13 @@ export interface NodeDeps {
   visibility?: Visibility
   // Per-device label in our certificate; never personal data.
   label?: string
+  limits?: Partial<NodeLimits>
+  session?: Partial<SessionLimits>
 }
 
 type Rel = 'request' | 'mutual' | 'none' | 'pending'
 
 const REL = ['request', 'mutual', 'none', 'pending']
-const HELLO_CERTS = LOCAL.node.helloCerts
-const LOST_KEPT = LOCAL.node.lostKept
 
 // Our devices as a contact knows them disagree with a single line of moves: one device revoked
 // twice with different successors, or a live device that isn't this one. Every device holds the
@@ -273,7 +275,8 @@ export class P2pNode {
   private failed = new Map<string, number[]>()
   private banned = new Map<string, number>()
   private verifyNonces = new Map<string, string[]>()
-  private requestTimes = new RateWindow(LOCAL.node.requestsWindowMs, () => LIMITS.requestsPerHour)
+  readonly limits: NodeLimits
+  private requestTimes: RateWindow
   private dropped = 0
   private listener: Listener | null = null
   private ticker: unknown = null
@@ -292,6 +295,11 @@ export class P2pNode {
     private deps: NodeDeps
   ) {
     this.clock = deps.clock ?? realClock
+    this.limits = { ...LIMITS, ...deps.limits }
+    this.requestTimes = new RateWindow(
+      this.limits.requestsWindowMs,
+      () => this.limits.requestsPerHour
+    )
     deps.transport.guard?.({
       vouch: (from, to, relays) => this.vouch(from, to, relays),
       sender: (src, proof, relays) => this.offerFrom(src, proof, relays),
@@ -538,7 +546,7 @@ export class P2pNode {
         if (n !== this.self.suffix) await this.writeSelf(cur => ({ ...cur, suffix: n }))
         this.status = 'online'
         this.changed()
-        this.ticker ??= this.clock.set(() => this.tick(), LIMITS.tickMs)
+        this.ticker ??= this.clock.set(() => this.tick(), this.limits.tickMs)
         this.schedule()
         return
       } catch (e) {
@@ -565,7 +573,7 @@ export class P2pNode {
       // Start from the plain id again: a squatter may be gone.
       if (this.status === 'squatted') this.self = { ...this.self, suffix: 0 }
       void this.listen()
-    }, LIMITS.backoff[1])
+    }, this.limits.backoff[1])
   }
 
   private lost() {
@@ -583,7 +591,7 @@ export class P2pNode {
   private tick() {
     this.ticker = null
     if (this.stopped || this.isPaused()) return
-    this.ticker = this.clock.set(() => this.tick(), LIMITS.tickMs)
+    this.ticker = this.clock.set(() => this.tick(), this.limits.tickMs)
     this.prune()
     this.schedule()
   }
@@ -628,7 +636,7 @@ export class P2pNode {
     } else if (!this.hiddenPaused) await this.listen()
   }
 
-  // Phones drop background tabs anyway: there, after 5 minutes hidden every session closes
+  // Phones drop background tabs anyway: there, after `hiddenPauseMs` hidden every session closes
   // (not during a call or in a voice channel), and they come back when the tab is visible again.
   private onVisibility() {
     const vis = this.deps.visibility
@@ -653,7 +661,7 @@ export class P2pNode {
       this.halt('paused')
       this.status = 'paused'
       this.changed()
-    }, LIMITS.hiddenPauseMs)
+    }, this.limits.hiddenPauseMs)
   }
 
   // ----- Offers -----
@@ -670,7 +678,10 @@ export class P2pNode {
   private offerFrom(src: string, proof: unknown, relays: string[]): string | null {
     if (!isRecord(proof)) return null
     const { dk, ts, sig } = proof
-    if (!Number.isSafeInteger(ts) || Math.abs(this.clock.now() - (ts as number)) > OFFER_SKEW_MS)
+    if (
+      !Number.isSafeInteger(ts) ||
+      Math.abs(this.clock.now() - (ts as number)) > this.limits.offerSkewMs
+    )
       return null
     if (!isKeyId(dk) || !peerIds(dk).includes(src)) return null
     const ik = this.ownerOf(dk)
@@ -725,7 +736,7 @@ export class P2pNode {
   }
 
   private failures(ts: number[]) {
-    return new RateWindow(LOCAL.node.failedMs, () => LIMITS.failedHandshakes, ts)
+    return new RateWindow(this.limits.failedMs, () => this.limits.failedHandshakes, ts)
   }
 
   private recentFailures(peer: string) {
@@ -738,8 +749,8 @@ export class P2pNode {
       this.stopped ||
       this.isPaused() ||
       this.isBanned(pipe.remote) ||
-      this.recentFailures(pipe.remote) >= LIMITS.failedHandshakes ||
-      [...this.pending].filter(s => s.role === 'responder').length >= LIMITS.handshakes
+      this.recentFailures(pipe.remote) >= this.limits.failedHandshakes ||
+      [...this.pending].filter(s => s.role === 'responder').length >= this.limits.handshakes
     )
       return pipe.close()
     this.run(new Session(this.sessionOpts('responder', pipe, null)))
@@ -774,6 +785,7 @@ export class P2pNode {
       pipe,
       me: this.me(),
       clock: this.clock,
+      limits: this.deps.session,
       // A device that moved away is let through only to hear that it moved (our hello says so),
       // then refused.
       admit: (r: { ik: string; dk: string }) =>
@@ -833,8 +845,8 @@ export class P2pNode {
       this.failedOf(s.peer).note(this.clock.now())
     }
     if (why === 'strikes') {
-      this.banned.set(s.peer, this.clock.now() + LIMITS.strikeBanMs)
-      if (r) this.banned.set(r.ik, this.clock.now() + LIMITS.strikeBanMs)
+      this.banned.set(s.peer, this.clock.now() + this.limits.strikeBanMs)
+      if (r) this.banned.set(r.ik, this.clock.now() + this.limits.strikeBanMs)
     }
     if (r && this.sessions.get(r.dk) === s) {
       this.sessions.delete(r.dk)
@@ -866,7 +878,11 @@ export class P2pNode {
       kept: this.isKept(x),
       lastUseful: x.lastUseful,
     }))
-    const i = victimFor(held, { contact: this.isContactSession(keep), kept: this.isKept(keep) })
+    const i = victimFor(
+      held,
+      { contact: this.isContactSession(keep), kept: this.isKept(keep) },
+      this.limits
+    )
     if (i === null) return false
     if (i >= 0) others[i].close('closed')
     return true
@@ -918,8 +934,8 @@ export class P2pNode {
       v: 1,
       rel: this.relOf(ik),
       profile: this.self.profile,
-      certs: this.self.certs.slice(0, HELLO_CERTS),
-      revs: this.self.revocations.slice(-HELLO_CERTS),
+      certs: this.self.certs.slice(0, this.limits.helloCerts),
+      revs: this.self.revocations.slice(-this.limits.helloCerts),
     }
     const binding = this.bindingFor(ik, peer)
     if (binding) msg.binding = binding
@@ -941,16 +957,19 @@ export class P2pNode {
   private yoursFor(ik: string) {
     const c = this.contacts.get(ik)
     if (!c || c.state === 'blocked') return null
-    return { certs: c.certs.slice(0, HELLO_CERTS), revs: c.revocations.slice(-HELLO_CERTS * 2) }
+    return {
+      certs: c.certs.slice(0, this.limits.helloCerts),
+      revs: c.revocations.slice(-this.limits.helloCerts * 2),
+    }
   }
 
   private async checkYours(y: unknown) {
     if (!isRecord(y) || this.self.moved) return
     const certs = arr(y.certs)
-      .slice(0, HELLO_CERTS)
+      .slice(0, this.limits.helloCerts)
       .filter((c): c is Cert => verifyCert(c, this.ik))
     const revs = arr(y.revs)
-      .slice(0, HELLO_CERTS * 2)
+      .slice(0, this.limits.helloCerts * 2)
       .filter((x): x is Revocation => verifyRevocation(x, this.ik))
     const ours = revs.find(x => this.isOurMove(x))
     if (ours) return this.markMoved(ours)
@@ -996,10 +1015,10 @@ export class P2pNode {
     }
     if (known && isRevoked(known, r.dk)) return false
     const certs = (Array.isArray(m.certs) ? m.certs : [])
-      .slice(0, HELLO_CERTS)
+      .slice(0, this.limits.helloCerts)
       .filter((c): c is Cert => verifyCert(c, r.ik))
     const revs = (Array.isArray(m.revs) ? m.revs : [])
-      .slice(0, HELLO_CERTS)
+      .slice(0, this.limits.helloCerts)
       .filter((x): x is Revocation => verifyRevocation(x, r.ik))
     if (revs.some(x => x.dk === r.dk)) return false
     if (!certs.some(c => c.dk === r.dk)) certs.unshift(r.cert)
@@ -1124,9 +1143,9 @@ export class P2pNode {
     return this.requestTimes.count(this.clock.now()) < this.requestTimes.limit
   }
 
-  // Keeps at most LIMITS.requests pending requests: the oldest unverified ones go.
+  // Keeps at most `requests` pending requests: the oldest unverified ones go.
   private async pruneRequests() {
-    const drop = overflowRequests([...this.contacts.values()], LIMITS.requests)
+    const drop = overflowRequests([...this.contacts.values()], this.limits.requests)
     let n = 0
     for (const ik of drop) {
       const gone = await this.deps.store.deleteContactIf(
@@ -1188,7 +1207,7 @@ export class P2pNode {
 
   // ----- Dialing -----
 
-  // Starts dials to contacts without a session, at most LIMITS.inFlight at once, each contact
+  // Starts dials to contacts without a session, at most `inFlight` at once, each contact
   // backing off while unreachable. `now` skips the backoff (the tab came back, or an accept).
   schedule(now = false) {
     if (this.stopped || this.isPaused() || !this.listener) return
@@ -1196,7 +1215,7 @@ export class P2pNode {
     // Voice participants first, also past the budget while a session may make room for them.
     for (const x of this.exts)
       for (const target of x.urgent?.() ?? []) {
-        if (this.dialing.size >= LIMITS.inFlight) return
+        if (this.dialing.size >= this.limits.inFlight) return
         const { ik } = target
         // Only the devices named (the one a participant is in voice on), with or without a
         // session with another device of theirs.
@@ -1206,7 +1225,8 @@ export class P2pNode {
           target.certs.some(c => this.sessions.has(c.dk))
         )
           continue
-        if (this.sessions.size + this.dialing.size >= LIMITS.sessions && !this.evictable()) break
+        if (this.sessions.size + this.dialing.size >= this.limits.sessions && !this.evictable())
+          break
         const c = this.contacts.get(ik)
         if (c?.state === 'blocked' || this.isBanned(ik)) continue
         const d = this.dials.get(ik)
@@ -1219,8 +1239,8 @@ export class P2pNode {
         )
       }
     for (const c of this.contacts.values()) {
-      if (this.dialing.size >= LIMITS.inFlight) return
-      if (this.sessions.size + this.dialing.size >= LIMITS.sessions) return
+      if (this.dialing.size >= this.limits.inFlight) return
+      if (this.sessions.size + this.dialing.size >= this.limits.sessions) return
       if (c.state !== 'mutual' && c.state !== 'outgoing') continue
       if (this.dialing.has(c.ik) || this.sessionsOf(c.ik).length > 0) continue
       if (this.isBanned(c.ik)) continue
@@ -1230,8 +1250,8 @@ export class P2pNode {
     }
     for (const x of this.exts)
       for (const target of x.targets?.() ?? []) {
-        if (this.dialing.size >= LIMITS.inFlight) return
-        if (this.sessions.size + this.dialing.size >= LIMITS.sessions) return
+        if (this.dialing.size >= this.limits.inFlight) return
+        if (this.sessions.size + this.dialing.size >= this.limits.sessions) return
         const { ik } = target
         if (ik === this.ik || this.dialing.has(ik) || this.sessionsOf(ik).length > 0) continue
         const c = this.contacts.get(ik)
@@ -1287,8 +1307,8 @@ export class P2pNode {
     const prev = this.dials.get(ik)
     // Outgoing requests back off even when they got through: the other side decides.
     if (!ok || (!member && this.contacts.get(ik)?.state !== 'mutual')) {
-      const attempt = Math.min((prev?.attempt ?? -1) + 1, LIMITS.backoff.length - 1)
-      this.dials.set(ik, { attempt, nextAt: this.clock.now() + LIMITS.backoff[attempt] })
+      const attempt = Math.min((prev?.attempt ?? -1) + 1, this.limits.backoff.length - 1)
+      this.dials.set(ik, { attempt, nextAt: this.clock.now() + this.limits.backoff[attempt] })
     }
     this.changed()
     this.schedule()
@@ -1526,7 +1546,9 @@ export class P2pNode {
     ]
     await this.writeSelf(cur => {
       const revocations = mergeRevocations(cur.revocations, revs, ik)
-      const lost = [...new Set([...(cur.lost ?? []), ...(opts.lost ?? [])])].slice(-LOST_KEPT)
+      const lost = [...new Set([...(cur.lost ?? []), ...(opts.lost ?? [])])].slice(
+        -this.limits.lostKept
+      )
       return {
         ...cur,
         dk,
@@ -1577,7 +1599,7 @@ export class P2pNode {
         ...cur,
         revocations,
         certs: mergeCerts([], cur.certs, ik, revocations),
-        lost: [...new Set([...(cur.lost ?? []), ...dks])].slice(-LOST_KEPT),
+        lost: [...new Set([...(cur.lost ?? []), ...dks])].slice(-this.limits.lostKept),
       }
     })
     if (!revs.length) return

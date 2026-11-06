@@ -14,6 +14,7 @@ import { hidesIp, relayBook } from '../../relays'
 import { Calls, type PendingCall } from '../calls'
 import { RELAY_DENIED_TEXT } from '../voice'
 import { Servers } from '../server'
+import { limitsFor, runtimeLimits } from '../user_limits'
 import {
   servers,
   calls,
@@ -29,6 +30,7 @@ import {
   store,
   reader,
   leader,
+  limits,
   initial,
   gen,
   writeOn,
@@ -201,6 +203,7 @@ const read = async (username: string, live: () => boolean) => {
     const self = await s.self()
     if (!live() || !self) return s.close()
     stopReader()
+    put.limits(limitsFor(username))
     put.reader({ store: s, me: keyId(self.ik.pk) })
     const ch = dataChannel(username)
     if (ch) {
@@ -282,6 +285,30 @@ export const run = (username: string, create: string | null) => {
   l.start()
 }
 
+// What the node, the DMs and the servers of `username` start with, besides the store and each
+// other: the account's limits and this page's hooks.
+export const startDeps = (username: string) => {
+  const lim = limitsFor(username)
+  const rt = runtimeLimits(lim)
+  return {
+    limits: lim,
+    node: { host: home.host, visibility: pageVisibility, ...rt.node },
+    dms: {
+      ...rt.dms,
+      attachments: () => !p2pHost.textOnly(),
+      room: freeSpace,
+      space: storageSpace,
+      autoMax: () => readAuto(username).dm,
+      autoDaily: () => readAuto(username).daily,
+    },
+    servers: {
+      ...rt.servers,
+      autoMax: () => readAuto(username).server,
+      attachments: () => !p2pHost.textOnly(),
+    },
+  }
+}
+
 export const boot = async (
   username: string,
   create: string | null,
@@ -299,8 +326,9 @@ export const boot = async (
       void p2pAccount(useP2p.getState().account)
     })
     if (!live()) return s.close()
+    const deps = startDeps(username)
     const n = await P2pNode.open(
-      { store: s, transport: new PeerTransport(), host: home.host, visibility: pageVisibility },
+      { ...deps.node, store: s, transport: new PeerTransport() },
       create !== null ? { name: create } : undefined
     )
     if (!live()) {
@@ -317,24 +345,11 @@ export const boot = async (
     }
     put.store(s)
     put.node(n)
+    put.limits(deps.limits)
     stopReader()
-    const d = new Dms({
-      node: n,
-      store: s,
-      attachments: () => !p2pHost.textOnly(),
-      room: freeSpace,
-      space: storageSpace,
-      autoMax: () => readAuto(username).dm,
-      autoDaily: () => readAuto(username).daily,
-    })
+    const d = new Dms({ ...deps.dms, node: n, store: s })
     put.dms(d)
-    const sv = new Servers({
-      node: n,
-      store: s,
-      dms: d,
-      autoMax: () => readAuto(username).server,
-      attachments: () => !p2pHost.textOnly(),
-    })
+    const sv = new Servers({ ...deps.servers, node: n, store: s, dms: d })
     put.servers(sv)
     sv.voice.media = callRtc
     sv.voice.consent = (hosts, ik) => relayBook.consent(hosts, ik)
@@ -429,6 +444,8 @@ export const boot = async (
     await bs.start()
     mirrorBadges(bs.all())
     if (node !== n) return
+    await d.start()
+    if (node !== n) return
     await sv.start()
     if (node !== n) return
     await refreshRooms()
@@ -471,6 +488,9 @@ const withNode = async <T>(fn: (n: P2pNode) => Promise<T>): Promise<T | null> =>
 }
 
 export const p2p = {
+  // The limits P2P started with in this tab (the defaults before it starts).
+  limits: () => limits,
+
   // `name` is shown to contacts; empty means "P2P user", never the account name.
   async enable(name = '') {
     const username = useP2p.getState().account

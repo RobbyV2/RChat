@@ -14,6 +14,7 @@ import {
 import { useStore } from '../store'
 import type { RChatState } from '../store_types'
 import { signedIn } from './global'
+import { p2pLimitActions } from './p2p_limits'
 import type { Action } from './types'
 
 export type SettingsSection =
@@ -108,6 +109,7 @@ export const settingsActions: Action[] = [
     available: ({ s }) => signedIn(s),
     run: () => void get().setAppearOffline(!get().me?.appear_offline),
   },
+  ...p2pLimitActions,
   section('settings', 'Open settings', Settings),
   section('notifications', 'Settings: Notifications', Bell),
   section('privacy', 'Settings: Privacy', ShieldOff, signedIn),

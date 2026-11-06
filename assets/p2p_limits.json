@@ -209,7 +209,7 @@
     "files.previewPixels": [100000000, 1048576, 1000000000],
     "files.thumbUrls": [200, 10, 100000],
     "files.autoDm": [10485760, 0, 107374182400],
-    "files.autoServer": [5242880, 0, 107374182400],
+    "files.autoServer": [10485760, 0, 107374182400],
     "files.autoDailyOptions.0": [268435456, 268435456, 268435456],
     "files.autoDailyOptions.1": [1073741824, 1073741824, 1073741824],
     "files.autoDailyOptions.2": [4294967296, 4294967296, 4294967296],

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, settle, waitFor } from './p2p_net'
 import type { P2pNode } from '../p2p/node'
-import type { P2pStore } from '../p2p/db'
+import type { P2pStore, RoomRecord } from '../p2p/db'
 import { b64u } from '../p2p/canonical'
 import { keyId, newKeyPair, signRevocation, type KeyPair } from '../p2p/keys'
 import { buildEvent, type Wire } from '../p2p/event_v1'
@@ -192,6 +192,157 @@ describe('storage limits', () => {
     )
     expect(dag.DAG.roomBytes).toBe(200 * 1024 * 1024)
     expect(dag.DAG.totalBytes).toBe(1024 * 1024 * 1024)
+  })
+
+  test('a full conversation takes messages again after a start with a higher limit', async () => {
+    const lim = { limits: { peerFullMs: 2000 } }
+    const { a, b, room, hub, clock } = await pair(lim, { ...lim, roomBytes: 6000 })
+    for (let i = 0; i < 6; i += 1) await a.dms.send(room, { body: `${i}`.padEnd(1500, 'x') })
+    await eventually(async () => !!(await a.store.room(room))?.peerFull, 'their storage is full')
+    expect((await b.store.room(room))?.full).toBe(true)
+    expect((await bodies(b, a)).length).toBeLessThan(6)
+    const old = live.splice(
+      live.findIndex(x => x.dms === b.dms),
+      1
+    )[0]
+    old.dms.stop()
+    old.node.stop()
+    b.store.close()
+    const n = await makeNode(hub, 'Bob', { clock, db: b.db })
+    const dms = new Dms({ node: n.node, store: n.store, clock, ...lim, roomBytes: 10_000_000 })
+    live.push({ node: n.node, dms })
+    const again: Peer = { ...n, dms }
+    expect((await again.store.room(room))?.full).toBe(true)
+    await dms.start()
+    expect((await again.store.room(room))?.full).toBe(false)
+    await n.node.start()
+    await waitFor(() => linked(a, again), 'back')
+    expect(await failure(dms.send(room, { body: 'from bob' }))).toBe('ok')
+    await clock.advance(3000)
+    a.node.schedule(true)
+    await eventually(async () => (await bodies(again, a)).length === 7, 'all of them')
+    expect((await again.store.room(room))?.full).toBe(false)
+    expect(sessionOf(a, room).strikes + sessionOf(again, room).strikes).toBe(0)
+  })
+
+  test('a room marked full is not full once an event fits', async () => {
+    const { a, b, room } = await pair()
+    const me = a.node.author()!
+    const ctx = { me: a.node.ik, peer: b.node.ik, roomBytes: 2000 }
+    const big = await eventOn(a, room, me, 'msg', { body: 'x'.repeat(2500) })
+    expect((await insertEvent(a.store.db, big.id, big.wire, Date.now(), ctx)).status).toBe('full')
+    expect((await a.store.room(room))?.full).toBe(true)
+    const small = await eventOn(a, room, me, 'msg', { body: 'y' })
+    expect((await insertEvent(a.store.db, small.id, small.wire, Date.now(), ctx)).status).toBe(
+      'new'
+    )
+    expect((await a.store.room(room))?.full).toBe(false)
+  })
+
+  test('only rooms under every running limit are unmarked at start', async () => {
+    const { store } = await makeNode(new Hub(), 'Ann')
+    const db = store.db
+    const room = (id: string, x: Partial<RoomRecord>): RoomRecord => ({
+      ...dag.blankRoom(id, 'peer', 0),
+      count: 10,
+      bytes: 5000,
+      full: true,
+      fullWhy: 'bytes',
+      ...x,
+    })
+    await db.put('rooms', room('d1', {}))
+    await db.put('rooms', room('d2', { bytes: 8000 }))
+    await db.put('rooms', room('d3', { count: 50, fullWhy: 'events' }))
+    await db.put('rooms', room('d4', { full: false }))
+    await db.put('rooms', room('s1', { kind: 'server', count: 12, acount: 4 }))
+    await db.put('rooms', room('s2', { kind: 'server', bytes: 7000 }))
+    await db.put('meta', 70, dag.TOTAL)
+    await db.put('meta', 19_000, dag.TOTAL_BYTES)
+    await db.put('meta', 22, dag.SERVER_TOTAL)
+    await db.put('meta', 4, dag.SERVER_ACL)
+    await db.put('meta', 12_000, dag.SERVER_TOTAL_BYTES)
+    const full = async () =>
+      (await store.rooms())
+        .filter(r => r.full)
+        .map(r => r.id)
+        .sort()
+    const dms = { roomCap: 50, roomBytes: 8000, totalCap: 100, totalBytes: 20_000 }
+    expect(await dag.refitFull(db, 'dm', { ...dms, totalBytes: 19_000 })).toEqual([])
+    const why = async (id: string) => (await store.room(id))?.fullWhy
+    expect(await dag.refitFull(db, 'dm', { ...dms, totalCap: 70 })).toEqual([])
+    expect(await why('d1')).toBe('events')
+    expect(await dag.refitFull(db, 'dm', dms)).toEqual(['d1'])
+    expect(await full()).toEqual(['d2', 'd3', 's1', 's2'])
+    expect([await why('d2'), await why('d3')]).toEqual(['bytes', 'events'])
+    const sv = { roomCap: 9, roomBytes: 8000, serverCap: 30, serverBytes: 20_000 }
+    expect(await dag.refitFull(db, 'server', { ...sv, roomCap: 8 })).toEqual([])
+    expect(await dag.refitFull(db, 'server', { ...sv, serverCap: 18 })).toEqual([])
+    expect(await dag.refitFull(db, 'server', { ...sv, serverBytes: 12_000 })).toEqual([])
+    expect(await dag.refitFull(db, 'server', sv)).toEqual(['s1'])
+    expect(await full()).toEqual(['d2', 'd3', 's2'])
+    expect((await store.room('d1'))?.count).toBe(10)
+    store.close()
+  })
+
+  test('a full server of unknown rules is judged at start as its events are stored', async () => {
+    const { store } = await makeNode(new Hub(), 'Ann')
+    const db = store.db
+    const room = (id: string, x: Partial<RoomRecord>): RoomRecord => ({
+      ...dag.blankRoom(id, '', 0),
+      kind: 'server',
+      count: 12,
+      acount: 12,
+      bytes: 5000,
+      full: true,
+      fullWhy: 'events',
+      ...x,
+    })
+    await db.put('rooms', room('k1', { acount: 4 }))
+    await db.put('rooms', room('u1', {}))
+    await db.put('rooms', room('u2', { count: 20 }))
+    await db.put('rooms', room('u3', { bytes: 8000, fullWhy: 'bytes' }))
+    await db.put('meta', 50, dag.SERVER_TOTAL)
+    await db.put('meta', 30, dag.SERVER_ACL)
+    await db.put('meta', 30_000, dag.SERVER_TOTAL_BYTES)
+    const was = { ...dag.UNKNOWN }
+    Object.assign(dag.UNKNOWN, { events: 20, bytes: 8000 })
+    try {
+      const sv = { roomCap: 100, roomBytes: 100_000, serverCap: 60, serverBytes: 100_000 }
+      const unknown = (r: RoomRecord) => r.id.startsWith('u')
+      // Every event of theirs counts, ACL ones too: all 50 against the total.
+      expect(await dag.refitFull(db, 'server', { ...sv, serverCap: 50 }, unknown)).toEqual(['k1'])
+      expect(await dag.refitFull(db, 'server', { ...sv, serverBytes: 30_000 }, unknown)).toEqual([])
+      expect(await dag.refitFull(db, 'server', sv, unknown)).toEqual(['u1'])
+      const full = (await store.rooms()).filter(r => r.full).map(r => r.id)
+      expect(full.sort()).toEqual(['u2', 'u3'])
+    } finally {
+      Object.assign(dag.UNKNOWN, was)
+    }
+    store.close()
+  })
+
+  test('a full conversation names the limit it reached', () => {
+    const caps = { roomCap: 100, totalCap: 1000, roomBytes: 1_000_000, totalBytes: 256 * 1024 ** 2 }
+    const big = EV.core + EV.attContent
+    const note = (count: number, bytes: number | undefined, fullWhy?: 'events' | 'bytes') =>
+      dm.fullNote({ count, bytes, fullWhy }, caps)
+    expect(note(100, 0, 'events')).toBe(dm.FULL_TEXT(100))
+    expect(note(99, 0, 'events')).toBe(
+      'Direct messages reached the limit of 1,000 stored events on this device.'
+    )
+    expect(note(99, 0)).toBe(dm.DMS_FULL_TEXT(1000))
+    expect(note(5, 1_000_000 - big + 1, 'bytes')).toBe(dm.FULL_BYTES_TEXT(1_000_000))
+    expect(note(5, 1_000_000 - big, 'bytes')).toBe(
+      'Direct messages reached the storage limit of 256.0 MB on this device.'
+    )
+    expect(note(5, undefined, 'bytes')).toBe(dm.DMS_FULL_BYTES_TEXT(256 * 1024 ** 2))
+  })
+
+  test('a send refused for the total of every conversation says so', async () => {
+    const { a, room } = await pair({ totalCap: 3 }, {})
+    for (const t of ['1', '2', '3']) await a.dms.send(room, { body: t })
+    expect(await failure(a.dms.send(room, { body: '4' }))).toBe(dm.DMS_FULL_TEXT(3))
+    expect((await a.store.room(room))?.fullWhy).toBe('events')
   })
 
   test('a quota error is acked as full, the window drains, and delivery resumes', async () => {

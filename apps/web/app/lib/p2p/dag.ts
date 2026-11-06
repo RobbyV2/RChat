@@ -202,7 +202,8 @@ export const insertInto = async (
         ? 'bytes'
         : null
   if (why) {
-    if (!room.full) await tx.objectStore('rooms').put({ ...room, full: true, fullWhy: why })
+    if (!room.full || room.fullWhy !== why)
+      await tx.objectStore('rooms').put({ ...room, full: true, fullWhy: why })
     return { status: 'full', why }
   }
   const parents: EventRecord[] = []
@@ -307,6 +308,7 @@ export const insertInto = async (
     pings: room.pings + (ping ? 1 : 0),
     lastTs: ev.type === 'msg' || ev.type === 'call' ? Math.max(room.lastTs, effTs) : room.lastTs,
     bytes: roomBytes + size,
+    full: false,
   }
   await tx.objectStore('rooms').put(next)
   await meta.put(total + 1, TOTAL)
@@ -352,6 +354,58 @@ export interface ServerInsert {
 export const UNKNOWN = { events: LOCAL.dag.unknownEvents, bytes: LOCAL.dag.unknownBytes }
 
 export type ServerInserted = Inserted | { status: 'stale' }
+
+// The running limits a room marked full is judged by again.
+export interface FullCaps {
+  roomCap?: number
+  totalCap?: number
+  roomBytes?: number
+  totalBytes?: number
+  serverCap?: number
+  serverBytes?: number
+}
+
+// Rooms of `kind` marked full that are under every running limit again (raised since they
+// filled): no longer full. A server of rules this build doesn't know (`unknown`) is judged as its
+// events are stored. Returns their ids.
+export const refitFull = async (
+  db: P2pDatabase,
+  kind: RoomRecord['kind'],
+  caps: FullCaps,
+  unknown: (r: RoomRecord) => boolean = () => false
+) => {
+  const tx = db.transaction(['rooms', 'meta'], 'readwrite')
+  const rooms = tx.objectStore('rooms')
+  const meta = tx.objectStore('meta')
+  const num = async (k: string) => ((await meta.get(k)) as number | undefined) ?? 0
+  const dm = kind === 'dm'
+  const events = await num(dm ? TOTAL : SERVER_TOTAL)
+  const content = events - (dm ? 0 : await num(SERVER_ACL))
+  const totalCap = dm ? (caps.totalCap ?? DAG.totalCap) : (caps.serverCap ?? DAG.serverCap)
+  const totalMax = dm ? (caps.totalBytes ?? DAG.totalBytes) : (caps.serverBytes ?? DAG.serverBytes)
+  const bytes = await num(dm ? TOTAL_BYTES : SERVER_TOTAL_BYTES)
+  const out: string[] = []
+  for (const r of await rooms.getAll()) {
+    if (!r.full || r.kind !== kind) continue
+    // Unknown rules: every event counts, up to what is stored of such a server.
+    const u = !dm && unknown(r)
+    const count = u || dm ? r.count : r.count - (r.acount ?? 0)
+    const eventsFull =
+      count >= (u ? UNKNOWN.events : (caps.roomCap ?? DAG.roomCap)) ||
+      (u ? events : content) >= totalCap
+    const bytesFull =
+      (r.bytes ?? 0) >= (u ? UNKNOWN.bytes : (caps.roomBytes ?? DAG.roomBytes)) || bytes >= totalMax
+    if (eventsFull || bytesFull) {
+      const fullWhy: FullWhy = eventsFull ? 'events' : 'bytes'
+      if (r.fullWhy !== fullWhy) await rooms.put({ ...r, fullWhy })
+      continue
+    }
+    await rooms.put({ ...r, full: false })
+    out.push(r.id)
+  }
+  await tx.done
+  return out
+}
 
 // Bytes of content bodies (and their search rows) each sender has stored in a room (spec 4.2
 // eviction step 3 picks the largest), in `meta`.
@@ -500,7 +554,8 @@ export const insertServer = async (
           ? 'bytes'
           : null
   if (full) {
-    if (!r.full) await tx.objectStore('rooms').put({ ...r, full: true, fullWhy: full })
+    if (!r.full || r.fullWhy !== full)
+      await tx.objectStore('rooms').put({ ...r, full: true, fullWhy: full })
     await tx.done
     return { status: 'full', why: full }
   }
@@ -606,6 +661,8 @@ export const insertServer = async (
       missing: missing.slice(-DAG.missing),
       lastSeq: seq,
       lastTs: !acl && ev.t === 'msg' ? Math.max(r.lastTs, effTs) : r.lastTs,
+      // ACL events of a server of known rules are stored whatever the room holds.
+      full: acl && !ctx.unknown ? r.full : false,
     },
     { ...countOf({ layer: ev.L, ...(gone ? { purged: true } : {}) }), bytes: storedBytes }
   )

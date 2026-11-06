@@ -16,6 +16,7 @@ export {
   AUTO_DAILY_OPTIONS,
   AUTO_DM,
   AUTO_SERVER,
+  autoChoices,
   parseAuto,
   readAuto,
   chatScope,

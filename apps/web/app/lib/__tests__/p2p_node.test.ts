@@ -329,6 +329,41 @@ describe('P2P node', () => {
     expect(a.node.paused).toBe(false)
   })
 
+  test("a node's own limits apply to it alone", async () => {
+    const clock = new ManualClock()
+    let visible = true
+    const fns = new Set<() => void>()
+    const visibility: Visibility = {
+      visible: () => visible,
+      onChange: fn => {
+        fns.add(fn)
+        return () => fns.delete(fn)
+      },
+      pauses: () => true,
+    }
+    const hub = new Hub()
+    const a = await makeNode(hub, 'Alice', {
+      clock,
+      visibility,
+      limits: { hiddenPauseMs: 60_000 },
+      session: { pingMs: 7000 },
+    })
+    const b = await makeNode(hub, 'Bob', { clock })
+    nodes.push(a.node, b.node)
+    expect(a.node.limits.hiddenPauseMs).toBe(60_000)
+    expect(b.node.limits.hiddenPauseMs).toBe(LIMITS.hiddenPauseMs)
+    expect(LIMITS.hiddenPauseMs).toBe(5 * 60_000)
+    await a.node.start()
+    await b.node.start()
+    await befriend(a.node, b.node, clock)
+    const s = a.node.readySessions(b.node.ik)[0] as unknown as { limits: { pingMs: number } }
+    expect(s.limits.pingMs).toBe(7000)
+    visible = false
+    fns.forEach(f => f())
+    await clock.advance(60_000 + 1000)
+    await waitFor(() => a.node.status === 'paused', 'hidden pause after a minute')
+  })
+
   test('a peer that fails handshakes is refused for a minute', async () => {
     const { out, hub } = await setup(['Alice'])
     const a = out[0].node

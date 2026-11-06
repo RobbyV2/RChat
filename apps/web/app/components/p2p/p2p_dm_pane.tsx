@@ -7,14 +7,7 @@ import { allPings } from '../../lib/selectors'
 import { P2P_DM_INTRO } from '../../lib/home'
 import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
 import { displayName, shieldOf } from '../../lib/p2p/contacts'
-import {
-  FULL_BYTES_TEXT,
-  FULL_TEXT,
-  movedText,
-  withMissed,
-  type P2pMessage,
-} from '../../lib/p2p/dm'
-import { DAG } from '../../lib/p2p/dag'
+import { fullNote, movedText, withMissed, type P2pMessage } from '../../lib/p2p/dm'
 import { PinsButton } from '../pins'
 import { PingBadge, pingLabel } from '../ping_badge'
 import {
@@ -115,7 +108,7 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
       <MovingBanner className={noteBarCls} />
     ) : room?.full ? (
       <div className={noteBarCls} role="status">
-        {room.fullWhy === 'bytes' ? FULL_BYTES_TEXT(DAG.roomBytes) : FULL_TEXT(DAG.roomCap)}
+        {fullNote(room, p2p.limits().dag)}
       </div>
     ) : !peer ? (
       <div className={noteBarCls}>This contact was removed.</div>
