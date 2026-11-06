@@ -441,7 +441,7 @@ pub(crate) async fn words(Path(username): Path<String>) -> Json<WordsResp> {
 /// messages are on) and gets their self DM. Answers 404 unless `registration` is `open` and
 /// `password_login` is on in `GET /api/settings`. No authentication.
 /// Strict and general rate-limit buckets.
-#[utoipa::path(post, path = "/api/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), `@`-containing, banned, taken or profanity-filtered username; empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; or a missing/invalid avatar color for `color` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(post, path = "/api/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), NUL-containing, `@`-containing, banned, taken or profanity-filtered username; empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; or a missing/invalid avatar color for `color` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
@@ -456,7 +456,7 @@ pub(crate) async fn register(
     if !Settings::cached(&state.db).await.password_signup() {
         return Err(not_found());
     }
-    if username.trim().is_empty() {
+    if username.trim().is_empty() || username.contains('\0') {
         return Err(bad("Username required"));
     }
     check_len(&username, NAME_MAX, "Username")?;
@@ -667,6 +667,9 @@ async fn login_at(state: &AppState, req: LoginReq, t: i64) -> Result<Json<AuthRe
         password,
         words,
     } = req;
+    if username.contains('\0') {
+        return Err(invalid_credentials());
+    }
     let key = username.to_lowercase();
     let db = &state.db;
     throttle_attempt(db, &key, t).await?;
@@ -972,7 +975,7 @@ pub(crate) async fn patch_me(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::test_util::{done, temp_state};
+    use crate::api::test_util::{done, pg_done, pg_state, temp_state};
     use crate::state::AppState;
 
     #[tokio::test]
@@ -1303,6 +1306,76 @@ mod tests {
         let locked = attempt("a", CLOCK + 6).await;
         assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _))));
         done(state, path).await;
+    }
+
+    async fn count(state: &AppState, sql: &'static str) -> i64 {
+        sqlx::query(sql)
+            .fetch_one(&state.db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("count value")
+    }
+
+    async fn nul_login(state: &AppState) -> ApiError {
+        login_at(
+            state,
+            LoginReq {
+                username: "ali\0ce".to_string(),
+                password: Some("a".to_string()),
+                words: None,
+            },
+            CLOCK,
+        )
+        .await
+        .err()
+        .expect("login refused")
+    }
+
+    async fn nul_names_are_refused(state: &AppState) {
+        let users = count(state, "SELECT COUNT(*) FROM users").await;
+        let ApiError(code, msg) = register_text(state, "ali\0ce")
+            .await
+            .err()
+            .expect("register refused");
+        assert_eq!(
+            (code, msg.as_str()),
+            (StatusCode::BAD_REQUEST, "Username required")
+        );
+        assert_eq!(count(state, "SELECT COUNT(*) FROM users").await, users);
+        let ApiError(code, msg) = nul_login(state).await;
+        assert_eq!(
+            (code, msg.as_str()),
+            (StatusCode::UNAUTHORIZED, "Invalid credentials")
+        );
+        assert_eq!(count(state, "SELECT COUNT(*) FROM login_attempts").await, 0);
+        let _ = register_text(state, "alice").await.expect("alice");
+    }
+
+    #[tokio::test]
+    async fn a_nul_in_a_username_is_refused_on_both_databases() {
+        let (state, path) = temp_state("auth_nul").await;
+        nul_names_are_refused(&state).await;
+        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $1, $2, 'text', 'identicon', 1)")
+            .bind("ali\0ce")
+            .bind(hash_password("a").await.expect("hash"))
+            .execute(&state.db)
+            .await
+            .expect("old account");
+        let ApiError(code, msg) = nul_login(&state).await;
+        assert_eq!(
+            (code, msg.as_str()),
+            (StatusCode::UNAUTHORIZED, "Invalid credentials")
+        );
+        assert_eq!(
+            count(&state, "SELECT COUNT(*) FROM login_attempts").await,
+            0
+        );
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("auth_nul").await {
+            nul_names_are_refused(&state).await;
+            pg_done(state, pg).await;
+        }
     }
 
     const CLOCK: i64 = 20_000 * 86400 + 3600;
