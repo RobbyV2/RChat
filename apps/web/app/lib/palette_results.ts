@@ -32,6 +32,8 @@ import {
   type Ranked,
   type UsageMap,
 } from './palette'
+import { paletteCtx } from './actions/ctx'
+import { paletteCommands } from './actions/palette'
 import type { IndexDoc, PaletteIndex } from './palette_index'
 import { indexSource } from './palette_sync'
 import { openPalette, setPaletteView } from './palette_store'
@@ -391,7 +393,12 @@ export const buildSections = (s: RChatState, text: string, ctx: ResultCtx): Sect
   const { mode, q } = parseQuery(text)
   const { usage, now } = ctx
   const out: Section[] = []
-  const commands = commandsFor(s)
+  const seen = new Set<string>()
+  const commands = [...commandsFor(s), ...paletteCommands(paletteCtx(s))].filter(c => {
+    if (seen.has(c.id)) return false
+    seen.add(c.id)
+    return true
+  })
   const selection = commands.filter(c => c.group === 'selection')
   const others = commands.filter(c => c.group !== 'selection')
   const r = <T extends PaletteItem>(items: T[], query = q) => rank(items, query, usage, now)

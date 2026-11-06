@@ -1,9 +1,18 @@
 'use client'
 
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type KeyboardEvent,
+} from 'react'
 import { ArrowLeft, Command, CornerDownLeft, Search } from 'lucide-react'
 import { fuzzyParts } from '../lib/fuzzy'
 import { useHome } from '../lib/home_store'
+import { actionsVersion, subscribeActions } from '../lib/actions/registry'
 import { loadApiDoc, loadApiHistory, useApiDoc } from '../lib/api_console'
 import {
   isMac,
@@ -297,6 +306,7 @@ function useResults(text: string) {
   const history = useApiDoc(x => x.history.items)
   const recents = useHome(x => x.prefs.recents)
   const indexTick = useIndexStatus(x => x.docs + x.bytes)
+  const actions = useSyncExternalStore(subscribeActions, actionsVersion, actionsVersion)
   return useMemo(() => {
     const ctx: ResultCtx = {
       usage,
@@ -309,8 +319,9 @@ function useResults(text: string) {
       mask,
     }
     void indexTick
+    void actions
     return buildSections(s, text, ctx)
-  }, [s, text, usage, mask, ops, history, recents, indexTick])
+  }, [s, text, usage, mask, ops, history, recents, indexTick, actions])
 }
 
 function ListView() {

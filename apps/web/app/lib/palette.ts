@@ -85,6 +85,8 @@ export const GROUP_LABELS: Record<PaletteGroup, string> = {
 // One row of the palette. `id` is stable across openings (it keys the usage counts).
 export interface PaletteItem {
   id: string
+  // The registered action that made this row.
+  action?: string
   title: string
   subtitle?: string
   group: PaletteGroup

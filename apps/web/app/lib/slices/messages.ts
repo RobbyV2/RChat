@@ -125,7 +125,7 @@ export const isSelfDm = (d: DmSummary) => d.is_self
 const merge = mergeSorted<Message>
 
 // Ids of optimistic messages, far above any real id.
-const OPT_BASE = 1e15
+export const OPT_BASE = 1e15
 let optSeq = 0
 const nextTempId = () => OPT_BASE + ++optSeq
 const draining = new Set<string>()

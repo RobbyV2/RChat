@@ -1,4 +1,9 @@
 import { create } from 'zustand'
+import { ctxFor } from './actions/ctx'
+import { paletteRow } from './actions/palette'
+import { actionById, guardAction } from './actions/registry'
+import { askable } from './actions/steps'
+import type { Target } from './actions/types'
 import { home, writeLocal } from './instances'
 import {
   EMPTY_PALETTE,
@@ -11,6 +16,7 @@ import {
   type PalettePrefs,
 } from './palette'
 import type { PollTarget } from './polls_store'
+import { useStore } from './store'
 
 // The palette's open state and its per-account prefs (usage counts, index mode).
 export type PaletteView =
@@ -63,6 +69,19 @@ export const openPalette = (text = '') =>
 
 export const closePalette = () =>
   usePaletteUi.setState({ open: false, text: '', view: { kind: 'list' } })
+
+// Opens the palette at the action's argument for `target`.
+export const openPaletteAt = (id: string, target: Target) => {
+  const a = actionById(id)
+  const ctx = ctxFor(useStore.getState(), target, 'palette')
+  const item = a ? guardAction(a, () => (askable(a, ctx) ? paletteRow(a, ctx) : null), null) : null
+  if (item)
+    usePaletteUi.setState({
+      open: true,
+      text: '',
+      view: item.arg ? { kind: 'arg', item } : { kind: 'list' },
+    })
+}
 
 export const togglePalette = () => (usePaletteUi.getState().open ? closePalette() : openPalette())
 
