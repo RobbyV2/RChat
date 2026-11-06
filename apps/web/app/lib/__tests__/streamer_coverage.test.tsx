@@ -69,16 +69,15 @@ describe('streamer mode', () => {
     expect(html).toContain('title="Previewing a server"')
   })
 
-  test('the config string stays covered until shown', () => {
-    signedIn(false)
-    const plain = render(<ConfigSyncSection />)
-    expect(plain).toContain('aria-label="Config string"')
-    expect(plain.includes('data-streamer-cover')).toBe(false)
-    signedIn(true)
-    const covered = render(<ConfigSyncSection />)
-    expect(covered.includes('aria-label="Config string"')).toBe(false)
-    expect(covered).toContain('aria-label="Show config string"')
-    expect(covered).toContain('aria-label="Copy config string"')
+  test('the config string stays covered until shown, in and out of streamer mode', () => {
+    for (const streamer of [false, true]) {
+      signedIn(streamer)
+      const html = render(<ConfigSyncSection />)
+      expect(html.includes('aria-label="Config string"')).toBe(false)
+      expect(html).toContain('aria-label="Show config string"')
+      expect(html).toContain('aria-label="Copy config string"')
+      expect(html.includes('Hidden in streamer mode')).toBe(streamer)
+    }
   })
 
   test('P2P sender names stay out of tooltips and are blurred in text', () => {

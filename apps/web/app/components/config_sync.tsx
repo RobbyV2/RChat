@@ -46,12 +46,20 @@ const iconBtn =
 
 const areaCls = `${fieldCls} w-full resize-none font-mono text-xs break-all md:text-xs`
 
-// In streamer mode a secret (a share link, its QR code, a config string) stays covered until
-// pressed, so it never shows on stream by accident. Copy and share buttons next to it still work.
-function StreamerCover({ what, children }: { what: string; children: ReactNode }) {
+// A secret stays covered until pressed, so it never shows by accident: in streamer mode always,
+// and outside it too when `always`. Copy and share buttons next to it still work.
+function StreamerCover({
+  what,
+  always = false,
+  children,
+}: {
+  what: string
+  always?: boolean
+  children: ReactNode
+}) {
   const streamer = useStore(s => s.streamer)
   const [open, setOpen] = useState(false)
-  if (!streamer || open) return <>{children}</>
+  if ((!streamer && !always) || open) return <>{children}</>
   return (
     <button
       type="button"
@@ -62,7 +70,7 @@ function StreamerCover({ what, children }: { what: string; children: ReactNode }
       className="flex min-h-12 w-full flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-outline-variant px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
     >
       <Eye size={16} />
-      Hidden in streamer mode. Show {what}
+      {streamer ? `Hidden in streamer mode. Show ${what}` : `Show ${what}`}
     </button>
   )
 }
@@ -422,7 +430,7 @@ function ExportBlock({
       ) : (
         (p2p === false || text) && (
           <div className="flex items-start gap-1">
-            <StreamerCover what="config string">
+            <StreamerCover what="config string" always>
               <textarea
                 readOnly
                 rows={3}
