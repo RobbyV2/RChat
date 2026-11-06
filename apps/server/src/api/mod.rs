@@ -1686,6 +1686,7 @@ pub fn routes(
             .route("/auth/login", post(auth::login))
             .route("/auth/words/{username}", get(auth::words))
             .route("/auth/recovery/challenge", post(recovery::challenge))
+            .route("/auth/recovery", post(recovery::recover))
             .route("/me/password", post(auth::change_password))
             .route("/servers/{name}/guest_access", post(servers::guest_access))
             .route("/servers", post(servers::create_server))
@@ -2099,6 +2100,23 @@ pub(crate) mod test_util {
     pub(crate) async fn pg_done(state: AppState, temp: PgTemp) {
         crate::db::close(&state.db).await;
         drop(temp);
+    }
+
+    /// The account key of the backup phrase `abandon` x11 `about`.
+    pub(crate) const PHRASE_KEY: &str = "IOGfm4VeaU9qsds79702OGowi43niF7E3YP1w8Qi4qM";
+
+    /// A signature by `PHRASE_KEY` over `phrase_message`, as base64url without padding.
+    pub(crate) fn phrase_sign(purpose: &str, username: &str, nonce: &str, context: &str) -> String {
+        use base64::Engine;
+        use ed25519_dalek::{Signer, SigningKey};
+        let secret: [u8; 32] =
+            hex::decode("3ce6f2b19c948b2c6f3cc5d0f429bab3812866054615593caf48839dec55ca2f")
+                .expect("hex")
+                .try_into()
+                .expect("32 bytes");
+        let message = crate::api::reauth::phrase_message(purpose, username, nonce, context);
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(SigningKey::from_bytes(&secret).sign(&message).to_bytes())
     }
 
     /// A grant-shaped value (64 hex characters) derived from `name`, for tests.
@@ -3022,6 +3040,7 @@ mod tests {
             (true, "/config_shares", 40),
             (true, "/identity/p2p_binding", 40),
             (true, "/auth/recovery/challenge", 40),
+            (true, "/auth/recovery", 40),
         ] {
             let mut count = 0;
             for n in 0..tries {
@@ -3058,6 +3077,7 @@ mod tests {
         assert!(limited["/config_shares"] >= 5, "{limited:?}");
         assert!(limited["/identity/p2p_binding"] >= 5, "{limited:?}");
         assert!(limited["/auth/recovery/challenge"] >= 5, "{limited:?}");
+        assert!(limited["/auth/recovery"] >= 5, "{limited:?}");
         assert_eq!(limited["/auth/words/nobody"], 0, "{limited:?}");
         assert_eq!(limited["/settings"], 0, "{limited:?}");
         done(state, path).await;

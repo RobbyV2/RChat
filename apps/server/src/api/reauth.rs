@@ -255,6 +255,16 @@ pub fn phrase_message(purpose: &str, username: &str, nonce: &str, context: &str)
     .concat()
 }
 
+#[cfg(test)]
+thread_local! {
+    static PHRASE_CHECKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn phrase_checks() -> u64 {
+    PHRASE_CHECKS.with(|c| c.get())
+}
+
 /// Whether `sig` (base64url) is a signature by the recovery key `key` (base64url Ed25519) over
 /// `phrase_message`.
 pub fn phrase_sig_ok(
@@ -266,6 +276,8 @@ pub fn phrase_sig_ok(
     sig: &str,
 ) -> bool {
     crate::identity::p2p_key(key).is_some_and(|key| {
+        #[cfg(test)]
+        PHRASE_CHECKS.with(|c| c.set(c.get() + 1));
         crate::identity::sig_ok(
             &key,
             &phrase_message(purpose, username, nonce, context),
@@ -314,34 +326,20 @@ mod tests {
     use axum::Json;
     use axum::extract::{FromRequestParts, State};
     use axum::http::{Request, StatusCode, header};
-    use base64::Engine;
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use ed25519_dalek::{Signer, SigningKey};
     use serde_json::json;
     use sqlx::Row;
 
     use super::*;
     use crate::api::auth::{RegisterReq, hash_password, register, session_key};
-    use crate::api::test_util::{done, temp_state};
+    use crate::api::test_util::{PHRASE_KEY as KEY, done, phrase_sign as sign, temp_state};
     use crate::db::{get_user, secret_key};
 
-    const KEY: &str = "IOGfm4VeaU9qsds79702OGowi43niF7E3YP1w8Qi4qM";
-    const SECRET: &str = "3ce6f2b19c948b2c6f3cc5d0f429bab3812866054615593caf48839dec55ca2f";
     const RECOVER_SIG: &str =
         "cJyitejzn10C9qYWcUrbSYk5kY-uICu9vkDIcm939uiM9hjQMj2l8Xjteb0SSBZKUN6rmMSvvx8c74T6ZoApBA";
     const SET_SIG: &str =
         "dbdLi9psy37fHJAkwh-ERVnJcRa3WnjT7jKyc_ilbjBTYDfYvn6ojQmLoAm3HdxXx_1cHNZHLL9QPdpuF8N0BA";
     const NEW_KEY: &str = "2Rd0E35G1_IAGOrmcRFbBetgSdlSqRK04n1s5rgrekE";
     const T: i64 = 20_000 * 86400 + 3600;
-
-    fn sign(purpose: &str, username: &str, nonce: &str, context: &str) -> String {
-        let secret: [u8; 32] = hex::decode(SECRET)
-            .expect("hex")
-            .try_into()
-            .expect("32 bytes");
-        let message = phrase_message(purpose, username, nonce, context);
-        URL_SAFE_NO_PAD.encode(SigningKey::from_bytes(&secret).sign(&message).to_bytes())
-    }
 
     async fn add_user(state: &AppState, name: &str, kind: &str, secret: &str, key: Option<&str>) {
         let hash = hash_password(secret).await.expect("hash");

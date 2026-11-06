@@ -289,6 +289,74 @@ async fn silent_sockets_close_and_addresses_are_capped() {
     crate::api::test_util::done(state, path).await;
 }
 
+#[tokio::test]
+async fn a_recovery_closes_the_sockets_of_old_sessions() {
+    use crate::api::test_util::{PHRASE_KEY, phrase_sign};
+    let (state, path, addr) = live("ws_recovery").await;
+    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, recovery_pub, recovery_set_at) VALUES('alice', 'alice', 'x', 'text', 'identicon', 0, $1, 0)")
+        .bind(PHRASE_KEY)
+        .execute(&state.db)
+        .await
+        .expect("user");
+    sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, 'alice', 0)")
+        .bind(crate::db::secret_key("thief-token"))
+        .execute(&state.db)
+        .await
+        .expect("token");
+    let ceiling = Duration::from_secs(30);
+    let mut thief = dial(addr, "203.0.113.4").await.expect("thief");
+    send_auth(&mut thief, Some("thief-token")).await;
+    until(|| state.hub.is_online_anywhere("alice")).await;
+    let client = reqwest::Client::new();
+    let post = |path: &str, body: serde_json::Value| {
+        client
+            .post(format!("http://{addr}{path}"))
+            .header("x-forwarded-for", "198.51.100.4")
+            .header("content-type", "application/json")
+            .body(body.to_string())
+            .send()
+    };
+    let challenge = post(
+        "/auth/recovery/challenge",
+        serde_json::json!({ "username": "Alice" }),
+    )
+    .await
+    .expect("challenge")
+    .text()
+    .await
+    .expect("challenge body");
+    let challenge: serde_json::Value = serde_json::from_str(&challenge).expect("challenge json");
+    let nonce = challenge["nonce"].as_str().expect("nonce");
+    let res = post(
+        "/auth/recovery",
+        serde_json::json!({
+            "username": "Alice",
+            "nonce": nonce,
+            "sig": phrase_sign("recover", "alice", nonce, ""),
+            "new": { "password": "new pass" },
+        }),
+    )
+    .await
+    .expect("recover");
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: serde_json::Value =
+        serde_json::from_str(&res.text().await.expect("recover body")).expect("recover json");
+    let token = body["token"].as_str().expect("token").to_string();
+    assert!(
+        closed_with(&mut thief, ceiling).await.is_some(),
+        "the old session's socket closes"
+    );
+    until(|| !state.hub.is_online_anywhere("alice")).await;
+    let mut mine = dial(addr, "203.0.113.4").await.expect("mine");
+    send_auth(&mut mine, Some(&token)).await;
+    until(|| state.hub.is_online_anywhere("alice")).await;
+    assert_eq!(
+        closed_with(&mut mine, Duration::from_millis(50)).await,
+        None
+    );
+    crate::api::test_util::done(state, path).await;
+}
+
 async fn next_of_type(ws: &mut Client, kind: &str, wait: Duration) -> Option<serde_json::Value> {
     use tokio_tungstenite::tungstenite::Message as T;
     let until = Instant::now() + wait;

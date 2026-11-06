@@ -79,7 +79,8 @@ fn password_kind_schema() -> utoipa::openapi::Object {
 #[derive(Serialize, ToSchema)]
 pub struct AuthResp {
     /// Session token (64 hex characters). Send it as `Authorization: Bearer <token>`. It does
-    /// not expire; it stays valid until logout or a password change from another session.
+    /// not expire; it stays valid until logout, a password change from another session or a
+    /// recovery.
     pub token: String,
     /// The signed-in user's account, as returned by `GET /api/me`.
     pub user: Me,
@@ -131,10 +132,10 @@ pub struct LoginReq {
 #[derive(Deserialize, ToSchema)]
 pub struct Secret {
     /// A text password (a new one must not be empty). Omit when using `words`.
-    password: Option<String>,
+    pub(crate) password: Option<String>,
     /// 7 words, case-insensitive and in order. For a new password they must come from
     /// `GET /api/auth/words/{username}`. Omit when using `password`.
-    words: Option<Vec<String>>,
+    pub(crate) words: Option<Vec<String>>,
 }
 
 /// A password change.
@@ -368,7 +369,7 @@ fn check_avatar(
     }
 }
 
-fn secret_from(
+pub(crate) fn secret_from(
     username: &str,
     password: Option<String>,
     words: Option<Vec<String>>,
@@ -549,7 +550,7 @@ pub(crate) async fn register(
     Ok(Json(AuthResp { token, user: me }))
 }
 
-async fn throttle_attempt(db: &Db, key: &str, t: i64) -> Result<(), ApiError> {
+pub(crate) async fn throttle_attempt(db: &Db, key: &str, t: i64) -> Result<(), ApiError> {
     let day = (t / 86400).to_string();
     let admitted = sqlx::query(
         "INSERT INTO login_attempts(username, day, count, last_at) VALUES($1, $2, 1, $3) ON CONFLICT(username) DO UPDATE SET count = CASE WHEN login_attempts.day = excluded.day THEN login_attempts.count + 1 ELSE 1 END, day = excluded.day, last_at = excluded.last_at WHERE login_attempts.day <> excluded.day OR excluded.last_at - login_attempts.last_at >= 3 RETURNING count",
@@ -649,11 +650,11 @@ fn wrong_password() -> ApiError {
 /// Log in
 ///
 /// Checks the username and password (or words) and returns a new session token; existing
-/// sessions stay valid. Each username, existing or not, admits one attempt every 3 seconds and
-/// at most 1000 attempts per UTC day (successful ones included); after that it is locked until
-/// the next UTC day. Throttled attempts are not checked. No authentication. Strict and general
-/// rate-limit buckets.
-#[utoipa::path(post, path = "/api/auth/login", tag = "Auth", request_body = LoginReq, responses((status = 200, description = "Credentials accepted; returns a new session token and the user's profile", body = AuthResp), (status = 400, description = "Not exactly one of `password` and `words`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Unknown username or wrong password (`Invalid credentials`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login attempts for this username today (UTC); locked until the next day", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since the last attempt for this username (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
+/// sessions stay valid. Each username, existing or not, admits one login or recovery attempt
+/// every 3 seconds and at most 1000 login and recovery attempts per UTC day (successful ones
+/// included); after that it is locked until the next UTC day. Throttled attempts are not
+/// checked. No authentication. Strict and general rate-limit buckets.
+#[utoipa::path(post, path = "/api/auth/login", tag = "Auth", request_body = LoginReq, responses((status = 200, description = "Credentials accepted; returns a new session token and the user's profile", body = AuthResp), (status = 400, description = "Not exactly one of `password` and `words`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Unknown username or wrong password (`Invalid credentials`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login and recovery attempts for this username today (UTC); locked until the next day", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since the last login or recovery attempt for this username (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginReq>,
@@ -661,7 +662,11 @@ pub(crate) async fn login(
     login_at(&state, req, now()).await
 }
 
-async fn login_at(state: &AppState, req: LoginReq, t: i64) -> Result<Json<AuthResp>, ApiError> {
+pub(crate) async fn login_at(
+    state: &AppState,
+    req: LoginReq,
+    t: i64,
+) -> Result<Json<AuthResp>, ApiError> {
     let LoginReq {
         username,
         password,
