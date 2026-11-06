@@ -385,6 +385,8 @@ export function ServerRail() {
   const logout = useStore(s => s.logout)
   const saved = useStore(s => s.layout.servers)
   const p2pHome = useP2p(s => s.home || s.server !== null)
+  // Set only while the instance has P2P on for this account.
+  const p2pOn = useP2p(s => s.account !== null)
   const atHome = useStore(s => s.home && s.view === null) && !p2pHome
 
   const items = railItems(
@@ -430,7 +432,7 @@ export function ServerRail() {
             {dmPings > 0 ? <RailPingBadge count={dmPings} /> : dmUnread && <UnreadDot />}
           </button>
         )}
-        {me && <P2pRailTile />}
+        {p2pOn && <P2pRailTile />}
         {me && <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />}
         {me && <PreviewTile />}
         <div
@@ -454,7 +456,7 @@ export function ServerRail() {
         >
           <Plus size={22} />
         </button>
-        {me && <P2pServerRail />}
+        {p2pOn && <P2pServerRail />}
       </div>
       <div className="flex shrink-0 flex-col items-center gap-2 border-t border-outline-variant pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <PaletteButton className={iconBtn} />

@@ -342,28 +342,29 @@ Upgrade all copies together. From 0.3.0 on, an older copy refuses to start once 
 
 ## Configuration
 
-Put settings in `.env.local`. Refer to `.env.local.example` for all settings and the range of each limit. A limit outside its range stops the server at start. These are the most useful ones:
+Put settings in `.env.local`. Refer to `.env.local.example` for all settings and the range of each limit. A limit outside its range stops the server at start. Settings marked "First start only" seed the Features section of the site admin panel, which controls them after that. These are the most useful ones:
 
-| Variable            | Default     | What it does                                                                         |
-| ------------------- | ----------- | ------------------------------------------------------------------------------------ |
-| `APP_MODE`          | `full`      | `full` serves the API and the app. `api-only` serves only the API.                   |
-| `HOST`              | `127.0.0.1` | The address the server listens on. Use `0.0.0.0` for remote access.                  |
-| `SERVER_PORT`       | `3000`      | The public port.                                                                     |
-| `DATABASE_URL`      | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                               |
-| `PUBLIC_URL`        | none        | The address people open, for example `https://chat.example.com`.                     |
-| `INSTANCE_NAME`     | `RChat`     | The name people see for your instance.                                               |
-| `GUESTS_ENABLED`    | `true`      | Lets people read public servers without an account.                                  |
-| `P2P_ATTACHMENTS`   | `true`      | Lets people send P2P attachments. The admin panel controls it after the first start. |
-| `S3_ENDPOINT`       | none        | Stores uploads in an S3 bucket. Also set the bucket and keys.                        |
-| `RCHAT_ROLES`       | `all`       | The roles this process runs (see Scaling).                                           |
-| `REDIS_URL`         | none        | The shared Redis server for many processes.                                          |
-| `TRUSTED_PROXIES`   | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.         |
-| `PUBLIC_STUN`       | `false`     | Gives calls a list of public STUN servers.                                           |
-| `RELAY_ENABLED`     | `false`     | Starts the built-in STUN and TURN relay on UDP port 3478.                            |
-| `RELAY_PUBLIC_IP`   | none        | The public IP of the relay. TURN needs it.                                           |
-| `VOICE_ROOM_MAX`    | `25`        | The most people in one voice channel. `0` means no limit.                            |
-| `UPLOAD_MAX_MIB`    | `25`        | The largest upload in MiB. Raise your proxy's body size limit to match.              |
-| `MESSAGE_MAX_CHARS` | `4000`      | The longest message in characters.                                                   |
+| Variable            | Default     | What it does                                                                                            |
+| ------------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
+| `APP_MODE`          | `full`      | `full` serves the API and the app. `api-only` serves only the API.                                      |
+| `HOST`              | `127.0.0.1` | The address the server listens on. Use `0.0.0.0` for remote access.                                     |
+| `SERVER_PORT`       | `3000`      | The public port.                                                                                        |
+| `DATABASE_URL`      | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                                                  |
+| `PUBLIC_URL`        | none        | The address people open, for example `https://chat.example.com`.                                        |
+| `INSTANCE_NAME`     | `RChat`     | The name people see for your instance.                                                                  |
+| `GUESTS_ENABLED`    | `true`      | Lets people read public servers without an account.                                                     |
+| `P2P_ATTACHMENTS`   | `true`      | Lets people send P2P attachments. The admin panel controls it after the first start.                    |
+| `AUTH_REGISTRATION` | `open`      | Who can sign up with a password: `open`, `sso` or `closed`. Keep it open until your own account exists. |
+| `S3_ENDPOINT`       | none        | Stores uploads in an S3 bucket. Also set the bucket and keys.                                           |
+| `RCHAT_ROLES`       | `all`       | The roles this process runs (see Scaling).                                                              |
+| `REDIS_URL`         | none        | The shared Redis server for many processes.                                                             |
+| `TRUSTED_PROXIES`   | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.                            |
+| `PUBLIC_STUN`       | `false`     | Gives calls a list of public STUN servers.                                                              |
+| `RELAY_ENABLED`     | `false`     | Starts the built-in STUN and TURN relay on UDP port 3478.                                               |
+| `RELAY_PUBLIC_IP`   | none        | The public IP of the relay. TURN needs it.                                                              |
+| `VOICE_ROOM_MAX`    | `25`        | The most people in one voice channel. `0` means no limit.                                               |
+| `UPLOAD_MAX_MIB`    | `25`        | The largest upload in MiB. Raise your proxy's body size limit to match.                                 |
+| `MESSAGE_MAX_CHARS` | `4000`      | The longest message in characters.                                                                      |
 
 When you raise `UPLOAD_MAX_MIB`, keep `UPLOAD_BUFFER_MIB` (256 by default) at least twice as large.
 

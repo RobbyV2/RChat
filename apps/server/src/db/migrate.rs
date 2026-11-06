@@ -334,6 +334,7 @@ pub(super) async fn init_schema(
         profanity_targets,
         p2p_attachments,
         outgoing_webhooks,
+        features,
     } = seeds;
     let schema = match is_sqlite {
         true => SQLITE_SCHEMA,
@@ -469,6 +470,13 @@ pub(super) async fn init_schema(
     seed_settings(&mut *conn, &[("p2p_attachments", p2p)]).await?;
     let outgoing = crate::api::switch_off_seed(outgoing_webhooks.as_deref());
     seed_settings(&mut *conn, &[("outgoing_webhooks", outgoing)]).await?;
+    seed_settings(&mut *conn, &features.pairs()).await?;
+    seed_setting(
+        conn,
+        crate::api::features::Registration::KEY,
+        features.registration().as_str(),
+    )
+    .await?;
     for (key, value) in [
         ("instance_id", crate::identity::random_id()),
         ("instance_signing_key", crate::identity::new_seed()),

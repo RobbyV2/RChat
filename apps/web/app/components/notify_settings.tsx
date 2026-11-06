@@ -166,12 +166,14 @@ const useOverrides = () => {
   const p2pRooms = useP2p(s => s.rooms)
   const contacts = useP2p(s => s.contacts)
   const p2pServers = useP2p(s => s.servers)
+  // Set only while the instance has P2P on for this account.
+  const p2pOn = useP2p(s => s.account !== null)
   const dmName = (room: string) => {
     const c = contacts.find(x => x.ik === p2pRooms[room]?.peer)
     return c ? displayName(c) : null
   }
   const mask = useMask()
-  const p2pList: Override[] = Object.entries(prefs.p2p).map(([key, rule]) => {
+  const p2pList: Override[] = Object.entries(p2pOn ? prefs.p2p : {}).map(([key, rule]) => {
     const o = p2pOverride(key, p2pServers, dmName)
     return {
       key: `p:${key}`,

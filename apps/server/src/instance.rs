@@ -421,9 +421,9 @@ impl Instance {
             ice: self.ice_info(&origin),
             features,
             limits: Limits::of(limits),
-            e2ee: limits.e2ee,
+            e2ee: false,
             sfu: limits.sfu_enabled,
-            widgets: limits.widgets,
+            widgets: false,
         }
     }
 }
@@ -527,11 +527,14 @@ pub struct InstanceInfo {
     pub features: Features,
     /// Limits of this instance.
     pub limits: Limits,
-    /// End-to-end encryption is on (`E2EE`, off by default).
+    /// Whether this build supports end-to-end encryption. The `e2ee` switch of
+    /// `GET /api/settings` says whether it is on.
     pub e2ee: bool,
-    /// Calls may go through the instance's media server (`SFU_ENABLED`, off by default).
+    /// The instance runs its media server for calls (`SFU_ENABLED`, off by default). The `sfu`
+    /// switch of `GET /api/settings` says whether calls use it.
     pub sfu: bool,
-    /// Embeddable widgets are on (`WIDGETS`, on by default).
+    /// Whether this build supports embeddable widgets. The `widgets` switch of
+    /// `GET /api/settings` says whether they are on.
     pub widgets: bool,
 }
 

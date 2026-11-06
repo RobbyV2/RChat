@@ -7,6 +7,7 @@ import { Check, Copy, Eye, QrCode as QrIcon, Share2, Trash2 } from 'lucide-react
 import { encode } from 'uqr'
 import { api, shareOrigin } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
+import { accountPrompt } from '../lib/features'
 import { sharing } from '../lib/platform'
 import { untilText } from '../lib/notify'
 import type { ConfigShare } from '../lib/api'
@@ -633,7 +634,8 @@ function ImportBlock() {
   const [seq, setSeq] = useState(0)
   // P2P files that came after the config text in a `.rchat` file.
   const [files, setFiles] = useState<FilesPart | null>(null)
-  const signedIn = useStore(s => s.me !== null)
+  // Set only while the instance has P2P on for this account.
+  const p2pOn = useP2p(s => s.account !== null)
 
   const preview = async (raw: string, file = false) => {
     setError(null)
@@ -712,8 +714,8 @@ function ImportBlock() {
           {done}
         </p>
       )}
-      {doc?.p2p && signedIn && <P2pImport key={`p2p-${seq}`} section={doc.p2p} files={files} />}
-      {doc && (!doc.p2p || !signedIn || presentSections(doc).length > 0) && (
+      {doc?.p2p && p2pOn && <P2pImport key={`p2p-${seq}`} section={doc.p2p} files={files} />}
+      {doc && (!doc.p2p || !p2pOn || presentSections(doc).length > 0) && (
         <ImportPreview
           key={seq}
           doc={doc}
@@ -733,6 +735,7 @@ function ImportBlock() {
 
 export function ConfigSyncSection() {
   const me = useStore(s => s.me !== null)
+  const ask = useStore(s => accountPrompt(s.settings))
   const hasP2p = useP2p(s => s.ik !== null && s.movedAt === null) && me
   const [include, setInclude] = useState<Set<SectionKey>>(() => new Set(SECTIONS.map(s => s.key)))
   const [withP2p, setWithP2p] = useState(false)
@@ -763,7 +766,7 @@ export function ConfigSyncSection() {
           <ShareBlock doc={doc} />
         ) : (
           <p className="text-sm text-on-surface-variant">
-            Create an account to share links. You can still copy the text below.
+            {ask} to share links. You can still copy the text below.
           </p>
         )}
       </section>

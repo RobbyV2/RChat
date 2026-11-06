@@ -47,6 +47,7 @@ import {
 import { forgetRecent, hideTip, parseSummary, unreadSummaryKey, useHome } from '../lib/home_store'
 import { isMac, paletteShortcut, usePalette } from '../lib/palette'
 import { dmSections } from '../lib/nav_layout'
+import { passwordSignup } from '../lib/features'
 import { enterKey } from '../lib/keys'
 import type { DmSummary } from '../lib/types'
 import { longPress } from './context_menu'
@@ -887,6 +888,7 @@ function GuestHome() {
   const router = useRouter()
   const openDialog = useStore(s => s.openDialog)
   const logout = useStore(s => s.logout)
+  const signup = useStore(s => passwordSignup(s.settings))
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1 px-1">
@@ -908,19 +910,20 @@ function GuestHome() {
             Find a server
           </button>
         </Card>
-        <Card title="Create an account" icon={<LogIn size={18} />}>
+        <Card title={signup ? 'Create an account' : 'Log in'} icon={<LogIn size={18} />}>
           <p className="px-2 text-sm text-on-surface-variant">
-            Sign up to send messages, add friends and get notified when someone mentions you.
+            {signup ? 'Sign up' : 'Log in'} to send messages, add friends and get notified when
+            someone mentions you.
           </p>
           <button
             type="button"
             onClick={() => {
               logout()
-              router.replace('/login?mode=register')
+              router.replace(signup ? '/login?mode=register' : '/login')
             }}
             className={`${filledBtn} mx-2 mt-2 self-start`}
           >
-            Sign up
+            {signup ? 'Sign up' : 'Log in'}
           </button>
         </Card>
       </div>

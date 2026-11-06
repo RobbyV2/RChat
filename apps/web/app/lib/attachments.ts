@@ -12,12 +12,6 @@ export interface PendingUpload {
   relay?: string
 }
 
-// Servers before 0.3.0 send no p2p_attachments: P2P was always on there.
-export const siteSettings = (s: SiteSettings): SiteSettings => ({
-  ...s,
-  p2p_attachments: s.p2p_attachments !== false,
-})
-
 // The server refuses a P2P id that is already another user's attachment (or a server file).
 export const p2pIdTaken = (e: unknown) =>
   e instanceof ApiError && e.status === 400 && e.message === 'Invalid p2p_id'

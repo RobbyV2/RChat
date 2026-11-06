@@ -7,6 +7,7 @@ import { maskProfanity, showText } from './profanity'
 import { EMPTY_PREFS } from './emoji'
 import { DEFAULT_ROUTE } from './call_choice'
 import { emptyLayout } from './nav_layout'
+import { DEFAULT_FEATURES } from './features'
 import { SELF_AUDIO_IDLE } from './voice_layout'
 import type { RChatState } from './store_types'
 import {
@@ -22,7 +23,7 @@ import { readsSlice } from './slices/reads'
 import { messagesSlice } from './slices/messages'
 import { serversSlice } from './slices/servers'
 import { rtcSlice } from './slices/rtc'
-import { BOOT_RETRY_MS, sessionSlice, tapWs } from './slices/session'
+import { BOOT_RETRY_MS, p2pGate, sessionSlice, tapWs } from './slices/session'
 import {
   banMenuItem,
   bindStore,
@@ -43,6 +44,7 @@ import { selectionInitial, selectionSlice } from './selection_store'
 import type { BlockedUser, ServerSummaryLite, UserRef, WsEvent } from './types'
 
 export * from './attachments'
+export { siteSettings } from './features'
 export * from './selectors'
 export * from './store_types'
 export * from './view'
@@ -461,6 +463,7 @@ export const useStore = create<RChatState>()((set, get) => {
       asset_uploads: true,
       p2p_attachments: true,
       guests_enabled: true,
+      ...DEFAULT_FEATURES,
     },
 
     instance: null,
@@ -490,6 +493,10 @@ export const useStore = create<RChatState>()((set, get) => {
 })
 
 bindStore(useStore)
+
+useStore.subscribe((s, prev) => {
+  if (s.settings !== prev.settings) p2pGate.settings(s.settings)
+})
 
 // What every display path masks names and text with: the personal profanity filter once it is
 // on and loaded, else the text as it is.

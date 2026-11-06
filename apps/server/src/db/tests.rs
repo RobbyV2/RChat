@@ -3364,3 +3364,141 @@ async fn open_with_uses_the_configured_options() {
     close(&db).await;
     let _ = std::fs::remove_file(&path);
 }
+
+/// An old database: no feature switch rows yet, older switches set away from their defaults, and
+/// a message.
+async fn old_feature_settings(db: &Db) {
+    use crate::api::features::{Feature, Registration};
+    let keys: Vec<String> = Feature::ALL
+        .into_iter()
+        .map(|f| format!("'{}'", f.key()))
+        .chain([format!("'{}'", Registration::KEY)])
+        .collect();
+    for stmt in [
+        format!("DELETE FROM settings WHERE key IN ({})", keys.join(", ")),
+        "UPDATE settings SET value = '0' WHERE key = 'guests_enabled'".to_string(),
+        "UPDATE settings SET value = '1' WHERE key = 'outgoing_webhooks'".to_string(),
+        "UPDATE settings SET value = '0' WHERE key = 'profanity_links'".to_string(),
+        format!(
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES({}, 'alice', 'old', 7)",
+            general_id(db).await
+        ),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(db)
+            .await
+            .expect(&stmt);
+    }
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM settings WHERE key = 'p2p' OR key = 'registration'"
+        )
+        .await,
+        0
+    );
+}
+
+/// The switches hold the first start's seeds, and nothing older changed.
+async fn seeded_feature_settings(db: &Db, round: usize) {
+    use crate::api::Settings;
+    use crate::api::features::{Feature, Registration};
+    let s = Settings::load(db).await;
+    for f in Feature::ALL {
+        let want = match f {
+            Feature::P2p | Feature::Widgets | Feature::PasswordLogin => false,
+            Feature::E2ee | Feature::Sfu => true,
+            _ => f.default_on(),
+        };
+        assert_eq!(s.on(f), want, "{f:?} after start {round}");
+        assert_eq!(
+            count(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM settings WHERE key = '{}' AND value = '{}'",
+                    f.key(),
+                    u8::from(want)
+                )
+            )
+            .await,
+            1,
+            "{f:?} is stored once"
+        );
+    }
+    assert_eq!(s.registration, Registration::Sso, "after start {round}");
+    assert!(!s.guests_enabled && s.outgoing_webhooks && !s.profanity_targets.links);
+    assert!(s.profanity_filter && s.profanity_targets.messages);
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM messages WHERE author = 'alice' AND content = 'old' AND created_at = 7"
+        )
+        .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn feature_switches_are_seeded_once_on_an_old_database() {
+    use crate::api::features::FeatureSeeds;
+    let first = DbOptions {
+        seeds: crate::config::Seeds {
+            features: FeatureSeeds::load(&|name| {
+                match name {
+                    "FEATURE_P2P" | "WIDGETS" | "AUTH_PASSWORD_LOGIN" => Some("off"),
+                    "E2EE" | "FEATURE_SFU" => Some("on"),
+                    "AUTH_REGISTRATION" => Some("sso"),
+                    _ => None,
+                }
+                .map(str::to_string)
+            })
+            .expect("seeds"),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let later = DbOptions {
+        seeds: crate::config::Seeds {
+            features: FeatureSeeds::load(&|name| {
+                match name {
+                    "AUTH_REGISTRATION" => Some("closed"),
+                    "FEATURE_SFU" | "E2EE" => Some("off"),
+                    _ => Some("on"),
+                }
+                .map(str::to_string)
+            })
+            .expect("other seeds"),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let path = temp_db_path("feature_seeds");
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    let db = open(path.to_str()).await.expect("open");
+    old_feature_settings(&db).await;
+    close(&db).await;
+    for (round, opts) in [&first, &later].into_iter().enumerate() {
+        let db = open_with(path.to_str(), opts).await.expect("upgrade");
+        seeded_feature_settings(&db, round).await;
+        close(&db).await;
+    }
+    wipe();
+    if let Some(pg) = crate::api::test_util::pg_temp("feature_seeds").await {
+        let db = open(Some(pg.url.as_str())).await.expect("open postgres");
+        old_feature_settings(&db).await;
+        close(&db).await;
+        for (round, opts) in [&first, &later].into_iter().enumerate() {
+            let db = open_with(Some(pg.url.as_str()), opts)
+                .await
+                .expect("upgrade postgres");
+            seeded_feature_settings(&db, round).await;
+            close(&db).await;
+        }
+        drop(pg);
+    }
+}

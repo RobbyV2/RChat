@@ -14,13 +14,14 @@ use sqlx::Row;
 use tokio::sync::Semaphore;
 use utoipa::ToSchema;
 
+use crate::api::access::not_found;
 use crate::api::dms::dm_page;
 use crate::api::servers::{Page, my_servers_page};
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, OkResp,
-    ProfanityTarget, ServerSummary, UserRef, bad, check_len, check_profanity, ok, request_token,
-    valid_color,
+    ProfanityTarget, ServerSummary, Settings, UserRef, bad, check_len, check_profanity, ok,
+    request_token, valid_color,
 };
 use crate::db::{AvatarKind, Db, User, get_user, lock_server, now, secret_key, shift_member_count};
 use crate::state::AppState;
@@ -437,9 +438,10 @@ pub(crate) async fn words(Path(username): Path<String>) -> Json<WordsResp> {
 /// Registers a user with either a text password or 7 words from their word set, signs them in
 /// and returns a session token. The new user joins the default `rchat` server (emitting
 /// `member_joined` to its members and to the user, plus its join message as `message` when join
-/// messages are on) and gets their self DM. No authentication.
+/// messages are on) and gets their self DM. Answers 404 unless `registration` is `open` and
+/// `password_login` is on in `GET /api/settings`. No authentication.
 /// Strict and general rate-limit buckets.
-#[utoipa::path(post, path = "/api/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), `@`-containing, banned, taken or profanity-filtered username; empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; or a missing/invalid avatar color for `color` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(post, path = "/api/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), `@`-containing, banned, taken or profanity-filtered username; empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; or a missing/invalid avatar color for `color` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
@@ -451,6 +453,9 @@ pub(crate) async fn register(
         avatar_kind,
         avatar_color,
     } = req;
+    if !Settings::cached(&state.db).await.password_signup() {
+        return Err(not_found());
+    }
     if username.trim().is_empty() {
         return Err(bad("Username required"));
     }
@@ -1132,6 +1137,64 @@ mod tests {
         .expect("login")
         .0;
         assert!(!ok.token.is_empty());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn password_sign_up_follows_registration_and_password_login() {
+        let (state, path) = temp_state("sign_up_switches").await;
+        let root = || Authed(crate::api::test_util::mem_user("root", true));
+        let switch = |body: serde_json::Value| {
+            let state = state.clone();
+            async move {
+                let _ = crate::api::admin::patch_settings(
+                    State(state),
+                    root(),
+                    Json(serde_json::from_value(body).expect("patch")),
+                )
+                .await
+                .expect("patch");
+            }
+        };
+        let not_found = |res: Result<Json<AuthResp>, ApiError>| matches!(res, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found");
+        let _ = register_text(&state, "alice")
+            .await
+            .expect("open by default");
+        for (body, open) in [
+            (serde_json::json!({"registration": "sso"}), false),
+            (serde_json::json!({"registration": "closed"}), false),
+            (
+                serde_json::json!({"registration": "open", "password_login": false}),
+                false,
+            ),
+            (serde_json::json!({"password_login": true}), true),
+        ] {
+            switch(body.clone()).await;
+            let blank = register_text(&state, " ").await;
+            let made = register_text(&state, &format!("u{}", body.to_string().len())).await;
+            match open {
+                true => {
+                    assert!(matches!(blank, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+                    assert!(made.is_ok(), "{body}");
+                }
+                false => {
+                    assert!(not_found(blank), "{body}: before any other check");
+                    assert!(not_found(made), "{body}");
+                }
+            }
+        }
+        switch(serde_json::json!({"registration": "closed", "password_login": false})).await;
+        let back = login(
+            State(state.clone()),
+            Json(LoginReq {
+                username: "alice".to_string(),
+                password: Some("a".to_string()),
+                words: None,
+            }),
+        )
+        .await
+        .expect("existing passwords still sign in");
+        assert!(!back.token.is_empty());
         done(state, path).await;
     }
 

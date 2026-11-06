@@ -5,6 +5,7 @@ import { p2p, type CallBinding } from '../p2p'
 import { DENIED_CALL, relayBook } from '../relays'
 import type { CallRelays, MessageMedia, SiteSettings, VoiceMsg, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
+import { DEFAULT_FEATURES } from '../features'
 
 afterAll(resetSessionCaches)
 
@@ -254,6 +255,7 @@ describe('attachment settings', () => {
     asset_uploads: true,
     p2p_attachments: true,
     guests_enabled: true,
+    ...DEFAULT_FEATURES,
   }
   const max = 25 * 1024 * 1024
   const big = max + 1

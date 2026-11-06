@@ -20,7 +20,7 @@ import type { PollTarget } from '../lib/polls_store'
 import { useStore } from '../lib/store'
 import type { PollKind, ShowResults } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
-import { Dialog, FieldError, fieldCls, filledBtn, textBtn } from './ui'
+import { Chips, Dialog, FieldError, fieldCls, filledBtn, textBtn } from './ui'
 
 const KINDS: PollKind[] = ['single', 'multiple', 'ranked', 'rating', 'yes_no']
 const SHOWS: ShowResults[] = ['always', 'after_vote', 'after_close']
@@ -29,39 +29,6 @@ const UNITS = [
   { label: 'hours', mult: 3600 },
   { label: 'days', mult: 86400 },
 ]
-
-function Chips<T extends string | number>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string
-  value: T
-  options: readonly { value: T; label: string }[]
-  onChange: (v: T) => void
-}) {
-  return (
-    <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
-      {options.map(o => (
-        <button
-          key={String(o.value)}
-          type="button"
-          role="radio"
-          aria-checked={value === o.value}
-          onClick={() => onChange(o.value)}
-          className={`rounded-full border px-3 py-1.5 text-sm ${
-            value === o.value
-              ? 'border-transparent bg-secondary-container text-on-secondary-container'
-              : 'border-outline text-on-surface-variant hover:bg-surface-container-highest'
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  )
-}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (

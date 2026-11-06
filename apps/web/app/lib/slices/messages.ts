@@ -9,6 +9,7 @@ import {
   p2pIdTaken,
   startMode,
 } from '../attachments'
+import { accountPrompt } from '../features'
 import { type ForwardClip, canForward, clipOf, forwardPending } from '../forward'
 import { dropGroupMessage } from '../group_pings'
 import { limitsOf, tooLargeText } from '../instance_limits'
@@ -1281,8 +1282,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     messageUser: (username, content) =>
       act(async () => {
-        const { me } = get()
-        if (!me) throw new Error('Create an account to send messages')
+        const { me, settings } = get()
+        if (!me) throw new Error(`${accountPrompt(settings)} to send messages`)
         const dm = await api.openDm(username)
         if (!sameUser(me.username)) return
         set(s => ({ dms: bumpFront(s.dms, dm, dmKey, isSelfDm) }))

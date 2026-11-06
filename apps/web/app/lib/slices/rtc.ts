@@ -1,6 +1,7 @@
 // Voice channels and calls: the media for them, self audio, and their events.
 
 import type { CallRoute } from '../call_choice'
+import { accountPrompt } from '../features'
 import { home } from '../instances'
 import { JoinTracker } from '../negotiation'
 import { p2p } from '../p2p'
@@ -183,8 +184,8 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   }
 
   const caller = () => {
-    const { me, guest, call } = get()
-    if (guest || !me) throw new Error('Create an account to start calls')
+    const { me, guest, call, settings } = get()
+    if (guest || !me) throw new Error(`${accountPrompt(settings)} to start calls`)
     if (call) throw new Error('Already in a call')
     return me
   }
@@ -227,8 +228,8 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   > = {
     joinVoice: (server, channelId) =>
       act(async () => {
-        const { me, guest, voice } = get()
-        if (guest || !me) throw new Error('Create an account to join voice')
+        const { me, guest, voice, settings } = get()
+        if (guest || !me) throw new Error(`${accountPrompt(settings)} to join voice`)
         const ends = myTimeoutEnds(get(), server)
         if (ends !== null) throw new Error(timedOutLine(ends))
         home.ws.ensureConnected()

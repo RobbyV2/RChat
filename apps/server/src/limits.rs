@@ -81,19 +81,15 @@ pub struct Limits {
     pub report_targets_per_day: u32,
     pub report_max_per_week: u32,
     pub report_retention_days: u32,
-    pub e2ee: bool,
     pub e2ee_guests_per_group: u32,
     pub e2ee_key_retention_days: u32,
-    pub e2ee_compliance: bool,
     pub sfu_enabled: bool,
     pub sfu_max_participants: u32,
     pub sfu_max_streams: u32,
     pub sfu_user_kib_per_sec: u32,
     pub p2p_backup_max_mib: u32,
-    pub widgets: bool,
     pub widget_quick_joins_per_hour: u32,
     pub widget_viewers_max: u32,
-    pub widget_bridge: bool,
     pub widget_bridge_servers_max: u32,
 }
 
@@ -129,29 +125,25 @@ impl Default for Limits {
             report_targets_per_day: 3,
             report_max_per_week: 10,
             report_retention_days: 180,
-            e2ee: false,
             e2ee_guests_per_group: 500,
             e2ee_key_retention_days: 30,
-            e2ee_compliance: false,
             sfu_enabled: false,
             sfu_max_participants: 100,
             sfu_max_streams: 2000,
             sfu_user_kib_per_sec: 4096,
             p2p_backup_max_mib: 64,
-            widgets: true,
             widget_quick_joins_per_hour: 10,
             widget_viewers_max: 5000,
-            widget_bridge: false,
             widget_bridge_servers_max: 50,
         }
     }
 }
 
 /// The values the operator set, by env name. Blank values count as unset.
-struct Env<'a>(&'a dyn Fn(&str) -> Option<String>);
+pub(crate) struct Env<'a>(pub(crate) &'a dyn Fn(&str) -> Option<String>);
 
 impl Env<'_> {
-    fn raw(&self, name: &str) -> Option<String> {
+    pub(crate) fn raw(&self, name: &str) -> Option<String> {
         (self.0)(name)
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
@@ -176,7 +168,7 @@ impl Env<'_> {
         Ok(self.opt(name)?.unwrap_or(default))
     }
 
-    fn switch(&self, name: &str, default: bool) -> anyhow::Result<bool> {
+    pub(crate) fn switch(&self, name: &str, default: bool) -> anyhow::Result<bool> {
         let Some(raw) = self.raw(name) else {
             return Ok(default);
         };
@@ -225,20 +217,16 @@ impl Limits {
             report_targets_per_day: e.num("REPORT_TARGETS_PER_DAY", d.report_targets_per_day)?,
             report_max_per_week: e.num("REPORT_MAX_PER_WEEK", d.report_max_per_week)?,
             report_retention_days: e.num("REPORT_RETENTION_DAYS", d.report_retention_days)?,
-            e2ee: e.switch("E2EE", d.e2ee)?,
             e2ee_guests_per_group: e.num("E2EE_GUESTS_PER_GROUP", d.e2ee_guests_per_group)?,
             e2ee_key_retention_days: e.num("E2EE_KEY_RETENTION_DAYS", d.e2ee_key_retention_days)?,
-            e2ee_compliance: e.switch("E2EE_COMPLIANCE", d.e2ee_compliance)?,
             sfu_enabled: e.switch("SFU_ENABLED", d.sfu_enabled)?,
             sfu_max_participants: e.num("SFU_MAX_PARTICIPANTS", d.sfu_max_participants)?,
             sfu_max_streams: e.num("SFU_MAX_STREAMS", d.sfu_max_streams)?,
             sfu_user_kib_per_sec: e.num("SFU_USER_KIB_PER_SEC", d.sfu_user_kib_per_sec)?,
             p2p_backup_max_mib: e.num("P2P_BACKUP_MAX_MIB", d.p2p_backup_max_mib)?,
-            widgets: e.switch("WIDGETS", d.widgets)?,
             widget_quick_joins_per_hour: e
                 .num("WIDGET_QUICK_JOINS_PER_HOUR", d.widget_quick_joins_per_hour)?,
             widget_viewers_max: e.num("WIDGET_VIEWERS_MAX", d.widget_viewers_max)?,
-            widget_bridge: e.switch("WIDGET_BRIDGE", d.widget_bridge)?,
             widget_bridge_servers_max: e
                 .num("WIDGET_BRIDGE_SERVERS_MAX", d.widget_bridge_servers_max)?,
         };

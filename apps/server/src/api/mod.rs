@@ -9,6 +9,7 @@ pub mod categories;
 pub mod config_shares;
 pub mod dms;
 pub mod embeds;
+pub mod features;
 pub mod friends;
 pub mod health;
 pub mod inbox;
@@ -47,6 +48,7 @@ use tower_governor::key_extractor::KeyExtractor;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use utoipa::ToSchema;
 
+use crate::api::features::{Feature, Registration};
 use crate::config::Roles;
 use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, pool_key};
 use crate::server::client_ip::ClientIp;
@@ -1174,7 +1176,8 @@ pub fn profanity_seed(filter: Option<&str>, targets: Option<&str>) -> Vec<(&'sta
 }
 
 /// Instance-wide feature switches. Changes reach clients through the `settings_changed`
-/// WebSocket event.
+/// WebSocket event. A switched-off feature's endpoints answer 404, except that uploads, P2P
+/// attachments and outgoing webhooks answer 403, and guests get 401 while guest access is off.
 #[derive(Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub struct Settings {
     /// Master switch of the profanity filter. When on, content matching a target in
@@ -1199,6 +1202,59 @@ pub struct Settings {
     /// is queued or sent and outgoing webhooks cannot be created.
     #[serde(default)]
     pub outgoing_webhooks: bool,
+    /// Reports to a server's moderators.
+    #[serde(default = "yes")]
+    pub server_reports: bool,
+    /// Reports to the instance.
+    #[serde(default = "yes")]
+    pub instance_reports: bool,
+    /// Embeddable widgets.
+    #[serde(default = "yes")]
+    pub widgets: bool,
+    /// Sending from widgets, and Quick join.
+    #[serde(default = "yes")]
+    pub widget_chat: bool,
+    /// Read-only widget links.
+    #[serde(default = "yes")]
+    pub widget_read_links: bool,
+    /// Widgets for P2P servers through the instance's bridge. Off by default.
+    #[serde(default)]
+    pub widget_bridge: bool,
+    /// End-to-end encryption. Off by default.
+    #[serde(default)]
+    pub e2ee: bool,
+    /// The compliance archive in new encrypted spaces. Off by default.
+    #[serde(default)]
+    pub e2ee_compliance: bool,
+    /// Setting and resetting backup phrases.
+    #[serde(default = "yes")]
+    pub backup_phrase: bool,
+    /// P2P backups stored on the instance.
+    #[serde(default = "yes")]
+    pub p2p_backup: bool,
+    /// Changing display names.
+    #[serde(default = "yes")]
+    pub display_names: bool,
+    /// The tour for new accounts.
+    #[serde(default = "yes")]
+    pub onboarding: bool,
+    /// Password sign-in. Off: no new passwords (see `registration`); existing passwords still
+    /// sign in.
+    #[serde(default = "yes")]
+    pub password_login: bool,
+    /// Calls through the instance's media server when it runs (`sfu` in `GET /api/instance`).
+    /// Off by default.
+    #[serde(default)]
+    pub sfu: bool,
+    /// Peer-to-peer servers and conversations in the app this instance serves. Off: the app
+    /// hides them and `POST /api/identity/p2p_binding` answers 404. Data on devices is kept.
+    #[serde(default = "yes")]
+    pub p2p: bool,
+    /// Who may create an account with a password: `open`, `sso` (only through single
+    /// sign-on) or `closed`. `POST /api/auth/register` answers 404 unless it is `open` and
+    /// `password_login` is on.
+    #[serde(default)]
+    pub registration: Registration,
 }
 
 pub(crate) fn yes() -> bool {
@@ -1219,11 +1275,27 @@ impl Settings {
         p2p_attachments: false,
         guests_enabled: false,
         outgoing_webhooks: false,
+        server_reports: false,
+        instance_reports: false,
+        widgets: false,
+        widget_chat: false,
+        widget_read_links: false,
+        widget_bridge: false,
+        e2ee: false,
+        e2ee_compliance: false,
+        backup_phrase: false,
+        p2p_backup: false,
+        display_names: false,
+        onboarding: false,
+        password_login: false,
+        sfu: false,
+        p2p: false,
+        registration: Registration::Closed,
     };
 
     pub async fn load(db: &Db) -> Settings {
         let rows = match sqlx::query(
-            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'p2p_attachments', 'guests_enabled', 'outgoing_webhooks') OR key LIKE 'profanity\\_%' ESCAPE '\\'",
+            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'p2p_attachments', 'guests_enabled', 'outgoing_webhooks', 'server_reports', 'instance_reports', 'widgets', 'widget_chat', 'widget_read_links', 'widget_bridge', 'e2ee', 'e2ee_compliance', 'backup_phrase', 'p2p_backup', 'display_names', 'onboarding', 'password_login', 'sfu', 'p2p', 'registration') OR key LIKE 'profanity\\_%' ESCAPE '\\'",
         )
             .fetch_all(db)
             .await
@@ -1244,12 +1316,13 @@ impl Settings {
         }) {
             warn_display_names();
         }
-        let on = |key: &str| {
+        let value = |key: &str| {
             rows.iter()
                 .find(|r| r.try_get::<String, _>(0).is_ok_and(|k| k == key))
                 .and_then(|r| r.try_get::<String, _>(1).ok())
-                .is_none_or(|v| v == "1")
         };
+        let on = |key: &str| value(key).is_none_or(|v| v == "1");
+        let feature = |f: Feature| value(f.key()).map_or(f.default_on(), |v| v == "1");
         let settings = Settings {
             profanity_filter: on("profanity_filter"),
             profanity_targets: ProfanityTargets::from_fn(|t| on(t.key())),
@@ -1265,6 +1338,24 @@ impl Settings {
                 })
                 .and_then(|r| r.try_get::<String, _>(1).ok())
                 .is_some_and(|v| v == "1"),
+            server_reports: feature(Feature::ServerReports),
+            instance_reports: feature(Feature::InstanceReports),
+            widgets: feature(Feature::Widgets),
+            widget_chat: feature(Feature::WidgetChat),
+            widget_read_links: feature(Feature::WidgetReadLinks),
+            widget_bridge: feature(Feature::WidgetBridge),
+            e2ee: feature(Feature::E2ee),
+            e2ee_compliance: feature(Feature::E2eeCompliance),
+            backup_phrase: feature(Feature::BackupPhrase),
+            p2p_backup: feature(Feature::P2pBackup),
+            display_names: feature(Feature::DisplayNames),
+            onboarding: feature(Feature::Onboarding),
+            password_login: feature(Feature::PasswordLogin),
+            sfu: feature(Feature::Sfu),
+            p2p: feature(Feature::P2p),
+            registration: value(Registration::KEY)
+                .map_or(Some(Registration::Open), |v| Registration::parse(&v))
+                .unwrap_or(Registration::Closed),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1288,6 +1379,57 @@ impl Settings {
     /// Neither uploads nor P2P attachments: messages are text and emoji only.
     pub fn text_only(&self) -> bool {
         !self.asset_uploads && !self.p2p_attachments
+    }
+
+    /// Whether the feature switch is on.
+    pub fn on(&self, feature: Feature) -> bool {
+        let Settings {
+            profanity_filter: _,
+            profanity_targets: _,
+            asset_previews: _,
+            asset_uploads: _,
+            p2p_attachments: _,
+            guests_enabled: _,
+            outgoing_webhooks: _,
+            server_reports,
+            instance_reports,
+            widgets,
+            widget_chat,
+            widget_read_links,
+            widget_bridge,
+            e2ee,
+            e2ee_compliance,
+            backup_phrase,
+            p2p_backup,
+            display_names,
+            onboarding,
+            password_login,
+            sfu,
+            p2p,
+            registration: _,
+        } = *self;
+        match feature {
+            Feature::ServerReports => server_reports,
+            Feature::InstanceReports => instance_reports,
+            Feature::Widgets => widgets,
+            Feature::WidgetChat => widget_chat,
+            Feature::WidgetReadLinks => widget_read_links,
+            Feature::WidgetBridge => widget_bridge,
+            Feature::E2ee => e2ee,
+            Feature::E2eeCompliance => e2ee_compliance,
+            Feature::BackupPhrase => backup_phrase,
+            Feature::P2pBackup => p2p_backup,
+            Feature::DisplayNames => display_names,
+            Feature::Onboarding => onboarding,
+            Feature::PasswordLogin => password_login,
+            Feature::Sfu => sfu,
+            Feature::P2p => p2p,
+        }
+    }
+
+    /// New accounts with a password: registration is open and password sign-in is on.
+    pub fn password_signup(&self) -> bool {
+        self.password_login && self.registration == Registration::Open
     }
 
     pub fn forget(db: &Db) {
@@ -2070,6 +2212,11 @@ mod tests {
         let denied = Settings::load(&db).await;
         assert!(!denied.guests_enabled && !denied.asset_uploads && !denied.asset_previews);
         assert!(denied.profanity_filter);
+        for f in features::Feature::ALL {
+            assert!(!denied.on(f), "{f:?} is off while settings can't be read");
+        }
+        assert_eq!(denied.registration, features::Registration::Closed);
+        assert!(!denied.password_signup());
         let still = Settings::cached(&db).await;
         assert!(!still.guests_enabled);
         assert!(SETTINGS_CACHE.lock().unwrap().get(&pool_key(&db)).is_none());
@@ -2321,6 +2468,36 @@ mod tests {
         assert!(stale.profanity_targets.channel_topics);
         assert!(stale.profanity_targets.category_names);
         assert!(!stale.profanity_targets.messages && stale.profanity_targets.usernames);
+    }
+
+    #[test]
+    fn settings_from_an_older_copy_get_the_switch_defaults() {
+        let old: Settings = serde_json::from_value(serde_json::json!({
+            "profanity_filter": true,
+            "asset_previews": true,
+            "asset_uploads": false,
+            "guests_enabled": true,
+        }))
+        .expect("older settings");
+        for f in features::Feature::ALL {
+            assert_eq!(old.on(f), f.default_on(), "{f:?}");
+        }
+        assert_eq!(old.registration, features::Registration::Open);
+        assert!(old.password_signup());
+        let signup = |registration: &str, password_login: bool| {
+            serde_json::from_value::<Settings>(serde_json::json!({
+                "profanity_filter": true,
+                "asset_previews": true,
+                "asset_uploads": true,
+                "guests_enabled": true,
+                "registration": registration,
+                "password_login": password_login,
+            }))
+            .expect("settings")
+            .password_signup()
+        };
+        assert!(signup("open", true));
+        assert!(!signup("open", false) && !signup("sso", true) && !signup("closed", true));
     }
 
     #[tokio::test]

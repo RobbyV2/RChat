@@ -2,7 +2,8 @@
 // sends, roles, bans, the admin lists, and leaving or losing a server.
 
 import { ApiError } from '../api'
-import { type PendingUpload, siteSettings } from '../attachments'
+import type { PendingUpload } from '../attachments'
+import { siteSettings } from '../features'
 import {
   type LayoutOrder,
   applyLayout,
@@ -1065,7 +1066,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
 
     updateSettings: patch =>
       act(async () => {
-        set({ settings: await api.patchSettings(patch) })
+        set({ settings: siteSettings(await api.patchSettings(patch)) })
       }),
   }
 

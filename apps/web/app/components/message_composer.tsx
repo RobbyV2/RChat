@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { errorText, type UploadMode, useMask, useStore, viewKey } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
+import { accountPrompt } from '../lib/features'
 import { charCount, counterFrom } from '../lib/rules'
 import { composing, sendKey } from '../lib/keys'
 import { runJoinStep, type JoinStep } from '../lib/join_flow'
@@ -215,6 +216,7 @@ const modeTitle = (mode: UploadMode, switchable: boolean) => {
 export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const guest = useStore(s => s.guest)
   const logout = useStore(s => s.logout)
+  const ask = useStore(s => accountPrompt(s.settings))
   const view = useStore(s => s.view)
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
@@ -338,7 +340,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       <div className="m-3 rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant">
         Viewing as a guest.{' '}
         <Link href="/login" onClick={() => logout()} className="text-primary underline">
-          Create an account
+          {ask}
         </Link>{' '}
         to send messages.
       </div>

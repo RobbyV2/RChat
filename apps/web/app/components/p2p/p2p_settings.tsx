@@ -308,6 +308,46 @@ function AdvancedLimits() {
   )
 }
 
+const REMOVE_TITLE = 'Remove P2P data from this browser?'
+const REMOVE_BODY =
+  'Your P2P identity and contacts are deleted from this browser. Without a backup they are gone for good.'
+
+// Settings > Peer-to-peer while the instance has P2P off: only removing this browser's data.
+export function P2pOffSection() {
+  const username = useStore(s => s.me?.username ?? null)
+  const off = useStore(s => !s.settings.p2p)
+  const ask = useStore(s => s.askConfirm)
+  const [done, setDone] = useState<{ username: string; ok: boolean } | null>(null)
+  if (!off || username === null) return null
+  const result = done?.username === username ? done : null
+  if (result ? result.ok : !p2p.hasData(username)) return null
+  const remove = () =>
+    ask({
+      title: REMOVE_TITLE,
+      body: REMOVE_BODY,
+      confirm: 'Remove',
+      action: () => void p2p.removeData(username).then(ok => setDone({ username, ok })),
+    })
+  return (
+    <section aria-label="Peer-to-peer">
+      <p className={sectionCls}>Peer-to-peer</p>
+      <div className="flex flex-col items-start gap-2 px-2">
+        <p className="text-xs text-on-surface-variant">
+          P2P is off on this instance. Your P2P data stays in this browser until you remove it.
+        </p>
+        {result && (
+          <p role="alert" className="text-xs text-error">
+            Couldn&apos;t remove P2P data
+          </p>
+        )}
+        <button onClick={remove} className={dangerBtn}>
+          Remove P2P data from this browser
+        </button>
+      </div>
+    </section>
+  )
+}
+
 // Settings > Peer-to-peer. Off until the user turns it on; only for signed-in accounts.
 export function P2pSection() {
   const signedIn = useStore(s => s.me !== null)
@@ -330,8 +370,8 @@ export function P2pSection() {
   const offer = iceOffer(info)
   const remove = () =>
     ask({
-      title: 'Remove P2P data from this browser?',
-      body: 'Your P2P identity and contacts are deleted from this browser. Without a backup they are gone for good.',
+      title: REMOVE_TITLE,
+      body: REMOVE_BODY,
       confirm: 'Remove',
       action: () => void p2p.removeData(),
     })
@@ -345,6 +385,11 @@ export function P2pSection() {
           <p className="text-xs text-on-surface-variant">
             Contacts you add by code, connected straight to you. Off by default.
           </p>
+          {error && (
+            <p role="alert" className="text-xs text-error">
+              {error}
+            </p>
+          )}
           <button onClick={() => p2p.openDialog({ kind: 'enable' })} className={filledBtn}>
             Turn on P2P
           </button>

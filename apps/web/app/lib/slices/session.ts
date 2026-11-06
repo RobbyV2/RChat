@@ -2,7 +2,6 @@
 // is open, guests, invites, the socket and catch-up after outages.
 
 import { ApiError, type LoginRequest, type RegisterRequest } from '../api'
-import { siteSettings } from '../attachments'
 import { catchUpDelay, due } from '../backoff'
 import { type Blocked, blockedSet, matchesBlockQuery, withoutTypers } from '../blocks'
 import { DEFAULT_ROUTE } from '../call_choice'
@@ -15,6 +14,7 @@ import {
   takeStashedConfig,
 } from '../config_transfer'
 import { EMPTY_PREFS } from '../emoji'
+import { accountPrompt, createP2pGate, siteSettings } from '../features'
 import { forwardKey } from '../forward'
 import { type FriendsDeps, friendsInitial, type friendsSlice } from '../friends_store'
 import { NO_GROUP_PINGS } from '../group_pings'
@@ -134,6 +134,10 @@ const readJson = <T>(key: string, fallback: T): T => {
 const RESYNC_JITTER = 10_000
 const CATCH_UP_VIEW_MAX = 5_000
 const POLL_EVERY = 60_000
+
+// P2P for the signed-in account, once the instance's settings say it is on. store.ts feeds it
+// every new settings object.
+export const p2pGate = createP2pGate(username => void p2pAccount(username))
 
 // Called with every live event after the store applied it (the palette index drops what the
 // viewer lost access to).
@@ -329,7 +333,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     relayBook.load(signedIn && username !== null ? home.scoped(relaysKey(username)) : null)
     set({ iceHelpers: on, iceRelay: relay })
     void ice.setSignedIn(signedIn)
-    void p2pAccount(signedIn ? username : null)
+    p2pGate.account(signedIn ? username : null)
   }
 
   const expireSession = () => {
@@ -1230,8 +1234,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }),
 
     setBio: async bio => {
-      const me = get().me
-      if (!me) return 'Create an account to add a description'
+      const { me, settings } = get()
+      if (!me) return `${accountPrompt(settings)} to add a description`
       try {
         const user = await api.setBio(cleanBio(bio) ? bio : null)
         set(s => (s.me?.username === me.username ? { me: { ...s.me, ...user } } : {}))

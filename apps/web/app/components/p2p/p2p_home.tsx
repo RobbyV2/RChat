@@ -495,11 +495,17 @@ function RequestRow({ c }: { c: Contact }) {
 }
 
 function Off() {
+  const error = useP2p(s => s.error)
   return (
     <div className="mx-auto flex max-w-md flex-col items-start gap-4 px-6 py-10">
       <Waypoints size={40} className="text-tertiary" />
       <h2 className="text-xl font-medium">Peer-to-peer contacts</h2>
       <p className="text-sm text-on-surface-variant">{ENABLE_COPY}</p>
+      {error && (
+        <p role="alert" className="text-sm text-error">
+          {error}
+        </p>
+      )}
       <button onClick={() => p2p.openDialog({ kind: 'enable' })} className={filledBtn}>
         Turn on P2P
       </button>

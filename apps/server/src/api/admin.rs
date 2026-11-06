@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::api::access::{MsgScope, not_found, staff_message};
+use crate::api::features::{Feature, Registration};
 use crate::api::{
     ApiError, Authed, OkResp, Paged, ProfanitySwitch, ServerSummaryLite, Settings, UserRef, bad,
     decode_cursor, encode_cursor, ok,
@@ -223,6 +224,22 @@ pub struct SettingsPatch {
     guests_enabled: Option<bool>,
     #[serde(default)]
     outgoing_webhooks: Option<bool>,
+    server_reports: Option<bool>,
+    instance_reports: Option<bool>,
+    widgets: Option<bool>,
+    widget_chat: Option<bool>,
+    widget_read_links: Option<bool>,
+    widget_bridge: Option<bool>,
+    e2ee: Option<bool>,
+    e2ee_compliance: Option<bool>,
+    backup_phrase: Option<bool>,
+    p2p_backup: Option<bool>,
+    display_names: Option<bool>,
+    onboarding: Option<bool>,
+    password_login: Option<bool>,
+    sfu: Option<bool>,
+    p2p: Option<bool>,
+    registration: Option<Registration>,
 }
 
 fn require_site_admin(user: &User) -> Result<(), ApiError> {
@@ -235,10 +252,14 @@ fn require_site_admin(user: &User) -> Result<(), ApiError> {
 /// Get the instance settings
 ///
 /// The instance-wide feature switches clients need to adapt their UI: profanity filter and
-/// its targets, link previews, uploads, P2P attachments and guest access. No authentication.
-/// Values may lag a change by up to 5 seconds per server process; live changes also arrive as
-/// the `settings_changed` WebSocket event. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/settings", tag = "Instance", responses((status = 200, description = "Site-wide feature toggles: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, and guest access", body = Settings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
+/// its targets, link previews, uploads, P2P attachments, guest access, outgoing webhooks,
+/// reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding,
+/// password sign-in and sign-up, the media server and P2P. A switched-off feature's endpoints
+/// answer 404, except that uploads, P2P attachments and outgoing webhooks answer 403, and
+/// guests get 401 while guest access is off. No authentication. Values may lag a change by up
+/// to 5 seconds per server process; live changes also arrive as the `settings_changed`
+/// WebSocket event. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/settings", tag = "Instance", responses((status = 200, description = "Site-wide switches: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, guest access, outgoing webhooks, reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding, password sign-in, the media server, P2P, and `registration`", body = Settings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
     Json(Settings::cached(&state.db).await)
 }
@@ -257,8 +278,41 @@ pub(crate) async fn patch_settings(
         p2p_attachments,
         guests_enabled,
         outgoing_webhooks,
+        server_reports,
+        instance_reports,
+        widgets,
+        widget_chat,
+        widget_read_links,
+        widget_bridge,
+        e2ee,
+        e2ee_compliance,
+        backup_phrase,
+        p2p_backup,
+        display_names,
+        onboarding,
+        password_login,
+        sfu,
+        p2p,
+        registration,
     } = req;
-    let pairs = [
+    let feature = |f: Feature| match f {
+        Feature::ServerReports => server_reports,
+        Feature::InstanceReports => instance_reports,
+        Feature::Widgets => widgets,
+        Feature::WidgetChat => widget_chat,
+        Feature::WidgetReadLinks => widget_read_links,
+        Feature::WidgetBridge => widget_bridge,
+        Feature::E2ee => e2ee,
+        Feature::E2eeCompliance => e2ee_compliance,
+        Feature::BackupPhrase => backup_phrase,
+        Feature::P2pBackup => p2p_backup,
+        Feature::DisplayNames => display_names,
+        Feature::Onboarding => onboarding,
+        Feature::PasswordLogin => password_login,
+        Feature::Sfu => sfu,
+        Feature::P2p => p2p,
+    };
+    let switches = [
         ("profanity_filter", profanity_filter),
         ("asset_previews", asset_previews),
         ("asset_uploads", asset_uploads),
@@ -271,20 +325,28 @@ pub(crate) async fn patch_settings(
         ProfanitySwitch::ALL
             .into_iter()
             .map(|t| (t.key(), profanity_targets.get(t))),
-    );
-    for (key, value) in pairs {
-        if let Some(on) = value {
-            sqlx::query(
-                "INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .chain(Feature::ALL.into_iter().map(|f| (f.key(), feature(f))))
+    .filter_map(|(key, on)| {
+        on.map(|on| {
+            (
+                key,
+                match on {
+                    true => "1",
+                    false => "0",
+                },
             )
-            .bind(key)
-            .bind(match on {
-                true => "1",
-                false => "0",
-            })
-            .execute(&state.db)
-            .await?;
-        }
+        })
+    });
+    let pairs = switches.chain(registration.map(|r| (Registration::KEY, r.as_str())));
+    for (key, value) in pairs {
+        sqlx::query(
+            "INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&state.db)
+        .await?;
     }
     let settings = Settings::load(&state.db).await;
     state.hub.broadcast(WsEvent::SettingsChanged { settings });
@@ -1914,6 +1976,76 @@ mod tests {
         assert_eq!(resume_purges(&state).await.expect("retry"), 1);
         assert_eq!(left("bad").await, 0);
         assert_eq!(left("busy").await, 1);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn feature_switches_change_live_and_settings_changed_carries_them() {
+        let (state, path) = temp_state("feature_switches").await;
+        let mut rx = state.hub.subscribe();
+        let root = || Authed(crate::api::test_util::mem_user("root", true));
+        let patch = |body: serde_json::Value| -> SettingsPatch {
+            serde_json::from_value(body).expect("patch")
+        };
+        let fresh = get_settings(State(state.clone())).await.0;
+        let wire = serde_json::to_value(fresh).expect("json");
+        for f in Feature::ALL {
+            assert_eq!(fresh.on(f), f.default_on(), "{f:?}");
+            assert_eq!(wire[f.key()], json!(f.default_on()), "{f:?}");
+        }
+        assert_eq!(wire["registration"], json!("open"));
+
+        let mut flipped = serde_json::Map::new();
+        for f in Feature::ALL {
+            flipped.insert(f.key().to_string(), json!(!f.default_on()));
+        }
+        flipped.insert("registration".to_string(), json!("sso"));
+        let flipped = serde_json::Value::Object(flipped);
+        let refused = patch_settings(
+            State(state.clone()),
+            Authed(crate::api::test_util::mem_user("alice", false)),
+            Json(patch(flipped.clone())),
+        )
+        .await;
+        assert!(matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"));
+        assert!(rx.try_recv().is_err(), "a refused patch sends nothing");
+        let got = patch_settings(State(state.clone()), root(), Json(patch(flipped)))
+            .await
+            .expect("patch")
+            .0;
+        let event = match rx.try_recv().expect("settings_changed") {
+            ev @ WsEvent::SettingsChanged { settings: _ } => {
+                serde_json::to_value(ev).expect("json")
+            }
+            _ => panic!("expected settings_changed"),
+        };
+        assert_eq!(event["type"], json!("settings_changed"));
+        Settings::forget(&state.db);
+        let stored = Settings::load(&state.db).await;
+        for (what, s) in [("response", got), ("stored", stored)] {
+            for f in Feature::ALL {
+                assert_eq!(s.on(f), !f.default_on(), "{what} {f:?}");
+            }
+            assert_eq!(s.registration, Registration::Sso, "{what}");
+        }
+        for f in Feature::ALL {
+            assert_eq!(event["settings"][f.key()], json!(!f.default_on()), "{f:?}");
+        }
+        assert_eq!(event["settings"]["registration"], json!("sso"));
+
+        let one = patch_settings(
+            State(state.clone()),
+            root(),
+            Json(patch(json!({"p2p": true, "registration": "closed"}))),
+        )
+        .await
+        .expect("one switch")
+        .0;
+        assert!(one.p2p && one.registration == Registration::Closed);
+        assert!(!one.server_reports && one.e2ee, "the others stay");
+        assert!(
+            serde_json::from_value::<SettingsPatch>(json!({"registration": "invite"})).is_err()
+        );
         done(state, path).await;
     }
 

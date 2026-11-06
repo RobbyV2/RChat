@@ -540,7 +540,26 @@ export interface SiteSettings {
   guests_enabled: boolean
   // Absent on servers before webhooks: off.
   outgoing_webhooks?: boolean
+  // The feature switches; siteSettings fills them in for older servers.
+  server_reports: boolean
+  instance_reports: boolean
+  widgets: boolean
+  widget_chat: boolean
+  widget_read_links: boolean
+  widget_bridge: boolean
+  e2ee: boolean
+  e2ee_compliance: boolean
+  backup_phrase: boolean
+  p2p_backup: boolean
+  display_names: boolean
+  onboarding: boolean
+  password_login: boolean
+  sfu: boolean
+  p2p: boolean
+  registration: Registration
 }
+
+export type Registration = 'open' | 'sso' | 'closed'
 
 export type SiteSettingsPatch = Partial<Omit<SiteSettings, 'profanity_targets'>> & {
   profanity_targets?: Partial<ProfanityTargets>

@@ -41,6 +41,7 @@ import { displayName } from '../lib/p2p/contacts'
 import type { CallView } from '../lib/p2p/calls'
 import { P2pBadge } from './p2p/p2p_badge'
 import { userRefFor, useStore, voiceMutedIn } from '../lib/store'
+import { accountPrompt } from '../lib/features'
 import { bannerColor, cachedProfile, profileKey } from '../lib/profile'
 import {
   autoFocus,
@@ -827,6 +828,7 @@ export function VoiceGrid({
   useStore(s => s.dms)
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
+  const ask = useStore(s => accountPrompt(s.settings))
   const voice = useStore(s => s.voice)
   const call = useStore(s => s.call)
   const { muted: selfMuted, deafened } = useStore(s => s.selfAudio)
@@ -1146,7 +1148,7 @@ export function VoiceGrid({
             <p className="text-lg font-semibold text-on-surface">No one is here yet</p>
             <p className="text-sm text-on-surface-variant">
               {guest && !forVoice
-                ? 'Create an account to join voice.'
+                ? `${ask} to join voice.`
                 : forVoice && p2pElsewhere
                   ? 'P2P is open in another tab.'
                   : 'Join to start talking.'}

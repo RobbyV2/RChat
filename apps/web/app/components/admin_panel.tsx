@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import { api } from '../lib/instances'
 import type { RelayStatus, ServerDetail, ServerSummaryLite } from '../lib/types'
@@ -22,7 +22,17 @@ import {
   ServerPasswordField,
   useMemberSearch,
 } from './server_settings'
-import { Dialog, Sentinel, dangerBtn, fieldCls, filledDangerBtn, sectionCls, textBtn } from './ui'
+import { FEATURE_ROWS, NEW_ACCOUNTS } from '../lib/features'
+import {
+  Chips,
+  Dialog,
+  Sentinel,
+  dangerBtn,
+  fieldCls,
+  filledDangerBtn,
+  sectionCls,
+  textBtn,
+} from './ui'
 
 export default function AdminPanel() {
   const dialog = useStore(s => s.activeDialog)
@@ -79,27 +89,41 @@ function NameForm({
 
 export function SettingSwitch({
   label,
+  hint,
   value,
   onChange,
   disabled = false,
 }: {
   label: string
+  hint?: string
   value: boolean
   onChange: (value: boolean) => void
   disabled?: boolean
 }) {
+  const hintId = useId()
   return (
     <button
       role="switch"
       aria-checked={value}
+      aria-label={label}
+      aria-describedby={hint ? hintId : undefined}
       title={label}
       disabled={disabled}
       onClick={() => onChange(!value)}
-      className="flex w-full items-center justify-between rounded-xl px-2 py-1.5 enabled:hover:bg-surface-container disabled:opacity-50"
+      className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left enabled:hover:bg-surface-container disabled:opacity-50"
     >
-      <span className="text-sm">{label}</span>
+      {hint ? (
+        <span className="flex min-w-0 flex-col">
+          <span className="text-sm">{label}</span>
+          <span id={hintId} className="text-xs text-on-surface-variant">
+            {hint}
+          </span>
+        </span>
+      ) : (
+        <span className="text-sm">{label}</span>
+      )}
       <span
-        className={`flex h-7 w-12 items-center rounded-full p-1 transition-colors ${
+        className={`flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${
           value
             ? 'justify-end bg-primary'
             : 'justify-start border border-outline bg-surface-container-highest'
@@ -150,51 +174,49 @@ function ProfanityTargetChecks() {
   )
 }
 
-function SiteSwitches() {
+function NewAccounts({ line }: { line: string }) {
+  const registration = useStore(s => s.settings.registration)
+  const updateSettings = useStore(s => s.updateSettings)
+  return (
+    <div className="flex flex-col gap-1.5 px-2 py-1.5">
+      <span className="flex flex-col">
+        <span className="text-sm">New accounts</span>
+        <span className="text-xs text-on-surface-variant">{line}</span>
+      </span>
+      <Chips
+        label="New accounts"
+        value={registration}
+        options={NEW_ACCOUNTS}
+        onChange={v => void updateSettings({ registration: v })}
+      />
+    </div>
+  )
+}
+
+function FeatureSwitches() {
   const settings = useStore(s => s.settings)
   const updateSettings = useStore(s => s.updateSettings)
   return (
     <div className="space-y-1">
-      <SettingSwitch
-        label="Profanity filter"
-        value={settings.profanity_filter}
-        onChange={v => void updateSettings({ profanity_filter: v })}
-      />
-      <ProfanityTargetChecks />
-      <SettingSwitch
-        label="Asset previews"
-        value={settings.asset_previews}
-        onChange={v => void updateSettings({ asset_previews: v })}
-      />
-      <SettingSwitch
-        label="File uploads"
-        value={settings.asset_uploads}
-        onChange={v => void updateSettings({ asset_uploads: v })}
-      />
-      <SettingSwitch
-        label="P2P attachments"
-        value={settings.p2p_attachments}
-        onChange={v => void updateSettings({ p2p_attachments: v })}
-      />
-      <p className="px-2 pb-1 text-xs text-on-surface-variant">
-        {settings.asset_uploads || settings.p2p_attachments
-          ? "P2P files stay in the sender's browser and have no size limit. Files in P2P conversations work either way. Turn off both file uploads and P2P attachments for text only, which hides files in P2P conversations too."
-          : 'Text only: messages can have text and emoji, no attachments, in P2P conversations too.'}
-      </p>
-      <SettingSwitch
-        label="Enable guests"
-        value={settings.guests_enabled}
-        onChange={v => void updateSettings({ guests_enabled: v })}
-      />
-      <SettingSwitch
-        label="Outgoing webhooks"
-        value={settings.outgoing_webhooks ?? false}
-        onChange={v => void updateSettings({ outgoing_webhooks: v })}
-      />
-      <p className="px-2 pb-1 text-xs text-on-surface-variant">
-        Lets server managers send events to URLs they choose. The instance then makes requests to
-        outside servers. Private and local addresses stay blocked unless allowlisted.
-      </p>
+      {FEATURE_ROWS.map(({ key, label, line }) => {
+        if (key === 'registration') return <NewAccounts key={key} line={line} />
+        return (
+          <Fragment key={key}>
+            <SettingSwitch
+              label={label}
+              hint={line}
+              value={settings[key] ?? false}
+              onChange={v => void updateSettings({ [key]: v })}
+            />
+            {key === 'profanity_filter' && <ProfanityTargetChecks />}
+            {key === 'p2p_attachments' && !settings.asset_uploads && !settings.p2p_attachments && (
+              <p className="px-2 pb-1 text-xs text-on-surface-variant">
+                Text only: no attachments, in P2P conversations too.
+              </p>
+            )}
+          </Fragment>
+        )
+      })}
     </div>
   )
 }
@@ -355,8 +377,8 @@ function Panel() {
   const moreUsers = useCallback(() => void loadAdminUsers(userQ), [userQ, loadAdminUsers])
   return (
     <Dialog full title="Site Administration" onClose={closeDialog}>
-      <p className={sectionCls}>Settings</p>
-      <SiteSwitches />
+      <p className={sectionCls}>Features</p>
+      <FeatureSwitches />
       {overview?.relay && <RelayStatusRow relay={overview.relay} />}
       <p className={sectionCls}>Servers{overview ? ` (${overview.server_count})` : ''}</p>
       <div className="mb-2 flex">

@@ -21,6 +21,40 @@ export const iconBtn =
 export const sectionCls =
   'pb-2 pt-5 text-xs font-medium uppercase tracking-wide text-on-surface-variant first:pt-0'
 
+// One choice of a few, as chips.
+export function Chips<T extends string | number>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: T
+  options: readonly { value: T; label: string }[]
+  onChange: (v: T) => void
+}) {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
+      {options.map(o => (
+        <button
+          key={String(o.value)}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          onClick={() => onChange(o.value)}
+          className={`rounded-full border px-3 py-1.5 text-sm ${
+            value === o.value
+              ? 'border-transparent bg-secondary-container text-on-secondary-container'
+              : 'border-outline text-on-surface-variant hover:bg-surface-container-highest'
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function FieldError({ message, id }: { message: string | null; id?: string }) {
   if (!message) return null
   return (

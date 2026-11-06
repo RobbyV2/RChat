@@ -9,6 +9,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::access::not_found;
 use super::{ApiError, ApiErrorBody, Authed, Settings};
 use crate::db::now;
 use crate::identity::{
@@ -62,6 +63,22 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         profanity_filter: _,
         profanity_targets: _,
         outgoing_webhooks: _,
+        server_reports: _,
+        instance_reports: _,
+        widgets: _,
+        widget_chat: _,
+        widget_read_links: _,
+        widget_bridge: _,
+        e2ee: _,
+        e2ee_compliance: _,
+        backup_phrase: _,
+        p2p_backup: _,
+        display_names: _,
+        onboarding: _,
+        password_login: _,
+        sfu: _,
+        p2p: _,
+        registration: _,
     } = Settings::cached(&state.read()).await;
     state.instance.discovery(
         &state.instance.origin(peer, headers),
@@ -233,8 +250,9 @@ pub struct Binding {
 /// `/.well-known/jwks.json`. The proof is a signature by `ik` itself, so nobody can bind a key
 /// they don't hold. Stateless: nothing is stored, and a binding can't be revoked before it
 /// expires (clients ask for a new one every day while the badge is on). Requires a bearer token;
-/// guests can't call it. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/identity/p2p_binding", tag = "Instance", request_body = BindingRequest, responses((status = 200, description = "EdDSA JWT binding ik to sub = user@host for 7 days", body = Binding), (status = 400, description = "ik is not a valid Ed25519 key, ts is more than 5 minutes from the server clock, or proof is not a signature by ik over this account and ts", body = ApiErrorBody), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// guests can't call it. Answers 404 while the `p2p` switch of `GET /api/settings` is off.
+/// Strict rate-limit bucket.
+#[utoipa::path(post, path = "/api/identity/p2p_binding", tag = "Instance", request_body = BindingRequest, responses((status = 200, description = "EdDSA JWT binding ik to sub = user@host for 7 days", body = Binding), (status = 400, description = "ik is not a valid Ed25519 key, ts is more than 5 minutes from the server clock, or proof is not a signature by ik over this account and ts", body = ApiErrorBody), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 404, description = "`Not found`: the `p2p` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn p2p_binding(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -243,6 +261,9 @@ pub(crate) async fn p2p_binding(
     Json(req): Json<BindingRequest>,
 ) -> Result<Json<Binding>, ApiError> {
     let BindingRequest { ik, ts, proof } = req;
+    if !Settings::cached(&state.db).await.p2p {
+        return Err(not_found());
+    }
     if user.username.contains('@') {
         return Err(ApiError(
             StatusCode::FORBIDDEN,
@@ -427,16 +448,14 @@ mod tests {
             (
                 &serde_json::json!(false),
                 &serde_json::json!(false),
-                &serde_json::json!(true)
+                &serde_json::json!(false)
             )
         );
         server.abort();
         let state = state.with_limits(std::sync::Arc::new(crate::limits::Limits {
             upload_max_mib: 10,
             message_max_chars: 500,
-            e2ee: true,
             sfu_enabled: true,
-            widgets: false,
             ..Default::default()
         }));
         let (addr, server) = serve(state.clone()).await;
@@ -452,7 +471,7 @@ mod tests {
         assert_eq!(
             (&info["e2ee"], &info["sfu"], &info["widgets"]),
             (
-                &serde_json::json!(true),
+                &serde_json::json!(false),
                 &serde_json::json!(true),
                 &serde_json::json!(false)
             )
@@ -669,6 +688,72 @@ mod tests {
             )
             .expect("signed by the instance key");
         serde_json::from_slice(&unb64url(parts[1])).unwrap()
+    }
+
+    #[tokio::test]
+    async fn switched_off_p2p_answers_404_and_capabilities_ignore_the_switches() {
+        let (state, path) = temp_state("instance_p2p_switch").await;
+        let (addr, server) = serve(state.clone()).await;
+        let base = format!("http://{addr}");
+        let client = reqwest::Client::new();
+        let root = register(&client, &base, "root").await;
+        let token = register(&client, &base, "alice").await;
+        let sub = format!("alice@{addr}");
+        let signer = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let ik = b64url(signer.verifying_key().as_bytes());
+        let bind = || {
+            client
+                .post(format!("{base}/api/identity/p2p_binding"))
+                .header("content-type", "application/json")
+                .bearer_auth(&token)
+                .body(bind_body(&signer, &ik, &sub, now()))
+                .send()
+        };
+        let switch = |body: &'static str| {
+            client
+                .patch(format!("{base}/api/admin/settings"))
+                .header("content-type", "application/json")
+                .bearer_auth(&root)
+                .body(body)
+                .send()
+        };
+        assert_eq!(bind().await.unwrap().status(), StatusCode::OK);
+        let off = switch(r#"{"p2p": false, "e2ee": true, "widgets": true}"#)
+            .await
+            .unwrap();
+        assert_eq!(off.status(), StatusCode::OK);
+        let res = bind().await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        assert_eq!(json(res).await, serde_json::json!({"error": "Not found"}));
+        let settings = json(
+            client
+                .get(format!("{base}/api/settings"))
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(settings["p2p"], serde_json::json!(false));
+        let info = json(
+            client
+                .get(format!("{base}/api/instance"))
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            (&info["e2ee"], &info["widgets"]),
+            (&serde_json::json!(false), &serde_json::json!(false)),
+            "what this build supports, not the switches"
+        );
+        assert_eq!(
+            switch(r#"{"p2p": true}"#).await.unwrap().status(),
+            StatusCode::OK
+        );
+        assert_eq!(bind().await.unwrap().status(), StatusCode::OK);
+        server.abort();
+        done(state, path).await;
     }
 
     #[tokio::test]

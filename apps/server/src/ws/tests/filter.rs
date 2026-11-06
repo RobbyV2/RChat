@@ -636,12 +636,7 @@ fn every_event() -> Vec<WsEvent> {
         WsEvent::SettingsChanged {
             settings: Settings {
                 profanity_filter: false,
-                profanity_targets: crate::api::ProfanityTargets::ALL,
-                asset_previews: false,
-                asset_uploads: false,
-                p2p_attachments: false,
-                guests_enabled: false,
-                outgoing_webhooks: false,
+                ..Settings::DENY
             },
         },
         WsEvent::Error { message: s("e") },

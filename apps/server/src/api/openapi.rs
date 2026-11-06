@@ -656,6 +656,12 @@ mod tests {
             );
         }
         assert!(schemas["ProfanityTargets"]["properties"]["display_names"].is_null());
+        for f in crate::api::features::Feature::ALL {
+            assert_eq!(settings[f.key()]["type"], "boolean", "{f:?}");
+        }
+        assert!(settings["registration"].is_object());
+        let text = serde_json::to_string(&schemas["Settings"]).expect("text");
+        assert!(text.is_ascii());
     }
 
     #[test]

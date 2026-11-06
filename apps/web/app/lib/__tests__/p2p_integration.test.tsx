@@ -1,4 +1,6 @@
+import 'fake-indexeddb/auto'
 import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { openDB } from 'idb'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactElement } from 'react'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
@@ -11,7 +13,18 @@ import { EMPTY_NOTIFY, setLevel } from '../notify'
 import { parseHome, pushP2pRecent, recentKey, recentShown } from '../home'
 import { messageItems, type ResultCtx } from '../palette_results'
 import { PaletteIndex } from '../palette_index'
-import { mirrorFrom, profileName, tellBadge, useP2p, type P2pState } from '../p2p/app'
+import {
+  mirrorFrom,
+  p2pAccount,
+  p2pKey,
+  profileName,
+  tellBadge,
+  useP2p,
+  type P2pState,
+} from '../p2p/app'
+import { dbName } from '../p2p/db'
+import { home } from '../instances'
+import { P2pOffSection, P2pSection } from '../../components/p2p/p2p_settings'
 import type { Fwd } from '../p2p/content'
 import { useP2pList } from '../../components/p2p/p2p_chat'
 import type { Contact } from '../p2p/contacts'
@@ -68,7 +81,7 @@ import { AccountChip } from '../../components/p2p/p2p_badge'
 import { ServerSettingsDialog } from '../../components/p2p/p2p_server_settings'
 import { CallBanner } from '../../components/voice_grid'
 import { markAllReadItem } from '../../components/mark_read'
-import { p2pDm, p2pHost, p2pMarkAll, p2pServer } from '../p2p/app'
+import { p2p, p2pDm, p2pHost, p2pMarkAll, p2pServer } from '../p2p/app'
 import { me, memoryStorage } from './fixtures'
 
 afterAll(resetSessionCaches)
@@ -447,6 +460,117 @@ describe('rail', () => {
     const inServer = render(<ServerRail />)
     expect(homeButton(inServer).includes('aria-current')).toBe(false)
     expect(/data-p2p-server="srv-room"[^>]*aria-current="page"/.test(inServer)).toBe(true)
+  })
+
+  test('without P2P from the instance the rail has no P2P tile or servers', () => {
+    Object.assign(initial, { me: me('bob'), home: true, view: null })
+    p2pState({ enabled: true, account: 'bob', servers: { [SRV]: server() } })
+    expect(render(<ServerRail />)).toContain('data-p2p-tile')
+    p2pState({ enabled: true, account: null, servers: { [SRV]: server() } })
+    const off = render(<ServerRail />)
+    expect(off).not.toContain('data-p2p-tile')
+    expect(off).not.toContain('data-p2p-server')
+    expect(homeButton(off)).toContain('aria-current="page"')
+  })
+})
+
+describe('P2P switched off on the instance', () => {
+  const db = () => dbName(home.host, 'bob')
+  const stored = async () => (await indexedDB.databases()).some(d => d.name === db())
+  const settings = (p2p: boolean) => ({ ...saved.settings, p2p })
+
+  test('Settings still removes P2P data from this browser, and the database is gone', async () => {
+    localStorage.setItem(home.scoped(p2pKey('bob')), JSON.stringify({ v: 1, on: true }))
+    ;(await openDB(db(), 1)).close()
+    expect(await stored()).toBe(true)
+    await p2pAccount(null)
+    Object.assign(initial, { me: me('bob'), settings: settings(false) })
+    const off = render(<P2pOffSection />)
+    expect(off).toContain('P2P is off on this instance.')
+    expect(off).toContain('Remove P2P data from this browser')
+    Object.assign(initial, { settings: settings(true) })
+    expect(render(<P2pOffSection />)).toBe('')
+    expect(await p2p.removeData('bob')).toBe(true)
+    expect(await stored()).toBe(false)
+    expect(localStorage.getItem(home.scoped(p2pKey('bob')))).toBeNull()
+    expect(useP2p.getState().account).toBeNull()
+    Object.assign(initial, { settings: settings(false) })
+    expect(render(<P2pOffSection />)).toBe('')
+  })
+
+  test('after a failed remove, Settings still offers removing the data that is left', async () => {
+    localStorage.setItem(home.scoped(p2pKey('bob')), JSON.stringify({ v: 1, on: true }))
+    ;(await openDB(db(), 1)).close()
+    await p2pAccount(null)
+    Object.assign(initial, { me: me('bob'), settings: settings(false) })
+    const del = indexedDB.deleteDatabase
+    indexedDB.deleteDatabase = () => {
+      throw new Error('denied')
+    }
+    try {
+      expect(await p2p.removeData('bob')).toBe(false)
+    } finally {
+      indexedDB.deleteDatabase = del
+    }
+    expect(await stored()).toBe(true)
+    expect(p2p.hasData('bob')).toBe(true)
+    expect(render(<P2pOffSection />)).toContain('Remove P2P data from this browser')
+    expect(useP2p.getState().account).toBeNull()
+    expect(await p2p.removeData('bob')).toBe(true)
+    expect(await stored()).toBe(false)
+    expect(p2p.hasData('bob')).toBe(false)
+  })
+
+  test('without P2P data in this browser there is nothing to remove', () => {
+    Object.assign(initial, { me: me('carol'), settings: settings(false) })
+    expect(render(<P2pOffSection />)).toBe('')
+  })
+})
+
+describe('removing P2P data while P2P is on', () => {
+  const db = () => dbName(home.host, 'bob')
+  const stored = async () => (await indexedDB.databases()).some(d => d.name === db())
+
+  test('a failed remove shows why and keeps P2P off until turned on', async () => {
+    localStorage.setItem(home.scoped(p2pKey('bob')), JSON.stringify({ v: 1, on: true }))
+    ;(await openDB(db(), 1)).close()
+    Object.assign(initial, { me: me('bob') })
+    useP2p.setState({ account: 'bob', enabled: true })
+    const del = indexedDB.deleteDatabase
+    indexedDB.deleteDatabase = () => {
+      throw new Error('denied')
+    }
+    try {
+      expect(await p2p.removeData()).toBe(false)
+    } finally {
+      indexedDB.deleteDatabase = del
+    }
+    expect(await stored()).toBe(true)
+    expect(p2p.hasData('bob')).toBe(false)
+    p2pState(useP2p.getState())
+    const failed = 'Couldn&#x27;t remove P2P data'
+    const section = render(<P2pSection />)
+    expect(section).toContain(failed)
+    expect(section).toContain('Turn on P2P')
+    expect(render(<P2pHome onMenu={() => {}} />)).toContain(failed)
+    Object.assign(p2pInitial, p2pSaved)
+    await p2pAccount('bob')
+    expect(useP2p.getState().enabled).toBe(false)
+    useP2p.setState({ error: "Couldn't remove P2P data" })
+    // A lock that never comes: turning on starts no node here.
+    Object.defineProperty(navigator, 'locks', {
+      value: { request: () => new Promise(() => {}) },
+      configurable: true,
+    })
+    try {
+      await p2p.enable()
+      expect(useP2p.getState().error).toBeNull()
+      await p2pAccount(null)
+    } finally {
+      delete (navigator as { locks?: unknown }).locks
+    }
+    expect(await p2p.removeData('bob')).toBe(true)
+    expect(await stored()).toBe(false)
   })
 })
 

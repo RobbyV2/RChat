@@ -6,6 +6,7 @@ use s3::creds::Credentials;
 use s3::{Bucket, Region};
 use serde::Deserialize;
 
+use crate::api::features::FeatureSeeds;
 use crate::db::DbOptions;
 use crate::instance::InstanceConfig;
 use crate::limits::Limits;
@@ -219,6 +220,7 @@ pub struct Seeds {
     pub profanity_targets: Option<String>,
     pub p2p_attachments: Option<String>,
     pub outgoing_webhooks: Option<String>,
+    pub features: FeatureSeeds,
 }
 
 fn lookup(env: &Option<HashMap<String, String>>, name: &str) -> Option<String> {
@@ -314,6 +316,7 @@ impl AppConfig {
             profanity_targets: lookup(&env, "PROFANITY_TARGETS"),
             p2p_attachments: lookup(&env, "P2P_ATTACHMENTS"),
             outgoing_webhooks: lookup(&env, "OUTGOING_WEBHOOKS"),
+            features: FeatureSeeds::load(&|name| lookup(&env, name))?,
         };
         config.swagger_ui = lookup(&env, "SWAGGER_UI");
         config.roles = config.resolve_roles()?;
@@ -689,6 +692,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::api::features::{Feature, FeatureSeeds, Registration};
     use crate::hub::Limits as WsLimits;
 
     #[test]
@@ -1135,6 +1139,9 @@ mod tests {
             ("E2EE_KEY_RETENTION_DAYS", "70", "1 to 69"),
             ("E2EE", "maybe", "on or off"),
             ("SFU_ENABLED", "2", "on or off"),
+            ("FEATURE_P2P", "maybe", "on or off"),
+            ("AUTH_PASSWORD_LOGIN", "2", "on or off"),
+            ("AUTH_REGISTRATION", "invite", "open, sso or closed"),
         ] {
             let err = load(&[(k, v)]).unwrap_err().to_string();
             assert_eq!(err, format!("{k}: expected {range}, got {v}"));
@@ -1220,13 +1227,8 @@ mod tests {
             (72, 3, 10, 180)
         );
         assert_eq!(
-            (
-                l.e2ee,
-                l.e2ee_guests_per_group,
-                l.e2ee_key_retention_days,
-                l.e2ee_compliance
-            ),
-            (false, 500, 30, false)
+            (l.e2ee_guests_per_group, l.e2ee_key_retention_days),
+            (500, 30)
         );
         assert_eq!(
             (
@@ -1240,13 +1242,11 @@ mod tests {
         assert_eq!(l.p2p_backup_max_mib, 64);
         assert_eq!(
             (
-                l.widgets,
                 l.widget_quick_joins_per_hour,
                 l.widget_viewers_max,
-                l.widget_bridge,
                 l.widget_bridge_servers_max
             ),
-            (true, 10, 5000, false, 50)
+            (10, 5000, 50)
         );
         assert_eq!(
             (l.upload_max_mib, l.message_max_chars, l.upload_bytes()),
@@ -1264,34 +1264,31 @@ mod tests {
             ("MESSAGE_MAX_CHARS", "500"),
             ("UPLOAD_MAX_MIB", "10"),
         ];
-        let l = AppConfig::load_from(&cli(None, None), env(&set))
-            .unwrap()
-            .limits;
+        let config = AppConfig::load_from(&cli(None, None), env(&set)).unwrap();
+        let l = config.limits;
         assert_eq!(
             (
                 l.report_targets_per_day,
-                l.e2ee,
-                l.e2ee_compliance,
                 l.sfu_enabled,
                 l.sfu_max_streams,
                 l.p2p_backup_max_mib,
-                l.widgets,
                 l.widget_bridge_servers_max,
                 l.message_max_chars,
                 l.upload_bytes()
             ),
+            (0, true, 9000, 0, 7, 500, 10 * 1024 * 1024)
+        );
+        let f = config.seeds.features;
+        assert_eq!(
             (
-                0,
-                true,
-                true,
-                true,
-                9000,
-                0,
-                false,
-                7,
-                500,
-                10 * 1024 * 1024
-            )
+                f.on(Feature::E2ee),
+                f.on(Feature::E2eeCompliance),
+                f.on(Feature::Widgets),
+                f.on(Feature::WidgetBridge),
+                f.on(Feature::Sfu)
+            ),
+            (true, true, false, false, false),
+            "the switch booleans seed Settings; SFU_ENABLED stays a limit"
         );
     }
 
@@ -1326,6 +1323,8 @@ mod tests {
             ("PROFANITY_TARGETS", "names"),
             ("OUTGOING_WEBHOOKS", "on"),
             ("SWAGGER_UI", "no"),
+            ("FEATURE_P2P", "off"),
+            ("AUTH_REGISTRATION", "closed"),
         ];
         let config = AppConfig::load_from(&cli(None, None), env(&set)).unwrap();
         let Secrets {
@@ -1344,6 +1343,10 @@ mod tests {
                 profanity_targets: Some("names".into()),
                 p2p_attachments: None,
                 outgoing_webhooks: Some("on".into()),
+                features: FeatureSeeds {
+                    switches: vec![(Feature::P2p, false)],
+                    registration: Some(Registration::Closed),
+                },
             }
         );
         assert_eq!(config.swagger_ui.as_deref(), Some("no"));

@@ -496,7 +496,7 @@ export const p2p = {
     const username = useP2p.getState().account
     if (!username || node || leader) return
     writeOn(username, true)
-    useP2p.setState({ enabled: true })
+    useP2p.setState({ enabled: true, error: null })
     try {
       await navigator.storage?.persist?.()
     } catch {
@@ -506,19 +506,31 @@ export const p2p = {
     void p2p.refreshStorage()
   },
 
-  // Deletes the identity, contacts and everything else P2P from this browser.
-  async removeData() {
-    const username = useP2p.getState().account
-    if (!username) return
+  // Whether this browser holds P2P data of `username`.
+  hasData: (username: string) => readOn(username),
+
+  // Deletes the identity, contacts and everything else P2P from this browser, also while the
+  // instance has P2P off and nothing runs. False when it failed.
+  async removeData(username = useP2p.getState().account): Promise<boolean> {
+    const running = useP2p.getState().account
+    if (!username || (running !== null && running !== username)) return false
     put.gen(gen + 1)
     shutdown()
     writeOn(username, false)
+    let ok = true
     try {
       await removeP2pDb(dbFor(username))
     } catch {
-      useP2p.setState({ error: "Couldn't remove P2P data" })
+      ok = false
+      // While P2P is off the flag is what offers removing the data again; while on, it would
+      // start the identity again on the next load.
+      if (running === null) writeOn(username, true)
     }
-    useP2p.setState({ ...initial, account: username, layout: readLayout(username) })
+    const error = ok ? null : "Couldn't remove P2P data"
+    if (useP2p.getState().account === username)
+      useP2p.setState({ ...initial, account: username, layout: readLayout(username), error })
+    else if (error) useP2p.setState({ error })
+    return ok
   },
 
   setPaused: (on: boolean) => withNode(n => n.setPaused(on)),

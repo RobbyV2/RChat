@@ -8,6 +8,7 @@ import { hostOf } from '../lib/qualified'
 import { useStore } from '../lib/store'
 import { shellInfo } from '../lib/platform'
 import { safeNext } from '../lib/invite'
+import { passwordSignup } from '../lib/features'
 import { NAME_MAX, charCount } from '../lib/rules'
 import type { AvatarKind } from '../lib/types'
 import type { PassKind } from '../lib/password'
@@ -208,7 +209,9 @@ export default function LoginPage() {
   const guestsEnabled = useStore(s => s.settings.guests_enabled)
   const [missing, setMissing] = useState(false)
 
-  const [mode, setMode] = useState<Mode>('login')
+  const [picked, setMode] = useState<Mode>('login')
+  const signup = useStore(s => passwordSignup(s.settings))
+  const mode: Mode = signup ? picked : 'login'
   const [username, setUsername] = useState('')
   const [passKind, setPassKind] = useState<PassKind>('text')
   const [password, setPassword] = useState('')
@@ -323,10 +326,12 @@ export default function LoginPage() {
             router.replace(safeNext(new URLSearchParams(window.location.search).get('next')) ?? '/')
           }
         />
-        <div className="flex gap-1 rounded-full bg-surface-container p-1">
-          {tab('login', 'Log in')}
-          {tab('register', 'Create account')}
-        </div>
+        {signup && (
+          <div className="flex gap-1 rounded-full bg-surface-container p-1">
+            {tab('login', 'Log in')}
+            {tab('register', 'Create account')}
+          </div>
+        )}
         <form onSubmit={submit} className="flex flex-col gap-4">
           <label className="flex flex-col gap-1">
             <span className="text-sm text-on-surface-variant">Username</span>

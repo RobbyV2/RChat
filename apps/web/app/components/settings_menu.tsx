@@ -8,7 +8,8 @@ import { limitsOf } from '../lib/instance_limits'
 import { iceOffer } from '../lib/ice'
 import { ownTurn } from '../lib/relays'
 import { RelaySection } from './relay_settings'
-import { P2pSection } from './p2p/p2p_settings'
+import { P2pOffSection, P2pSection } from './p2p/p2p_settings'
+import { useP2p } from '../lib/p2p/app'
 import { defaultBanner } from '../lib/profile'
 import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio, siteFilterOn } from '../lib/rules'
@@ -583,6 +584,7 @@ function SettingsSection() {
   const setTheme = useStore(s => s.setTheme)
   const streamer = useStore(s => s.streamer)
   const setStreamer = useStore(s => s.setStreamer)
+  const p2pOn = useP2p(s => s.account !== null)
   return (
     <div className="flex flex-col gap-8">
       <section>
@@ -595,7 +597,7 @@ function SettingsSection() {
       <ChatSection />
       <ConnectionSection />
       <RelaySection />
-      <P2pSection />
+      {p2pOn ? <P2pSection /> : <P2pOffSection />}
       <section>
         <p className={sectionCls}>Appearance</p>
         <SettingSwitch
