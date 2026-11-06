@@ -12,9 +12,10 @@ export const Perm = {
   ViewAuditLog: 64,
   TimeoutMembers: 128,
   ManageWebhooks: 256,
+  ManageReports: 512,
 } as const
 
-export const ALL_PERMS = 511
+export const ALL_PERMS = 1023
 
 export const hasPerm = (perms: number, perm: number) => (perms & perm) !== 0
 

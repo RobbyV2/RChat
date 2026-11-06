@@ -15,9 +15,12 @@ pub enum Perm {
     ViewAuditLog = 64,
     TimeoutMembers = 128,
     ManageWebhooks = 256,
+    ManageReports = 512,
 }
 
-pub const ALL_PERMS: i64 = 511;
+pub const ALL_PERMS: i64 = 1023;
+/// Every permission before `ManageReports` existed.
+pub const PRE_REPORT_PERMS: i64 = 511;
 
 pub fn perm_bits(is_admin: bool, perms: i64, roles: i64) -> i64 {
     match (is_admin, perms) {

@@ -43,6 +43,11 @@ export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
     bit: Perm.ManageWebhooks,
     hint: 'Create and change webhooks that post into channels',
   },
+  {
+    label: 'Manage reports',
+    bit: Perm.ManageReports,
+    hint: 'See and act on reports in this server',
+  },
 ]
 
 export const PROFANITY_TARGETS: { key: ProfanityTarget; label: string }[] = [

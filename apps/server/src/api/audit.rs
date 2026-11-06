@@ -1135,7 +1135,10 @@ mod tests {
             s(),
             who("alice"),
             Path(("club".to_string(), "dave".to_string())),
-            Json(req(json!({ "perms": Perm::Kick as i64 }))),
+            Json(req(json!({
+                "perms": Perm::Kick as i64,
+                "mask": crate::api::access::perms::ALL_PERMS
+            }))),
         )
         .await
         .expect("perms");

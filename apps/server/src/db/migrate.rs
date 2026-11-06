@@ -4,7 +4,7 @@ use sqlx::{AnyConnection, Row};
 use super::schema::{POSTGRES_SCHEMA, POSTGRES_TRIGGERS, SQLITE_SCHEMA, SQLITE_TRIGGERS};
 use super::secrets::secret_key;
 use super::{NO_EXTRA_HASH, now};
-use crate::api::access::perms::ALL_PERMS;
+use crate::api::access::perms::{ALL_PERMS, PRE_REPORT_PERMS, Perm};
 use crate::config::Seeds;
 
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -158,7 +158,8 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// 16: `media.charged_to` and `media.charged_server` (webhook uploads count against the
 /// webhook's owner and its server's webhooks).
 /// 17: stored names of uploaded files cleaned like new uploads (`messages.media_filename`).
-pub const SCHEMA_VERSION: i64 = 17;
+/// 18: the Manage reports permission bit.
+pub const SCHEMA_VERSION: i64 = 18;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
@@ -437,7 +438,7 @@ pub(super) async fn init_schema(
     }
     if version < 14 {
         let n = sqlx::query("UPDATE members SET perms = $1 WHERE is_admin <> 0 AND perms = $2")
-            .bind(ALL_PERMS)
+            .bind(PRE_REPORT_PERMS)
             .bind(PRE_WEBHOOK_PERMS)
             .execute(&mut *conn)
             .await?
@@ -448,6 +449,9 @@ pub(super) async fn init_schema(
     }
     if version < 17 {
         clean_file_names(conn).await?;
+    }
+    if version < 18 {
+        grant_manage_reports(conn).await?;
     }
     let t = now();
     sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
@@ -487,6 +491,42 @@ pub(super) async fn init_schema(
         seed_setting(conn, key, &value).await?;
     }
     store_setting(conn, "schema_version", &SCHEMA_VERSION.to_string()).await?;
+    Ok(())
+}
+
+/// Gives Manage reports to admins with every permission, and to every admin permission set and
+/// role that includes Kick.
+async fn grant_manage_reports(conn: &mut AnyConnection) -> anyhow::Result<()> {
+    let (reports, kick) = (Perm::ManageReports as i64, Perm::Kick as i64);
+    let n = sqlx::query("UPDATE members SET perms = $1 WHERE is_admin <> 0 AND perms = $2")
+        .bind(ALL_PERMS)
+        .bind(PRE_REPORT_PERMS)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    if n > 0 {
+        tracing::info!("gave {n} admins with every permission the Manage reports permission");
+    }
+    let n = sqlx::query("UPDATE members SET perms = perms | $1 WHERE is_admin <> 0 AND perms <> 0 AND (perms & $2) <> 0 AND (perms & $1) = 0")
+        .bind(reports)
+        .bind(kick)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected();
+    if n > 0 {
+        tracing::info!("gave {n} admins with Kick the Manage reports permission");
+    }
+    let n = sqlx::query(
+        "UPDATE roles SET perms = perms | $1 WHERE (perms & $2) <> 0 AND (perms & $1) = 0",
+    )
+    .bind(reports)
+    .bind(kick)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    if n > 0 {
+        tracing::info!("gave {n} roles with Kick the Manage reports permission");
+    }
     Ok(())
 }
 

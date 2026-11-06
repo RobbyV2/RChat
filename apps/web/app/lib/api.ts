@@ -1,4 +1,5 @@
 import { localUntil, type TimeoutWire } from './timeouts'
+import { ALL_PERMS } from './types'
 import type {
   AdminOverview,
   AuditEntry,
@@ -570,7 +571,10 @@ export const endpoints = (c: ApiClient) => ({
   transferAdmin: (server: string, username: string) =>
     c.req<unknown>('POST', `/servers/${seg(server)}/transfer_admin`, { username }),
   setAdminPerms: (server: string, username: string, perms: number) =>
-    c.req<unknown>('PATCH', `/servers/${seg(server)}/admins/${seg(username)}/perms`, { perms }),
+    c.req<unknown>('PATCH', `/servers/${seg(server)}/admins/${seg(username)}/perms`, {
+      perms,
+      mask: ALL_PERMS,
+    }),
   createRole: (server: string, body: { name: string; color: string; perms: number }) =>
     c.req<Role>('POST', `/servers/${seg(server)}/roles`, body),
   updateRole: (

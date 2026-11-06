@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  PERM_ITEMS,
   PROFANITY_TARGETS,
   adminMask,
   canChangeRole,
@@ -67,6 +68,21 @@ describe('memberPerms', () => {
   })
 })
 
+describe('Manage reports', () => {
+  test('is the last permission and part of every permission', () => {
+    expect(Perm.ManageReports).toBe(512)
+    expect(ALL_PERMS).toBe(1023)
+    expect(memberPerms({ is_admin: true, perms: 0, role_ids: [] }, [])).toBe(1023)
+    expect(adminMask(0)).toBe(1023)
+    expect(adminMask(Perm.Kick | Perm.ManageReports)).toBe(516)
+    expect(PERM_ITEMS.at(-1)).toEqual({
+      label: 'Manage reports',
+      bit: Perm.ManageReports,
+      hint: 'See and act on reports in this server',
+    })
+  })
+})
+
 describe('canModerate', () => {
   test('needs a strict superset of the target perms', () => {
     const kick = Perm.Kick
@@ -93,10 +109,10 @@ describe('granting perms', () => {
     expect(canGrant(ma | kick, false, kick)).toBe(true)
     expect(canGrant(ma | kick, false, ma | kick)).toBe(true)
     expect(canGrant(ma | kick, false, Perm.DeleteServer)).toBe(false)
-    expect(canGrant(ma, false, 512)).toBe(true)
+    expect(canGrant(ma, false, 1024)).toBe(true)
     expect(canGrant(0, true, ALL_PERMS)).toBe(true)
     expect(adminMask(0)).toBe(ALL_PERMS)
-    expect(adminMask(kick | 512)).toBe(kick)
+    expect(adminMask(kick | 1024)).toBe(kick)
     expect(canPromote(ma | kick, false)).toBe(false)
     expect(canPromote(ALL_PERMS, false)).toBe(true)
     expect(canPromote(ma, true)).toBe(true)

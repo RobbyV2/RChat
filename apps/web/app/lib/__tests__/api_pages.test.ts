@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { api } from '../instances'
 import { useStore, resetSessionCaches } from '../store'
+import { ALL_PERMS, Perm } from '../types'
 import { member, paged } from './fixtures'
 
 afterAll(resetSessionCaches)
@@ -51,6 +52,18 @@ describe('cursor pages', () => {
     }) as typeof fetch
     expect(await api.getUnreads()).toEqual({ items: [], more: true })
     expect(requests.map(r => r.search)).toEqual([''])
+  })
+})
+
+describe('admin perms', () => {
+  test('say which bits they set, so older bits stay as stored', async () => {
+    const bodies: unknown[] = []
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)))
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }) as typeof fetch
+    await api.setAdminPerms('club', 'bob', Perm.Kick)
+    expect(bodies).toEqual([{ perms: Perm.Kick, mask: ALL_PERMS }])
   })
 })
 

@@ -8,8 +8,8 @@ use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::perms::{
-    ALL_PERMS, ChannelAccess, Perm, PermRow, Restrict, can_grant, can_moderate, fold_access,
-    perm_bits, perm_row, perm_subjects, rule_narrows,
+    ALL_PERMS, ChannelAccess, PRE_REPORT_PERMS, Perm, PermRow, Restrict, can_grant, can_moderate,
+    fold_access, perm_bits, perm_row, perm_subjects, rule_narrows,
 };
 use crate::api::access::{
     BANNED, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, forbidden, is_member,
@@ -182,10 +182,15 @@ pub struct UsernameReq {
 pub struct PermsReq {
     /// Permission bitmask: 1 Manage channels, 2 Manage messages (delete and pin messages of
     /// others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention everyone and roles, 64 View
-    /// audit log, 128 Timeout members, 256 Manage webhooks. Bits outside 511 are dropped. For an
-    /// admin, 0 means all permissions.
+    /// audit log, 128 Timeout members, 256 Manage webhooks, 512 Manage reports. Bits outside 1023
+    /// are dropped. For an admin, 0 means all permissions.
     #[schema(example = 7)]
     perms: i64,
+    /// The permission bits `perms` sets; send 1023. The admin keeps the bits they hold outside
+    /// it; bits outside it that `perms` sets are added. Defaults to 511 (every permission before
+    /// Manage reports).
+    #[schema(example = 1023)]
+    mask: Option<i64>,
 }
 
 /// Request body for creating a role.
@@ -200,8 +205,8 @@ pub struct RoleReq {
     color: String,
     /// Permission bitmask for members with the role: 1 Manage channels, 2 Manage messages (delete
     /// and pin messages of others), 4 Kick, 8 Delete server, 16 Manage admins, 32 Mention
-    /// everyone and roles, 64 View audit log, 128 Timeout members, 256 Manage webhooks. Bits
-    /// outside 511 are dropped.
+    /// everyone and roles, 64 View audit log, 128 Timeout members, 256 Manage webhooks, 512
+    /// Manage reports. Bits outside 1023 are dropped.
     /// Roles only add permissions to members who are not admins. Admins use their own admin
     /// permissions.
     #[schema(example = 6)]
@@ -220,7 +225,7 @@ pub struct RolePatch {
     name: Option<String>,
     /// New role color as `#rrggbb`, stored as sent.
     color: Option<String>,
-    /// New permission bitmask (see `RoleReq.perms`). Bits outside 511 are dropped.
+    /// New permission bitmask (see `RoleReq.perms`). Bits outside 1023 are dropped.
     perms: Option<i64>,
     /// Whether anyone who can send may mention the role (see `RoleReq.mentionable`). Turning it
     /// on needs the Mention everyone permission.
@@ -3434,11 +3439,12 @@ pub(crate) async fn transfer_admin(
 
 /// Set an admin's permissions
 ///
-/// Replaces the permission bitmask of the admin `username` (bits outside 511 are dropped; 0 means
-/// all permissions). Taking permissions away works on any admin, like revoking admin. When the new
-/// permissions add any the admin did not have, all of the new permissions must be ones you have
-/// (equal is fine), so only callers holding every permission can set 0. Requires the Manage admins
-/// server permission. Emits `admin_changed` to the server and the user. General rate-limit bucket.
+/// Replaces the permission bits of the admin `username` that `mask` covers and adds the other bits
+/// `perms` sets (bits outside 1023 are dropped; 0 means all permissions). Taking permissions away
+/// works on any admin, like revoking admin. When the new permissions add any the admin did not
+/// have, all of the new permissions must be ones you have (equal is fine), so only callers holding
+/// every permission can set 0. Requires the Manage admins server permission. Emits
+/// `admin_changed` to the server and the user. General rate-limit bucket.
 #[utoipa::path(
     patch,
     path = "/api/servers/{name}/admins/{username}/perms",
@@ -3460,14 +3466,13 @@ pub(crate) async fn set_admin_perms(
     State(state): State<AppState>,
     Authed(user): Authed,
     Path((name, target)): Path<(String, String)>,
-    Json(req): Json<PermsReq>,
+    Json(PermsReq { perms: sent, mask }): Json<PermsReq>,
 ) -> Result<Json<OkResp>, ApiError> {
     let target = target.to_lowercase();
     let user = acting_on(&user, &target);
     let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::ManageAdmins).await?;
     let key = access.name().to_string();
-    let perms = req.perms & ALL_PERMS;
     let mine = access.perms(&state.db).await?;
     let own = access.member_own_perms(&state.db).await?;
     let actor = access.audit_actor(&state.db, Perm::ManageAdmins).await?;
@@ -3483,7 +3488,12 @@ pub(crate) async fn set_admin_perms(
         Some(r) => r.try_get(0)?,
         None => return Err(not_found("Not an admin")),
     };
-    let (old, new) = (perm_bits(true, stored, 0), perm_bits(true, perms, 0));
+    let old = perm_bits(true, stored, 0);
+    let perms = match sent & ALL_PERMS {
+        0 => 0,
+        p => p | (old & !mask.unwrap_or(PRE_REPORT_PERMS)),
+    };
+    let new = perm_bits(true, perms, 0);
     if new & !old != 0 && !can_grant(mine, user.is_site_admin, new) {
         return Err(forbidden("You can't grant permissions you don't have"));
     }
@@ -3542,19 +3552,12 @@ async fn role_guard(state: &AppState, name: &str, user: &User) -> Result<ServerA
 }
 
 fn held_above_sql(one: bool) -> String {
-    let bits = [
-        Perm::ManageChannels,
-        Perm::DeleteMessages,
-        Perm::Kick,
-        Perm::DeleteServer,
-        Perm::ManageAdmins,
-        Perm::MentionEveryone,
-        Perm::ViewAuditLog,
-        Perm::TimeoutMembers,
-        Perm::ManageWebhooks,
-    ]
-    .map(|p| format!("MAX(r.perms & {})", p as i64))
-    .join(" | ");
+    let bits = (0..i64::BITS)
+        .map(|i| 1i64 << i)
+        .filter(|b| ALL_PERMS & b != 0)
+        .map(|b| format!("MAX(r.perms & {b})"))
+        .collect::<Vec<_>>()
+        .join(" | ");
     let role = match one {
         true => " AND h.role_id = $4",
         false => "",
@@ -7307,7 +7310,26 @@ mod tests {
                 State(state.clone()),
                 Authed(actor),
                 Path(("club".to_string(), target.to_string())),
-                Json(PermsReq { perms }),
+                Json(PermsReq {
+                    perms,
+                    mask: Some(ALL_PERMS),
+                }),
+            )
+            .await,
+        )
+    }
+
+    async fn set_perms_json(
+        state: &AppState,
+        target: &str,
+        body: serde_json::Value,
+    ) -> Result<(), (StatusCode, String)> {
+        code(
+            set_admin_perms(
+                State(state.clone()),
+                Authed(mem_user("alice", false)),
+                Path(("club".to_string(), target.to_string())),
+                Json(serde_json::from_value(body).expect("perms body")),
             )
             .await,
         )
@@ -7560,6 +7582,121 @@ mod tests {
             .await
             .expect("a member you can moderate");
         assert!(!holds(db, "carol", low).await && !holds(db, "carol", equal).await);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn role_edits_keep_manage_reports() {
+        let (state, path) = temp_state("role_reports").await;
+        let db = &state.db;
+        club_with(&state, &["bob"]).await;
+        let id = new_role(db, "mod", KICK).await;
+        edit(&state, mem_user("alice", false), id, None, Some(2047))
+            .await
+            .expect("every bit");
+        assert_eq!(role_row(db, id).await.2, 1023);
+        edit(&state, mem_user("alice", false), id, None, Some(516))
+            .await
+            .expect("kick and reports");
+        assert_eq!(role_row(db, id).await.2, 516);
+        let reports = |name: &str, site_admin: bool| {
+            let user = mem_user(name, site_admin);
+            async move {
+                resolve_server(db, "club", Some(&user), &Proof::none())
+                    .await
+                    .expect("access")
+                    .require_perm(db, Perm::ManageReports)
+                    .await
+                    .is_ok()
+            }
+        };
+        assert!(!reports("bob", false).await);
+        hold(db, "bob", id).await;
+        assert!(reports("bob", false).await);
+        assert!(reports("alice", false).await);
+        assert!(reports("root", true).await);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn admin_edits_from_old_apps_keep_manage_reports() {
+        let (state, path) = temp_state("admin_reports_mask").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol", "dave"]).await;
+        let (reports, timeout) = (Perm::ManageReports as i64, Perm::TimeoutMembers as i64);
+        set_admin_row(db, "bob", MA | KICK | reports).await;
+        set_admin_row(db, "carol", 0).await;
+        set_admin_row(db, "dave", KICK).await;
+        let set = |target: &'static str, body: serde_json::Value| {
+            let state = state.clone();
+            async move { set_perms_json(&state, target, body).await.expect(target) }
+        };
+        set("bob", serde_json::json!({ "perms": MA | KICK | timeout })).await;
+        assert_eq!(
+            member_row(db, "bob").await,
+            (1, MA | KICK | timeout | reports)
+        );
+        set("carol", serde_json::json!({ "perms": 511 & !KICK })).await;
+        assert_eq!(member_row(db, "carol").await, (1, ALL_PERMS & !KICK));
+        set("dave", serde_json::json!({ "perms": reports })).await;
+        assert_eq!(member_row(db, "dave").await, (1, reports));
+        set("dave", serde_json::json!({ "perms": 0 })).await;
+        assert_eq!(member_row(db, "dave").await, (1, 0));
+        let every = |perms: i64| serde_json::json!({ "perms": perms, "mask": ALL_PERMS });
+        set("bob", every(MA | KICK)).await;
+        assert_eq!(member_row(db, "bob").await, (1, MA | KICK));
+        set("carol", every(511 & !KICK)).await;
+        assert_eq!(member_row(db, "carol").await, (1, 511 & !KICK));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn manage_reports_counts_for_role_holders_above_you() {
+        let (state, path) = temp_state("role_reports_above").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol"]).await;
+        set_admin_row(db, "bob", MA | KICK).await;
+        let low = new_role(db, "low", KICK).await;
+        let reports = new_role(db, "reports", Perm::ManageReports as i64).await;
+        hold(db, "carol", low).await;
+        hold(db, "carol", reports).await;
+        let mut above = vec![low, reports];
+        above.sort_unstable();
+        assert_eq!(limits_of(&state, mem_user("bob", false)).await.0, above);
+        assert_eq!(
+            edit(&state, mem_user("bob", false), low, Some("x"), None).await,
+            forbid("You can't change a role held by a member you can't moderate")
+        );
+        assert_eq!(role_row(db, low).await.0, "low");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn every_permission_counts_for_role_holders_above_you() {
+        let (state, path) = temp_state("role_bits_above").await;
+        let db = &state.db;
+        club_with(&state, &["bob", "carol"]).await;
+        set_admin_row(db, "bob", MA | KICK).await;
+        for bit in (0..i64::BITS).map(|i| 1i64 << i) {
+            if ALL_PERMS & bit == 0 {
+                continue;
+            }
+            let id = new_role(db, &format!("bit{bit}"), bit).await;
+            hold(db, "carol", id).await;
+            let above = match bit & !(MA | KICK) {
+                0 => vec![],
+                _ => vec![id],
+            };
+            assert_eq!(
+                limits_of(&state, mem_user("bob", false)).await.0,
+                above,
+                "{bit}"
+            );
+            sqlx::query("DELETE FROM user_roles WHERE username = 'carol'")
+                .execute(db)
+                .await
+                .expect("unhold");
+        }
         done(state, path).await;
     }
 
@@ -7925,7 +8062,7 @@ mod tests {
         let err = patch(" ", "#000000", Some(MA)).await.err().map(|e| e.0);
         assert_eq!(err, Some(StatusCode::BAD_REQUEST));
         assert_eq!(role_row(db, id).await, before);
-        let Json(role) = patch("helpers", "#00ff00", Some(MA | 512))
+        let Json(role) = patch("helpers", "#00ff00", Some(MA | 1024))
             .await
             .expect("valid");
         assert_eq!(

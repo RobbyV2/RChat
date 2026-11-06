@@ -420,7 +420,8 @@ pub struct Role {
     /// Permission bits of the role: 1 Manage channels, 2 Manage messages (delete and pin messages
     /// of others), 4 Kick (also bans), 8 Delete server (also edits the server), 16 Manage admins,
     /// 32 Mention everyone and roles (`@everyone`, `@here` and every role), 64 View audit log,
-    /// 128 Timeout members, 256 Manage webhooks.
+    /// 128 Timeout members, 256 Manage webhooks, 512 Manage reports (see and act on reports in the
+    /// server).
     #[schema(example = 6)]
     pub perms: i64,
     /// Anyone who can send in a channel may mention the role with `@name`. Otherwise only members
