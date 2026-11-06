@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, type MouseEvent, type ReactNode } from 'react'
 import { Check, Ellipsis, ListChecks, SquareCheckBig, X } from 'lucide-react'
-import { useStore, type ContextMenuItem } from '../lib/store'
+import { useStore } from '../lib/store'
 import { isSelected, selectionLabel, selectable } from '../lib/selection'
 import {
   selectionActions,
@@ -61,18 +61,6 @@ export const openSelectionMenu = (scope: string | null, m: Message, x: number, y
   const items = selectionMenuItems(selectionActions(s, m.author))
   s.openContextMenu(x, y, items)
   return true
-}
-
-// "Select Message" for the message menu and the long-press sheet.
-export const selectMenuItem = (scope: string | null, m: Message): ContextMenuItem | null => {
-  const s = useStore.getState()
-  if (!scope || !s.me || s.guest) return null
-  if (!selectable(m, canDeleteIn(s, scope, m))) return null
-  return {
-    label: 'Select Message',
-    icon: SquareCheckBig,
-    action: () => useStore.getState().startSelection(scope, m),
-  }
 }
 
 // A message row that can be picked: file-manager clicks outside the mode (a click sets the

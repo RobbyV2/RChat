@@ -17,6 +17,9 @@ type SystemRow = Pick<Message, 'id' | 'kind'>
 
 export const isSystem = (m: Pick<Message, 'kind'>) => m.kind === 'join' || m.kind === 'leave'
 
+// A pin or join/leave line: its menu offers delete, select and its id only.
+export const isNotice = (m: Pick<Message, 'kind'>) => m.kind === 'pin' || isSystem(m)
+
 // The same message always gets the same line, on every client.
 const template = (m: SystemRow) =>
   m.kind === 'join'

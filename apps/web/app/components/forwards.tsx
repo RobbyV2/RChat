@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Forward, Image as ImageIcon, SendHorizontal } from 'lucide-react'
-import { useMask, useStore, type ContextMenuItem } from '../lib/store'
+import { useMask, useStore } from '../lib/store'
 import { forwardOrigin, forwardPending } from '../lib/forward'
 import type { Message } from '../lib/types'
 import type { ToolbarAction } from './message_toolbar'
@@ -26,12 +26,6 @@ export const forwardAction = (onClick: () => void): ToolbarAction => ({
   label: 'Forward',
   icon: Forward,
   onClick,
-})
-
-export const forwardMenuItem = (action: () => void): ContextMenuItem => ({
-  label: 'Forward',
-  icon: Forward,
-  action,
 })
 
 // The bar above a composer while the forward clipboard has a message. Send forwards it here. X

@@ -849,7 +849,9 @@ test('expand: a row per entry, `<id>_<key>`, in the palette and in the menus the
     ['t_route_a', 'Relay A', 'a.example', Copy, undefined, undefined],
     ['t_route_b', 'Relay B', undefined, Trash2, true, true],
   ])
-  const menu = menuItems(ctxFor(st, m5, 'menu'))
+  // The app's own message actions join this menu too.
+  const relays = () => menuItems(ctxFor(st, m5, 'menu')).filter(i => i.label.startsWith('Relay'))
+  const menu = relays()
   expect(menu.map(i => [i.label, i.subtitle, i.checked, i.radio, i.danger, i.icon])).toEqual([
     ['Relay A', 'a.example', true, true, undefined, Copy],
     ['Relay B', undefined, undefined, undefined, true, Trash2],
@@ -859,7 +861,7 @@ test('expand: a row per entry, `<id>_<key>`, in the palette and in the menus the
   await drain()
   expect(got).toEqual([{ relay: 'b' }, { relay: 'a' }])
   off()
-  expect(menuItems(ctxFor(st, m5, 'menu'))).toEqual([])
+  expect(relays()).toEqual([])
 })
 
 const gone = "That's no longer available"

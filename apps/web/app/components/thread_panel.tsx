@@ -5,14 +5,9 @@ import { MessageSquareText, Trash2 } from 'lucide-react'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { ReactionBar } from './reactions'
 import { readOnly } from '../lib/reactions'
-import {
-  confirmDeleteMessage,
-  myPerms,
-  roleColor,
-  threadKey,
-  useStore,
-  type ContextMenuItem,
-} from '../lib/store'
+import { messageRights } from '../lib/actions/message'
+import { openActionMenu } from '../lib/actions/menu'
+import { confirmDeleteMessage, myPerms, roleColor, threadKey, useStore } from '../lib/store'
 import { Perm, hasPerm, type Message } from '../lib/types'
 import { findById } from '../lib/window'
 import { newSince } from '../lib/lists'
@@ -24,10 +19,8 @@ import {
   OutboxRows,
   mentionRowCls,
   mentionsMe,
-  messageCopyItems,
   reactHeader,
   replyAction,
-  replyMenuItem,
   timeMeta,
   useAuthorMembers,
   useMemberLookup,
@@ -43,23 +36,16 @@ import {
   useScrollAnchor,
 } from './viewport_height'
 import { PanelHeader, useEscape } from './ui'
-import { BlockedList, blockMenuItem } from './blocking'
-import { friendMenuItem } from './friends'
+import { BlockedList } from './blocking'
 import { ReplyPreview } from './replies'
 import { canQuote } from '../lib/replies'
 import { canForward } from '../lib/forward'
-import { ForwardCard, forwardAction, forwardMenuItem } from './forwards'
-import { PollCard, pollMenuItems } from './poll_card'
+import { ForwardCard, forwardAction } from './forwards'
+import { PollCard } from './poll_card'
 import { canEdit as ownEditable } from '../lib/sed'
-import { MessageEditor, editAction, editMenuItem } from './message_editor'
+import { MessageEditor, editAction } from './message_editor'
 import { useMyTimeoutEnds } from './timeout_dialog'
-import {
-  BulkJobBar,
-  Selectable,
-  SelectionBar,
-  openSelectionMenu,
-  selectMenuItem,
-} from './selection'
+import { BulkJobBar, Selectable, SelectionBar, openSelectionMenu } from './selection'
 
 const EMPTY: Message[] = []
 
@@ -156,7 +142,6 @@ export default function ThreadPanel() {
   const loadOlderThread = useStore(s => s.loadOlderThread)
   const loadNewerThread = useStore(s => s.loadNewerThread)
   const jumpToPresent = useStore(s => s.jumpToPresent)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const startReply = useStore(s => s.startReply)
   const startEdit = useStore(s => s.startEdit)
   const copyForward = useStore(s => s.copyForward)
@@ -249,28 +234,14 @@ export default function ThreadPanel() {
   }
 
   const rowMenu = (m: Message) => (x: number, y: number) => {
-    const reply = m.id !== root.id
-    if (reply && openSelectionMenu(key, m, x, y)) return
-    const select = reply ? selectMenuItem(key, m) : null
-    const items: ContextMenuItem[] = []
-    if (canEdit(m)) items.push(editMenuItem(() => editMsg(m)))
-    if (canReply(m)) items.push(replyMenuItem(() => replyTo(m)))
-    if (forwardable(m)) items.push(forwardMenuItem(() => copyForward(m)))
-    items.push(...pollMenuItems(m))
-    if (select) items.push(select)
-    if (m.id !== root.id && canDelete(m))
-      items.push({
-        label: 'Delete Message',
-        danger: true,
-        icon: Trash2,
-        action: () => confirmDeleteMessage(m.id),
-      })
-    const friend = friendMenuItem(m.author)
-    if (friend) items.push(friend)
-    const block = blockMenuItem(m.author)
-    if (block) items.push(block)
-    items.push(...messageCopyItems(m))
-    openContextMenu(x, y, items, canReact ? reactHeader(m, x, y) : undefined)
+    if (m.id !== root.id && openSelectionMenu(key, m, x, y)) return
+    const react = messageRights(useStore.getState(), m, key).react
+    openActionMenu(
+      x,
+      y,
+      { kind: 'message', message: m, list: key },
+      react ? reactHeader(m, x, y) : undefined
+    )
   }
 
   const row = (m: Message) => {

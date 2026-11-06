@@ -1,5 +1,5 @@
 // A person's menu: a member row, someone who interacted, a friend or request row, a sidebar DM's
-// other person, and (until the message menus move) a message's author.
+// other person, and a message's author.
 
 import {
   AtSign,
@@ -28,11 +28,13 @@ import {
   type ContextMenuItem,
 } from '../store'
 import type { RChatState } from '../store_types'
+import { isNotice } from '../system_messages'
 import { Perm, hasPerm, type Member, type UserRef } from '../types'
-import { isWebhookAuthor } from '../webhooks'
+import { isWebhookAuthor, isWebhookMessage } from '../webhooks'
 import { ctxFor } from './ctx'
 import { signedIn } from './global'
 import { itemFor } from './menu'
+import { copiesAll } from './message'
 import { noLongerAvailable } from './registry'
 import type { Action, ActionCtx, MemberWhere } from './types'
 
@@ -45,6 +47,22 @@ const person = (ctx: ActionCtx, ...where: MemberWhere[]): UserRef | null => {
   if (t.kind === 'dm') return where.includes('dm') && t.where === 'sidebar' ? t.dm.other : null
   return null
 }
+
+// A message list: a channel's, a DM's or a thread's.
+type List = 'c' | 'd' | 't'
+
+// The author of a message in one of `lists`, as a signed-in account sees them: never a notice's
+// or a webhook's.
+const author = (ctx: ActionCtx, ...lists: List[]): UserRef | null => {
+  const t = ctx.target
+  if (t.kind !== 'message' || !signedIn(ctx.s)) return null
+  const m = t.message
+  if (isNotice(m) || isWebhookMessage(m)) return null
+  return lists.some(l => t.list.startsWith(l)) ? m.author : null
+}
+
+// In the thread panel, the author's rows come after select and delete.
+const inThread = (ctx: ActionCtx) => ctx.target.kind === 'message' && ctx.target.list[0] === 't'
 
 // Someone else, not a webhook, seen by a signed-in account.
 const someoneElse = (s: RChatState, u: UserRef | null): UserRef | null =>
@@ -74,7 +92,7 @@ const copy = (text: string) => void sharing().copyText(text)
 const blockable = (ctx: ActionCtx): boolean | null => {
   const u = someoneElse(
     ctx.s,
-    person(ctx, 'list', 'interacted', 'friend', 'request', 'author', 'dm')
+    person(ctx, 'list', 'interacted', 'friend', 'request', 'dm') ?? author(ctx, 'c', 'd', 't')
   )
   return u && !!ctx.s.blocked[u.username]
 }
@@ -91,6 +109,8 @@ interface Seat {
   server: string
   user: UserRef
   self: boolean
+  // On a message's author rather than a member list row.
+  message: boolean
   perms: number
   siteAdmin: boolean
   row: Member | undefined
@@ -99,13 +119,20 @@ interface Seat {
   over: boolean
 }
 
-const MOD: MemberWhere[] = ['list', 'author']
+// A member list row, or the author of a message in a channel.
+const seatedAt = (ctx: ActionCtx): { user: UserRef; server: string } | null => {
+  const t = ctx.target
+  if (t.kind === 'member')
+    return t.where === 'list' && t.server !== null ? { user: t.user, server: t.server } : null
+  const user = author(ctx, 'c')
+  return user && ctx.server !== null ? { user, server: ctx.server } : null
+}
 
 const seatOf = (ctx: ActionCtx): Seat | null => {
-  const { s, target } = ctx
-  if (!signedIn(s) || !s.me || target.kind !== 'member' || !MOD.includes(target.where)) return null
-  const { user, server } = target
-  if (server === null) return null
+  const { s } = ctx
+  const at = seatedAt(ctx)
+  if (!signedIn(s) || !s.me || !at) return null
+  const { user, server } = at
   const perms = myPerms(s, server)
   const siteAdmin = s.me.is_site_admin
   const row = memberOf(s, server, user.username)
@@ -113,6 +140,7 @@ const seatOf = (ctx: ActionCtx): Seat | null => {
     server,
     user,
     self: user.username === s.me.username,
+    message: ctx.target.kind === 'message',
     perms,
     siteAdmin,
     row,
@@ -139,8 +167,13 @@ const openTimeout = onSeat(({ server, user }) =>
   get().openDialog({ kind: 'timeout', server, user: userRef(user) })
 )
 
-const timedOut = ({ s, target }: ActionCtx) =>
-  target.kind === 'member' && memberTimeout(s, target.server, target.user.username) !== null
+const timedOut = (ctx: ActionCtx) => {
+  const seat = seatOf(ctx)
+  return !!seat && memberTimeout(ctx.s, seat.server, seat.user.username) !== null
+}
+
+// A message's menu offers admin rows only on someone else's.
+const notOwnMessage = (seat: Seat) => !seat.message || !seat.self
 
 // A role choice's value says what it does: `+<id>` assigns the role, `-<id>` removes it.
 const roleChoices = (ctx: ActionCtx) => {
@@ -163,15 +196,17 @@ export const roleItems = (server: string, user: UserRef): ContextMenuItem[] =>
     ?.submenu ?? []
 
 const onMember = { scope: 'member', targets: ['member'] } as const
+const onMemberOrAuthor = { scope: 'member', targets: ['member', 'message'] } as const
 
 export const memberActions: Action[] = [
   {
     id: 'member_dm',
     title: 'Direct Message',
     icon: MessageCircle,
-    ...onMember,
+    ...onMemberOrAuthor,
     order: 200,
-    available: ctx => signedIn(ctx.s) && person(ctx, 'list', 'interacted') !== null,
+    available: ctx =>
+      signedIn(ctx.s) && (person(ctx, 'list', 'interacted') ?? author(ctx, 'c', 'd')) !== null,
     run: ({ member }) => {
       if (member) void get().startDm(member.username)
     },
@@ -194,7 +229,7 @@ export const memberActions: Action[] = [
     id: 'member_kick',
     title: 'Kick',
     danger: true,
-    ...onMember,
+    ...onMemberOrAuthor,
     order: 400,
     available: moderates(Perm.Kick),
     run: onSeat(({ server, user }) => confirmKick(server, user.username)),
@@ -203,7 +238,7 @@ export const memberActions: Action[] = [
     id: 'member_ban',
     title: 'Ban from server',
     danger: true,
-    ...onMember,
+    ...onMemberOrAuthor,
     order: 410,
     available: moderates(Perm.Kick),
     run: onSeat(({ server, user }) => confirmBan(server, user.username)),
@@ -214,7 +249,7 @@ export const memberActions: Action[] = [
     label: ctx => (timedOut(ctx) ? 'Change Timeout' : 'Time Out'),
     danger: true,
     dangerFor: ctx => !timedOut(ctx),
-    ...onMember,
+    ...onMemberOrAuthor,
     order: 420,
     available: moderates(Perm.TimeoutMembers),
     menuRun: openTimeout,
@@ -224,7 +259,7 @@ export const memberActions: Action[] = [
     id: 'member_timeout_remove',
     title: 'Remove Timeout',
     danger: true,
-    ...onMember,
+    ...onMemberOrAuthor,
     order: 430,
     available: ctx => moderates(Perm.TimeoutMembers)(ctx) && timedOut(ctx),
     run: onSeat(({ server, user }) => void get().removeTimeout(server, user.username)),
@@ -233,35 +268,41 @@ export const memberActions: Action[] = [
     id: 'member_revoke_admin',
     title: 'Revoke Admin',
     danger: true,
-    ...onMember,
+    ...onMemberOrAuthor,
     order: 440,
     available: ctx =>
       may(
         ctx,
         Perm.ManageAdmins,
-        ({ row, perms, siteAdmin, server }) =>
-          !!row?.is_admin &&
-          canRevoke(perms, siteAdmin, row.perms, rolePerms(row, ctx.s.servers[server]?.roles ?? []))
+        seat =>
+          notOwnMessage(seat) &&
+          !!seat.row?.is_admin &&
+          canRevoke(
+            seat.perms,
+            seat.siteAdmin,
+            seat.row.perms,
+            rolePerms(seat.row, ctx.s.servers[seat.server]?.roles ?? [])
+          )
       ),
     run: onSeat(({ server, user }) => revokeAdminFor(server, user.username)),
   },
   {
     id: 'member_promote_admin',
     title: 'Promote to Admin',
-    ...onMember,
+    ...onMemberOrAuthor,
     order: 440,
     available: ctx =>
       may(
         ctx,
         Perm.ManageAdmins,
-        ({ row, perms, siteAdmin }) => !row?.is_admin && canPromote(perms, siteAdmin)
+        seat => notOwnMessage(seat) && !seat.row?.is_admin && canPromote(seat.perms, seat.siteAdmin)
       ),
     run: onSeat(({ server, user }) => void get().grantAdmin(server, user.username)),
   },
   {
     id: 'member_transfer_admin',
     title: 'Transfer Admin',
-    ...onMember,
+    ...onMemberOrAuthor,
     order: 450,
     available: ctx =>
       may(
@@ -275,14 +316,14 @@ export const memberActions: Action[] = [
   {
     id: 'member_roles',
     title: 'Assign Role',
-    ...onMember,
+    ...onMemberOrAuthor,
     order: 460,
     args: [{ kind: 'choice', name: 'role', prompt: 'Role', choices: roleChoices }],
     available: ctx => roleChoices(ctx).length > 0,
     run: (ctx, { role }) => {
       const seat = seatOf(ctx)
       const pick = /^([+-])(\d+)$/.exec(role ?? '')
-      if (!seat || !pick || !roleChoices(ctx).some(c => c.value === role)) {
+      if (!seat || seat.left || !pick || !roleChoices(ctx).some(c => c.value === role)) {
         noLongerAvailable()
         return
       }
@@ -298,11 +339,15 @@ export const memberActions: Action[] = [
     title: 'Add friend',
     icon: UserPlus,
     ...onMember,
-    targets: ['member', 'dm'],
+    targets: ['member', 'dm', 'message'],
     order: 470,
+    orderFor: ctx => (inThread(ctx) ? 520 : 470),
     available: ctx => {
       const { s } = ctx
-      const u = someoneElse(s, person(ctx, 'list', 'interacted', 'author', 'dm'))
+      const u = someoneElse(
+        s,
+        person(ctx, 'list', 'interacted', 'dm') ?? author(ctx, 'c', 'd', 't')
+      )
       return !!u && !s.blocked[u.username] && !known(s, u.username)
     },
     run: ({ member }) => {
@@ -372,8 +417,9 @@ export const memberActions: Action[] = [
     icon: UserX,
     danger: true,
     ...onMember,
-    targets: ['member', 'dm'],
+    targets: ['member', 'dm', 'message'],
     order: 480,
+    orderFor: ctx => (inThread(ctx) ? 530 : 480),
     available: ctx => blockable(ctx) === false,
     run: ({ member }) => {
       if (member) get().askBlock(member)
@@ -384,8 +430,9 @@ export const memberActions: Action[] = [
     title: 'Unblock',
     icon: UserCheck,
     ...onMember,
-    targets: ['member', 'dm'],
+    targets: ['member', 'dm', 'message'],
     order: 480,
+    orderFor: ctx => (inThread(ctx) ? 530 : 480),
     available: ctx => blockable(ctx) === true,
     run: ({ member }) => {
       if (member) void get().unblockUser(member.username, member.display_name)
@@ -395,9 +442,12 @@ export const memberActions: Action[] = [
     id: 'member_copy_id',
     title: 'Copy User ID',
     icon: AtSign,
-    ...onMember,
+    ...onMemberOrAuthor,
     order: 940,
-    available: ctx => signedIn(ctx.s) && person(ctx, 'list', 'interacted', 'friend') !== null,
+    available: ctx =>
+      ctx.target.kind === 'message'
+        ? copiesAll(ctx) && !isWebhookMessage(ctx.target.message)
+        : signedIn(ctx.s) && person(ctx, 'list', 'interacted', 'friend') !== null,
     run: ({ member }) => {
       if (member) copy(member.username)
     },

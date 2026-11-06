@@ -2,14 +2,10 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  AtSign,
   Clock,
-  Copy,
   Hash,
-  Link,
   Lock,
   Menu,
-  MessageCircle,
   MoreVertical,
   MessageSquareText,
   MessagesSquare,
@@ -30,36 +26,21 @@ import {
   Volume2,
   type LucideIcon,
 } from 'lucide-react'
-import {
-  canModerate,
-  canPromote,
-  canRevoke,
-  canTransferTo,
-  memberPerms,
-  rolePerms,
-} from '../lib/rules'
 import { lastOwn, newSince, unreadMark } from '../lib/lists'
 import { escapeMarksRead } from '../lib/follow'
 import { mentionLookups, mentionsUser } from '../lib/mentions'
 import { readOnly } from '../lib/reactions'
 import { slowTitle } from '../lib/slowmode'
 import { canQuote, repliesToMe } from '../lib/replies'
-import { banMenuItem, roleMenuItems, timeoutMenuItems } from '../lib/actions/author'
+import { messageRights } from '../lib/actions/message'
+import { openActionMenu } from '../lib/actions/menu'
 import {
   byUsername,
-  changeableRoles,
   confirmDeleteMessage,
-  confirmKick,
-  confirmTransfer,
-  memberOf,
-  memberState,
-  messageServer,
   myPerms,
-  revokeAdminFor,
   roleColor,
   userRefFor,
   useStore,
-  myRolePerms,
   viewKey,
   allPings,
   groupMentionsMe,
@@ -72,7 +53,7 @@ import { callTone, type CallTone } from '../lib/voice_layout'
 import { callLogInfo } from '../lib/call_choice'
 import { UserAvatar } from './user_avatar'
 import { WebhookBadge } from './webhooks'
-import { isWebhookAuthor, webhookIdOf } from '../lib/webhooks'
+import { isWebhookAuthor } from '../lib/webhooks'
 import { MarkdownMessage } from './markdown_message'
 import { TypingIndicator } from './typing_indicator'
 import { MessageComposer } from './message_composer'
@@ -97,29 +78,24 @@ import { PingBadge, pingLabel } from './ping_badge'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { QuickReactions, ReactionBar, rowAt } from './reactions'
 import { ReplyPreview } from './replies'
-import { MessageEditor, editAction, editMenuItem } from './message_editor'
+import { MessageEditor, editAction } from './message_editor'
 import { canEdit as ownEditable } from '../lib/sed'
 import { canForward } from '../lib/forward'
-import { ForwardCard, forwardAction, forwardMenuItem } from './forwards'
-import { PinNotice, PinsButton, PinsWindow, pinMenuItem, useCanPin } from './pins'
-import { PollCard, pollMenuItems } from './poll_card'
+import { ForwardCard, forwardAction } from './forwards'
+import { PinNotice, PinsButton, PinsWindow } from './pins'
+import { PollCard } from './poll_card'
 import { SystemNotice } from './system_messages'
 import { useMyTimeoutEnds } from './timeout_dialog'
-import { PINS_TITLE, canPin } from '../lib/pins'
-import { isSystem } from '../lib/system_messages'
-import { messageLinkUrl } from '../lib/message_links'
-import { sharing } from '../lib/platform'
-import { messageStampToken } from '../lib/timestamps'
+import { PINS_TITLE } from '../lib/pins'
+import { isNotice, isSystem } from '../lib/system_messages'
 import { MessageTime } from './timestamp'
-import { BlockedComposer, BlockedList, blockMenuItem } from './blocking'
-import { friendMenuItem } from './friends'
+import { BlockedComposer, BlockedList } from './blocking'
 import {
   BulkJobBar,
   SelectButton,
   Selectable,
   SelectionBar,
   openSelectionMenu,
-  selectMenuItem,
   useSelectionKeys,
 } from './selection'
 import { p2pMarkAll } from '../lib/p2p/app'
@@ -281,8 +257,6 @@ export function CallLogLine({
 
 const EMPTY_OUT: Outgoing[] = []
 
-const copy = (text: string) => void navigator.clipboard.writeText(text)
-
 export const avatarTriggerCls =
   'block cursor-pointer rounded-full outline-offset-2 hover:opacity-85 focus-visible:outline-2 focus-visible:outline-primary'
 export const nameTriggerCls =
@@ -370,12 +344,6 @@ export const replyAction = (onClick: () => void): ToolbarAction => ({
   label: 'Reply',
   icon: Reply,
   onClick,
-})
-
-export const replyMenuItem = (action: () => void): ContextMenuItem => ({
-  label: 'Reply',
-  icon: Reply,
-  action,
 })
 
 export function useAuthorMembers(server: string | null, key: string) {
@@ -529,31 +497,6 @@ const MessageRow = memo(function MessageRow({
   )
 })
 
-export const messageCopyItems = (m: Message): ContextMenuItem[] => {
-  const link = messageLinkUrl(m, messageServer(useStore.getState(), m))
-  return [
-    ...(m.content.trim()
-      ? [{ label: 'Copy Text', icon: Copy, action: () => copy(m.content) }]
-      : []),
-    ...(link
-      ? [{ label: 'Copy Message Link', icon: Link, action: () => void sharing().copyText(link) }]
-      : []),
-    {
-      label: 'Copy Timestamp',
-      icon: Clock,
-      action: () => void sharing().copyText(messageStampToken(m.created_at)),
-    },
-    { label: 'Copy Message ID', icon: Hash, action: () => copy(String(m.id)) },
-    isWebhookAuthor(m.author.username)
-      ? {
-          label: 'Copy Webhook ID',
-          icon: AtSign,
-          action: () => copy(String(webhookIdOf(m.author.username) ?? '')),
-        }
-      : { label: 'Copy User ID', icon: AtSign, action: () => copy(m.author.username) },
-  ]
-}
-
 export const reactHeader = (m: Message, x: number, y: number): ContextMenuOptions => ({
   header: <QuickReactions m={m} anchor={rowAt(x, y)} />,
 })
@@ -676,17 +619,11 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const jumpTo = useStore(s => s.jumpTo)
   const startReply = useStore(s => s.startReply)
   const startEdit = useStore(s => s.startEdit)
-  const copyForward = useStore(s => s.copyForward)
   const editingId = useStore(s =>
     s.editing && s.view && s.editing.key === viewKey(s.view) ? s.editing.id : null
   )
   const dismissUnread = useStore(s => s.dismissUnread)
   const askMarkAllRead = useStore(s => s.askMarkAllRead)
-  const startDm = useStore(s => s.startDm)
-  const grantAdmin = useStore(s => s.grantAdmin)
-  const openDialog = useStore(s => s.openDialog)
-  const openContextMenu = useStore(s => s.openContextMenu)
-  const openThread = useStore(s => s.openThread)
   const openSearch = useStore(s => s.openSearch)
   const uploadFile = useStore(s => s.uploadFile)
   const canAttach = useStore(s => s.settings.asset_uploads || s.settings.p2p_attachments)
@@ -782,139 +719,18 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   }
 
   const messageMenu = (msg: Message, x: number, y: number) => {
-    if (openSelectionMenu(scope, msg, x, y)) return
-    const select = selectMenuItem(scope, msg)
-    if (!me) {
-      openContextMenu(x, y, messageCopyItems(msg))
-      return
-    }
-    if (msg.kind === 'pin' || isSystem(msg)) {
-      openContextMenu(x, y, [
-        ...(canDelete(msg)
-          ? [
-              {
-                label: 'Delete Message',
-                danger: true,
-                icon: Trash2,
-                action: () => confirmDeleteMessage(msg.id),
-              },
-            ]
-          : []),
-        ...(select ? [select] : []),
-        { label: 'Copy Message ID', icon: Hash, action: () => copy(String(msg.id)) },
-      ])
-      return
-    }
-    const { author } = msg
-    const self = author.username === me.username
-    const hook = isWebhookAuthor(author.username)
-    const items: ContextMenuItem[] = hook
-      ? []
-      : [
-          {
-            label: 'Direct Message',
-            icon: MessageCircle,
-            action: () => void startDm(author.username),
-          },
-        ]
-    if (view?.kind === 'channel') {
-      items.unshift({
-        label: 'Reply in thread',
-        icon: MessageSquareText,
-        action: () => void openThread(msg),
-      })
-    }
-    if (forwardable(msg)) items.unshift(forwardMenuItem(() => copyForward(msg)))
-    if (canReact && canQuote(msg)) items.unshift(replyMenuItem(() => replyTo(msg)))
-    if (canEdit(msg)) items.unshift(editMenuItem(() => editMsg(msg)))
-    if (pinRights && canPin(msg)) items.push(pinMenuItem(msg))
-    items.push(...pollMenuItems(msg))
-    if (view?.kind === 'channel' && !self && !hook) {
-      const target = memberOf(useStore.getState(), view.server, author.username)
-      const left = memberState(useStore.getState(), view.server, author.username) === null
-      if (
-        !left &&
-        hasPerm(perms, Perm.Kick) &&
-        canModerate(perms, me.is_site_admin, memberPerms(target, detail?.roles ?? []))
-      )
-        items.push(
-          {
-            label: 'Kick',
-            danger: true,
-            action: () => confirmKick(view.server, author.username),
-          },
-          ...[banMenuItem(view.server, author.username)].filter(i => i !== null)
-        )
-      if (
-        !left &&
-        hasPerm(perms, Perm.TimeoutMembers) &&
-        canModerate(perms, me.is_site_admin, memberPerms(target, detail?.roles ?? []))
-      )
-        items.push(...timeoutMenuItems(view.server, author))
-      if (hasPerm(perms, Perm.ManageAdmins)) {
-        if (target?.is_admin) {
-          if (
-            canRevoke(perms, me.is_site_admin, target.perms, rolePerms(target, detail?.roles ?? []))
-          )
-            items.push({
-              label: 'Revoke Admin',
-              action: () => revokeAdminFor(view.server, author.username),
-            })
-        } else if (canPromote(perms, me.is_site_admin))
-          items.push({
-            label: 'Promote to Admin',
-            action: () => void grantAdmin(view.server, author.username),
-          })
-        if (
-          canTransferTo(
-            perms,
-            me.is_site_admin,
-            target?.perms ?? 0,
-            myRolePerms(useStore.getState(), view.server)
-          )
-        )
-          items.push({
-            label: 'Transfer Admin',
-            action: () => confirmTransfer(view.server, author.username),
-          })
-      }
-    }
-    if (
-      view?.kind === 'channel' &&
-      !hook &&
-      hasPerm(perms, Perm.ManageAdmins) &&
-      changeableRoles(useStore.getState(), view.server, author.username).length
+    if (!scope || openSelectionMenu(scope, msg, x, y)) return
+    const react = !isNotice(msg) && messageRights(useStore.getState(), msg, scope).react
+    openActionMenu(
+      x,
+      y,
+      { kind: 'message', message: msg, list: scope },
+      react ? reactHeader(msg, x, y) : undefined
     )
-      items.push({
-        label: 'Assign Role',
-        action: () => openContextMenu(x, y, roleMenuItems(view.server, author.username)),
-      })
-    const friend = friendMenuItem(author)
-    if (friend && !self) items.push(friend)
-    const block = blockMenuItem(author)
-    if (block) items.push(block)
-    if (me.is_site_admin && !self && !hook) {
-      items.push({
-        label: 'Ban site-wide',
-        danger: true,
-        action: () => openDialog({ kind: 'ban_confirm', username: author.username }),
-      })
-    }
-    if (select) items.push(select)
-    if (canDelete(msg))
-      items.push({
-        label: 'Delete Message',
-        danger: true,
-        icon: Trash2,
-        action: () => confirmDeleteMessage(msg.id),
-      })
-    items.push(...messageCopyItems(msg))
-    openContextMenu(x, y, items, canReact ? reactHeader(msg, x, y) : undefined)
   }
 
   const canUnreact = me !== null && !guest
   const timedOutEnds = useMyTimeoutEnds(view?.kind === 'channel' ? view.server : null)
-  const pinRights = useCanPin()
   const canReact =
     canUnreact &&
     (view?.kind === 'dm' ||

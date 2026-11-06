@@ -2,10 +2,10 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ChartColumn, EyeOff, FileText, Pin, PinOff, X } from 'lucide-react'
+import { ChartColumn, EyeOff, FileText, Pin, X } from 'lucide-react'
 import { useMediaSrc } from '../lib/media_src'
 import { PINS_TITLE, noPinsText, pinPlace } from '../lib/pins'
-import { myPerms, useStore, viewKey, type ContextMenuItem } from '../lib/store'
+import { myPerms, useStore, viewKey } from '../lib/store'
 import { Perm, hasPerm, type Message } from '../lib/types'
 import { longPress, useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
@@ -32,19 +32,6 @@ export function useCanPin() {
   })
   return can && !timedOut
 }
-
-export const pinMenuItem = (m: Message): ContextMenuItem =>
-  m.pinned_at
-    ? {
-        label: 'Unpin Message',
-        icon: PinOff,
-        action: () => void useStore.getState().unpinMessage(m.id),
-      }
-    : {
-        label: 'Pin Message',
-        icon: Pin,
-        action: () => void useStore.getState().pinMessage(m.id),
-      }
 
 export const confirmUnpin = (unpin: () => void) =>
   useStore.getState().askConfirm({

@@ -2,16 +2,11 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { UserX } from 'lucide-react'
-import { authorItem } from '../lib/actions/author'
 import { useStore } from '../lib/store'
 import { blockedLabel, blockedRuns, type BlockedRun } from '../lib/blocks'
 import type { Message, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { fieldCls, FieldError, filledBtn, Masked, Sentinel, textBtn } from './ui'
-
-// "Block" or "Unblock" for a message author's menu (until the message menus move to the registry).
-export const blockMenuItem = (user: UserRef) =>
-  authorItem('member_block', user) ?? authorItem('member_unblock', user)
 
 // Collapsed runs of blocked users' messages. A run opens with Show, or by itself when a jump
 // targets one of its messages.

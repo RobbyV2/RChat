@@ -10,17 +10,8 @@ import {
   useSyncExternalStore,
   type KeyboardEvent,
 } from 'react'
-import {
-  AtSign,
-  Bell,
-  Check,
-  CheckCheck,
-  ExternalLink,
-  Hash,
-  MessageSquare,
-  UserPlus,
-  X,
-} from 'lucide-react'
+import { AtSign, Bell, Check, CheckCheck, Hash, MessageSquare, UserPlus, X } from 'lucide-react'
+import { openActionMenu } from '../lib/actions/menu'
 import { useMask, useStore } from '../lib/store'
 import { allPings } from '../lib/selectors'
 import {
@@ -233,19 +224,14 @@ function Row({
 }) {
   const mask = useMask()
   const streamer = useStore(s => s.streamer)
-  const openMenu = useStore(s => s.openContextMenu)
   const snippet = inboxSnippet(entry, streamer, mask)
   const menu = longPress((x, y) =>
-    openMenu(x, y, [
-      {
-        label: entry.where.kind === 'friends' ? 'Open friends' : 'Jump to message',
-        icon: ExternalLink,
-        action: () => onOpen(entry),
-      },
-      ...(entry.unread
-        ? [{ label: 'Mark as read', icon: Check, action: () => onRead(entry) }]
-        : []),
-    ])
+    openActionMenu(x, y, {
+      kind: 'inbox',
+      entry,
+      open: () => onOpen(entry),
+      read: () => onRead(entry),
+    })
   )
   return (
     <li className="group relative">

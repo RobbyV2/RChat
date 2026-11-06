@@ -14,7 +14,6 @@ import {
   UserX,
   X,
 } from 'lucide-react'
-import { authorItem, banMenuItem, roleMenuItems, timeoutMenuItems } from '../actions/author'
 import { ctxFor, paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { roleItems } from '../actions/member'
@@ -22,15 +21,13 @@ import { menuItems, openActionMenu } from '../actions/menu'
 import { paletteCommands } from '../actions/palette'
 import { allActions } from '../actions/registry'
 import type { MemberWhere, Target } from '../actions/types'
-import { blockMenuItem } from '../../components/blocking'
-import { friendMenuItem } from '../../components/friends'
 import { emptyLayout } from '../nav_layout'
 import { EMPTY_NOTIFY, setLevel, setMute } from '../notify'
 import { setSharing, sharing } from '../platform'
 import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
 import type { RChatState } from '../store_types'
 import { Perm, type DmSummary, type Member, type UserRef } from '../types'
-import { drain, me, member, paged, role, serverDetail, user } from './fixtures'
+import { drain, me, member, msg, paged, role, serverDetail, user } from './fixtures'
 
 const realSharing = sharing()
 const g = globalThis as { window?: unknown }
@@ -84,7 +81,13 @@ const state = (o: State = {}) => {
           is_site_admin: !!o.siteAdmin,
           servers: [{ name: 's', display_name: 'Space', creator: null, is_admin: !!o.owner }],
         }),
-    servers: { s: serverDetail('s', { display_name: 'Space', roles }) },
+    servers: {
+      s: serverDetail('s', {
+        display_name: 'Space',
+        roles,
+        channels: [{ id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 }],
+      }),
+    },
     members: {
       s: paged([
         member('alice', { role_ids: [1], is_admin: !!o.owner }),
@@ -121,6 +124,12 @@ const dmAt = (dm: DmSummary, where: 'sidebar' | 'home' = 'sidebar'): Target => (
   kind: 'dm',
   dm,
   where,
+})
+// A message by `author` in #general, as its menu sees it.
+const said = (author: UserRef = bobby): Target => ({
+  kind: 'message',
+  message: msg(1, { author }),
+  list: 'c1',
 })
 const items = (t: Target) => menuItems(ctxFor(useStore.getState(), t, 'menu'))
 const labels = (t: Target) => items(t).map(i => i.label)
@@ -685,7 +694,7 @@ test('a role row whose role was given or taken since it opened runs nothing and 
     })
   const surfaces = [
     () => row(at('bob'), 'Assign Role')!.submenu!,
-    () => roleMenuItems('s', 'bob'),
+    () => row(said(), 'Assign Role')!.submenu!,
     () => roleItems('s', bobby),
   ]
   const pick = (rows: ContextMenuItem[], label: string) => rows.find(i => i.label === label)!
@@ -734,9 +743,9 @@ test('moderation is not offered on an author who left', () => {
     members: { s: paged([member('alice', { role_ids: [1], is_admin: true })]) },
     memberInfo: { s: { bob: null } },
   })
-  expect(banMenuItem('s', 'bob')).toBeNull()
-  expect(timeoutMenuItems('s', bobby)).toEqual([])
-  expect(authorItem('member_kick', bobby, 's')).toBeNull()
+  expect(row(said(), 'Ban from server') ?? null).toBeNull()
+  expect(labels(said()).filter(l => l.endsWith('Timeout') || l === 'Time Out')).toEqual([])
+  expect(row(said(), 'Kick') ?? null).toBeNull()
 })
 
 test('member and DM actions stay out of the palette until it has a target (rule 10)', () => {
@@ -774,33 +783,21 @@ test('a DM target carries its list key and its other person', () => {
   expect([c.dm?.id, c.list, c.member?.username]).toEqual([9, 'd9', 'bob'])
 })
 
-test('the helpers the message panes still use keep their rows (until C4)', () => {
+test("a message author's rows are the member rows", () => {
+  const timeouts = (t: Target) => labels(t).filter(l => l.endsWith('Timeout') || l === 'Time Out')
+  const person = (t: Target) => labels(t).filter(l => /^(Add friend|Block|Unblock)$/.test(l))
   state({ perms: Perm.Kick | Perm.TimeoutMembers | Perm.ManageAdmins })
-  expect(banMenuItem('s', 'bob')?.label).toBe('Ban from server')
-  expect(timeoutMenuItems('s', bobby).map(i => i.label)).toEqual(['Time Out'])
-  expect(roleMenuItems('s', 'bob').map(i => i.label)).toEqual([
-    'Assign r1',
-    'Assign Moderator',
-    'Remove Helper',
-  ])
-  expect(roleItems('s', bobby).map(i => i.label)).toEqual(
-    roleMenuItems('s', 'bob').map(i => i.label)
-  )
-  expect([friendMenuItem(bobby)?.label, blockMenuItem(bobby)?.label]).toEqual([
-    'Add friend',
-    'Block',
-  ])
+  expect(row(said(), 'Ban from server')?.label).toBe('Ban from server')
+  expect(timeouts(said())).toEqual(['Time Out'])
+  const roles = row(said(), 'Assign Role')!.submenu!.map(i => i.label)
+  expect(roles).toEqual(['Assign r1', 'Assign Moderator', 'Remove Helper'])
+  expect(roleItems('s', bobby).map(i => i.label)).toEqual(roles)
+  expect(person(said())).toEqual(['Add friend', 'Block'])
   state({ owner: true, timedOut: true, blocked: ['bob'] })
-  expect(timeoutMenuItems('s', bobby).map(i => i.label)).toEqual([
-    'Change Timeout',
-    'Remove Timeout',
-  ])
-  expect([friendMenuItem(bobby), blockMenuItem(bobby)?.label]).toEqual([null, 'Unblock'])
-  expect([friendMenuItem(user('alice')), blockMenuItem(user('alice'))]).toEqual([null, null])
+  expect(timeouts(said())).toEqual(['Change Timeout', 'Remove Timeout'])
+  expect(person(said())).toEqual(['Unblock'])
+  expect(person(said(user('alice')))).toEqual([])
   state({ guest: true })
-  expect([friendMenuItem(bobby), blockMenuItem(bobby), banMenuItem('s', 'bob')]).toEqual([
-    null,
-    null,
-    null,
-  ])
+  expect(person(said())).toEqual([])
+  expect(row(said(), 'Ban from server') ?? null).toBeNull()
 })

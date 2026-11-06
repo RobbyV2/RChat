@@ -12,13 +12,21 @@ import {
 } from '../friends'
 import { mergePings, pingCount } from '../pings'
 import { dmPingCount } from '../selectors'
-import { friendMenuItem } from '../../components/friends'
-import type { Friend, FriendRequest, Ping, WsEvent } from '../types'
-import { me, memoryStorage, until, user } from './fixtures'
+import { ctxFor } from '../actions/ctx'
+import { registerAppActions } from '../actions/index'
+import { itemFor } from '../actions/menu'
+import type { Friend, FriendRequest, Ping, UserRef, WsEvent } from '../types'
+import { me, memoryStorage, msg, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
 const st = () => useStore.getState()
+// The "Add friend" row of a menu on a message by `author`.
+const friendMenuItem = (author: UserRef) => {
+  registerAppActions()
+  const target = { kind: 'message' as const, message: msg(1, { author }), list: 'c1' }
+  return itemFor('member_friend_add', ctxFor(st(), target, 'menu'))
+}
 const dispatch = (ev: WsEvent) => st().applyWsEvent(ev)
 const friend = (name: string, online = false, display = name): Friend => ({
   user: user(name, { display_name: display }),

@@ -95,15 +95,27 @@ export const guardAction = <T>(a: Action, f: () => T, fallback: T): T => {
 export const isAvailable = (a: Action, ctx: ActionCtx) =>
   guardAction(a, () => a.available(ctx), false)
 
-const byOrder = (list: Action[]) => list.sort((a, b) => (a.order ?? 500) - (b.order ?? 500))
+const orderOf = (a: Action, ctx: ActionCtx) =>
+  a.orderFor ? guardAction(a, () => a.orderFor!(ctx), a.order ?? 500) : (a.order ?? 500)
+
+const byOrder = (list: Action[], ctx: ActionCtx) => {
+  const at = new Map(list.map(a => [a, orderOf(a, ctx)]))
+  return list.sort((a, b) => at.get(a)! - at.get(b)!)
+}
 
 export const actionsFor = (ctx: ActionCtx, scopes?: Scope | readonly Scope[]): Action[] => {
   const want = scopes === undefined ? null : typeof scopes === 'string' ? [scopes] : scopes
-  return byOrder(allActions().filter(a => (!want || want.includes(a.scope)) && isAvailable(a, ctx)))
+  return byOrder(
+    allActions().filter(a => (!want || want.includes(a.scope)) && isAvailable(a, ctx)),
+    ctx
+  )
 }
 
 export const targetActions = (ctx: ActionCtx): Action[] =>
-  byOrder(allActions().filter(a => a.targets?.includes(ctx.target.kind) && isAvailable(a, ctx)))
+  byOrder(
+    allActions().filter(a => a.targets?.includes(ctx.target.kind) && isAvailable(a, ctx)),
+    ctx
+  )
 
 export const labelOf = (a: Action, ctx: ActionCtx): string =>
   a.label ? guardAction(a, () => a.label!(ctx), a.title) : a.title

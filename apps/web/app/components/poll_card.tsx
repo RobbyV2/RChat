@@ -12,9 +12,9 @@ import {
   Plus,
   Smile,
   Trophy,
-  Users,
   X,
 } from 'lucide-react'
+import { managesPoll } from '../lib/actions/message'
 import { api } from '../lib/instances'
 import {
   KIND_HINTS,
@@ -28,16 +28,18 @@ import {
   moveRank,
   optionLabel,
   percent,
+  pollClosed,
   runoffRows,
   sameBallot,
   timeLeft,
   toggleChoice,
   toggleRank,
   votersLabel,
+  votersShown,
   writtenKind,
 } from '../lib/polls'
-import { messageServer, myPerms, myTimeoutEnds, useStore, type ContextMenuItem } from '../lib/store'
-import { Perm, hasPerm, type Message, type Poll, type PollVoter } from '../lib/types'
+import { useStore } from '../lib/store'
+import type { Message, Poll, PollVoter } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
 import { Dialog, fieldCls, FieldError, filledBtn, Masked, Sentinel, textBtn } from './ui'
 import { UserAvatar } from './user_avatar'
@@ -56,37 +58,10 @@ function useNow(on: boolean) {
   return now
 }
 
-// The author, or in a channel someone with Manage messages, may close and reopen. Nobody while
-// timed out in the poll's server.
-export const canManagePoll = (m: Message) => {
-  const s = useStore.getState()
-  if (!s.me || s.guest || m.kind !== 'poll' || m.poll?.snapshot) return false
-  const server = messageServer(s, m)
-  if (myTimeoutEnds(s, server) !== null) return false
-  if (m.author.username === s.me.username) return true
-  return server !== null && hasPerm(myPerms(s, server), Perm.DeleteMessages)
-}
-
-const votersShown = (p: Poll | null | undefined) =>
-  !!p && !p.snapshot && !p.anonymous && p.results !== null && p.voters > 0
+export const canManagePoll = (m: Message) => managesPoll(useStore.getState(), m)
 
 const openVoters = (m: Message) =>
   useStore.getState().openDialog({ kind: 'poll_voters', message: m })
-
-export const pollMenuItems = (m: Message): ContextMenuItem[] => {
-  const p = m.poll
-  if (m.kind !== 'poll' || !p) return []
-  const items: ContextMenuItem[] = []
-  const { closePoll, reopenPoll } = useStore.getState()
-  if (votersShown(p)) items.push({ label: 'View Votes', icon: Users, action: () => openVoters(m) })
-  if (canManagePoll(m))
-    items.push(
-      p.closed || (p.closes_at !== null && p.closes_at <= Date.now() / 1000)
-        ? { label: 'Reopen Poll', icon: LockOpen, action: () => void reopenPoll(m.id) }
-        : { label: 'Close Poll', icon: Lock, action: () => void closePoll(m.id) }
-    )
-  return items
-}
 
 function Bar({ share, mine, lead }: { share: number; mine: boolean; lead: boolean }) {
   return (
@@ -587,7 +562,7 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
   const now = useNow(!!poll && !poll.closed && poll.closes_at !== null)
   if (!poll) return null
   const static_ = !!poll.snapshot
-  const closed = poll.closed || (poll.closes_at !== null && poll.closes_at <= now)
+  const closed = pollClosed(poll, now)
   const voted = !!poll.mine?.length
   const live =
     !static_ &&

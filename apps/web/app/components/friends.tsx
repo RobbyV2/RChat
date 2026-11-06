@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Check, MessageCircle, MoreVertical, UserMinus, UserPlus, Users, X } from 'lucide-react'
 import { ApiError } from '../lib/api'
 import { api } from '../lib/instances'
-import { authorItem } from '../lib/actions/author'
 import { messageFriend } from '../lib/actions/member'
 import { openActionMenu } from '../lib/actions/menu'
 import type { Target } from '../lib/actions/types'
@@ -42,9 +41,6 @@ import {
   textBtn,
   useEscape,
 } from './ui'
-
-// "Add friend" for a message author's menu (until the message menus move to the registry).
-export const friendMenuItem = (user: UserRef) => authorItem('member_friend_add', user)
 
 // The unseen friend pings (requests and accepted requests), for badges.
 export const useFriendPings = () => useStore(s => scopePings(badgePings(s), FRIENDS_SCOPE))

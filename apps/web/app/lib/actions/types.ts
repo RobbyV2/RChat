@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
+import type { InboxEntry } from '../inbox'
 import type { Folder } from '../nav_layout'
 import type { PaletteGroup } from '../palette'
 import type { RChatState } from '../store_types'
@@ -35,6 +36,12 @@ export type Target =
   | { kind: 'dm'; dm: DmSummary; where: 'sidebar' | 'home' }
   // The rail's home button and the instance badge.
   | { kind: 'home' }
+  // A link preview under a message; `banner`: it shows an image.
+  | { kind: 'embed'; message: Message; ord: number; banner: boolean }
+  // A timestamp in a message's text: `ts` in milliseconds, `token` as written.
+  | { kind: 'timestamp'; ts: number; token: string }
+  // An inbox row, with its panel's open and mark-read.
+  | { kind: 'inbox'; entry: InboxEntry; open(): void; read(): void }
 
 export interface ActionCtx {
   s: RChatState
@@ -120,6 +127,8 @@ export interface Action<A extends Args = Args> {
   name?: boolean
   // Menu position, default 500; ties keep registration order.
   order?: number
+  // The position in this context's menu; `order` stays the static one.
+  orderFor?(ctx: ActionCtx): number
   group?: PaletteGroup
   // A built-in shortcut, as in SHORTCUTS.
   hint?: string

@@ -1,9 +1,7 @@
 'use client'
 
 import { useEffect, useSyncExternalStore } from 'react'
-import { Clock } from 'lucide-react'
-import { sharing } from '../lib/platform'
-import { useStore } from '../lib/store'
+import { openActionMenu } from '../lib/actions/menu'
 import { daySnapshot, snapshot, subscribe, subscribeDay, track } from '../lib/stamp_clock'
 import { formatStamp, fullTime, messageTime, type StampStyle } from '../lib/timestamps'
 import { longPress } from './context_menu'
@@ -20,16 +18,10 @@ export function Stamp({ ms, style, token }: { ms: number; style: StampStyle; tok
   return (
     <time
       {...longPress((x, y) =>
-        useStore.getState().openContextMenu(
+        openActionMenu(
           x,
           y,
-          [
-            {
-              label: 'Copy Timestamp',
-              icon: Clock,
-              action: () => void sharing().copyText(token),
-            },
-          ],
+          { kind: 'timestamp', ts: ms, token },
           { header: <span className="text-sm text-on-surface">{full}</span> }
         )
       )}

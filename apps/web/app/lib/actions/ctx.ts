@@ -2,14 +2,25 @@ import { memberState, messageServer } from '../selectors'
 import { OPT_BASE } from '../slices/messages'
 import { useStore } from '../store'
 import type { RChatState } from '../store_types'
-import type { Channel, DmSummary } from '../types'
+import type { Channel, DmSummary, Message } from '../types'
 import { threadKey, viewKey } from '../view'
+import { isWebhookMessage } from '../webhooks'
 import { bindActionHost } from './registry'
 import type { ActionCtx, Target, Via } from './types'
 
 // The open thread's list, else the open channel's or DM's.
 export const currentList = (s: RChatState): string | null =>
   s.panel?.kind === 'thread' ? threadKey(s.panel.root.id) : s.view ? viewKey(s.view) : null
+
+// The list a message belongs to: its thread's, else its channel's or DM's.
+export const messageList = (m: Message): string | null =>
+  m.thread_root_id !== null
+    ? threadKey(m.thread_root_id)
+    : m.dm_id !== null
+      ? viewKey({ kind: 'dm', dmId: m.dm_id })
+      : m.channel_id !== null
+        ? `c${m.channel_id}`
+        : null
 
 interface Place {
   server: string | null
@@ -34,7 +45,8 @@ const openPlace = (s: RChatState): Place => {
 
 const placeOf = (s: RChatState, t: Target): Place => {
   switch (t.kind) {
-    case 'message': {
+    case 'message':
+    case 'embed': {
       const server = messageServer(s, t.message)
       return {
         server,
@@ -57,6 +69,8 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'selection':
     case 'folder':
     case 'home':
+    case 'timestamp':
+    case 'inbox':
       return openPlace(s)
   }
 }
@@ -66,7 +80,7 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'member':
       return t.user
     case 'message':
-      return t.message.webhook ? null : t.message.author
+      return isWebhookMessage(t.message) ? null : t.message.author
     case 'dm':
       return t.dm.other
     case 'none':
@@ -76,6 +90,9 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'channel':
     case 'category':
     case 'home':
+    case 'embed':
+    case 'timestamp':
+    case 'inbox':
       return s.profile?.user ?? null
   }
 }
@@ -87,6 +104,8 @@ const listOf = (s: RChatState, t: Target) => {
       return t.list
     case 'dm':
       return viewKey({ kind: 'dm', dmId: t.dm.id })
+    case 'embed':
+      return messageList(t.message) ?? currentList(s)
     case 'none':
     case 'member':
     case 'server':
@@ -94,6 +113,8 @@ const listOf = (s: RChatState, t: Target) => {
     case 'channel':
     case 'category':
     case 'home':
+    case 'timestamp':
+    case 'inbox':
       return currentList(s)
   }
 }
@@ -104,7 +125,7 @@ export const ctxFor = (s: RChatState, target: Target, via: Via): ActionCtx => ({
   target,
   ...placeOf(s, target),
   list: listOf(s, target),
-  message: target.kind === 'message' ? target.message : null,
+  message: target.kind === 'message' || target.kind === 'embed' ? target.message : null,
   member: memberOf(s, target),
 })
 
@@ -150,11 +171,21 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
       const dm = dmById(s, t.dm.id)
       return dm && { ...t, dm }
     }
+    case 'embed': {
+      const list = messageList(t.message)
+      if (!list) return t
+      const held = freshTarget(s, { kind: 'message', message: t.message, list })
+      if (held?.kind !== 'message') return null
+      const e = held.message.embeds.find(x => x.ord === t.ord)
+      return e ? { ...t, message: held.message, banner: t.banner && !e.banner_removed } : null
+    }
     case 'none':
     case 'selection':
     case 'server':
     case 'folder':
     case 'home':
+    case 'timestamp':
+    case 'inbox':
       return t
   }
 }

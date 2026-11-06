@@ -69,14 +69,8 @@ import { previewPath, saveGuestMedia, useMediaSrc, usePreviewSrc } from '../lib/
 import { expiryText, sameOriginImage } from '../lib/rules'
 import { remarkMask } from '../lib/profanity'
 import { CLOSE, OPEN, markSpoilers, spoilerParts, unmarkSpoilers } from '../lib/spoilers'
-import {
-  groupPills,
-  knownMentions,
-  useMask,
-  userRefFor,
-  useStore,
-  type ContextMenuItem,
-} from '../lib/store'
+import { openActionMenu } from '../lib/actions/menu'
+import { groupPills, knownMentions, useMask, userRefFor, useStore } from '../lib/store'
 import { useChatSource } from './chat_source'
 import type { Embed, Message, MessageMedia, UserRef } from '../lib/types'
 import { longPress } from './context_menu'
@@ -994,8 +988,6 @@ function EmbedCard({
   message: Message
   canDelete: boolean
 }) {
-  const deleteEmbed = useStore(s => s.deleteEmbed)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const { ord, site_name, title, description, image_url, banner_removed } = embed
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const path = banner_removed ? null : previewPath(message.id, ord, image_url)
@@ -1004,26 +996,8 @@ function EmbedCard({
   const mask = useMask()
   const url = useMemo(() => postedUrl(message.content, embed.url), [message.content, embed.url])
 
-  const menu = (x: number, y: number) => {
-    const items: ContextMenuItem[] = [
-      {
-        label: 'Remove embed',
-        danger: true,
-        action: () => void deleteEmbed(message.id, ord, false),
-      },
-    ]
-    if (path !== null) {
-      items.push({ label: 'Remove banner', action: () => void deleteEmbed(message.id, ord, true) })
-    }
-    items.push({
-      label: 'Remove all embeds',
-      danger: true,
-      action: () => {
-        for (const e of message.embeds) void deleteEmbed(message.id, e.ord, false)
-      },
-    })
-    openContextMenu(x, y, items)
-  }
+  const menu = (x: number, y: number) =>
+    openActionMenu(x, y, { kind: 'embed', message, ord, banner: path !== null })
 
   return (
     <div
@@ -1059,6 +1033,7 @@ function EmbedCard({
       {canDelete && (
         <button
           title="Embed options"
+          aria-label="Embed options"
           onClick={e => menu(e.clientX, e.clientY)}
           className="absolute top-1.5 right-1.5 rounded-full p-1 text-on-surface-variant opacity-0 group-focus-within/embed:opacity-100 group-hover/embed:opacity-100 hover:bg-surface-container-highest max-md:opacity-100"
         >
