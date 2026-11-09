@@ -2,7 +2,7 @@ name: mobile
 
 # Android and iOS builds. The native projects are generated here from apps/desktop/src-tauri and
 # apps/desktop/mobile; they are never committed. ci.yml calls this for test builds (debug APK,
-# unsigned iOS), release.yml for release builds (signed when the secrets exist).
+# sideload IPA), release.yml for release builds (signed when the secrets exist).
 on:
   workflow_call:
     inputs:
@@ -140,7 +140,78 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ios
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: brew install xcodegen
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: tauri-cli
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-${{ runner.os }}-2.12.2
+      - if: steps.tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version 2.12.2 --locked --force
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: wasm-pack
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-${{ runner.os }}-0.15.0
+      - if: steps.wasm-pack.outputs.cache-hit != 'true'
+        run: cargo install wasm-pack --version 0.15.0 --locked --force
+      # The wasm-bindgen Cargo.lock pins, so wasm-pack does not download one.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: wasm-bindgen
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-${{ runner.os }}-0.2.129
+      - if: steps.wasm-bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked --force
+      - run: bun apps/desktop/scripts/mobile.ts init ios
+      # Every run makes this one. It is built without signing and then signed ad hoc, which
+      # needs no Apple key, so sideloading tools install it.
+      - name: Build sideload IPA
+        working-directory: apps/desktop/src-tauri
+        env:
+          VERSION: ${{ inputs.version }}
+          BUILD_NUMBER: ${{ inputs.build-number || github.run_number }}
+          NAME: ${{ inputs.release && format('RChat_{0}_ios_sideload.ipa', inputs.version) || 'RChat_sideload.ipa' }}
+        run: |
+          PLATFORM=ios bun ../../../scripts/release.ts tauri-config "$RUNNER_TEMP/tauri.ios.json"
+          cargo tauri ios build --ci --no-sign --target aarch64 --build-number "$BUILD_NUMBER" --config "$RUNNER_TEMP/tauri.ios.json"
+          ipa=$(find gen/apple/build -name '*.ipa' | head -n 1)
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          ../scripts/sideload-ipa.sh "$ipa" "$GITHUB_WORKSPACE/dist/$NAME"
+          rm "$ipa"
+      # The finished file, unpacked with the system unzip. The signature must verify, the version
+      # must be three integers and the build must be the version plus the build number.
+      - name: Check the sideload IPA
+        env:
+          VERSION: ${{ inputs.version }}
+          BUILD_NUMBER: ${{ inputs.build-number || github.run_number }}
+        run: |
+          unzip -q dist/*sideload.ipa -d "$RUNNER_TEMP/sideload"
+          app=$(echo "$RUNNER_TEMP"/sideload/Payload/*.app)
+          info="$app/Info.plist"
+          codesign --verify --verbose=2 "$app"
+          codesign --display --verbose=2 "$app"
+          file "$app/$(plutil -extract CFBundleExecutable raw -o - "$info")"
+          plutil -p "$info"
+          version=$(plutil -extract CFBundleShortVersionString raw -o - "$info")
+          build=$(plutil -extract CFBundleVersion raw -o - "$info")
+          want=${VERSION%%-*}
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ "$version" != "${want:-$version}" ] ||
+            [ "$build" != "$version.$BUILD_NUMBER" ]; then
+            echo "Unexpected version $version ($build), wanted ${want:-three integers} ($version.$BUILD_NUMBER)" >&2
+            exit 1
+          fi
       - id: signing
+        if: inputs.release
         env:
           IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
           IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
@@ -149,85 +220,25 @@ jobs:
           if [ -n "$IOS_CERTIFICATE" ] && [ -n "$IOS_MOBILE_PROVISION" ] && [ -n "$APPLE_DEVELOPMENT_TEAM" ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
-            echo "present=false" >> "$GITHUB_OUTPUT"
             echo "iOS signing: off (needs IOS_CERTIFICATE, IOS_MOBILE_PROVISION and APPLE_DEVELOPMENT_TEAM)"
           fi
-      # Release builds need a signed IPA; without the secrets there is nothing to publish.
-      - id: run
-        run: echo "build=${{ !inputs.release || steps.signing.outputs.present == 'true' }}" >> "$GITHUB_OUTPUT"
-      - if: steps.run.outputs.build == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - if: steps.run.outputs.build == 'true'
-        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,wasm32-unknown-unknown
-      - if: steps.run.outputs.build == 'true'
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: ios
-      - if: steps.run.outputs.build == 'true'
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - if: steps.run.outputs.build == 'true'
-        run: bun install --frozen-lockfile
-      - if: steps.run.outputs.build == 'true'
-        run: brew install xcodegen
-      - if: steps.run.outputs.build == 'true'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        id: tauri-cli
-        with:
-          path: ~/.cargo/bin/cargo-tauri
-          key: tauri-cli-${{ runner.os }}-2.12.2
-      - if: steps.run.outputs.build == 'true' && steps.tauri-cli.outputs.cache-hit != 'true'
-        run: cargo install tauri-cli --version 2.12.2 --locked --force
-      - if: steps.run.outputs.build == 'true'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        id: wasm-pack
-        with:
-          path: ~/.cargo/bin/wasm-pack
-          key: wasm-pack-${{ runner.os }}-0.15.0
-      - if: steps.run.outputs.build == 'true' && steps.wasm-pack.outputs.cache-hit != 'true'
-        run: cargo install wasm-pack --version 0.15.0 --locked --force
-      # The wasm-bindgen Cargo.lock pins, so wasm-pack does not download one.
-      - if: steps.run.outputs.build == 'true'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        id: wasm-bindgen
-        with:
-          path: ~/.cargo/bin/wasm-bindgen
-          key: wasm-bindgen-${{ runner.os }}-0.2.129
-      - if: steps.run.outputs.build == 'true' && steps.wasm-bindgen.outputs.cache-hit != 'true'
-        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked --force
-      - if: steps.run.outputs.build == 'true'
-        run: bun apps/desktop/scripts/mobile.ts init ios
-      - name: Build unsigned IPA
-        if: steps.run.outputs.build == 'true' && !inputs.release
-        working-directory: apps/desktop/src-tauri
-        run: cargo tauri ios build --ci --no-sign --target aarch64
+      # An extra for releases whose repository has the signing secrets.
       - name: Build signed IPA
-        if: steps.run.outputs.build == 'true' && inputs.release
+        if: steps.signing.outputs.present == 'true'
         working-directory: apps/desktop/src-tauri
         env:
           VERSION: ${{ inputs.version }}
-          BUILD_NUMBER: ${{ inputs.build-number }}
+          BUILD_NUMBER: ${{ inputs.build-number || github.run_number }}
           EXPORT_METHOD: ${{ vars.IOS_EXPORT_METHOD || 'release-testing' }}
           IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
           APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
         run: |
-          bun ../../../scripts/release.ts tauri-config "$RUNNER_TEMP/tauri.ci.json"
-          args=(ios build --ci --target aarch64 --export-method "$EXPORT_METHOD" --config "$RUNNER_TEMP/tauri.ci.json")
-          if [ -n "$BUILD_NUMBER" ]; then args+=(--build-number "$BUILD_NUMBER"); fi
-          cargo tauri "${args[@]}"
-      - if: steps.run.outputs.build == 'true'
-        env:
-          NAME: ${{ inputs.release && format('RChat_{0}_ios.ipa', inputs.version) || '' }}
-        run: |
-          mkdir -p dist
-          ipa=$(find apps/desktop/src-tauri/gen/apple/build -name '*.ipa' | head -n 1)
-          cp "$ipa" "dist/${NAME:-$(basename "$ipa")}"
-          ls -l dist
-      - if: steps.run.outputs.build == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          cargo tauri ios build --ci --target aarch64 --export-method "$EXPORT_METHOD" --build-number "$BUILD_NUMBER" --config "$RUNNER_TEMP/tauri.ios.json"
+          cp "$(find gen/apple/build -name '*.ipa' | head -n 1)" "$GITHUB_WORKSPACE/dist/RChat_${VERSION}_ios.ipa"
+      - run: ls -l dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mobile-ios
           path: dist/*

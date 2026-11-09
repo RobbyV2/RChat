@@ -15,5 +15,16 @@
 	</dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>io.github.robbyv2.rchat</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>rchat</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

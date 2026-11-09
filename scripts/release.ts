@@ -72,6 +72,13 @@ export const releaseMeta = ({ refType, refName, base, date, runNumber }: MetaInp
   }
 }
 
+// CFBundleShortVersionString takes three integers, so iOS builds drop the pre-release part.
+export const numericVersion = (version: string) => {
+  const m = SEMVER.exec(version)
+  if (!m) throw new Error(`Bad version: ${version}`)
+  return `${m[1]}.${m[2]}.${m[3]}`
+}
+
 type ConfigInput = {
   version?: string
   wixVersion?: string
@@ -80,6 +87,7 @@ type ConfigInput = {
   hasKey?: boolean
   thumbprint?: string
   channel?: string
+  platform?: string
 }
 
 // Merged over tauri.conf.json with `--config`. Updater files are only made when both halves of
@@ -93,6 +101,7 @@ export const tauriConfig = ({
   hasKey,
   thumbprint,
   channel,
+  platform,
 }: ConfigInput) => {
   const sign = Boolean(pubkey && hasKey)
   if (channel === 'stable' && !sign)
@@ -105,7 +114,7 @@ export const tauriConfig = ({
     windows.timestampUrl = 'http://timestamp.digicert.com'
   }
   return {
-    ...(version ? { version } : {}),
+    ...(version ? { version: platform === 'ios' ? numericVersion(version) : version } : {}),
     bundle: {
       createUpdaterArtifacts: sign,
       windows,
@@ -272,6 +281,7 @@ const main = (args: string[]) => {
       hasKey: Boolean(process.env.TAURI_SIGNING_PRIVATE_KEY),
       thumbprint: process.env.WINDOWS_THUMBPRINT,
       channel: process.env.CHANNEL,
+      platform: process.env.PLATFORM,
     })
     console.log(
       config.bundle.createUpdaterArtifacts

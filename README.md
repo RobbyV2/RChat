@@ -263,11 +263,24 @@ just src mobile-init android
 just src android-build
 just src mobile-init ios
 just src ios-build
+just src ios-sideload
 ```
 
-CI builds a debug APK and an unsigned iOS build on every push to main and keeps them as run artifacts. Releases carry a signed APK (see Releases).
+CI builds a debug APK and the sideload IPA on every push to main and keeps them as run artifacts. Releases carry a signed APK (see Releases).
 
 `rchat://` links open the app like on the desktop. To open `https://` links to your own instance in the app, replace `chat.example.com` in `apps/desktop/mobile/applinks.conf.json`, pass it with `--config` when you build, and serve the two files in `apps/desktop/mobile/well-known` from `https://<your instance>/.well-known/` with your signing certificate fingerprint and Apple team ID filled in.
+
+### Installing on iPhone and iPad
+
+Each release has `RChat_<version>_ios_sideload.ipa` for iOS 16.4 or newer. Apple did not sign it, so install it with one of the tools below. Build it yourself on a Mac with `just src mobile-init ios` and `just src ios-sideload`. The build needs no Apple account, key or certificate.
+
+AltStore, SideStore and Sideloadly sign the app with your Apple ID. A free Apple ID allows 3 sideloaded apps at a time (AltStore or SideStore is one of them) and 10 new app IDs a week. RChat uses one app ID. With a free Apple ID the app must be refreshed every 7 days.
+
+- **AltStore**: open the file with the plus button in My Apps.
+- **SideStore**: open the file with the plus button in My Apps.
+- **Sideloadly**: installs the file from a computer. Install each new version the same way.
+- **TrollStore** (iOS 16.4 to 16.6.1, 16.7 RC and 17.0): installs the file for good, with no Apple ID. After installing, it asks you to turn on Developer Mode and restart before the app opens.
+- **LiveContainer**: runs the app inside LiveContainer, so RChat needs no app slot and no app ID of its own. Add the file with its plus button. `rchat://` links do not open the app: paste the link into LiveContainer's link field. If notifications do not show, turn on Fix Local Notification in the app's settings in LiveContainer. Other apps in the same LiveContainer can read RChat's data, including your sign-in token.
 
 ## Releases
 
@@ -299,7 +312,7 @@ To skip heavy parts of `ci.yml` on a push, put a tag in the commit message, or g
 A release holds:
 
 - Windows: MSI and NSIS installers. macOS: a universal DMG. Linux: .deb, .rpm and AppImage (when it builds). Weekly and `-rc` versions get no .rpm. Going from a weekly .deb back to the stable one of the same version needs `apt install --allow-downgrades`.
-- Android: an APK, plus an AAB when the release key is set. iOS: an IPA, only when the signing secrets are set.
+- Android: an APK, plus an AAB when the release key is set. iOS: `RChat_<version>_ios_sideload.ipa` (see Mobile apps), plus a signed `RChat_<version>_ios.ipa` when the signing secrets are set.
 - Server binaries (`rchat-server`) for Linux x86_64 and aarch64 (glibc 2.35 or newer), macOS (universal) and Windows x86_64. The aarch64 server and Docker builds use GitHub's `ubuntu-22.04-arm` runner. Private repositories need an arm64 larger runner.
 - `SHA256SUMS`, the updater manifest `latest.json` with `.sig` files when updater signing is set, and `rchat-packaging_<version>.tar.gz`.
 - Docker images on GHCR: `latest` and the version for stable, `weekly`, `nightly` and `weekly-YYYY-MM-DD` for weekly, plus the commit SHA.
@@ -313,7 +326,7 @@ Signing uses repository secrets when they exist. Without them the builds are uns
 | `APPLE_CERTIFICATE` (base64 .p12), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`                                     | macOS code signing              |
 | `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_P8` (or `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`)                    | macOS notarization              |
 | `ANDROID_KEYSTORE` (base64), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`                         | Android APK and AAB             |
-| `IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`, `APPLE_DEVELOPMENT_TEAM`, variable `IOS_EXPORT_METHOD` | iOS IPA                         |
+| `IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`, `IOS_MOBILE_PROVISION`, `APPLE_DEVELOPMENT_TEAM`, variable `IOS_EXPORT_METHOD` | Signed iOS IPA                  |
 
 ### Package managers
 

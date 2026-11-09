@@ -97,6 +97,27 @@ describe('app builds', () => {
       }
     }
   })
+
+  test('the iOS job always makes the sideload IPA, and the signed one only with the secrets', () => {
+    const job = read('.github/workflows/mobile.yml').split('\n  mobile-ios:\n')[1]
+    const step = (name: string) => job.split(`- name: ${name}\n`)[1].split(/\n {6}(?:- |# )/)[0]
+    const sideload = step('Build sideload IPA')
+    expect(sideload).not.toContain('if:')
+    expect(sideload).toContain('PLATFORM=ios bun ../../../scripts/release.ts tauri-config')
+    expect(sideload).toContain('cargo tauri ios build --ci --no-sign --target aarch64')
+    expect(sideload).toContain('--build-number "$BUILD_NUMBER"')
+    expect(sideload).toContain('../scripts/sideload-ipa.sh "$ipa" "$GITHUB_WORKSPACE/dist/$NAME"')
+    expect(sideload).toContain(
+      "format('RChat_{0}_ios_sideload.ipa', inputs.version) || 'RChat_sideload.ipa'"
+    )
+    expect(step('Check the sideload IPA')).toContain('codesign --verify')
+    const signed = step('Build signed IPA')
+    expect(signed).toContain("if: steps.signing.outputs.present == 'true'")
+    expect(signed).not.toContain('--no-sign')
+    expect(signed).toContain('dist/RChat_${VERSION}_ios.ipa')
+    expect(job).not.toContain('steps.run.outputs.build')
+    expect(job).not.toMatch(/-----BEGIN|\.p12|\.mobileprovision/)
+  })
 })
 
 describe('tauri config', () => {
@@ -125,6 +146,15 @@ describe('tauri config', () => {
     const step = stable.split('- name:')[0]
     expect(step).toContain('gh release upload "$TAG" dist/* --clobber')
     expect(step).not.toContain('gh release delete')
+  })
+
+  test('iOS gets the numeric version, which CFBundleShortVersionString needs', () => {
+    expect(tauriConfig({ version: '0.4.1-weekly.20261116', platform: 'ios' }).version).toBe('0.4.1')
+    expect(tauriConfig({ version: '0.4.0-rc.1', platform: 'ios' }).version).toBe('0.4.0')
+    expect(tauriConfig({ version: '0.4.0', platform: 'ios' }).version).toBe('0.4.0')
+    expect(tauriConfig({ version: '0.4.1-weekly.20261116' }).version).toBe('0.4.1-weekly.20261116')
+    expect(tauriConfig({ platform: 'ios' })).toEqual(tauriConfig({}))
+    expect(() => tauriConfig({ version: 'next', platform: 'ios' })).toThrow('next')
   })
 
   test('everything set', () => {

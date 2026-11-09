@@ -14,3 +14,9 @@ android-build *args: deps
 # Unsigned iOS build (macOS only, in src-tauri/gen/apple/build)
 ios-build *args: deps
   cd {{DESKTOP}} && cargo tauri ios build --no-sign {{args}}
+
+# Output: src-tauri/gen/apple/build/RChat_sideload.ipa
+# iOS build for AltStore, SideStore, Sideloadly, TrollStore or LiveContainer (macOS only)
+ios-sideload *args: deps
+  cd {{DESKTOP}} && cargo tauri ios build --no-sign --target aarch64 {{args}}
+  {{ROOT}}/apps/desktop/scripts/sideload-ipa.sh "$(ls -t {{DESKTOP}}/gen/apple/build/*/*.ipa | head -n 1)" {{DESKTOP}}/gen/apple/build/RChat_sideload.ipa
