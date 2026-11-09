@@ -171,6 +171,11 @@ jobs:
           merge-multiple: true
       - name: Updater manifest
         run: bun scripts/release.ts updater dist
+      # For AltStore and SideStore, which read it to offer the sideload IPA and its updates.
+      - name: AltStore source
+        env:
+          BUILD_NUMBER: ${{ needs.meta.outputs.version_code }}
+        run: bun scripts/release.ts altstore dist
       - name: Packaging manifests
         run: |
           bun scripts/release.ts packaging dist "$RUNNER_TEMP/packaging"
@@ -207,10 +212,11 @@ jobs:
           # `weekly` is what the app's weekly channel reads; `nightly` is kept for old links.
           move_tag weekly
           move_tag nightly
-          # The `weekly` release is updated in place so latest.json never disappears.
+          # The `weekly` release is updated in place so latest.json and altstore.json never disappear.
           notes="Latest weekly build: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
           pointer=(dist/SHA256SUMS)
           if [ -f dist/latest.json ]; then pointer+=(dist/latest.json); fi
+          if [ -f dist/altstore.json ]; then pointer+=(dist/altstore.json); fi
           if gh release view weekly > /dev/null 2>&1; then
             gh release upload weekly "${pointer[@]}" --clobber
             gh release edit weekly --prerelease --latest=false --title "Weekly" --notes "$notes"

@@ -189,7 +189,8 @@ jobs:
           ../scripts/sideload-ipa.sh "$ipa" "$GITHUB_WORKSPACE/dist/$NAME"
           rm "$ipa"
       # The finished file, unpacked with the system unzip. The signature must verify, the version
-      # must be three integers and the build must be the version plus the build number.
+      # must be three integers and the build must be the version plus the build number, which is
+      # what altstore.json states (scripts/release.ts).
       - name: Check the sideload IPA
         env:
           VERSION: ${{ inputs.version }}

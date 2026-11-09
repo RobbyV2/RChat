@@ -1,10 +1,16 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   TEMPLATES,
+  altstoreSource,
   appVersion,
   fill,
+  iosApp,
+  ipaPrivacy,
   packagingValues,
   releaseMeta,
   tauriConfig,
@@ -296,5 +302,215 @@ describe('packaging', () => {
       expect(out).not.toMatch(/\{\{[A-Z0-9_]+\}\}/)
       if (path.endsWith('.json')) expect(JSON.parse(out).version).toBe('0.3.0')
     }
+  })
+})
+
+// AltStore and SideStore refuse the install unless the version, the build, the size and the
+// permissions in the source equal the IPA's.
+describe('altstore source', () => {
+  const app = {
+    name: 'RChat',
+    bundle: 'io.github.robbyv2.rchat',
+    description: 'Anonymous Material chat',
+    minimum: '16.4',
+  }
+  const privacy = { NSCameraUsageDescription: 'Turn on your camera in video calls.' }
+  const sha256 = 'ab'.repeat(32)
+  const input = { app, privacy, repo: 'RobbyV2/RChat', build: 812, size: 5356927, sha256 }
+  const date = '2026-11-16T05:20:31Z'
+
+  test('a stable release', () => {
+    const source = altstoreSource({
+      ...input,
+      channel: 'stable',
+      tag: '0.4.0',
+      version: '0.4.0',
+      file: 'RChat_0.4.0_ios_sideload.ipa',
+      date,
+    })
+    expect(source).toEqual({
+      name: 'RChat',
+      identifier: 'io.github.robbyv2.rchat.source',
+      apps: [
+        {
+          name: 'RChat',
+          bundleIdentifier: 'io.github.robbyv2.rchat',
+          developerName: 'RChat',
+          localizedDescription: 'Anonymous Material chat',
+          iconURL:
+            'https://raw.githubusercontent.com/RobbyV2/RChat/0.4.0/apps/desktop/src-tauri/icons/128x128@2x.png',
+          versions: [
+            {
+              version: '0.4.0',
+              buildVersion: '0.4.0.812',
+              date,
+              downloadURL:
+                'https://github.com/RobbyV2/RChat/releases/download/0.4.0/RChat_0.4.0_ios_sideload.ipa',
+              size: 5356927,
+              sha256,
+              minOSVersion: '16.4',
+            },
+          ],
+          appPermissions: {
+            entitlements: [],
+            privacy: { NSCameraUsageDescription: 'Turn on your camera in video calls.' },
+          },
+        },
+      ],
+    })
+  })
+
+  test('a weekly build has the numeric version, its dated download and its own identifier', () => {
+    const source = altstoreSource({
+      ...input,
+      channel: 'weekly',
+      tag: 'weekly-2026-11-16',
+      version: '0.4.1-weekly.20261116',
+      file: 'RChat_0.4.1-weekly.20261116_ios_sideload.ipa',
+      date,
+    })
+    expect(source.name).toBe('RChat weekly')
+    expect(source.identifier).toBe('io.github.robbyv2.rchat.source.weekly')
+    expect(source.apps[0].iconURL).toContain('/RobbyV2/RChat/weekly-2026-11-16/')
+    expect(source.apps[0].versions).toEqual([
+      {
+        version: '0.4.1',
+        buildVersion: '0.4.1.812',
+        date,
+        downloadURL:
+          'https://github.com/RobbyV2/RChat/releases/download/weekly-2026-11-16/RChat_0.4.1-weekly.20261116_ios_sideload.ipa',
+        size: 5356927,
+        sha256,
+        minOSVersion: '16.4',
+      },
+    ])
+  })
+
+  test('the app facts come from the Tauri config', () => {
+    expect(iosApp()).toEqual({
+      name: 'RChat',
+      bundle: 'io.github.robbyv2.rchat',
+      description: 'Anonymous Material chat',
+      minimum: '16.4',
+    })
+  })
+
+  // A binary Info.plist like Xcode's, with one usage string the app's Info.ios.plist does not have
+  // and the nested Info.plist every built app carries.
+  const usage = {
+    NSCameraUsageDescription: 'Turn on your camera in video calls.',
+    NSBluetoothAlwaysUsageDescription: 'Added by a plugin at build time.',
+  }
+  const ipa = (
+    path: string,
+    info: Record<string, unknown> = { CFBundleName: 'RChat', ...usage }
+  ) => {
+    const code = `
+import json, plistlib, sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'w') as archive:
+    archive.writestr('Payload/RChat.app/LaunchScreen.storyboardc/Info.plist',
+        plistlib.dumps({'NSMotionUsageDescription': 'Not the app plist.'}))
+    archive.writestr('Payload/RChat.app/Info.plist',
+        plistlib.dumps(json.load(sys.stdin), fmt=plistlib.FMT_BINARY))
+    archive.writestr('Payload/RChat.app/RChat', 'binary')
+`
+    const out = spawnSync('python3', ['-I', '-c', code, path], {
+      input: JSON.stringify(info),
+      encoding: 'utf8',
+    })
+    if (out.status !== 0) throw new Error(out.stderr)
+  }
+  const inDist = (check: (dist: string) => void) => {
+    const dist = mkdtempSync(join(tmpdir(), 'rchat-altstore-'))
+    try {
+      check(dist)
+    } finally {
+      rmSync(dist, { recursive: true, force: true })
+    }
+  }
+  const stable = { CHANNEL: 'stable', TAG: '0.4.0', VERSION: '0.4.0', BUILD_NUMBER: '7' }
+  const run = (dist: string, env: Record<string, string> = stable) =>
+    spawnSync(process.execPath, [join(import.meta.dir, 'release.ts'), 'altstore', dist], {
+      env: { PATH: process.env.PATH ?? '', GITHUB_REPOSITORY: 'RobbyV2/RChat', ...env },
+      encoding: 'utf8',
+    })
+
+  test("the usage strings are the IPA's own, in a fixed order", () =>
+    inDist(dist => {
+      const path = join(dist, 'RChat_0.4.0_ios_sideload.ipa')
+      ipa(path)
+      expect(Object.entries(ipaPrivacy(path))).toEqual([
+        ['NSBluetoothAlwaysUsageDescription', 'Added by a plugin at build time.'],
+        ['NSCameraUsageDescription', 'Turn on your camera in video calls.'],
+      ])
+      ipa(path, { CFBundleName: 'RChat' })
+      expect(ipaPrivacy(path)).toEqual({})
+    }))
+
+  test('the command reads the file: its size, its hash and its usage strings', () =>
+    inDist(dist => {
+      const path = join(dist, 'RChat_0.4.0_ios_sideload.ipa')
+      ipa(path)
+      writeFileSync(join(dist, 'RChat_0.4.0_ios.ipa'), 'signed')
+      const done = run(dist)
+      expect(done.stderr).toBe('')
+      const source = JSON.parse(readFileSync(join(dist, 'altstore.json'), 'utf8'))
+      const [version] = source.apps[0].versions
+      expect(version.size).toBe(statSync(path).size)
+      expect(version.sha256).toBe(createHash('sha256').update(readFileSync(path)).digest('hex'))
+      expect(version.buildVersion).toBe('0.4.0.7')
+      expect(version.downloadURL).toEndWith('/0.4.0/RChat_0.4.0_ios_sideload.ipa')
+      expect(version.date).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
+      expect(source.apps[0].appPermissions).toEqual({
+        entitlements: [],
+        privacy: {
+          NSBluetoothAlwaysUsageDescription: 'Added by a plugin at build time.',
+          NSCameraUsageDescription: 'Turn on your camera in video calls.',
+        },
+      })
+    }))
+
+  test('an IPA that cannot be read fails and writes no source file', () =>
+    inDist(dist => {
+      writeFileSync(join(dist, 'RChat_0.4.0_ios_sideload.ipa'), 'not a zip')
+      const done = run(dist)
+      expect(done.status).not.toBe(0)
+      expect(done.stderr).toContain('RChat_0.4.0_ios_sideload.ipa')
+      expect(existsSync(join(dist, 'altstore.json'))).toBe(false)
+    }))
+
+  test('without the sideload IPA there is no source file', () =>
+    inDist(dist => {
+      const done = run(dist)
+      expect(done.status).toBe(0)
+      expect(existsSync(join(dist, 'altstore.json'))).toBe(false)
+    }))
+
+  test('the release writes it before the checksums, with the build number the iOS build got', () => {
+    const read = (path: string) => readFileSync(join(import.meta.dir, '..', path), 'utf8')
+    const release = read('.github/workflows/release.yml')
+    expect(release).toContain('build-number: ${{ needs.meta.outputs.version_code }}')
+    const step = release.split('- name: AltStore source\n')[1].split('- name:')[0]
+    expect(step).toContain('BUILD_NUMBER: ${{ needs.meta.outputs.version_code }}')
+    expect(step).toContain('bun scripts/release.ts altstore dist')
+    expect(release.indexOf('- name: AltStore source')).toBeLessThan(
+      release.indexOf('- name: Checksums')
+    )
+    const weekly = release.split('- name: Weekly release')[1].split('- name:')[0]
+    expect(weekly).toContain('pointer+=(dist/altstore.json)')
+    expect(weekly).toContain('gh release upload weekly "${pointer[@]}" --clobber')
+    expect(read('.github/workflows/mobile.yml')).toContain(
+      '[ "$build" != "$version.$BUILD_NUMBER" ]'
+    )
+  })
+
+  test('the README names both source addresses', () => {
+    const readme = readFileSync(join(import.meta.dir, '..', 'README.md'), 'utf8')
+    expect(readme).toContain(
+      'https://github.com/RobbyV2/RChat/releases/latest/download/altstore.json'
+    )
+    expect(readme).toContain(
+      'https://github.com/RobbyV2/RChat/releases/download/weekly/altstore.json'
+    )
   })
 })

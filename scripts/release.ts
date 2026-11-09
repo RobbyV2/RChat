@@ -4,11 +4,13 @@
 //   bun scripts/release.ts tauri-config <out>   per-build Tauri config overrides (JSON file)
 //   bun scripts/release.ts updater <dist>       Tauri updater manifest dist/latest.json
 //   bun scripts/release.ts packaging <dist> <out>  winget, scoop, Homebrew and AUR files
+//   bun scripts/release.ts altstore <dist>      AltStore and SideStore source dist/altstore.json
 //
 // Inputs come from the environment, so the workflows only pass what they know.
 
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -230,6 +232,96 @@ export const packagingValues = (
   return values
 }
 
+const TAURI = 'apps/desktop/src-tauri'
+
+// What the source says about the iOS app, from the config its build reads.
+export const iosApp = () => {
+  const config = JSON.parse(readFileSync(join(root, TAURI, 'tauri.conf.json'), 'utf8'))
+  return {
+    name: config.productName as string,
+    bundle: config.identifier as string,
+    description: config.bundle.shortDescription as string,
+    minimum: config.bundle.iOS.minimumSystemVersion as string,
+  }
+}
+
+const USAGE_STRINGS = `
+import json, plistlib, re, sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    names = [name for name in archive.namelist() if re.fullmatch(r'Payload/[^/]+\\.app/Info\\.plist', name)]
+    if len(names) != 1:
+        sys.exit(f'Expected one app in Payload, found {len(names)}.')
+    info = plistlib.loads(archive.read(names[0]))
+print(json.dumps({key: info[key] for key in sorted(info) if key.endswith('UsageDescription')}))
+`
+
+// The usage strings in the IPA's own Info.plist, which can hold more than the app's
+// Info.ios.plist. The install is refused when the source misses one of them.
+export const ipaPrivacy = (path: string): Record<string, string> => {
+  const out = spawnSync('python3', ['-I', '-c', USAGE_STRINGS, path], { encoding: 'utf8' })
+  if (out.status !== 0) throw new Error(`Can't read ${path}: ${out.stderr || out.error?.message}`)
+  return JSON.parse(out.stdout)
+}
+
+type SourceInput = {
+  app: ReturnType<typeof iosApp>
+  privacy: Record<string, string>
+  channel: string
+  repo: string
+  tag: string
+  version: string
+  build: number
+  file: string
+  size: number
+  sha256: string
+  date: string
+}
+
+// AltStore and SideStore refuse the install unless `version`, `buildVersion`, `size`, `sha256`
+// and the permissions equal the IPA's. tauri-cli writes the build as `<version>.<build number>`,
+// which mobile.yml checks. The date must have no milliseconds.
+export const altstoreSource = ({
+  app,
+  privacy,
+  channel,
+  repo,
+  tag,
+  version,
+  build,
+  file,
+  size,
+  sha256,
+  date,
+}: SourceInput) => {
+  const numeric = numericVersion(version)
+  const weekly = channel === 'weekly'
+  return {
+    name: weekly ? `${app.name} weekly` : app.name,
+    identifier: `${app.bundle}.source${weekly ? '.weekly' : ''}`,
+    apps: [
+      {
+        name: app.name,
+        bundleIdentifier: app.bundle,
+        developerName: app.name,
+        localizedDescription: app.description,
+        iconURL: `https://raw.githubusercontent.com/${repo}/${tag}/${TAURI}/icons/128x128@2x.png`,
+        versions: [
+          {
+            version: numeric,
+            buildVersion: `${numeric}.${build}`,
+            date,
+            downloadURL: `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(file)}`,
+            size,
+            sha256,
+            minOSVersion: app.minimum,
+          },
+        ],
+        appPermissions: { entitlements: [], privacy },
+      },
+    ],
+  }
+}
+
 const sha256 = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
 
 const env = (key: string, fallback?: string) => {
@@ -332,9 +424,32 @@ const main = (args: string[]) => {
       writeFileSync(target, fill(readFileSync(join(root, 'packaging', path), 'utf8'), values))
       console.log(`wrote ${relative(out, target)}`)
     }
+  } else if (command === 'altstore') {
+    const dist = rest[0]
+    const file = readdirSync(dist).find(name => name.endsWith('_ios_sideload.ipa'))
+    if (!file) {
+      console.log('No sideload IPA, so no altstore.json.')
+      return
+    }
+    const source = altstoreSource({
+      app: iosApp(),
+      privacy: ipaPrivacy(join(dist, file)),
+      channel: env('CHANNEL'),
+      repo: env('GITHUB_REPOSITORY', 'RobbyV2/RChat'),
+      tag: env('TAG'),
+      version: env('VERSION'),
+      build: Number(env('BUILD_NUMBER')),
+      file,
+      size: statSync(join(dist, file)).size,
+      sha256: sha256(join(dist, file)),
+      date: new Date().toISOString().replace(/\.\d+Z$/, 'Z'),
+    })
+    writeFileSync(join(dist, 'altstore.json'), `${JSON.stringify(source, null, 2)}\n`)
+    const [{ version, buildVersion }] = source.apps[0].versions
+    console.log(`altstore.json: ${file}, version ${version} (${buildVersion})`)
   } else {
     throw new Error(
-      'usage: release.ts meta | tauri-config <out> | updater <dist> | packaging <dist> <out>'
+      'usage: release.ts meta | tauri-config <out> | updater <dist> | packaging <dist> <out> | altstore <dist>'
     )
   }
 }
