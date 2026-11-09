@@ -514,22 +514,35 @@ body {
 [data-drop-target] {
   scale: 0.84;
   box-shadow:
-    0 0 0 7px color-mix(in srgb, var(--color-primary) 30%, var(--color-surface-container-lowest)),
-    0 0 0 9px var(--color-primary);
+    0 0 0 7px
+      var(
+        --folder-drop,
+        color-mix(in srgb, var(--color-primary) 30%, var(--color-surface-container-lowest))
+      ),
+    0 0 0 9px var(--folder-icon, var(--color-primary));
 }
 
 [data-drop-target][data-drag-box] {
   scale: none;
-  background: color-mix(in srgb, var(--color-primary) 34%, var(--color-surface-container-lowest));
-  box-shadow: inset 0 0 0 2px var(--color-primary);
+  background: var(
+    --folder-drop,
+    color-mix(in srgb, var(--color-primary) 34%, var(--color-surface-container-lowest))
+  );
+  box-shadow: inset 0 0 0 2px var(--folder-icon, var(--color-primary));
 }
 
 .folder-tile {
-  background: color-mix(in srgb, var(--color-primary) 26%, var(--color-surface-container-lowest));
+  background: var(
+    --folder-tile,
+    color-mix(in srgb, var(--color-primary) 26%, var(--color-surface-container-lowest))
+  );
 }
 
 .folder-tile:hover {
-  background: color-mix(in srgb, var(--color-primary) 36%, var(--color-surface-container-lowest));
+  background: var(
+    --folder-hover,
+    color-mix(in srgb, var(--color-primary) 36%, var(--color-surface-container-lowest))
+  );
 }
 
 .folder-mini {
@@ -538,8 +551,25 @@ body {
 }
 
 .folder-group {
-  --rail-cut: color-mix(in srgb, var(--color-primary) 22%, var(--color-surface-container-lowest));
+  --rail-cut: var(
+    --folder-group,
+    color-mix(in srgb, var(--color-primary) 22%, var(--color-surface-container-lowest))
+  );
   background: var(--rail-cut);
+}
+
+.folder-icon {
+  color: var(--folder-icon, var(--color-primary));
+}
+
+.folder-icon:hover {
+  background: var(--folder-hover, var(--color-primary-container));
+  color: var(--folder-icon, var(--color-on-primary-container));
+}
+
+.folder-badge {
+  background: var(--folder-icon, var(--color-primary));
+  color: var(--folder-on-icon, var(--color-on-primary));
 }
 
 .drag-chip {

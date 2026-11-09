@@ -8,6 +8,7 @@ import { displayName } from '../../lib/p2p/contacts'
 import { P } from '../../lib/p2p/state'
 import { CopyButton, QrCode } from '../config_sync'
 import { Dialog, FieldError, fieldCls, filledBtn, Masked, textBtn } from '../ui'
+import { FolderColorField } from '../folder_dialog'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { QrScan } from './qr_scan'
 import { CoOwnerAsks, CoOwnerPicker } from './p2p_server_flows'
@@ -474,18 +475,20 @@ export function ServerNewDialog({
   )
 }
 
-export function P2pFolderDialog({ id }: { id: string }) {
+export function P2pFolderDialog({ id, colorFirst = false }: { id: string; colorFirst?: boolean }) {
   const folder = useP2p(s => s.layout.servers.find(e => typeof e !== 'string' && e.id === id))
   const [name, setName] = useState(typeof folder === 'object' ? (folder.name ?? '') : '')
+  const [color, setColor] = useState(typeof folder === 'object' ? (folder.color ?? null) : null)
   if (!folder) return null
   const save = () => {
     p2pRail.rename(id, name)
+    p2pRail.setFolderColor(id, color)
     p2p.closeDialog()
   }
   return (
-    <Dialog title="Rename folder" onClose={p2p.closeDialog} compact>
+    <Dialog title="Edit folder" onClose={p2p.closeDialog} compact>
       <input
-        autoFocus
+        autoFocus={!colorFirst}
         value={name}
         maxLength={50}
         onChange={e => setName(e.target.value)}
@@ -496,6 +499,7 @@ export function P2pFolderDialog({ id }: { id: string }) {
         aria-label="Folder name"
         className={`${fieldCls} w-full`}
       />
+      <FolderColorField color={color} onColor={setColor} tone="tertiary" />
       <div className="mt-6 flex justify-end gap-2">
         <button onClick={p2p.closeDialog} className={textBtn}>
           Cancel

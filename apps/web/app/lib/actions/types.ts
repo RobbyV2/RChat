@@ -32,7 +32,8 @@ export type Target =
   | { kind: 'selection'; list: string; author?: UserRef | null; more?: boolean }
   | { kind: 'member'; user: UserRef; server: string | null; where: MemberWhere }
   | { kind: 'server'; server: string; folder: string | null; at: number }
-  | { kind: 'folder'; folder: Folder }
+  // `p2p`: a folder of the P2P servers' rail.
+  | { kind: 'folder'; folder: Folder; p2p?: boolean }
   | { kind: 'channel'; server: string; channel: Channel }
   | { kind: 'category'; server: string; category: Category }
   | { kind: 'dm'; dm: DmSummary; where: 'sidebar' | 'home' }
@@ -78,6 +79,8 @@ export interface ArgChoice {
   label: string
   subtitle?: string
   icon?: LucideIcon
+  // A #rrggbb dot before the label.
+  swatch?: string
   checked?: boolean
   radio?: boolean
   disabled?: boolean

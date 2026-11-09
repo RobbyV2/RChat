@@ -250,6 +250,37 @@ describe('applying', () => {
     expect(Object.keys(st().notifyPrefs.servers)).toEqual(['club'])
   })
 
+  test('a folder color goes from one account’s export into another account’s rail', async () => {
+    useStore.setState({
+      me: me('alice', { servers: [srv('rchat'), srv('club')] }),
+      layout: {
+        ...emptyLayout,
+        servers: [{ id: 'f1', name: 'Games', servers: ['club', 'rchat'], open: false }],
+      },
+    })
+    st().setFolderColor('f1', '#3B82D9')
+    const text = await encodeConfig(buildConfig(configSourceOf(st()), new Set(['layout'] as const)))
+    useStore.setState({
+      me: me('bob', { servers: [srv('rchat'), srv('club')] }),
+      layout: emptyLayout,
+    })
+    const decoded = await decodeConfig(text)
+    if (!decoded.ok) throw new Error(decoded.error)
+    expect(await st().applyConfig(decoded.doc, ['layout'])).toBeNull()
+    const colored = {
+      id: 'f1',
+      name: 'Games',
+      servers: ['club', 'rchat'],
+      open: false,
+      color: '#3b82d9',
+    }
+    expect(st().layout.servers).toEqual([colored])
+    const stored = JSON.parse(local.get(home.scoped(layoutKey('bob'))) ?? 'null') as {
+      servers: unknown
+    }
+    expect(stored.servers).toEqual([colored])
+  })
+
   test('on another account: unknown servers and DMs drop out, the rest is written to its keys', async () => {
     const error = await st().applyConfig(incoming(), [
       'theme',

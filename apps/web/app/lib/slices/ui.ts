@@ -28,6 +28,7 @@ import {
   pinDm as pinIn,
   placeDm as placeIn,
   renameFolder as renameFolderIn,
+  setFolderColor as setFolderColorIn,
   toggleFolder as toggleIn,
   ungroupFolder as ungroupIn,
   unpinDm as unpinIn,
@@ -436,6 +437,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     | 'mergeServers'
     | 'toggleFolder'
     | 'renameFolder'
+    | 'setFolderColor'
     | 'ungroupFolder'
     | 'placeDm'
     | 'pinDm'
@@ -526,6 +528,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
 
     toggleFolder: id => saveLayout(toggleIn(get().layout, id)),
     renameFolder: (id, name) => saveLayout(renameFolderIn(get().layout, id, name)),
+    setFolderColor: (id, color) => saveLayout(setFolderColorIn(get().layout, id, color)),
     ungroupFolder: id => saveLayout(ungroupIn(get().layout, id)),
 
     placeDm: (id, zone, index) => {

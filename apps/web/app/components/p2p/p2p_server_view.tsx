@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   Clock,
   Crown,
@@ -42,6 +42,10 @@ import { serverPings, serverUnread } from '../../lib/p2p/alerts'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { levelOf, mutedOf } from '../../lib/notify'
 import { folderKey, railItems, serverKey, type Folder } from '../../lib/nav_layout'
+import { folderStyle } from '../../lib/folder_colors'
+import { ctxFor } from '../../lib/actions/ctx'
+import { folderActions } from '../../lib/actions/folder'
+import { itemFor } from '../../lib/actions/menu'
 import type { DropTarget } from '../../lib/drag'
 import { serverInitial } from '../../lib/rules'
 import { sharing } from '../../lib/platform'
@@ -228,7 +232,15 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
   )
 }
 
-function P2pFolderEntry({ folder, list, at }: { folder: Folder; list: ServerView[]; at: number }) {
+export function P2pFolderEntry({
+  folder,
+  list,
+  at,
+}: {
+  folder: Folder
+  list: ServerView[]
+  at: number
+}) {
   const prefs = useStore(s => s.notifyPrefs)
   const openContextMenu = useStore(s => s.openContextMenu)
   const unread = !folder.open && list.some(v => serverUnread(v, prefs))
@@ -237,6 +249,8 @@ function P2pFolderEntry({ folder, list, at }: { folder: Folder; list: ServerView
   const mask = useMask()
   const label =
     folder.name && !streamer ? folder.name : `P2P folder: ${list.map(v => mask(v.name)).join(', ')}`
+  const theme = useStore(s => s.theme)
+  const style = folderStyle(folder.color, theme) as CSSProperties | undefined
   const header = {
     title: streamer ? folder.name || 'Folder' : label,
     'aria-expanded': folder.open,
@@ -246,8 +260,15 @@ function P2pFolderEntry({ folder, list, at }: { folder: Folder; list: ServerView
     ...longPress(
       (x, y) =>
         openContextMenu(x, y, [
+          ...folderActions.flatMap(
+            a =>
+              itemFor(
+                a.id,
+                ctxFor(useStore.getState(), { kind: 'folder', folder, p2p: true }, 'menu')
+              ) ?? []
+          ),
           {
-            label: 'Rename folder',
+            label: 'Edit folder',
             action: () => p2p.openDialog({ kind: 'p2p_folder', id: folder.id }),
           },
           { label: 'Ungroup', action: () => p2pRail.ungroup(folder.id) },
@@ -264,6 +285,7 @@ function P2pFolderEntry({ folder, list, at }: { folder: Folder; list: ServerView
     return (
       <button
         {...header}
+        style={style}
         className={`${tile} folder-tile relative border-2 border-dashed border-tertiary p-1.5`}
       >
         <span className="grid size-8 grid-cols-2 grid-rows-2 gap-1">
@@ -278,7 +300,7 @@ function P2pFolderEntry({ folder, list, at }: { folder: Folder; list: ServerView
         </span>
         <span
           aria-hidden
-          className="absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-tertiary text-on-tertiary"
+          className="absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-(--folder-icon,var(--color-tertiary)) text-(--folder-on-icon,var(--color-on-tertiary))"
         >
           <FolderIcon size={9} strokeWidth={2.5} />
         </span>
@@ -298,11 +320,12 @@ function P2pFolderEntry({ folder, list, at }: { folder: Folder; list: ServerView
   return (
     <div
       data-drag-box
+      style={style}
       className="folder-group flex w-14 shrink-0 flex-col items-center rounded-[20px] py-1"
     >
       <button
         {...header}
-        className={`${tile} text-tertiary hover:bg-tertiary-container hover:text-on-tertiary-container`}
+        className={`${tile} text-(--folder-icon,var(--color-tertiary)) hover:bg-(--folder-hover,var(--color-tertiary-container)) hover:text-(--folder-icon,var(--color-on-tertiary-container))`}
       >
         <FolderOpen size={22} />
       </button>

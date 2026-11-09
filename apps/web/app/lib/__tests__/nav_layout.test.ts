@@ -31,6 +31,7 @@ import {
   railNames,
   renameFolder,
   renameServer,
+  setFolderColor,
   toggleFolder,
   ungroupFolder,
   unpinDm,
@@ -166,6 +167,86 @@ describe('layout storage', () => {
       'd',
       'e',
       F('f3', ['f', 'g'], { name: 'x'.repeat(50), open: true }),
+    ])
+  })
+})
+
+describe('folder colors in the layout', () => {
+  test('a saved color round trips in lowercase', () => {
+    const raw = { v: 2, servers: [{ id: 'f1', name: null, servers: ['a', 'b'], color: '#A1b2C3' }] }
+    expect(parseLayout(JSON.stringify(raw)).servers).toEqual([
+      F('f1', ['a', 'b'], { color: '#a1b2c3' }),
+    ])
+    const saved = S(F('f1', ['a', 'b'], { color: '#a1b2c3', open: true }), 'c')
+    expect(parseLayout(JSON.stringify(saved))).toEqual(saved)
+  })
+
+  test('a bad color is dropped and the folder stays', () => {
+    for (const color of ['red', '#abc', '#a1b2c3d', 'a1b2c3', '', 7, null, { r: 1 }, ['#a1b2c3']]) {
+      const raw = { v: 2, servers: [{ id: 'f1', servers: ['a', 'b'], color }] }
+      const [folder] = parseLayout(JSON.stringify(raw)).servers
+      expect(folder).toEqual(F('f1', ['a', 'b']))
+      expect(Object.hasOwn(folder as Folder, 'color')).toBe(false)
+    }
+  })
+
+  test('a layout saved before folder colors loads unchanged', () => {
+    const old =
+      '{"v":2,"servers":["x",{"id":"f1","name":"Games","servers":["a","b"],"open":true}],"dmOrder":[2],"dmPinned":[],"dmSeen":2,"selfPin":"auto","collapsed":{}}'
+    const layout = parseLayout(old)
+    expect(layout.servers).toEqual(['x', F('f1', ['a', 'b'], { name: 'Games', open: true })])
+    expect(JSON.stringify(layout)).toBe(old)
+  })
+
+  test('setting a color stores it in lowercase and default removes it', () => {
+    const layout = S('x', F('f1', ['a', 'b'], { name: 'Games' }), 'c')
+    const red = setFolderColor(layout, 'f1', '#FF0000')
+    expect(red.servers).toEqual([
+      'x',
+      F('f1', ['a', 'b'], { name: 'Games', color: '#ff0000' }),
+      'c',
+    ])
+    expect(layout.servers[1]).toEqual(F('f1', ['a', 'b'], { name: 'Games' }))
+    const cleared = setFolderColor(red, 'f1', null)
+    expect(cleared.servers[1]).toEqual(F('f1', ['a', 'b'], { name: 'Games' }))
+    expect(Object.hasOwn(cleared.servers[1] as Folder, 'color')).toBe(false)
+    expect(setFolderColor(red, 'f1', 'nope').servers[1]).toEqual(
+      F('f1', ['a', 'b'], { name: 'Games' })
+    )
+  })
+
+  test('an unknown folder or an unchanged color keeps the layout', () => {
+    const layout = S(F('f1', ['a', 'b'], { color: '#ff0000' }))
+    expect(setFolderColor(layout, 'nope', '#00ff00')).toBe(layout)
+    expect(setFolderColor(layout, 'f1', '#FF0000')).toBe(layout)
+    const plain = S(F('f2', ['a', 'b']))
+    expect(setFolderColor(plain, 'f2', null)).toBe(plain)
+  })
+
+  test('the color stays with the folder through renames, toggles, moves and new servers', () => {
+    const loaded = ['a', 'b', 'c', 'd']
+    const layout = S(F('f1', ['a', 'b'], { color: '#ff0000' }), 'c', 'd')
+    const color = (l: Layout) =>
+      l.servers.flatMap(e => (typeof e === 'string' ? [] : [[e.id, e.color]]))
+    expect(color(renameFolder(layout, 'f1', 'Work'))).toEqual([['f1', '#ff0000']])
+    expect(color(toggleFolder(layout, 'f1'))).toEqual([['f1', '#ff0000']])
+    expect(color(moveFolder(layout, loaded, 'f1', 2))).toEqual([['f1', '#ff0000']])
+    expect(color(addToFolder(layout, loaded, 'c', 'f1'))).toEqual([['f1', '#ff0000']])
+    expect(color(moveIntoFolder(layout, loaded, 'd', 'f1', 0))).toEqual([['f1', '#ff0000']])
+    expect(color(moveServer(layout, loaded, 'd', 0))).toEqual([['f1', '#ff0000']])
+    expect(color(renameServer(layout, 'a', 'z'))).toEqual([['f1', '#ff0000']])
+    expect(color(forgetServer(S(F('f1', ['a', 'b', 'c'], { color: '#ff0000' })), 'c'))).toEqual([
+      ['f1', '#ff0000'],
+    ])
+  })
+
+  test('a new folder starts with the default color and ungrouping forgets the color', () => {
+    const merged = mergeServers(S('a', 'b'), ['a', 'b'], 'b', 'a', 'f9')
+    expect(merged.servers).toEqual([F('f9', ['a', 'b'])])
+    expect(Object.hasOwn(merged.servers[0] as Folder, 'color')).toBe(false)
+    expect(ungroupFolder(S(F('f1', ['a', 'b'], { color: '#ff0000' })), 'f1').servers).toEqual([
+      'a',
+      'b',
     ])
   })
 })

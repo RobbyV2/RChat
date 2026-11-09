@@ -28,6 +28,8 @@ import { EMPTY_NOTIFY, setLevel, setMute } from '../notify'
 import { EMPTY_PREFS, MAX_USED, noteUse } from '../emoji'
 
 const NOW = 1_800_000_000_000
+const ROOM_A = 'A'.repeat(43)
+const ROOM_B = 'B'.repeat(43)
 const ALL = new Set<SectionKey>(SECTIONS.map(s => s.key))
 
 const source = (over: Partial<ConfigSource> = {}): ConfigSource => {
@@ -245,6 +247,82 @@ describe('sanitizing', () => {
     expect(l.dmOrder.every(id => Number.isSafeInteger(id) && id > 0)).toBe(true)
     expect(l.dmPinned).toEqual([4])
     expect(l.selfPin).toBe('auto')
+  })
+
+  test('folder colors travel in the export and come back in lowercase', async () => {
+    const src = source({
+      layout: {
+        servers: [
+          'rchat',
+          { id: 'f1', name: 'Games', servers: ['club', 'arena'], open: true, color: '#ff0000' },
+          { id: 'f2', name: null, servers: ['den', 'loft'], open: false },
+        ],
+        dmOrder: [],
+        dmPinned: [],
+        selfPin: 'auto',
+        p2p: [{ id: 'p1', name: null, servers: [ROOM_A, ROOM_B], open: false, color: '#3B82D9' }],
+      },
+    })
+    const built = buildConfig(src, ALL)
+    expect(built.layout?.servers).toEqual([
+      'rchat',
+      { id: 'f1', name: 'Games', servers: ['club', 'arena'], open: true, color: '#ff0000' },
+      { id: 'f2', name: null, servers: ['den', 'loft'], open: false },
+    ])
+    const back = await decodeConfig(await encodeConfig(built), NOW)
+    if (!back.ok) throw new Error(back.error)
+    expect(back.doc.layout?.servers).toEqual([
+      'rchat',
+      { id: 'f1', name: 'Games', servers: ['club', 'arena'], open: true, color: '#ff0000' },
+      { id: 'f2', name: null, servers: ['den', 'loft'], open: false },
+    ])
+    expect(back.doc.layout?.p2p).toEqual([
+      { id: 'p1', name: null, servers: [ROOM_A, ROOM_B], open: false, color: '#3b82d9' },
+    ])
+  })
+
+  test('an imported folder color is validated and a bad one falls back to the default', () => {
+    const folder = (color: unknown) => ({
+      id: 'f',
+      name: null,
+      servers: ['a', 'b'],
+      open: false,
+      color,
+    })
+    for (const color of ['red', '#12', 'url(x)', 7, null, { a: 1 }, '#12345g']) {
+      const out = sanitizeConfig({ v: 1, layout: { servers: [folder(color)] } }, NOW)
+      if (!out.ok) throw new Error('rejected')
+      expect(out.doc.layout?.servers).toEqual([
+        { id: 'f', name: null, servers: ['a', 'b'], open: false },
+      ])
+    }
+    const out = sanitizeConfig({ v: 1, layout: { servers: [folder('#ABCDEF')] } }, NOW)
+    if (!out.ok) throw new Error('rejected')
+    expect(out.doc.layout?.servers).toEqual([
+      { id: 'f', name: null, servers: ['a', 'b'], open: false, color: '#abcdef' },
+    ])
+  })
+
+  test('a config exported before folder colors still loads', async () => {
+    const old = {
+      v: 1,
+      theme: 'dark',
+      layout: {
+        servers: ['rchat', { id: 'f1', name: 'Games', servers: ['club', 'arena'], open: true }],
+        dmOrder: [7, 3],
+        dmPinned: [7],
+        selfPin: 'unpinned',
+      },
+    }
+    const back = await decodeConfig(await deflate(JSON.stringify(old)), NOW)
+    if (!back.ok) throw new Error(back.error)
+    expect(back.doc.theme).toBe('dark')
+    expect(back.doc.layout).toEqual({
+      servers: ['rchat', { id: 'f1', name: 'Games', servers: ['club', 'arena'], open: true }],
+      dmOrder: [7, 3],
+      dmPinned: [7],
+      selfPin: 'unpinned',
+    })
   })
 
   test('notification rules go through the notify parser (prototype keys stay inert)', () => {

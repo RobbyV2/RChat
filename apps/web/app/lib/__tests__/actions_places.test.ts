@@ -8,7 +8,7 @@ import { actionById } from '../actions/registry'
 import type { Target } from '../actions/types'
 import { useChannelEdit } from '../channel_edit'
 import { P2P_IP_HINT } from '../call_choice'
-import { emptyLayout, type Folder } from '../nav_layout'
+import { emptyLayout, type Folder, type Layout } from '../nav_layout'
 import { EMPTY_NOTIFY, setLevel, setMute, setSuppress, type NotifyPrefs } from '../notify'
 import { setSharing, sharing } from '../platform'
 import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
@@ -48,6 +48,7 @@ interface State {
   unread?: boolean
   notify?: NotifyPrefs
   channels?: Channel[]
+  layout?: Layout
 }
 
 // Alice in Space (s) and the rchat server; her role r1 carries `perms`. `unread`: #general has
@@ -75,7 +76,7 @@ const railState = (o: State = {}) => {
     reads: o.unread ? { c1: { lastRead: 1, latest: 5, server: 's' } } : {},
     pings: {},
     notifyPrefs: o.notify ?? EMPTY_NOTIFY,
-    layout: emptyLayout,
+    layout: o.layout ?? emptyLayout,
     view: { kind: 'channel', server: 's', channelId: 1 },
   })
 }
@@ -310,14 +311,14 @@ test('a folder', async () => {
   expect(items(folderAt).map(i => [i.label, i.icon, !!i.disabled])).toEqual([
     ['Mark as read', CheckCheck, false],
     ['Mute folder', BellOff, false],
-    ['Rename folder', undefined, false],
+    ['Edit folder', undefined, false],
     ['Ungroup', undefined, false],
   ])
   const out = await effects(items(folderAt))
   expect(out[0]).toEqual(['Mark as read', [['markServersRead', ['s', 'b']]]])
   expect(out[6]).toEqual(['Until I turn it back on', [['muteServers', ['s', 'b'], 'forever']]])
   expect(out.slice(7)).toEqual([
-    ['Rename folder', [['openDialog', { kind: 'rename_folder', id: 'f1' }]]],
+    ['Edit folder', [['openDialog', { kind: 'rename_folder', id: 'f1' }]]],
     ['Ungroup', [['ungroupFolder', 'f1']]],
   ])
   const muted = [{ kind: 'server', name: 's' } as const, { kind: 'server', name: 'b' } as const]
@@ -326,9 +327,17 @@ test('a folder', async () => {
   expect([unmute?.icon, unmute?.subtitle]).toEqual([Bell, 'Muted until you turn it back on'])
   expect(await effects([unmute!])).toEqual([['Unmute folder', [['muteServers', ['s', 'b'], null]]]])
   railState({ guest: true })
-  expect(labels(folderAt)).toEqual(['Mute folder', 'Rename folder', 'Ungroup'])
+  expect(labels(folderAt)).toEqual(['Mute folder', 'Edit folder', 'Ungroup'])
   expect(labels({ kind: 'folder', folder: { ...folder, servers: [] } })).toEqual([
-    'Rename folder',
+    'Edit folder',
+    'Ungroup',
+  ])
+  railState({ unread: true, layout: { ...emptyLayout, servers: [folder, 'rchat'] } })
+  expect(labels(folderAt)).toEqual([
+    'Mark as read',
+    'Mute folder',
+    'Folder color',
+    'Edit folder',
     'Ungroup',
   ])
 })

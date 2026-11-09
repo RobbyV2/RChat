@@ -14,6 +14,7 @@ import {
   collapsedCount,
   collapsedOf,
   type Collapsed,
+  cleanFolderColor,
   cleanFolderName,
   parseLayout,
   type Folder,
@@ -184,7 +185,15 @@ export interface ConfigSource {
 }
 
 const copyEntry = (e: RailEntry): RailEntry =>
-  typeof e === 'string' ? e : { id: e.id, name: e.name, servers: [...e.servers], open: e.open }
+  typeof e === 'string'
+    ? e
+    : {
+        id: e.id,
+        name: e.name,
+        servers: [...e.servers],
+        open: e.open,
+        ...(e.color ? { color: e.color } : {}),
+      }
 
 const pickLayout = (l: NonNullable<ConfigSource['layout']>): ConfigLayout => ({
   servers: l.servers.map(copyEntry),
@@ -257,11 +266,13 @@ const cleanEntries = (list: RailEntry[], ok: (n: string) => boolean) => {
     }
     const names = e.servers.filter(ok).slice(0, budget)
     budget -= names.length
+    const color = cleanFolderColor(e.color)
     const folder: Folder = {
       id: e.id,
       name: e.name === null ? null : cleanFolderName(e.name),
       servers: names,
       open: e.open,
+      ...(color ? { color } : {}),
     }
     if (names.length >= 2 && e.id.length <= FOLDER_ID_MAX) entries.push(folder)
     else entries.push(...names)

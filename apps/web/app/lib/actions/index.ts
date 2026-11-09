@@ -2,6 +2,7 @@ import { adminActions } from './admin'
 import { cardActions } from './cards'
 import { channelActions } from './channel'
 import { dmActions } from './dm'
+import { folderActions } from './folder'
 import { friendActions } from './friends'
 import { globalActions, goActions } from './global'
 import { memberActions } from './member'
@@ -25,6 +26,7 @@ export const registerAppActions = () => {
     placeActions,
     globalActions,
     friendActions,
+    folderActions,
     settingsActions,
     memberActions,
     adminActions,

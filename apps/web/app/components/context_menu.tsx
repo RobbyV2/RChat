@@ -325,6 +325,7 @@ function Row({
   index,
   open,
   coarse,
+  swatches,
   onEnter,
   onPick,
 }: {
@@ -333,6 +334,8 @@ function Row({
   index: number
   open: boolean
   coarse: boolean
+  // Some row of this menu has a color dot: the others leave its room, so labels line up.
+  swatches: boolean
   onEnter?: (el: HTMLElement) => void
   onPick: (el: HTMLElement, keyboard: boolean) => void
 }) {
@@ -355,6 +358,16 @@ function Row({
       } ${it.danger ? 'text-error' : 'text-on-surface'} ${it.disabled ? 'cursor-default opacity-40' : ''}`}
       data-level={level}
     >
+      {it.swatch ? (
+        <span
+          aria-hidden
+          data-swatch={it.swatch}
+          style={{ background: it.swatch, width: size, height: size }}
+          className="shrink-0 rounded-full border border-outline-variant"
+        />
+      ) : (
+        swatches && <span aria-hidden className="shrink-0" style={{ width: size }} />
+      )}
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate">{it.label}</span>
         {it.subtitle && (
@@ -596,6 +609,7 @@ function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean })
               index={i}
               open={false}
               coarse
+              swatches={items.some(x => x.swatch)}
               onPick={(el, keyboard) => pick(depth, i, el, keyboard)}
             />
           ))}
@@ -629,6 +643,7 @@ function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean })
               index={i}
               open={stack[level]?.from === i}
               coarse={false}
+              swatches={items.some(x => x.swatch)}
               onEnter={el => {
                 if (it.submenu) openSub(level, i, el, false)
                 else if (stack.length > level) setStack(st => st.slice(0, level))

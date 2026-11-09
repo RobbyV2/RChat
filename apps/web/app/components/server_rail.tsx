@@ -1,5 +1,6 @@
 'use client'
 
+import type { CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Eye,
@@ -27,6 +28,7 @@ import {
 } from '../lib/store'
 import { openActionMenu } from '../lib/actions/menu'
 import { folderKey, railItems, serverKey, type Folder } from '../lib/nav_layout'
+import { folderStyle } from '../lib/folder_colors'
 import type { DropTarget } from '../lib/drag'
 import type { ServerDetail } from '../lib/types'
 import { serverInitial } from '../lib/rules'
@@ -202,7 +204,7 @@ function MiniIcon({ server: { name, display_name } }: { server: RailServer }) {
   )
 }
 
-function FolderEntry({
+export function FolderEntry({
   folder,
   servers,
   at,
@@ -219,6 +221,8 @@ function FolderEntry({
   )
   const key = folderKey(folder.id)
   const label = useStore(s => (s.streamer ? folder.name || 'Folder' : folderLabel(s, folder)))
+  const theme = useStore(s => s.theme)
+  const style = folderStyle(folder.color, theme) as CSSProperties | undefined
   const header = {
     title: label,
     'aria-expanded': folder.open,
@@ -240,7 +244,7 @@ function FolderEntry({
   }
   if (!folder.open) {
     return (
-      <button {...header} className={`${tile} folder-tile relative p-1.5`}>
+      <button {...header} style={style} className={`${tile} folder-tile relative p-1.5`}>
         <span className="grid size-9 grid-cols-2 grid-rows-2 gap-1">
           {servers.slice(0, 4).map(s => (
             <MiniIcon key={s.name} server={s} />
@@ -248,7 +252,7 @@ function FolderEntry({
         </span>
         <span
           aria-hidden
-          className="absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest)) bg-primary text-on-primary"
+          className="folder-badge absolute -right-1 -bottom-1 flex size-4.5 items-center justify-center rounded-full border-2 border-(--rail-cut,var(--color-surface-container-lowest))"
         >
           <FolderIcon size={9} strokeWidth={2.5} />
         </span>
@@ -259,12 +263,10 @@ function FolderEntry({
   return (
     <div
       data-drag-box
+      style={style}
       className="folder-group flex w-14 shrink-0 flex-col items-center rounded-[20px] py-1"
     >
-      <button
-        {...header}
-        className={`${tile} text-primary hover:bg-primary-container hover:text-on-primary-container`}
-      >
+      <button {...header} className={`${tile} folder-icon`}>
         <FolderOpen size={22} />
       </button>
       <div

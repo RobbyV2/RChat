@@ -164,7 +164,7 @@ export const serverActions: Action[] = [
   },
   {
     id: 'folder_rename',
-    title: 'Rename folder',
+    title: 'Edit folder',
     ...onFolder,
     order: 300,
     available: ctx => folderOf(ctx) !== null,

@@ -79,6 +79,8 @@ export interface ContextMenuItem {
   // Shown dimmed; it stays focusable for keyboard moves but does nothing.
   disabled?: boolean
   icon?: LucideIcon
+  // A #rrggbb dot before the label.
+  swatch?: string
   checked?: boolean
   radio?: boolean
   submenu?: ContextMenuItem[]
@@ -124,7 +126,7 @@ export type ActiveDialog =
       focus?: 'bio' | 'p2p_limits'
       section?: 'settings' | 'notifications' | 'privacy' | 'sync' | 'information' | 'palette'
     }
-  | { kind: 'rename_folder'; id: string }
+  | { kind: 'rename_folder'; id: string; focus?: 'color' }
   | { kind: 'category'; server: string; id?: number }
   | { kind: 'add_friends'; names: string[] }
   | { kind: 'poll_voters'; message: Message }
@@ -386,6 +388,7 @@ export interface RChatState {
   mergeServers: (name: string, target: string) => void
   toggleFolder: (id: string) => void
   renameFolder: (id: string, name: string) => void
+  setFolderColor: (id: string, color: string | null) => void
   ungroupFolder: (id: string) => void
   placeDm: (id: number, zone: DmZone, index: number) => void
   pinDm: (id: number) => void

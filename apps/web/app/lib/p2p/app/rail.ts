@@ -9,6 +9,7 @@ import {
   newFolderId,
   parseLayout,
   renameFolder,
+  setFolderColor,
   toggleFolder,
   ungroupFolder,
   type Layout,
@@ -55,6 +56,8 @@ export const p2pRail = {
   toggleFolder: (id: string) => saveLayout(toggleFolder(useP2p.getState().layout, id)),
   rename: (id: string, name: string) =>
     saveLayout(renameFolder(useP2p.getState().layout, id, name)),
+  setFolderColor: (id: string, color: string | null) =>
+    saveLayout(setFolderColor(useP2p.getState().layout, id, color)),
   ungroup: (id: string) => saveLayout(ungroupFolder(useP2p.getState().layout, id)),
   // From an imported config (its layout section).
   apply: (servers: RailEntry[]) => saveLayout({ ...useP2p.getState().layout, servers }),

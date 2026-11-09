@@ -41,6 +41,7 @@ const picked = (a: Action, ctx: ActionCtx): Pick<ContextMenuItem, 'action' | 'su
       danger: c.danger,
       disabled: c.disabled,
       icon: c.icon,
+      swatch: c.swatch,
       checked: c.checked,
       radio: c.radio,
       action: () => void confirmThenRun(a, ctx, { [step.name]: c.value }),

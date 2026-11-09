@@ -139,6 +139,41 @@ describe('server folders', () => {
     expect(st().layout.servers).toEqual(['c', 'rchat', 'a', 'b'])
   })
 
+  test('a folder color is saved per account and survives a reload', () => {
+    withServers('rchat', 'a', 'b', 'c')
+    st().mergeServers('b', 'a')
+    const id = folder()?.id ?? ''
+    st().setFolderColor(id, '#3B82D9')
+    expect(folder()).toEqual({ id, name: null, servers: ['a', 'b'], open: false, color: '#3b82d9' })
+    expect(saved('rchat_layout:alice')?.servers[1]).toEqual(folder())
+    expect(saved('rchat_layout:alice')?.v).toBe(2)
+    useStore.setState({ layout: emptyLayout })
+    st().reloadLayout()
+    expect(folder()?.color).toBe('#3b82d9')
+    st().renameFolder(id, 'Work')
+    st().toggleFolder(id)
+    expect(folder()).toEqual({
+      id,
+      name: 'Work',
+      servers: ['a', 'b'],
+      open: true,
+      color: '#3b82d9',
+    })
+    st().setFolderColor(id, null)
+    expect(folder()).toEqual({ id, name: 'Work', servers: ['a', 'b'], open: true })
+    expect(JSON.stringify(saved('rchat_layout:alice'))).not.toContain('color')
+  })
+
+  test('another account on the same browser keeps its own folder colors', () => {
+    withServers('rchat', 'a', 'b')
+    st().mergeServers('b', 'a')
+    st().setFolderColor(folder()?.id ?? '', '#d9483b')
+    expect(storage.has('rchat_layout:bob')).toBe(false)
+    useStore.setState({ me: me('bob', { servers: [srv('rchat'), srv('a'), srv('b')] }) })
+    st().reloadLayout()
+    expect(folder()).toBeUndefined()
+  })
+
   test('dragging a server out of a folder of two dissolves it in place', () => {
     withServers('rchat', 'a', 'b', 'c')
     st().mergeServers('b', 'a')

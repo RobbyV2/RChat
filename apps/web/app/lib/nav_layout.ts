@@ -3,6 +3,8 @@ export interface Folder {
   name: string | null
   servers: string[]
   open: boolean
+  // Lowercase #rrggbb; absent for the default color.
+  color?: string
 }
 
 export type RailEntry = string | Folder
@@ -76,6 +78,16 @@ const parseJson = (raw: string | null): unknown => {
 
 export const cleanFolderName = (name: string) => name.trim().slice(0, FOLDER_NAME_MAX) || null
 
+const HEX = /^#[0-9a-f]{6}$/i
+
+export const cleanFolderColor = (color: unknown) =>
+  typeof color === 'string' && HEX.test(color) ? color.toLowerCase() : null
+
+const colored = (color: unknown): Pick<Folder, 'color'> => {
+  const clean = cleanFolderColor(color)
+  return clean === null ? {} : { color: clean }
+}
+
 const tidy = (entries: RailEntry[]): RailEntry[] => {
   const seen = new Set<string>()
   const ids = new Set<string>()
@@ -103,7 +115,7 @@ const tidy = (entries: RailEntry[]): RailEntry[] => {
 const folderOf = (x: unknown): RailEntry[] => {
   if (isName(x)) return [x]
   if (typeof x !== 'object' || x === null) return []
-  const { id, name, servers, open } = x as Record<string, unknown>
+  const { id, name, servers, open, color } = x as Record<string, unknown>
   if (!isName(id)) return []
   return [
     {
@@ -111,6 +123,7 @@ const folderOf = (x: unknown): RailEntry[] => {
       name: typeof name === 'string' ? cleanFolderName(name) : null,
       servers: listOf(servers, isName),
       open: open === true,
+      ...colored(color),
     },
   ]
 }
@@ -430,6 +443,14 @@ export const toggleFolder = (layout: Layout, id: string) =>
 
 export const renameFolder = (layout: Layout, id: string, name: string) =>
   editFolder(layout, id, f => [{ ...f, name: cleanFolderName(name) }])
+
+export const setFolderColor = (layout: Layout, id: string, color: string | null): Layout => {
+  const next = cleanFolderColor(color)
+  const folder = findFolder(layout.servers, id)
+  if (!folder || (folder.color ?? null) === next) return layout
+  const { color: _old, ...rest } = folder
+  return editFolder(layout, id, () => [{ ...rest, ...colored(next) }])
+}
 
 export const ungroupFolder = (layout: Layout, id: string) => editFolder(layout, id, f => f.servers)
 

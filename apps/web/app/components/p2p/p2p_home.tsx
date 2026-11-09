@@ -860,7 +860,9 @@ export function P2pDialogs() {
     case 'server_settings':
       return <ServerSettingsDialog key={dialog.room} room={dialog.room} tab={dialog.tab} />
     case 'p2p_folder':
-      return <P2pFolderDialog key={dialog.id} id={dialog.id} />
+      return (
+        <P2pFolderDialog key={dialog.id} id={dialog.id} colorFirst={dialog.focus === 'color'} />
+      )
     case 'lost_device':
       return <LostDeviceDialog key={dialog.dk} dk={dialog.dk} />
     case 'recover':

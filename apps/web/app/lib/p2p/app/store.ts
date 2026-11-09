@@ -30,7 +30,7 @@ export type P2pDialog =
   | { kind: 'server_new'; tab?: 'create' | 'join'; code?: string }
   | { kind: 'server_invite'; room: string }
   | { kind: 'server_settings'; room: string; tab?: ServerTab }
-  | { kind: 'p2p_folder'; id: string }
+  | { kind: 'p2p_folder'; id: string; focus?: 'color' }
   | { kind: 'lost_device'; dk: string }
   | { kind: 'recover' }
 
