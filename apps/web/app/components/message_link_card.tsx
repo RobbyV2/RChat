@@ -45,12 +45,7 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
       data-link-card={id}
       className="mt-1 flex max-w-160 min-w-0 items-center gap-3 rounded-xl border border-outline-variant bg-surface-container px-3 py-2"
     >
-      <button
-        type="button"
-        tabIndex={-1}
-        onClick={jump}
-        className="min-w-0 flex-1 cursor-pointer text-left"
-      >
+      <button type="button" tabIndex={-1} onClick={jump} className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
           <UserAvatar
             username={author.username}

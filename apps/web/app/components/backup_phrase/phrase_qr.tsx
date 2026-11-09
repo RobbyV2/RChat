@@ -144,7 +144,7 @@ export function PhraseQr({
     <button
       type="button"
       onClick={onShow}
-      className={`${cover} cursor-pointer hover:bg-surface-container-highest hover:text-on-surface`}
+      className={`${cover} hover:bg-surface-container-highest hover:text-on-surface`}
     >
       Hidden in streamer mode. Show QR code
     </button>

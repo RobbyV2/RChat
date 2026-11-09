@@ -279,7 +279,7 @@ function ResponseView({ res }: { res: ApiResponse }) {
           type="button"
           data-streamer-cover
           onClick={() => setShown(res)}
-          className="flex min-h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-outline-variant px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+          className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-outline-variant px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
         >
           <Eye size={16} />
           Hidden in streamer mode. Show response
@@ -295,9 +295,7 @@ function ResponseBody({ res }: { res: ApiResponse }) {
   return (
     <>
       <details className="rounded-lg bg-surface-container px-3 py-2 text-xs">
-        <summary className="cursor-pointer text-on-surface-variant">
-          Headers ({res.headers.length})
-        </summary>
+        <summary className="text-on-surface-variant">Headers ({res.headers.length})</summary>
         <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono">
           {res.headers.map(([k, v]) => (
             <div key={k} className="contents">

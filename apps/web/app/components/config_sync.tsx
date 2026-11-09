@@ -67,7 +67,7 @@ function StreamerCover({
       aria-label={`Show ${what}`}
       data-streamer-cover
       onClick={() => setOpen(true)}
-      className="flex min-h-12 w-full flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-outline-variant px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
+      className="flex min-h-12 w-full flex-1 items-center justify-center gap-2 rounded-xl border border-dashed border-outline-variant px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface"
     >
       <Eye size={16} />
       {streamer ? `Hidden in streamer mode. Show ${what}` : `Show ${what}`}

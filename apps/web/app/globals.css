@@ -207,6 +207,30 @@ body {
   font-family: var(--font-sans);
 }
 
+/* Everything clickable shows the hand; disabled controls keep the default cursor. */
+@layer base {
+  :where(
+    button,
+    [role='button'],
+    [role='link'],
+    [role='menuitem'],
+    [role='menuitemcheckbox'],
+    [role='menuitemradio'],
+    [role='tab'],
+    [role='option'],
+    [role='switch'],
+    [role='checkbox'],
+    [role='radio'],
+    a[href],
+    summary,
+    select,
+    label:has(input:is([type='checkbox'], [type='radio']):enabled),
+    input:is([type='checkbox'], [type='radio'], [type='color'], [type='file'], [type='range'])
+  ):not(:disabled, [aria-disabled='true']) {
+    cursor: pointer;
+  }
+}
+
 .streamer-mode .streamer {
   filter: blur(5px);
   transition: filter 0.15s;

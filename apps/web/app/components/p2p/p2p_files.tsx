@@ -225,7 +225,7 @@ function Tile({ att, canFetch }: { att: Attachment; canFetch: boolean }) {
           data-file-spoiler
           title="Click to reveal"
           onClick={() => setRevealed(true)}
-          className="relative mt-1 block w-fit cursor-pointer overflow-hidden rounded-xl"
+          className="relative mt-1 block w-fit overflow-hidden rounded-xl"
         >
           <img src={url} alt="Spoiler" className="max-h-80 max-w-full blur-2xl" />
           <span className="absolute inset-0 flex items-center justify-center">

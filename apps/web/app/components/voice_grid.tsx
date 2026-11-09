@@ -417,7 +417,7 @@ function Tile({
         aria-pressed={focused}
         title={focused ? 'Back to grid' : 'Focus'}
         onClick={onToggle}
-        className="absolute inset-0 cursor-pointer rounded-xl outline-offset-[-3px] transition-colors hover:bg-on-surface/5 focus-visible:outline-2 focus-visible:outline-primary"
+        className="absolute inset-0 rounded-xl outline-offset-[-3px] transition-colors hover:bg-on-surface/5 focus-visible:outline-2 focus-visible:outline-primary"
       />
       <span
         {...(tile.local ? {} : profileTrigger(user, server))}

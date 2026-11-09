@@ -511,7 +511,7 @@ export function SpoilerCover({ title, onReveal }: { title?: string; onReveal: ()
       title={title}
       aria-label="Spoiler attachment, press to reveal"
       onClick={onReveal}
-      className="mt-1 flex w-fit cursor-pointer items-center gap-2 rounded-xl border border-outline-variant bg-surface-container px-3 py-2 hover:bg-surface-container-high"
+      className="mt-1 flex w-fit items-center gap-2 rounded-xl border border-outline-variant bg-surface-container px-3 py-2 hover:bg-surface-container-high"
     >
       <EyeOff size={18} className="shrink-0 text-on-surface-variant" />
       <span className="rounded-full bg-spoiler px-2 py-0.5 text-xs font-medium tracking-wide text-white uppercase">
@@ -894,7 +894,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
           aria-label="Spoiler image, press to reveal"
           data-spoiler-media
           onClick={() => setRevealed(true)}
-          className="relative mt-1 block w-fit cursor-pointer overflow-hidden rounded-xl"
+          className="relative mt-1 block w-fit overflow-hidden rounded-xl"
         >
           <img src={src} alt="Spoiler" className="max-h-80 max-w-full blur-2xl" />
           <span className="absolute inset-0 flex items-center justify-center">
@@ -973,7 +973,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
     'mt-1 block w-fit rounded-xl border border-outline-variant bg-surface-container px-3 py-2 text-left hover:bg-surface-container-high'
   if (guest && server !== undefined) {
     return (
-      <button title={`Download ${filename}`} onClick={save} className={`cursor-pointer ${box}`}>
+      <button title={`Download ${filename}`} onClick={save} className={box}>
         {card}
       </button>
     )
@@ -1097,7 +1097,7 @@ function SpoilerLinkCard({ url }: { url: string }) {
       title="Spoiler link, click to show"
       aria-label="Spoiler link, press to show"
       onClick={() => setRevealed(true)}
-      className={`${box} cursor-pointer text-on-surface-variant hover:bg-surface-container-high`}
+      className={`${box} text-on-surface-variant hover:bg-surface-container-high`}
     >
       <EyeOff size={14} className="shrink-0" />
       <span className="rounded-full bg-spoiler px-2 py-0.5 text-xs font-medium tracking-wide text-white uppercase">
