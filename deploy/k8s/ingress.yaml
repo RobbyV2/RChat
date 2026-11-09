@@ -1,7 +1,7 @@
-# Same path routing as deploy/nginx.conf. The browser dials PeerJS on NEXT_PUBLIC_PEERJS_PORT
-# (9001 in the published image). To route /peerjs through this Ingress on 443, build the image
-# with --build-arg NEXT_PUBLIC_PEERJS_PORT=443, or expose rchat-peerjs on 9001 with a
-# LoadBalancer Service.
+# Same path routing as deploy/nginx.conf, with an /api/v1/<x> twin for each /api/<x> path. The
+# browser dials PeerJS on NEXT_PUBLIC_PEERJS_PORT (9001 in the published image). To route /peerjs
+# through this Ingress on 443, build the image with --build-arg NEXT_PUBLIC_PEERJS_PORT=443, or
+# expose rchat-peerjs on 9001 with a LoadBalancer Service.
 #
 # rchat-strict adds the cluster-wide rate limit for auth, password changes, guest_access and
 # media uploads. rchat-invites and rchat-joins add the same limit, each in its own bucket. The
@@ -36,7 +36,21 @@ spec:
                 name: rchat-gateway
                 port:
                   name: http
+          - path: /api/v1/ws
+            pathType: Exact
+            backend:
+              service:
+                name: rchat-gateway
+                port:
+                  name: http
           - path: /api/media
+            pathType: Prefix
+            backend:
+              service:
+                name: rchat-media
+                port:
+                  name: http
+          - path: /api/v1/media
             pathType: Prefix
             backend:
               service:
@@ -50,7 +64,21 @@ spec:
                 name: rchat-search
                 port:
                   name: http
+          - path: /api/v1/search
+            pathType: Exact
+            backend:
+              service:
+                name: rchat-search
+                port:
+                  name: http
           - path: /api/server_search
+            pathType: Exact
+            backend:
+              service:
+                name: rchat-search
+                port:
+                  name: http
+          - path: /api/v1/server_search
             pathType: Exact
             backend:
               service:
@@ -118,7 +146,21 @@ spec:
                 name: rchat-api
                 port:
                   name: http
+          - path: /api/v1/auth/
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
           - path: /api/me/password$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
+          - path: /api/v1/me/password$
             pathType: ImplementationSpecific
             backend:
               service:
@@ -132,7 +174,21 @@ spec:
                 name: rchat-api
                 port:
                   name: http
+          - path: /api/v1/servers/.+/guest_access$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
           - path: /api/media$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-media
+                port:
+                  name: http
+          - path: /api/v1/media$
             pathType: ImplementationSpecific
             backend:
               service:
@@ -161,6 +217,13 @@ spec:
                 name: rchat-api
                 port:
                   name: http
+          - path: /api/v1/invites/
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
 ---
 # Server joins check the server password, so they get the same limit in their own bucket.
 apiVersion: networking.k8s.io/v1
@@ -178,6 +241,13 @@ spec:
       http:
         paths:
           - path: /api/servers/.+/join$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
+          - path: /api/v1/servers/.+/join$
             pathType: ImplementationSpecific
             backend:
               service:

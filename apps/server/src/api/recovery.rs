@@ -41,7 +41,7 @@ pub struct Challenge {
 /// byte, the purpose, a zero byte, the returned `username`, a zero byte, the nonce, a zero byte
 /// and the context. Send the signature as base64url without padding. No authentication. Strict
 /// and general rate-limit buckets.
-#[utoipa::path(post, path = "/api/auth/recovery/challenge", tag = "Auth", request_body = ChallengeReq, responses((status = 200, description = "A new nonce for this username, valid once until `expires_at`", body = Challenge), (status = 400, description = "Blank, too long (over 100 characters) or NUL-containing username. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict or general bucket", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(post, path = "/api/v1/auth/recovery/challenge", tag = "Auth", request_body = ChallengeReq, responses((status = 200, description = "A new nonce for this username, valid once until `expires_at`", body = Challenge), (status = 400, description = "Blank, too long (over 100 characters) or NUL-containing username. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict or general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn challenge(
     State(state): State<AppState>,
     Json(req): Json<ChallengeReq>,
@@ -74,7 +74,7 @@ pub struct RecoverReq {
     /// The username the challenge was issued for, case-insensitive.
     #[schema(example = "alice")]
     pub username: String,
-    /// The nonce from `POST /api/auth/recovery/challenge` for this username.
+    /// The nonce from `POST /api/v1/auth/recovery/challenge` for this username.
     pub nonce: String,
     /// The Ed25519 signature by the account key of the backup phrase over the challenge, with
     /// purpose `recover` and an empty context, as base64url without padding (86 characters).
@@ -95,14 +95,14 @@ fn wrong_phrase() -> ApiError {
 /// Sign in with a backup phrase
 ///
 /// Proves the account's backup phrase with a signature over a challenge from
-/// `POST /api/auth/recovery/challenge` (purpose `recover`, empty context), replaces the password
+/// `POST /api/v1/auth/recovery/challenge` (purpose `recover`, empty context), replaces the password
 /// or words, and returns a new session token. Every other session of the account is revoked and
 /// its WebSocket connections close. The backup phrase stays set. An unknown account, one without
 /// a backup phrase, a used, expired or foreign nonce and a wrong signature all answer the same
 /// 401. Recovery and login share each username's pace: one attempt every 3 seconds and at most
 /// 1000 a UTC day. An invalid new password answers 400 and leaves the nonce unused. No
 /// authentication. Strict and general rate-limit buckets.
-#[utoipa::path(post, path = "/api/auth/recovery", tag = "Auth", request_body = RecoverReq, responses((status = 200, description = "Recovered: the password is replaced, every other session of the account is revoked and its live connections close, and the new session token is returned. The backup phrase stays set", body = AuthResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, or not exactly one of `password` and `words` in `new`; the nonce stays unused. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "`Wrong username or backup phrase`: an unknown account, one without a backup phrase, a used, expired or foreign nonce, or a wrong signature. The nonce is used up", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login and recovery attempts for this username today (UTC); locked until the next day", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since the last login or recovery attempt for this username (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
+#[utoipa::path(post, path = "/api/v1/auth/recovery", tag = "Auth", request_body = RecoverReq, responses((status = 200, description = "Recovered: the password is replaced, every other session of the account is revoked and its live connections close, and the new session token is returned. The backup phrase stays set", body = AuthResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, or not exactly one of `password` and `words` in `new`; the nonce stays unused. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "`Wrong username or backup phrase`: an unknown account, one without a backup phrase, a used, expired or foreign nonce, or a wrong signature. The nonce is used up", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login and recovery attempts for this username today (UTC); locked until the next day", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since the last login or recovery attempt for this username (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn recover(
     State(state): State<AppState>,
     Json(req): Json<RecoverReq>,

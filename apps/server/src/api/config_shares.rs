@@ -100,7 +100,7 @@ pub fn check_expiry(expires_in: i64) -> Result<(), ApiError> {
 /// active links. Guests cannot share. Strict rate-limit bucket.
 #[utoipa::path(
     post,
-    path = "/api/config_shares",
+    path = "/api/v1/config_shares",
     tag = "Account",
     request_body = NewConfigShare,
     responses(
@@ -159,7 +159,7 @@ pub(crate) async fn create_share(
 /// not included. Strict rate-limit bucket.
 #[utoipa::path(
     get,
-    path = "/api/config_shares",
+    path = "/api/v1/config_shares",
     tag = "Account",
     responses(
         (status = 200, description = "Your active links", body = [ConfigShare]),
@@ -197,7 +197,7 @@ pub(crate) async fn list_shares(
 /// and revoked links all answer the same 404. Strict rate-limit bucket.
 #[utoipa::path(
     get,
-    path = "/api/config_shares/{id}",
+    path = "/api/v1/config_shares/{id}",
     tag = "Account",
     params(("id" = String, Path, description = "Link id")),
     responses(
@@ -233,7 +233,7 @@ pub(crate) async fn get_share(
 /// answer the same 404 as missing ones. Strict rate-limit bucket.
 #[utoipa::path(
     delete,
-    path = "/api/config_shares/{id}",
+    path = "/api/v1/config_shares/{id}",
     tag = "Account",
     params(("id" = String, Path, description = "Link id")),
     responses(

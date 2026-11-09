@@ -53,7 +53,7 @@ impl PingKind {
 }
 
 /// A notification for one user, delivered live as the `ping` WebSocket event. Unseen pings are
-/// counted per scope in `GET /api/unreads` and marked seen by `POST /api/read`.
+/// counted per scope in `GET /api/v1/unreads` and marked seen by `POST /api/v1/read`.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct Ping {
     /// Ping id, increasing over time.

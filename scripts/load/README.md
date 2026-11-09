@@ -31,7 +31,7 @@ The password must be `load-pass-1`. Register `admin` first, then `pwref`.
 
 ```sh
 for u in admin pwref; do
-  curl -s -H 'Content-Type: application/json' http://127.0.0.1:3411/api/auth/register \
+  curl -s -H 'Content-Type: application/json' http://127.0.0.1:3411/api/v1/auth/register \
     -d "{\"username\":\"$u\",\"password\":\"load-pass-1\",\"avatar_kind\":\"identicon\"}" >/dev/null
 done
 docker exec -i rchat-load-pg psql -U postgres < scripts/load/seed.sql
@@ -55,20 +55,20 @@ bun scripts/load/client.ts
 
 Run `mem.ts` against a freshly started server. `PHASES` with `presence` or `send` must have `storm` before them.
 
-| Variable                   | Used by                        | Meaning                                                                                                                                                                   |
-| -------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BASE`                     | all                            | Server address. Required.                                                                                                                                                 |
-| `WS_BASE`                  | all                            | WebSocket address of the sockets. Default: `BASE` with `/api/ws`. Set it to another copy for cross-copy delivery (sends and the presence phase's new users go to `BASE`). |
-| `SERVER_PID`               | all                            | Server process, for its CPU and RSS. Required by `mem.ts`.                                                                                                                |
-| `PG_CONTAINER`             | `count.ts`, `perms.ts`         | Postgres container with `pg_stat_statements`. Required there.                                                                                                             |
-| `OUT`                      | all                            | File the results are appended to. `client.ts` also saves screenshots next to it.                                                                                          |
-| `PHASES`                   | `run.ts`                       | Comma list of `login`, `ready`, `storm`, `presence`, `send`, `members`, `search`, `unreads`. Default: all.                                                                |
-| `CONC`                     | `join.ts`                      | Concurrent joins. Default 200.                                                                                                                                            |
-| `SOCKETS`                  | `run.ts`, `perms.ts`, `mem.ts` | Sockets to open. Default 1000.                                                                                                                                            |
-| `FROM`                     | `mem.ts`                       | First user number. Default 2000 (light users); 1000 for users in 200 servers.                                                                                             |
-| `VIEW`                     | `mem.ts`                       | Server the sockets view. Default none.                                                                                                                                    |
-| `HOLD`                     | `mem.ts`                       | Seconds to keep the sockets open after measuring. Default 0.                                                                                                              |
-| `PLAYWRIGHT_BROWSERS_PATH` | `client.ts`                    | Where Chromium is. Default `~/.cache/ms-playwright`.                                                                                                                      |
+| Variable                   | Used by                        | Meaning                                                                                                                                                                      |
+| -------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BASE`                     | all                            | Server address. Required.                                                                                                                                                    |
+| `WS_BASE`                  | all                            | WebSocket address of the sockets. Default: `BASE` with `/api/v1/ws`. Set it to another copy for cross-copy delivery (sends and the presence phase's new users go to `BASE`). |
+| `SERVER_PID`               | all                            | Server process, for its CPU and RSS. Required by `mem.ts`.                                                                                                                   |
+| `PG_CONTAINER`             | `count.ts`, `perms.ts`         | Postgres container with `pg_stat_statements`. Required there.                                                                                                                |
+| `OUT`                      | all                            | File the results are appended to. `client.ts` also saves screenshots next to it.                                                                                             |
+| `PHASES`                   | `run.ts`                       | Comma list of `login`, `ready`, `storm`, `presence`, `send`, `members`, `search`, `unreads`. Default: all.                                                                   |
+| `CONC`                     | `join.ts`                      | Concurrent joins. Default 200.                                                                                                                                               |
+| `SOCKETS`                  | `run.ts`, `perms.ts`, `mem.ts` | Sockets to open. Default 1000.                                                                                                                                               |
+| `FROM`                     | `mem.ts`                       | First user number. Default 2000 (light users); 1000 for users in 200 servers.                                                                                                |
+| `VIEW`                     | `mem.ts`                       | Server the sockets view. Default none.                                                                                                                                       |
+| `HOLD`                     | `mem.ts`                       | Seconds to keep the sockets open after measuring. Default 0.                                                                                                                 |
+| `PLAYWRIGHT_BROWSERS_PATH` | `client.ts`                    | Where Chromium is. Default `~/.cache/ms-playwright`.                                                                                                                         |
 
 ## Upgrade check
 

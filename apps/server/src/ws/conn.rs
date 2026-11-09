@@ -76,7 +76,7 @@ use crate::state::AppState;
 /// attachments, and the key it checks download tokens with), `p2p_peer`, `error` and `resync` (fetch state again after missed events). Frames
 /// are at most 64 KiB. The token goes in the `auth` frame, not in the bearer security scheme.
 /// General rate-limit bucket for the upgrade request.
-#[utoipa::path(get, path = "/api/ws", tag = "Realtime", responses((status = 101, description = "WebSocket upgrade"), (status = 429, description = "Too many requests in the general bucket, or too many open connections from this address", content_type = "text/plain", body = String), (status = 503, description = "Realtime bus not ready", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(get, path = "/api/v1/ws", tag = "Realtime", responses((status = 101, description = "WebSocket upgrade"), (status = 429, description = "Too many requests in the general bucket, or too many open connections from this address", content_type = "text/plain", body = String), (status = 503, description = "Realtime bus not ready", content_type = "text/plain", body = String)), security(()))]
 pub async fn handler(
     State(state): State<AppState>,
     Extension(key): Extension<ClientIp>,

@@ -65,7 +65,7 @@ pub enum ReAuth {
 /// A backup phrase signature over a recovery challenge.
 #[derive(Deserialize, ToSchema)]
 pub struct PhraseProof {
-    /// The nonce from `POST /api/auth/recovery/challenge` for this account.
+    /// The nonce from `POST /api/v1/auth/recovery/challenge` for this account.
     pub nonce: String,
     /// The Ed25519 signature by the account key of the backup phrase over the challenge, as
     /// base64url without padding (86 characters).

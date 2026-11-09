@@ -768,7 +768,7 @@ pub(crate) async fn my_servers_by_names(
 /// you are not a member of. Requires a bearer token. General rate-limit bucket.
 #[utoipa::path(
     get,
-    path = "/api/me/servers",
+    path = "/api/v1/me/servers",
     tag = "Account",
     params(MyServersQuery),
     responses(
@@ -1153,9 +1153,9 @@ async fn members_page(
 /// General rate-limit bucket.
 #[utoipa::path(
     get,
-    path = "/api/servers/{name}/members",
+    path = "/api/v1/servers/{name}/members",
     tag = "Members",
-    params(("name" = String, Path, description = "Server name, case-insensitive"), MemberListQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
+    params(("name" = String, Path, description = "Server name, case-insensitive"), MemberListQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
     responses(
         (status = 200, description = "A page of members, or just the requested `usernames`", body = Vec<Member>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
         (status = 400, description = "Invalid cursor (including a cursor from a different kind of listing), or a non-integer `offset` or `limit`", body = ApiErrorBody),
@@ -1319,9 +1319,9 @@ async fn recent_pairs(
 /// General rate-limit bucket.
 #[utoipa::path(
     get,
-    path = "/api/servers/{name}/interacted",
+    path = "/api/v1/servers/{name}/interacted",
     tag = "Members",
-    params(("name" = String, Path, description = "Server name, case-insensitive"), MembersQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
+    params(("name" = String, Path, description = "Server name, case-insensitive"), MembersQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
     responses(
         (status = 200, description = "A page of users who interacted with the server and are not members, most recent first", body = Vec<UserRef>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
         (status = 400, description = "Invalid cursor (JSON), or a non-integer `offset` or `limit` (plain-text framework error)", body = ApiErrorBody),
@@ -1379,7 +1379,7 @@ pub(crate) async fn list_interacted(
 /// Emits `server_created` to the creator. Strict and general rate-limit buckets.
 #[utoipa::path(
     post,
-    path = "/api/servers",
+    path = "/api/v1/servers",
     tag = "Servers",
     request_body = CreateServerReq,
     responses(
@@ -1465,9 +1465,9 @@ pub(crate) async fn create_server(
 /// General rate-limit bucket.
 #[utoipa::path(
     get,
-    path = "/api/servers/{name}",
+    path = "/api/v1/servers/{name}",
     tag = "Servers",
-    params(("name" = String, Path, description = "Server name, case-insensitive"), ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
     responses(
         (status = 200, description = "Server details: channels visible to the viewer, roles, and member and online counts", body = ServerDetail),
         (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
@@ -1505,7 +1505,7 @@ pub(crate) async fn get_server(
 /// buckets.
 #[utoipa::path(
     get,
-    path = "/api/servers/{name}/available",
+    path = "/api/v1/servers/{name}/available",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     responses(
@@ -1541,7 +1541,7 @@ pub(crate) async fn server_available(
 /// servers without a password). General rate-limit bucket.
 #[utoipa::path(
     get,
-    path = "/api/server_search",
+    path = "/api/v1/server_search",
     tag = "Search",
     params(ServerSearchQuery),
     responses(
@@ -1604,7 +1604,7 @@ pub(crate) async fn search_servers(
 /// it, guests only when guest access is on. Strict and general rate-limit buckets.
 #[utoipa::path(
     post,
-    path = "/api/servers/{name}/guest_access",
+    path = "/api/v1/servers/{name}/guest_access",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = GuestAccessReq,
@@ -1769,7 +1769,7 @@ async fn invite_preview(
 ///
 /// Returns an invite card: the server, the viewer `status`, member and online counts, and a short
 /// preview of recent messages. The password step is the same as for
-/// `POST /api/servers/{name}/join`. You get the card for a server without a password, a server you
+/// `POST /api/v1/servers/{name}/join`. You get the card for a server without a password, a server you
 /// are a member of, or (for guests) a server that a valid `X-Guest-Grant` unlocks. All other names
 /// get the same `401 Password required` without `X-Invite-Password`, also when the server does not
 /// exist. A wrong password or an unknown name gets `404 Server not found or wrong password`.
@@ -1781,12 +1781,12 @@ async fn invite_preview(
 /// buckets.
 #[utoipa::path(
     get,
-    path = "/api/invites/{name}",
+    path = "/api/v1/invites/{name}",
     tag = "Invites",
     params(
         ("name" = String, Path, description = "Server name, case-insensitive"),
         ("X-Invite-Password" = Option<String>, Header, description = "Percent-encoded server password from the invite link or typed by the viewer; blank counts as absent"),
-        ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests; a valid grant unlocks the card")
+        ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests; a valid grant unlocks the card")
     ),
     responses(
         (status = 200, description = "Invite card for the server", body = Invite),
@@ -1894,7 +1894,7 @@ async fn insert_member(
 /// buckets.
 #[utoipa::path(
     post,
-    path = "/api/servers/{name}/join",
+    path = "/api/v1/servers/{name}/join",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body(content = Option<JoinReq>, description = "Optional; `password` is only read for password-protected servers you are not a member of"),
@@ -1990,7 +1990,7 @@ async fn end_membership(
 /// caller, and the caller goes offline in the server. General rate-limit bucket.
 #[utoipa::path(
     post,
-    path = "/api/servers/{name}/leave",
+    path = "/api/v1/servers/{name}/leave",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     responses(
@@ -2047,7 +2047,7 @@ pub(crate) async fn leave_server(
 /// the server leave their call. Strict and general rate-limit buckets.
 #[utoipa::path(
     patch,
-    path = "/api/servers/{name}",
+    path = "/api/v1/servers/{name}",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = ServerPatch,
@@ -2410,7 +2410,7 @@ async fn purge_members(
 /// rate-limit bucket.
 #[utoipa::path(
     delete,
-    path = "/api/servers/{name}",
+    path = "/api/v1/servers/{name}",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     responses(
@@ -2446,7 +2446,7 @@ pub(crate) async fn delete_server(
 /// General rate-limit bucket.
 #[utoipa::path(
     post,
-    path = "/api/servers/{name}/channels",
+    path = "/api/v1/servers/{name}/channels",
     tag = "Channels",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = CreateChannelReq,
@@ -2577,7 +2577,7 @@ pub(crate) async fn create_channel(
 /// updated channel when the name changed, otherwise `channel_updated`. General rate-limit bucket.
 #[utoipa::path(
     patch,
-    path = "/api/channels/{id}",
+    path = "/api/v1/channels/{id}",
     tag = "Channels",
     params(("id" = i64, Path, description = "Channel id")),
     request_body = ChannelPatch,
@@ -2793,7 +2793,7 @@ pub(crate) async fn update_channel(
 /// view the channel get either. General rate-limit bucket.
 #[utoipa::path(
     delete,
-    path = "/api/channels/{id}",
+    path = "/api/v1/channels/{id}",
     tag = "Channels",
     params(("id" = i64, Path, description = "Channel id")),
     responses(
@@ -2891,7 +2891,7 @@ pub(crate) async fn delete_channel(
 /// rate-limit bucket.
 #[utoipa::path(
     post,
-    path = "/api/servers/{name}/kick",
+    path = "/api/v1/servers/{name}/kick",
     tag = "Moderation",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = UsernameReq,
@@ -2958,7 +2958,7 @@ pub(crate) async fn kick_member(
 /// otherwise `server_banned` to the user. General rate-limit bucket.
 #[utoipa::path(
     post,
-    path = "/api/servers/{name}/bans",
+    path = "/api/v1/servers/{name}/bans",
     tag = "Moderation",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = UsernameReq,
@@ -3046,7 +3046,7 @@ pub(crate) async fn ban_member(
 /// WebSocket event. General rate-limit bucket.
 #[utoipa::path(
     delete,
-    path = "/api/servers/{name}/bans/{username}",
+    path = "/api/v1/servers/{name}/bans/{username}",
     tag = "Moderation",
     params(("name" = String, Path, description = "Server name, case-insensitive"), ("username" = String, Path, description = "Target username, case-insensitive")),
     responses(
@@ -3094,7 +3094,7 @@ pub(crate) async fn unban_member(
 /// legacy `offset`). Requires the Kick server permission. General rate-limit bucket.
 #[utoipa::path(
     get,
-    path = "/api/servers/{name}/bans",
+    path = "/api/v1/servers/{name}/bans",
     tag = "Moderation",
     params(("name" = String, Path, description = "Server name, case-insensitive"), MembersQuery),
     responses(
@@ -3263,7 +3263,7 @@ async fn set_admin(
 /// the user. General rate-limit bucket.
 #[utoipa::path(
     post,
-    path = "/api/servers/{name}/admins",
+    path = "/api/v1/servers/{name}/admins",
     tag = "Moderation",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = UsernameReq,
@@ -3305,7 +3305,7 @@ pub(crate) async fn grant_admin(
 /// the server and the user. General rate-limit bucket.
 #[utoipa::path(
     delete,
-    path = "/api/servers/{name}/admins/{username}",
+    path = "/api/v1/servers/{name}/admins/{username}",
     tag = "Moderation",
     params(("name" = String, Path, description = "Server name, case-insensitive"), ("username" = String, Path, description = "Target username, case-insensitive")),
     responses(
@@ -3344,7 +3344,7 @@ pub(crate) async fn revoke_admin(
 /// General rate-limit bucket.
 #[utoipa::path(
     post,
-    path = "/api/servers/{name}/transfer_admin",
+    path = "/api/v1/servers/{name}/transfer_admin",
     tag = "Moderation",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = UsernameReq,
@@ -3447,7 +3447,7 @@ pub(crate) async fn transfer_admin(
 /// `admin_changed` to the server and the user. General rate-limit bucket.
 #[utoipa::path(
     patch,
-    path = "/api/servers/{name}/admins/{username}/perms",
+    path = "/api/v1/servers/{name}/admins/{username}/perms",
     tag = "Moderation",
     params(("name" = String, Path, description = "Server name, case-insensitive"), ("username" = String, Path, description = "Target username, case-insensitive")),
     request_body = PermsReq,
@@ -3731,7 +3731,7 @@ fn check_color(color: &str) -> Result<(), ApiError> {
 /// `roles_changed` to the server. General rate-limit bucket.
 #[utoipa::path(
     post,
-    path = "/api/servers/{name}/roles",
+    path = "/api/v1/servers/{name}/roles",
     tag = "Roles",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = RoleReq,
@@ -3835,7 +3835,7 @@ pub(crate) async fn create_role(
 /// rate-limit bucket.
 #[utoipa::path(
     patch,
-    path = "/api/servers/{name}/roles/{id}",
+    path = "/api/v1/servers/{name}/roles/{id}",
     tag = "Roles",
     params(("name" = String, Path, description = "Server name, case-insensitive"), ("id" = i64, Path, description = "Role id; the role must belong to this server")),
     request_body = RolePatch,
@@ -4009,7 +4009,7 @@ pub(crate) async fn update_role(
 /// view. General rate-limit bucket.
 #[utoipa::path(
     delete,
-    path = "/api/servers/{name}/roles/{id}",
+    path = "/api/v1/servers/{name}/roles/{id}",
     tag = "Roles",
     params(("name" = String, Path, description = "Server name, case-insensitive"), ("id" = i64, Path, description = "Role id; the role must belong to this server")),
     responses(
@@ -4100,7 +4100,7 @@ pub(crate) async fn delete_role(
 /// from voice channels they can no longer view. General rate-limit bucket.
 #[utoipa::path(
     post,
-    path = "/api/servers/{name}/roles/{id}/assign",
+    path = "/api/v1/servers/{name}/roles/{id}/assign",
     tag = "Roles",
     params(("name" = String, Path, description = "Server name, case-insensitive"), ("id" = i64, Path, description = "Role id; the role must belong to this server")),
     request_body = UsernameReq,
@@ -4204,7 +4204,7 @@ pub(crate) async fn assign_role(
 /// view. General rate-limit bucket.
 #[utoipa::path(
     delete,
-    path = "/api/servers/{name}/roles/{id}/assign/{username}",
+    path = "/api/v1/servers/{name}/roles/{id}/assign/{username}",
     tag = "Roles",
     params(("name" = String, Path, description = "Server name, case-insensitive"), ("id" = i64, Path, description = "Role id; the role must belong to this server"), ("username" = String, Path, description = "Target username, case-insensitive")),
     responses(
@@ -4382,7 +4382,7 @@ pub struct ChannelPermsQuery {
 /// channels permission in the channel's server. General rate-limit bucket.
 #[utoipa::path(
     get,
-    path = "/api/channels/{id}/perms",
+    path = "/api/v1/channels/{id}/perms",
     tag = "Channels",
     params(("id" = i64, Path, description = "Channel id"), ChannelPermsQuery),
     responses(
@@ -4445,7 +4445,7 @@ pub(crate) async fn list_channel_perms(
 /// they can no longer view it. General rate-limit bucket.
 #[utoipa::path(
     put,
-    path = "/api/channels/{id}/perms",
+    path = "/api/v1/channels/{id}/perms",
     tag = "Channels",
     params(("id" = i64, Path, description = "Channel id")),
     request_body = ChannelPerm,
@@ -4556,7 +4556,7 @@ pub(crate) async fn set_channel_perm(
 /// channel's voice room if they can no longer view it. General rate-limit bucket.
 #[utoipa::path(
     delete,
-    path = "/api/channels/{id}/perms/{subject}",
+    path = "/api/v1/channels/{id}/perms/{subject}",
     tag = "Channels",
     params(
         ("id" = i64, Path, description = "Channel id"),

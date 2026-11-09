@@ -769,7 +769,7 @@ struct Raw {
 /// rate-limit bucket.
 #[utoipa::path(
     get,
-    path = "/api/servers/{name}/audit",
+    path = "/api/v1/servers/{name}/audit",
     tag = "Moderation",
     params(("name" = String, Path, description = "Server name, case-insensitive"), AuditQuery),
     responses(

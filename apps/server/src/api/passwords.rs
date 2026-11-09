@@ -198,7 +198,7 @@ async fn live_count(db: &Db, server: &str, t: i64) -> Result<i64, ApiError> {
 /// bucket.
 #[utoipa::path(
     get,
-    path = "/api/servers/{name}/passwords",
+    path = "/api/v1/servers/{name}/passwords",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     responses(
@@ -272,7 +272,7 @@ fn expiry(
 /// rchat server. Strict and general rate-limit buckets.
 #[utoipa::path(
     post,
-    path = "/api/servers/{name}/passwords",
+    path = "/api/v1/servers/{name}/passwords",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = NewPassword,
@@ -414,7 +414,7 @@ pub(crate) async fn create_password(
 /// guests whose grant ended lose the server. General rate-limit bucket.
 #[utoipa::path(
     delete,
-    path = "/api/servers/{name}/passwords/{id}",
+    path = "/api/v1/servers/{name}/passwords/{id}",
     tag = "Servers",
     params(
         ("name" = String, Path, description = "Server name, case-insensitive"),

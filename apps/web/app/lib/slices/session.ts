@@ -1281,8 +1281,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         await bootUrl()
         return
       }
+      await get().loadInstance()
       void get().loadSettings()
-      void get().loadInstance()
       const token = localStorage.getItem(LS.token)
       const guest = localStorage.getItem(LS.guest) === '1'
       const stored = readJson<unknown>(LS.guestServers, null)

@@ -1,3 +1,4 @@
+import { apiRoot, versionedBase, type ApiPrefix } from './api_version'
 import { localUntil, type TimeoutWire } from './timeouts'
 import { ALL_PERMS } from './types'
 import type {
@@ -63,6 +64,7 @@ import type {
   WebhookSecret,
 } from './webhooks'
 
+// The API root (`.../api`); clients call it through `versionedBase` (see `api_version.ts`).
 export function resolveApiBase(
   url: string | undefined,
   hasWindow: boolean,
@@ -89,6 +91,9 @@ async function failed(response: Response): Promise<never> {
   const error = await response.json().catch(() => ({ error: response.statusText }))
   throw new ApiError(error.error || response.statusText, response.status, error)
 }
+
+export const isJson = (res: Response) =>
+  /^application\/(?:[\w.+-]*\+)?json\b/i.test(res.headers.get('content-type') ?? '')
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) return failed(response)
@@ -123,15 +128,38 @@ export const inboxParams = (q: InboxQuery) => {
 export class ApiClient {
   private token: string | null = null
   private grants: Record<string, string> = {}
-
-  base = ''
+  private root = ''
+  // Set from the instance's discovery document (see `api_version.ts`).
+  prefix: ApiPrefix = 'unversioned'
 
   constructor(base: string) {
     this.setBase(base)
   }
 
+  get base() {
+    return versionedBase(this.root, this.prefix)
+  }
+
   setBase(base: string) {
-    this.base = base.replace(/\/+$/, '')
+    this.root = apiRoot(base)
+  }
+
+  // The instance's discovery document, on the unversioned path every version serves. Only a JSON
+  // answer counts; a redirect (into the web app on older instances) is not followed. The boot
+  // waits for it, so it gives up after 3 s.
+  async discovery(timeoutMs = 3000): Promise<InstanceInfo> {
+    let res: Response
+    try {
+      res = await fetch(`${this.root}/instance`, {
+        headers: { Accept: 'application/json' },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+    } catch {
+      throw new ApiError("Can't reach the server", 0)
+    }
+    if (!isJson(res)) throw new ApiError('No instance document', res.status)
+    return handleResponse<InstanceInfo>(res)
   }
 
   setToken(token: string | null) {
@@ -722,7 +750,7 @@ export const endpoints = (c: ApiClient) => ({
     c.page<ServerSummaryLite>(withCursor(`/admin/users/${seg(username)}/servers`, cursor)),
   adminDeleteMessage: (id: number) => c.req<unknown>('DELETE', `/admin/messages/${id}`),
   banUser: (username: string) => c.req<unknown>('POST', '/admin/ban', { username }),
-  instance: () => c.req<InstanceInfo>('GET', '/instance'),
+  instance: () => c.discovery(),
   identityAssertion: (aud: string, nonce?: string) =>
     c.req<Assertion>('POST', '/identity/assertion', { aud, nonce }),
   p2pIce: () => c.req<IceServers>('GET', '/p2p/ice'),

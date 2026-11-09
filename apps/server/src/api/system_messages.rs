@@ -156,7 +156,7 @@ async fn load(db: &Db, server: &str) -> Result<SystemMessages, ApiError> {
 /// clients show it as "Hidden channel". General rate-limit bucket.
 #[utoipa::path(
     get,
-    path = "/api/servers/{name}/system_messages",
+    path = "/api/v1/servers/{name}/system_messages",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     responses(
@@ -185,7 +185,7 @@ pub(crate) async fn get_system_messages(
 /// event. General rate-limit bucket.
 #[utoipa::path(
     patch,
-    path = "/api/servers/{name}/system_messages",
+    path = "/api/v1/servers/{name}/system_messages",
     tag = "Servers",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = SystemMessagesPatch,

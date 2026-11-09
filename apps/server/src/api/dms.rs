@@ -35,7 +35,7 @@ pub struct DmListQuery {
     /// Page size, 1 to 100 (clamped), default 50.
     limit: Option<i64>,
     /// Opaque cursor from the `X-Next-Cursor` header of the previous page (or `dms_cursor` from
-    /// `GET /api/me`). Empty means the first page.
+    /// `GET /api/v1/me`). Empty means the first page.
     cursor: Option<String>,
     /// Comma-separated DM ids to fetch instead of a page; up to 100 distinct ids, entries that
     /// are not integers or not your DMs are skipped. Paging parameters are then ignored.
@@ -196,7 +196,7 @@ pub(crate) async fn dms_by_ids(
 ///
 /// Returns the signed-in user's DM conversations, a page at a time or selected by id. Requires
 /// a bearer token. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/dms", tag = "Direct messages", params(DmListQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default 50, max 100) of the signed-in user's DM conversations: the self DM first, then by latest message (call logs included) newest first, DMs without messages last by id newest first. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page (`dms_cursor` in `/api/me` for the page after the first). DMs the user closed are left out of pages. With `ids` (comma-separated, max 100) returns just those DMs, self DM first, without `X-Next-Cursor`, skipping ones the user is not part of; closed ones are included with `closed: true`", body = Vec<DmSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON), or a non-integer `offset`/`limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/dms", tag = "Direct messages", params(DmListQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default 50, max 100) of the signed-in user's DM conversations: the self DM first, then by latest message (call logs included) newest first, DMs without messages last by id newest first. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page (`dms_cursor` in `/api/v1/me` for the page after the first). DMs the user closed are left out of pages. With `ids` (comma-separated, max 100) returns just those DMs, self DM first, without `X-Next-Cursor`, skipping ones the user is not part of; closed ones are included with `closed: true`", body = Vec<DmSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON), or a non-integer `offset`/`limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn list_dms(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -237,7 +237,7 @@ pub(crate) async fn list_dms(
 /// DM emits `dm_created` to both users. If the signed-in user had closed it, it is reopened for
 /// them and `dm_reopened` (`{username, dm_id}`) goes to their connections. Requires a bearer
 /// token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/dms", tag = "Direct messages", request_body = OpenDmReq, responses((status = 200, description = "The DM with the given user, created if it did not exist yet", body = DmSummary), (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework error; 415 for the latter)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "User not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/dms", tag = "Direct messages", request_body = OpenDmReq, responses((status = 200, description = "The DM with the given user, created if it did not exist yet", body = DmSummary), (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework error; 415 for the latter)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "User not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn open_dm(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -349,7 +349,7 @@ pub(crate) async fn reopen_for(state: &AppState, id: i64, actor: &str, recipient
 }
 
 /// Closes `user`'s side of their DM with `other`, if there is one, like `POST
-/// /api/dms/{id}/close`, and returns its id.
+/// /api/v1/dms/{id}/close`, and returns its id.
 pub(crate) async fn close_with(
     state: &AppState,
     user: &User,
@@ -382,12 +382,12 @@ pub(crate) async fn close_with(
 ///
 /// Hides a DM from the signed-in user's DM list on all their devices; the history is kept and
 /// the other participant's list is unchanged. The DM comes back when a new message (or call)
-/// arrives in it from either side, or when the user opens it again with `POST /api/dms`. Closing
+/// arrives in it from either side, or when the user opens it again with `POST /api/v1/dms`. Closing
 /// marks the DM read up to its newest message and its pings seen (`read_updated`). Emits
 /// `dm_closed` (`{username, dm_id}`) to the user's connections when it was open. Closing a
 /// closed DM changes nothing. Requires a bearer token and being a participant. General
 /// rate-limit bucket.
-#[utoipa::path(post, path = "/api/dms/{id}/close", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), responses((status = 200, description = "Closed; body `{\"ok\": true}`", body = OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/dms/{id}/close", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), responses((status = 200, description = "Closed; body `{\"ok\": true}`", body = OkResp), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn close_dm(
     State(state): State<AppState>,
     Path(id): Path<i64>,

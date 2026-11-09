@@ -76,11 +76,21 @@ function tail(logs: string[]) {
     .join('\n')
 }
 
-async function call<T>(base: string, path: string, token?: string, body?: unknown) {
+// The API base of the server at `base` from its discovery document: `/api/v1` when it lists v1,
+// else `/api` (builds from before API versions).
+export const apiBaseOf = (base: string, doc: unknown) => {
+  const versions: unknown = (doc as { api_versions?: unknown } | null)?.api_versions
+  return base + (Array.isArray(versions) && versions.includes('v1') ? '/api/v1' : '/api')
+}
+
+const apiOf = async (base: string) =>
+  apiBaseOf(base, await (await fetch(base + '/api/instance')).json())
+
+async function call<T>(api: string, path: string, token?: string, body?: unknown) {
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = 'Bearer ' + token
   if (body !== undefined) headers['Content-Type'] = 'application/json'
-  const r = await fetch(base + '/api' + path, {
+  const r = await fetch(api + path, {
     method: body !== undefined ? 'POST' : 'GET',
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -98,48 +108,48 @@ type Auth = { token: string }
 type Msg = { id: number; content: string }
 type Seeded = { alice: string; bob: string; channel: number; root: number; dm: number }
 
-async function seed(base: string): Promise<Seeded> {
+async function seed(api: string): Promise<Seeded> {
   const register = (username: string) =>
-    call<Auth>(base, '/auth/register', undefined, {
+    call<Auth>(api, '/auth/register', undefined, {
       username,
       password: PASSWORD,
       avatar_kind: 'identicon',
     })
   const alice = (await register('alice')).token
   const bob = (await register('bob')).token
-  await call(base, '/servers', alice, { name: 'upgrade' })
+  await call(api, '/servers', alice, { name: 'upgrade' })
   const channel = (
-    await call<{ id: number }>(base, '/servers/upgrade/channels', alice, { name: 'notes' })
+    await call<{ id: number }>(api, '/servers/upgrade/channels', alice, { name: 'notes' })
   ).id
-  await call(base, '/servers/upgrade/join', bob, {})
+  await call(api, '/servers/upgrade/join', bob, {})
   const root = (
-    await call<Msg>(base, `/channels/${channel}/messages`, alice, { content: 'upgrade root' })
+    await call<Msg>(api, `/channels/${channel}/messages`, alice, { content: 'upgrade root' })
   ).id
-  await call(base, `/channels/${channel}/messages`, bob, { content: 'upgrade second' })
-  await call(base, `/messages/${root}/thread`, bob, { content: 'upgrade thread reply' })
-  const dm = (await call<{ id: number }>(base, '/dms', alice, { username: 'bob' })).id
-  await call(base, `/dms/${dm}/messages`, alice, { content: 'upgrade dm' })
-  await call(base, `/dms/${dm}/messages`, bob, { content: 'upgrade dm reply' })
+  await call(api, `/channels/${channel}/messages`, bob, { content: 'upgrade second' })
+  await call(api, `/messages/${root}/thread`, bob, { content: 'upgrade thread reply' })
+  const dm = (await call<{ id: number }>(api, '/dms', alice, { username: 'bob' })).id
+  await call(api, `/dms/${dm}/messages`, alice, { content: 'upgrade dm' })
+  await call(api, `/dms/${dm}/messages`, bob, { content: 'upgrade dm reply' })
   return { alice, bob, channel, root, dm }
 }
 
-async function readBack(base: string, s: Seeded) {
-  const ready = await call<{ ok: boolean }>(base, '/ready')
-  expect(ready.ok, '/api/ready is not ok')
-  const me = await call<{ username: string; servers: { name: string }[] }>(base, '/me', s.alice)
-  expect(me.username === 'alice', `/api/me is ${me.username}`)
+async function readBack(api: string, s: Seeded) {
+  const ready = await call<{ ok: boolean }>(api, '/ready')
+  expect(ready.ok, '/ready is not ok')
+  const me = await call<{ username: string; servers: { name: string }[] }>(api, '/me', s.alice)
+  expect(me.username === 'alice', `/me is ${me.username}`)
   expect(
     me.servers.some(server => server.name === 'upgrade'),
-    '/api/me lacks the upgrade server'
+    '/me lacks the upgrade server'
   )
   const has = (msgs: Msg[], ...want: string[]) => want.every(w => msgs.some(m => m.content === w))
-  const history = await call<Msg[]>(base, `/channels/${s.channel}/messages`, s.alice)
+  const history = await call<Msg[]>(api, `/channels/${s.channel}/messages`, s.alice)
   expect(has(history, 'upgrade root', 'upgrade second'), 'channel history lost messages')
-  const thread = await call<Msg[]>(base, `/messages/${s.root}/thread`, s.alice)
+  const thread = await call<Msg[]>(api, `/messages/${s.root}/thread`, s.alice)
   expect(has(thread, 'upgrade thread reply'), 'the thread reply is missing')
-  const dm = await call<Msg[]>(base, `/dms/${s.dm}/messages`, s.bob)
+  const dm = await call<Msg[]>(api, `/dms/${s.dm}/messages`, s.bob)
   expect(has(dm, 'upgrade dm', 'upgrade dm reply'), 'DM history lost messages')
-  await call<Auth>(base, '/auth/login', undefined, { username: 'bob', password: PASSWORD })
+  await call<Auth>(api, '/auth/login', undefined, { username: 'bob', password: PASSWORD })
 }
 
 async function runCheck(db: 'sqlite' | 'postgres', target: string, statements: string[]) {
@@ -243,11 +253,11 @@ async function main() {
   try {
     if (admin) await admin.unsafe(`CREATE DATABASE ${scratch}`)
     const old = await start(oldBin, 'old')
-    const seeded = await seed(base)
+    const seeded = await seed(await apiOf(base))
     await stop(old)
     await stop(await start(newBin, 'new-1'))
     const second = await start(newBin, 'new-2')
-    await readBack(base, seeded)
+    await readBack(await apiOf(base), seeded)
     await stop(second)
     if (check) {
       const results = await runCheck(db, target, statements)

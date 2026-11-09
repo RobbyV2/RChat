@@ -192,7 +192,7 @@ fn clean_reason(reason: Option<String>) -> Result<Option<String>, ApiError> {
 /// when they are in voice. General rate-limit bucket.
 #[utoipa::path(
     put,
-    path = "/api/servers/{name}/timeouts/{username}",
+    path = "/api/v1/servers/{name}/timeouts/{username}",
     tag = "Moderation",
     params(("name" = String, Path, description = "Server name, case-insensitive"), ("username" = String, Path, description = "Member to time out, case-insensitive")),
     request_body = TimeoutReq,
@@ -280,7 +280,7 @@ pub(crate) async fn set_timeout(
 /// rate-limit bucket.
 #[utoipa::path(
     delete,
-    path = "/api/servers/{name}/timeouts/{username}",
+    path = "/api/v1/servers/{name}/timeouts/{username}",
     tag = "Moderation",
     params(("name" = String, Path, description = "Server name, case-insensitive"), ("username" = String, Path, description = "Timed out user, case-insensitive")),
     responses(

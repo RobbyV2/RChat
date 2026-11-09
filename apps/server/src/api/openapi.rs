@@ -19,7 +19,7 @@ impl Modify for Bearer {
                     HttpBuilder::new()
                         .scheme(HttpAuthScheme::Bearer)
                         .description(Some(
-                            "A session token from `POST /api/auth/register`, `POST /api/auth/login` or `POST /api/auth/recovery`, sent as `Authorization: Bearer <token>`. Tokens do not expire; `POST /api/auth/logout` revokes one, a password change revokes all others, and a recovery revokes every earlier one. An unknown token on an endpoint that also allows guests is treated as no token.",
+                            "A session token from `POST /api/v1/auth/register`, `POST /api/v1/auth/login` or `POST /api/v1/auth/recovery`, sent as `Authorization: Bearer <token>`. Tokens do not expire; `POST /api/v1/auth/logout` revokes one, a password change revokes all others, and a recovery revokes every earlier one. An unknown token on an endpoint that also allows guests is treated as no token.",
                         ))
                         .build(),
                 ),
@@ -185,9 +185,11 @@ impl Modify for Bearer {
     info(
         title = "RChat API",
         version = env!("CARGO_PKG_VERSION"),
-        description = "RChat is a self-hosted chat server: servers with text and voice channels, roles and per-channel permissions, threads, direct messages with calls, media uploads, link previews and search. This document covers the REST API under `/api` plus the `/.well-known` discovery documents.
+        description = "RChat is a self-hosted chat server: servers with text and voice channels, roles and per-channel permissions, threads, direct messages with calls, media uploads, link previews and search. This document covers version 1 of the REST API plus the `/.well-known` discovery documents.
 
-**Authentication.** Register or log in to get a session token and send it as `Authorization: Bearer <token>`. Endpoints marked with an optional security requirement also work without a token for guests, when the instance has guest access turned on (`guests_enabled` in `GET /api/settings`); otherwise they answer 401. On endpoints that need a token, `401 Unauthorized` means the token is missing or unknown. When the token cannot be checked (the database is unavailable), any endpoint that reads it answers `503 {\"error\": \"Cannot check your session right now. Try again soon\"}`: keep the token and retry. Guests are read-only. Password-protected servers additionally need a guest grant from `POST /api/servers/{name}/guest_access`, sent in the `X-Guest-Grant` header (comma-separated, up to 100 grants).
+**Versions.** `/api/v1/...` is version 1. `/api/...` without a version uses the latest version.
+
+**Authentication.** Register or log in to get a session token and send it as `Authorization: Bearer <token>`. Endpoints marked with an optional security requirement also work without a token for guests, when the instance has guest access turned on (`guests_enabled` in `GET /api/v1/settings`); otherwise they answer 401. On endpoints that need a token, `401 Unauthorized` means the token is missing or unknown. When the token cannot be checked (the database is unavailable), any endpoint that reads it answers `503 {\"error\": \"Cannot check your session right now. Try again soon\"}`: keep the token and retry. Guests are read-only. Password-protected servers additionally need a guest grant from `POST /api/v1/servers/{name}/guest_access`, sent in the `X-Guest-Grant` header (comma-separated, up to 100 grants).
 
 **Names.** Server names and usernames are case-insensitive: they are matched by their lowercase form, and responses carry the lowercase `name`/`username` alongside the original-case `display_name`.
 
@@ -195,13 +197,13 @@ impl Modify for Bearer {
 
 **Pagination.** List endpoints return a JSON array. When more items follow, the `X-Next-Cursor` response header holds an opaque cursor; pass it back as the `cursor` query parameter for the next page. The header is absent on the last page. Each endpoint lists its page size and limits.
 
-**Rate limits.** Every `/api` route except `/api/health` and `/api/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, word hints, recovery challenges, recovery sign-in, password change, guest access, server name checks, config links, P2P identity bindings and media upload also share a strict per-IP bucket (2 per second, burst 30). Invite previews and joining a server each have their own bucket of the same size. Exceeding a bucket answers 429 with a plain-text body.
+**Rate limits.** Every `/api` route except `/api/v1/health` and `/api/v1/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, word hints, recovery challenges, recovery sign-in, password change, guest access, server name checks, config links, P2P identity bindings and media upload also share a strict per-IP bucket (2 per second, burst 30). Invite previews and joining a server each have their own bucket of the same size. Exceeding a bucket answers 429 with a plain-text body.
 
 **Errors.** Errors raised by the API come as JSON `{\"error\": \"...\"}` (`ApiErrorBody`). Malformed JSON bodies are rejected by the framework with a plain-text 400, 415 or 422.
 
-**Private servers stay hidden.** A password-protected server is indistinguishable from one that does not exist to anyone without access (membership, a valid guest grant, or the password where an endpoint takes one). Every endpoint that takes a server name answers both with the same `404 {\"error\": \"Server not found or wrong password\"}`; endpoints that take a password (`join`, `guest_access`, invites) answer a missing password with the same `401 {\"error\": \"Password required\"}` and a wrong one with that 404, and always hash the password, also for names that do not exist. Endpoints that take a channel or message id answer `404 {\"error\": \"Not found\"}` for ids that do not exist, that you cannot see (hidden channels, messages before your join without read history) or that belong to a server you cannot access. Bans are only reported (403) once access was proven. `GET /api/servers/{name}/available` is the one deliberate existence check, because creating a server reveals the same.
+**Private servers stay hidden.** A password-protected server is indistinguishable from one that does not exist to anyone without access (membership, a valid guest grant, or the password where an endpoint takes one). Every endpoint that takes a server name answers both with the same `404 {\"error\": \"Server not found or wrong password\"}`; endpoints that take a password (`join`, `guest_access`, invites) answer a missing password with the same `401 {\"error\": \"Password required\"}` and a wrong one with that 404, and always hash the password, also for names that do not exist. Endpoints that take a channel or message id answer `404 {\"error\": \"Not found\"}` for ids that do not exist, that you cannot see (hidden channels, messages before your join without read history) or that belong to a server you cannot access. Bans are only reported (403) once access was proven. `GET /api/v1/servers/{name}/available` is the one deliberate existence check, because creating a server reveals the same.
 
-**Realtime.** `GET /api/ws` upgrades to a WebSocket. Clients send JSON frames tagged by `type` (`auth` first, with the token or without one for a guest, then `viewing`, `subscribe`, voice, call and `rtc_signal` frames) and receive JSON events tagged by `type` in snake_case (`message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`, `read_updated`, `ping`, `ping_count`, `voice_state`, `call_state` and more; see `WsEvent` in `apps/server/src/ws/event.rs`). `ping` (`{username, ping: Ping}`) reaches only the pinged user's connections when someone mentions them; `ping_count` (`{username, scope, pings, pings_until, thread_pings}`, same fields as a `GET /api/unreads` item) gives a scope's unseen pings after some were removed. `@everyone`, `@here` and role mentions send no per-user event: the `message` event carries `group_mentions`, each client decides whether the message addresses it (member, online, holds the role). `group_pings_seen` (`{username, scope, message_ids}`) tells the user's connections that `POST /api/inbox/read` or `POST /api/inbox/read_all` marked those group mentions seen. A signed-in user is online while any of their connections is open, whatever server or page it shows (unless they appear offline), and goes offline about 10 seconds after the last one closes. Switching to appear offline hides them at once; coming back online is allowed a few times in a row, then about once per 10 seconds, and the last setting wins. An account keeps at most `WS_CONNECTIONS_PER_USER` connections (default 20; opening another closes the oldest with close code 4008), and opening them faster than `WS_CONNECT_BURST` / `WS_CONNECTS_PER_MINUTE` (counted per instance and across the cluster) closes the new one with code 4029. One client address keeps at most `WS_SOCKETS_PER_IP` connections per instance (default 200; past it the upgrade answers 429) and `WS_GUEST_SOCKETS_PER_IP` of them as guests (default 50; past it the guest connection closes with code 4029); an IPv6 /64 counts as one address. All guest connections of one instance together are capped at `WS_GUEST_SOCKETS_MAX` (default 2000, 0 turns guest connections off; past it the guest connection closes with code 4029). A connection that sends no `auth` frame within 10 seconds closes with code 4001. `subscribe` frames are paced per connection by the number of servers they newly check (at most 100 servers per frame, 50 for guests); one past the pace waits and a later one replaces it. `voice_join` and `voice_leave` are paced per account (a few per second; the latest waits and wins), `call_start` and `call_accept` too (each on its own), and `rtc_signal` payloads are at most 20 KiB with a per-account byte budget (enough to negotiate with a full voice room twice at once); past these the server answers an `error` frame. These paces count per server process. `presence_changed` (`{server, username, online, online_count}`) reaches the connections viewing that server when a member's first connection opens or last one closes, and when members join, leave, are kicked or banned, and `GET /api/unreads` lists the unread ones as `group_pings`. `layout_changed` (`{server, layout}`, a `ChannelLayout`) carries the new channel order, with only the channels each connection can see and only the categories holding one of them (all categories for people who manage channels). Every `position` a client gets (channels and categories, in REST answers and events) counts only what that client can see, so it runs 0, 1, 2 and so on without gaps. `read_updated` (`{username, scope, last_read, pings_until}`) tells the reader's other connections that `POST /api/read` (or, once per scope, `POST /api/read/batch`) stored a position or marked pings seen; clients clear only pings with an id up to `pings_until` (0: none), so newer pings keep their badge. The REST operations below name the events they emit."
+**Realtime.** `GET /api/v1/ws` upgrades to a WebSocket. Clients send JSON frames tagged by `type` (`auth` first, with the token or without one for a guest, then `viewing`, `subscribe`, voice, call and `rtc_signal` frames) and receive JSON events tagged by `type` in snake_case (`message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`, `read_updated`, `ping`, `ping_count`, `voice_state`, `call_state` and more; see `WsEvent` in `apps/server/src/ws/event.rs`). `ping` (`{username, ping: Ping}`) reaches only the pinged user's connections when someone mentions them; `ping_count` (`{username, scope, pings, pings_until, thread_pings}`, same fields as a `GET /api/v1/unreads` item) gives a scope's unseen pings after some were removed. `@everyone`, `@here` and role mentions send no per-user event: the `message` event carries `group_mentions`, each client decides whether the message addresses it (member, online, holds the role). `group_pings_seen` (`{username, scope, message_ids}`) tells the user's connections that `POST /api/v1/inbox/read` or `POST /api/v1/inbox/read_all` marked those group mentions seen. A signed-in user is online while any of their connections is open, whatever server or page it shows (unless they appear offline), and goes offline about 10 seconds after the last one closes. Switching to appear offline hides them at once; coming back online is allowed a few times in a row, then about once per 10 seconds, and the last setting wins. An account keeps at most `WS_CONNECTIONS_PER_USER` connections (default 20; opening another closes the oldest with close code 4008), and opening them faster than `WS_CONNECT_BURST` / `WS_CONNECTS_PER_MINUTE` (counted per instance and across the cluster) closes the new one with code 4029. One client address keeps at most `WS_SOCKETS_PER_IP` connections per instance (default 200; past it the upgrade answers 429) and `WS_GUEST_SOCKETS_PER_IP` of them as guests (default 50; past it the guest connection closes with code 4029); an IPv6 /64 counts as one address. All guest connections of one instance together are capped at `WS_GUEST_SOCKETS_MAX` (default 2000, 0 turns guest connections off; past it the guest connection closes with code 4029). A connection that sends no `auth` frame within 10 seconds closes with code 4001. `subscribe` frames are paced per connection by the number of servers they newly check (at most 100 servers per frame, 50 for guests); one past the pace waits and a later one replaces it. `voice_join` and `voice_leave` are paced per account (a few per second; the latest waits and wins), `call_start` and `call_accept` too (each on its own), and `rtc_signal` payloads are at most 20 KiB with a per-account byte budget (enough to negotiate with a full voice room twice at once); past these the server answers an `error` frame. These paces count per server process. `presence_changed` (`{server, username, online, online_count}`) reaches the connections viewing that server when a member's first connection opens or last one closes, and when members join, leave, are kicked or banned, and `GET /api/v1/unreads` lists the unread ones as `group_pings`. `layout_changed` (`{server, layout}`, a `ChannelLayout`) carries the new channel order, with only the channels each connection can see and only the categories holding one of them (all categories for people who manage channels). Every `position` a client gets (channels and categories, in REST answers and events) counts only what that client can see, so it runs 0, 1, 2 and so on without gaps. `read_updated` (`{username, scope, last_read, pings_until}`) tells the reader's other connections that `POST /api/v1/read` (or, once per scope, `POST /api/v1/read/batch`) stored a position or marked pings seen; clients clear only pings with an id up to `pings_until` (0: none), so newer pings keep their badge. The REST operations below name the events they emit."
     ),
     tags(
         (name = "Auth", description = "Create accounts, sign in and out, recover with a backup phrase, and look up word-password hints."),
@@ -244,9 +246,8 @@ fn swagger_on(value: Option<&str>) -> bool {
 pub fn routes(swagger_ui: Option<&str>) -> Router<AppState> {
     let router = Router::new().route("/openapi.json", get(openapi_json));
     match swagger_on(swagger_ui) {
-        true => {
-            router.merge(SwaggerUi::new("/swagger-ui").url("/api/openapi.json", ApiDoc::openapi()))
-        }
+        true => router
+            .merge(SwaggerUi::new("/swagger-ui").url("/api/v1/openapi.json", ApiDoc::openapi())),
         false => router,
     }
 }
@@ -263,22 +264,22 @@ mod tests {
     const NO_ERROR_RESPONSE: [(&str, &str, &str); 6] = [
         (
             "get",
-            "/api/health",
+            "/api/v1/health",
             "liveness only reports that the process answers; it is outside every rate limiter and cannot fail",
         ),
         (
             "get",
-            "/api/auth/words/{username}",
+            "/api/v1/auth/words/{username}",
             "any username gets a word set, derived from the name without a database lookup",
         ),
         (
             "get",
-            "/api/settings",
+            "/api/v1/settings",
             "public, no input; answers the cached settings and only the rate limiter can refuse it",
         ),
         (
             "get",
-            "/api/instance",
+            "/api/v1/instance",
             "public, no input; answers the instance document and only the rate limiter can refuse it",
         ),
         (
@@ -294,20 +295,20 @@ mod tests {
     ];
 
     const ADMIN_ROUTES: [(&str, &str); 9] = [
-        ("patch", "/api/admin/settings"),
-        ("get", "/api/admin/overview"),
-        ("get", "/api/admin/users"),
-        ("get", "/api/admin/servers"),
-        ("delete", "/api/admin/servers/{name}"),
-        ("delete", "/api/admin/users/{username}"),
-        ("get", "/api/admin/users/{username}/servers"),
-        ("delete", "/api/admin/messages/{id}"),
-        ("post", "/api/admin/ban"),
+        ("patch", "/api/v1/admin/settings"),
+        ("get", "/api/v1/admin/overview"),
+        ("get", "/api/v1/admin/users"),
+        ("get", "/api/v1/admin/servers"),
+        ("delete", "/api/v1/admin/servers/{name}"),
+        ("delete", "/api/v1/admin/users/{username}"),
+        ("get", "/api/v1/admin/users/{username}/servers"),
+        ("delete", "/api/v1/admin/messages/{id}"),
+        ("post", "/api/v1/admin/ban"),
     ];
 
     const UNDOCUMENTED: [(&str, &str, &str); 1] = [(
         "get",
-        "/api/openapi.json",
+        "/api/v1/openapi.json",
         "serves this document itself, next to Swagger UI",
     )];
 
@@ -315,9 +316,9 @@ mod tests {
         "site-admin only; site admins must stay hidden, so the public document leaves these out";
 
     const ROUTE_SOURCES: [(&str, &str); 4] = [
-        ("/api", include_str!("mod.rs")),
-        ("/api", include_str!("health.rs")),
-        ("/api", include_str!("openapi.rs")),
+        ("/api/v1", include_str!("mod.rs")),
+        ("/api/v1", include_str!("health.rs")),
+        ("/api/v1", include_str!("openapi.rs")),
         ("", include_str!("instance.rs")),
     ];
 
@@ -487,7 +488,7 @@ mod tests {
                 "{method} {path} is documented, but {ADMIN_REASON}"
             );
         }
-        assert!(doc["paths"]["/api/settings"]["patch"].is_null());
+        assert!(doc["paths"]["/api/v1/settings"]["patch"].is_null());
         for (name, schema) in doc["components"]["schemas"].as_object().expect("schemas") {
             assert!(
                 schema["properties"]["is_site_admin"].is_null(),
@@ -495,7 +496,13 @@ mod tests {
             );
         }
         let lower = json.to_lowercase();
-        for leak in ["site admin", "site-admin", "is_site_admin", "/api/admin"] {
+        for leak in [
+            "site admin",
+            "site-admin",
+            "is_site_admin",
+            "/api/admin",
+            "/api/v1/admin",
+        ] {
             assert!(!lower.contains(leak), "{leak}");
         }
         if let Ok(out) = std::env::var("RCHAT_OPENAPI_OUT") {
@@ -608,6 +615,91 @@ mod tests {
             "registered but not documented: {missing:?}"
         );
         assert!(extra.is_empty(), "documented but not registered: {extra:?}");
+    }
+
+    async fn answer(
+        client: &reqwest::Client,
+        base: &str,
+        method: &str,
+        path: &str,
+        n: usize,
+    ) -> u16 {
+        let method = reqwest::Method::from_bytes(method.to_uppercase().as_bytes()).expect("method");
+        client
+            .request(method, format!("{base}{path}"))
+            .header(
+                "x-forwarded-for",
+                format!("10.{}.{}.{}", n >> 16 & 255, n >> 8 & 255, n & 255),
+            )
+            .send()
+            .await
+            .expect("answer")
+            .status()
+            .as_u16()
+    }
+
+    #[tokio::test]
+    async fn every_route_answers_on_both_prefixes() {
+        use crate::config::{AppConfig, Roles};
+        use crate::server::client_ip::ProxyTrust;
+        use crate::server::route_builder::{api_router, resolve_versions};
+        let (state, path) = crate::api::test_util::temp_state("both_prefixes").await;
+        let config = AppConfig {
+            roles: Roles {
+                web: false,
+                ..Roles::ALL
+            },
+            proxy_trust: ProxyTrust::Any,
+            ..AppConfig::defaults()
+        };
+        const UNROUTED: u16 = 418;
+        let app = resolve_versions(
+            api_router(&config, state.clone())
+                .fallback(|| async { axum::http::StatusCode::IM_A_TEAPOT }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let base = format!("http://{}", listener.local_addr().expect("addr"));
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await;
+        });
+        let client = reqwest::Client::new();
+        let routes: Vec<(String, String)> = registered_routes()
+            .into_iter()
+            .filter_map(|(m, p)| Some((m, p.strip_prefix("/api/v1/")?.to_string())))
+            .collect();
+        assert!(routes.len() > 100, "{} routes", routes.len());
+        let mut wrong = Vec::new();
+        for (i, (method, rest)) in routes.iter().enumerate() {
+            let rest = rest
+                .split('/')
+                .map(|seg| match seg.starts_with('{') {
+                    true => "1",
+                    false => seg,
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            let pinned = answer(&client, &base, method, &format!("/api/v1/{rest}"), 2 * i).await;
+            let latest = answer(&client, &base, method, &format!("/api/{rest}"), 2 * i + 1).await;
+            if pinned == UNROUTED || pinned == 405 || pinned != latest {
+                wrong.push(format!("{method} {rest}: /api/v1 {pinned}, /api {latest}"));
+            }
+        }
+        for unrouted in ["/api/v1/nope", "/api/nope", "/api/v1/v1/me"] {
+            assert_eq!(
+                answer(&client, &base, "get", unrouted, 0).await,
+                UNROUTED,
+                "{unrouted}"
+            );
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+        server.abort();
+        crate::api::test_util::done(state, path).await;
     }
 
     #[test]

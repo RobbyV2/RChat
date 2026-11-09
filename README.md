@@ -165,6 +165,8 @@ Run only the API:
 APP_MODE=api-only just src api
 ```
 
+`/api/v1/...` is version 1. `/api/...` without a version uses the latest version.
+
 Build the frontend as static files for that API. The files go to `apps/web/out/`:
 
 ```bash

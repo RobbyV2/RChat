@@ -1,6 +1,8 @@
 // The API console: reads the instance's OpenAPI document into operations with form fields,
 // checks and builds requests from what was typed, and keeps a short local history without
-// secrets. Only `/api/` paths of this instance are ever called.
+// secrets. Only `/api/` paths of this instance are ever called, under the base this client uses.
+
+import { apiTail } from './api_version'
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -450,13 +452,20 @@ export const planSend = (op: Operation, values: Values, guest: boolean): SendPla
   return { kind: op.confirm ? 'confirm' : 'send', request: built.request }
 }
 
-// The URL to fetch: the API base of this instance and the `/api/...` path. Anything else is
-// refused, so the console never reaches another origin or a non-API route.
+// The path to send under the API base, from the documented `/api/v1/...` (or, on instances from
+// before versions, `/api/...`) path. Anything else is refused, so the console never reaches
+// another origin or a non-API route.
 const ESCAPES = /\\|%2e|%2f|%5c|(^|\/)\.{1,2}(\/|$)|\/\//i
 
+export const requestPath = (r: Pick<BuiltRequest, 'path' | 'query'>) => {
+  const tail = apiTail(r.path)
+  if (tail === null || ESCAPES.test(r.path)) return null
+  return `${tail}${r.query ? `?${r.query}` : ''}`
+}
+
 export const requestUrl = (apiBase: string, r: Pick<BuiltRequest, 'path' | 'query'>) => {
-  if (!r.path.startsWith('/api/') || ESCAPES.test(r.path)) return null
-  return `${apiBase.replace(/\/+$/, '')}${r.path.slice('/api'.length)}${r.query ? `?${r.query}` : ''}`
+  const path = requestPath(r)
+  return path === null ? null : `${apiBase.replace(/\/+$/, '')}${path}`
 }
 
 const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`

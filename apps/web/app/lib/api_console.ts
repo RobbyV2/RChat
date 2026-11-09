@@ -9,7 +9,7 @@ import {
   parseOpenApi,
   prettyBody,
   pushHistory,
-  requestUrl,
+  requestPath,
   type ApiHistory,
   type BuiltRequest,
   type HistoryEntry,
@@ -111,15 +111,10 @@ export const RESPONSE_MAX = 2 * 1024 * 1024
 
 // Sends a built request with the signed-in user's own token (or guest grants).
 export const sendRequest = async (r: BuiltRequest): Promise<ApiResponse> => {
-  const url = requestUrl(api.base, r)
-  if (url === null) throw new ApiError('Only API paths can be called', 0)
+  const path = requestPath(r)
+  if (path === null) throw new ApiError('Only API paths can be called', 0)
   const started = performance.now()
-  const res = await api.send(
-    r.method,
-    `${r.path.slice('/api'.length)}${r.query ? `?${r.query}` : ''}`,
-    r.body,
-    r.headers
-  )
+  const res = await api.send(r.method, path, r.body, r.headers)
   const type = res.headers.get('content-type')
   let raw = ''
   let cut = false

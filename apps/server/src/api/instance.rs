@@ -99,7 +99,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
 /// PeerJS server, which optional features are on, and its limits. No authentication.
 /// Cached for 60 seconds (`Cache-Control: public` when `PUBLIC_URL` is set, `private` when
 /// the URLs are derived from the request host). General rate-limit bucket.
-#[utoipa::path(get, path = "/api/instance", tag = "Instance", responses((status = 200, description = "Who this instance is: id, name, URLs, versions, features and limits", body = InstanceInfo), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(get, path = "/api/v1/instance", tag = "Instance", responses((status = 200, description = "Who this instance is: id, name, URLs, versions, features and limits", body = InstanceInfo), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn instance(
     State(state): State<AppState>,
     Peer(peer): Peer,
@@ -112,9 +112,9 @@ pub(crate) async fn instance(
 /// Discover this instance
 ///
 /// The well-known discovery document for other instances and clients: the same body and
-/// caching as `GET /api/instance`, whose URL it carries in `instance_url`, along with the
+/// caching as `GET /api/v1/instance`, whose URL it carries in `instance_url`, along with the
 /// JWKS URL in `jwks_uri`. No authentication. General rate-limit bucket.
-#[utoipa::path(get, path = "/.well-known/rchat", tag = "Instance", responses((status = 200, description = "Discovery document, the same as GET /api/instance, with links to it and to the JWKS", body = InstanceInfo), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(get, path = "/.well-known/rchat", tag = "Instance", responses((status = 200, description = "Discovery document, the same as GET /api/v1/instance, with links to it and to the JWKS", body = InstanceInfo), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn well_known(state: State<AppState>, peer: Peer, headers: HeaderMap) -> Response {
     instance(state, peer, headers).await
 }
@@ -122,8 +122,8 @@ pub(crate) async fn well_known(state: State<AppState>, peer: Peer, headers: Head
 /// Get the instance signing keys
 ///
 /// The public Ed25519 keys this instance signs identity assertions and P2P bindings with, as a
-/// JSON Web Key Set. Verify a token from `POST /api/identity/assertion` or
-/// `POST /api/identity/p2p_binding` against the key whose `kid` matches the JWT header. No
+/// JSON Web Key Set. Verify a token from `POST /api/v1/identity/assertion` or
+/// `POST /api/v1/identity/p2p_binding` against the key whose `kid` matches the JWT header. No
 /// authentication. Cached for 300 seconds. General rate-limit bucket.
 #[utoipa::path(get, path = "/.well-known/jwks.json", tag = "Instance", responses((status = 200, description = "Public signing keys of this instance as a JSON Web Key Set (RFC 7517); kid is the RFC 7638 thumbprint, the first key signs", body = Object), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn jwks(State(state): State<AppState>) -> Response {
@@ -164,7 +164,7 @@ pub struct Assertion {
 /// instance, for the audience named in `aud`. The audience verifies it with the keys at
 /// `/.well-known/jwks.json` of the issuer. Requires a bearer token; guests can't call it. No
 /// side effects. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/identity/assertion", tag = "Instance", request_body = AssertionRequest, responses((status = 200, description = "Short-lived EdDSA JWT proving the caller is sub = user@host on this instance", body = Assertion), (status = 400, description = "Missing or oversized aud or nonce", body = ApiErrorBody), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/identity/assertion", tag = "Instance", request_body = AssertionRequest, responses((status = 200, description = "Short-lived EdDSA JWT proving the caller is sub = user@host on this instance", body = Assertion), (status = 400, description = "Missing or oversized aud or nonce", body = ApiErrorBody), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn assertion(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -221,7 +221,7 @@ pub struct BindingRequest {
     pub ts: i64,
     /// Ed25519 signature by `ik`, base64url without padding (86 characters), over the bytes
     /// `rchat-p2p-bind1`, a zero byte, `sub`, a zero byte and `ts` in decimal. `sub` is the
-    /// caller as `username@host`, with `host` from `GET /api/instance`.
+    /// caller as `username@host`, with `host` from `GET /api/v1/instance`.
     pub proof: String,
 }
 
@@ -250,9 +250,9 @@ pub struct Binding {
 /// `/.well-known/jwks.json`. The proof is a signature by `ik` itself, so nobody can bind a key
 /// they don't hold. Stateless: nothing is stored, and a binding can't be revoked before it
 /// expires (clients ask for a new one every day while the badge is on). Requires a bearer token;
-/// guests can't call it. Answers 404 while the `p2p` switch of `GET /api/settings` is off.
+/// guests can't call it. Answers 404 while the `p2p` switch of `GET /api/v1/settings` is off.
 /// Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/identity/p2p_binding", tag = "Instance", request_body = BindingRequest, responses((status = 200, description = "EdDSA JWT binding ik to sub = user@host for 7 days", body = Binding), (status = 400, description = "ik is not a valid Ed25519 key, ts is more than 5 minutes from the server clock, or proof is not a signature by ik over this account and ts", body = ApiErrorBody), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 404, description = "`Not found`: the `p2p` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/identity/p2p_binding", tag = "Instance", request_body = BindingRequest, responses((status = 200, description = "EdDSA JWT binding ik to sub = user@host for 7 days", body = Binding), (status = 400, description = "ik is not a valid Ed25519 key, ts is more than 5 minutes from the server clock, or proof is not a signature by ik over this account and ts", body = ApiErrorBody), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 404, description = "`Not found`: the `p2p` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn p2p_binding(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -314,13 +314,13 @@ pub struct IceServers {
 
 /// Get ICE servers for peer-to-peer connections
 ///
-/// The STUN servers from `ice` in `GET /api/instance` plus TURN relays with credentials.
+/// The STUN servers from `ice` in `GET /api/v1/instance` plus TURN relays with credentials.
 /// Credentials for the built-in relay follow the TURN REST convention: username
 /// `{expiry}:{opaque}`, where `opaque` is a hash of the account (never the username), and
 /// a one-hour lifetime. Without TURN on the instance this returns only the STUN entries
 /// (possibly none). Requires a bearer token; guests can't call it. No side effects. General
 /// rate-limit bucket.
-#[utoipa::path(get, path = "/api/p2p/ice", tag = "Instance", responses((status = 200, description = "ICE servers with TURN credentials and their expiry", body = IceServers), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/p2p/ice", tag = "Instance", responses((status = 200, description = "ICE servers with TURN credentials and their expiry", body = IceServers), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn ice(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -500,6 +500,11 @@ mod tests {
         assert_eq!(info["name"], "RChat");
         assert_eq!(info["host"], addr.to_string());
         assert_eq!(info["api_version"], crate::instance::API_VERSION);
+        assert_eq!(
+            info["api_versions"],
+            serde_json::json!(crate::server::route_builder::VERSIONS)
+        );
+        assert_eq!(info["api_versions"], serde_json::json!(["v1"]));
         assert_eq!(info["public_url"], base);
         assert_eq!(info["api_url"], format!("{base}/api"));
         assert_eq!(info["ws_url"], format!("ws://{addr}/api/ws"));

@@ -125,7 +125,9 @@ export const useMediaSrc = (id: string, server: string | undefined, wanted: bool
 // anything else is never loaded.
 export const previewPath = (messageId: number, ord: number, imageUrl: string | null) => {
   if (imageUrl === null) return null
-  const m = /^\/api(\/messages\/(\d+)\/embeds\/(\d+)\/image\?v=[0-9a-f]{1,64})$/.exec(imageUrl)
+  const m = /^\/api(?:\/v1)?(\/messages\/(\d+)\/embeds\/(\d+)\/image\?v=[0-9a-f]{1,64})$/.exec(
+    imageUrl
+  )
   if (!m || Number(m[2]) !== messageId || Number(m[3]) !== ord) return null
   return m[1]
 }

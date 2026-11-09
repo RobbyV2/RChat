@@ -488,13 +488,13 @@ pub struct Member {
     pub perms: i64,
     /// Ids of the server roles assigned to the member.
     pub role_ids: Vec<i64>,
-    /// The extra password the member joined with. Only in `GET /api/servers/{name}/members`
+    /// The extra password the member joined with. Only in `GET /api/v1/servers/{name}/members`
     /// for callers with the Delete server permission, and only for members who joined with an
     /// extra password that is still listed; absent otherwise. It disappears once the password
     /// row is purged, 30 days after the password was revoked, expired or used up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub joined_via: Option<JoinedVia>,
-    /// The member's running timeout. Only in `GET /api/servers/{name}/members` for callers with
+    /// The member's running timeout. Only in `GET /api/v1/servers/{name}/members` for callers with
     /// the Timeout members permission; absent otherwise and when none is running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<timeouts::MemberTimeout>,
@@ -533,7 +533,7 @@ pub struct ServerDetail {
     /// Channel categories, ordered by `position`. Categories without a channel the caller can
     /// see are left out, unless the caller manages channels.
     pub categories: Vec<Category>,
-    /// Version of the channel layout, for `PUT /api/servers/{name}/layout`.
+    /// Version of the channel layout, for `PUT /api/v1/servers/{name}/layout`.
     pub layout_version: i64,
     /// Ids of listed text channels where the caller, a member, can read but not send messages
     /// or add reactions (their own reactions can still be removed). Empty for non-members, who
@@ -552,13 +552,13 @@ pub struct ServerDetail {
 /// A direct-message conversation of the signed-in user.
 #[derive(Clone, Serialize, ToSchema)]
 pub struct DmSummary {
-    /// Conversation id, used in `/api/dms/{id}/messages`.
+    /// Conversation id, used in `/api/v1/dms/{id}/messages`.
     pub id: i64,
     /// The other participant; the signed-in user for the conversation with yourself.
     pub other: UserRef,
     /// Whether this is the conversation with yourself.
     pub is_self: bool,
-    /// You closed it, so it is hidden from your DM list. Only `GET /api/dms?ids=` returns
+    /// You closed it, so it is hidden from your DM list. Only `GET /api/v1/dms?ids=` returns
     /// closed DMs; a new message in it or opening it again reopens it.
     pub closed: bool,
 }
@@ -566,7 +566,7 @@ pub struct DmSummary {
 /// A file attached to a message, stored on the server or shared peer to peer.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct MediaRef {
-    /// 32 hex characters. For `server` media, download it from `/api/media/{id}`; for `p2p`
+    /// 32 hex characters. For `server` media, download it from `/api/v1/media/{id}`; for `p2p`
     /// it is the id the hoster's browser shares the file under.
     #[schema(example = "9f86d081884c7d659a2feaa0c55ad015")]
     pub id: String,
@@ -754,7 +754,7 @@ pub struct Message {
     #[serde(default)]
     pub group_mentions: Vec<pings::GroupMention>,
     /// For a `poll` message, the poll as you see it (counts only when you may see them; your
-    /// own vote only in message lists and `GET /api/polls/{id}`). For a forwarded poll, a frozen
+    /// own vote only in message lists and `GET /api/v1/polls/{id}`). For a forwarded poll, a frozen
     /// `snapshot` that takes no votes. `null` otherwise.
     #[serde(default)]
     pub poll: Option<polls::Poll>,
@@ -774,7 +774,7 @@ pub struct ForwardRef {
     pub author: Option<UserRef>,
     /// Unix seconds when the original was sent.
     pub created_at: i64,
-    /// Id of the forwarded message. `GET /api/messages/{id}/location` tells where it is, if you
+    /// Id of the forwarded message. `GET /api/v1/messages/{id}/location` tells where it is, if you
     /// can read it.
     pub source_id: i64,
     /// Where it came from, as a label: `Direct message`, `#channel - Server` when forwarded
@@ -1191,7 +1191,7 @@ pub struct Settings {
     pub profanity_targets: ProfanityTargets,
     /// Link previews: the server fetches page metadata for links in messages.
     pub asset_previews: bool,
-    /// File uploads through `POST /api/media`.
+    /// File uploads through `POST /api/v1/media`.
     pub asset_uploads: bool,
     /// Peer-to-peer attachments: files hosted by the sender's browser, without a size limit.
     /// With this and `asset_uploads` off the instance is text only: messages carrying any
@@ -1245,16 +1245,16 @@ pub struct Settings {
     /// sign in.
     #[serde(default = "yes")]
     pub password_login: bool,
-    /// Calls through the instance's media server when it runs (`sfu` in `GET /api/instance`).
+    /// Calls through the instance's media server when it runs (`sfu` in `GET /api/v1/instance`).
     /// Off by default.
     #[serde(default)]
     pub sfu: bool,
     /// Peer-to-peer servers and conversations in the app this instance serves. Off: the app
-    /// hides them and `POST /api/identity/p2p_binding` answers 404. Data on devices is kept.
+    /// hides them and `POST /api/v1/identity/p2p_binding` answers 404. Data on devices is kept.
     #[serde(default = "yes")]
     pub p2p: bool,
     /// Who may create an account with a password: `open`, `sso` (only through single
-    /// sign-on) or `closed`. `POST /api/auth/register` answers 404 unless it is `open` and
+    /// sign-on) or `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and
     /// `password_login` is on.
     #[serde(default)]
     pub registration: Registration,

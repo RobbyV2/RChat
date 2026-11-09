@@ -94,7 +94,7 @@ impl ChannelKind {
     }
 }
 
-/// `server`: uploaded through `POST /api/media` and stored by the instance. `p2p`: kept in the
+/// `server`: uploaded through `POST /api/v1/media` and stored by the instance. `p2p`: kept in the
 /// sender's browser and shared peer to peer while they are online; the server stores only the
 /// metadata.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, utoipa::ToSchema)]

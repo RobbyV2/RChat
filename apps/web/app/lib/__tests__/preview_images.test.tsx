@@ -7,9 +7,10 @@ import { me, msg } from './fixtures'
 
 describe('link preview images', () => {
   test('only this preview path on the instance is accepted', () => {
-    expect(previewPath(7, 1, '/api/messages/7/embeds/1/image?v=0123456789abcdef')).toBe(
-      '/messages/7/embeds/1/image?v=0123456789abcdef'
-    )
+    for (const prefix of ['/api', '/api/v1'])
+      expect(previewPath(7, 1, `${prefix}/messages/7/embeds/1/image?v=0123456789abcdef`)).toBe(
+        '/messages/7/embeds/1/image?v=0123456789abcdef'
+      )
     for (const raw of [
       'https://tracker.example/p.png?c=42',
       'http://192.168.0.1/cgi-bin/x',
@@ -18,6 +19,8 @@ describe('link preview images', () => {
       '/api/messages/7/embeds/2/image?v=00',
       '/api/messages/7/embeds/1/image?v=00&x=https://e.com',
       '/api/media/abc',
+      '/api/v2/messages/7/embeds/1/image?v=00',
+      '/api/v1/v1/messages/7/embeds/1/image?v=00',
     ])
       expect(previewPath(7, 1, raw)).toBe(null)
     expect(previewPath(7, 1, null)).toBe(null)

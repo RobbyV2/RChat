@@ -15,7 +15,7 @@ export function need(name: string) {
 
 let base: string | undefined
 export const baseUrl = () => (base ??= need('BASE').replace(/\/+$/, ''))
-export const baseWs = () => baseUrl().replace(/^http/, 'ws') + '/api/ws'
+export const baseWs = () => baseUrl().replace(/^http/, 'ws') + '/api/v1/ws'
 const wsUrl = () => process.env.WS_BASE ?? baseWs()
 export const serverPid = () => Number(process.env.SERVER_PID ?? 0)
 
@@ -80,7 +80,7 @@ export async function req(
   if (opts.i !== undefined) headers.Authorization = 'Bearer ' + tok(opts.i)
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json'
   const t0 = performance.now()
-  const r = await fetch(baseUrl() + '/api' + path, {
+  const r = await fetch(baseUrl() + '/api/v1' + path, {
     method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,

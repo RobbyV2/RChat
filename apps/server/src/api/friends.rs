@@ -746,7 +746,7 @@ fn unfriend_events(state: &AppState, a: &str, b: &str) {
 /// Send a friend request
 ///
 /// Sends `username` a friend request from the signed-in user, after a check of their mini
-/// profile (`GET /api/users/{username}/profile`) on the client. When they had already sent you a
+/// profile (`GET /api/v1/users/{username}/profile`) on the client. When they had already sent you a
 /// request, this accepts it (`status` `accepted`); when you are friends already it changes
 /// nothing (`friends`); sending a pending request again changes nothing (`sent`). A new request
 /// emits `friend_request_added` to both users and a `ping` of kind `friend_request` (scope
@@ -754,7 +754,7 @@ fn unfriend_events(state: &AppState, a: &str, b: &str) {
 /// "Who can send you friend requests" setting), has 1000 pending requests, or blocked you, all
 /// give the same `404`. At most 100 pending sent requests and 20 requests per 10 minutes.
 /// Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/friends/requests", tag = "Friends", request_body = FriendReq, responses((status = 200, description = "Sent, accepted (they had asked you) or already friends", body = RequestOutcome), (status = 400, description = "`You cannot add yourself as a friend`, `You have too many pending friend requests`, `You can have at most 1000 friends` or `That user has too many friends`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "You blocked this user", body = ApiErrorBody), (status = 404, description = "`Could not send a friend request to that user.`: no such user, or they do not take requests from you", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many friend requests. Try again later.` (JSON), or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/friends/requests", tag = "Friends", request_body = FriendReq, responses((status = 200, description = "Sent, accepted (they had asked you) or already friends", body = RequestOutcome), (status = 400, description = "`You cannot add yourself as a friend`, `You have too many pending friend requests`, `You can have at most 1000 friends` or `That user has too many friends`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "You blocked this user", body = ApiErrorBody), (status = 404, description = "`Could not send a friend request to that user.`: no such user, or they do not take requests from you", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many friend requests. Try again later.` (JSON), or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn send_request(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -857,7 +857,7 @@ pub(crate) async fn send_request(
 /// `friend_request_removed` and `friend_added` to both users and a `ping` of kind
 /// `friend_accept` (scope `friends`) to `username`. Requires a bearer token. General rate-limit
 /// bucket.
-#[utoipa::path(post, path = "/api/friends/requests/{username}/accept", tag = "Friends", params(("username" = String, Path, description = "The sender, case-insensitive")), responses((status = 200, description = "The new friend", body = Friend), (status = 400, description = "`You can have at most 1000 friends` or `That user has too many friends`", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "No friend request from this user", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/friends/requests/{username}/accept", tag = "Friends", params(("username" = String, Path, description = "The sender, case-insensitive")), responses((status = 200, description = "The new friend", body = Friend), (status = 400, description = "`You can have at most 1000 friends` or `That user has too many friends`", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "No friend request from this user", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn accept_request(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -905,7 +905,7 @@ async fn drop_request(
 /// Removes the pending friend request `username` sent to the signed-in user. Emits
 /// `friend_request_removed` to both users when there was one; denying again changes nothing.
 /// Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/friends/requests/{username}/deny", tag = "Friends", params(("username" = String, Path, description = "The sender, case-insensitive")), responses((status = 200, description = "No request from them is pending; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/friends/requests/{username}/deny", tag = "Friends", params(("username" = String, Path, description = "The sender, case-insensitive")), responses((status = 200, description = "No request from them is pending; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn deny_request(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -919,7 +919,7 @@ pub(crate) async fn deny_request(
 /// Takes back the signed-in user's pending friend request to `username`. Emits
 /// `friend_request_removed` to both users when there was one, and removes the recipient's ping
 /// for it, seen or not. Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(delete, path = "/api/friends/requests/{username}", tag = "Friends", params(("username" = String, Path, description = "The recipient, case-insensitive")), responses((status = 200, description = "No request to them is pending; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/v1/friends/requests/{username}", tag = "Friends", params(("username" = String, Path, description = "The recipient, case-insensitive")), responses((status = 200, description = "No request to them is pending; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn cancel_request(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -933,7 +933,7 @@ pub(crate) async fn cancel_request(
 /// Ends the signed-in user's friendship with `username`. Emits `friend_removed` to both users
 /// when they were friends; removing again changes nothing. Requires a bearer token. General
 /// rate-limit bucket.
-#[utoipa::path(delete, path = "/api/users/{username}/friendship", tag = "Friends", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "Not friends anymore; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/v1/users/{username}/friendship", tag = "Friends", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "Not friends anymore; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn remove_friend(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -964,7 +964,7 @@ pub(crate) async fn remove_friend(
 ///
 /// Whether the signed-in user and `username` are friends or have a pending request between
 /// them. Unknown users give `none`. Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/users/{username}/friendship", tag = "Friends", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "The relation", body = Friendship), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/users/{username}/friendship", tag = "Friends", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "The relation", body = Friendship), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn friendship(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1066,7 +1066,7 @@ pub(crate) async fn friend_page(
 /// max 50), optionally only those whose username or display name starts with `q`, and only
 /// those online with `online=true`. Each friend carries their online state; `friend_presence`
 /// events keep it current. Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/friends", tag = "Friends", params(FriendListQuery), responses((status = 200, description = "A page of friends, by display name", body = Vec<Friend>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON), or a non-integer `limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/friends", tag = "Friends", params(FriendListQuery), responses((status = 200, description = "A page of friends, by display name", body = Vec<Friend>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON), or a non-integer `limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn list_friends(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1097,7 +1097,7 @@ pub(crate) async fn list_friends(
 /// Returns the signed-in user's pending friend requests, newest first, a page at a time
 /// (default and max 50): those sent to them (`incoming=true`, the default) or those they sent
 /// (`incoming=false`). Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/friends/requests", tag = "Friends", params(RequestListQuery), responses((status = 200, description = "A page of pending requests, newest first", body = Vec<FriendRequest>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON), or a non-integer `limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/friends/requests", tag = "Friends", params(RequestListQuery), responses((status = 200, description = "A page of pending requests, newest first", body = Vec<FriendRequest>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON), or a non-integer `limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn list_requests(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1165,7 +1165,7 @@ pub(crate) async fn list_requests(
 /// Pending request counts both ways and the unseen friend pings (requests and accepted
 /// requests) of the signed-in user, for the friends badge. Requires a bearer token. General
 /// rate-limit bucket.
-#[utoipa::path(get, path = "/api/friends/summary", tag = "Friends", responses((status = 200, description = "Counts", body = FriendSummary), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/friends/summary", tag = "Friends", responses((status = 200, description = "Counts", body = FriendSummary), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn summary(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1197,7 +1197,7 @@ pub(crate) async fn summary(
 /// Marks the signed-in user's unseen friend pings (ids up to `pings_until`, or all) seen and
 /// sends their connections a `ping_count` for the `friends` scope when any changed. Requires a
 /// bearer token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/friends/seen", tag = "Friends", request_body = SeenReq, responses((status = 200, description = "Seen; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/friends/seen", tag = "Friends", request_body = SeenReq, responses((status = 200, description = "Seen; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn mark_seen(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1228,7 +1228,7 @@ pub(crate) async fn mark_seen(
 ///
 /// Who can DM the signed-in user and who can send them friend requests. Requires a bearer token.
 /// General rate-limit bucket.
-#[utoipa::path(get, path = "/api/me/privacy", tag = "Friends", responses((status = 200, description = "The settings", body = Privacy), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/me/privacy", tag = "Friends", responses((status = 200, description = "The settings", body = Privacy), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn get_privacy(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1244,7 +1244,7 @@ pub(crate) async fn get_privacy(
 /// (`403` `You only accept DMs from friends. Change this in Settings > Privacy.`). `friend_requests`: `everyone`, `servers` (people who share a
 /// server with you) or `nobody`. Emits `privacy_changed` to your connections. Requires a bearer
 /// token. General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/me/privacy", tag = "Friends", request_body = PrivacyPatch, responses((status = 200, description = "The stored settings", body = Privacy), (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework errors)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "An unknown value (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/v1/me/privacy", tag = "Friends", request_body = PrivacyPatch, responses((status = 200, description = "The stored settings", body = Privacy), (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework errors)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "An unknown value (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn patch_privacy(
     State(state): State<AppState>,
     Authed(user): Authed,

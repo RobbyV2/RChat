@@ -463,7 +463,7 @@ pub struct WebhookSecret {
     pub webhook: Webhook,
     /// The secret part of its URL. Shown only now; only a keyed hash is stored.
     pub token: String,
-    /// The path to post to, `/api/webhooks/{id}/{token}`.
+    /// The path to post to, `/api/v1/webhooks/{id}/{token}`.
     pub path: String,
 }
 
@@ -720,7 +720,7 @@ pub struct WebhookPatch {
 ///
 /// The server's incoming webhooks in channels you can see, oldest first. Requires the Manage
 /// webhooks or Manage channels permission. Tokens are never listed. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/servers/{name}/webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), responses((status = 200, description = "The webhooks", body = Vec<Webhook>), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`: no such server, one you have no access to, or one you are not a member of (identical responses)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/servers/{name}/webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), responses((status = 200, description = "The webhooks", body = Vec<Webhook>), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`: no such server, one you have no access to, or one you are not a member of (identical responses)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn list_webhooks(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -747,12 +747,12 @@ pub(crate) async fn list_webhooks(
 /// Create an incoming webhook
 ///
 /// Creates a webhook that posts into one text channel of the server, and returns its token
-/// once. Anyone with the URL `/api/webhooks/{id}/{token}` can post there as the webhook, so
+/// once. Anyone with the URL `/api/v1/webhooks/{id}/{token}` can post there as the webhook, so
 /// treat it like a password. At most 15 per channel and 100 per server. Requires membership
 /// with the Manage webhooks or Manage channels permission. Whether the webhook may use group
 /// mentions is fixed now from your Mention everyone permission (and checked again on every
 /// message). Logged in the audit log. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/servers/{name}/webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), request_body = NewWebhook, responses((status = 200, description = "The webhook with its token", body = WebhookSecret), (status = 400, description = "Unknown or voice channel, an invalid or taken name (`That name belongs to someone in this server. Pick another name`), an invalid avatar color, the profanity filter, or the channel or server limit", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password` (identical for servers you cannot open or are not a member of)", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/servers/{name}/webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), request_body = NewWebhook, responses((status = 200, description = "The webhook with its token", body = WebhookSecret), (status = 400, description = "Unknown or voice channel, an invalid or taken name (`That name belongs to someone in this server. Pick another name`), an invalid avatar color, the profanity filter, or the channel or server limit", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password` (identical for servers you cannot open or are not a member of)", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn create_webhook(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -813,7 +813,7 @@ pub(crate) async fn create_webhook(
     tx.commit().await?;
     let webhook = webhook_rows(db, &[row]).await?.remove(0);
     Ok(Json(WebhookSecret {
-        path: format!("/api/webhooks/{id}/{token}"),
+        path: format!("/api/v1/webhooks/{id}/{token}"),
         token,
         webhook,
     }))
@@ -846,7 +846,7 @@ async fn managed_hook(
 /// is then taken from your Mention everyone permission (this needs Manage webhooks or Manage
 /// channels as a member). Requires the Manage webhooks or Manage channels permission. Logged in
 /// the audit log. General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/servers/{name}/webhooks/{id}", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Webhook id")), request_body = WebhookPatch, responses((status = 200, description = "The webhook", body = Webhook), (status = 400, description = "Invalid name, avatar or channel, or the channel's limit", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook` (also for webhooks in channels you cannot see)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/v1/servers/{name}/webhooks/{id}", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Webhook id")), request_body = WebhookPatch, responses((status = 200, description = "The webhook", body = Webhook), (status = 400, description = "Invalid name, avatar or channel, or the channel's limit", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook` (also for webhooks in channels you cannot see)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn update_webhook(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -941,7 +941,7 @@ pub(crate) async fn update_webhook(
 /// member). Instance staff without those permissions as a member reset it without taking it
 /// over; the owner stays. Requires the Manage webhooks or Manage channels permission. Logged in the audit
 /// log. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/servers/{name}/webhooks/{id}/token", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Webhook id")), responses((status = 200, description = "The webhook with its new token", body = WebhookSecret), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission` (also when taking over someone else's webhook without Manage webhooks or Manage channels as a member), or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/servers/{name}/webhooks/{id}/token", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Webhook id")), responses((status = 200, description = "The webhook with its new token", body = WebhookSecret), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission` (also when taking over someone else's webhook without Manage webhooks or Manage channels as a member), or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn reset_token(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -986,7 +986,7 @@ pub(crate) async fn reset_token(
     let (_, row) = managed_hook(db, &access, &user, id).await?;
     Ok(Json(WebhookSecret {
         webhook: webhook_rows(db, &[row]).await?.remove(0),
-        path: format!("/api/webhooks/{id}/{token}"),
+        path: format!("/api/v1/webhooks/{id}/{token}"),
         token,
     }))
 }
@@ -996,7 +996,7 @@ pub(crate) async fn reset_token(
 /// Its URL stops working; messages it posted stay (moderators delete them like any message).
 /// Requires the Manage webhooks or Manage channels permission. Logged in the audit log.
 /// General rate-limit bucket.
-#[utoipa::path(delete, path = "/api/servers/{name}/webhooks/{id}", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Webhook id")), responses((status = 200, description = "Deleted", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/v1/servers/{name}/webhooks/{id}", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Webhook id")), responses((status = 200, description = "Deleted", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_webhook(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1075,7 +1075,7 @@ pub struct ExecuteReq {
     /// Which mentions may ping; see `AllowedMentions`.
     #[serde(default)]
     pub allowed_mentions: Option<AllowedMentions>,
-    /// A poll, as for `POST /api/channels/{id}/messages`.
+    /// A poll, as for `POST /api/v1/channels/{id}/messages`.
     #[serde(default)]
     pub poll: Option<PollReq>,
     /// At most 10 rich embeds.
@@ -1509,7 +1509,7 @@ async fn post(
 /// Posts a message into the webhook's channel as the webhook. No bearer token: the URL is the
 /// secret. Send JSON (at most 2 MiB), or `multipart/form-data` with the JSON in a `payload_json`
 /// part (at most 2 MiB) and one file part (only while file uploads are on and the webhook has an
-/// owner; at most `limits.upload_bytes` of `GET /api/instance`, by default 25 MiB
+/// owner; at most `limits.upload_bytes` of `GET /api/v1/instance`, by default 25 MiB
 /// (`UPLOAD_MAX_MIB`)). A multipart body takes room for its whole declared length in the
 /// owner's share of the upload buffer before it is read, like the owner's own uploads. When the
 /// webhook can not upload, or a body not declared over 2 MiB and 64 KiB finds no room free at
@@ -1525,7 +1525,7 @@ async fn post(
 /// and still has the Mention everyone permission (mentionable roles also when asked). Rate
 /// limits: 5 per 2 seconds per webhook, 30 per minute per channel, and the strict bucket per
 /// IP. Wrong ids, wrong tokens and deleted webhooks all get the same 404.
-#[utoipa::path(post, path = "/api/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ExecuteQuery), request_body(content = ExecuteReq, description = "JSON, or multipart with `payload_json` and one file", content_type = "application/json"), responses((status = 200, description = "With `wait=true`: the posted message", body = Message), (status = 204, description = "Posted"), (status = 400, description = "Empty message, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), invalid embeds, name, avatar, poll, `reply_to` (`Cannot reply to that message`) or `thread_id` (`Unknown thread`), or the profanity filter", body = ApiErrorBody), (status = 403, description = "`File uploads are turned off on this server`, or `This webhook has no owner, so it cannot upload files`: for a file part, or a multipart body declared over 2 MiB and 64 KiB", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`: no such webhook or a wrong token (identical responses)", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`), or JSON (the body or `payload_json`) over 2 MiB, or a multipart body over 2 MiB and 64 KiB for a webhook that can not upload (`JSON exceeds 2MB limit`)", body = ApiErrorBody), (status = 429, description = "Slow mode (`Slow mode: wait Ns`), the webhook or channel budget (`Too many attempts. Try again later`), the upload budget of the webhook's owner or of the server's webhooks (`Upload limit reached: ...`), 3 uploads or multipart bodies of the owner, or ones holding the owner's share of the upload buffer, already being read, for a file part or a multipart body declared over 2 MiB and 64 KiB (`Too many uploads at once: ...`), or the strict bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`", body = ApiErrorBody)), security(()))]
+#[utoipa::path(post, path = "/api/v1/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ExecuteQuery), request_body(content = ExecuteReq, description = "JSON, or multipart with `payload_json` and one file", content_type = "application/json"), responses((status = 200, description = "With `wait=true`: the posted message", body = Message), (status = 204, description = "Posted"), (status = 400, description = "Empty message, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), invalid embeds, name, avatar, poll, `reply_to` (`Cannot reply to that message`) or `thread_id` (`Unknown thread`), or the profanity filter", body = ApiErrorBody), (status = 403, description = "`File uploads are turned off on this server`, or `This webhook has no owner, so it cannot upload files`: for a file part, or a multipart body declared over 2 MiB and 64 KiB", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`: no such webhook or a wrong token (identical responses)", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`), or JSON (the body or `payload_json`) over 2 MiB, or a multipart body over 2 MiB and 64 KiB for a webhook that can not upload (`JSON exceeds 2MB limit`)", body = ApiErrorBody), (status = 429, description = "Slow mode (`Slow mode: wait Ns`), the webhook or channel budget (`Too many attempts. Try again later`), the upload budget of the webhook's owner or of the server's webhooks (`Upload limit reached: ...`), 3 uploads or multipart bodies of the owner, or ones holding the owner's share of the upload buffer, already being read, for a file part or a multipart body declared over 2 MiB and 64 KiB (`Too many uploads at once: ...`), or the strict bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`", body = ApiErrorBody)), security(()))]
 pub(crate) async fn execute(
     State(state): State<AppState>,
     Path((id, token)): Path<(String, String)>,
@@ -1546,7 +1546,7 @@ pub(crate) async fn execute(
 ///
 /// The webhook's id, channel, name and avatar, to check a URL. No bearer token. Wrong ids and
 /// tokens get the same 404. Strict rate-limit bucket.
-#[utoipa::path(get, path = "/api/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token")), responses((status = 200, description = "The webhook", body = WebhookInfo), (status = 404, description = "`Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(get, path = "/api/v1/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token")), responses((status = 200, description = "The webhook", body = WebhookInfo), (status = 404, description = "`Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn webhook_info(
     State(state): State<AppState>,
     Path((id, token)): Path<(String, String)>,
@@ -1605,7 +1605,7 @@ pub struct WebhookEdit {
 /// Changes the text or embeds of a message this webhook posted (no other message). Checked
 /// like a new message; edits never ping. Poll messages cannot be edited. No bearer token.
 /// Strict rate-limit bucket.
-#[utoipa::path(patch, path = "/api/webhooks/{id}/{token}/messages/{message_id}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ("message_id" = String, Path, description = "Message id")), request_body = WebhookEdit, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Empty result, too long, invalid embeds, the profanity filter, or a poll (`Cannot edit this message`)", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`, or `Unknown message` (not one of this webhook's messages)", body = ApiErrorBody), (status = 429, description = "The webhook budget or the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
+#[utoipa::path(patch, path = "/api/v1/webhooks/{id}/{token}/messages/{message_id}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ("message_id" = String, Path, description = "Message id")), request_body = WebhookEdit, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Empty result, too long, invalid embeds, the profanity filter, or a poll (`Cannot edit this message`)", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`, or `Unknown message` (not one of this webhook's messages)", body = ApiErrorBody), (status = 429, description = "The webhook budget or the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn edit_hook_message(
     State(state): State<AppState>,
     Path((id, token, message_id)): Path<(String, String, String)>,
@@ -1693,7 +1693,7 @@ pub(crate) async fn edit_hook_message(
 ///
 /// Deletes a message this webhook posted (no other message). No bearer token. Strict
 /// rate-limit bucket.
-#[utoipa::path(delete, path = "/api/webhooks/{id}/{token}/messages/{message_id}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ("message_id" = String, Path, description = "Message id")), responses((status = 204, description = "Deleted"), (status = 404, description = "`Unknown webhook`, or `Unknown message`", body = ApiErrorBody), (status = 429, description = "The webhook budget or the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
+#[utoipa::path(delete, path = "/api/v1/webhooks/{id}/{token}/messages/{message_id}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ("message_id" = String, Path, description = "Message id")), responses((status = 204, description = "Deleted"), (status = 404, description = "`Unknown webhook`, or `Unknown message`", body = ApiErrorBody), (status = 429, description = "The webhook budget or the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn delete_hook_message(
     State(state): State<AppState>,
     Path((id, token, message_id)): Path<(String, String, String)>,
@@ -2052,7 +2052,7 @@ fn new_secret() -> String {
 /// webhooks or Manage channels permission. Secrets are never listed, and only a webhook's
 /// owner sees its whole URL (others get the scheme and host). General rate-limit
 /// bucket.
-#[utoipa::path(get, path = "/api/servers/{name}/outgoing_webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), responses((status = 200, description = "The outgoing webhooks", body = OutgoingList), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/servers/{name}/outgoing_webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), responses((status = 200, description = "The outgoing webhooks", body = OutgoingList), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn list_outgoing(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2082,7 +2082,7 @@ pub(crate) async fn list_outgoing(
 /// row the webhook turns off. Only while the instance allows outgoing webhooks. At most 10
 /// per server. Returns the signing secret once. Logged in the audit log (host only). Strict
 /// rate-limit bucket.
-#[utoipa::path(post, path = "/api/servers/{name}/outgoing_webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), request_body = NewOutgoing, responses((status = 200, description = "The webhook with its secret", body = OutgoingSecret), (status = 400, description = "Invalid name, events or URL (`URL must use https`, `Address not allowed` (also for hosts that do not resolve), `Port not allowed`), or 10 already", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, or `Outgoing webhooks are turned off on this instance`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/servers/{name}/outgoing_webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), request_body = NewOutgoing, responses((status = 200, description = "The webhook with its secret", body = OutgoingSecret), (status = 400, description = "Invalid name, events or URL (`URL must use https`, `Address not allowed` (also for hosts that do not resolve), `Port not allowed`), or 10 already", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, or `Outgoing webhooks are turned off on this instance`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn create_outgoing(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2237,7 +2237,7 @@ async fn write_outgoing(
 /// previous owner's URL is never shown): payloads then include only what you can view (this
 /// needs Manage webhooks or Manage channels as a member). Requires the Manage webhooks or Manage channels
 /// permission. Logged in the audit log. General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/servers/{name}/outgoing_webhooks/{id}", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), request_body = OutgoingPatch, responses((status = 200, description = "The webhook", body = OutgoingWebhook), (status = 400, description = "Invalid name, URL or events, or `Enter the destination URL to take over this webhook.` when a change that makes you the owner has no URL", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, or turning it on while the instance switch is off", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 409, description = "`This webhook was just changed, try again`: its URL, events, switch or owner changed while this edit was being checked; nothing was written", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/v1/servers/{name}/outgoing_webhooks/{id}", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), request_body = OutgoingPatch, responses((status = 200, description = "The webhook", body = OutgoingWebhook), (status = 400, description = "Invalid name, URL or events, or `Enter the destination URL to take over this webhook.` when a change that makes you the owner has no URL", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, or turning it on while the instance switch is off", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 409, description = "`This webhook was just changed, try again`: its URL, events, switch or owner changed while this edit was being checked; nothing was written", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn update_outgoing(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2370,7 +2370,7 @@ pub(crate) async fn update_outgoing(
 /// `url` in the body (the previous owner's URL is never shown): payloads then include only what you
 /// can view (this needs Manage webhooks or Manage channels as a member). Requires the Manage
 /// webhooks or Manage channels permission. Logged in the audit log. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/servers/{name}/outgoing_webhooks/{id}/secret", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), request_body(content = SecretReset, description = "Needed only when the reset makes you the owner"), responses((status = 200, description = "The webhook with its new secret", body = OutgoingSecret), (status = 400, description = "`Enter the destination URL to take over this webhook.`, or an invalid URL", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission` (also when taking over someone else's webhook without Manage webhooks or Manage channels as a member), or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 409, description = "`This webhook was just changed, try again`: its owner changed while this reset was being checked; nothing was written", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/servers/{name}/outgoing_webhooks/{id}/secret", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), request_body(content = SecretReset, description = "Needed only when the reset makes you the owner"), responses((status = 200, description = "The webhook with its new secret", body = OutgoingSecret), (status = 400, description = "`Enter the destination URL to take over this webhook.`, or an invalid URL", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission` (also when taking over someone else's webhook without Manage webhooks or Manage channels as a member), or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 409, description = "`This webhook was just changed, try again`: its owner changed while this reset was being checked; nothing was written", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn reset_secret(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2454,7 +2454,7 @@ pub(crate) async fn reset_secret(
 ///
 /// Stops all deliveries, pending ones included, and drops its log. Requires the Manage webhooks
 /// or Manage channels permission. Logged in the audit log. General rate-limit bucket.
-#[utoipa::path(delete, path = "/api/servers/{name}/outgoing_webhooks/{id}", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), responses((status = 200, description = "Deleted", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/v1/servers/{name}/outgoing_webhooks/{id}", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), responses((status = 200, description = "Deleted", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn delete_outgoing(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2496,7 +2496,7 @@ pub(crate) async fn delete_outgoing(
 /// The newest 50 deliveries with their status codes, timings and errors (never response
 /// bodies). Kept for 7 days, at most 100 per webhook. Requires the Manage webhooks or Manage
 /// channels permission. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/servers/{name}/outgoing_webhooks/{id}/deliveries", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), responses((status = 200, description = "Newest first", body = Vec<Delivery>), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/servers/{name}/outgoing_webhooks/{id}/deliveries", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), responses((status = 200, description = "Newest first", body = Vec<Delivery>), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn list_deliveries(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2538,7 +2538,7 @@ pub(crate) async fn list_deliveries(
 /// Queues a `ping` event to the outgoing webhook right away, to check the URL and the
 /// signature. Only while the instance allows outgoing webhooks and the webhook is on. Requires
 /// the Manage webhooks or Manage channels permission. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/servers/{name}/outgoing_webhooks/{id}/test", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), responses((status = 200, description = "Queued", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, `Outgoing webhooks are turned off on this instance`, or `This webhook is off`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/servers/{name}/outgoing_webhooks/{id}/test", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), responses((status = 200, description = "Queued", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, `Outgoing webhooks are turned off on this instance`, or `This webhook is off`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn test_outgoing(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -3746,7 +3746,7 @@ mod tests {
             .expect("create");
         assert_eq!(
             made.path,
-            format!("/api/webhooks/{}/{}", made.webhook.id, made.token)
+            format!("/api/v1/webhooks/{}/{}", made.webhook.id, made.token)
         );
         assert!(made.webhook.mentions, "the owner may mention everyone");
         let stored: String = sqlx::query("SELECT token_hash FROM webhooks WHERE id = $1")

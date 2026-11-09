@@ -284,7 +284,7 @@ async fn clean_name(db: &Db, raw: &str) -> Result<String, ApiError> {
 /// emits `layout_changed` to the server. General rate-limit bucket.
 #[utoipa::path(
     post,
-    path = "/api/servers/{name}/categories",
+    path = "/api/v1/servers/{name}/categories",
     tag = "Channels",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = CategoryReq,
@@ -356,7 +356,7 @@ pub(crate) async fn create_category(
 /// the layout version and emits `layout_changed` to the server. General rate-limit bucket.
 #[utoipa::path(
     patch,
-    path = "/api/categories/{id}",
+    path = "/api/v1/categories/{id}",
     tag = "Channels",
     params(("id" = i64, Path, description = "Category id")),
     request_body = CategoryReq,
@@ -428,7 +428,7 @@ pub(crate) async fn rename_category(
 /// rate-limit bucket.
 #[utoipa::path(
     delete,
-    path = "/api/categories/{id}",
+    path = "/api/v1/categories/{id}",
     tag = "Channels",
     params(("id" = i64, Path, description = "Category id")),
     responses(
@@ -542,7 +542,7 @@ fn check_order(req: &LayoutReq, current: &ChannelLayout) -> Result<(), ApiError>
 /// see. General rate-limit bucket.
 #[utoipa::path(
     put,
-    path = "/api/servers/{name}/layout",
+    path = "/api/v1/servers/{name}/layout",
     tag = "Channels",
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = LayoutReq,

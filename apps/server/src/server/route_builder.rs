@@ -3,8 +3,8 @@ use std::sync::Arc;
 use axum::{
     Router,
     body::Body,
-    extract::Request,
-    http::StatusCode,
+    extract::{OriginalUri, Request},
+    http::{StatusCode, Uri},
     response::{IntoResponse, Response},
 };
 use hyper::upgrade::OnUpgrade;
@@ -29,7 +29,31 @@ fn limited(router: Router, key: ClientIp, limits: &Limits) -> Router {
     router.layer(GovernorLayer::new(governor_conf))
 }
 
+/// The API versions this server serves, each under `/api/<version>`.
+pub const VERSIONS: [&str; 1] = ["v1"];
+
+/// The version `/api/...` without a version segment resolves to.
+pub const LATEST: &str = "v1";
+
 pub fn register_routes(proxy_url: Option<&str>, config: &AppConfig, state: AppState) -> Router {
+    let router = api_router(config, state);
+    let router = match proxy_url {
+        Some(url) => {
+            let url: Arc<str> = Arc::from(url);
+            let client: ProxyClient = Client::builder(TokioExecutor::new()).build_http();
+            router.fallback(move |OriginalUri(asked): OriginalUri, mut req: Request| {
+                *req.uri_mut() = asked;
+                let url = Arc::clone(&url);
+                let client = client.clone();
+                async move { proxy_to_frontend(url, client, req).await }
+            })
+        }
+        None => router,
+    };
+    resolve_versions(router)
+}
+
+pub(crate) fn api_router(config: &AppConfig, state: AppState) -> Router {
     let key = ClientIp(config.proxy_trust.clone());
     let api_routes = crate::api::routes(
         state.clone(),
@@ -47,26 +71,52 @@ pub fn register_routes(proxy_url: Option<&str>, config: &AppConfig, state: AppSt
         ),
         false => Router::new(),
     };
-    let router = Router::new()
+    Router::new()
         .nest(
-            "/api",
+            "/api/v1",
             crate::api::health::routes()
                 .with_state(state)
                 .merge(api_routes),
         )
-        .merge(well_known);
+        .merge(well_known)
+}
 
-    match proxy_url {
-        Some(url) => {
-            let url: Arc<str> = Arc::from(url);
-            let client: ProxyClient = Client::builder(TokioExecutor::new()).build_http();
-            router.fallback(move |req| {
-                let url = Arc::clone(&url);
-                let client = client.clone();
-                async move { proxy_to_frontend(url, client, req).await }
-            })
-        }
-        None => router,
+/// `router` behind the version rewrite, which runs before routing so every route, limiter and
+/// role sees the resolved path.
+pub(crate) fn resolve_versions(router: Router) -> Router {
+    Router::new()
+        .fallback_service(router)
+        .layer(axum::middleware::map_request(|req: Request| async move {
+            resolve_version(req)
+        }))
+}
+
+fn resolve_version(mut req: Request) -> Request {
+    let Some(path) = resolved(req.uri().path()) else {
+        return req;
+    };
+    let path_query = match req.uri().query() {
+        Some(query) => format!("{path}?{query}"),
+        None => path,
+    };
+    let mut parts = req.uri().clone().into_parts();
+    parts.path_and_query = path_query.parse().ok();
+    if let Ok(uri) = Uri::from_parts(parts) {
+        *req.uri_mut() = uri;
+    }
+    req
+}
+
+/// `path` under `/api/{LATEST}` when it is an `/api` path without a version.
+fn resolved(path: &str) -> Option<String> {
+    let rest = path.strip_prefix("/api")?;
+    if !(rest.is_empty() || rest.starts_with('/')) {
+        return None;
+    }
+    let segment = rest.split('/').nth(1).unwrap_or("");
+    match VERSIONS.contains(&segment) {
+        true => None,
+        false => Some(format!("/api/{LATEST}{rest}")),
     }
 }
 
@@ -195,6 +245,49 @@ mod tests {
     }
 
     #[test]
+    fn unversioned_api_paths_resolve_to_the_latest_version() {
+        assert!(VERSIONS.contains(&LATEST));
+        let latest = |rest: &str| Some(format!("/api/{LATEST}{rest}"));
+        assert_eq!(resolved("/api/me"), latest("/me"));
+        assert_eq!(resolved("/api"), latest(""));
+        assert_eq!(resolved("/api/"), latest("/"));
+        assert_eq!(resolved("/api/ws"), latest("/ws"));
+        assert_eq!(
+            resolved("/api/servers/v1/members"),
+            latest("/servers/v1/members")
+        );
+        assert_eq!(resolved("/api/v1x/me"), latest("/v1x/me"));
+        for version in VERSIONS {
+            for kept in [
+                format!("/api/{version}"),
+                format!("/api/{version}/"),
+                format!("/api/{version}/me"),
+            ] {
+                assert_eq!(resolved(&kept), None, "{kept}");
+            }
+        }
+        for kept in ["/apis/me", "/", "/login", "/.well-known/rchat", "/s/api/me"] {
+            assert_eq!(resolved(kept), None, "{kept}");
+        }
+        let resolve = |uri: &str| {
+            resolve_version(
+                Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .expect("req"),
+            )
+            .uri()
+            .to_string()
+        };
+        assert_eq!(
+            resolve("/api/search?q=a%20b&x=1"),
+            format!("/api/{LATEST}/search?q=a%20b&x=1")
+        );
+        assert_eq!(resolve("/api/v1/me?x=1"), "/api/v1/me?x=1");
+        assert_eq!(resolve("/login?next=/api/me"), "/login?next=/api/me");
+    }
+
+    #[test]
     fn the_frontend_proxy_only_forwards_page_traffic() {
         assert_eq!(status(req("GET", "/", &[])), None);
         assert_eq!(status(req("HEAD", "/s/rchat/", &[("rsc", "1")])), None);
@@ -234,6 +327,66 @@ mod tests {
                 Some(StatusCode::METHOD_NOT_ALLOWED)
             );
         }
+    }
+
+    /// A frontend that answers every request with its request target.
+    async fn echo_frontend() -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("addr"));
+        let held = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = vec![0; 4096];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                let target = head.split(' ').nth(1).unwrap_or("").to_string();
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{target}",
+                    target.len()
+                );
+                let _ = socket.write_all(reply.as_bytes()).await;
+            }
+        });
+        (url, held)
+    }
+
+    #[tokio::test]
+    async fn the_frontend_sees_the_path_the_client_asked_for() {
+        let (url, frontend) = echo_frontend().await;
+        let (state, path) = crate::api::test_util::temp_state("frontend_path").await;
+        let config = AppConfig {
+            roles: crate::config::Roles {
+                web: false,
+                ..crate::config::Roles::ALL
+            },
+            ..AppConfig::defaults()
+        };
+        let app = register_routes(Some(&url), &config, state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let base = format!("http://{}", listener.local_addr().expect("addr"));
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await;
+        });
+        for target in ["/login?x=1", "/api/nope?x=1", "/api/v1/nope", "/api"] {
+            let body = reqwest::get(format!("{base}{target}"))
+                .await
+                .expect("get")
+                .text()
+                .await
+                .expect("body");
+            assert_eq!(body, target);
+        }
+        server.abort();
+        frontend.abort();
+        crate::api::test_util::done(state, path).await;
     }
 
     async fn silent_frontend() -> (Arc<str>, tokio::task::JoinHandle<()>) {

@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { joinCode } from './load/join'
 import { findChrome, pct, stats } from './load/lib'
 import { phaseError } from './load/run'
-import { failures, multiStatements, splitStatements, truthy } from './load/upgrade'
+import { apiBaseOf, failures, multiStatements, splitStatements, truthy } from './load/upgrade'
 
 const dir = join(import.meta.dir, 'load')
 const scripts = () => readdirSync(dir).filter(name => name.endsWith('.ts'))
@@ -151,6 +151,12 @@ describe('load harness helpers', () => {
     for (const value of [true, 1, 1n, 't', 'true', '1']) expect(truthy(value)).toBe(true)
     for (const value of [false, 0, 0n, 'f', 'false', '0', null, undefined, 2, 'yes'])
       expect(truthy(value)).toBe(false)
+  })
+
+  test('upgrade.ts calls /api/v1 only on builds whose discovery document lists v1', () => {
+    expect(apiBaseOf('http://h', { api_versions: ['v1'] })).toBe('http://h/api/v1')
+    for (const doc of [{}, { api_versions: 'v1' }, { api_versions: ['v2'] }, null, '<html>'])
+      expect(apiBaseOf('http://h', doc)).toBe('http://h/api')
   })
 
   test('a check fails on a false first column or on no rows', () => {

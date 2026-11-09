@@ -936,6 +936,8 @@ export interface InstanceInfo {
   host: string
   version: string
   api_version: string
+  // Served versions; absent on instances from before API versions (see `api_version.ts`).
+  api_versions?: string[]
   public_url: string
   api_url: string
   ws_url: string

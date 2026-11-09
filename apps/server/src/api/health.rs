@@ -31,7 +31,7 @@ pub struct Readiness {
 ///
 /// Liveness probe: answers 200 whenever the process can serve HTTP, without touching the
 /// database. Served by every role, needs no authentication and is not rate limited.
-#[utoipa::path(get, path = "/api/health", tag = "Health", responses((status = 200, description = "Process is up", body = Health)), security(()))]
+#[utoipa::path(get, path = "/api/v1/health", tag = "Health", responses((status = 200, description = "Process is up", body = Health)), security(()))]
 pub(crate) async fn health() -> Json<Health> {
     Json(Health { ok: true })
 }
@@ -42,7 +42,7 @@ pub(crate) async fn health() -> Json<Health> {
 /// is set, the realtime bus is publishing, following and caught up; 503 otherwise, with the
 /// same body showing which part failed. Served by every role, needs no authentication and is
 /// not rate limited.
-#[utoipa::path(get, path = "/api/ready", tag = "Health", responses((status = 200, description = "Database reachable and, when REDIS_URL is set, this instance can write to and read from the realtime bus and has caught up", body = Readiness), (status = 503, description = "Not ready to take traffic", body = Readiness)), security(()))]
+#[utoipa::path(get, path = "/api/v1/ready", tag = "Health", responses((status = 200, description = "Database reachable and, when REDIS_URL is set, this instance can write to and read from the realtime bus and has caught up", body = Readiness), (status = 503, description = "Not ready to take traffic", body = Readiness)), security(()))]
 pub(crate) async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
     let db = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
     let bus = state.hub.ready();

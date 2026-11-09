@@ -14,6 +14,7 @@ import {
   planSend,
   prettyBody,
   pushHistory,
+  requestPath,
   requestUrl,
   restoreValues,
   toCurl,
@@ -348,6 +349,17 @@ describe('validation and requests', () => {
     expect(planSend(k, emptyValues(k), false).kind).toBe('confirm')
     const s = op('search')
     expect(planSend(s, emptyValues(s), false).kind).toBe('send')
+  })
+
+  test('documented paths of either prefix go under the base this client calls', () => {
+    expect(requestUrl('/api/v1', { path: '/api/v1/me', query: 'a=1' })).toBe('/api/v1/me?a=1')
+    expect(requestUrl('/api/v1', { path: '/api/me', query: '' })).toBe('/api/v1/me')
+    expect(requestUrl('https://old.example/api', { path: '/api/me', query: '' })).toBe(
+      'https://old.example/api/me'
+    )
+    expect(requestPath({ path: '/api/v1/servers/a%20b', query: 'x=1' })).toBe('/servers/a%20b?x=1')
+    expect(requestPath({ path: '/api/v1//evil.example/x', query: '' })).toBeNull()
+    expect(requestUrl('/api/v1', { path: '/api/v1/../admin', query: '' })).toBeNull()
   })
 
   test('only API paths of this instance get a URL', () => {

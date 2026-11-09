@@ -18,6 +18,7 @@ import {
   User,
   Volume2,
 } from 'lucide-react'
+import { apiTail } from './api_version'
 import type { Recent } from './home'
 import { previewText } from './invite'
 import { fillPath, type HistoryEntry, type Operation } from './openapi'
@@ -299,7 +300,7 @@ export const apiItems = (ops: Operation[]): PaletteItem[] =>
     id: `api_${op.id}`,
     title: op.summary,
     subtitle: `${op.method} ${op.path}`,
-    aliases: [`${op.method} ${op.path}`, op.path.slice('/api'.length)],
+    aliases: [`${op.method} ${op.path}`, apiTail(op.path) ?? op.path],
     keywords: [op.tag],
     group: 'api',
     icon: Bot,

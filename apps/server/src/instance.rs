@@ -412,6 +412,10 @@ impl Instance {
             host,
             version: env!("CARGO_PKG_VERSION").to_string(),
             api_version: API_VERSION.to_string(),
+            api_versions: crate::server::route_builder::VERSIONS
+                .iter()
+                .map(|v| v.to_string())
+                .collect(),
             public_url: origin.clone(),
             api_url,
             ws_url,
@@ -433,13 +437,13 @@ impl Instance {
 pub struct Features {
     /// Guest access (reading servers without an account) is on.
     pub guests: bool,
-    /// File uploads through `POST /api/media` are on.
+    /// File uploads through `POST /api/v1/media` are on.
     pub uploads: bool,
     /// Peer-to-peer attachments are on. With `uploads` also off, messages are text only.
     pub p2p_attachments: bool,
     /// Link previews are on.
     pub previews: bool,
-    /// `POST /api/identity/assertion` is available.
+    /// `POST /api/v1/identity/assertion` is available.
     pub identity_assertions: bool,
 }
 
@@ -502,19 +506,25 @@ pub struct InstanceInfo {
     /// Version of this API.
     #[schema(example = "1.1")]
     pub api_version: String,
+    /// API versions this instance serves, each under `/api/<version>`; `/api/...` without one uses
+    /// the latest. Instances from before API versions leave this out and serve only `/api/...`.
+    #[schema(example = json!(["v1"]))]
+    pub api_versions: Vec<String>,
     /// Origin of the web app, without a trailing slash.
     #[schema(example = "https://chat.example.com")]
     pub public_url: String,
-    /// Base URL of the REST API.
+    /// Root URL of the REST API. `<api_url>/v1` is version 1; the root itself uses the latest
+    /// version.
     #[schema(example = "https://chat.example.com/api")]
     pub api_url: String,
-    /// WebSocket gateway URL.
+    /// WebSocket gateway URL on the latest version; `/api/v1/ws` in place of `/api/ws` is
+    /// version 1.
     #[schema(example = "wss://chat.example.com/api/ws")]
     pub ws_url: String,
     /// PeerJS signalling server used for peer-to-peer file sharing and calls.
     #[schema(example = "https://chat.example.com:9001/peerjs")]
     pub peerjs_url: String,
-    /// URL of `GET /api/instance` on this instance.
+    /// URL of this document on this instance (`GET /api/instance`, the latest version).
     #[schema(example = "https://chat.example.com/api/instance")]
     pub instance_url: String,
     /// URL of the instance's JSON Web Key Set.
@@ -528,13 +538,13 @@ pub struct InstanceInfo {
     /// Limits of this instance.
     pub limits: Limits,
     /// Whether this build supports end-to-end encryption. The `e2ee` switch of
-    /// `GET /api/settings` says whether it is on.
+    /// `GET /api/v1/settings` says whether it is on.
     pub e2ee: bool,
     /// The instance runs its media server for calls (`SFU_ENABLED`, off by default). The `sfu`
-    /// switch of `GET /api/settings` says whether calls use it.
+    /// switch of `GET /api/v1/settings` says whether calls use it.
     pub sfu: bool,
     /// Whether this build supports embeddable widgets. The `widgets` switch of
-    /// `GET /api/settings` says whether they are on.
+    /// `GET /api/v1/settings` says whether they are on.
     pub widgets: bool,
 }
 
@@ -547,7 +557,7 @@ pub struct Ice {
     #[schema(example = json!(["stun:stun.example.org:3478", "stun:chat.example.com:3478"]))]
     pub stun: Vec<String>,
     /// TURN relaying is available: signed-in users get short-lived credentials from
-    /// `GET /api/p2p/ice`.
+    /// `GET /api/v1/p2p/ice`.
     pub turn: bool,
     /// The instance runs its own relay (STUN, and TURN when `turn` is on).
     pub relay: bool,

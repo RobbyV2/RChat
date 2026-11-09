@@ -1,4 +1,5 @@
-import { createApi, resolveApiBase, type Api } from './api'
+import { createApi, isJson, resolveApiBase, type Api } from './api'
+import { apiRoot, prefixOf, versionedUrl } from './api_version'
 import { getBasePath } from './basePath'
 import { hostOf, normalizeHost, privateHost } from './qualified'
 
@@ -114,8 +115,10 @@ export function peerFrom(raw: string | undefined, origin: string): PeerTarget {
   }
 }
 
+// The instance's unversioned API root, gateway and health URLs; a connection pins them to the
+// version its document allows.
 export function endpointsFrom(origin: string, info: InstanceInfo | null): Endpoints {
-  const api = trimSlash(info?.api_url || `${origin}/api`)
+  const api = apiRoot(info?.api_url || `${origin}/api`)
   const ws = info?.ws_url || wsUrlFrom(origin)
   return {
     origin,
@@ -209,12 +212,13 @@ export async function fetchInstance(
       res = await fetcher(`${origin}${path}`, {
         signal: AbortSignal.timeout(timeoutMs),
         credentials: 'omit',
+        redirect: 'manual',
         headers: { Accept: 'application/json' },
       })
     } catch {
       throw new InstanceError(`Can't reach ${host}`)
     }
-    if (!res.ok) continue
+    if (!res.ok || !isJson(res)) continue
     const body: unknown = await res.json().catch(() => null)
     if (!validInfo(body)) continue
     if (!fromOrigin(origin, body)) throw new InstanceError(`${host} claims to be another site`)
@@ -245,14 +249,35 @@ export async function resolveInstance(
 export class InstanceConnection {
   readonly api: Api
   readonly ws: WsClient
+  private doc: InstanceInfo | null = null
 
   constructor(
     private ends: Endpoints,
-    public info: InstanceInfo | null = null,
+    info: InstanceInfo | null = null,
     public isDefault = false
   ) {
     this.api = createApi(ends.api)
-    this.ws = new WsClient(ends)
+    this.info = info
+    this.ws = new WsClient(this.pinned)
+  }
+
+  // The instance's document, which also picks the API version this connection calls.
+  get info() {
+    return this.doc
+  }
+
+  set info(info: InstanceInfo | null) {
+    this.doc = info
+    this.api.prefix = prefixOf(info)
+  }
+
+  private pinned = {
+    url: () => versionedUrl(this.ends.url(), this.api.prefix),
+    probe: () => this.health(),
+  }
+
+  health() {
+    return versionedUrl(this.ends.probe(), this.api.prefix)
   }
 
   get origin() {
@@ -260,7 +285,7 @@ export class InstanceConnection {
   }
 
   get apiBase() {
-    return this.ends.api
+    return this.api.base
   }
 
   get host() {
@@ -286,7 +311,7 @@ export class InstanceConnection {
     this.api.setBase(ends.api)
     this.api.setToken(null)
     this.api.setGrants({})
-    this.ws.retarget(ends)
+    this.ws.retarget(this.pinned)
   }
 }
 

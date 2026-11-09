@@ -266,7 +266,7 @@ async fn resolve_place(db: &Db, scope: &str, user: &User) -> Result<Place, ApiEr
     }
 }
 
-/// The verdict on one message, through the same gate and rule as `DELETE /api/messages/{id}`.
+/// The verdict on one message, through the same gate and rule as `DELETE /api/v1/messages/{id}`.
 enum Verdict {
     Missing,
     Others,
@@ -653,7 +653,7 @@ fn dedup(ids: &[i64]) -> Vec<i64> {
 /// entry per request or job (`message.bulk_delete` with the count and the authors), which a job
 /// writes with its first such batch and updates with every later one. `dry_run` counts without deleting. Deletes: 20 per minute;
 /// dry runs: 60 per minute.
-#[utoipa::path(post, path = "/api/messages/bulk_delete", tag = "Messages", request_body = BulkDeleteReq, responses((status = 200, description = "What was deleted, or the job that deletes everything", body = BulkDeleteResp), (status = 400, description = "`Unknown scope`, neither `ids` nor `all` (`Choose messages to delete`), both, more than 200 ids (`At most 200 messages at a time`), more than 1000 `except` ids (`At most 1000 exceptions`), or `except`/`before`/`after`/`author` without `all` (`except, before, after and author only go with all`), or an empty or over-long `author` (`Unknown author`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the channel, thread or DM does not exist or you cannot read it; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many attempts. Try again later` past the request limits, `Too many deletions are running. Wait for one to finish` with three jobs running, or plain text from the general bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/messages/bulk_delete", tag = "Messages", request_body = BulkDeleteReq, responses((status = 200, description = "What was deleted, or the job that deletes everything", body = BulkDeleteResp), (status = 400, description = "`Unknown scope`, neither `ids` nor `all` (`Choose messages to delete`), both, more than 200 ids (`At most 200 messages at a time`), more than 1000 `except` ids (`At most 1000 exceptions`), or `except`/`before`/`after`/`author` without `all` (`except, before, after and author only go with all`), or an empty or over-long `author` (`Unknown author`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the channel, thread or DM does not exist or you cannot read it; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many attempts. Try again later` past the request limits, `Too many deletions are running. Wait for one to finish` with three jobs running, or plain text from the general bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn bulk_delete(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -896,7 +896,7 @@ async fn running_job(db: &Db, username: &str, scope: &str) -> sqlx::Result<Optio
 ///
 /// Your running jobs and the ones that ended in the last day, newest first (at most 20).
 /// Requires a bearer token.
-#[utoipa::path(get, path = "/api/messages/bulk_delete/jobs", tag = "Messages", responses((status = 200, description = "Your jobs", body = [BulkJob]), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/messages/bulk_delete/jobs", tag = "Messages", responses((status = 200, description = "Your jobs", body = [BulkJob]), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn list_jobs(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -919,7 +919,7 @@ pub(crate) async fn list_jobs(
 /// Stops your running job after the batch in progress; what it deleted stays deleted (and is
 /// audit logged). Requires a bearer token. A job that already ended is answered as it is.
 /// Emits `bulk_delete_progress` to your connections.
-#[utoipa::path(delete, path = "/api/messages/bulk_delete/jobs/{id}", tag = "Messages", params(("id" = i64, Path, description = "Job id")), responses((status = 200, description = "The job", body = BulkJob), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such job of yours", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/v1/messages/bulk_delete/jobs/{id}", tag = "Messages", params(("id" = i64, Path, description = "Job id")), responses((status = 200, description = "The job", body = BulkJob), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such job of yours", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn cancel_job(
     State(state): State<AppState>,
     Authed(user): Authed,
