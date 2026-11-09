@@ -2,10 +2,11 @@
 
 import type { CSSProperties } from 'react'
 import { Settings } from 'lucide-react'
-import { THEME_BACKDROP_CSS, headerColors } from '../lib/server_colors'
+import { GEAR_CHIP_CSS, headerColors } from '../lib/server_colors'
 import { Masked } from './ui'
 
-const gearCls = 'group relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full'
+const gearCls =
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-full outline-offset-2 focus-visible:outline-2'
 
 export function ServerHeader({
   server,
@@ -25,36 +26,19 @@ export function ServerHeader({
   showGear?: boolean
 }) {
   const colors = headerColors(bannerColor, nameColor)
-  const style: CSSProperties = colors?.bg
+  const style: CSSProperties | undefined = colors?.bg
     ? ({
         background: colors.bg,
         borderColor: `color-mix(in srgb, ${colors.bg} 78%, ${colors.gear})`,
         '--hdr-gear': colors.gear,
-        '--hdr-backdrop': colors.backdrop,
       } as CSSProperties)
-    : ({
-        '--hdr-gear': 'var(--color-on-surface)',
-        '--hdr-backdrop': THEME_BACKDROP_CSS,
-      } as CSSProperties)
-  const backdrop = (
-    <>
-      <span
-        aria-hidden
-        className="pointer-events-none absolute -inset-2.5 rounded-full"
-        style={{
-          background: 'radial-gradient(circle closest-side, var(--hdr-backdrop) 60%, transparent)',
-        }}
-      />
-      <span
-        aria-hidden
-        className="pointer-events-none absolute inset-0 rounded-full bg-[color-mix(in_srgb,var(--hdr-gear)_18%,transparent)] opacity-0 group-hover:opacity-100 group-active:opacity-100"
-      />
-    </>
-  )
-  const gearIcon = <Settings size={18} className="relative" />
-  const gear = colors?.bg
-    ? `${gearCls} text-[var(--hdr-gear)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--hdr-gear)]`
-    : `${gearCls} text-on-surface-variant hover:text-on-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary`
+    : undefined
+  // On a banner the gear sits on a chip of the theme's surface so it reads on any color.
+  const chip = colors?.bg ? ({ '--gear-chip': GEAR_CHIP_CSS } as CSSProperties) : undefined
+  const gear = chip
+    ? `${gearCls} bg-(--gear-chip) text-on-surface shadow-elevation-1 hover:bg-surface-container-highest focus-visible:outline-(--hdr-gear)`
+    : `${gearCls} text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-primary`
+  const gearIcon = <Settings size={18} />
   return (
     <header
       style={style}
@@ -72,8 +56,7 @@ export function ServerHeader({
       )}
       {preview
         ? showGear && (
-            <span aria-hidden className={gear}>
-              {backdrop}
+            <span aria-hidden style={chip} className={gear}>
               {gearIcon}
             </span>
           )
@@ -82,9 +65,9 @@ export function ServerHeader({
               title="Server settings"
               aria-label="Server settings"
               onClick={onSettings}
+              style={chip}
               className={gear}
             >
-              {backdrop}
               {gearIcon}
             </button>
           )}

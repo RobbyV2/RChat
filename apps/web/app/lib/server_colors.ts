@@ -3,12 +3,14 @@ import { validColor } from './profile'
 export const ON_DARK = '#ffffff'
 export const ON_LIGHT = '#000000'
 export const MIN_CONTRAST = 4.5
-export const MIN_HALO = 1.3
-export const MIN_GEAR = 6
-const HALO_SHIFT = 0.14
+// Focus rings and other non-text parts (WCAG 1.4.11).
+export const MIN_NON_TEXT = 3
 export const THEME_SURFACES = { dark: '#1d1b20', light: '#f7f2fa' } as const
 export const THEME_ON_SURFACE = { dark: '#e6e0e9', light: '#1d1b20' } as const
-export const THEME_GEAR = { dark: '#cac4d0', light: '#49454f' } as const
+// The gear on a banner sits on a chip of the theme's surface-container-high, mostly opaque.
+export const THEME_CHIP = { dark: '#2b2930', light: '#ece6f0' } as const
+export const GEAR_CHIP_ALPHA = 0.85
+export const GEAR_CHIP_CSS = `color-mix(in srgb, var(--color-surface-container-high) ${Math.round(GEAR_CHIP_ALPHA * 100)}%, transparent)`
 
 export const BANNER_PRESETS = [
   { color: '#4f46b8', label: 'Indigo' },
@@ -67,21 +69,17 @@ export const mix = (from: string, to: string, amount: number) => {
 export const onColor = (bg: string) =>
   contrast(bg, ON_DARK) >= contrast(bg, ON_LIGHT) ? ON_DARK : ON_LIGHT
 
-const AWAY = [0.4, 0.6, 0.8, 1]
-const TOWARD = Array.from({ length: 19 }, (_, i) => HALO_SHIFT + i * 0.02)
+// The gear's focus ring sits on the banner, so it takes the banner's text color.
+export const gearRing = (banner: string) => onColor(banner)
 
-export const gearBackdrop = (bg: string, fg = onColor(bg)) => {
-  const far = contrast(fg, '#000000') > contrast(fg, '#ffffff') ? '#000000' : '#ffffff'
-  const fits = (c: string) => contrast(c, bg) >= MIN_HALO && contrast(c, fg) >= MIN_GEAR
-  const candidates = [...AWAY.map(t => mix(bg, far, t)), ...TOWARD.map(t => mix(bg, fg, t))]
-  return candidates.find(fits) ?? mix(bg, fg, HALO_SHIFT)
-}
+// What the chip looks like over a banner.
+export const gearChip = (theme: keyof typeof THEME_CHIP, banner: string) =>
+  mix(banner, THEME_CHIP[theme], GEAR_CHIP_ALPHA)
 
 export interface HeaderColors {
   bg: string | null
   fg: string | null
   gear: string | null
-  backdrop: string | null
 }
 
 export const headerColors = (
@@ -91,13 +89,8 @@ export const headerColors = (
   const bg = validColor(banner) ? banner.toLowerCase() : null
   const custom = validColor(name) ? name.toLowerCase() : null
   if (!bg && !custom) return null
-  const gear = bg ? onColor(bg) : null
-  return {
-    bg,
-    fg: custom ?? gear,
-    gear,
-    backdrop: bg ? gearBackdrop(bg, gear ?? undefined) : null,
-  }
+  const gear = bg ? gearRing(bg) : null
+  return { bg, fg: custom ?? gear, gear }
 }
 
 const ratio = (value: number) => `${(Math.floor(value * 10) / 10).toFixed(1)}:1`
@@ -120,8 +113,3 @@ export const contrastWarning = (
   const where = failing.map(t => `the ${t.theme} theme (${ratio(t.value)})`).join(' and ')
   return `Without a banner, the name is hard to read in ${where}. Aim for at least 4.5:1, or pick a banner.`
 }
-
-export const themeBackdrop = (theme: keyof typeof THEME_SURFACES) =>
-  mix(THEME_SURFACES[theme], THEME_ON_SURFACE[theme], HALO_SHIFT)
-
-export const THEME_BACKDROP_CSS = `color-mix(in srgb, var(--color-surface-container-low) ${Math.round((1 - HALO_SHIFT) * 100)}%, var(--color-on-surface))`

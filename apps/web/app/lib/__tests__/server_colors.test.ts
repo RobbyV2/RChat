@@ -1,22 +1,22 @@
 import { describe, expect, test } from 'bun:test'
 import {
   BANNER_PRESETS,
+  GEAR_CHIP_ALPHA,
   MIN_CONTRAST,
-  MIN_GEAR,
-  MIN_HALO,
+  MIN_NON_TEXT,
   NAME_PRESETS,
   ON_DARK,
   ON_LIGHT,
+  THEME_CHIP,
+  THEME_ON_SURFACE,
   contrast,
   contrastWarning,
-  gearBackdrop,
+  gearChip,
+  gearRing,
   headerColors,
   luminance,
-  THEME_GEAR,
-  THEME_SURFACES,
   mix,
   onColor,
-  themeBackdrop,
 } from '../server_colors'
 
 describe('contrast helpers', () => {
@@ -51,48 +51,24 @@ describe('contrast helpers', () => {
     }
   })
 
-  test('the gear halo shows on every banner and keeps the icon readable', () => {
-    const banners = [
-      '#ffffff',
-      '#000000',
-      '#f5f5f5',
-      '#0a0a0a',
-      '#ffe8a3',
-      '#ffff00',
-      '#ff0066',
-      '#808080',
-      '#4f46b8',
-      '#0000a0',
-      '#ff00f5',
-      '#9cf00c',
-    ]
-    for (const bg of banners) {
-      const backdrop = gearBackdrop(bg)
-      expect(contrast(backdrop, bg) >= MIN_HALO).toBe(true)
-      expect(contrast(backdrop, onColor(bg)) >= MIN_GEAR).toBe(true)
-    }
+  test('the gear chip keeps the icon readable on any banner in both themes', () => {
+    for (const theme of ['dark', 'light'] as const)
+      for (let i = 0; i < 4096; i++) {
+        const bg = `#${[i >> 8, (i >> 4) & 15, i & 15].map(c => (c * 17).toString(16).padStart(2, '0')).join('')}`
+        expect(contrast(gearChip(theme, bg), THEME_ON_SURFACE[theme]) >= MIN_CONTRAST).toBe(true)
+      }
+  })
+
+  test('the gear focus ring shows on any banner', () => {
     for (let i = 0; i < 4096; i++) {
       const bg = `#${[i >> 8, (i >> 4) & 15, i & 15].map(c => (c * 17).toString(16).padStart(2, '0')).join('')}`
-      const backdrop = gearBackdrop(bg)
-      expect(contrast(backdrop, bg) >= MIN_HALO).toBe(true)
-      expect(contrast(backdrop, onColor(bg)) >= MIN_GEAR).toBe(true)
+      expect(contrast(gearRing(bg), bg) >= MIN_NON_TEXT).toBe(true)
     }
   })
 
-  test('the halo keeps the tint when it already shows, else shifts toward the icon', () => {
-    expect(gearBackdrop('#ff0066')).toBe(mix('#ff0066', '#ffffff', 0.4))
-    expect(gearBackdrop('#808080')).toBe(mix('#808080', '#ffffff', 0.4))
-    expect(gearBackdrop('#4f46b8')).toBe(mix('#4f46b8', '#000000', 0.4))
-    expect(gearBackdrop('#ffffff')).toBe(mix('#ffffff', '#000000', 0.14))
-    expect(gearBackdrop('#000000')).toBe(mix('#000000', '#ffffff', 0.14))
-  })
-
-  test('the default theme header gets a visible halo too', () => {
-    for (const theme of ['dark', 'light'] as const) {
-      const backdrop = themeBackdrop(theme)
-      expect(contrast(backdrop, THEME_SURFACES[theme]) >= MIN_HALO).toBe(true)
-      expect(contrast(backdrop, THEME_GEAR[theme]) >= MIN_GEAR).toBe(true)
-    }
+  test('the gear chip is the theme surface over the banner', () => {
+    expect(gearChip('dark', '#ffffff')).toBe(mix('#ffffff', THEME_CHIP.dark, GEAR_CHIP_ALPHA))
+    expect(gearChip('light', '#000000')).toBe(mix('#000000', THEME_CHIP.light, GEAR_CHIP_ALPHA))
   })
 
   test('presets are valid and readable with their automatic text color', () => {
@@ -111,32 +87,18 @@ describe('headerColors', () => {
   })
 
   test('a banner alone gets an automatic name color', () => {
-    expect(headerColors('#FFFFFF', null)).toEqual({
-      bg: '#ffffff',
-      fg: ON_LIGHT,
-      gear: ON_LIGHT,
-      backdrop: gearBackdrop('#ffffff'),
-    })
-    const dark = headerColors('#000000', null)
-    expect(dark?.fg).toBe(ON_DARK)
-    expect(dark?.backdrop).toBe(gearBackdrop('#000000'))
-    expect(dark?.backdrop === '#000000').toBe(false)
+    expect(headerColors('#FFFFFF', null)).toEqual({ bg: '#ffffff', fg: ON_LIGHT, gear: ON_LIGHT })
+    expect(headerColors('#000000', null)?.fg).toBe(ON_DARK)
   })
 
   test('a custom name color wins over the automatic one, the gear stays readable', () => {
     const both = headerColors('#ff0066', '#ffd166')
     expect(both?.fg).toBe('#ffd166')
     expect(both?.gear).toBe(onColor('#ff0066'))
-    expect(both?.backdrop).toBe(gearBackdrop('#ff0066'))
   })
 
   test('a name color alone keeps the theme background and gear', () => {
-    expect(headerColors(null, '#ABCDEF')).toEqual({
-      bg: null,
-      fg: '#abcdef',
-      gear: null,
-      backdrop: null,
-    })
+    expect(headerColors(null, '#ABCDEF')).toEqual({ bg: null, fg: '#abcdef', gear: null })
   })
 })
 
