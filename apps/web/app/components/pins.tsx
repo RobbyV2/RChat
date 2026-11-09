@@ -55,7 +55,13 @@ export const confirmUnpin = (unpin: () => void) =>
   })
 
 // The header button. `toggle` binds it to another pin list (a P2P conversation).
-export function PinsButton({ toggle }: { toggle?: { open: boolean; onClick: () => void } }) {
+export function PinsButton({
+  toggle,
+  className = '',
+}: {
+  toggle?: { open: boolean; onClick: () => void }
+  className?: string
+}) {
   const storeOpen = useStore(
     s => s.pins !== null && s.view !== null && s.pins.key === viewKey(s.view)
   )
@@ -72,7 +78,7 @@ export function PinsButton({ toggle }: { toggle?: { open: boolean; onClick: () =
       onClick={() => (toggle ? toggle.onClick() : open ? closePins() : openPins())}
       className={`rounded-full p-1.5 hover:bg-surface-container-high ${
         open ? 'bg-surface-container-high text-primary' : ''
-      }`}
+      } ${className}`}
     >
       <Pin size={20} />
     </button>

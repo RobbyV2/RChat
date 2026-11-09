@@ -139,40 +139,42 @@ export function ForwardCard({
     <div data-forward={fwd.source_id} className="min-w-0">
       {head}
       <div className="mt-1 max-w-160 min-w-0 rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          {author ? (
-            <>
-              <span
-                {...(local ? {} : profileTrigger(author, null, false))}
-                title={local ? undefined : 'View profile'}
-                className={`block shrink-0 rounded-full ${local ? '' : 'cursor-pointer hover:opacity-85'}`}
-              >
-                <UserAvatar
-                  username={author.username}
-                  avatarKind={author.avatar_kind}
-                  avatarColor={author.avatar_color}
-                  size={20}
-                />
-              </span>
-              <span
-                {...(local ? {} : profileTrigger(author, null))}
-                className={`streamer min-w-0 truncate rounded-sm text-sm font-medium ${local ? '' : 'cursor-pointer outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'}`}
-              >
-                <Masked text={author.display_name} />
-              </span>
-              {isWebhookAuthor(author.username) && <WebhookBadge />}
-            </>
-          ) : (
-            <>
-              <UserAvatar username="" avatarKind="color" avatarColor={null} size={20} />
-              <span
-                data-forward-deleted
-                className="min-w-0 truncate text-sm font-medium text-on-surface-variant italic"
-              >
-                {DELETED_USER}
-              </span>
-            </>
-          )}
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2">
+          <span data-forward-author className="flex max-w-full min-w-0 items-center gap-2">
+            {author ? (
+              <>
+                <span
+                  {...(local ? {} : profileTrigger(author, null, false))}
+                  title={local ? undefined : 'View profile'}
+                  className={`block shrink-0 rounded-full ${local ? '' : 'cursor-pointer hover:opacity-85'}`}
+                >
+                  <UserAvatar
+                    username={author.username}
+                    avatarKind={author.avatar_kind}
+                    avatarColor={author.avatar_color}
+                    size={20}
+                  />
+                </span>
+                <span
+                  {...(local ? {} : profileTrigger(author, null))}
+                  className={`streamer min-w-0 truncate rounded-sm text-sm font-medium ${local ? '' : 'cursor-pointer outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'}`}
+                >
+                  <Masked text={author.display_name} />
+                </span>
+                {isWebhookAuthor(author.username) && <WebhookBadge />}
+              </>
+            ) : (
+              <>
+                <UserAvatar username="" avatarKind="color" avatarColor={null} size={20} />
+                <span
+                  data-forward-deleted
+                  className="min-w-0 truncate text-sm font-medium text-on-surface-variant italic"
+                >
+                  {DELETED_USER}
+                </span>
+              </>
+            )}
+          </span>
           <MessageTime ts={fwd.created_at} className="shrink-0 text-xs text-on-surface-variant" />
         </div>
         {m.poll?.snapshot ? (
@@ -198,7 +200,7 @@ export function ForwardCard({
               e.stopPropagation()
               void openForward(m)
             }}
-            className="mt-1 flex max-w-full min-w-0 items-center gap-1 rounded-sm text-left text-xs text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary disabled:no-underline pointer-coarse:min-h-8"
+            className="mt-1 flex max-w-full min-w-0 flex-wrap items-center gap-x-1 rounded-sm text-left text-xs text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary disabled:no-underline pointer-coarse:min-h-8"
           >
             {origin && (
               <>
@@ -208,7 +210,7 @@ export function ForwardCard({
                 <span aria-hidden>·</span>
               </>
             )}
-            <span className="shrink-0">
+            <span className="min-w-0">
               Originally sent {messageTime(fwd.created_at * 1000, Date.now())}
             </span>
           </button>

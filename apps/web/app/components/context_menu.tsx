@@ -26,6 +26,7 @@ import {
   swallowsClick,
   type PressInput,
 } from '../lib/long_press'
+import { EDITABLE } from '../lib/follow'
 import { dnd, type DragSpec } from './drag'
 import { SheetGrip } from './ui'
 
@@ -459,6 +460,20 @@ function OpenMenu({ menu, coarse }: { menu: ContextMenuState; coarse: boolean })
     focusNext.current = null
     itemsOf(ref.current, coarse ? 0 : want.level)[want.index]?.focus()
   })
+
+  // Focus goes back to the control that opened the menu when the menu closes with focus in it.
+  // A text field is left alone, so a phone keyboard doesn't pop up again.
+  useLayoutEffect(() => {
+    const opener = document.activeElement
+    const box = ref.current
+    return () => {
+      const now = document.activeElement
+      const lost = now === null || now === document.body || box?.contains(now) === true
+      if (!lost || !(opener instanceof HTMLElement) || opener === document.body) return
+      if (!opener.isConnected || opener.matches(EDITABLE)) return
+      opener.focus({ preventScroll: true })
+    }
+  }, [])
 
   // Re-registered every render so the handler sees the current stack.
   useEffect(() => {

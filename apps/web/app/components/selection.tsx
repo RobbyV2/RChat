@@ -170,7 +170,13 @@ export function Selectable({
 
 // Header toggle for selection mode in a scope. Hidden on narrow screens until on: long-press
 // "Select message" enters the mode there, and the header needs the room.
-export function SelectButton({ scope }: { scope: string | null }) {
+export function SelectButton({
+  scope,
+  className = '',
+}: {
+  scope: string | null
+  className?: string
+}) {
   const on = useStore(s => scope !== null && s.selection?.scope === scope)
   const signedIn = useStore(s => s.me !== null && !s.guest)
   if (!scope || !signedIn) return null
@@ -185,7 +191,7 @@ export function SelectButton({ scope }: { scope: string | null }) {
         if (on) s.exitSelection()
         else s.startSelection(scope)
       }}
-      className={`rounded-full p-1.5 ${on ? 'bg-secondary-container text-on-secondary-container' : 'hidden hover:bg-surface-container-high md:inline-flex'}`}
+      className={`rounded-full p-1.5 ${on ? 'bg-secondary-container text-on-secondary-container' : `hidden hover:bg-surface-container-high md:inline-flex ${className}`}`}
     >
       <SquareCheckBig size={20} />
     </button>

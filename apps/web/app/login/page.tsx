@@ -312,7 +312,7 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-app flex-col items-center px-safe-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-safe-4">
-      <header className="flex w-full shrink-0 items-center justify-between pt-[max(0.5rem,env(safe-area-inset-top))] pb-2">
+      <header className="flex w-full shrink-0 items-center justify-between py-2">
         <ThemeToggle />
         <StatusClock />
       </header>

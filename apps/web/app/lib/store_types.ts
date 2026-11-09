@@ -87,6 +87,8 @@ export interface ContextMenuItem {
 
 export interface ContextMenuOptions {
   header?: ReactNode
+  // Names the control that opened the menu, so it can show the menu as open.
+  owner?: string
 }
 
 export interface ContextMenuState extends ContextMenuOptions {

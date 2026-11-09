@@ -181,12 +181,12 @@ export function PanelHeader({
 }) {
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-4">
-      <Icon size={18} className="text-on-surface-variant" />
-      <span className="font-medium">{title}</span>
+      <Icon size={18} className="shrink-0 text-on-surface-variant" />
+      <span className="min-w-0 truncate font-medium">{title}</span>
       <button
         title={closeTitle}
         onClick={onClose}
-        className="ml-auto rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-high"
+        className="ml-auto shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-high"
       >
         <X size={18} />
       </button>
@@ -224,7 +224,7 @@ export function Dialog({
         aria-labelledby={titleId}
         className={`w-full overflow-y-auto bg-surface-container-high p-6 shadow-elevation-3 ${
           full
-            ? 'h-full max-h-none sm:h-auto sm:max-h-[min(85vh,100%)] sm:max-w-lg sm:rounded-2xl'
+            ? 'h-full max-h-none pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:h-auto sm:max-h-[min(85vh,100%)] sm:max-w-lg sm:rounded-2xl sm:pb-6'
             : compact
               ? 'max-h-full max-w-sm rounded-3xl'
               : 'max-h-[min(85vh,100%)] max-w-lg rounded-2xl'
@@ -262,7 +262,7 @@ export function LinkPage({
   const authed = useStore(s => s.me !== null || s.guest)
   return (
     <div className="invite-backdrop fixed inset-x-0 top-app z-40 flex h-app flex-col overflow-y-auto px-safe-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-      <header className="flex shrink-0 items-center justify-between pt-[max(0.75rem,env(safe-area-inset-top))] pb-2">
+      <header className="flex shrink-0 items-center justify-between pt-3 pb-2">
         <img src="/rchat_logo.png" alt="RChat" className="h-9 w-auto" />
         <div className="flex items-center gap-1">
           <ThemeToggle />

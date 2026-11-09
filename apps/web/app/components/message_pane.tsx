@@ -10,6 +10,7 @@ import {
   Lock,
   Menu,
   MessageCircle,
+  MoreVertical,
   MessageSquareText,
   MessagesSquare,
   Phone,
@@ -18,8 +19,10 @@ import {
   PhoneMissed,
   PhoneOff,
   PhoneOutgoing,
+  Pin,
   Reply,
   Search,
+  SquareCheckBig,
   Trash2,
   Users,
   Video,
@@ -104,7 +107,7 @@ import { PinNotice, PinsButton, PinsWindow, pinMenuItem, useCanPin } from './pin
 import { PollCard, pollMenuItems } from './poll_card'
 import { SystemNotice } from './system_messages'
 import { useMyTimeoutEnds } from './timeout_dialog'
-import { canPin } from '../lib/pins'
+import { PINS_TITLE, canPin } from '../lib/pins'
 import { isSystem } from '../lib/system_messages'
 import { messageLinkUrl } from '../lib/message_links'
 import { sharing } from '../lib/platform'
@@ -319,7 +322,7 @@ export function AuthorRow({
         </span>
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-baseline gap-2">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
           <span
             {...profileTrigger(author, server)}
             style={{ color }}
@@ -608,6 +611,41 @@ export function OutboxRows({ msgKey, size = 36 }: { msgKey: string; size?: numbe
         )
       })}
     </>
+  )
+}
+
+export const HEADER_MORE = 'header-more'
+
+// The header actions that fold into one menu when the header is narrow.
+export function HeaderMore({ scope, search }: { scope: string | null; search: boolean }) {
+  const signedIn = useStore(s => s.me !== null && !s.guest)
+  const open = useStore(s => s.contextMenu?.owner === HEADER_MORE)
+  const items: ContextMenuItem[] = []
+  if (scope && signedIn)
+    items.push({
+      label: 'Select Messages',
+      icon: SquareCheckBig,
+      action: () => useStore.getState().startSelection(scope),
+    })
+  if (scope)
+    items.push({ label: PINS_TITLE, icon: Pin, action: () => useStore.getState().openPins() })
+  if (search)
+    items.push({ label: 'Search', icon: Search, action: () => useStore.getState().openSearch() })
+  if (!items.length) return null
+  return (
+    <button
+      title="More"
+      aria-label="More"
+      aria-haspopup="menu"
+      aria-expanded={open}
+      onClick={e => {
+        const r = e.currentTarget.getBoundingClientRect()
+        useStore.getState().openContextMenu(r.right, r.bottom + 4, items, { owner: HEADER_MORE })
+      }}
+      className="rounded-full p-1.5 hover:bg-surface-container-high @sm:hidden"
+    >
+      <MoreVertical size={20} />
+    </button>
   )
 }
 
@@ -956,7 +994,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         if (file) uploadFile(viewKey(view), file)
       }}
     >
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-outline-variant px-4">
+      <header className="@container flex h-14 shrink-0 items-center gap-3 border-b border-outline-variant px-4">
         <button
           title={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
           aria-label="Menu"
@@ -972,7 +1010,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         {view?.kind === 'channel' && (
           <div className="flex min-w-0 flex-1 flex-col md:flex-row md:items-center md:gap-3">
             <span
-              className={`flex min-w-0 shrink-0 items-center gap-1.5 font-medium ${
+              className={`flex max-w-full min-w-0 shrink-0 items-center gap-1.5 font-medium ${
                 !isVoice && channel?.topic?.trim() ? 'md:max-w-[50%]' : ''
               }`}
             >
@@ -1033,21 +1071,22 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
             )}
           </span>
         )}
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2 @max-sm:gap-1">
           {dm && !dm.is_self && !guest && !otherBlocked && <CallButtons dm={dm} />}
-          <StatusClock />
-          {scope && <SelectButton scope={scope} />}
-          {scope && <PinsButton />}
+          <StatusClock timeCls="@max-lg:hidden" />
+          {scope && <SelectButton scope={scope} className="@max-sm:hidden" />}
+          {scope && <PinsButton className="@max-sm:hidden" />}
           {!guest && <InboxButton />}
           {view?.kind === 'channel' && !isVoice && (
             <button
               title="Search"
               onClick={() => openSearch()}
-              className="rounded-full p-1.5 hover:bg-surface-container-high"
+              className="rounded-full p-1.5 hover:bg-surface-container-high @max-sm:hidden"
             >
               <Search size={20} />
             </button>
           )}
+          <HeaderMore scope={scope} search={view?.kind === 'channel' && !isVoice} />
           {view?.kind === 'channel' && (
             <button
               title="Members"

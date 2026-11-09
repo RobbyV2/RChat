@@ -333,7 +333,7 @@ export const P2pRow = memo(function P2pRow({
             <KeyAvatar ik={p.sender} size={36} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-baseline gap-2">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
               <span className="streamer min-w-0 truncate text-sm font-medium">
                 <Masked text={m.author.display_name} />
               </span>
@@ -820,7 +820,7 @@ export function P2pComposer({
             )
           }}
           placeholder={streamer ? 'Send a P2P message' : placeholder}
-          className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:text-on-surface-variant md:text-sm"
+          className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:whitespace-nowrap placeholder:text-on-surface-variant md:text-sm"
         />
         {(count > counterFrom(BODY_MAX) || tooLong) && (
           <span

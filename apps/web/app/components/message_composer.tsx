@@ -587,7 +587,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             }
           }}
           placeholder={placeholder}
-          className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:text-on-surface-variant md:text-sm"
+          className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:whitespace-nowrap placeholder:text-on-surface-variant md:text-sm"
         />
         {count > counterFrom(max) && (
           <span

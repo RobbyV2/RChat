@@ -34,7 +34,7 @@ export function ThemeToggle() {
   )
 }
 
-export default function StatusClock() {
+export default function StatusClock({ timeCls = '' }: { timeCls?: string }) {
   const wsStatus = useStore(s => s.wsStatus)
   const live = useStore(s => s.token !== null || s.guest)
   const [time, setTime] = useState('')
@@ -46,7 +46,7 @@ export default function StatusClock() {
   }, [])
   return (
     <div className="flex items-center gap-2 text-sm tabular-nums text-on-surface-variant">
-      <span title="Local time" className="min-w-16 text-right">
+      <span title="Local time" className={`min-w-16 text-right ${timeCls}`}>
         {time}
       </span>
       {live && (

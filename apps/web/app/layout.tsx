@@ -16,7 +16,7 @@ export const metadata: Metadata = {
     ],
     apple: '/icons/apple_touch_icon.png',
   },
-  appleWebApp: { capable: true, title: 'RChat' },
+  appleWebApp: { capable: true, title: 'RChat', statusBarStyle: 'black-translucent' },
 }
 
 export const viewport: Viewport = {

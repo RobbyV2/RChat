@@ -343,7 +343,8 @@ body {
   }
 }
 
-/* The desktop shell draws its own title bar; everything else sits below it. */
+/* The desktop shell draws its own title bar and a home screen app draws under the status bar;
+   everything else sits below both. */
 :root {
   --titlebar-h: 0px;
   --safe-top: calc(env(safe-area-inset-top, 0px) + var(--titlebar-h));
@@ -358,20 +359,33 @@ html[data-chrome='macos'] {
   --titlebar-h: 36px;
 }
 
-html[data-chrome] body {
-  padding-top: var(--titlebar-h);
+body {
+  padding-top: var(--safe-top);
+}
+
+/* The home screen app's status bar text is white: give it a dark backing in the light theme. */
+@media (display-mode: standalone) {
+  :root[data-theme='light'] body::before {
+    content: '';
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: 80;
+    height: env(safe-area-inset-top, 0px);
+    background: var(--color-inverse-surface);
+    pointer-events: none;
+  }
 }
 
 @utility h-app {
-  height: calc(var(--app-height, 100dvh) - var(--titlebar-h));
+  height: calc(var(--app-height, 100dvh) - var(--safe-top));
 }
 
 @utility min-h-app {
-  min-height: calc(100dvh - var(--titlebar-h));
+  min-height: calc(100dvh - var(--safe-top));
 }
 
 @utility top-app {
-  top: var(--titlebar-h);
+  top: var(--safe-top);
 }
 
 @utility px-safe {
