@@ -65,7 +65,14 @@ import {
 } from '../lib/invite'
 import { postedUrl, spoileredUrls } from '../lib/embed_links'
 import { findMessageLinks, parseMessageLink } from '../lib/message_links'
-import { previewPath, saveGuestMedia, useMediaSrc, usePreviewSrc } from '../lib/media_src'
+import {
+  mediaModeFor,
+  previewPath,
+  saveMedia,
+  useLinkedSrc,
+  useMediaSrc,
+  usePreviewSrc,
+} from '../lib/media_src'
 import { expiryText, sameOriginImage } from '../lib/rules'
 import { remarkMask } from '../lib/profanity'
 import { CLOSE, OPEN, markSpoilers, spoilerParts, unmarkSpoilers } from '../lib/spoilers'
@@ -264,10 +271,16 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   // A P2P message never loads anything by itself: an image from the instance would tell it what
   // was said and when it was read.
   const chat = useChatSource()
+  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const local =
     !chat && sameOriginImage(src, window.location.href, [window.location.origin, api.origin()])
-  if (previews && local)
-    return <img src={src} alt={alt ?? ''} className="my-1 max-h-80 max-w-full rounded-xl" />
+  const shown = useLinkedSrc(src, server, previews && local)
+  if (previews && local && shown === undefined)
+    return (
+      <span className="my-1 block h-40 w-60 max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container" />
+    )
+  if (previews && local && shown)
+    return <img src={shown} alt={alt ?? ''} className="my-1 max-h-80 max-w-full rounded-xl" />
   if (!src) return <>{alt}</>
   if (inLink) return <>{alt || src}</>
   return (
@@ -852,7 +865,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
   const { id, filename, removed, removed_by_author, spoiler, expires_at } = media
   const image = previews && IMAGE_EXT.test(filename)
   const src = useMediaSrc(id, server, image && !removed)
-  const guest = api.guestMedia(server)
+  const fetched = mediaModeFor(server) === 'blob'
   const lang = previews && !image ? fileLang(filename) : null
   const text = useServerText(
     id,
@@ -912,7 +925,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
     return <SpoilerCover onReveal={() => setRevealed(true)} />
   }
   const save = () =>
-    void saveGuestMedia(id, server ?? '', filename).catch((err: unknown) =>
+    void saveMedia(id, server, filename).catch((err: unknown) =>
       useStore.getState().setError(err instanceof Error ? err.message : String(err))
     )
   if (lang !== null && text === undefined) return <CodePreviewLoading filename={filename} />
@@ -926,7 +939,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
         lang={lang}
         file={text}
         actions={
-          guest && server !== undefined ? (
+          fetched ? (
             <button
               title={`Download ${filename}`}
               aria-label="Download"
@@ -965,7 +978,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
   )
   const box =
     'mt-1 block w-fit rounded-xl border border-outline-variant bg-surface-container px-3 py-2 text-left hover:bg-surface-container-high'
-  if (guest && server !== undefined) {
+  if (fetched) {
     return (
       <button title={`Download ${filename}`} onClick={save} className={box}>
         {card}

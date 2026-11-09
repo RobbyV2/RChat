@@ -1,7 +1,8 @@
-import { describe, expect, test } from 'bun:test'
+import { beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
 import { MarkdownMessage } from '../../components/markdown_message'
+import { api } from '../instances'
 import type { Message } from '../types'
 
 // In a P2P conversation nothing loads by itself: images from the instance (or anywhere) are
@@ -73,6 +74,8 @@ const render = (content: string, p2p: boolean) => {
 }
 
 describe('P2P messages fetch nothing', () => {
+  beforeEach(() => api.setToken(null))
+
   const text = `![pixel](${ORIGIN}/api/media/7) and ![rel](/api/media/8) https://example.com/a`
 
   test('instance messages still show same-origin images', () => {

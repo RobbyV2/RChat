@@ -226,6 +226,10 @@ export class ApiClient {
     return `${this.base}/media/${seg(id)}`
   }
 
+  signedIn() {
+    return this.token !== null
+  }
+
   // Guests can't load media by URL: their grant goes in a header, never in a link that could be
   // copied or kept in history. See `media_src.ts`.
   guestMedia(server?: string) {
@@ -237,14 +241,53 @@ export class ApiClient {
     return `${this.base}${path}`
   }
 
-  async mediaBlob(id: string, server: string, signal?: AbortSignal) {
-    return this.blobAt(this.mediaUrl(id), server, signal)
+  // The path of an address below this API's root (any version), or null for anywhere else: the
+  // token and grants go nowhere but here.
+  private below(url: string) {
+    const page = typeof window === 'undefined' ? 'http://localhost/' : window.location.href
+    try {
+      const at = new URL(url, page)
+      const root = new URL(`${this.root}/`, page)
+      if (at.origin !== root.origin || !at.pathname.startsWith(root.pathname)) return null
+      return { path: at.pathname.slice(root.pathname.length), plain: !at.search && !at.hash }
+    } catch {
+      return null
+    }
   }
 
-  async blobAt(url: string, server: string, signal?: AbortSignal) {
-    const grant = this.grants[server]
-    const headers: Record<string, string> = grant ? { 'X-Guest-Grant': grant } : {}
-    const res = await fetch(url, { headers, signal, referrerPolicy: 'no-referrer' })
+  // The id in the address of one of this instance's media files, or null for anything else.
+  mediaId(url: string) {
+    const at = this.below(url)
+    const m = at?.plain ? /^(?:v1\/)?media\/([^/]+)$/.exec(at.path) : null
+    try {
+      return m ? decodeURIComponent(m[1]) : null
+    } catch {
+      return null
+    }
+  }
+
+  private credentials(server?: string): Record<string, string> {
+    if (this.token) return { Authorization: `Bearer ${this.token}` }
+    const grant = server === undefined ? undefined : this.grants[server]
+    return grant ? { 'X-Guest-Grant': grant } : {}
+  }
+
+  async mediaBlob(id: string, server?: string, signal?: AbortSignal) {
+    return this.authedBlob(this.mediaUrl(id), server, signal)
+  }
+
+  // A file of this instance, fetched with the account's token or the guest's grant for `server`
+  // in a header. An address outside the API is refused and a redirect is never followed, so
+  // neither is ever sent anywhere else.
+  async authedBlob(url: string, server?: string, signal?: AbortSignal) {
+    if (!this.below(url)) throw new ApiError('Could not load the file', 0)
+    const headers = this.credentials(server)
+    const res = await fetch(url, {
+      headers,
+      signal,
+      redirect: 'error',
+      referrerPolicy: 'no-referrer',
+    })
     if (!res.ok) throw new ApiError('Could not load the file', res.status)
     return res.blob()
   }
@@ -252,11 +295,8 @@ export class ApiClient {
   // The first `max` bytes of a file, for a text preview; the rest is never downloaded. `cut` is
   // true when the file goes on past them; `total` is its full size when the server says.
   async mediaStart(id: string, server: string | undefined, max: number, signal?: AbortSignal) {
-    const headers: Record<string, string> = {}
-    const grant = server !== undefined ? this.grants[server] : undefined
-    if (this.token) headers.Authorization = `Bearer ${this.token}`
-    else if (grant) headers['X-Guest-Grant'] = grant
-    const res = await fetch(this.mediaUrl(id), { headers, signal })
+    const headers = this.credentials(server)
+    const res = await fetch(this.mediaUrl(id), { headers, signal, redirect: 'error' })
     if (!res.ok || !res.body) throw new ApiError('Could not load the file', res.status)
     const length = Number(res.headers.get('content-length'))
     const total = Number.isSafeInteger(length) && length > 0 ? length : null

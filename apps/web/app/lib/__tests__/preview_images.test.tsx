@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { api } from '../instances'
 import { previewPath } from '../media_src'
 import { resetSessionCaches, useStore } from '../store'
 import { MarkdownMessage } from '../../components/markdown_message'
+import type { MessageMedia } from '../types'
 import { me, msg } from './fixtures'
 
 describe('link preview images', () => {
@@ -28,14 +30,18 @@ describe('link preview images', () => {
 
   const initial = useStore.getInitialState()
   const saved = { ...initial }
+  const base = api.base
   beforeEach(() => {
     Object.assign(initial, {
       me: me('alice'),
       settings: { ...saved.settings, asset_previews: true },
     })
+    api.setToken(null)
   })
   afterEach(() => {
     Object.assign(initial, saved)
+    api.setBase(base)
+    api.setToken(null)
     resetSessionCaches()
   })
 
@@ -66,5 +72,48 @@ describe('link preview images', () => {
     expect(html).toContain('Page')
     expect(html.includes('tracker.example')).toBe(false)
     expect(html.includes('<img')).toBe(false)
+  })
+
+  const file = (filename: string): MessageMedia => ({
+    id: 'f1',
+    filename,
+    kind: 'server',
+    hoster: null,
+    expires_at: null,
+    size: 10,
+    mime: null,
+    removed: false,
+    removed_by_author: false,
+    spoiler: false,
+  })
+  const attached = (filename: string) =>
+    renderToStaticMarkup(<MarkdownMessage message={msg(5, { media: file(filename) })} />)
+
+  test("an account on the page's own API gets media and previews by address", () => {
+    api.setBase('/api')
+    api.setToken('tok')
+    expect(render('/api/messages/5/embeds/0/image?v=0123456789abcdef')).toContain(
+      '<img src="/api/messages/5/embeds/0/image?v=0123456789abcdef"'
+    )
+    expect(attached('pic.png')).toContain('<img src="/api/media/f1"')
+    const html = attached('report.pdf')
+    expect(html).toContain('<a href="/api/media/f1" download="report.pdf"')
+    expect(html.includes('<button')).toBe(false)
+  })
+
+  test('an account on an API at another origin never loads them by address', () => {
+    api.setBase('https://chat.b.com/api')
+    api.setToken('tok')
+    const preview = render('/api/messages/5/embeds/0/image?v=0123456789abcdef')
+    expect(preview).toContain('Page')
+    expect(preview.includes('<img')).toBe(false)
+    expect(preview.includes('/embeds/0/image')).toBe(false)
+    const picture = attached('pic.png')
+    expect(picture.includes('<img')).toBe(false)
+    expect(picture.includes('chat.b.com')).toBe(false)
+    const html = attached('report.pdf')
+    expect(html).toContain('<button title="Download report.pdf"')
+    expect(html.includes('href="https://chat.b.com')).toBe(false)
+    expect(html.includes('download=')).toBe(false)
   })
 })

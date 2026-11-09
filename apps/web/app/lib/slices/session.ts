@@ -42,7 +42,7 @@ import {
 } from '../invite'
 import { deniedAccess } from '../join_flow'
 import { keyed, mergeHead, refreshTail, samePrefix } from '../lists'
-import { forgetGuestMedia } from '../media_src'
+import { forgetMedia } from '../media_src'
 import { bootDms, emptyLayout, knownDms, layoutServers, pruneLayout } from '../nav_layout'
 import { EMPTY_NOTIFY, keepScopes } from '../notify'
 import { historyKey } from '../openapi'
@@ -1360,7 +1360,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       setTokenCookie(null)
       writeLocal(LS.guest, null)
       writeLocal(LS.guestGrants, null)
-      forgetGuestMedia()
+      forgetMedia()
       api.setToken(null)
       api.setGrants({})
       home.ws.setGrants({})
