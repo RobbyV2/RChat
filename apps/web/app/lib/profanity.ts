@@ -1,20 +1,22 @@
 // The personal profanity filter: masks what you see, instance and P2P content alike, and never
 // changes what is stored, sent or searched. The site filter (server side, blocks before posting)
 // is separate and never applies to P2P content. The setting is per account in this browser
-// (`rchat_profanity:{username|guest}`), off by default. The matcher is the server's own
-// (`crates/profanity`, compiled into `crates/wasm`), loaded only once the setting is on.
+// (`rchat_profanity:{username|guest}`), on unless the account turned it off. The matcher is the
+// server's own (`crates/profanity`, compiled into `crates/wasm`), loaded only once it is on.
 import { getBasePath } from './basePath'
 
 export const profanityKey = (username: string | null) => `rchat_profanity:${username ?? 'guest'}`
 
+export const PROFANITY_DEFAULT = true
+
 export const parseProfanity = (raw: string | null): boolean => {
   try {
     const data = raw ? (JSON.parse(raw) as unknown) : null
-    if (typeof data !== 'object' || data === null) return false
+    if (typeof data !== 'object' || data === null) return PROFANITY_DEFAULT
     const { v, on } = data as { v?: unknown; on?: unknown }
-    return v === 1 && typeof on === 'boolean' ? on : false
+    return v === 1 && typeof on === 'boolean' ? on : PROFANITY_DEFAULT
   } catch {
-    return false
+    return PROFANITY_DEFAULT
   }
 }
 

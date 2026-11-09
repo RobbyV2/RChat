@@ -2267,6 +2267,7 @@ mod tests {
     #[tokio::test]
     async fn bio_is_saved_shown_and_broadcast() {
         let (state, path) = temp_state("bio_patch").await;
+        crate::api::test_util::profanity_on(&state.db).await;
         let _ = register_text(&state, "bea").await.expect("register");
         let mut rx = state.hub.subscribe();
         let patch = |body: &str| {
@@ -2433,6 +2434,7 @@ mod tests {
     #[tokio::test]
     async fn display_names_change_but_never_sign_in_or_mention() {
         let (state, path) = temp_state("display_names").await;
+        crate::api::test_util::profanity_on(&state.db).await;
         let _ = register_text(&state, "Alice").await.expect("alice");
         let _ = register_text(&state, "bob").await.expect("bob");
         let mut rx = state.hub.subscribe();

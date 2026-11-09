@@ -8283,6 +8283,7 @@ mod tests {
     async fn channel_topics_are_cleaned_filtered_and_live() {
         let (state, path) = temp_state("channel_topics").await;
         let db = &state.db;
+        crate::api::test_util::profanity_on(db).await;
         club_with(&state, &["bob"]).await;
         let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'club'")
             .fetch_one(db)
@@ -9098,6 +9099,7 @@ mod tests {
         };
         let (state, path) = temp_state("categories").await;
         let db = &state.db;
+        crate::api::test_util::profanity_on(db).await;
         club_with(&state, &["bob"]).await;
         let alice = || Authed(mem_user("alice", false));
         let bob = || Authed(mem_user("bob", false));

@@ -20,6 +20,7 @@ import {
   type Matcher,
 } from '../profanity'
 import { siteFilterOn } from '../rules'
+import { home } from '../instances'
 import { maskOf, useStore, resetSessionCaches } from '../store'
 import { MarkdownMessage } from '../../components/markdown_message'
 import { me, memoryStorage, msg, user } from './fixtures'
@@ -62,13 +63,18 @@ beforeEach(resetMasking)
 afterEach(resetMasking)
 
 describe('the setting', () => {
-  test('is off by default and parsed defensively', () => {
+  test('is on by default and parsed defensively', () => {
     expect(profanityKey('alice')).toBe('rchat_profanity:alice')
     expect(profanityKey(null)).toBe('rchat_profanity:guest')
-    for (const raw of [null, '', 'nope', '[]', '{"v":2,"on":true}', '{"v":1,"on":"yes"}'])
-      expect(parseProfanity(raw)).toBe(false)
+    for (const raw of [null, '', 'nope', '[]', '{"v":9,"on":false}', '{"v":1,"on":"no"}'])
+      expect(parseProfanity(raw)).toBe(true)
     expect(parseProfanity(profanityValue(true))).toBe(true)
     expect(parseProfanity(profanityValue(false))).toBe(false)
+  })
+
+  test('a choice saved before the default changed is kept', () => {
+    expect(parseProfanity('{"v":1,"on":false}')).toBe(false)
+    expect(parseProfanity('{"v":1,"on":true}')).toBe(true)
   })
 })
 
@@ -204,6 +210,42 @@ describe('in messages', () => {
     expect(maskOf(useStore.getState())('hey, shit')).toBe('hey, shit')
     expect(maskProfanity('hey, shit')).toBe('hey, shit')
     expect(storage.get('rchat_profanity:alice')).toBe('{"v":1,"on":false}')
+  })
+
+  test('an account that never chose has it on, one that turned it off keeps it off', async () => {
+    const g = globalThis as { window?: unknown; document?: unknown; fetch: typeof fetch }
+    const real = { window: g.window, document: g.document, fetch: g.fetch }
+    g.window = {
+      location: { pathname: '/', href: 'http://x/', origin: 'http://x', protocol: 'http:' },
+      history: { state: null, pushState: () => {}, replaceState: () => {} },
+    }
+    g.document = { cookie: '' }
+    const signIn = async (username: string) => {
+      g.fetch = (async () =>
+        new Response(JSON.stringify({ token: 'tok', user: me(username) }), {
+          status: 200,
+        })) as unknown as typeof fetch
+      useStore.setState({ me: null })
+      await useStore.getState().login({ username, password: 'x' } as never)
+    }
+    try {
+      await setMasking(true, counted().load)
+      await signIn('alice')
+      expect(useStore.getState().profanityOn).toBe(true)
+      expect(storage.has('rchat_profanity:alice')).toBe(false)
+      await new Promise(r => setTimeout(r, 0))
+      expect(maskOf(useStore.getState())('hey, shit')).toBe('hey, ****')
+      useStore.getState().setProfanityOn(false)
+      storage.set('rchat_profanity:bob', '{"v":1,"on":false}')
+      await signIn('bob')
+      expect(useStore.getState().profanityOn).toBe(false)
+      await signIn('alice')
+      expect(useStore.getState().profanityOn).toBe(false)
+    } finally {
+      home.ws.stop()
+      Object.assign(g, real)
+      useStore.setState({ token: null })
+    }
   })
 
   test('an imported config sets it', async () => {

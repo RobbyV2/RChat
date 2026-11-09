@@ -1184,12 +1184,7 @@ pub fn switch_seed(value: Option<&str>) -> bool {
 }
 
 pub fn profanity_seed(filter: Option<&str>, targets: Option<&str>) -> Vec<(&'static str, bool)> {
-    let filter = !filter.is_some_and(|v| {
-        matches!(
-            v.trim().to_lowercase().as_str(),
-            "0" | "false" | "off" | "no"
-        )
-    });
+    let filter = switch_off_seed(filter);
     let targets = match targets.map(str::trim).filter(|v| !v.is_empty()) {
         Some(list) => ProfanityTargets::parse_list(list),
         None => ProfanityTargets::ALL,
@@ -1209,8 +1204,9 @@ pub fn profanity_seed(filter: Option<&str>, targets: Option<&str>) -> Vec<(&'sta
 /// `client_other_instances` gates no endpoint.
 #[derive(Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub struct Settings {
-    /// Master switch of the profanity filter. When on, content matching a target in
-    /// `profanity_targets` is rejected with 400 `Content blocked by profanity filter`.
+    /// Master switch of the profanity filter. Off by default (`PROFANITY_FILTER` seeds it).
+    /// When on, content matching a target in `profanity_targets` is rejected with 400
+    /// `Content blocked by profanity filter`.
     pub profanity_filter: bool,
     /// Which texts the filter checks while `profanity_filter` is on.
     #[serde(default)]
@@ -1358,7 +1354,7 @@ impl Settings {
         let on = |key: &str| value(key).is_none_or(|v| v == "1");
         let feature = |f: Feature| value(f.key()).map_or(f.default_on(), |v| v == "1");
         let settings = Settings {
-            profanity_filter: on("profanity_filter"),
+            profanity_filter: value("profanity_filter").is_some_and(|v| v == "1"),
             profanity_targets: ProfanityTargets::from_fn(|t| on(t.key())),
             asset_previews: on("asset_previews"),
             asset_uploads: on("asset_uploads"),
@@ -2066,6 +2062,15 @@ pub(crate) mod test_util {
         (AppState::new(db, Hub::new(), None, None, instance), path)
     }
 
+    /// Turns the instance profanity filter on, as an operator would.
+    pub(crate) async fn profanity_on(db: &Db) {
+        sqlx::query("UPDATE settings SET value = '1' WHERE key = 'profanity_filter'")
+            .execute(db)
+            .await
+            .expect("filter on");
+        crate::api::Settings::forget(db);
+    }
+
     pub(crate) async fn done(state: AppState, path: PathBuf) {
         crate::db::close(&state.db).await;
         for suffix in ["", "-wal", "-shm"] {
@@ -2224,7 +2229,7 @@ mod tests {
     use std::net::SocketAddr;
 
     use super::*;
-    use crate::api::test_util::{done, temp_state};
+    use crate::api::test_util::{done, profanity_on, temp_state};
     use crate::server::client_ip::ProxyTrust;
 
     #[test]
@@ -2428,15 +2433,19 @@ mod tests {
         };
         let defaults = seed(None, None);
         assert_eq!(defaults.len(), 1 + ProfanitySwitch::ALL.len());
-        assert!(defaults.iter().all(|(_, v)| *v));
-        for off in ["off", "0", "false", " OFF ", "no"] {
+        assert!(
+            defaults
+                .iter()
+                .all(|(k, v)| *v == (*k != "profanity_filter"))
+        );
+        for off in ["off", "0", "false", " OFF ", "no", "", "maybe"] {
             assert_eq!(
                 on(&seed(Some(off), None), "profanity_filter"),
                 Some(false),
                 "{off}"
             );
         }
-        for v in ["on", "1", "true", ""] {
+        for v in ["on", "1", "true", " YES "] {
             assert_eq!(
                 on(&seed(Some(v), None), "profanity_filter"),
                 Some(true),
@@ -2461,14 +2470,16 @@ mod tests {
             ",",
         ] {
             assert!(
-                seed(None, Some(typo)).iter().all(|(_, v)| *v),
+                seed(Some("on"), Some(typo)).iter().all(|(_, v)| *v),
                 "{typo} must fail closed"
             );
         }
-        assert!(seed(None, Some("all")).iter().all(|(_, v)| *v));
-        assert!(seed(None, Some("messages,all")).iter().all(|(_, v)| *v));
-        assert!(seed(None, Some("  ")).iter().all(|(_, v)| *v));
-        let none = seed(None, Some("none"));
+        let targets_all =
+            |pairs: Vec<(&str, bool)>| pairs.iter().all(|(k, v)| *k == "profanity_filter" || *v);
+        assert!(targets_all(seed(None, Some("all"))));
+        assert!(targets_all(seed(None, Some("messages,all"))));
+        assert!(targets_all(seed(None, Some("  "))));
+        let none = seed(Some("on"), Some("none"));
         assert!(none.iter().all(|(k, v)| *v == (*k == "profanity_filter")));
         let bios = seed(None, Some("bios"));
         for switch in ProfanitySwitch::ALL {
@@ -2522,6 +2533,35 @@ mod tests {
                 ..ProfanityTargets::from_fn(|_| false)
             }
         );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_instance_filter_starts_off_and_a_stored_choice_stays() {
+        let (state, path) = temp_state("profanity_fresh").await;
+        let db = state.db.clone();
+        let fresh = Settings::load(&db).await;
+        assert!(!fresh.profanity_filter);
+        assert_eq!(fresh.profanity_targets, ProfanityTargets::ALL);
+        for target in ProfanityTarget::ALL {
+            assert!(!fresh.blocks(target, "fuck"), "{target:?}");
+        }
+        sqlx::query("DELETE FROM settings WHERE key = 'profanity_filter'")
+            .execute(&db)
+            .await
+            .expect("forget");
+        assert!(!Settings::load(&db).await.profanity_filter);
+        sqlx::query("INSERT INTO settings(key, value) VALUES('profanity_filter', '1')")
+            .execute(&db)
+            .await
+            .expect("an existing instance with the filter on");
+        crate::db::close(&db).await;
+        Settings::forget(&db);
+        let reopened = crate::db::open(path.to_str()).await.expect("restart");
+        let kept = Settings::load(&reopened).await;
+        assert!(kept.profanity_filter);
+        assert!(kept.blocks(ProfanityTarget::Messages, "fuck"));
+        crate::db::close(&reopened).await;
         done(state, path).await;
     }
 
@@ -2620,6 +2660,7 @@ mod tests {
             matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m.contains("profanity"))
         }
         let (state, path) = temp_state("profanity_paths").await;
+        profanity_on(&state.db).await;
         let st = || State(state.clone());
         let alice = || Authed(mem_user("alice", false));
         let patch = |body: Value| {

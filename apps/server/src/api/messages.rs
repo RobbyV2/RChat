@@ -7096,6 +7096,7 @@ mod tests {
     async fn edits_are_validated_like_new_messages() {
         let (state, path) = temp_state("edit_validate").await;
         let db = &state.db;
+        crate::api::test_util::profanity_on(db).await;
         let cid = general_id(db).await;
         add_user(db, "alice", "alice").await;
         add_member(db, "rchat", "alice", 0, 0, 1).await;

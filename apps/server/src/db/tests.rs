@@ -3756,6 +3756,7 @@ async fn old_feature_settings(db: &Db) {
         "UPDATE settings SET value = '0' WHERE key = 'guests_enabled'".to_string(),
         "UPDATE settings SET value = '1' WHERE key = 'outgoing_webhooks'".to_string(),
         "UPDATE settings SET value = '0' WHERE key = 'profanity_links'".to_string(),
+        "UPDATE settings SET value = '1' WHERE key = 'profanity_filter'".to_string(),
         format!(
             "INSERT INTO messages(channel_id, author, content, created_at) VALUES({}, 'alice', 'old', 7)",
             general_id(db).await

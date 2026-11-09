@@ -63,6 +63,7 @@ import { notifications } from '../platform'
 import {
   maskOutsideCode,
   maskProfanity,
+  PROFANITY_DEFAULT,
   parseProfanity,
   profanityKey,
   profanityValue,
@@ -235,7 +236,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   }
 
   const readProfanity = (owner: string | null) =>
-    readScoped(profanityKey(owner), parseProfanity, false)
+    readScoped(profanityKey(owner), parseProfanity, PROFANITY_DEFAULT)
 
   const useProfanity = (on: boolean) => {
     const s = get()
