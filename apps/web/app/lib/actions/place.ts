@@ -25,11 +25,11 @@ import {
 import { api, shareOrigin } from '../instances'
 import {
   LEVELS,
-  MUTE_CHOICES,
   muteEnd,
   mutedText,
-  muteUntilFor,
   ownRule,
+  parentScope,
+  untilText,
   type Level,
   type NotifyScope,
 } from '../notify'
@@ -37,11 +37,21 @@ import { openPollFromPalette } from '../palette_store'
 import { sharing } from '../platform'
 import type { PollTarget } from '../polls_store'
 import { dayEndTs } from '../search'
-import { myPerms, scopeMarkTargets, serverAdminPerms, userRefFor, useStore } from '../store'
+import {
+  myPerms,
+  scopeMarkTargets,
+  serverAdminPerms,
+  serverNames,
+  serversMarkTargets,
+  userRefFor,
+  useStore,
+} from '../store'
 import type { RChatState } from '../store_types'
 import { Perm, hasPerm } from '../types'
 import { viewKey, viewPath } from '../view'
 import { signedIn, username, usernameStep } from './global'
+import { muteStep, muteUntil } from './notify'
+import { railServer } from './server'
 import type { Action, ActionCtx, ArgChoice, ArgStep, Scope, Target } from './types'
 
 const get = () => useStore.getState()
@@ -63,25 +73,31 @@ const notifyHere = ({ s }: ActionCtx): NotifyScope | null => {
     : { kind: 'dm', id: v.dmId }
 }
 
-// A sidebar DM's, else the open channel's or DM's.
+// A sidebar DM's or a text channel's, else the open channel's or DM's.
 const notifyTarget = (ctx: ActionCtx): NotifyScope | null => {
   const t = ctx.target
-  if (t.kind !== 'dm') return notifyHere(ctx)
-  return t.where === 'sidebar' ? { kind: 'dm', id: t.dm.id } : null
+  switch (t.kind) {
+    case 'dm':
+      return t.where === 'sidebar' ? { kind: 'dm', id: t.dm.id } : null
+    case 'channel':
+      return t.channel.kind === 'text'
+        ? { kind: 'channel', id: t.channel.id, server: t.server }
+        : null
+    default:
+      return notifyHere(ctx)
+  }
 }
 
-const notifyServer = ({ server }: ActionCtx): NotifyScope | null =>
-  server === null ? null : { kind: 'server', name: server }
+// A rail server icon's, else the open server's.
+const notifyServer = (ctx: ActionCtx): NotifyScope | null => {
+  const server = ctx.target.kind === 'server' ? railServer(ctx) : ctx.server
+  return server === null ? null : { kind: 'server', name: server }
+}
 
 const mutedNow = (s: RChatState, scope: NotifyScope) => {
   const until = ownRule(s.notifyPrefs, scope)?.muteUntil
   return until === 'forever' || (typeof until === 'number' && until > Date.now())
 }
-
-const muteChoices: ArgChoice[] = MUTE_CHOICES.map(c => ({
-  value: c.ms === null ? 'forever' : String(c.ms),
-  label: c.label,
-}))
 
 const levelChoices: ArgChoice[] = [
   ...LEVELS.map(l => ({ value: l.level, label: l.label })),
@@ -122,18 +138,21 @@ const notifyActions = (p: NotifyPlace): Action[] => [
     scope: p.scope,
     icon: BellOff,
     keywords: ['notifications', 'silence'],
-    args: [{ kind: 'choice', name: 'value', prompt: 'For how long', choices: () => muteChoices }],
+    subtitle: ctx => {
+      const scope = p.menu && ctx.via === 'menu' ? p.of(ctx) : null
+      const parent = scope && parentScope(scope)
+      const now = Date.now()
+      const end = parent && muteEnd(ctx.s.notifyPrefs, parent, now)
+      return end ? `Server muted ${untilText(end, now)}` : undefined
+    },
+    args: [muteStep],
     available: ctx => {
       const scope = p.of(ctx)
       return scope !== null && !mutedNow(ctx.s, scope)
     },
     run: (ctx, { value }) => {
       const scope = p.of(ctx)
-      if (scope)
-        get().muteScope(
-          scope,
-          value === 'forever' ? 'forever' : muteUntilFor(Number(value), Date.now())
-        )
+      if (scope) get().muteScope(scope, muteUntil(value))
     },
   },
   {
@@ -230,10 +249,13 @@ export const placeActions: Action[] = [
     icon: Check,
     iconFor: ({ via }) => (via === 'menu' ? CheckCheck : Check),
     keywords: ['read', 'unread'],
-    targets: ['dm'],
+    targets: ['dm', 'channel'],
     order: 110,
     disabled: ({ s, list }) => list === null || !scopeMarkTargets(s, list).length,
-    available: ({ list }) => list !== null,
+    available: ({ s, list, target }) =>
+      target.kind === 'channel'
+        ? target.channel.kind === 'text' && !!s.me?.servers.some(x => x.name === target.server)
+        : list !== null,
     run: ({ list }) => {
       if (list) void get().markScopesRead([list])
     },
@@ -312,19 +334,34 @@ export const placeActions: Action[] = [
     scope: 'channel',
     of: notifyTarget,
     name: what,
-    menu: { targets: ['dm'], noun: () => 'DM' },
+    menu: {
+      targets: ['dm', 'channel'],
+      noun: ({ target }) => (target.kind === 'channel' ? 'Channel' : 'DM'),
+    },
   }),
   {
     id: 'mark_server_read',
     title: 'Mark this server as read',
+    label: ({ via }) => (via === 'menu' ? 'Mark as read' : 'Mark this server as read'),
     scope: 'server',
     icon: Check,
-    available: ({ server }) => server !== null,
+    iconFor: ({ via }) => (via === 'menu' ? CheckCheck : Check),
+    targets: ['server'],
+    order: 110,
+    disabled: ({ s, server }) => server === null || !serversMarkTargets(s, [server]).length,
+    available: ctx =>
+      ctx.target.kind === 'server' ? !!ctx.s.me && railServer(ctx) !== null : ctx.server !== null,
     run: ({ server }) => {
       if (server) void get().markServerRead(server)
     },
   },
-  ...notifyActions({ key: 'server', scope: 'server', of: notifyServer, name: 'this server' }),
+  ...notifyActions({
+    key: 'server',
+    scope: 'server',
+    of: notifyServer,
+    name: 'this server',
+    menu: { targets: ['server'], noun: () => 'Server' },
+  }),
   {
     id: 'server_settings',
     title: 'Server settings',
@@ -394,9 +431,12 @@ export const placeActions: Action[] = [
   {
     id: 'leave_server',
     title: 'Leave this server',
+    label: ({ via }) => (via === 'menu' ? 'Leave Server' : 'Leave this server'),
     scope: 'server',
     icon: LogOut,
     danger: true,
+    targets: ['server'],
+    order: 950,
     args: [
       {
         kind: 'confirm',
@@ -405,11 +445,12 @@ export const placeActions: Action[] = [
         confirm: 'Leave',
       },
     ],
-    available: ({ s, server }) =>
-      signedIn(s) &&
+    available: ({ s, server, target }) =>
       server !== null &&
       server !== 'rchat' &&
-      !!s.me?.servers.some(x => x.name === server),
+      (target.kind === 'server'
+        ? serverNames(s).includes(server)
+        : signedIn(s) && !!s.me?.servers.some(x => x.name === server)),
     run: ({ server }) => {
       if (server) void get().leaveServer(server)
     },

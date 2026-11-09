@@ -2,11 +2,12 @@
 // open place's commands (place.ts), and adding or blocking the other person are member actions.
 
 import { AtSign, ExternalLink, PinOff } from 'lucide-react'
-import { LEVELS, levelLabel, levelOf, type NotifyScope } from '../notify'
+import type { NotifyScope } from '../notify'
 import { sharing } from '../platform'
 import { useStore } from '../store'
 import type { DmSummary } from '../types'
 import { signedIn } from './global'
+import { notifySettings } from './notify'
 import type { Action, ActionCtx } from './types'
 
 const get = () => useStore.getState()
@@ -38,39 +39,7 @@ export const dmActions: Action[] = [
       if (dm) void get().openDm(dm.id)
     },
   },
-  {
-    id: 'dm_notify',
-    title: 'Notification settings',
-    ...onDm,
-    order: 130,
-    subtitle: ctx => {
-      const scope = notifyScope(ctx)
-      return scope ? levelLabel(levelOf(ctx.s.notifyPrefs, scope)) : undefined
-    },
-    args: [
-      {
-        kind: 'choice',
-        name: 'level',
-        prompt: 'Notify me about',
-        choices: ctx => {
-          const scope = notifyScope(ctx)
-          const level = scope && levelOf(ctx.s.notifyPrefs, scope)
-          return LEVELS.map(l => ({
-            value: l.level,
-            label: l.label,
-            radio: true,
-            checked: level === l.level,
-          }))
-        },
-      },
-    ],
-    available: ctx => notifyScope(ctx) !== null,
-    run: (ctx, { level }) => {
-      const scope = notifyScope(ctx)
-      const pick = LEVELS.find(l => l.level === level)?.level
-      if (scope && pick) get().setNotifyLevel(scope, pick)
-    },
-  },
+  notifySettings('dm_notify', 'dm', ['dm'], notifyScope),
   {
     id: 'dm_pin',
     title: 'Pin DM',

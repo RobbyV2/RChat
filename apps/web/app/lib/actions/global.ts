@@ -11,7 +11,7 @@ import {
 } from 'lucide-react'
 import { p2pMarkAll } from '../p2p/app'
 import { openPalette } from '../palette_store'
-import { useStore } from '../store'
+import { allMarkTargets, useStore } from '../store'
 import type { RChatState } from '../store_types'
 import type { Action, ArgStep } from './types'
 
@@ -90,9 +90,12 @@ export const globalActions: Action[] = [
   {
     id: 'mark_all_read',
     title: 'Mark everything as read',
+    label: ({ via }) => (via === 'menu' ? 'Mark all as read' : 'Mark everything as read'),
     scope: 'global',
     icon: CheckCheck,
     hint: 'Shift+Escape',
+    targets: ['home'],
+    disabled: ({ s }) => !allMarkTargets(s).length && !p2pMarkAll().pending,
     available: ({ s }) => signedIn(s),
     run: () => get().askMarkAllRead(p2pMarkAll()),
   },

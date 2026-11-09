@@ -2,30 +2,12 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { ChevronDown, Phone, Video } from 'lucide-react'
-import { relayOnly } from '../lib/ice'
-import { displayHost, hostOf, manualRelays, ownTurn, type RelayChoice } from '../lib/relays'
-import {
-  P2P_IP_HINT,
-  ROUTE_LABEL,
-  p2pCallable,
-  recentlyFailed,
-  routeFor,
-  type CallRoute,
-} from '../lib/call_choice'
+import { openActionMenu } from '../lib/actions/menu'
+import { p2pCallOk } from '../lib/actions/voice'
+import { ROUTE_LABEL, routeFor, type CallRoute } from '../lib/call_choice'
 import { fmtDuration } from '../lib/voice_layout'
-import { useStore, type ContextMenuItem } from '../lib/store'
+import { useStore } from '../lib/store'
 import type { DmSummary } from '../lib/types'
-
-const useP2pCallable = (dm: DmSummary) =>
-  useStore(s =>
-    p2pCallable({
-      guest: s.guest,
-      signedIn: s.me !== null,
-      p2pOn: s.settings.p2p_attachments,
-      selfDm: dm.is_self,
-      failed: recentlyFailed(s.p2pCallFailed[dm.id]),
-    })
-  )
 
 export function DirectBadge({ label = 'Direct' }: { label?: string }) {
   return (
@@ -83,15 +65,9 @@ export function CallType({
 function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
   const chosen = useStore(s => s.callRoute)
   const busy = useStore(s => s.call !== null)
-  const hidesIp = useStore(s =>
-    relayOnly(s.instance?.ice, s.iceHelpers, s.iceRelay, ownTurn(s.relayPrefs))
-  )
   const startCall = useStore(s => s.startCall)
   const startP2pCall = useStore(s => s.startP2pCall)
-  const setCallRoute = useStore(s => s.setCallRoute)
-  const openContextMenu = useStore(s => s.openContextMenu)
-  const relays = useStore(s => s.relayPrefs)
-  const p2pOk = useP2pCallable(dm)
+  const p2pOk = useStore(s => p2pCallOk(s, dm))
   const [shown, setShown] = useState<object | null>(null)
   const open = useStore(s => shown !== null && s.contextMenu === shown)
   const route = routeFor(chosen, p2pOk)
@@ -101,51 +77,20 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
     if (r === 'p2p') void startP2pCall(dm.id, video)
     else void startCall(dm.id, video)
   }
-  const pick = (r: CallRoute) => {
-    setCallRoute(r)
-    start(r)
-  }
-  // A P2P call through a chosen relay, for this call only: the default for files and calls stays
-  // the one in Settings.
-  const pickRelay = (choice: RelayChoice) => {
-    setCallRoute('p2p')
-    void startP2pCall(dm.id, video, choice)
-  }
-  const manual = manualRelays(relays)
   const title = route === 'p2p' ? `${kind}, direct (P2P)` : kind
   const menu = (x: number, y: number) => {
-    const items: ContextMenuItem[] = [
+    openActionMenu(
+      x,
+      y,
+      { kind: 'call', dm, video },
       {
-        label: ROUTE_LABEL.server,
-        radio: true,
-        checked: route === 'server',
-        action: () => pick('server'),
-      },
-      ...(p2pOk
-        ? [
-            {
-              label: ROUTE_LABEL.p2p,
-              subtitle: hidesIp ? undefined : P2P_IP_HINT,
-              wrap: true,
-              radio: true,
-              checked: route === 'p2p',
-              action: () => pick('p2p'),
-            },
-            ...manual.map(r => ({
-              label: `Direct through ${displayHost(hostOf(r.url) ?? r.url)}`,
-              wrap: true,
-              action: () => pickRelay(r.url),
-            })),
-          ]
-        : []),
-    ]
-    openContextMenu(x, y, items, {
-      header: (
-        <span className="px-2 text-xs font-medium text-on-surface-variant">
-          {video ? 'Start a video call' : 'Start a call'}
-        </span>
-      ),
-    })
+        header: (
+          <span className="px-2 text-xs font-medium text-on-surface-variant">
+            {video ? 'Start a video call' : 'Start a call'}
+          </span>
+        ),
+      }
+    )
     setShown(useStore.getState().contextMenu)
   }
   return (

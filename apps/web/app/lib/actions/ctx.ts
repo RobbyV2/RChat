@@ -57,6 +57,7 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'channel':
       return { server: t.server, channel: t.channel, dm: null }
     case 'dm':
+    case 'call':
       return { server: null, channel: null, dm: t.dm }
     case 'member':
     case 'server':
@@ -71,6 +72,7 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'home':
     case 'timestamp':
     case 'inbox':
+    case 'card':
       return openPlace(s)
   }
 }
@@ -82,6 +84,7 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'message':
       return isWebhookMessage(t.message) ? null : t.message.author
     case 'dm':
+    case 'call':
       return t.dm.other
     case 'none':
     case 'selection':
@@ -93,6 +96,7 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'embed':
     case 'timestamp':
     case 'inbox':
+    case 'card':
       return s.profile?.user ?? null
   }
 }
@@ -103,18 +107,21 @@ const listOf = (s: RChatState, t: Target) => {
     case 'selection':
       return t.list
     case 'dm':
+    case 'call':
       return viewKey({ kind: 'dm', dmId: t.dm.id })
+    case 'channel':
+      return viewKey({ kind: 'channel', server: t.server, channelId: t.channel.id })
     case 'embed':
       return messageList(t.message) ?? currentList(s)
     case 'none':
     case 'member':
     case 'server':
     case 'folder':
-    case 'channel':
     case 'category':
     case 'home':
     case 'timestamp':
     case 'inbox':
+    case 'card':
       return currentList(s)
   }
 }
@@ -167,7 +174,8 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
       const category = all?.find(c => c.id === t.category.id)
       return !all ? t : category ? { ...t, category } : null
     }
-    case 'dm': {
+    case 'dm':
+    case 'call': {
       const dm = dmById(s, t.dm.id)
       return dm && { ...t, dm }
     }
@@ -186,6 +194,7 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
     case 'home':
     case 'timestamp':
     case 'inbox':
+    case 'card':
       return t
   }
 }

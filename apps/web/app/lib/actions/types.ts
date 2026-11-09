@@ -44,6 +44,17 @@ export type Target =
   | { kind: 'timestamp'; ts: number; token: string }
   // An inbox row, with its panel's open and mark-read.
   | { kind: 'inbox'; entry: InboxEntry; open(): void; read(): void }
+  // A Home card: `read`, what marking it read would mark now.
+  | {
+      kind: 'card'
+      key: string
+      open(): void
+      read: string[]
+      markRead(): void
+      forget?(): void
+    }
+  // The call buttons' chevron: how a call or video call with the DM's other person connects.
+  | { kind: 'call'; dm: DmSummary; video: boolean }
 
 export interface ActionCtx {
   s: RChatState
@@ -53,7 +64,8 @@ export interface ActionCtx {
   server: string | null
   channel: Channel | null
   dm: DmSummary | null
-  // The message list: the target message's or DM's, else the open thread, channel or DM.
+  // The message list: the target message's, channel's or DM's, else the open thread, channel or
+  // DM.
   list: string | null
   message: Message | null
   // The target member, a message target's author unless a webhook, a DM target's other person,

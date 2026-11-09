@@ -16,7 +16,6 @@ import {
 import {
   badgePings,
   myPerms,
-  scopeMarkTargets,
   scopeMuted,
   scopeUnread,
   serverAdminPerms,
@@ -24,18 +23,11 @@ import {
   useStore,
 } from '../lib/store'
 import { openActionMenu } from '../lib/actions/menu'
+import { useChannelEdit, type Editing } from '../lib/channel_edit'
 import { dmSections } from '../lib/nav_layout'
-import { canDeleteChannel } from '../lib/rules'
 import { enterKey } from '../lib/keys'
 import { rtc } from '../lib/rtc'
-import {
-  Perm,
-  hasPerm,
-  type Category,
-  type Channel,
-  type ChannelKind,
-  type DmSummary,
-} from '../lib/types'
+import { Perm, hasPerm, type Category, type Channel, type DmSummary } from '../lib/types'
 import {
   CATEGORIES_ZONE,
   NO_CATEGORY,
@@ -57,16 +49,10 @@ import { Masked, Sentinel } from './ui'
 import { useAuthorMembers } from './message_pane'
 import { PingBadge } from './ping_badge'
 import { scopePings } from '../lib/pings'
-import { MutedIcon, notifyMenuItems } from './notify_menu'
-import { markReadItem } from './mark_read'
+import { MutedIcon } from './notify_menu'
 import { shownMedia } from '../lib/timeouts'
 
-type Editing =
-  { mode: 'create'; kind: ChannelKind; category: number | null } | { mode: 'rename'; id: number }
-
 const base = 'flex h-full w-60 shrink-0 flex-col bg-surface-container-low'
-
-const joined = (server: string) => !!useStore.getState().me?.servers.some(x => x.name === server)
 
 function DmRow({
   dm,
@@ -252,16 +238,11 @@ export function ChannelSidebar() {
   const { pinned, recent } = useMemo(() => dmSections(dms, layout), [dms, layout])
   const openChannel = useStore(s => s.openChannel)
   const openDialog = useStore(s => s.openDialog)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const createChannel = useStore(s => s.createChannel)
-  const deleteCategory = useStore(s => s.deleteCategory)
   const moveChannel = useStore(s => s.moveChannel)
   const moveCategory = useStore(s => s.moveCategory)
   const setCategoriesCollapsed = useStore(s => s.setCategoriesCollapsed)
   const renameChannel = useStore(s => s.renameChannel)
-  const deleteChannel = useStore(s => s.deleteChannel)
-  const askConfirm = useStore(s => s.askConfirm)
-  const markScopesRead = useStore(s => s.markScopesRead)
   const joinVoice = useStore(s => s.joinVoice)
   const voiceUsers = useStore(s => s.voiceUsers)
   const voice = useStore(s => s.voice)
@@ -274,8 +255,8 @@ export function ChannelSidebar() {
   useStore(s => s.members)
   useStore(s => s.memberInfo)
   useStore(s => s.me)
-  const [editing, setEditing] = useState<Editing | null>(null)
-  const [name, setName] = useState('')
+  const editing = useChannelEdit(e => e.editing)
+  const name = useChannelEdit(e => e.name)
   const [dmInput, setDmInput] = useState<string | null>(null)
   const settled = useRef(false)
   const voiceServer = view?.kind === 'channel' ? view.server : null
@@ -396,23 +377,18 @@ export function ChannelSidebar() {
   const activeId = view?.kind === 'channel' ? view.channelId : null
   const channelDrag = dragGroup === 'channel'
 
-  const startEdit = (next: Editing, initial: string) => {
-    settled.current = false
-    setEditing(next)
-    setName(initial)
-  }
+  // Here only: a field started for another server waits for it.
+  const editingHere: Editing | null = editing?.server === server ? editing : null
 
   const submit = () => {
-    const trimmed = name.trim()
-    const current = editing
-    setEditing(null)
-    setName('')
-    if (settled.current) return
-    settled.current = true
-    if (!trimmed || !current) return
+    const edit = useChannelEdit.getState()
+    const current = edit.editing
+    const trimmed = edit.name.trim()
+    edit.stop()
+    if (!current || !trimmed) return
     switch (current.mode) {
       case 'create':
-        void createChannel(server, trimmed, current.kind, current.category)
+        void createChannel(current.server, trimmed, current.kind, current.category)
         return
       case 'rename':
         void renameChannel(current.id, trimmed)
@@ -422,93 +398,16 @@ export function ChannelSidebar() {
 
   const createIn = (category: number | null) => {
     if (category !== null) setCategoriesCollapsed(server, [category], false)
-    startEdit({ mode: 'create', kind: 'text', category }, '')
+    useChannelEdit.getState().start({ mode: 'create', server, kind: 'text', category }, '')
   }
 
   const allCategories = groups.categories.map(g => g.category.id)
 
-  const channelMenu = (c: Channel) => (x: number, y: number) => {
-    openContextMenu(x, y, [
-      ...(c.kind === 'text' && joined(server)
-        ? [
-            markReadItem(
-              scopeMarkTargets(useStore.getState(), `c${c.id}`),
-              () => void markScopesRead([`c${c.id}`])
-            ),
-          ]
-        : []),
-      ...(c.kind === 'text'
-        ? notifyMenuItems({ kind: 'channel', id: c.id, server }, 'Channel')
-        : []),
-      {
-        label: 'Copy Channel ID',
-        action: () => void navigator.clipboard.writeText(String(c.id)),
-      },
-      ...(canManage
-        ? [
-            {
-              label: 'Rename Channel',
-              action: () => startEdit({ mode: 'rename', id: c.id }, c.name),
-            },
-            ...(canDeleteChannel(detail.channels, c)
-              ? [
-                  {
-                    label: 'Delete Channel',
-                    danger: true,
-                    action: () =>
-                      askConfirm({
-                        title: 'Delete Channel',
-                        body:
-                          c.kind === 'text'
-                            ? `Delete #${c.name}? Its messages are deleted for everyone.`
-                            : `Delete the voice channel ${c.name}?`,
-                        confirm: 'Delete',
-                        action: () => void deleteChannel(c.id),
-                      }),
-                  },
-                ]
-              : []),
-          ]
-        : []),
-    ])
-  }
+  const channelMenu = (channel: Channel) => (x: number, y: number) =>
+    openActionMenu(x, y, { kind: 'channel', server, channel })
 
-  const categoryMenu = (category: Category) => (x: number, y: number) => {
-    openContextMenu(x, y, [
-      ...(canManage
-        ? [
-            { label: 'Create channel here', action: () => createIn(category.id) },
-            {
-              label: 'Rename category',
-              action: () => openDialog({ kind: 'category', server, id: category.id }),
-            },
-            {
-              label: 'Delete category',
-              danger: true,
-              action: () =>
-                askConfirm({
-                  title: 'Delete category',
-                  body: `Delete the category ${category.name}? Its channels are kept and move out of it.`,
-                  confirm: 'Delete',
-                  action: () => void deleteCategory(category.id),
-                }),
-            },
-          ]
-        : []),
-      {
-        label: 'Collapse all',
-        action: () => setCategoriesCollapsed(server, allCategories, true),
-      },
-      {
-        label: 'Expand all',
-        action: () => setCategoriesCollapsed(server, allCategories, false),
-      },
-      {
-        label: 'Copy Category ID',
-        action: () => void navigator.clipboard.writeText(String(category.id)),
-      },
-    ])
-  }
+  const categoryMenu = (category: Category) => (x: number, y: number) =>
+    openActionMenu(x, y, { kind: 'category', server, category })
 
   const keepShown = (c: Channel) => c.id === activeId || voice?.channelId === c.id
 
@@ -557,13 +456,10 @@ export function ChannelSidebar() {
     <input
       autoFocus
       value={name}
-      onChange={e => setName(e.target.value)}
+      onChange={e => useChannelEdit.getState().setName(e.target.value)}
       onKeyDown={e => {
         if (enterKey(e)) submit()
-        if (e.key === 'Escape') {
-          settled.current = true
-          setEditing(null)
-        }
+        if (e.key === 'Escape') useChannelEdit.getState().stop()
       }}
       onBlur={submit}
       placeholder="channel name"
@@ -572,16 +468,16 @@ export function ChannelSidebar() {
   )
 
   const createRow = (category: number | null) =>
-    editing?.mode === 'create' && editing.category === category ? (
+    editingHere?.mode === 'create' && editingHere.category === category ? (
       <span className="flex items-center">
         <span className="flex shrink-0 gap-0.5 pl-2">
           <button
             title="Text channel"
             aria-label="Text channel"
             onMouseDown={e => e.preventDefault()}
-            onClick={() => setEditing({ ...editing, kind: 'text' })}
+            onClick={() => useChannelEdit.getState().setKind('text')}
             className={`rounded-lg p-1.5 ${
-              editing.kind === 'text'
+              editingHere.kind === 'text'
                 ? 'bg-secondary-container text-on-secondary-container'
                 : 'text-on-surface-variant hover:bg-surface-container'
             }`}
@@ -592,9 +488,9 @@ export function ChannelSidebar() {
             title="Voice channel"
             aria-label="Voice channel"
             onMouseDown={e => e.preventDefault()}
-            onClick={() => setEditing({ ...editing, kind: 'voice' })}
+            onClick={() => useChannelEdit.getState().setKind('voice')}
             className={`rounded-lg p-1.5 ${
-              editing.kind === 'voice'
+              editingHere.kind === 'voice'
                 ? 'bg-secondary-container text-on-secondary-container'
                 : 'text-on-surface-variant hover:bg-surface-container'
             }`}
@@ -659,7 +555,7 @@ export function ChannelSidebar() {
   )
 
   const row = (c: Channel) =>
-    editing?.mode === 'rename' && editing.id === c.id ? (
+    editingHere?.mode === 'rename' && editingHere.id === c.id ? (
       <span key={c.id} className="flex">
         {editInput}
       </span>

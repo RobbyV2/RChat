@@ -16,22 +16,20 @@ import {
   dmPingCount,
   dmsUnread,
   folderLabel,
-  myPerms,
   previewServer,
   type RailServer,
   railServers,
   scopeMuted,
   serverPingCount,
-  serversMarkTargets,
   serverUnread,
   useMask,
   useStore,
 } from '../lib/store'
+import { openActionMenu } from '../lib/actions/menu'
 import { folderKey, railItems, serverKey, type Folder } from '../lib/nav_layout'
 import type { DropTarget } from '../lib/drag'
-import { Perm, hasPerm, type ServerDetail } from '../lib/types'
+import type { ServerDetail } from '../lib/types'
 import { serverInitial } from '../lib/rules'
-import { inviteUrl } from '../lib/invite'
 import { longPress } from './context_menu'
 import { dragScope } from './drag'
 import { InstallButton } from './pwa_register'
@@ -40,8 +38,7 @@ import { ThemeToggle } from './status_clock'
 import { PaletteButton } from './palette'
 import { Sentinel, iconBtn } from './ui'
 import { RailPingBadge, pingLabel } from './ping_badge'
-import { MutedIcon, folderNotifyItems, notifyMenuItems } from './notify_menu'
-import { markAllReadItem, markReadItem } from './mark_read'
+import { MutedIcon } from './notify_menu'
 import { P2pRailTile } from './p2p/p2p_home'
 import { P2pServerRail } from './p2p/p2p_server_view'
 import { p2p as p2pView, useP2p } from '../lib/p2p/app'
@@ -107,12 +104,6 @@ function ServerTile({
   const unread = useStore(s => serverUnread(s, name))
   const pings = useStore(s => serverPingCount(s, name))
   const openServer = useStore(s => s.openServer)
-  const openContextMenu = useStore(s => s.openContextMenu)
-  const leaveServer = useStore(s => s.leaveServer)
-  const askConfirm = useStore(s => s.askConfirm)
-  const moveServer = useStore(s => s.moveServer)
-  const markServerRead = useStore(s => s.markServerRead)
-  const openDialog = useStore(s => s.openDialog)
   const muted = useStore(s => scopeMuted(s, { kind: 'server', name }))
   const mine = me !== null && creator === me.username
   const mask = useMask()
@@ -123,62 +114,14 @@ function ServerTile({
     <button
       title={`${mine ? `${shown} (Creator)` : shown}${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}`}
       onClick={() => void openServer(name)}
-      {...longPress(
-        (x, y) =>
-          openContextMenu(x, y, [
-            ...(me
-              ? [
-                  markReadItem(
-                    serversMarkTargets(useStore.getState(), [name]),
-                    () => void markServerRead(name)
-                  ),
-                ]
-              : []),
-            ...notifyMenuItems({ kind: 'server', name }, 'Server'),
-            ...(me && hasPerm(myPerms(useStore.getState(), name), Perm.ManageChannels)
-              ? [
-                  {
-                    label: 'Create category',
-                    action: () => openDialog({ kind: 'category', server: name }),
-                  },
-                ]
-              : []),
-            {
-              label: 'Copy invite link',
-              action: () => void navigator.clipboard.writeText(inviteUrl(name)),
-            },
-            {
-              label: 'Copy Server ID',
-              action: () => void navigator.clipboard.writeText(name),
-            },
-            ...(folder === null
-              ? []
-              : [{ label: 'Remove from folder', action: () => moveServer(name, at + 1) }]),
-            ...(name === 'rchat'
-              ? []
-              : [
-                  {
-                    label: 'Leave Server',
-                    danger: true,
-                    action: () =>
-                      askConfirm({
-                        title: 'Leave Server',
-                        body: 'Leave this server? You can join it again later.',
-                        confirm: 'Leave',
-                        action: () => void leaveServer(name),
-                      }),
-                  },
-                ]),
-          ]),
-        {
-          group: 'rail',
-          key: serverKey(name),
-          // P2P servers have zones of their own.
-          zones: zone => zone !== 'p2p' && !zone.startsWith('p2p:'),
-          onto: key => key !== parent,
-          onDrop: target => dropServer(name, target),
-        }
-      )}
+      {...longPress((x, y) => openActionMenu(x, y, { kind: 'server', server: name, folder, at }), {
+        group: 'rail',
+        key: serverKey(name),
+        // P2P servers have zones of their own.
+        zones: zone => zone !== 'p2p' && !zone.startsWith('p2p:'),
+        onto: key => key !== parent,
+        onDrop: target => dropServer(name, target),
+      })}
       data-drop-onto={folder === null ? 'Create folder' : undefined}
       className={`${tile} relative text-lg font-semibold ${active ? 'bg-primary text-on-primary' : idle}`}
     >
@@ -211,8 +154,6 @@ function PreviewTile() {
   const name = useStore(previewServer)
   const display = useStore(s => (name ? (s.servers[name]?.display_name ?? name) : ''))
   const openServer = useStore(s => s.openServer)
-  const joinPreview = useStore(s => s.joinPreview)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const mask = useMask()
   const streamer = useStore(s => s.streamer)
   if (!name) return null
@@ -225,16 +166,7 @@ function PreviewTile() {
       aria-current="page"
       onClick={() => void openServer(name)}
       {...longPress((x, y) =>
-        openContextMenu(x, y, [
-          {
-            label: 'Join Server',
-            action: () => void joinPreview(name),
-          },
-          {
-            label: 'Copy Server ID',
-            action: () => void navigator.clipboard.writeText(name),
-          },
-        ])
+        openActionMenu(x, y, { kind: 'server', server: name, folder: null, at: -1 })
       )}
       className={`${tile} relative border-2 border-dashed border-primary bg-surface-container-high text-lg font-semibold text-on-surface`}
     >
@@ -281,10 +213,6 @@ function FolderEntry({
 }) {
   const toggleFolder = useStore(s => s.toggleFolder)
   const moveFolder = useStore(s => s.moveFolder)
-  const ungroupFolder = useStore(s => s.ungroupFolder)
-  const openDialog = useStore(s => s.openDialog)
-  const openContextMenu = useStore(s => s.openContextMenu)
-  const markServersRead = useStore(s => s.markServersRead)
   const unread = useStore(s => !folder.open && servers.some(x => serverUnread(s, x.name)))
   const pings = useStore(s =>
     folder.open ? 0 : servers.reduce((n, x) => n + serverPingCount(s, x.name), 0)
@@ -298,25 +226,10 @@ function FolderEntry({
     onClick: () => toggleFolder(folder.id),
     ...longPress(
       (x, y) =>
-        openContextMenu(x, y, [
-          ...(useStore.getState().me
-            ? [
-                markReadItem(
-                  serversMarkTargets(
-                    useStore.getState(),
-                    servers.map(x => x.name)
-                  ),
-                  () => void markServersRead(servers.map(x => x.name))
-                ),
-              ]
-            : []),
-          ...folderNotifyItems(servers.map(x => x.name)),
-          {
-            label: 'Rename folder',
-            action: () => openDialog({ kind: 'rename_folder', id: folder.id }),
-          },
-          { label: 'Ungroup', action: () => ungroupFolder(folder.id) },
-        ]),
+        openActionMenu(x, y, {
+          kind: 'folder',
+          folder: { ...folder, servers: servers.map(x => x.name) },
+        }),
       {
         group: 'rail',
         key,
@@ -378,7 +291,6 @@ export function ServerRail() {
   const dmPings = useStore(dmPingCount)
   const openLastDm = useStore(s => s.openLastDm)
   const goHome = useStore(s => s.goHome)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const serversMore = useStore(s => s.serversMore)
   const loadMoreServers = useStore(s => s.loadMoreServers)
   const openDialog = useStore(s => s.openDialog)
@@ -425,7 +337,7 @@ export function ServerRail() {
             title={dmPings ? `Direct messages, ${pingLabel(dmPings)}` : 'Direct messages'}
             aria-label="Direct messages"
             onClick={openLastDm}
-            {...longPress((x, y) => openContextMenu(x, y, [markAllReadItem()]))}
+            {...longPress((x, y) => openActionMenu(x, y, { kind: 'home' }))}
             className={`${tile} relative ${view?.kind === 'dm' && !p2pHome ? 'bg-primary text-on-primary' : idle}`}
           >
             <MessageCircle size={22} />

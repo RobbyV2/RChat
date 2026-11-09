@@ -1,4 +1,6 @@
 import { adminActions } from './admin'
+import { cardActions } from './cards'
+import { channelActions } from './channel'
 import { dmActions } from './dm'
 import { friendActions } from './friends'
 import { globalActions, goActions } from './global'
@@ -7,7 +9,9 @@ import { embedActions, messageActions } from './message'
 import { placeActions } from './place'
 import { defineAction } from './registry'
 import { selectionActions } from './selection'
+import { serverActions } from './server'
 import { settingsActions } from './settings'
+import { voiceActions } from './voice'
 
 let registered = false
 
@@ -27,6 +31,10 @@ export const registerAppActions = () => {
     dmActions,
     messageActions,
     embedActions,
+    serverActions,
+    channelActions,
+    cardActions,
+    voiceActions,
   ])
     for (const a of list) defineAction(a)
 }

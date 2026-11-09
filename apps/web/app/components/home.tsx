@@ -7,7 +7,6 @@ import {
   CheckCheck,
   Command,
   Compass,
-  ExternalLink,
   Hash,
   House,
   Lightbulb,
@@ -16,7 +15,6 @@ import {
   MessageCircle,
   Pin,
   Plus,
-  Trash2,
   Users,
   Volume2,
   X,
@@ -30,7 +28,6 @@ import {
   serversMarkTargets,
   useMask,
   useStore,
-  type ContextMenuItem,
 } from '../lib/store'
 import {
   INBOX_SHOWN,
@@ -46,6 +43,7 @@ import {
 import { forgetRecent, hideTip, parseSummary, unreadSummaryKey, useHome } from '../lib/home_store'
 import { isMac, paletteShortcut, usePalette } from '../lib/palette'
 import { openActionMenu } from '../lib/actions/menu'
+import type { Target } from '../lib/actions/types'
 import { dmSections } from '../lib/nav_layout'
 import { passwordSignup } from '../lib/features'
 import { enterKey } from '../lib/keys'
@@ -60,7 +58,6 @@ import { ServerGlyph } from './server_rail'
 import StatusClock from './status_clock'
 import { UserAvatar } from './user_avatar'
 import { Masked, SkeletonRows, fieldCls, filledBtn, textBtn } from './ui'
-import { markReadItem } from './mark_read'
 import { p2p, p2pDm, p2pMarkAll, p2pServer, useP2p, type P2pState } from '../lib/p2p/app'
 import { p2pUnread, type P2pUnreadRow } from '../lib/p2p/alerts'
 import { displayName } from '../lib/p2p/contacts'
@@ -271,6 +268,9 @@ function PlaceGlyph({ p2p = false, children }: { p2p?: boolean; children: ReactN
   )
 }
 
+// What a card's menu marks read and forgets.
+type CardMenu = Pick<Extract<Target, { kind: 'card' }>, 'read' | 'markRead' | 'forget'>
+
 // One Jump back in row, instance or P2P.
 function RecentItem({
   id,
@@ -282,7 +282,7 @@ function RecentItem({
   unread,
   pings,
   open,
-  menu,
+  card,
 }: {
   id: string
   title: string
@@ -293,16 +293,15 @@ function RecentItem({
   unread: boolean
   pings: number
   open: () => void
-  menu: () => ContextMenuItem[]
+  card: () => CardMenu
 }) {
-  const openContextMenu = useStore(s => s.openContextMenu)
   return (
     <button
       type="button"
       data-recent={id}
       onClick={open}
       title={title}
-      {...longPress((x, y) => openContextMenu(x, y, menu()))}
+      {...longPress((x, y) => openActionMenu(x, y, { kind: 'card', key: id, open, ...card() }))}
       className={rowCls}
     >
       {glyph}
@@ -393,11 +392,11 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
       unread={unread}
       pings={pings}
       open={open}
-      menu={() => [
-        { label: 'Open', icon: ExternalLink, action: open },
-        markReadItem(scopeMarkTargets(useStore.getState(), key), () => void markScopesRead([key])),
-        { label: 'Remove from Jump back in', icon: Trash2, action: () => forgetRecent(key) },
-      ]}
+      card={() => ({
+        read: scopeMarkTargets(useStore.getState(), key),
+        markRead: () => void markScopesRead([key]),
+        forget: () => forgetRecent(key),
+      })}
     />
   )
 }
@@ -457,13 +456,11 @@ function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) 
       unread={unread}
       pings={pings}
       open={open}
-      menu={() => [
-        { label: 'Open', icon: ExternalLink, action: open },
-        markReadItem(unread || pings ? [key] : [], () =>
-          p2pDm.markRead(ch === null ? room : `${room}/${ch}`)
-        ),
-        { label: 'Remove from Jump back in', icon: Trash2, action: () => forgetRecent(key) },
-      ]}
+      card={() => ({
+        read: unread || pings ? [key] : [],
+        markRead: () => p2pDm.markRead(ch === null ? room : `${room}/${ch}`),
+        forget: () => forgetRecent(key),
+      })}
     />
   )
 }
@@ -522,7 +519,7 @@ function UnreadRow({
   open,
   mark,
   markLabel,
-  menu,
+  card,
 }: {
   id: string
   glyph: ReactNode
@@ -534,13 +531,12 @@ function UnreadRow({
   open: () => void
   mark: () => void
   markLabel: string
-  menu: () => ContextMenuItem[]
+  card: () => CardMenu
 }) {
-  const openContextMenu = useStore(s => s.openContextMenu)
   return (
     <div
       data-unread-server={id}
-      {...longPress((x, y) => openContextMenu(x, y, menu()))}
+      {...longPress((x, y) => openActionMenu(x, y, { kind: 'card', key: id, open, ...card() }))}
       className="flex min-w-0 items-center gap-1 rounded-xl hover:bg-surface-container-high"
     >
       <button
@@ -614,13 +610,10 @@ function ServerUnreadRow({
       open={() => void openServer(name)}
       mark={() => void markServerRead(name)}
       markLabel={`Mark ${shown} as read`}
-      menu={() => [
-        { label: 'Open', icon: ExternalLink, action: () => void openServer(name) },
-        markReadItem(
-          serversMarkTargets(useStore.getState(), [name]),
-          () => void markServerRead(name)
-        ),
-      ]}
+      card={() => ({
+        read: serversMarkTargets(useStore.getState(), [name]),
+        markRead: () => void markServerRead(name),
+      })}
     />
   )
 }
@@ -642,10 +635,10 @@ function DmUnreadRow({ pings }: { pings: number }) {
       open={openLastDm}
       mark={() => void markDmsRead()}
       markLabel="Mark direct messages as read"
-      menu={() => [
-        { label: 'Open', icon: ExternalLink, action: openLastDm },
-        markReadItem(dmsMarkTargets(useStore.getState()), () => void markDmsRead()),
-      ]}
+      card={() => ({
+        read: dmsMarkTargets(useStore.getState()),
+        markRead: () => void markDmsRead(),
+      })}
     />
   )
 }
@@ -680,10 +673,7 @@ function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {
       open={() => p2pServer.open(v.id)}
       mark={() => p2pServer.markAllRead(v.id)}
       markLabel={`Mark ${shown} as read`}
-      menu={() => [
-        { label: 'Open', icon: ExternalLink, action: () => p2pServer.open(v.id) },
-        markReadItem([v.id], () => p2pServer.markAllRead(v.id)),
-      ]}
+      card={() => ({ read: [v.id], markRead: () => p2pServer.markAllRead(v.id) })}
     />
   )
 }
@@ -704,10 +694,7 @@ function P2pDmUnreadRow({ pings }: { pings: number }) {
       open={p2p.openHome}
       mark={p2pDm.markAllRead}
       markLabel="Mark P2P direct messages as read"
-      menu={() => [
-        { label: 'Open', icon: ExternalLink, action: p2p.openHome },
-        markReadItem(['p2p_dms'], p2pDm.markAllRead),
-      ]}
+      card={() => ({ read: ['p2p_dms'], markRead: p2pDm.markAllRead })}
     />
   )
 }

@@ -3,8 +3,8 @@
 import { Globe } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { DEFAULT_INSTANCE_NAME, home } from '../lib/instances'
+import { openActionMenu } from '../lib/actions/menu'
 import { longPress } from './context_menu'
-import { markAllReadItem } from './mark_read'
 
 function useInstance() {
   const info = useStore(s => s.instance)
@@ -32,13 +32,12 @@ export function RailInstance() {
   const openDialog = useStore(s => s.openDialog)
   const streamer = useStore(s => s.streamer)
   const signedIn = useStore(s => s.me !== null)
-  const openContextMenu = useStore(s => s.openContextMenu)
   return (
     <button
       title={streamer ? 'Instance' : host ? `${name} (${host})` : name}
       aria-label={`Instance ${name}${host ? ` on ${host}` : ''}`}
       onClick={() => openDialog({ kind: 'settings' })}
-      {...(signedIn ? longPress((x, y) => openContextMenu(x, y, [markAllReadItem()])) : {})}
+      {...(signedIn ? longPress((x, y) => openActionMenu(x, y, { kind: 'home' })) : {})}
       className="flex w-15 shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
     >
       <Globe size={16} className="shrink-0" />

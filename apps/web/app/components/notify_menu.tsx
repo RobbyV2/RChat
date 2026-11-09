@@ -27,7 +27,7 @@ const muteChoices = (apply: (until: MuteUntil) => void): ContextMenuItem[] =>
     action: () => apply(muteUntilFor(c.ms, Date.now())),
   }))
 
-// "Mute …" (or "Unmute …") and "Notification settings" for a channel, DM or server menu.
+// "Mute …" (or "Unmute …") and "Notification settings" for a P2P channel, DM or server menu.
 export const notifyMenuItems = (scope: NotifyScope, noun: string): ContextMenuItem[] => {
   const s = useStore.getState()
   const prefs = s.notifyPrefs
@@ -87,32 +87,6 @@ export const notifyMenuItems = (scope: NotifyScope, noun: string): ContextMenuIt
           submenu: muteChoices(until => s.muteScope(scope, until)),
         }
   return [mute, settings]
-}
-
-// "Mute folder" mutes each server in it; "Unmute folder" once all of them are muted.
-export const folderNotifyItems = (servers: string[]): ContextMenuItem[] => {
-  if (!servers.length) return []
-  const s = useStore.getState()
-  const now = Date.now()
-  const ends = servers.map(name => muteEnd(s.notifyPrefs, { kind: 'server', name }, now))
-  if (ends.every(e => e !== null)) {
-    const same = ends.every(e => e === ends[0])
-    return [
-      {
-        label: 'Unmute folder',
-        subtitle: same && ends[0] !== null ? mutedText(ends[0], now) : undefined,
-        icon: Bell,
-        action: () => s.muteServers(servers, null),
-      },
-    ]
-  }
-  return [
-    {
-      label: 'Mute folder',
-      icon: BellOff,
-      submenu: muteChoices(until => s.muteServers(servers, until)),
-    },
-  ]
 }
 
 // The muted marker on rows and tiles; the tooltip says until when.
