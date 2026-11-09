@@ -243,7 +243,7 @@ pub struct SettingsPatch {
     registration: Option<Registration>,
 }
 
-fn require_site_admin(user: &User) -> Result<(), ApiError> {
+pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
     match user.is_site_admin {
         true => Ok(()),
         false => Err(not_found()),
@@ -909,7 +909,8 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         .execute(&mut **tx)
         .await?;
     crate::api::bulk_delete::forget_author(tx, key).await?;
-    crate::api::audit::forget_user(tx, key).await
+    crate::api::audit::forget_user(tx, key).await?;
+    crate::api::instance_audit::forget_user(tx, key).await
 }
 
 pub(crate) async fn ban_user(
@@ -966,6 +967,48 @@ pub(crate) async fn delete_user(
     }
     hide_user(&state, &key, PurgeKind::User).await?;
     Ok(ok())
+}
+
+#[derive(Serialize)]
+pub struct PhraseRemoved {
+    pub removed: bool,
+}
+
+pub(crate) async fn remove_phrase(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(username): Path<String>,
+) -> Result<Json<PhraseRemoved>, ApiError> {
+    require_site_admin(&user)?;
+    let key = username.to_lowercase();
+    if key == user.username {
+        return Err(bad("Cannot remove your own backup phrase here"));
+    }
+    if key.contains('\0') {
+        return Ok(Json(PhraseRemoved { removed: false }));
+    }
+    let mut tx = state.db.begin().await?;
+    let removed = sqlx::query(
+        "UPDATE users SET recovery_pub = NULL, recovery_set_at = NULL WHERE username = $1 AND recovery_pub IS NOT NULL AND password_hash <> '!purging'",
+    )
+    .bind(&key)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+    if removed {
+        crate::api::instance_audit::record_in(
+            &mut tx,
+            &user.username,
+            "user.remove_phrase",
+            Some(&key),
+            serde_json::json!({}),
+            now(),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(Json(PhraseRemoved { removed }))
 }
 
 pub(crate) async fn user_servers(
@@ -2167,6 +2210,322 @@ mod tests {
                 .await
                 .expect("servers");
         assert_eq!(servers.len(), 12);
+        done(state, path).await;
+    }
+
+    async fn audit_rows(db: &Db) -> Vec<(Option<String>, String, Option<String>, String)> {
+        sqlx::query("SELECT actor, action, target, detail FROM instance_audit ORDER BY id")
+            .fetch_all(db)
+            .await
+            .expect("audit")
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get(0).expect("actor"),
+                    r.try_get(1).expect("action"),
+                    r.try_get(2).expect("target"),
+                    r.try_get(3).expect("detail"),
+                )
+            })
+            .collect()
+    }
+
+    async fn authed(db: &Db, name: &str) -> Authed {
+        Authed(get_user(db, name).await.expect("load").expect("user"))
+    }
+
+    fn phrase_of(user: &User) -> (Option<&str>, Option<i64>) {
+        (user.recovery_pub.as_deref(), user.recovery_set_at)
+    }
+
+    #[tokio::test]
+    async fn the_admin_removes_a_phrase_and_it_is_audited() {
+        use crate::api::reauth::Session;
+        use crate::api::recovery::{RecoverySet, set_phrase_at};
+        use crate::api::test_util::PHRASE_KEY;
+        let (state, path) = temp_state("admin_phrase").await;
+        let db = &state.db;
+        let _ = reg(&state, "root").await.expect("root");
+        let bob_token = reg(&state, "bob").await.expect("bob").0.token;
+        let _ = reg(&state, "carol").await.expect("carol");
+        sqlx::query("UPDATE users SET is_site_admin = 1 WHERE username = 'root'")
+            .execute(db)
+            .await
+            .expect("admin");
+        sqlx::query("UPDATE users SET recovery_pub = $1, recovery_set_at = 7, bio = 'hi' WHERE username IN ('bob', 'root')")
+            .bind(PHRASE_KEY)
+            .execute(db)
+            .await
+            .expect("phrases");
+        let before = get_user(db, "bob").await.expect("load").expect("bob");
+        let remove = |who: Authed, name: &str| {
+            remove_phrase(State(state.clone()), who, Path(name.to_string()))
+        };
+        let ApiError(code, msg) = remove(authed(db, "carol").await, "bob")
+            .await
+            .err()
+            .expect("not an admin");
+        let ApiError(delete_code, delete_msg) = delete_user(
+            State(state.clone()),
+            authed(db, "carol").await,
+            Path("bob".to_string()),
+        )
+        .await
+        .err()
+        .expect("not an admin");
+        assert_eq!((code, msg.as_str()), (StatusCode::NOT_FOUND, "Not found"));
+        assert_eq!((code, msg), (delete_code, delete_msg));
+        let ApiError(code, msg) = remove(authed(db, "carol").await, "nobody")
+            .await
+            .err()
+            .expect("not an admin");
+        assert_eq!((code, msg.as_str()), (StatusCode::NOT_FOUND, "Not found"));
+        assert!(audit_rows(db).await.is_empty());
+        let Json(PhraseRemoved { removed }) = remove(authed(db, "root").await, "Bob")
+            .await
+            .expect("removed");
+        assert!(removed);
+        let after = get_user(db, "bob").await.expect("load").expect("bob");
+        assert_eq!(phrase_of(&after), (None, None));
+        let kept = |u: &User| {
+            let User {
+                username,
+                display_name,
+                password_hash,
+                password_kind,
+                avatar_kind,
+                avatar_color,
+                banner_color,
+                bio,
+                is_site_admin,
+                appear_offline,
+                created_at,
+                recovery_pub: _,
+                recovery_set_at: _,
+            } = u.clone();
+            (
+                (username, display_name, password_hash, password_kind),
+                (avatar_kind, avatar_color, banner_color, bio),
+                (is_site_admin, appear_offline, created_at),
+            )
+        };
+        assert_eq!(kept(&after), kept(&before));
+        assert!(
+            crate::api::session_for_token(&state, &bob_token)
+                .await
+                .expect("lookup")
+                .is_some(),
+            "bob stays signed in"
+        );
+        let Json(PhraseRemoved { removed }) = remove(authed(db, "root").await, "bob")
+            .await
+            .expect("again");
+        assert!(!removed);
+        let Json(PhraseRemoved { removed }) = remove(authed(db, "root").await, "nobody")
+            .await
+            .expect("unknown");
+        assert!(!removed);
+        let Json(PhraseRemoved { removed }) = remove(authed(db, "root").await, "ali\0ce")
+            .await
+            .expect("nul");
+        assert!(!removed);
+        for own in ["root", "ROOT"] {
+            let ApiError(code, msg) = remove(authed(db, "root").await, own)
+                .await
+                .err()
+                .expect("own");
+            assert_eq!(
+                (code, msg.as_str()),
+                (
+                    StatusCode::BAD_REQUEST,
+                    "Cannot remove your own backup phrase here"
+                )
+            );
+        }
+        let root = get_user(db, "root").await.expect("load").expect("root");
+        assert_eq!(phrase_of(&root), (Some(PHRASE_KEY), Some(7)));
+        assert_eq!(
+            audit_rows(db).await,
+            vec![(
+                Some("root".to_string()),
+                "user.remove_phrase".to_string(),
+                Some("bob".to_string()),
+                "{}".to_string()
+            )]
+        );
+        let at: i64 = sqlx::query("SELECT at FROM instance_audit")
+            .fetch_one(db)
+            .await
+            .expect("at")
+            .try_get(0)
+            .expect("at value");
+        assert!((now() - at).abs() < 60);
+        let fresh = || Session {
+            user: after.clone(),
+            token: bob_token.clone(),
+            created_at: now(),
+        };
+        let set = |how: serde_json::Value| -> RecoverySet {
+            serde_json::from_value(json!({"key": PHRASE_KEY, "reauth": how})).expect("set")
+        };
+        let ApiError(code, msg) =
+            set_phrase_at(&state, fresh(), set(json!({"fresh_session": true})), now())
+                .await
+                .err()
+                .expect("a fresh session alone sets no phrase");
+        assert_eq!(
+            (code, msg.as_str()),
+            (StatusCode::UNAUTHORIZED, "Confirm with your password")
+        );
+        assert_eq!(
+            phrase_of(&get_user(db, "bob").await.expect("load").expect("bob")),
+            (None, None)
+        );
+        let _ = set_phrase_at(&state, fresh(), set(json!({"password": "a"})), now())
+            .await
+            .expect("the password sets a phrase again");
+        assert_eq!(
+            phrase_of(&get_user(db, "bob").await.expect("load").expect("bob")).0,
+            Some(PHRASE_KEY)
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn only_the_admin_lists_the_instance_audit_newest_first() {
+        use crate::api::instance_audit::{AuditQuery, Entry, list, record};
+        let (state, path) = temp_state("admin_instance_audit").await;
+        let db = &state.db;
+        let _ = reg(&state, "root").await.expect("root");
+        let _ = reg(&state, "carol").await.expect("carol");
+        sqlx::query("UPDATE users SET is_site_admin = 1 WHERE username = 'root'")
+            .execute(db)
+            .await
+            .expect("admin");
+        for n in 0..57 {
+            record(
+                db,
+                "root",
+                "test.action",
+                Some(&format!("user{n:02}")),
+                json!({"n": n}),
+            )
+            .await
+            .expect("record");
+        }
+        record(db, "root", "test.none", None, json!({}))
+            .await
+            .expect("no target");
+        let query = |cursor: Option<String>| -> AuditQuery {
+            serde_json::from_value(json!({ "cursor": cursor })).expect("query")
+        };
+        let ApiError(code, msg) = list(
+            State(state.clone()),
+            authed(db, "carol").await,
+            Query(query(None)),
+        )
+        .await
+        .err()
+        .expect("not an admin");
+        assert_eq!((code, msg.as_str()), (StatusCode::NOT_FOUND, "Not found"));
+        let Paged(first, next) = list(
+            State(state.clone()),
+            authed(db, "root").await,
+            Query(query(None)),
+        )
+        .await
+        .expect("first page");
+        assert_eq!(first.len(), 50);
+        let Entry {
+            id: _,
+            at: _,
+            actor,
+            action,
+            target,
+            detail,
+        } = &first[0];
+        assert_eq!(
+            (actor.as_deref(), action.as_str(), target.as_deref(), detail),
+            (Some("root"), "test.none", None, &json!({}))
+        );
+        assert_eq!(first[1].target.as_deref(), Some("user56"));
+        assert_eq!(first[1].detail, json!({"n": 56}));
+        let Paged(rest, end) = list(
+            State(state.clone()),
+            authed(db, "root").await,
+            Query(query(next)),
+        )
+        .await
+        .expect("second page");
+        assert_eq!(rest.len(), 8);
+        assert_eq!(rest[7].target.as_deref(), Some("user00"));
+        assert!(end.is_none());
+        let ids: Vec<i64> = first.iter().chain(rest.iter()).map(|e| e.id).collect();
+        assert!(ids.windows(2).all(|w| w[0] > w[1]));
+        let ApiError(code, _) = list(
+            State(state.clone()),
+            authed(db, "root").await,
+            Query(query(Some("zz".to_string()))),
+        )
+        .await
+        .err()
+        .expect("bad cursor");
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_deleted_account_leaves_the_instance_audit() {
+        use crate::api::instance_audit::record;
+        let (state, path) = temp_state("admin_audit_forget").await;
+        let db = &state.db;
+        let _ = reg(&state, "root").await.expect("root");
+        let _ = reg(&state, "bob").await.expect("bob");
+        let _ = reg(&state, "carol").await.expect("carol");
+        sqlx::query("UPDATE users SET is_site_admin = 1 WHERE username = 'root'")
+            .execute(db)
+            .await
+            .expect("admin");
+        record(db, "root", "user.remove_phrase", Some("bob"), json!({}))
+            .await
+            .expect("record");
+        record(db, "bob", "test.action", Some("carol"), json!({}))
+            .await
+            .expect("record");
+        record(db, "root", "sso.provider_update", Some("bob"), json!({}))
+            .await
+            .expect("a target that is not an account");
+        let _ = delete_user(
+            State(state.clone()),
+            authed(db, "root").await,
+            Path("bob".to_string()),
+        )
+        .await
+        .expect("delete bob");
+        settle(db).await;
+        assert_eq!(
+            audit_rows(db).await,
+            vec![
+                (
+                    Some("root".to_string()),
+                    "user.remove_phrase".to_string(),
+                    None,
+                    "{}".to_string()
+                ),
+                (
+                    None,
+                    "test.action".to_string(),
+                    Some("carol".to_string()),
+                    "{}".to_string()
+                ),
+                (
+                    Some("root".to_string()),
+                    "sso.provider_update".to_string(),
+                    Some("bob".to_string()),
+                    "{}".to_string()
+                ),
+            ]
+        );
         done(state, path).await;
     }
 }

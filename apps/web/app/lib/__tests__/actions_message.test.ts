@@ -625,12 +625,14 @@ test('the hidden site admin: Ban site-wide on others, in channels and DMs, never
     'Transfer Admin',
     'Assign Role',
     ...PERSON,
+    'Remove backup phrase',
     'Ban site-wide',
     'Select Message',
     'Delete Message',
     ...COPY_ALL,
   ])
   expect(labels(at(own))).not.toContain('Ban site-wide')
+  expect(labels(at(own))).not.toContain('Remove backup phrase')
   state({ siteAdmin: true, view: 'd9' })
   expect(labels(at(dmBob))).toEqual([
     'Reply',
@@ -638,6 +640,7 @@ test('the hidden site admin: Ban site-wide on others, in channels and DMs, never
     'Direct Message',
     'Pin Message',
     ...PERSON,
+    'Remove backup phrase',
     'Ban site-wide',
     'Select Message',
     ...COPY_ALL,
@@ -953,8 +956,9 @@ test('each message row does what it did', async () => {
     ['Remove Timeout', [['removeTimeout', 's', 'bob']]],
   ])
   state({ siteAdmin: true, view: 'd9', blocked: ['bob'] })
-  expect(await effects(items(at(dmBob)).slice(4, 6))).toEqual([
+  expect(await effects(items(at(dmBob)).slice(4, 7))).toEqual([
     ['Unblock', [['unblockUser', 'bob', 'Bobby']]],
+    ['Remove backup phrase', [['openDialog', { kind: 'remove_phrase_confirm', username: 'bob' }]]],
     ['Ban site-wide', [['openDialog', { kind: 'ban_confirm', username: 'bob' }]]],
   ])
   expect(await effects([row(at(dmBob), 'Copy Message Link')!])).toEqual([

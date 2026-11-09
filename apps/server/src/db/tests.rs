@@ -3563,6 +3563,144 @@ async fn recovery_columns_are_added_to_an_old_database() {
     }
 }
 
+async fn old_instance_audit_db(db: &Db) {
+    for stmt in [
+        "DROP INDEX idx_instance_audit_actor",
+        "DROP INDEX idx_instance_audit_target",
+        "DROP TABLE instance_audit",
+        "UPDATE settings SET value = '19' WHERE key = 'schema_version'",
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, recovery_pub, recovery_set_at) VALUES('alice', 'Alice', 'old-hash', 'text', 'identicon', 7, 'key', 9)",
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('bob', 'Bob', 'bob-hash', 'words', 'identicon', 8)",
+    ] {
+        sqlx::query(stmt).execute(db).await.expect(stmt);
+    }
+}
+
+async fn upgraded_instance_audit_db(db: &Db, rows: i64) {
+    let users = sqlx::query("SELECT username, display_name, password_hash, password_kind, created_at, recovery_pub, recovery_set_at FROM users WHERE username IN ('alice', 'bob') ORDER BY username")
+        .fetch_all(db)
+        .await
+        .expect("users");
+    type Kept = (
+        String,
+        String,
+        String,
+        String,
+        i64,
+        Option<String>,
+        Option<i64>,
+    );
+    let kept: Vec<Kept> = users
+        .iter()
+        .map(|r| {
+            (
+                r.try_get(0).expect("username"),
+                r.try_get(1).expect("display_name"),
+                r.try_get(2).expect("password_hash"),
+                r.try_get(3).expect("password_kind"),
+                r.try_get(4).expect("created_at"),
+                r.try_get(5).expect("recovery_pub"),
+                r.try_get(6).expect("recovery_set_at"),
+            )
+        })
+        .collect();
+    let s = |v: &str| v.to_string();
+    assert_eq!(
+        kept,
+        vec![
+            (
+                s("alice"),
+                s("Alice"),
+                s("old-hash"),
+                s("text"),
+                7,
+                Some(s("key")),
+                Some(9)
+            ),
+            (s("bob"), s("Bob"), s("bob-hash"), s("words"), 8, None, None),
+        ]
+    );
+    for index in ["idx_instance_audit_actor", "idx_instance_audit_target"] {
+        let sql = match is_sqlite(db) {
+            true => format!(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = '{index}'"
+            ),
+            false => format!(
+                "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = '{index}'"
+            ),
+        };
+        assert_eq!(count(db, &sql).await, 1, "{index}");
+    }
+    assert_eq!(count(db, "SELECT COUNT(*) FROM instance_audit").await, rows);
+    crate::api::instance_audit::record(
+        db,
+        "alice",
+        "test.action",
+        Some("bob"),
+        serde_json::json!({"k": 1}),
+    )
+    .await
+    .expect("new table");
+    let row = sqlx::query(
+        "SELECT actor, action, target, detail FROM instance_audit ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(db)
+    .await
+    .expect("row");
+    let got: (Option<String>, String, Option<String>, String) = (
+        row.try_get(0).expect("actor"),
+        row.try_get(1).expect("action"),
+        row.try_get(2).expect("target"),
+        row.try_get(3).expect("detail"),
+    );
+    assert_eq!(
+        got,
+        (
+            Some(s("alice")),
+            s("test.action"),
+            Some(s("bob")),
+            s("{\"k\":1}")
+        )
+    );
+    assert_eq!(
+        count(
+            db,
+            "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+        )
+        .await,
+        SCHEMA_VERSION
+    );
+}
+
+async fn instance_audit_upgrade(url: &str) {
+    let db = open(Some(url)).await.expect("open");
+    old_instance_audit_db(&db).await;
+    close(&db).await;
+    for run in 0..2 {
+        let db = open(Some(url)).await.expect("upgrade");
+        upgraded_instance_audit_db(&db, run).await;
+        close(&db).await;
+    }
+}
+
+#[tokio::test]
+async fn instance_audit_is_added_to_an_old_database() {
+    assert_eq!(SCHEMA_VERSION, 20);
+    let path = crate::db::temp_db_path("instance_audit_upgrade");
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    instance_audit_upgrade(path.to_str().expect("path")).await;
+    wipe();
+    if let Some(pg) = crate::api::test_util::pg_temp("instance_audit_upgrade").await {
+        instance_audit_upgrade(&pg.url).await;
+        drop(pg);
+    }
+}
+
 #[tokio::test]
 async fn open_with_uses_the_configured_options() {
     let path = temp_db_path("open_with");

@@ -14,6 +14,7 @@ pub mod friends;
 pub mod health;
 pub mod inbox;
 pub mod instance;
+pub mod instance_audit;
 pub mod media;
 pub mod messages;
 pub mod openapi;
@@ -2010,6 +2011,11 @@ fn api_routes(
         .route("/admin/servers", get(admin::list_servers))
         .route("/admin/servers/{name}", delete(admin::delete_server))
         .route("/admin/users/{username}", delete(admin::delete_user))
+        .route(
+            "/admin/users/{username}/recovery",
+            delete(admin::remove_phrase),
+        )
+        .route("/admin/audit", get(instance_audit::list))
         .route("/admin/users/{username}/servers", get(admin::user_servers))
         .route("/admin/messages/{id}", delete(admin::delete_message))
         .route("/admin/ban", post(admin::ban_user))

@@ -297,13 +297,15 @@ mod tests {
         ),
     ];
 
-    const ADMIN_ROUTES: [(&str, &str); 9] = [
+    const ADMIN_ROUTES: [(&str, &str); 11] = [
         ("patch", "/api/v1/admin/settings"),
         ("get", "/api/v1/admin/overview"),
         ("get", "/api/v1/admin/users"),
         ("get", "/api/v1/admin/servers"),
         ("delete", "/api/v1/admin/servers/{name}"),
         ("delete", "/api/v1/admin/users/{username}"),
+        ("delete", "/api/v1/admin/users/{username}/recovery"),
+        ("get", "/api/v1/admin/audit"),
         ("get", "/api/v1/admin/users/{username}/servers"),
         ("delete", "/api/v1/admin/messages/{id}"),
         ("post", "/api/v1/admin/ban"),

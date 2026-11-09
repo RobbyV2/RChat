@@ -234,6 +234,7 @@ test('member list, the hidden site admin', () => {
     'Assign Role',
     'Add friend',
     'Block',
+    'Remove backup phrase',
     'Ban site-wide',
     COPY,
   ])
@@ -520,6 +521,7 @@ test('each member row does what it did', async () => {
     ['Remove Helper', [['unassignRole', 's', 3, 'bob']]],
     ['Add friend', [['askAddFriends', ['bob']]]],
     ['Block', [['askBlock', bobRef]]],
+    ['Remove backup phrase', [['openDialog', { kind: 'remove_phrase_confirm', username: 'bob' }]]],
     ['Ban site-wide', [['openDialog', { kind: 'ban_confirm', username: 'bob' }]]],
     [COPY, [['copy', 'bob']]],
   ])

@@ -163,7 +163,8 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// 18: the Manage reports permission bit.
 /// 19: recovery phrase columns (`users.recovery_pub`, `users.recovery_set_at`) and
 /// `recovery_challenges`.
-pub const SCHEMA_VERSION: i64 = 19;
+/// 20: the instance audit log (`instance_audit`).
+pub const SCHEMA_VERSION: i64 = 20;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {

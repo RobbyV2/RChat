@@ -3,6 +3,7 @@ import { localUntil, type TimeoutWire } from './timeouts'
 import { ALL_PERMS } from './types'
 import type {
   AdminOverview,
+  InstanceAuditEntry,
   AuditEntry,
   AuthResponse,
   BlockedUser,
@@ -786,6 +787,10 @@ export const endpoints = (c: ApiClient) => ({
     c.page<ServerSummaryLite>(withCursor(`/admin/servers?limit=50&q=${seg(q)}`, cursor)),
   adminDeleteServer: (name: string) => c.req<unknown>('DELETE', `/admin/servers/${seg(name)}`),
   adminDeleteUser: (username: string) => c.req<unknown>('DELETE', `/admin/users/${seg(username)}`),
+  adminRemovePhrase: (username: string) =>
+    c.req<{ removed: boolean }>('DELETE', `/admin/users/${seg(username)}/recovery`),
+  adminAudit: (cursor: string | null) =>
+    c.page<InstanceAuditEntry>(withCursor('/admin/audit', cursor)),
   adminUserServers: (username: string, cursor: string | null = null) =>
     c.page<ServerSummaryLite>(withCursor(`/admin/users/${seg(username)}/servers`, cursor)),
   adminDeleteMessage: (id: number) => c.req<unknown>('DELETE', `/admin/messages/${id}`),

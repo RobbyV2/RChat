@@ -567,6 +567,17 @@ export type SiteSettingsPatch = Partial<Omit<SiteSettings, 'profanity_targets'>>
   profanity_targets?: Partial<ProfanityTargets>
 }
 
+// One row of the instance audit log, which only the site admin's panel lists.
+export interface InstanceAuditEntry {
+  id: number
+  at: number
+  // Null once the account is deleted.
+  actor: string | null
+  action: string
+  target: string | null
+  detail: unknown
+}
+
 export interface RelayStatus {
   enabled: boolean
   turn: boolean

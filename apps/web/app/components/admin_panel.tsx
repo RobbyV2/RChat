@@ -3,7 +3,8 @@
 import { Fragment, useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import { api } from '../lib/instances'
-import type { RelayStatus, ServerDetail, ServerSummaryLite } from '../lib/types'
+import type { InstanceAuditEntry, RelayStatus, ServerDetail, ServerSummaryLite } from '../lib/types'
+import { instanceAuditLine } from '../lib/instance_audit'
 import { confirmKick, errorText, revokeAdminFor, useStore } from '../lib/store'
 import {
   PROFANITY_TARGETS,
@@ -45,6 +46,8 @@ export default function AdminPanel() {
       return <BanConfirm username={dialog.username} />
     case 'delete_user_confirm':
       return <DeleteUserConfirm username={dialog.username} />
+    case 'remove_phrase_confirm':
+      return <RemovePhraseConfirm username={dialog.username} />
     default:
       return null
   }
@@ -242,6 +245,68 @@ function DangerTools() {
       />
       <button className={dangerBtn}>Delete message</button>
     </form>
+  )
+}
+
+function InstanceAudit() {
+  const setError = useStore(s => s.setError)
+  const [list, setList] = useState<InstanceAuditEntry[] | null>(null)
+  const [next, setNext] = useState<string | null>(null)
+  const busy = useRef(false)
+  const fetchFrom = useCallback(
+    (cursor: string | null) => {
+      if (busy.current) return
+      busy.current = true
+      api
+        .adminAudit(cursor)
+        .then(page => {
+          setList(cur => {
+            const base = cursor === null ? [] : (cur ?? [])
+            const seen = new Set(base.map(e => e.id))
+            return [...base, ...page.items.filter(e => !seen.has(e.id))]
+          })
+          setNext(page.next)
+        })
+        .catch((e: unknown) => setError(errorText(e)))
+        .finally(() => {
+          busy.current = false
+        })
+    },
+    [setError]
+  )
+  useEffect(() => {
+    fetchFrom(null)
+  }, [fetchFrom])
+  if (!list) return null
+  return (
+    <div className="space-y-1">
+      {list.length === 0 && <p className="text-sm text-on-surface-variant">Nothing yet.</p>}
+      {list.map(e => (
+        <div
+          key={e.id}
+          className="flex flex-wrap items-baseline gap-x-2 rounded-xl bg-surface-container px-2 py-1.5 text-sm"
+        >
+          <span className="min-w-0 flex-1 break-words">
+            {instanceAuditLine(e).map((p, i) =>
+              p.name ? (
+                <span key={i} className="streamer">
+                  {p.text}
+                </span>
+              ) : (
+                <Fragment key={i}>{p.text}</Fragment>
+              )
+            )}
+          </span>
+          <time
+            dateTime={new Date(e.at * 1000).toISOString()}
+            className="shrink-0 text-xs text-on-surface-variant"
+          >
+            {new Date(e.at * 1000).toLocaleString()}
+          </time>
+        </div>
+      ))}
+      {next && <Sentinel key={list.length} onVisible={() => fetchFrom(next)} />}
+    </div>
   )
 }
 
@@ -446,7 +511,7 @@ function Panel() {
                 avatarColor={u.avatar_color}
                 size={28}
               />
-              <span className="streamer min-w-0 flex-1 truncate text-sm">
+              <span className="streamer min-w-24 flex-1 truncate text-sm">
                 {u.display_name} <span className="text-on-surface-variant">({u.username})</span>
               </span>
               <button
@@ -457,6 +522,14 @@ function Panel() {
               </button>
               {u.username !== me?.username && (
                 <>
+                  <button
+                    onClick={() =>
+                      openDialog({ kind: 'remove_phrase_confirm', username: u.username })
+                    }
+                    className={dangerBtn}
+                  >
+                    Remove backup phrase
+                  </button>
                   <button
                     onClick={() =>
                       openDialog({ kind: 'delete_user_confirm', username: u.username })
@@ -479,6 +552,8 @@ function Panel() {
         ))}
         {adminUsers.hasMore && <Sentinel key={adminUsers.list.length} onVisible={moreUsers} />}
       </div>
+      <p className={sectionCls}>Audit log</p>
+      <InstanceAudit />
       <p className={sectionCls}>Danger Tools</p>
       <DangerTools />
     </Dialog>
@@ -726,6 +801,20 @@ function DeleteUserConfirm({ username }: { username: string }) {
       Delete the account of <span className="streamer">{username}</span>? Every message they sent
       and their DMs are deleted. Servers they created are kept. The username becomes free to
       register again; use Ban site-wide to also block the name.
+    </UserConfirm>
+  )
+}
+
+function RemovePhraseConfirm({ username }: { username: string }) {
+  const adminRemovePhrase = useStore(s => s.adminRemovePhrase)
+  return (
+    <UserConfirm
+      title="Remove Backup Phrase"
+      confirm="Remove"
+      run={() => adminRemovePhrase(username)}
+    >
+      Remove the backup phrase of <span className="streamer">{username}</span>? They stay signed in
+      and keep their password. This only removes a way back in, and they can set a new phrase.
     </UserConfirm>
   )
 }
