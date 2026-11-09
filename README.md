@@ -372,6 +372,29 @@ The relay uses UDP ports 49160 to 49415. Open them in the firewall. Reserve them
 
 Data is not encrypted at rest.
 
+## Product rules
+
+Every change keeps these true:
+
+- The app calls no outside service at runtime unless the operator or user sets one up (S3, SSO, public STUN, relays). Package dependencies are fine.
+- Icon-only controls have a hover `title` and an `aria-label`.
+- Usernames, display names and server names have the `streamer` class.
+- Every message, channel, DM and server action is reachable by right-click on desktop and by long-press (a bottom sheet) on touch.
+- Light and dark themes both look right, and every screen works on mobile.
+- Guests are read-only: no sending, reacting, pinning, editing, presence or voice.
+- Site admins stay hidden: no UI ever shows that someone is one. The first registered account becomes the hidden site admin.
+- Every endpoint that touches a server, channel or message checks access through the access gate (`apps/server/src/api/access.rs`). Denials are uniform 404s.
+- WS events never carry unbounded user lists. Member and server lists load 50 at a time.
+- Client settings live in localStorage per account through the `writeLocal` and `home.scoped(...)` helpers in `apps/web/app/lib/store.ts`. They are versioned and parsed defensively: bad JSON falls back to the defaults.
+- Platform APIs (notifications, badges, clipboard, share, storage, files) go through the interfaces in `apps/web/app/lib/platform/`.
+- No request leaving the app carries anyone's email, name or other personal data (User-Agent, headers, payloads).
+- Schema changes go into both the SQLite and Postgres schemas, with migrations for new columns. Columns and tables are never dropped or renamed.
+
+### P2P rules
+
+- The instance profanity filter never touches P2P content or P2P file names, on the server or the client. Only the user's own display filter may mask what they see, and it never changes what is stored or sent. Uploads hosted on the instance stay filtered.
+- Every P2P frame and event parser ignores unknown fields, ops and kinds without a strike. Strikes are only for malformed known fields, invalid signatures, abuse volume or requests the sender isn't entitled to.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
