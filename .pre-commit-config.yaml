@@ -34,7 +34,7 @@ repos:
 
       - id: tsc
         name: tsc (web)
-        entry: bunx tsc --noEmit -p apps/web
+        entry: bunx tsc --noEmit --incremental false -p apps/web
         language: system
         files: ^apps/web/
         types_or: [ts, tsx]

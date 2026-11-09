@@ -51,7 +51,7 @@ gates: deps
   cd {{ROOT}} && cargo clippy --workspace {{DESKTOP_CRATES}} --all-targets -- -D warnings
   cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt --check
   cd {{ROOT}} && bunx eslint . --ignore-pattern '.superpowers/**'
-  cd {{ROOT}} && bunx tsc --noEmit -p apps/web
+  cd {{ROOT}} && bunx tsc --noEmit --incremental false -p apps/web
   cd {{ROOT}} && bunx prettier --check "**/*.{ts,tsx,js,jsx,json,md,mjs}" {{PRETTIER_IGNORES}}
   cd {{ROOT}} && cargo test --workspace {{DESKTOP_CRATES}}
   cd {{ROOT}} && bun test scripts
