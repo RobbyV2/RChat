@@ -3741,3 +3741,116 @@ async fn feature_switches_are_seeded_once_on_an_old_database() {
         drop(pg);
     }
 }
+
+const OTHER_INSTANCES: &str = "client_other_instances";
+
+/// The switch as stored (one value per row) and as `GET /api/settings` sends it.
+async fn other_instances(db: &Db) -> (Vec<String>, serde_json::Value) {
+    let stored = sqlx::query("SELECT value FROM settings WHERE key = $1")
+        .bind(OTHER_INSTANCES)
+        .fetch_all(db)
+        .await
+        .expect("rows")
+        .iter()
+        .map(|r| r.try_get::<String, _>(0).expect("value"))
+        .collect();
+    let sent = serde_json::to_value(crate::api::Settings::load(db).await).expect("json");
+    (stored, sent[OTHER_INSTANCES].clone())
+}
+
+/// A database from before the switch: no row for it, other settings changed, and a message.
+async fn before_other_instances(db: &Db) {
+    for stmt in [
+        format!("DELETE FROM settings WHERE key = '{OTHER_INSTANCES}'"),
+        "UPDATE settings SET value = '0' WHERE key = 'p2p'".to_string(),
+        "UPDATE settings SET value = '0' WHERE key = 'guests_enabled'".to_string(),
+        "UPDATE settings SET value = 'sso' WHERE key = 'registration'".to_string(),
+        format!(
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES({}, 'alice', 'old', 7)",
+            general_id(db).await
+        ),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(db)
+            .await
+            .expect(&stmt);
+    }
+}
+
+async fn other_instances_upgrade(fresh: Option<&str>, off: Option<&str>, old: Option<&str>) {
+    use crate::api::features::{FeatureSeeds, Registration};
+    let seeded_off = DbOptions {
+        seeds: crate::config::Seeds {
+            features: FeatureSeeds::load(&|name| {
+                (name == "FEATURE_CLIENT_OTHER_INSTANCES").then(|| "off".to_string())
+            })
+            .expect("seeds"),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let on = (vec!["1".to_string()], serde_json::json!(true));
+
+    let db = open(fresh).await.expect("fresh");
+    assert_eq!(other_instances(&db).await, on, "a fresh database");
+    close(&db).await;
+
+    let db = open_with(off, &seeded_off).await.expect("fresh, off");
+    assert_eq!(
+        other_instances(&db).await,
+        (vec!["0".to_string()], serde_json::json!(false)),
+        "the env seed"
+    );
+    close(&db).await;
+
+    let db = open(old).await.expect("old");
+    before_other_instances(&db).await;
+    assert_eq!(other_instances(&db).await.0, Vec::<String>::new());
+    close(&db).await;
+    for (round, opts) in [&DbOptions::default(), &seeded_off].into_iter().enumerate() {
+        let db = open_with(old, opts).await.expect("upgrade");
+        assert_eq!(other_instances(&db).await, on, "after start {round}");
+        let s = crate::api::Settings::load(&db).await;
+        assert!(!s.p2p && !s.guests_enabled && s.password_login, "{round}");
+        assert_eq!(s.registration, Registration::Sso, "after start {round}");
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM messages WHERE author = 'alice' AND content = 'old' AND created_at = 7"
+            )
+            .await,
+            1
+        );
+        close(&db).await;
+    }
+}
+
+#[tokio::test]
+async fn the_other_instances_switch_is_seeded_on_new_and_old_databases() {
+    let paths = [
+        "other_instances_fresh",
+        "other_instances_off",
+        "other_instances_old",
+    ]
+    .map(crate::db::temp_db_path);
+    let wipe = || {
+        for path in &paths {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        }
+    };
+    wipe();
+    let [fresh, off, old] = &paths;
+    other_instances_upgrade(fresh.to_str(), off.to_str(), old.to_str()).await;
+    wipe();
+    let pg = |tag| crate::api::test_util::pg_temp(tag);
+    if let (Some(fresh), Some(off), Some(old)) = (
+        pg("other_instances_fresh").await,
+        pg("other_instances_off").await,
+        pg("other_instances_old").await,
+    ) {
+        other_instances_upgrade(Some(&fresh.url), Some(&off.url), Some(&old.url)).await;
+        drop((fresh, off, old));
+    }
+}

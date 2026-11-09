@@ -392,6 +392,8 @@ Data is not encrypted at rest.
 
 Any web app may call the API with a token; cookies are never sent cross-site.
 
+`FEATURE_CLIENT_OTHER_INSTANCES` (first start only, default `on`) lets people add other instances in the web app this site serves. The desktop and mobile apps and other web apps ignore it.
+
 ## Product rules
 
 Every change keeps these true:

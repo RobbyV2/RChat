@@ -17,11 +17,13 @@ export const FEATURE_KEYS = [
   'password_login',
   'sfu',
   'p2p',
+  'client_other_instances',
 ] as const
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number]
 
-// An instance from before the switches has P2P and password sign-up and none of the rest.
+// An instance from before the switches has P2P and password sign-up, lets its app add other
+// instances, and has none of the rest.
 const BEFORE_SWITCHES: Record<FeatureKey, boolean> = {
   server_reports: false,
   instance_reports: false,
@@ -38,6 +40,7 @@ const BEFORE_SWITCHES: Record<FeatureKey, boolean> = {
   password_login: true,
   sfu: false,
   p2p: true,
+  client_other_instances: true,
 }
 
 const registrationOf = (value: unknown): Registration => {
@@ -123,6 +126,11 @@ export const FEATURE_ROWS: FeatureRow[] = [
   },
   { key: 'display_names', label: 'Display names', line: 'Lets people change their display name.' },
   { key: 'onboarding', label: 'Onboarding', line: 'Shows new accounts a short tour.' },
+  {
+    key: 'client_other_instances',
+    label: "Other instances in this site's app",
+    line: "Lets people add other instances in this site's web app. Other apps ignore it.",
+  },
   {
     key: 'backup_phrase',
     label: 'Backup phrase',

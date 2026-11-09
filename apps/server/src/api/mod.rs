@@ -1204,7 +1204,8 @@ pub fn profanity_seed(filter: Option<&str>, targets: Option<&str>) -> Vec<(&'sta
 
 /// Instance-wide feature switches. Changes reach clients through the `settings_changed`
 /// WebSocket event. A switched-off feature's endpoints answer 404, except that uploads, P2P
-/// attachments and outgoing webhooks answer 403, and guests get 401 while guest access is off.
+/// attachments and outgoing webhooks answer 403, guests get 401 while guest access is off, and
+/// `client_other_instances` gates no endpoint.
 #[derive(Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub struct Settings {
     /// Master switch of the profanity filter. When on, content matching a target in
@@ -1277,6 +1278,10 @@ pub struct Settings {
     /// hides them and `POST /api/v1/identity/p2p_binding` answers 404. Data on devices is kept.
     #[serde(default = "yes")]
     pub p2p: bool,
+    /// Adding other instances in the web app this instance serves. Only that app reads it:
+    /// the desktop and mobile apps and other web apps ignore it, and it gates no endpoint.
+    #[serde(default = "yes")]
+    pub client_other_instances: bool,
     /// Who may create an account with a password: `open`, `sso` (only through single
     /// sign-on) or `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and
     /// `password_login` is on.
@@ -1317,12 +1322,13 @@ impl Settings {
         password_login: false,
         sfu: false,
         p2p: false,
+        client_other_instances: false,
         registration: Registration::Closed,
     };
 
     pub async fn load(db: &Db) -> Settings {
         let rows = match sqlx::query(
-            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'p2p_attachments', 'guests_enabled', 'outgoing_webhooks', 'server_reports', 'instance_reports', 'widgets', 'widget_chat', 'widget_read_links', 'widget_bridge', 'e2ee', 'e2ee_compliance', 'backup_phrase', 'p2p_backup', 'display_names', 'onboarding', 'password_login', 'sfu', 'p2p', 'registration') OR key LIKE 'profanity\\_%' ESCAPE '\\'",
+            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'p2p_attachments', 'guests_enabled', 'outgoing_webhooks', 'server_reports', 'instance_reports', 'widgets', 'widget_chat', 'widget_read_links', 'widget_bridge', 'e2ee', 'e2ee_compliance', 'backup_phrase', 'p2p_backup', 'display_names', 'onboarding', 'password_login', 'sfu', 'p2p', 'client_other_instances', 'registration') OR key LIKE 'profanity\\_%' ESCAPE '\\'",
         )
             .fetch_all(db)
             .await
@@ -1380,6 +1386,7 @@ impl Settings {
             password_login: feature(Feature::PasswordLogin),
             sfu: feature(Feature::Sfu),
             p2p: feature(Feature::P2p),
+            client_other_instances: feature(Feature::ClientOtherInstances),
             registration: value(Registration::KEY)
                 .map_or(Some(Registration::Open), |v| Registration::parse(&v))
                 .unwrap_or(Registration::Closed),
@@ -1433,6 +1440,7 @@ impl Settings {
             password_login,
             sfu,
             p2p,
+            client_other_instances,
             registration: _,
         } = *self;
         match feature {
@@ -1451,6 +1459,7 @@ impl Settings {
             Feature::PasswordLogin => password_login,
             Feature::Sfu => sfu,
             Feature::P2p => p2p,
+            Feature::ClientOtherInstances => client_other_instances,
         }
     }
 

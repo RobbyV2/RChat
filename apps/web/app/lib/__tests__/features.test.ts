@@ -45,6 +45,7 @@ const SWITCHES = [
   'password_login',
   'sfu',
   'p2p',
+  'client_other_instances',
 ]
 
 describe('feature switches', () => {
@@ -54,7 +55,9 @@ describe('feature switches', () => {
     expect(s.password_login).toBe(true)
     expect(s.registration).toBe('open')
     expect(s.p2p_attachments).toBe(true)
-    for (const key of SWITCHES.filter(k => k !== 'p2p' && k !== 'password_login'))
+    expect(s.client_other_instances).toBe(true)
+    const kept = ['p2p', 'password_login', 'client_other_instances']
+    for (const key of SWITCHES.filter(k => !kept.includes(k)))
       expect([key, s[key as keyof SiteSettings]]).toEqual([key, false])
     expect(passwordSignup(s)).toBe(true)
   })
@@ -73,6 +76,19 @@ describe('feature switches', () => {
     expect(
       siteSettings({ ...older, registration: 5 } as unknown as SiteSettings).registration
     ).toBe('open')
+  })
+
+  test('other instances stay allowed unless the instance turns them off', () => {
+    expect(siteSettings(older).client_other_instances).toBe(true)
+    const off = siteSettings({ ...older, client_other_instances: false } as SiteSettings)
+    expect(off.client_other_instances).toBe(false)
+    const odd = siteSettings({ ...older, client_other_instances: 0 } as unknown as SiteSettings)
+    expect(odd.client_other_instances).toBe(true)
+    expect(FEATURE_ROWS.find(r => r.key === 'client_other_instances')).toEqual({
+      key: 'client_other_instances',
+      label: "Other instances in this site's app",
+      line: "Lets people add other instances in this site's web app. Other apps ignore it.",
+    })
   })
 
   test('password sign-up needs open registration and password sign-in', () => {

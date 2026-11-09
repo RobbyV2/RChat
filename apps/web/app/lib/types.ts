@@ -557,6 +557,7 @@ export interface SiteSettings {
   password_login: boolean
   sfu: boolean
   p2p: boolean
+  client_other_instances: boolean
   registration: Registration
 }
 

@@ -22,10 +22,11 @@ pub enum Feature {
     PasswordLogin,
     Sfu,
     P2p,
+    ClientOtherInstances,
 }
 
 impl Feature {
-    pub const ALL: [Feature; 15] = [
+    pub const ALL: [Feature; 16] = [
         Feature::ServerReports,
         Feature::InstanceReports,
         Feature::Widgets,
@@ -41,6 +42,7 @@ impl Feature {
         Feature::PasswordLogin,
         Feature::Sfu,
         Feature::P2p,
+        Feature::ClientOtherInstances,
     ];
 
     /// The `Settings` field and the key in the `settings` table.
@@ -61,6 +63,7 @@ impl Feature {
             Feature::PasswordLogin => "password_login",
             Feature::Sfu => "sfu",
             Feature::P2p => "p2p",
+            Feature::ClientOtherInstances => "client_other_instances",
         }
     }
 
@@ -82,6 +85,7 @@ impl Feature {
             Feature::PasswordLogin => "AUTH_PASSWORD_LOGIN",
             Feature::Sfu => "FEATURE_SFU",
             Feature::P2p => "FEATURE_P2P",
+            Feature::ClientOtherInstances => "FEATURE_CLIENT_OTHER_INSTANCES",
         }
     }
 
@@ -99,7 +103,8 @@ impl Feature {
             | Feature::DisplayNames
             | Feature::Onboarding
             | Feature::PasswordLogin
-            | Feature::P2p => true,
+            | Feature::P2p
+            | Feature::ClientOtherInstances => true,
         }
     }
 }
@@ -229,6 +234,11 @@ mod tests {
                 ("password_login", "AUTH_PASSWORD_LOGIN", true),
                 ("sfu", "FEATURE_SFU", false),
                 ("p2p", "FEATURE_P2P", true),
+                (
+                    "client_other_instances",
+                    "FEATURE_CLIENT_OTHER_INSTANCES",
+                    true
+                ),
             ]
         );
         assert_eq!(

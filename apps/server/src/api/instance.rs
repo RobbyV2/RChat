@@ -78,6 +78,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         password_login: _,
         sfu: _,
         p2p: _,
+        client_other_instances: _,
         registration: _,
     } = Settings::cached(&state.read()).await;
     state.instance.discovery(
