@@ -390,6 +390,8 @@ The relay uses UDP ports 49160 to 49415. Open them in the firewall. Reserve them
 
 Data is not encrypted at rest.
 
+Any web app may call the API with a token; cookies are never sent cross-site.
+
 ## Product rules
 
 Every change keeps these true:

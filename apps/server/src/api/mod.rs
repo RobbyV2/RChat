@@ -245,6 +245,30 @@ pub(crate) fn split_list(raw: &str) -> Vec<String> {
 
 pub const NEXT_CURSOR: &str = "x-next-cursor";
 
+pub const CORS_REQUEST_HEADERS: [&str; 12] = [
+    "content-type",
+    "authorization",
+    "accept",
+    "upgrade",
+    "connection",
+    "sec-websocket-key",
+    "sec-websocket-version",
+    "sec-websocket-protocol",
+    "x-guest-grant",
+    "x-invite-password",
+    "x-trust-token",
+    "x-trust-client",
+];
+
+pub const CORS_RESPONSE_HEADERS: [&str; 6] = [
+    NEXT_CURSOR,
+    "retry-after",
+    "x-trust-required",
+    "x-trust-remaining",
+    "x-trust-renew",
+    "date",
+];
+
 pub(crate) fn encode_cursor(parts: &[&str]) -> String {
     hex::encode(parts.join("\u{1f}"))
 }

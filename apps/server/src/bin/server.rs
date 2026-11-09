@@ -2,14 +2,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::http::{HeaderName, Method, header};
 use clap::Parser;
 use rust_next::config::{AppConfig, CliOverrides, Roles};
-use rust_next::server::build_router;
 use rust_next::server::client_ip::ProxyTrust;
+use rust_next::server::{build_router, cors_layer};
 use rust_next::state::AppState;
 use rust_next::ws::Hub;
-use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;
 
 #[tokio::main]
@@ -201,33 +199,8 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::mirror_request())
-        .allow_methods([
-            Method::GET,
-            Method::POST,
-            Method::PUT,
-            Method::DELETE,
-            Method::PATCH,
-            Method::OPTIONS,
-        ])
-        .allow_headers([
-            header::CONTENT_TYPE,
-            header::AUTHORIZATION,
-            header::ACCEPT,
-            header::UPGRADE,
-            header::CONNECTION,
-            HeaderName::from_static("sec-websocket-key"),
-            HeaderName::from_static("sec-websocket-version"),
-            HeaderName::from_static("sec-websocket-protocol"),
-            HeaderName::from_static("x-guest-grant"),
-            HeaderName::from_static("x-invite-password"),
-        ])
-        .expose_headers([HeaderName::from_static(rust_next::api::NEXT_CURSOR)])
-        .allow_credentials(true);
-
     let proxy_url = config.proxy_url();
-    let app = build_router(proxy_url.as_deref(), &config, state.clone()).layer(cors);
+    let app = build_router(proxy_url.as_deref(), &config, state.clone()).layer(cors_layer());
 
     let addr = config.addr();
     let listener = tokio::net::TcpListener::bind(&addr).await?;
