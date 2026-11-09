@@ -146,6 +146,8 @@ pub struct PasswordChange {
     current: Secret,
     /// The new password or words. Either kind is allowed, regardless of the current one.
     new: Secret,
+    /// `false` also removes the account's backup phrase. Omit or `true` to keep it.
+    keep_recovery: Option<bool>,
 }
 
 fn word_set(username: &str) -> Vec<String> {
@@ -707,13 +709,13 @@ pub(crate) async fn me(
 
 /// Change the password
 ///
-/// Replaces the account's password or words after checking the current one. Every other
-/// session token of the account is revoked and its WebSocket connections close; the token used
-/// for this request stays valid. Each session admits one attempt every 3 seconds, and after 50
-/// wrong current passwords in a UTC day it may not change the password again until the next
-/// day (other sessions and logins are unaffected). Requires a bearer token. Strict and general
-/// rate-limit buckets.
-#[utoipa::path(post, path = "/api/v1/me/password", tag = "Account", request_body(content = PasswordChange, description = "`current` and `new` each take exactly one of `password` (any non-empty text) or `words` (7 words, in order, from the account's word set). Switching between text and words is allowed"), responses((status = 200, description = "Password changed. Every other login token of the account is revoked and their live connections close; the token used for this request stays valid", body = OkResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, or not exactly one of `password` and `words` in `current` or `new`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token (`Unauthorized`), or wrong current password (`Wrong password`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Password changes from this session locked for the day (UTC) after 50 wrong current passwords (separate from the login lockout; other sessions are unaffected)", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since this session's last attempt (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+/// Replaces the account's password or words after checking the current one. Every other session
+/// token of the account is revoked and its WebSocket connections close; the token used for this
+/// request stays valid. The backup phrase stays unless `keep_recovery` is `false`. Each session
+/// admits one attempt every 3 seconds, and after 50 wrong current passwords in a UTC day it may not
+/// change the password again until the next day (other sessions and logins are unaffected).
+/// Requires a bearer token. Strict and general rate-limit buckets.
+#[utoipa::path(post, path = "/api/v1/me/password", tag = "Account", request_body(content = PasswordChange, description = "`current` and `new` each take exactly one of `password` (any non-empty text) or `words` (7 words, in order, from the account's word set). Switching between text and words is allowed"), responses((status = 200, description = "Password changed. Every other login token of the account is revoked and their live connections close; the token used for this request stays valid. With `keep_recovery: false` the backup phrase is removed too", body = OkResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, or not exactly one of `password` and `words` in `current` or `new`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token (`Unauthorized`), or wrong current password (`Wrong password`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Password changes from this session locked for the day (UTC) after 50 wrong current passwords (separate from the login lockout; other sessions are unaffected)", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since this session's last attempt (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn change_password(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -730,7 +732,11 @@ async fn change_password_at(
     req: PasswordChange,
     t: i64,
 ) -> Result<Json<OkResp>, ApiError> {
-    let PasswordChange { current, new } = req;
+    let PasswordChange {
+        current,
+        new,
+        keep_recovery,
+    } = req;
     let Secret {
         password: new_password,
         words: new_words,
@@ -762,6 +768,14 @@ async fn change_password_at(
     .rows_affected();
     if changed != 1 {
         return Err(wrong_password());
+    }
+    if keep_recovery == Some(false) {
+        sqlx::query(
+            "UPDATE users SET recovery_pub = NULL, recovery_set_at = NULL WHERE username = $1",
+        )
+        .bind(&user.username)
+        .execute(&mut *tx)
+        .await?;
     }
     sqlx::query("DELETE FROM tokens WHERE username = $1 AND token <> $2")
         .bind(&user.username)
@@ -1435,7 +1449,18 @@ mod tests {
             axum::http::header::AUTHORIZATION,
             format!("Bearer {token}").parse().expect("header"),
         );
-        change_password_at(state, user, &headers, PasswordChange { current, new }, t).await
+        change_password_at(
+            state,
+            user,
+            &headers,
+            PasswordChange {
+                current,
+                new,
+                keep_recovery: None,
+            },
+            t,
+        )
+        .await
     }
 
     async fn change_as(
@@ -1454,7 +1479,11 @@ mod tests {
             State(state.clone()),
             Authed(user),
             headers,
-            Json(PasswordChange { current, new }),
+            Json(PasswordChange {
+                current,
+                new,
+                keep_recovery: None,
+            }),
         )
         .await
     }
@@ -1506,6 +1535,83 @@ mod tests {
             .execute(&state.db)
             .await
             .expect("insert token");
+    }
+
+    #[tokio::test]
+    async fn password_change_keeps_the_phrase_unless_told() {
+        let (state, path) = temp_state("password_change_phrase").await;
+        let token = register_text(&state, "uma").await.expect("uma").0.token;
+        let key = crate::api::test_util::PHRASE_KEY;
+        sqlx::query(
+            "UPDATE users SET recovery_pub = $1, recovery_set_at = 7 WHERE username = 'uma'",
+        )
+        .bind(key)
+        .execute(&state.db)
+        .await
+        .expect("phrase");
+        let phrase = || async {
+            let user = get_user(&state.db, "uma")
+                .await
+                .expect("load")
+                .expect("uma");
+            (user.recovery_pub, user.recovery_set_at)
+        };
+        let change_with = |current: &'static str, new: &'static str, keep: Option<bool>, t: i64| {
+            let state = state.clone();
+            let token = token.clone();
+            async move {
+                let user = get_user(&state.db, "uma")
+                    .await
+                    .expect("load")
+                    .expect("uma");
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {token}").parse().expect("header"),
+                );
+                change_password_at(
+                    &state,
+                    user,
+                    &headers,
+                    PasswordChange {
+                        current: text(current),
+                        new: text(new),
+                        keep_recovery: keep,
+                    },
+                    t,
+                )
+                .await
+            }
+        };
+        let t = now();
+        let _ = change_with("a", "b", None, t).await.expect("absent keeps");
+        assert_eq!(phrase().await, (Some(key.to_string()), Some(7)));
+        let _ = change_with("b", "c", Some(true), t + 3)
+            .await
+            .expect("true keeps");
+        assert_eq!(phrase().await, (Some(key.to_string()), Some(7)));
+        let ApiError(code, _) = change_with("wrong", "d", Some(false), t + 6)
+            .await
+            .err()
+            .expect("wrong password");
+        assert_eq!(code, StatusCode::UNAUTHORIZED);
+        assert_eq!(phrase().await, (Some(key.to_string()), Some(7)));
+        let _ = change_with("c", "d", Some(false), t + 9)
+            .await
+            .expect("false removes");
+        assert_eq!(phrase().await, (None, None));
+        let user = get_user(&state.db, "uma")
+            .await
+            .expect("load")
+            .expect("uma");
+        assert!(verify_password("d", &user.password_hash).await);
+        let body: PasswordChange = serde_json::from_value(serde_json::json!({
+            "current": {"password": "d"},
+            "new": {"password": "e"},
+        }))
+        .expect("old clients send no keep_recovery");
+        assert_eq!(body.keep_recovery, None);
+        done(state, path).await;
     }
 
     #[tokio::test]

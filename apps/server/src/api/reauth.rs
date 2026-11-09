@@ -91,8 +91,8 @@ pub struct ReAuthBody {
     /// A backup phrase signature over a fresh challenge. The change says which purpose and
     /// context it signs.
     phrase: Option<PhraseProof>,
-    /// `true` to confirm with this session alone. Works only for setting a first backup phrase,
-    /// from a session created less than 15 minutes ago.
+    /// `true` to confirm with this session alone. No change accepts it: it answers 401
+    /// `Confirm with your password`.
     fresh_session: Option<bool>,
     /// A fresh sign-in with an identity provider. No provider is available yet, so this answers
     /// 400 `Unknown sign-in provider`.
@@ -153,10 +153,9 @@ impl Purpose {
         }
     }
 
-    pub fn fresh_session_ok(&self, user: &User) -> bool {
+    pub fn fresh_session_ok(&self, _user: &User) -> bool {
         match self {
-            Purpose::SetPhrase { .. } => user.recovery_pub.is_none(),
-            Purpose::RemovePhrase => false,
+            Purpose::SetPhrase { .. } | Purpose::RemovePhrase => false,
         }
     }
 }
@@ -227,15 +226,17 @@ pub(crate) async fn check_at(
                 false => counted(state, &pace, "Wrong backup phrase").await,
             }
         }
-        ReAuth::FreshSession => {
-            let fresh = -FRESH_SESSION_SKEW_SECS..FRESH_SESSION_SECS;
-            match purpose.fresh_session_ok(user) && fresh.contains(&(t - created_at)) {
-                true => Ok(()),
-                false => Err(refused("Confirm with your password")),
-            }
-        }
+        ReAuth::FreshSession => match purpose.fresh_session_ok(user) && fresh_at(*created_at, t) {
+            true => Ok(()),
+            false => Err(refused("Confirm with your password")),
+        },
         ReAuth::FreshIdp { .. } => Err(bad("Unknown sign-in provider")),
     }
+}
+
+/// Whether a session created at `created_at` is young enough at `t` to confirm on its own.
+fn fresh_at(created_at: i64, t: i64) -> bool {
+    (-FRESH_SESSION_SKEW_SECS..FRESH_SESSION_SECS).contains(&(t - created_at))
 }
 
 /// What a backup phrase signs: `rchat-recovery1`, then the purpose, the lowercase username, the
@@ -668,7 +669,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fresh_session_only_sets_a_first_phrase() {
+    async fn fresh_session_never_sets_or_removes_a_phrase() {
         let (state, path) = temp_state("reauth_fresh").await;
         add_user(&state, "alice", "text", "pw", None).await;
         add_user(&state, "carol", "text", "pw", Some(KEY)).await;
@@ -685,46 +686,29 @@ mod tests {
         );
         let alice = session(&state, "alice", "tok-alice", T).await;
         let carol = session(&state, "carol", "tok-carol", T).await;
-        assert!(set().fresh_session_ok(&alice.user));
-        assert!(!set().fresh_session_ok(&carol.user));
-        assert!(!Purpose::RemovePhrase.fresh_session_ok(&alice.user));
-        check_at(&state, &alice, ReAuth::FreshSession, set(), T + 899)
-            .await
-            .expect("fresh");
+        for user in [&alice.user, &carol.user] {
+            assert!(!set().fresh_session_ok(user));
+            assert!(!Purpose::RemovePhrase.fresh_session_ok(user));
+        }
         let confirm = refusal(StatusCode::UNAUTHORIZED, "Confirm with your password");
-        assert_eq!(
-            denied(check_at(&state, &alice, ReAuth::FreshSession, set(), T + 900).await),
-            confirm
-        );
-        check_at(&state, &alice, ReAuth::FreshSession, set(), T - 60)
-            .await
-            .expect("created up to a minute ahead");
-        for early in [T - 61, T - 30 * 86400] {
+        for (who, purpose, at) in [
+            (&alice, set(), T + 1),
+            (&alice, set(), T),
+            (&alice, set(), T + 899),
+            (&carol, set(), T + 1),
+            (&alice, Purpose::RemovePhrase, T + 1),
+            (&carol, Purpose::RemovePhrase, T + 1),
+        ] {
             assert_eq!(
-                denied(check_at(&state, &alice, ReAuth::FreshSession, set(), early).await),
-                confirm,
-                "created {} s ahead",
-                T - early
+                denied(check_at(&state, who, ReAuth::FreshSession, purpose, at).await),
+                confirm
             );
         }
-        assert_eq!(
-            denied(check_at(&state, &carol, ReAuth::FreshSession, set(), T + 1).await),
-            confirm
-        );
-        assert_eq!(
-            denied(
-                check_at(
-                    &state,
-                    &alice,
-                    ReAuth::FreshSession,
-                    Purpose::RemovePhrase,
-                    T + 1
-                )
-                .await
-            ),
-            confirm
-        );
         assert_eq!(failures(&state, "tok-alice").await, 0);
+        assert_eq!(failures(&state, "tok-carol").await, 0);
+        check_at(&state, &alice, ReAuth::Password("pw".into()), set(), T + 1)
+            .await
+            .expect("the password sets a first phrase");
         done(state, path).await;
     }
 

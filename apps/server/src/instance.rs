@@ -445,6 +445,9 @@ pub struct Features {
     pub previews: bool,
     /// `POST /api/v1/identity/assertion` is available.
     pub identity_assertions: bool,
+    /// Backup phrases (`/api/v1/me/recovery` and `POST /api/v1/auth/recovery`) are supported.
+    /// Whether new phrases can be set is the `backup_phrase` switch of `GET /api/v1/settings`.
+    pub backup_phrase: bool,
 }
 
 /// Limits of this instance.

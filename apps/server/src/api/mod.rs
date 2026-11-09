@@ -1721,6 +1721,10 @@ pub fn routes(
             .route("/auth/recovery/challenge", post(recovery::challenge))
             .route("/auth/recovery", post(recovery::recover))
             .route("/me/password", post(auth::change_password))
+            .route(
+                "/me/recovery",
+                put(recovery::set_phrase).delete(recovery::remove_phrase),
+            )
             .route("/servers/{name}/guest_access", post(servers::guest_access))
             .route("/servers", post(servers::create_server))
             .route("/servers/{name}", patch(servers::update_server))
@@ -1807,6 +1811,7 @@ fn api_routes(
 ) -> Router<AppState> {
     Router::new()
         .route("/me", get(auth::me).patch(auth::patch_me))
+        .route("/me/recovery", get(recovery::status))
         .route("/auth/logout", post(auth::logout))
         .route("/me/servers", get(servers::list_my_servers))
         .route("/users/{username}/profile", get(users::profile))

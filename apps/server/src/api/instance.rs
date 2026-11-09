@@ -89,6 +89,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
             p2p_attachments,
             previews: asset_previews,
             identity_assertions: true,
+            backup_phrase: true,
         },
         &state.limits,
     )
@@ -512,6 +513,7 @@ mod tests {
         assert_eq!(info["jwks_uri"], format!("{base}/.well-known/jwks.json"));
         assert_eq!(info["features"]["guests"], true);
         assert_eq!(info["features"]["p2p_attachments"], true);
+        assert_eq!(info["features"]["backup_phrase"], true);
         assert_eq!(info["limits"]["page_size"], 50);
         let res = client
             .get(format!("{base}/.well-known/rchat"))
@@ -1107,6 +1109,7 @@ mod tests {
                 p2p_attachments: true,
                 previews: true,
                 identity_assertions: true,
+                backup_phrase: true,
             },
             &state.limits,
         );
