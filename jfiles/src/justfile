@@ -10,12 +10,10 @@ default:
   just --list
 
 # Install all dependencies
-install:
-  cd {{ROOT}} && bun install
-  cargo install taplo-cli
-  cargo install wasm-pack
+install: deps
+  cargo install wasm-pack --version 0.15.0 --locked
   cargo install wasm-bindgen-cli --version 0.2.129 --locked
-  cargo install tauri-cli --version "^2" --locked
+  cargo install tauri-cli --version 2.12.2 --locked
 
 # Amend no edit
 amend:

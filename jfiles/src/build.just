@@ -17,15 +17,16 @@ build-api:
   cd {{ROOT}} && cargo build --release --bin server
 
 # Build Next.js for production (standalone)
-build-frontend:
+build-frontend: deps
   cd {{ROOT}} && bun run build
   @echo "Copying static assets for standalone build..."
+  cd {{WEB}} && rm -rf .next/standalone/apps/web/.next/static .next/standalone/apps/web/public
   cd {{WEB}} && cp -r .next/static .next/standalone/apps/web/.next/static
   cd {{WEB}} && cp -r public .next/standalone/apps/web/public
 
-# Build static frontend baked with a remote API URL (connects to an api-only server)
 # Usage: just src build-static https://api.example.com
-build-static api_url:
+[doc("Build the static frontend baked with a remote API URL (for an api-only server)")]
+build-static api_url: deps build-wasm
   cd {{ROOT}} && STATIC_EXPORT=true NEXT_PUBLIC_API_URL={{api_url}} bun run build
   cd {{WEB}} && cp out/index.html out/404.html
   @echo "Static site in {{WEB}}/out (API: {{api_url}}); serve it on any static host."
@@ -34,44 +35,59 @@ build-static api_url:
 build-all: build-wasm build-api build-frontend
   @echo ""
   @echo "Production build complete!"
-  @echo "  API binary:  {{ROOT}}/target/release/server"
+  @echo "  API binary:  {{CARGO_TARGET}}/release/server"
   @echo "  WASM:        {{WEB}}/public/wasm/"
   @echo "  Frontend:    {{WEB}}/.next/standalone/"
   @echo ""
-  @echo "Run with: just src prod"
+  @echo "Run with: just src start-prod"
 
 # Check Rust code without building
 check:
   cd {{ROOT}} && cargo check
 
+# Run every check a commit needs (formatting, lints, types, all tests, build)
+gates: deps
+  cd {{ROOT}} && cargo fmt --all --check
+  cd {{ROOT}} && cargo clippy --workspace {{DESKTOP_CRATES}} --all-targets -- -D warnings
+  cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt --check
+  cd {{ROOT}} && bunx eslint . --ignore-pattern '.superpowers/**'
+  cd {{ROOT}} && bunx tsc --noEmit -p apps/web
+  cd {{ROOT}} && bunx prettier --check "**/*.{ts,tsx,js,jsx,json,md,mjs}" {{PRETTIER_IGNORES}}
+  cd {{ROOT}} && cargo test --workspace {{DESKTOP_CRATES}}
+  cd {{ROOT}} && bun test scripts
+  cd {{WEB}} && bun test app
+  cd {{ROOT}} && bun run build
+
 # Format and lint all code
-fmt:
-  cd {{ROOT}} && cargo clippy --all-targets --all-features --fix --allow-dirty -- -D warnings
+fmt: deps
+  cd {{ROOT}} && cargo clippy --workspace {{DESKTOP_CRATES}} --all-targets --fix --allow-dirty -- -D warnings
   cd {{ROOT}} && cargo fmt --all
-  cd {{ROOT}} && taplo fmt
-  cd {{ROOT}} && bunx prettier --write "**/*.{ts,tsx,js,jsx,json,md,mjs}"
+  cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt
+  cd {{ROOT}} && bunx eslint . --ignore-pattern '.superpowers/**' --fix
+  cd {{ROOT}} && bunx prettier --write "**/*.{ts,tsx,js,jsx,json,md,mjs}" {{PRETTIER_IGNORES}}
 
 # Check formatting and linting without changes
-fmt-check:
+fmt-check: deps
   cd {{ROOT}} && cargo fmt --check --all
-  cd {{ROOT}} && cargo clippy --all-targets --all-features -- -D warnings
-  cd {{ROOT}} && taplo fmt --check
-  cd {{ROOT}} && bunx prettier --check "**/*.{ts,tsx,js,jsx,json,md,mjs}"
+  cd {{ROOT}} && cargo clippy --workspace {{DESKTOP_CRATES}} --all-targets -- -D warnings
+  cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt --check
+  cd {{ROOT}} && bunx eslint . --ignore-pattern '.superpowers/**'
+  cd {{ROOT}} && bunx prettier --check "**/*.{ts,tsx,js,jsx,json,md,mjs}" {{PRETTIER_IGNORES}}
 
 # Format Rust only
 fmt-rust:
-  cd {{ROOT}} && cargo clippy --all-targets --all-features --fix --allow-dirty -- -D warnings
+  cd {{ROOT}} && cargo clippy --workspace {{DESKTOP_CRATES}} --all-targets --fix --allow-dirty -- -D warnings
   cd {{ROOT}} && cargo fmt --all
-  cd {{ROOT}} && taplo fmt
+  cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt
 
 # Format TypeScript/frontend only
-fmt-ts:
-  cd {{ROOT}} && bun run lint --fix
-  cd {{ROOT}} && bunx prettier --write "**/*.{ts,tsx,js,jsx,json,md,mjs}"
+fmt-ts: deps
+  cd {{ROOT}} && bunx eslint . --ignore-pattern '.superpowers/**' --fix
+  cd {{ROOT}} && bunx prettier --write "**/*.{ts,tsx,js,jsx,json,md,mjs}" {{PRETTIER_IGNORES}}
 
 # Build Docker image
 docker:
-  cd {{ROOT}} && docker build -t rust-next .
+  cd {{ROOT}} && docker build -t rchat .
 
 # Run Docker container
 docker-run:

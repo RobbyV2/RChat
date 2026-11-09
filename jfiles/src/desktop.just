@@ -1,16 +1,16 @@
 import "../common.just"
 
-# Desktop app (Tauri): needs `cargo install tauri-cli --version "^2" --locked` and the
+# Desktop app (Tauri): needs tauri-cli 2.12.2, wasm-pack and the
 # wasm-bindgen CLI pinned in Cargo.lock (`just src install`)
 
 # Run the desktop app against the Next dev server on 127.0.0.1:1430, with hot reload
-desktop: build-wasm-dev
+desktop: deps build-wasm-dev
   cd {{DESKTOP}} && cargo tauri dev
 
 # Usage: just src desktop-build, or just src desktop-build --bundles deb
-# Build the desktop app bundles for this OS (release, in target/release/bundle; the Tauri
-# beforeBuildCommand builds the wasm and the static export)
-desktop-build *args:
+# The Tauri beforeBuildCommand builds the wasm and the static export.
+[doc("Build the desktop app bundles for this OS (release, in target/release/bundle)")]
+desktop-build *args: deps
   #!/usr/bin/env bash
   set -euo pipefail
   if [ "$(uname -s)" = Linux ] && ! pkg-config --exists webkit2gtk-4.1 libsoup-3.0; then
@@ -22,5 +22,5 @@ desktop-build *args:
   cd "{{DESKTOP}}" && cargo tauri build {{args}}
 
 # Debug build of the desktop app without bundles, for quick checks
-desktop-debug:
+desktop-debug: deps
   cd {{DESKTOP}} && cargo tauri build --debug --no-bundle

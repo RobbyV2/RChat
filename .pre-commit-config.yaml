@@ -1,43 +1,87 @@
+# Setup: install pre-commit (or prek), then run `pre-commit install`.
+# Commits run the formatters and linters. Pushes also run the Rust and script tests.
+# The web suite and the build: `pre-commit run --hook-stage manual --all-files` (or `just src gates`).
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
 repos:
   - repo: local
     hooks:
-      # Rust formatting
       - id: cargo-fmt
         name: cargo fmt
         entry: cargo fmt --all --
         language: system
         types: [rust]
-        pass_filenames: true
 
-      # Rust linting
       - id: cargo-clippy
         name: cargo clippy
-        entry: cargo clippy --all-targets --all-features -- -D warnings
+        entry: cargo clippy --workspace --exclude rchat-desktop --exclude tauri-plugin-rchat-share --all-targets -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
 
-      # TOML formatting
       - id: taplo-fmt
         name: taplo fmt
-        entry: taplo fmt
+        entry: bunx @taplo/cli@0.7.0 fmt
         language: system
         types: [toml]
-        pass_filenames: false
 
-      # TypeScript/JavaScript linting
       - id: eslint
         name: eslint
-        entry: bun run lint
+        entry: bunx eslint . --ignore-pattern '.superpowers/**'
         language: system
         types_or: [javascript, jsx, ts, tsx]
         pass_filenames: false
 
-      # Prettier formatting
+      - id: tsc
+        name: tsc (web)
+        entry: bunx tsc --noEmit -p apps/web
+        language: system
+        files: ^apps/web/
+        types_or: [ts, tsx]
+        pass_filenames: false
+
       - id: prettier
         name: prettier
-        entry: bunx prettier --write
+        entry: bunx prettier --write --ignore-unknown
         language: system
         types_or: [javascript, jsx, ts, tsx, json, markdown]
-        pass_filenames: true
 
+      - id: cargo-test
+        name: cargo test
+        entry: cargo test --workspace --exclude rchat-desktop --exclude tauri-plugin-rchat-share
+        language: system
+        types_or: [rust, toml]
+        pass_filenames: false
+        stages: [pre-push, manual]
+
+      - id: desktop-clippy
+        name: cargo clippy (desktop)
+        entry: bash -c 'test -d apps/web/out || bun run build:desktop; cargo clippy -p rchat-desktop -p tauri-plugin-rchat-share --all-targets -- -D warnings'
+        language: system
+        files: ^apps/desktop/
+        pass_filenames: false
+        stages: [pre-push, manual]
+
+      - id: script-tests
+        name: bun test scripts
+        entry: bun test scripts
+        language: system
+        files: ^(scripts|deploy|packaging)/
+        pass_filenames: false
+        stages: [pre-push, manual]
+
+      - id: web-tests
+        name: bun test app (web)
+        entry: bash -c 'cd apps/web && bun test app'
+        language: system
+        files: ^apps/web/
+        pass_filenames: false
+        stages: [manual]
+
+      - id: build
+        name: bun run build
+        entry: bun run build
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [manual]
