@@ -16,6 +16,8 @@ export interface ClientLimits {
   servers_per_account: number
   session_max_age_secs: number
   session_idle_secs: number
+  // Seconds an uploaded file stays by default (servers may choose otherwise).
+  media_retention_secs: number
 }
 
 export const DEFAULT_LIMITS: Readonly<ClientLimits> = Object.freeze({
@@ -29,6 +31,7 @@ export const DEFAULT_LIMITS: Readonly<ClientLimits> = Object.freeze({
   servers_per_account: 0,
   session_max_age_secs: 0,
   session_idle_secs: 0,
+  media_retention_secs: 86400,
 })
 
 const KEYS = Object.keys(DEFAULT_LIMITS) as (keyof ClientLimits)[]

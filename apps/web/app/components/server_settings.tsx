@@ -56,6 +56,7 @@ import { ServerAccessSection, passwordName } from './server_access'
 import { ColorField } from './color_field'
 import { ServerHeader } from './server_header'
 import { ServerSystemMessages } from './system_messages'
+import { ServerUploadExpiry } from './upload_expiry'
 import { TopicEditor } from './channel_topic'
 import {
   BANNER_PRESETS,
@@ -1189,6 +1190,7 @@ function Settings({ server }: { server: string }) {
           <FieldError message={renameError} />
           <ServerAppearance server={server} />
           <ServerSystemMessages server={server} />
+          <ServerUploadExpiry server={server} />
           <ServerAccessSection
             server={server}
             hasPassword={detail.has_password}
@@ -1223,6 +1225,7 @@ function Settings({ server }: { server: string }) {
         <>
           <ServerAppearance server={server} />
           <ServerSystemMessages server={server} />
+          <ServerUploadExpiry server={server} />
         </>
       )}
       {hasPerm(perms, Perm.ManageAdmins) && (

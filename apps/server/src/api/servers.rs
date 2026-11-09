@@ -948,6 +948,10 @@ async fn server_detail(
     let layout_version = layout_version(db, &name).await?;
     let member_count = member_count(db, &name).await?;
     let online_count = hub.online_count(&name);
+    let expiry = crate::api::upload_expiry::UploadExpiryState::of(
+        crate::api::upload_expiry::stored(db, &name).await?,
+        &crate::api::Settings::cached(db).await,
+    );
     Ok(ServerDetail {
         name: name.clone(),
         display_name,
@@ -963,6 +967,8 @@ async fn server_detail(
         role_limits: role_limits(db, access).await?,
         member_count,
         online_count,
+        upload_expiry: expiry.upload_expiry,
+        upload_ttl: expiry.upload_ttl,
     })
 }
 

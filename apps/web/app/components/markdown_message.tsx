@@ -101,6 +101,8 @@ import { Stamp } from './timestamp'
 import { splitStamps, type StampStyle } from '../lib/timestamps'
 import { MaskControl, Masked, MaskedWord, MaskedWords, MaskPlain, useOwn } from './ui'
 import { mentionHandle } from '../lib/display_name'
+import { removedLifetime, removedTail } from '../lib/upload_expiry'
+import { useUploadLifetime } from './upload_expiry'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -875,11 +877,20 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   )
 }
 
-function MediaAttachment({ media, own }: { media: MessageMedia; own: boolean }) {
+function MediaAttachment({
+  media,
+  own,
+  postedAt,
+}: {
+  media: MessageMedia
+  own: boolean
+  postedAt: number
+}) {
   const previews = useStore(s => s.settings.asset_previews)
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const [revealed, setRevealed] = useState(false)
   const always = useSpoilersOpen()
+  const lifetime = useUploadLifetime(server)
   const { id, filename, removed, removed_by_author, spoiler, expires_at } = media
   const image = previews && IMAGE_EXT.test(filename)
   const src = useMediaSrc(id, server, image && !removed)
@@ -893,9 +904,14 @@ function MediaAttachment({ media, own }: { media: MessageMedia; own: boolean }) 
   if (removed) {
     return (
       <p className="mt-1 text-xs text-on-surface-variant italic">
-        {removed_by_author
-          ? 'Attachment removed'
-          : `File ${filename} was removed after 1 day of posting`}
+        {removed_by_author ? (
+          'Attachment removed'
+        ) : (
+          <>
+            File <Masked text={filename} own={own} />{' '}
+            {removedTail(removedLifetime(expires_at, postedAt, lifetime))}
+          </>
+        )}
       </p>
     )
   }
@@ -1250,7 +1266,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
           ) : media.kind === 'p2p' && !media.removed ? (
             <P2pFile media={media} messageId={message.id} />
           ) : (
-            <MediaAttachment media={media} own={own} />
+            <MediaAttachment media={media} own={own} postedAt={message.created_at} />
           )}
           {canDelete && !media.removed && (
             <button

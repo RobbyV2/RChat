@@ -143,13 +143,17 @@ impl Registration {
 }
 
 /// The env values that seed the feature switches at first start, checked at start: a switch is
-/// on or off (also true/false, yes/no, 1/0), `AUTH_REGISTRATION` open, sso or closed.
+/// on or off (also true/false, yes/no, 1/0), `AUTH_REGISTRATION` open, sso or closed,
+/// `UPLOAD_EXPIRY_MAX_DAYS` 0 to 365.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FeatureSeeds {
     /// The switches the env sets.
     pub switches: Vec<(Feature, bool)>,
     pub registration: Option<Registration>,
+    pub upload_expiry_max_days: Option<i64>,
 }
+
+const CAP_ENV: &str = "UPLOAD_EXPIRY_MAX_DAYS";
 
 impl FeatureSeeds {
     pub fn load(env: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<FeatureSeeds> {
@@ -169,9 +173,24 @@ impl FeatureSeeds {
             })?),
             None => None,
         };
+        let upload_expiry_max_days = match e.raw(CAP_ENV) {
+            Some(raw) => Some(
+                raw.parse::<i64>()
+                    .ok()
+                    .filter(|d| (0..=crate::api::upload_expiry::CAP_DAYS_MAX).contains(d))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "{CAP_ENV}: expected 0 to {}, got {raw}",
+                            crate::api::upload_expiry::CAP_DAYS_MAX
+                        )
+                    })?,
+            ),
+            None => None,
+        };
         Ok(FeatureSeeds {
             switches,
             registration,
+            upload_expiry_max_days,
         })
     }
 
@@ -208,6 +227,22 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
         FeatureSeeds::load(&|name| set.get(name).cloned())
+    }
+
+    #[test]
+    fn the_upload_expiry_cap_seeds_from_0_to_365_days() {
+        assert_eq!(seeds(&[]).expect("unset").upload_expiry_max_days, None);
+        for (raw, days) in [("0", 0), (" 30 ", 30), ("365", 365)] {
+            let got = seeds(&[("UPLOAD_EXPIRY_MAX_DAYS", raw)]).expect(raw);
+            assert_eq!(got.upload_expiry_max_days, Some(days), "{raw}");
+        }
+        for raw in ["-1", "366", "1.5", "week"] {
+            let err = seeds(&[("UPLOAD_EXPIRY_MAX_DAYS", raw)]).expect_err(raw);
+            assert_eq!(
+                err.to_string(),
+                format!("UPLOAD_EXPIRY_MAX_DAYS: expected 0 to 365, got {raw}")
+            );
+        }
     }
 
     #[test]
@@ -351,5 +386,8 @@ mod tests {
         }
         let value = documented(Registration::ENV, "open, sso or closed");
         assert_eq!(Registration::parse(&value), Some(Registration::Open));
+        let value = documented(super::CAP_ENV, "0 to 365 days");
+        let shown = seeds(&[(super::CAP_ENV, &value)]).expect("loads");
+        assert_eq!(shown.upload_expiry_max_days, Some(0));
     }
 }

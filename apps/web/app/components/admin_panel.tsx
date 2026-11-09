@@ -27,9 +27,11 @@ import { FEATURE_ROWS, NEW_ACCOUNTS } from '../lib/features'
 import {
   Chips,
   Dialog,
+  FieldError,
   Sentinel,
   dangerBtn,
   fieldCls,
+  filledBtn,
   filledDangerBtn,
   sectionCls,
   textBtn,
@@ -196,6 +198,61 @@ function NewAccounts({ line }: { line: string }) {
   )
 }
 
+// The longest upload expiry servers may choose, in days; 0 for no limit.
+function UploadExpiryCap() {
+  const days = useStore(s => s.settings.upload_expiry_max_days ?? 0)
+  const updateSettings = useStore(s => s.updateSettings)
+  const [text, setText] = useState(String(days))
+  const [seen, setSeen] = useState(days)
+  const [error, setError] = useState<string | null>(null)
+  const id = useId()
+  if (seen !== days) {
+    setSeen(days)
+    setText(String(days))
+  }
+  const value = Number(text)
+  const valid = text.trim() !== '' && Number.isInteger(value) && value >= 0 && value <= 365
+  return (
+    <form
+      data-upload-expiry-cap
+      onSubmit={e => {
+        e.preventDefault()
+        if (!valid) return setError('Enter 0 to 365 days.')
+        setError(null)
+        void updateSettings({ upload_expiry_max_days: value })
+      }}
+      className="flex flex-col gap-1.5 px-2 py-1.5"
+    >
+      <label htmlFor={id} className="flex flex-col">
+        <span className="text-sm">Longest file expiry</span>
+        <span className="text-xs text-on-surface-variant">
+          Days a server may keep uploaded files, 1 to 365. 0: no limit, and servers may keep files
+          until they are removed.
+        </span>
+      </label>
+      <span className="flex items-center gap-2">
+        <input
+          id={id}
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={365}
+          value={text}
+          onChange={e => setText(e.target.value)}
+          className={`${fieldCls} max-w-24 flex-none`}
+        />
+        <button
+          disabled={!valid || value === days}
+          className={`${filledBtn} cursor-pointer disabled:cursor-default`}
+        >
+          Save
+        </button>
+      </span>
+      <FieldError message={error} />
+    </form>
+  )
+}
+
 function FeatureSwitches() {
   const settings = useStore(s => s.settings)
   const updateSettings = useStore(s => s.updateSettings)
@@ -212,6 +269,7 @@ function FeatureSwitches() {
               onChange={v => void updateSettings({ [key]: v })}
             />
             {key === 'profanity_filter' && <ProfanityTargetChecks />}
+            {key === 'asset_uploads' && <UploadExpiryCap />}
             {key === 'p2p_attachments' && !settings.asset_uploads && !settings.p2p_attachments && (
               <p className="px-2 pb-1 text-xs text-on-surface-variant">
                 Text only: no attachments, in P2P conversations too.

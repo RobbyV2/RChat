@@ -247,6 +247,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             rules: _,
         }
         | WsEvent::RolesChanged { server }
+        | WsEvent::UploadExpiryChanged { server }
         | WsEvent::ChannelPermsChanged {
             server,
             channel_id: _,

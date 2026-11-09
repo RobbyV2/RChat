@@ -81,6 +81,7 @@ const FIELD_LABELS: Record<string, string> = {
   more_authors: 'More authors',
   thread: 'Thread replies',
   owner: 'Owner',
+  upload_expiry: 'File expiry',
 }
 
 export const fieldLabel = (field: string) => FIELD_LABELS[field] ?? field.replaceAll('_', ' ')
@@ -123,12 +124,14 @@ export function valueText(field: string, v: unknown): string {
   }
   if (typeof v === 'number') {
     if (field === 'slowmode_seconds') return slowLabel(v)
+    if (field === 'upload_expiry') return durationText(v)
     if (field === 'perms') return permNames(v)
     if (field === 'expires_at' || field === 'until') return new Date(v * 1000).toLocaleString()
     if (field === 'duration' || field === 'remaining') return durationText(v)
     return String(v)
   }
   if (typeof v === 'string') {
+    if (field === 'upload_expiry') return v === 'never' ? 'Never' : 'Default'
     if (field === 'kind') return v === 'voice' ? 'Voice' : 'Text'
     if (field === 'permanent_password') return PASSWORD_MODES[v] ?? v
     return v

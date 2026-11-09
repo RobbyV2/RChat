@@ -105,6 +105,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("media", "charged_server TEXT"),
     ("users", "recovery_pub TEXT"),
     ("users", "recovery_set_at {INT}"),
+    ("servers", "upload_expiry {INT}"),
+    ("media", "ttl {INT}"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -164,10 +166,12 @@ const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 /// 19: recovery phrase columns (`users.recovery_pub`, `users.recovery_set_at`) and
 /// `recovery_challenges`.
 /// 20: the instance audit log (`instance_audit`).
-pub const SCHEMA_VERSION: i64 = 20;
+/// 21: per-server upload expiry (`servers.upload_expiry`), `media.ttl` with its sweep and cap
+/// indexes, and the `messages_media_release` trigger.
+pub const SCHEMA_VERSION: i64 = 21;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 12] {
     [
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_revoked ON server_passwords(revoked_at) WHERE revoked_at IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_expires ON server_passwords(expires_at) WHERE expires_at IS NOT NULL",
@@ -185,6 +189,9 @@ pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 9] {
         "CREATE INDEX IF NOT EXISTS idx_messages_system_channel ON messages(channel_id, created_at) WHERE kind IN ('join','leave')",
         "CREATE INDEX IF NOT EXISTS idx_messages_pin_notice ON messages(pin_message_id, created_at) WHERE kind = 'pin'",
         "CREATE INDEX IF NOT EXISTS idx_guest_grants_network ON guest_grants(server, network) WHERE network IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_media_default_expiry ON media(uploaded_at) WHERE ttl IS NULL",
+        "CREATE INDEX IF NOT EXISTS idx_media_timed_expiry ON media((uploaded_at + ttl)) WHERE ttl > 0",
+        "CREATE INDEX IF NOT EXISTS idx_media_kept ON media(ttl) WHERE ttl IS NOT NULL",
     ]
 }
 
@@ -484,6 +491,12 @@ pub(super) async fn init_schema(
         conn,
         crate::api::features::Registration::KEY,
         features.registration().as_str(),
+    )
+    .await?;
+    seed_setting(
+        conn,
+        crate::api::upload_expiry::CAP_KEY,
+        &features.upload_expiry_max_days.unwrap_or(0).to_string(),
     )
     .await?;
     for (key, value) in [

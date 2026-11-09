@@ -29,6 +29,7 @@ pub mod recovery;
 pub mod servers;
 pub mod system_messages;
 pub mod timeouts;
+pub mod upload_expiry;
 pub mod users;
 pub mod webhooks;
 
@@ -572,6 +573,11 @@ pub struct ServerDetail {
     pub member_count: i64,
     /// Number of members of this server who are online right now (anywhere on the site).
     pub online_count: i64,
+    /// How long files uploaded here stay (`PUT /api/v1/servers/{name}/upload_expiry`).
+    pub upload_expiry: upload_expiry::UploadExpiry,
+    /// Seconds a new file stays after upload, after the instance cap; `null` when files are kept
+    /// until removed.
+    pub upload_ttl: Option<i64>,
 }
 
 /// A direct-message conversation of the signed-in user.
@@ -602,8 +608,9 @@ pub struct MediaRef {
     pub kind: MediaKind,
     /// Username of the user sharing a `p2p` file; `null` for `server` media.
     pub hoster: Option<String>,
-    /// Unix seconds when the file goes away: 24 hours after upload for `server` media, and
-    /// the sender's chosen expiry for `p2p` media (`null` means no expiry).
+    /// Unix seconds when the file goes away (`null`: kept until removed). For `server` media
+    /// this follows the server's upload expiry (24 hours after upload by default; DMs always
+    /// use the default); for `p2p` media it is the sender's chosen expiry.
     pub expires_at: Option<i64>,
     /// Size in bytes, known for `p2p` media; `null` for `server` media.
     pub size: Option<i64>,
@@ -624,13 +631,18 @@ pub struct MediaRef {
 }
 
 impl MediaRef {
-    pub fn server(id: String, filename: String, spoiler: bool, expires_at: i64) -> MediaRef {
+    pub fn server(
+        id: String,
+        filename: String,
+        spoiler: bool,
+        expires_at: Option<i64>,
+    ) -> MediaRef {
         MediaRef {
             id,
             filename,
             kind: MediaKind::Server,
             hoster: None,
-            expires_at: Some(expires_at),
+            expires_at,
             size: None,
             mime: None,
             sha256: None,
@@ -1284,6 +1296,11 @@ pub struct Settings {
     /// `password_login` is on.
     #[serde(default)]
     pub registration: Registration,
+    /// Longest upload expiry a server may choose, in days: 1 to 365, or 0 for no cap (servers
+    /// may then also keep files until they are removed). Longer choices are shortened to it.
+    /// `UPLOAD_EXPIRY_MAX_DAYS` seeds it; 0 by default.
+    #[serde(default)]
+    pub upload_expiry_max_days: i64,
 }
 
 pub(crate) fn yes() -> bool {
@@ -1321,11 +1338,12 @@ impl Settings {
         p2p: false,
         client_other_instances: false,
         registration: Registration::Closed,
+        upload_expiry_max_days: 1,
     };
 
     pub async fn load(db: &Db) -> Settings {
         let rows = match sqlx::query(
-            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'p2p_attachments', 'guests_enabled', 'outgoing_webhooks', 'server_reports', 'instance_reports', 'widgets', 'widget_chat', 'widget_read_links', 'widget_bridge', 'e2ee', 'e2ee_compliance', 'backup_phrase', 'p2p_backup', 'display_names', 'onboarding', 'password_login', 'sfu', 'p2p', 'client_other_instances', 'registration') OR key LIKE 'profanity\\_%' ESCAPE '\\'",
+            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'p2p_attachments', 'guests_enabled', 'outgoing_webhooks', 'server_reports', 'instance_reports', 'widgets', 'widget_chat', 'widget_read_links', 'widget_bridge', 'e2ee', 'e2ee_compliance', 'backup_phrase', 'p2p_backup', 'display_names', 'onboarding', 'password_login', 'sfu', 'p2p', 'client_other_instances', 'registration', 'upload_expiry_max_days') OR key LIKE 'profanity\\_%' ESCAPE '\\'",
         )
             .fetch_all(db)
             .await
@@ -1387,6 +1405,11 @@ impl Settings {
             registration: value(Registration::KEY)
                 .map_or(Some(Registration::Open), |v| Registration::parse(&v))
                 .unwrap_or(Registration::Closed),
+            upload_expiry_max_days: value(upload_expiry::CAP_KEY).map_or(0, |v| {
+                v.trim()
+                    .parse::<i64>()
+                    .map_or(1, |d| d.clamp(0, upload_expiry::CAP_DAYS_MAX))
+            }),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1439,6 +1462,7 @@ impl Settings {
             p2p,
             client_other_instances,
             registration: _,
+            upload_expiry_max_days: _,
         } = *self;
         match feature {
             Feature::ServerReports => server_reports,
@@ -2002,6 +2026,10 @@ fn api_routes(
         .route("/identity/assertion", post(instance::assertion))
         .route("/p2p/ice", get(instance::ice))
         .route("/admin/settings", patch(admin::patch_settings))
+        .route(
+            "/servers/{name}/upload_expiry",
+            get(upload_expiry::get_upload_expiry).put(upload_expiry::set_upload_expiry),
+        )
         .route("/admin/overview", get(admin::overview))
         .route("/admin/users", get(admin::list_users))
         .route("/admin/servers", get(admin::list_servers))

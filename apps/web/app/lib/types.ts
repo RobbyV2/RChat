@@ -1,3 +1,4 @@
+import type { UploadExpiry } from './upload_expiry'
 import type { TimeoutWire } from './timeouts'
 
 export type AvatarKind = 'identicon' | 'color'
@@ -213,6 +214,9 @@ export interface ServerDetail {
   role_limits?: RoleLimits
   member_count: number
   online_count: number
+  // Absent on servers before per-server upload expiry: the instance default.
+  upload_expiry?: UploadExpiry
+  upload_ttl?: number | null
 }
 
 export interface RoleLimits {
@@ -559,6 +563,8 @@ export interface SiteSettings {
   p2p: boolean
   client_other_instances: boolean
   registration: Registration
+  // Days; 0 or absent: no cap.
+  upload_expiry_max_days?: number
 }
 
 export type Registration = 'open' | 'sso' | 'closed'
@@ -821,6 +827,7 @@ export type WsEvent =
   | { type: 'member_kicked'; server: string; username: string; banned: boolean }
   | { type: 'admin_changed'; server: string; username: string; is_admin: boolean; perms: number }
   | { type: 'roles_changed'; server: string }
+  | { type: 'upload_expiry_changed'; server: string }
   | { type: 'channel_perms_changed'; server: string; channel_id: number }
   | { type: 'layout_changed'; server: string; layout: ChannelLayout }
   | { type: 'user_updated'; user: UserRef }

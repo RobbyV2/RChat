@@ -57,7 +57,7 @@ export function Chips<T extends string | number>({
           role="radio"
           aria-checked={value === o.value}
           onClick={() => onChange(o.value)}
-          className={`rounded-full border px-3 py-1.5 text-sm ${
+          className={`cursor-pointer rounded-full border px-3 py-1.5 text-sm ${
             value === o.value
               ? 'border-transparent bg-secondary-container text-on-secondary-container'
               : 'border-outline text-on-surface-variant hover:bg-surface-container-highest'

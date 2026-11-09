@@ -87,7 +87,7 @@ pub(crate) fn clean_mime(raw: &str) -> String {
 /// The operator's upload limits.
 #[derive(Clone, Copy, Debug)]
 pub struct UploadLimits {
-    /// Most bytes of one account's files kept at once (uploads live a day); 0 for no limit.
+    /// Most bytes of one account's files kept at once; 0 for no limit.
     pub budget: u64,
     /// Most bytes of upload bodies held in memory at once across all requests.
     pub buffer: u64,
@@ -575,16 +575,16 @@ fn over_budget(budget: u64, charge: Charge<'_>) -> ApiError {
     ApiError(
         StatusCode::TOO_MANY_REQUESTS,
         format!(
-            "Upload limit reached: up to {} of {whose} are kept at once, and each is deleted 1 day after upload",
+            "Upload limit reached: up to {} of {whose} are kept at once. Space frees up as they expire or are removed",
             fmt_bytes(budget)
         ),
     )
 }
 
 /// The files counted against an account: its own uploads and those charged to it.
-const ACCOUNT_USED: &str = "SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) FROM media WHERE (uploader = $1 OR charged_to = $1) AND uploaded_at > $2";
+const ACCOUNT_USED: &str = "SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) FROM media WHERE (uploader = $1 OR charged_to = $1) AND (ttl = 0 OR uploaded_at + COALESCE(ttl, $3) > $2)";
 /// The files of a server's webhooks.
-const HOOKS_USED: &str = "SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) FROM media WHERE charged_server = $1 AND uploaded_at > $2";
+const HOOKS_USED: &str = "SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) FROM media WHERE charged_server = $1 AND (ttl = 0 OR uploaded_at + COALESCE(ttl, $3) > $2)";
 
 /// Refuses an upload of `adding` bytes that would take `charge` past the storage budget.
 pub(crate) async fn check_budget(
@@ -603,7 +603,8 @@ pub(crate) async fn check_budget(
     for (sql, key) in checks {
         let used: i64 = sqlx::query(sql)
             .bind(key)
-            .bind(now() - MEDIA_TTL_SECS)
+            .bind(now())
+            .bind(MEDIA_TTL_SECS)
             .fetch_one(db)
             .await?
             .try_get(0)?;
@@ -713,7 +714,7 @@ async fn store_within(
         .map(|_| charge.account.to_string())
         .filter(|account| account != file.uploader);
     let inserted = sqlx::query(
-        "INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at, charged_to, charged_server) SELECT $1, $2, $3, $4, NULL, $5, $6, $9, $10 WHERE $7 = 0 OR ((SELECT COALESCE(SUM(size), 0) FROM media WHERE (uploader = $11 OR charged_to = $11) AND uploaded_at > $8) + $4 <= $7 AND ($10 IS NULL OR (SELECT COALESCE(SUM(size), 0) FROM media WHERE charged_server = $10 AND uploaded_at > $8) + $4 <= $7))",
+        "INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at, charged_to, charged_server) SELECT $1, $2, $3, $4, NULL, $5, $6, $9, $10 WHERE $7 = 0 OR ((SELECT COALESCE(SUM(size), 0) FROM media WHERE (uploader = $11 OR charged_to = $11) AND (ttl = 0 OR uploaded_at + COALESCE(ttl, $12) > $8)) + $4 <= $7 AND ($10 IS NULL OR (SELECT COALESCE(SUM(size), 0) FROM media WHERE charged_server = $10 AND (ttl = 0 OR uploaded_at + COALESCE(ttl, $12) > $8)) + $4 <= $7))",
     )
     .bind(file.id)
     .bind(file.filename)
@@ -722,10 +723,11 @@ async fn store_within(
     .bind(file.uploader)
     .bind(file.uploaded_at)
     .bind(budget.min(i64::MAX as u64) as i64)
-    .bind(file.uploaded_at - MEDIA_TTL_SECS)
+    .bind(file.uploaded_at)
     .bind(charged_to)
     .bind(charge.hooks_of.map(str::to_string))
     .bind(charge.account)
+    .bind(MEDIA_TTL_SECS)
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -759,15 +761,17 @@ async fn store_within(
 /// parameters when it is at most 127 bytes, else stored as `application/octet-stream`. Then
 /// pass the returned `id` as
 /// `media_id` when sending a message; only the uploader can attach it, and only to one
-/// message. The file is deleted 24 hours after upload whether attached or not, and messages
-/// carrying it then show it as removed (`media_removed` event). At most `limits.upload_bytes`
+/// message. The file is deleted 24 hours after upload (attached or not), or at the time its
+/// server chose when it is posted in a server (`upload_expiry` of the server); messages carrying
+/// it then show it as removed (`media_removed` event). At most `limits.upload_bytes`
 /// of `GET /api/v1/instance` per file, by default 25 MiB (`UPLOAD_MAX_MIB`), and
 /// at most the instance's per-account budget (`UPLOAD_BUDGET_MIB`, 2 GiB unless set) of your
-/// files kept at once (files your webhooks sent count too). At most 3 of your uploads are read
-/// at once. Each takes room for its whole declared body in the instance's upload buffer
-/// (`UPLOAD_BUFFER_MIB`) before any of it is read, and together they hold at most a quarter of
-/// it, three uploads (up to half of it) or one upload, whichever is most. A body that sends
-/// nothing for 30 seconds, or takes over 10 minutes in all, is dropped with 408.
+/// files kept at once, until each expires or is removed (files your webhooks sent count too).
+/// At most 3 of your uploads are read at once. Each takes room for its whole declared body in
+/// the instance's upload buffer (`UPLOAD_BUFFER_MIB`) before any of it is read, and together
+/// they hold at most a quarter of it, three uploads (up to half of it) or one upload, whichever
+/// is most. A body that sends nothing for 30 seconds, or takes over 10 minutes in all, is
+/// dropped with 408.
 ///
 /// Requires a bearer token and the instance's uploads setting. Strict rate-limit bucket.
 #[utoipa::path(post, path = "/api/v1/media", tag = "Media", request_body(content = Vec<u8>, content_type = "multipart/form-data", description = "A multipart form whose first part is the file"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef), (status = 400, description = "No file part (JSON `No file provided`) or a malformed multipart body (JSON). A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "File uploads are disabled on this instance", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`): `File exceeds 25MB limit` with the configured number. A request body over that size plus 1 MiB is cut off while the file is read and answers with this status and the JSON error \"Error parsing `multipart/form-data` request\"", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket (shared with register, login, word hints, password change and guest access) or the general bucket (plain text), the per-account budget is used up (JSON `Upload limit reached: ...`; space frees up as your files expire), or 3 of your uploads, or uploads holding your share of the upload buffer, are already being read (JSON `Too many uploads at once: ...`)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`: the instance holds as many upload bodies in memory as it allows (each upload takes room for its whole declared size first)", body = ApiErrorBody)), security(("bearer" = [])))]
@@ -814,7 +818,7 @@ pub(crate) async fn upload_media(
         id,
         filename,
         false,
-        uploaded_at + MEDIA_TTL_SECS,
+        Some(uploaded_at + MEDIA_TTL_SECS),
     )))
 }
 
@@ -941,6 +945,12 @@ pub(crate) async fn delete_media(
             if let Some(entry) = entry {
                 audit::record(&mut tx, entry).await?;
             }
+            let original =
+                sqlx::query("SELECT 1 FROM messages WHERE id = $1 AND fwd_created_at IS NULL")
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await?
+                    .is_some();
             sqlx::query("UPDATE messages SET media_removed = 2 WHERE id = $1")
                 .bind(id)
                 .execute(&mut *tx)
@@ -952,11 +962,15 @@ pub(crate) async fn delete_media(
             .fetch_optional(&mut *tx)
             .await?
             .is_some();
-            if !shared {
-                sqlx::query("DELETE FROM media WHERE id = $1")
-                    .bind(&media_id)
-                    .execute(&mut *tx)
-                    .await?;
+            match shared {
+                true if original => crate::api::upload_expiry::release(&mut tx, &media_id).await?,
+                true => {}
+                false => {
+                    sqlx::query("DELETE FROM media WHERE id = $1")
+                        .bind(&media_id)
+                        .execute(&mut *tx)
+                        .await?;
+                }
             }
             tx.commit().await?;
             if !shared {
@@ -1240,17 +1254,32 @@ pub(crate) fn content_disposition(filename: &str) -> String {
 
 const SWEEP_BATCH: i64 = 200;
 
-async fn sweep_batch(db: &Db, cutoff: i64) -> sqlx::Result<(Vec<String>, Vec<WsEvent>)> {
+/// Files past their time: the instance default (`ttl` unset) or their own `ttl`; `ttl` 0 stays.
+async fn sweep_batch(db: &Db, at: i64) -> sqlx::Result<(Vec<String>, Vec<WsEvent>)> {
     let mut tx = db.begin().await?;
-    let rows = sqlx::query("SELECT id FROM media WHERE uploaded_at <= $1 LIMIT $2")
-        .bind(cutoff)
-        .bind(SWEEP_BATCH)
-        .fetch_all(&mut *tx)
-        .await?;
-    let ids = rows
-        .iter()
-        .map(|r| r.try_get::<String, _>(0))
-        .collect::<sqlx::Result<Vec<_>>>()?;
+    let mut ids = Vec::new();
+    for (sql, by) in [
+        (
+            "SELECT id FROM media WHERE ttl IS NULL AND uploaded_at <= $1 LIMIT $2",
+            at - MEDIA_TTL_SECS,
+        ),
+        (
+            "SELECT id FROM media WHERE ttl > 0 AND (uploaded_at + ttl) <= $1 LIMIT $2",
+            at,
+        ),
+    ] {
+        let rows = sqlx::query(sql)
+            .bind(by)
+            .bind(SWEEP_BATCH - ids.len() as i64)
+            .fetch_all(&mut *tx)
+            .await?;
+        for r in &rows {
+            ids.push(r.try_get::<String, _>(0)?);
+        }
+        if ids.len() as i64 >= SWEEP_BATCH {
+            break;
+        }
+    }
     if ids.is_empty() {
         tx.commit().await?;
         return Ok((ids, Vec::new()));
@@ -1298,11 +1327,16 @@ async fn sweep_batch(db: &Db, cutoff: i64) -> sqlx::Result<(Vec<String>, Vec<WsE
     Ok((ids, events))
 }
 
-async fn sweep(db: &Db, s3: Option<&Bucket>) -> sqlx::Result<Vec<WsEvent>> {
-    let cutoff = now() - MEDIA_TTL_SECS;
+pub(crate) async fn sweep(db: &Db, s3: Option<&Bucket>) -> sqlx::Result<Vec<WsEvent>> {
+    let mut conn = db.acquire().await?;
+    if let Some(cap) = crate::api::upload_expiry::stored_cap(&mut conn).await {
+        crate::api::upload_expiry::clamp(&mut conn, cap).await?;
+    }
+    drop(conn);
+    let at = now();
     let mut events = Vec::new();
     loop {
-        let (ids, batch) = sweep_batch(db, cutoff).await?;
+        let (ids, batch) = sweep_batch(db, at).await?;
         events.extend(batch);
         for id in &ids {
             s3_delete(s3, id).await;

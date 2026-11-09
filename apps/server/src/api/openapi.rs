@@ -65,6 +65,8 @@ impl Modify for Bearer {
         super::passwords::revoke_password,
         super::system_messages::get_system_messages,
         super::system_messages::update_system_messages,
+        super::upload_expiry::get_upload_expiry,
+        super::upload_expiry::set_upload_expiry,
         super::servers::create_channel,
         super::servers::update_channel,
         super::servers::delete_channel,
@@ -178,6 +180,9 @@ impl Modify for Bearer {
     ),
     components(schemas(
         super::ApiErrorBody,
+        super::upload_expiry::UploadExpiry,
+        super::upload_expiry::ExpiryMode,
+        super::upload_expiry::UploadExpiryState,
         super::pings::Ping,
         super::pings::ThreadPings,
         super::pings::GroupMention,

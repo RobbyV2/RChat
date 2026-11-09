@@ -611,7 +611,9 @@ pub(super) fn wants(
             is_admin: _,
             perms: _,
         } => in_server(server),
-        WsEvent::RolesChanged { server } => in_server(server),
+        WsEvent::RolesChanged { server } | WsEvent::UploadExpiryChanged { server } => {
+            in_server(server)
+        }
         WsEvent::ChannelPermsChanged {
             server,
             channel_id: _,

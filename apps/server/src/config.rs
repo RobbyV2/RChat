@@ -1346,6 +1346,7 @@ mod tests {
                 features: FeatureSeeds {
                     switches: vec![(Feature::P2p, false)],
                     registration: Some(Registration::Closed),
+                    upload_expiry_max_days: None,
                 },
             }
         );

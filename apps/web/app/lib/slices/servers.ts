@@ -1231,6 +1231,9 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       )
         refetchServer(ev.server)
     },
+    upload_expiry_changed: ev => {
+      if (get().servers[ev.server]) refetchServer(ev.server)
+    },
     roles_changed: ev => {
       dropLinkCards()
       if (!get().servers[ev.server]) return

@@ -34,6 +34,8 @@ import { clock } from '../lib/slowmode'
 import { useCountdown } from '../lib/countdown'
 import { Dialog, FieldError, fieldCls, filledBtn, Masked, useOwnServer } from './ui'
 import { SITE_FILTER_NOTE } from '../lib/home'
+import { lifetimeText } from '../lib/upload_expiry'
+import { useUploadLifetime } from './upload_expiry'
 import { hideTip, useHome } from '../lib/home_store'
 import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
 import { useMedia } from './context_menu'
@@ -233,11 +235,11 @@ function SiteFilterNote() {
   )
 }
 
-const modeTitle = (mode: UploadMode, switchable: boolean) => {
+const modeTitle = (mode: UploadMode, switchable: boolean, lifetime: number | null) => {
   const what =
     mode === 'p2p'
       ? 'P2P: hosted from your browser while you are online, no size limit'
-      : 'Server: uploaded to the server, removed after 1 day'
+      : `Server: uploaded to the server, ${lifetimeText(lifetime)}`
   return switchable ? `${what}. Click for ${mode === 'p2p' ? 'server upload' : 'P2P'}` : what
 }
 
@@ -250,6 +252,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const dms = useStore(s => s.dms)
   const streamer = useStore(s => s.streamer)
   const ownServer = useOwnServer(view?.kind === 'channel' ? view.server : null)
+  const lifetime = useUploadLifetime(view?.kind === 'channel' ? view.server : null)
   const selfDm = useStore(s => {
     const v = s.view
     return v?.kind === 'dm' && s.dms.some(d => d.id === v.dmId && d.is_self)
@@ -488,7 +491,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             <FileIcon size={20} className="text-primary" />
             <div className="flex items-center gap-1">
               <button
-                title={modeTitle(pending.mode, switchable)}
+                title={modeTitle(pending.mode, switchable, lifetime)}
                 onClick={() => draftKey && toggleUploadMode(draftKey)}
                 disabled={!switchable}
                 className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium disabled:cursor-default ${

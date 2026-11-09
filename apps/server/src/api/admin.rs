@@ -10,7 +10,7 @@ use crate::api::access::{MsgScope, not_found, staff_message};
 use crate::api::features::{Feature, Registration};
 use crate::api::{
     ApiError, Authed, OkResp, Paged, ProfanitySwitch, ServerSummaryLite, Settings, UserRef, bad,
-    decode_cursor, encode_cursor, ok,
+    decode_cursor, encode_cursor, ok, upload_expiry,
 };
 use crate::db::{AvatarKind, Db, User, now, purge_messages, recount_members, user_row};
 use crate::state::AppState;
@@ -241,6 +241,7 @@ pub struct SettingsPatch {
     p2p: Option<bool>,
     client_other_instances: Option<bool>,
     registration: Option<Registration>,
+    upload_expiry_max_days: Option<i64>,
 }
 
 pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
@@ -297,7 +298,11 @@ pub(crate) async fn patch_settings(
         p2p,
         client_other_instances,
         registration,
+        upload_expiry_max_days,
     } = req;
+    if upload_expiry_max_days.is_some_and(|d| !(0..=upload_expiry::CAP_DAYS_MAX).contains(&d)) {
+        return Err(bad("The longest file expiry must be 0 to 365 days"));
+    }
     let feature = |f: Feature| match f {
         Feature::ServerReports => server_reports,
         Feature::InstanceReports => instance_reports,
@@ -342,7 +347,10 @@ pub(crate) async fn patch_settings(
             )
         })
     });
-    let pairs = switches.chain(registration.map(|r| (Registration::KEY, r.as_str())));
+    let cap = upload_expiry_max_days.map(|d| d.to_string());
+    let pairs = switches
+        .chain(registration.map(|r| (Registration::KEY, r.as_str())))
+        .chain(cap.as_deref().map(|d| (upload_expiry::CAP_KEY, d)));
     for (key, value) in pairs {
         sqlx::query(
             "INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -353,6 +361,9 @@ pub(crate) async fn patch_settings(
         .await?;
     }
     let settings = Settings::load(&state.db).await;
+    if let Some(cap) = upload_expiry_max_days {
+        upload_expiry::retime_all(&state.db, cap).await?;
+    }
     state.hub.broadcast(WsEvent::SettingsChanged { settings });
     Ok(Json(settings))
 }

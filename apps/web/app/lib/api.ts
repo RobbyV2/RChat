@@ -52,6 +52,7 @@ import type {
   Unread,
   UserRef,
 } from './types'
+import type { UploadExpiry, UploadExpiryState } from './upload_expiry'
 import type { LayoutOrder } from './categories'
 import type { Page } from './lists'
 import type { Privacy, Relation, RequestStatus } from './friends'
@@ -546,6 +547,10 @@ export const endpoints = (c: ApiClient) => ({
     c.req<SystemMessages>('GET', `/servers/${seg(name)}/system_messages`),
   updateSystemMessages: (name: string, patch: Partial<SystemMessages>) =>
     c.req<SystemMessages>('PATCH', `/servers/${seg(name)}/system_messages`, patch),
+  uploadExpiry: (name: string) =>
+    c.req<UploadExpiryState>('GET', `/servers/${seg(name)}/upload_expiry`),
+  setUploadExpiry: (name: string, choice: UploadExpiry) =>
+    c.req<UploadExpiryState>('PUT', `/servers/${seg(name)}/upload_expiry`, choice),
   createChannel: (
     server: string,
     name: string,

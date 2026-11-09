@@ -266,6 +266,10 @@ pub enum WsEvent {
     RolesChanged {
         server: String,
     },
+    /// The server's upload expiry changed; clients load the server again.
+    UploadExpiryChanged {
+        server: String,
+    },
     ChannelPermsChanged {
         server: String,
         channel_id: i64,

@@ -2154,6 +2154,7 @@ async fn forward_columns_are_added_to_an_old_database() {
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
         "DROP INDEX idx_messages_fwd_author",
+        "DROP TRIGGER messages_media_release",
         "ALTER TABLE messages DROP COLUMN fwd_author",
         "ALTER TABLE messages DROP COLUMN fwd_created_at",
         "ALTER TABLE messages DROP COLUMN fwd_source_id",
@@ -2173,10 +2174,11 @@ async fn forward_columns_are_added_to_an_old_database() {
         assert_eq!(
             count(
                 &db,
-                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_messages_fwd_author'"
+                "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('idx_messages_fwd_author', 'messages_media_release')"
             )
             .await,
-            1
+            2,
+            "the release trigger comes back once the forward columns exist"
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM messages WHERE author = 'alice' AND content = 'old message' AND created_at = 7 AND fwd_author IS NULL AND fwd_created_at IS NULL AND fwd_source_id IS NULL AND fwd_origin IS NULL AND fwd_dropped IS NULL").await,
@@ -3685,7 +3687,7 @@ async fn instance_audit_upgrade(url: &str) {
 
 #[tokio::test]
 async fn instance_audit_is_added_to_an_old_database() {
-    assert_eq!(SCHEMA_VERSION, 20);
+    const { assert!(SCHEMA_VERSION >= 20) };
     let path = crate::db::temp_db_path("instance_audit_upgrade");
     let wipe = || {
         for suffix in ["", "-wal", "-shm"] {
@@ -3804,6 +3806,7 @@ async fn seeded_feature_settings(db: &Db, round: usize) {
         );
     }
     assert_eq!(s.registration, Registration::Sso, "after start {round}");
+    assert_eq!(s.upload_expiry_max_days, 0, "after start {round}");
     assert!(!s.guests_enabled && s.outgoing_webhooks && !s.profanity_targets.links);
     assert!(s.profanity_filter && s.profanity_targets.messages);
     assert_eq!(
@@ -3841,6 +3844,7 @@ async fn feature_switches_are_seeded_once_on_an_old_database() {
                 match name {
                     "AUTH_REGISTRATION" => Some("closed"),
                     "FEATURE_SFU" | "E2EE" => Some("off"),
+                    "UPLOAD_EXPIRY_MAX_DAYS" => Some("30"),
                     _ => Some("on"),
                 }
                 .map(str::to_string)
@@ -3991,5 +3995,198 @@ async fn the_other_instances_switch_is_seeded_on_new_and_old_databases() {
     ) {
         other_instances_upgrade(Some(&fresh.url), Some(&off.url), Some(&old.url)).await;
         drop((fresh, off, old));
+    }
+}
+
+#[tokio::test]
+async fn the_upload_expiry_cap_is_seeded_once() {
+    let path = temp_db_path("expiry_cap_seed");
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    let with = |days: Option<i64>| DbOptions {
+        seeds: crate::config::Seeds {
+            features: crate::api::features::FeatureSeeds {
+                upload_expiry_max_days: days,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let db = open(path.to_str()).await.expect("fresh, unset");
+    assert_eq!(
+        crate::api::Settings::load(&db).await.upload_expiry_max_days,
+        0
+    );
+    sqlx::query("DELETE FROM settings WHERE key = 'upload_expiry_max_days'")
+        .execute(&db)
+        .await
+        .expect("forget");
+    close(&db).await;
+    for (round, days) in [Some(30), Some(7)].into_iter().enumerate() {
+        let db = open_with(path.to_str(), &with(days)).await.expect("start");
+        assert_eq!(
+            crate::api::Settings::load(&db).await.upload_expiry_max_days,
+            30,
+            "start {round}: the first seed stays"
+        );
+        close(&db).await;
+    }
+    wipe();
+}
+
+async fn old_upload_expiry_db(db: &Db) {
+    let now = now();
+    let release: &[&str] = match is_sqlite(db) {
+        true => &["DROP TRIGGER messages_media_release"],
+        false => &[
+            "DROP TRIGGER messages_media_release ON messages",
+            "DROP FUNCTION rchat_media_release()",
+            "DELETE FROM settings WHERE key = 'trigger_version'",
+        ],
+    };
+    for stmt in release.iter().map(|s| s.to_string()).chain([
+        "DROP INDEX idx_media_default_expiry".to_string(),
+        "DROP INDEX idx_media_timed_expiry".to_string(),
+        "DROP INDEX idx_media_kept".to_string(),
+        "ALTER TABLE media DROP COLUMN ttl".to_string(),
+        "ALTER TABLE servers DROP COLUMN upload_expiry".to_string(),
+        "UPDATE settings SET value = '20' WHERE key = 'schema_version'".to_string(),
+        "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 7)".to_string(),
+        "INSERT INTO channels(server, name, created_at) VALUES('club', 'general', 7)".to_string(),
+        format!(
+            "INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at) VALUES('{}', 'old.txt', 'text/plain', 1, NULL, 'alice', {})",
+            "a".repeat(32),
+            now - 2 * 86400
+        ),
+        format!(
+            "INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at) VALUES('{}', 'new.txt', 'text/plain', 1, NULL, 'alice', {})",
+            "b".repeat(32),
+            now - 60
+        ),
+    ]) {
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(db)
+            .await
+            .expect(&stmt);
+    }
+    for (id, at) in [("a", now - 2 * 86400), ("b", now - 60)] {
+        sqlx::query("INSERT INTO messages(channel_id, author, content, media_id, media_filename, media_kind, media_expires_at, created_at) SELECT id, 'alice', '', $1, 'f.txt', 'server', $2, $3 FROM channels WHERE server = 'club'")
+            .bind(id.repeat(32))
+            .bind(at + 86400)
+            .bind(at)
+            .execute(db)
+            .await
+            .expect("message with a file");
+    }
+}
+
+async fn upgraded_upload_expiry_db(db: &Db, choice: Option<i64>) {
+    assert_eq!(count(db, STORED_SCHEMA).await, SCHEMA_VERSION);
+    let stored: Option<i64> = sqlx::query("SELECT upload_expiry FROM servers WHERE name = 'club'")
+        .fetch_one(db)
+        .await
+        .expect("club")
+        .try_get(0)
+        .expect("upload_expiry");
+    assert_eq!(stored, choice);
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM servers WHERE upload_expiry IS NULL AND name <> 'club'"
+        )
+        .await,
+        count(db, "SELECT COUNT(*) FROM servers WHERE name <> 'club'").await
+    );
+    assert_eq!(
+        count(db, "SELECT COUNT(*) FROM media WHERE ttl IS NULL").await,
+        count(db, "SELECT COUNT(*) FROM media").await
+    );
+    let (indexes, trigger) = match is_sqlite(db) {
+        true => (
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_media_default_expiry', 'idx_media_timed_expiry', 'idx_media_kept')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'messages_media_release'",
+        ),
+        false => (
+            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname IN ('idx_media_default_expiry', 'idx_media_timed_expiry', 'idx_media_kept')",
+            "SELECT COUNT(*) FROM pg_trigger WHERE tgname = 'messages_media_release'",
+        ),
+    };
+    assert_eq!(count(db, indexes).await, 3);
+    assert_eq!(count(db, trigger).await, 1);
+    assert_eq!(
+        count(
+            db,
+            "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+        )
+        .await,
+        SCHEMA_VERSION
+    );
+}
+
+const STORED_SCHEMA: &str =
+    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'";
+
+async fn upload_expiry_upgrade(url: &str) {
+    let db = open(Some(url)).await.expect("open");
+    old_upload_expiry_db(&db).await;
+    assert!(
+        count(&db, STORED_SCHEMA).await < SCHEMA_VERSION,
+        "the old database is at 20, the instance audit log"
+    );
+    close(&db).await;
+    for _ in 0..2 {
+        let db = open(Some(url)).await.expect("upgrade");
+        upgraded_upload_expiry_db(&db, None).await;
+        close(&db).await;
+    }
+    let db = open(Some(url)).await.expect("open");
+    crate::api::media::sweep(&db, None).await.expect("sweep");
+    assert_eq!(
+        count(
+            &db,
+            &format!("SELECT COUNT(*) FROM media WHERE id = '{}'", "a".repeat(32))
+        )
+        .await,
+        0,
+        "an old file past the default time goes"
+    );
+    assert_eq!(
+        count(
+            &db,
+            &format!("SELECT COUNT(*) FROM media WHERE id = '{}'", "b".repeat(32))
+        )
+        .await,
+        1,
+        "a new one stays"
+    );
+    sqlx::query("UPDATE servers SET upload_expiry = 0 WHERE name = 'club'")
+        .execute(&db)
+        .await
+        .expect("keep files");
+    close(&db).await;
+    let db = open(Some(url)).await.expect("restart");
+    upgraded_upload_expiry_db(&db, Some(0)).await;
+    close(&db).await;
+}
+
+#[tokio::test]
+async fn upload_expiry_columns_are_added_to_an_old_database() {
+    let path = crate::db::temp_db_path("upload_expiry_upgrade");
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    upload_expiry_upgrade(path.to_str().expect("path")).await;
+    wipe();
+    if let Some(pg) = crate::api::test_util::pg_temp("upload_expiry_upgrade").await {
+        upload_expiry_upgrade(&pg.url).await;
+        drop(pg);
     }
 }

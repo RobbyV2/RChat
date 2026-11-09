@@ -462,7 +462,8 @@ pub struct Limits {
     /// Largest upload, in bytes: by default 25 MiB (`UPLOAD_MAX_MIB`).
     #[schema(example = 26214400)]
     pub upload_bytes: usize,
-    /// Seconds an uploaded file is kept before it is deleted.
+    /// Seconds an uploaded file is kept before it is deleted, unless its server chose otherwise
+    /// (`upload_expiry` of the server). Files in DMs always use this.
     #[schema(example = 86400)]
     pub media_retention_secs: i64,
     /// Default page size of list endpoints.

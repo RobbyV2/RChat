@@ -44,6 +44,7 @@ describe('instance limits', () => {
       servers_per_account: 0,
       session_max_age_secs: 0,
       session_idle_secs: 0,
+      media_retention_secs: 86400,
     })
   })
 

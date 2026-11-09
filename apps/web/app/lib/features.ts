@@ -63,6 +63,10 @@ export const siteSettings = (s: SiteSettings): SiteSettings => {
     p2p_attachments: s.p2p_attachments !== false,
     ...switches,
     registration: registrationOf(sent.registration),
+    upload_expiry_max_days:
+      Number.isInteger(sent.upload_expiry_max_days) && (sent.upload_expiry_max_days as number) >= 0
+        ? (sent.upload_expiry_max_days as number)
+        : 0,
   }
 }
 
