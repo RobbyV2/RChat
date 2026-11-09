@@ -965,6 +965,11 @@ function P2pCard() {
             <span className="font-medium text-on-surface">{card.status}</span>
             {card.state === 'online' && ` \u00b7 ${onlineText(card.online)}`}
           </p>
+          {card.note && (
+            <p data-p2p-home-note className="px-2 text-sm break-words text-on-surface-variant">
+              {card.note}
+            </p>
+          )}
           {cardRows(card).map(row => {
             const Icon = P2P_ROW_ICONS[row.id]
             return (

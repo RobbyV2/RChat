@@ -1,5 +1,13 @@
 import { requests, visibleContacts, type Contact } from './contacts'
-import { SQUATTED, type Presence, type Status } from './node'
+import {
+  SQUATTED,
+  UNREACHABLE,
+  UNREACHABLE_TEXT,
+  UNSUPPORTED,
+  UNSUPPORTED_TEXT,
+  type Presence,
+  type Status,
+} from './node'
 
 // What Home's Peer-to-peer card shows, from the P2P state.
 
@@ -19,7 +27,16 @@ export interface CardInput {
 }
 
 export type CardState =
-  'off' | 'elsewhere' | 'starting' | 'online' | 'connecting' | 'paused' | 'blocked' | 'moved'
+  | 'off'
+  | 'elsewhere'
+  | 'starting'
+  | 'online'
+  | 'connecting'
+  | 'unreachable'
+  | 'unsupported'
+  | 'paused'
+  | 'blocked'
+  | 'moved'
 
 export interface HomeCard {
   state: CardState
@@ -29,12 +46,15 @@ export interface HomeCard {
   requests: number
   invites: number
   asks: number
+  // What the state means, as the P2P page's notice says it.
+  note: string | null
 }
 
 const nodeState = (status: Status | 'off', paused: boolean): CardState => {
   if (status === 'online') return 'online'
   if (status === 'paused' || paused) return 'paused'
   if (status === 'squatted') return 'blocked'
+  if (status === 'unreachable' || status === 'unsupported') return status
   return status === 'moved' ? 'moved' : 'connecting'
 }
 
@@ -44,6 +64,8 @@ const TEXT: Record<CardState, string> = {
   starting: 'Starting…',
   online: 'Online',
   connecting: 'Connecting…',
+  unreachable: UNREACHABLE,
+  unsupported: UNSUPPORTED,
   paused: 'Paused',
   blocked: SQUATTED,
   moved: 'Moved to another device',
@@ -52,6 +74,11 @@ const TEXT: Record<CardState, string> = {
 // The connection in words, once P2P runs in this tab.
 export const statusText = (status: Status | 'off', paused: boolean) =>
   TEXT[nodeState(status, paused)]
+
+const NOTE: Partial<Record<CardState, string>> = {
+  unreachable: UNREACHABLE_TEXT,
+  unsupported: UNSUPPORTED_TEXT,
+}
 
 const stateOf = ({ enabled, elsewhere, loading, status, paused }: CardInput): CardState => {
   if (!enabled) return 'off'
@@ -62,7 +89,16 @@ const stateOf = ({ enabled, elsewhere, loading, status, paused }: CardInput): Ca
 export const homeCard = (s: CardInput): HomeCard => {
   const state = stateOf(s)
   if (state === 'off')
-    return { state, status: TEXT.off, online: 0, top: [], requests: 0, invites: 0, asks: 0 }
+    return {
+      state,
+      status: TEXT.off,
+      online: 0,
+      top: [],
+      requests: 0,
+      invites: 0,
+      asks: 0,
+      note: null,
+    }
   const online = visibleContacts(s.contacts).filter(
     c => c.state === 'mutual' && s.presence[c.ik] === 'online'
   )
@@ -74,6 +110,7 @@ export const homeCard = (s: CardInput): HomeCard => {
     requests: requests(s.contacts).length,
     invites: s.serverInvites,
     asks: s.coOwnerAsks + s.transferAsks,
+    note: NOTE[state] ?? null,
   }
 }
 

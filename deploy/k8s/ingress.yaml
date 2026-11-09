@@ -1,7 +1,7 @@
 # Same path routing as deploy/nginx.conf, with an /api/v1/<x> twin for each /api/<x> path. The
-# browser dials PeerJS on NEXT_PUBLIC_PEERJS_PORT (9001 in the published image). To route /peerjs
-# through this Ingress on 443, build the image with --build-arg NEXT_PUBLIC_PEERJS_PORT=443, or
-# expose rchat-peerjs on 9001 with a LoadBalancer Service.
+# browser dials PeerJS on port 9001 of the page host unless PUBLIC_PEERJS_URL says otherwise. To
+# route /peerjs through this Ingress on 443, set PUBLIC_PEERJS_URL in config.yaml, or expose
+# rchat-peerjs on 9001 with a LoadBalancer Service.
 #
 # rchat-strict adds the cluster-wide rate limit for auth, password changes, guest_access and
 # media uploads. rchat-invites and rchat-joins add the same limit, each in its own bucket. The

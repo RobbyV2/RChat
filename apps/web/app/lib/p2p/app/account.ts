@@ -1,4 +1,6 @@
-import { api, home, shareOrigin } from '../../instances'
+import { api, home, homeLookup, shareOrigin } from '../../instances'
+import { probeAddress } from '../../ice'
+import { keepAsker } from '../keep'
 import { dbName, P2pStore, removeP2pDb } from '../db'
 import { BadgeKeeper, Badges, peersCanCheck, readSlots } from '../badge'
 import { fingerprint, keyId } from '../keys'
@@ -309,6 +311,12 @@ export const startDeps = (username: string) => {
   }
 }
 
+const INFO_WAIT_MS = 5000
+
+// Never waited on (keep.ts); asked again at a later start after a dismissed prompt.
+const keep = keepAsker(() => sessionStorage)
+const storageManager = () => (typeof navigator === 'undefined' ? undefined : navigator.storage)
+
 export const boot = async (
   username: string,
   create: string | null,
@@ -452,13 +460,26 @@ export const boot = async (
     refreshServers()
     const chat = useP2p.getState().chat
     if (chat) await loadChat(chat.room, chat.peer)
+    // The instance's PeerJS address, on a first visit (later ones keep it).
+    if (!home.info) await homeLookup.settled(INFO_WAIT_MS)
+    if (node !== n) return
     await n.start()
     k.start()
     void d.blobs.resume().catch(() => {})
+    void checkAddress(n).catch(() => {})
+    void keep(storageManager())
   } catch {
     if (live())
       useP2p.setState({ loading: false, error: "Couldn't open P2P storage in this browser" })
   }
+}
+
+// Relay only hides the address on purpose, and connects through the relay.
+const checkAddress = async (n: P2pNode) => {
+  const { iceServers, iceTransportPolicy } = relayBook.autoConfig()
+  if (iceTransportPolicy === 'relay') return
+  const seen = await probeAddress({ iceServers })
+  if (node === n) useP2p.setState({ addressHidden: seen === 'hidden' })
 }
 
 // Called on every sign in and out (null): one node per account, none for guests.
@@ -497,11 +518,7 @@ export const p2p = {
     if (!username || node || leader) return
     writeOn(username, true)
     useP2p.setState({ enabled: true, error: null })
-    try {
-      await navigator.storage?.persist?.()
-    } catch {
-      // Best effort: the browser may still evict the data.
-    }
+    void keep(storageManager())
     run(username, name)
     void p2p.refreshStorage()
   },
@@ -534,6 +551,8 @@ export const p2p = {
   },
 
   setPaused: (on: boolean) => withNode(n => n.setPaused(on)),
+  retry: () => withNode(n => n.retry()),
+  dismissAddress: () => useP2p.setState({ addressHidden: false }),
   addContact: (text: string, intro = ''): Promise<AddResult | null> =>
     withNode(n => n.addContact(text, intro)),
   readCard: (text: string) => withNode(n => n.readCard(text)),

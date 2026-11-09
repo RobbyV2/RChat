@@ -21,7 +21,7 @@ export interface PeerTarget {
 export interface Endpoints extends WsEndpoints {
   origin: string
   api: string
-  peer: () => PeerTarget
+  peer: (info?: InstanceInfo | null) => PeerTarget
 }
 
 export interface StorageLike {
@@ -115,6 +115,44 @@ export function peerFrom(raw: string | undefined, origin: string): PeerTarget {
   }
 }
 
+const urlOf = (raw: string | undefined) => {
+  try {
+    return raw ? new URL(raw) : null
+  } catch {
+    return null
+  }
+}
+
+// PeerJS for the web app on the instance's own site: the build's NEXT_PUBLIC_PEERJS_HOST and
+// _PORT when set, else the address the instance advertises on the page's host (PUBLIC_PEERJS_URL,
+// PEERJS_PORT), else port 9001 of the page's host. The page's https always means wss.
+export function homePeer(
+  page: { hostname: string; protocol: string },
+  advertised: string | undefined,
+  baked: { host?: string; port?: string } = {
+    host: process.env.NEXT_PUBLIC_PEERJS_HOST,
+    port: process.env.NEXT_PUBLIC_PEERJS_PORT,
+  }
+): PeerTarget {
+  const pageSecure = page.protocol === 'https:'
+  const url = baked.host || baked.port ? null : urlOf(advertised)
+  if (url && url.hostname === page.hostname && /^https?:$/.test(url.protocol)) {
+    const secure = pageSecure || url.protocol === 'https:'
+    return {
+      host: url.hostname,
+      port: Number(url.port || (secure ? 443 : 80)),
+      path: trimSlash(url.pathname) || '/',
+      secure,
+    }
+  }
+  return {
+    host: baked.host || page.hostname,
+    port: Number(baked.port || '9001'),
+    path: '/peerjs',
+    secure: pageSecure,
+  }
+}
+
 // The instance's unversioned API root, gateway and health URLs; a connection pins them to the
 // version its document allows.
 export function endpointsFrom(origin: string, info: InstanceInfo | null): Endpoints {
@@ -141,12 +179,7 @@ function defaultEndpoints(): Endpoints {
     api,
     url: () => wsUrlFrom(bakedApi, window.location, getBasePath(), bakedWs),
     probe: () => (bakedApi ? `${bakedApi}/api/health` : `${getBasePath()}/api/health`),
-    peer: () => ({
-      host: process.env.NEXT_PUBLIC_PEERJS_HOST || window.location.hostname,
-      port: Number(process.env.NEXT_PUBLIC_PEERJS_PORT || '9001'),
-      path: '/peerjs',
-      secure: window.location.protocol === 'https:',
-    }),
+    peer: info => homePeer(window.location, info?.peerjs_url),
   }
 }
 
@@ -297,7 +330,7 @@ export class InstanceConnection {
   }
 
   peer() {
-    return this.ends.peer()
+    return this.ends.peer(this.info)
   }
 
   scoped(key: string) {
@@ -454,6 +487,22 @@ export function selectHome(origin: string, info: InstanceInfo) {
 
 export const fitsHome = (info: InstanceInfo, conn: InstanceConnection = home) =>
   conn.isDefault || (fromOrigin(conn.origin, info) && sameSite(conn.origin, info))
+
+// A lookup of the home instance's discovery document: `settled` waits for `done`, at most `ms`.
+export const lookup = () => {
+  let finish = () => {}
+  const looked = new Promise<void>(resolve => {
+    finish = resolve
+  })
+  return {
+    done: () => finish(),
+    settled: (ms: number) =>
+      Promise.race([looked, new Promise<void>(resolve => setTimeout(resolve, ms))]),
+  }
+}
+
+// This page's first one, so P2P registers at the PeerJS address it gives (homePeer).
+export const homeLookup = lookup()
 
 export function noteHomeInfo(info: InstanceInfo) {
   home.info = info

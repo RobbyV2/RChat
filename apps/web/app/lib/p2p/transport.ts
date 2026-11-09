@@ -157,12 +157,20 @@ export class PeerTransport implements Transport {
   private offers: OfferGuard | null = null
   private gate = new OfferGate(relayBook, () => this.offers)
 
+  constructor(
+    // PeerJS's Peer; tests pass a stand-in.
+    private peerClass: typeof Peer = Peer,
+    // How long the PeerJS server may take to accept our id.
+    private listenMs = DIAL_MS
+  ) {}
+
   guard(g: OfferGuard) {
     this.offers = g
   }
 
   listen(id: string, onPipe: (pipe: Pipe) => void, onLost: () => void): Promise<Listener> {
     this.close()
+    const Peer = this.peerClass
     return new Promise((resolve, reject) => {
       // A fresh token each time, so an old registration never blocks the new one.
       const peer = new Peer(id, {
@@ -179,8 +187,13 @@ export class PeerTransport implements Transport {
       refresh()
       this.unwatch = [ice.onChange(refresh), relayBook.onChange(refresh)]
       let opened = false
+      const timer = setTimeout(() => {
+        this.close(peer)
+        reject(new TransportError('timeout'))
+      }, this.listenMs)
       peer.on('open', () => {
         opened = true
+        clearTimeout(timer)
         resolve({ close: () => this.close(peer) })
       })
       peer.on('connection', conn => {
@@ -202,8 +215,17 @@ export class PeerTransport implements Transport {
         const type = (err as { type?: string }).type
         if (type === 'peer-unavailable') return
         if (!opened) {
+          clearTimeout(timer)
           this.close(peer)
-          reject(new TransportError(type === 'unavailable-id' ? 'unavailable-id' : 'network'))
+          reject(
+            new TransportError(
+              type === 'unavailable-id'
+                ? 'unavailable-id'
+                : type === 'browser-incompatible'
+                  ? 'unsupported'
+                  : 'network'
+            )
+          )
         } else if (
           type === 'unavailable-id' ||
           type === 'server-error' ||

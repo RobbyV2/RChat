@@ -11,6 +11,8 @@ import {
   endpointsFrom,
   fetchInstance,
   home,
+  homePeer,
+  lookup,
   normalizeOrigin,
   peerFrom,
   readKnown,
@@ -141,6 +143,60 @@ describe('instance addresses', () => {
       path: '/peerjs',
       secure: false,
     })
+  })
+
+  test("the web app on the instance's site dials the PeerJS address the instance advertises", () => {
+    const page = { hostname: 'chat.example.com', protocol: 'https:' }
+    const at = (port: number, path = '/peerjs', secure = true) => ({
+      host: 'chat.example.com',
+      port,
+      path,
+      secure,
+    })
+    // PUBLIC_PEERJS_URL behind a TLS proxy that routes /peerjs on 443.
+    expect(homePeer(page, 'https://chat.example.com/peerjs', {})).toEqual(at(443))
+    expect(homePeer(page, 'https://chat.example.com:8443/p2p/peerjs/', {})).toEqual(
+      at(8443, '/p2p/peerjs')
+    )
+    // A PeerJS port other than 9001.
+    expect(homePeer(page, 'https://chat.example.com:9443/peerjs', {})).toEqual(at(9443))
+    // An instance that can't tell it is behind TLS: the page's scheme wins.
+    expect(homePeer(page, 'http://chat.example.com:9001/peerjs', {})).toEqual(at(9001))
+    expect(homePeer(page, 'http://chat.example.com/peerjs', {})).toEqual(at(443))
+    const plain = { hostname: '127.0.0.1', protocol: 'http:' }
+    expect(homePeer(plain, 'http://127.0.0.1:3632/peerjs', {})).toEqual({
+      host: '127.0.0.1',
+      port: 3632,
+      path: '/peerjs',
+      secure: false,
+    })
+    // Another host (an instance without PUBLIC_URL names localhost), none, or junk: port 9001.
+    for (const advertised of [
+      'https://localhost:9001/peerjs',
+      'https://peer.example.com/peerjs',
+      undefined,
+      'not a url',
+      'ftp://chat.example.com/peerjs',
+    ])
+      expect(homePeer(page, advertised, {})).toEqual(at(9001))
+    // A build with NEXT_PUBLIC_PEERJS_HOST or _PORT keeps it.
+    expect(homePeer(page, 'https://chat.example.com/peerjs', { port: '7000' })).toEqual(at(7000))
+    expect(homePeer(page, 'https://chat.example.com/peerjs', { host: 'peer.example.com' })).toEqual(
+      { ...at(9001), host: 'peer.example.com' }
+    )
+  })
+
+  test('the home connection hands its discovery document to the PeerJS address', () => {
+    const seen: unknown[] = []
+    const ends: Endpoints = {
+      ...fixed('https://chat.example.com'),
+      peer: got => {
+        seen.push(got?.peerjs_url)
+        return fixed('x').peer()
+      },
+    }
+    new InstanceConnection(ends, info({ peerjs_url: 'https://chat.example.com/peerjs' })).peer()
+    expect(seen).toEqual(['https://chat.example.com/peerjs'])
   })
 })
 
@@ -424,6 +480,27 @@ describe('instance registry', () => {
 
   test('errors are typed', () => {
     expect(new InstanceError('x').name).toBe('InstanceError')
+  })
+})
+
+// P2P registers once the page has looked up its instance's discovery document (its PeerJS
+// address), or after a bound when the lookup hangs.
+describe('the home lookup', () => {
+  test('waits for the lookup, at most the bound', async () => {
+    const l = lookup()
+    let waited = false
+    const wait = l.settled(5000).then(() => (waited = true))
+    await new Promise(r => setTimeout(r, 20))
+    expect(waited).toBe(false)
+    l.done()
+    await wait
+    expect(waited).toBe(true)
+    const t0 = Date.now()
+    await lookup().settled(30)
+    expect(Date.now() - t0 < 1000).toBe(true)
+    const late = lookup()
+    late.done()
+    await late.settled(5000)
   })
 })
 

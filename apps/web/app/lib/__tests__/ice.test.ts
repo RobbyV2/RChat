@@ -12,6 +12,7 @@ import {
   iceValue,
   parseHelpers,
   parseIce,
+  probeAddress,
   relayOnly,
   type IceSource,
   type Timers,
@@ -298,5 +299,65 @@ describe('IceCache', () => {
       'Instance relay',
     ])
     expect(iceOffer({ stun: [], turn: true, relay: false })).toEqual(['Relay servers'])
+  })
+})
+
+// A browser (or an extension, like uBlock Origin's WebRTC setting on Firefox for Android) that
+// offers no address at all can't be reached by contacts that do the same.
+type Cand = { candidate: string } | null
+
+class FakePc {
+  static made: FakePc[] = []
+  onicecandidate: ((e: { candidate: Cand }) => void) | null = null
+  closed = false
+  constructor(
+    readonly config: RTCConfiguration,
+    private gathered: Cand[] | null
+  ) {
+    FakePc.made.push(this)
+  }
+  createDataChannel() {}
+  async createOffer() {
+    return { type: 'offer' as const, sdp: 'v=0' }
+  }
+  async setLocalDescription() {
+    for (const c of this.gathered ?? []) {
+      await Promise.resolve()
+      this.onicecandidate?.({ candidate: c })
+    }
+  }
+  close() {
+    this.closed = true
+  }
+}
+
+const pcWith = (gathered: Cand[] | null) => (config: RTCConfiguration) =>
+  new FakePc(config, gathered) as unknown as RTCPeerConnection
+
+describe('the address check', () => {
+  const host = { candidate: 'candidate:1 1 udp 2122252543 7c1d.local 52256 typ host' }
+  const srflx = { candidate: 'candidate:2 1 udp 1686052607 203.0.113.7 40000 typ srflx' }
+  const config = { iceServers: [{ urls: ['stun:stun.example:3478'] }] }
+
+  test('any candidate means the browser offers an address', async () => {
+    FakePc.made = []
+    expect(await probeAddress(config, 1000, pcWith([host, null]))).toBe('shown')
+    expect(await probeAddress(config, 1000, pcWith([srflx, null]))).toBe('shown')
+    expect(FakePc.made.every(pc => pc.closed)).toBe(true)
+    expect(FakePc.made[0].config).toEqual(config)
+  })
+
+  test('none before gathering ends, or by the deadline, means it hides it', async () => {
+    expect(await probeAddress(config, 1000, pcWith([{ candidate: '' }, null]))).toBe('hidden')
+    expect(await probeAddress(config, 1000, pcWith([null]))).toBe('hidden')
+    expect(await probeAddress(config, 30, pcWith(null))).toBe('hidden')
+  })
+
+  test("a browser without WebRTC can't tell", async () => {
+    expect(
+      await probeAddress(config, 1000, () => {
+        throw new Error('no WebRTC')
+      })
+    ).toBe('unknown')
   })
 })

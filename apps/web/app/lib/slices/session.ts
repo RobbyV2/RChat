@@ -24,6 +24,7 @@ import {
   fitsHome,
   home,
   noteHomeInfo,
+  homeLookup,
   pageHref,
   resolveInstance,
   selectHome,
@@ -1166,6 +1167,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       } catch {
         set({ instanceHost: home.host })
         return false
+      } finally {
+        homeLookup.done()
       }
     },
 

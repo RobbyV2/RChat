@@ -22,6 +22,8 @@ data:
   # not start until you do.
   PUBLIC_URL: "REPLACE-with-your-public-origin"
   # ALLOWED_HOSTS: "chat.example.com"
+  # PeerJS through the Ingress on 443 (ingress.yaml):
+  # PUBLIC_PEERJS_URL: "https://chat.example.com/peerjs"
   # Connection helpers for calls and P2P files. All are off by default.
   # PUBLIC_STUN: "false"
   # The relay runs only in the rchat-relay pod (relay.yaml). All pods need these values.

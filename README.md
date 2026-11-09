@@ -369,6 +369,7 @@ Put settings in `.env.local`. Refer to `.env.local.example` for all settings and
 | `SERVER_PORT`       | `3000`      | The public port.                                                                                        |
 | `DATABASE_URL`      | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                                                  |
 | `PUBLIC_URL`        | none        | The address people open, for example `https://chat.example.com`.                                        |
+| `PUBLIC_PEERJS_URL` | none        | Where browsers reach PeerJS, for example `https://chat.example.com/peerjs`. Default: port 9001.         |
 | `INSTANCE_NAME`     | `RChat`     | The name people see for your instance.                                                                  |
 | `GUESTS_ENABLED`    | `true`      | Lets people read public servers without an account.                                                     |
 | `P2P_ATTACHMENTS`   | `true`      | Lets people send P2P attachments. The admin panel controls it after the first start.                    |
@@ -383,6 +384,8 @@ Put settings in `.env.local`. Refer to `.env.local.example` for all settings and
 | `VOICE_ROOM_MAX`    | `25`        | The most people in one voice channel. `0` means no limit.                                               |
 | `UPLOAD_MAX_MIB`    | `25`        | The largest upload in MiB. Raise your proxy's body size limit to match.                                 |
 | `MESSAGE_MAX_CHARS` | `4000`      | The longest message in characters.                                                                      |
+
+Behind a TLS proxy that serves only 443, route `/peerjs` (with the WebSocket upgrade) to the PeerJS server and set `PUBLIC_PEERJS_URL`.
 
 When you raise `UPLOAD_MAX_MIB`, keep `UPLOAD_BUFFER_MIB` (256 by default) at least twice as large.
 

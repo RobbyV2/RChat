@@ -9,7 +9,7 @@ import {
   type CardInput,
 } from '../p2p/home_card'
 import type { Contact } from '../p2p/contacts'
-import { SQUATTED } from '../p2p/node'
+import { SQUATTED, UNREACHABLE, UNREACHABLE_TEXT, UNSUPPORTED, UNSUPPORTED_TEXT } from '../p2p/node'
 
 const contact = (ik: string, over: Partial<Contact> = {}): Contact =>
   ({
@@ -63,6 +63,7 @@ describe('the Peer-to-peer card on Home', () => {
       requests: 0,
       invites: 0,
       asks: 0,
+      note: null,
     })
     expect(cardRows(card)).toEqual([])
   })
@@ -84,6 +85,23 @@ describe('the Peer-to-peer card on Home', () => {
     expect(line({ elsewhere: true, loading: true })).toEqual(['elsewhere', 'Open in another tab'])
     expect(statusText('online', true)).toBe('Online')
     expect(statusText('squatted', true)).toBe('Paused')
+  })
+
+  // The signaling server can't be reached, or the browser has WebRTC off: the card says so and
+  // what it means, like the P2P page's notice.
+  test('an unreachable server and WebRTC off are named, with their notice', () => {
+    const shown = (over: Partial<CardInput>) => {
+      const { state, status, note } = homeCard(input(over))
+      return [state, status, note]
+    }
+    expect(shown({ status: 'unreachable' })).toEqual(['unreachable', UNREACHABLE, UNREACHABLE_TEXT])
+    expect(shown({ status: 'unsupported' })).toEqual(['unsupported', UNSUPPORTED, UNSUPPORTED_TEXT])
+    expect(shown({ status: 'online' })).toEqual(['online', 'Online', null])
+    expect(shown({ status: 'connecting' })).toEqual(['connecting', 'Connecting…', null])
+    expect(shown({ status: 'unreachable', paused: true })).toEqual(['paused', 'Paused', null])
+    expect(statusText('unreachable', false)).toBe(UNREACHABLE)
+    expect(statusText('unsupported', false)).toBe(UNSUPPORTED)
+    expect(statusText('unsupported', true)).toBe('Paused')
   })
 
   test('online contacts are counted and the first few are shown by name', () => {
@@ -142,7 +160,15 @@ describe('the Peer-to-peer card on Home', () => {
     expect(p2pEntry('off')).toBe('enable')
     expect(p2pEntry('elsewhere')).toBe('home')
     expect(p2pEntry('starting')).toBe('home')
-    for (const state of ['online', 'connecting', 'paused', 'blocked', 'moved'] as const)
+    for (const state of [
+      'online',
+      'connecting',
+      'unreachable',
+      'unsupported',
+      'paused',
+      'blocked',
+      'moved',
+    ] as const)
       expect(p2pEntry(state)).toBe('dialog')
   })
 })

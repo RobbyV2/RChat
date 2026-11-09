@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, settle, waitFor } from './p2p_net'
-import { P2pNode, ELSEWHERE, LIMITS, OTHER_HOST, type Visibility } from '../p2p/node'
+import {
+  P2pNode,
+  ELSEWHERE,
+  LIMITS,
+  OTHER_HOST,
+  TransportError,
+  type Visibility,
+} from '../p2p/node'
 import { P2pStore, removeP2pDb, type SelfRecord } from '../p2p/db'
 import { keyId, newKeyPair, peerId, signCert, signRevocation, withSuffix } from '../p2p/keys'
 import { encodeCard, makeCard } from '../p2p/card'
@@ -245,6 +252,144 @@ describe('P2P node', () => {
     for (let n = 0; n <= 3; n += 1) hub.squatted.add(withSuffix(peerId(c.node.dk), n))
     await c.node.start()
     expect(c.node.status).toBe('squatted')
+  })
+
+  test('an unreachable signaling server says so, retries in the background and on request', async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const a = await makeNode(hub, 'Alice', { clock })
+    nodes.push(a.node)
+    const t = hub.transport()
+    let down = true
+    let tries = 0
+    ;(a.node as unknown as { deps: { transport: typeof t } }).deps.transport = {
+      ...t,
+      listen: (id, onPipe, onLost) => {
+        tries += 1
+        return down ? Promise.reject(new TransportError('timeout')) : t.listen(id, onPipe, onLost)
+      },
+    }
+    const seen: string[] = []
+    a.node.onChange(() => seen.push(a.node.status))
+    await a.node.start()
+    expect(a.node.status).toBe('unreachable')
+    expect(tries).toBe(1)
+    // The background retry keeps saying so instead of going back to "connecting".
+    seen.length = 0
+    await clock.advance(LIMITS.backoff[1] + 1000)
+    expect(tries).toBe(2)
+    expect(seen.includes('connecting')).toBe(false)
+    expect(a.node.status).toBe('unreachable')
+    // Retry tries at once and comes online.
+    down = false
+    await a.node.retry()
+    expect(tries).toBe(3)
+    expect(a.node.status).toBe('online')
+    await a.node.retry()
+    expect(tries).toBe(3)
+    // Losing the server after that says so at once, and Retry registers again.
+    hub.drop(a.node.peerId)
+    expect(a.node.status).toBe('unreachable')
+    await a.node.retry()
+    expect(tries).toBe(4)
+    expect(a.node.status).toBe('online')
+  })
+
+  test('a browser without WebRTC says so and never tries again', async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const a = await makeNode(hub, 'Alice', { clock })
+    nodes.push(a.node)
+    const t = hub.transport()
+    let tries = 0
+    ;(a.node as unknown as { deps: { transport: typeof t } }).deps.transport = {
+      ...t,
+      listen: () => {
+        tries += 1
+        return Promise.reject(new TransportError('unsupported'))
+      },
+    }
+    await a.node.start()
+    expect(a.node.status).toBe('unsupported')
+    await clock.advance(LIMITS.backoff[4] + 1000)
+    await a.node.retry()
+    expect(tries).toBe(1)
+    expect(a.node.status).toBe('unsupported')
+  })
+
+  // Registrations that are still running when the user pauses, or that a newer one replaced.
+  const slowListens = (node: P2pNode, hub: Hub) => {
+    const t = hub.transport()
+    const held: { fail: () => void; pass: () => Promise<void> }[] = []
+    ;(node as unknown as { deps: { transport: typeof t } }).deps.transport = {
+      ...t,
+      listen: (id, onPipe, onLost) =>
+        new Promise((resolve, reject) => {
+          held.push({
+            fail: () => reject(new TransportError('timeout')),
+            pass: () => t.listen(id, onPipe, onLost).then(resolve, reject),
+          })
+        }),
+    }
+    return held
+  }
+
+  test('a registration that fails late never says "unreachable" while paused or replaced', async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const a = await makeNode(hub, 'Alice', { clock })
+    nodes.push(a.node)
+    const held = slowListens(a.node, hub)
+    void a.node.start()
+    await settle()
+    expect(a.node.status).toBe('connecting')
+    await a.node.setPaused(true)
+    held[0].fail()
+    await settle()
+    expect(a.node.status).toBe('paused')
+    // Resuming registers again; the first try's late failure doesn't count.
+    void a.node.setPaused(false)
+    await settle()
+    expect(held.length).toBe(2)
+    await held[1].pass()
+    await settle()
+    expect(a.node.status).toBe('online')
+    const b = await makeNode(hub, 'Bob', { clock })
+    nodes.push(b.node)
+    const bHeld = slowListens(b.node, hub)
+    void b.node.start()
+    await settle()
+    await b.node.setPaused(true)
+    void b.node.setPaused(false)
+    await settle()
+    bHeld[0].fail()
+    await settle()
+    expect(b.node.status).toBe('connecting')
+    await bHeld[1].pass()
+    await settle()
+    expect(b.node.status).toBe('online')
+  })
+
+  test('Retry during a background try shows it is connecting and waits for that try', async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const a = await makeNode(hub, 'Alice', { clock })
+    nodes.push(a.node)
+    const held = slowListens(a.node, hub)
+    void a.node.start()
+    await settle()
+    held[0].fail()
+    await settle()
+    expect(a.node.status).toBe('unreachable')
+    await clock.advance(LIMITS.backoff[1] + 1000)
+    expect(held.length).toBe(2)
+    expect(a.node.status).toBe('unreachable')
+    await a.node.retry()
+    expect(a.node.status).toBe('connecting')
+    expect(held.length).toBe(2)
+    held[1].fail()
+    await settle()
+    expect(a.node.status).toBe('unreachable')
   })
 
   test('the dial scheduler keeps at most 4 dials in flight and backs off', async () => {

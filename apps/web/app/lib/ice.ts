@@ -286,3 +286,38 @@ export const probeRelay = (server: RTCIceServer, timeoutMs = 8000): Promise<bool
       .catch(() => finish(false))
   })
 }
+
+// Whether this browser offers contacts any address to reach it at with these servers. A privacy
+// setting or extension (uBlock Origin's WebRTC setting on Firefox for Android, a browser's WebRTC
+// IP policy) can hide every one; then only contacts that offer one can connect.
+export const probeAddress = (
+  config: RTCConfiguration,
+  timeoutMs = 5000,
+  make: (c: RTCConfiguration) => RTCPeerConnection = c => new RTCPeerConnection(c)
+): Promise<'shown' | 'hidden' | 'unknown'> => {
+  let pc: RTCPeerConnection
+  try {
+    pc = make(config)
+  } catch {
+    return Promise.resolve('unknown')
+  }
+  return new Promise(resolve => {
+    let done = false
+    const finish = (seen: 'shown' | 'hidden' | 'unknown') => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      pc.close()
+      resolve(seen)
+    }
+    const timer = setTimeout(() => finish('hidden'), timeoutMs)
+    pc.onicecandidate = e => {
+      if (e.candidate === null) finish('hidden')
+      else if (e.candidate.candidate) finish('shown')
+    }
+    pc.createDataChannel('probe')
+    pc.createOffer()
+      .then(offer => pc.setLocalDescription(offer))
+      .catch(() => finish('unknown'))
+  })
+}

@@ -128,6 +128,8 @@ export interface P2pState {
   elsewhere: boolean
   // Message requests dropped to limit spam.
   dropped: number
+  // This browser offers contacts no address to connect to (ice.ts probeAddress).
+  addressHidden: boolean
   storage: { usage: number; quota: number } | null
   error: string | null
   dialog: P2pDialog | null
@@ -242,6 +244,7 @@ export const initial: P2pState = {
   home: false,
   elsewhere: false,
   dropped: 0,
+  addressHidden: false,
   storage: null,
   error: null,
   dialog: null,

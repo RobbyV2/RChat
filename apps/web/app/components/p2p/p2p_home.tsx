@@ -16,7 +16,12 @@ import {
   type Contact,
 } from '../../lib/p2p/contacts'
 import { fingerprint } from '../../lib/p2p/keys'
-import type { Presence } from '../../lib/p2p/node'
+import {
+  ADDRESS_HIDDEN,
+  UNREACHABLE_TEXT,
+  UNSUPPORTED_TEXT,
+  type Presence,
+} from '../../lib/p2p/node'
 import { statusText } from '../../lib/p2p/home_card'
 import { enterKey } from '../../lib/keys'
 import { longPress } from '../context_menu'
@@ -195,6 +200,50 @@ export function MovingBanner({
         className={textBtn}
       >
         Resume
+      </button>
+    </div>
+  )
+}
+
+// The PeerJS server didn't answer: the node keeps trying, and Retry tries now.
+export function UnreachableNotice() {
+  return (
+    <div
+      role="status"
+      data-p2p-unreachable
+      className="flex flex-col items-start gap-3 rounded-2xl bg-surface-container-high p-4"
+    >
+      <p className="text-sm text-on-surface">{UNREACHABLE_TEXT}</p>
+      <button onClick={() => void p2p.retry()} className={`${textBtn} cursor-pointer`}>
+        Retry
+      </button>
+    </div>
+  )
+}
+
+// PeerJS found no WebRTC here: no retry helps, so there is no Retry.
+export function UnsupportedNotice() {
+  return (
+    <div
+      role="status"
+      data-p2p-unsupported
+      className="rounded-2xl bg-surface-container-high p-4 text-sm break-words text-on-surface"
+    >
+      {UNSUPPORTED_TEXT}
+    </div>
+  )
+}
+
+export function AddressNotice() {
+  return (
+    <div
+      role="status"
+      data-p2p-address-hidden
+      className="flex flex-col items-start gap-3 rounded-2xl bg-surface-container-high p-4"
+    >
+      <p className="text-sm text-on-surface">{ADDRESS_HIDDEN}</p>
+      <button onClick={p2p.dismissAddress} className={`${textBtn} cursor-pointer`}>
+        Dismiss
       </button>
     </div>
   )
@@ -503,6 +552,7 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
   const elsewhere = useP2p(s => s.elsewhere)
   const reader = useP2p(s => s.reader)
   const dropped = useP2p(s => s.dropped)
+  const addressHidden = useP2p(s => s.addressHidden)
   const [showBlocked, setShowBlocked] = useState(false)
   const list = visibleContacts(contacts)
   const pending = requestsOf(contacts)
@@ -563,6 +613,9 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
             {elsewhere && <ElsewhereNotice />}
             {!elsewhere && <IdentityAlert />}
             {status === 'moved' && !elsewhere && <MovedBanner />}
+            {status === 'unreachable' && !elsewhere && <UnreachableNotice />}
+            {status === 'unsupported' && !elsewhere && <UnsupportedNotice />}
+            {addressHidden && status === 'online' && !elsewhere && <AddressNotice />}
             {!elsewhere && <MovingBanner />}
             {dropped > 0 && <DroppedNote n={dropped} />}
             <CoOwnerAsks />

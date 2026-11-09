@@ -68,7 +68,9 @@ import { realClock, Session, type Clock, type Limits as SessionLimits, type Pipe
 // mutual contacts within a connection budget, and keeps everything in IndexedDB.
 
 export class TransportError extends Error {
-  constructor(readonly kind: 'unavailable-id' | 'peer-unavailable' | 'timeout' | 'network') {
+  constructor(
+    readonly kind: 'unavailable-id' | 'peer-unavailable' | 'timeout' | 'network' | 'unsupported'
+  ) {
     super(kind)
   }
 }
@@ -116,11 +118,26 @@ export type NodeLimits = typeof LIMITS
 
 export const ELSEWHERE = 'Your P2P identity changed in another tab. Reload this page.'
 
-export type Status = 'starting' | 'online' | 'connecting' | 'paused' | 'squatted' | 'moved'
+export type Status =
+  | 'starting'
+  | 'online'
+  | 'connecting'
+  | 'unreachable'
+  | 'unsupported'
+  | 'paused'
+  | 'squatted'
+  | 'moved'
 
 export type Presence = 'online' | 'dialing' | 'offline'
 
 export const SQUATTED = 'Someone is blocking your P2P address on this instance'
+export const UNREACHABLE = "Can't reach the P2P server"
+export const UNREACHABLE_TEXT = `${UNREACHABLE}, so contacts can't reach you. Trying again in the background.`
+export const ADDRESS_HIDDEN =
+  'This browser hides its network address, so P2P contacts may not reach you. If an extension does this, like uBlock Origin with "Prevent WebRTC from leaking local IP addresses" on, turn that off in its settings, or add a relay in Settings.'
+export const UNSUPPORTED = 'WebRTC is off'
+export const UNSUPPORTED_TEXT =
+  'This browser has WebRTC turned off, and P2P needs it. Turn it on (in Firefox: media.peerconnection.enabled in about:config) or use another browser.'
 export const OTHER_HOST = (host: string) =>
   `Contact uses ${host}. P2P across instances isn't supported.`
 
@@ -527,11 +544,16 @@ export class P2pNode {
   }
 
   private async listen() {
-    if (this.listener || this.stopped) return
-    this.status = 'connecting'
-    this.changed()
+    if (this.listener || this.stopped || this.status === 'unsupported') return
+    const attempt = ++this.attempts
+    // Once the signaling server couldn't be reached, tries in the background keep saying so.
+    if (this.status !== 'unreachable') {
+      this.status = 'connecting'
+      this.changed()
+    }
     for (let n = this.self.suffix; n <= SUFFIX_MAX; n += 1) {
       const id = withSuffix(peerId(this.self.dk.pk), n)
+      this.trying += 1
       try {
         const l = await this.deps.transport.listen(
           id,
@@ -551,11 +573,21 @@ export class P2pNode {
         return
       } catch (e) {
         if (!(e instanceof TransportError) || e.kind !== 'unavailable-id') {
-          this.status = 'connecting'
+          // Paused, stopped, or a newer registration took over.
+          if (this.listener || this.stopped || this.isPaused() || attempt !== this.attempts) return
+          if (e instanceof TransportError && e.kind === 'unsupported') {
+            // Trying again never helps: only WebRTC turned on or another browser does.
+            this.status = 'unsupported'
+            this.changed()
+            return
+          }
+          this.status = 'unreachable'
           this.changed()
           this.retryListen()
           return
         }
+      } finally {
+        this.trying -= 1
       }
     }
     this.status = 'squatted'
@@ -564,6 +596,20 @@ export class P2pNode {
   }
 
   private retryTimer: unknown = null
+  private trying = 0
+  private attempts = 0
+
+  // Tries the signaling server again now, after it couldn't be reached. A try already running
+  // in the background decides instead.
+  async retry() {
+    if (this.status !== 'unreachable' || this.stopped || this.isPaused()) return
+    this.status = 'connecting'
+    this.changed()
+    if (this.trying > 0) return
+    if (this.retryTimer !== null) this.clock.clear(this.retryTimer)
+    this.retryTimer = null
+    await this.listen()
+  }
 
   private retryListen() {
     if (this.retryTimer !== null || this.stopped) return
@@ -579,7 +625,7 @@ export class P2pNode {
   private lost() {
     this.listener = null
     if (this.stopped || this.isPaused()) return
-    this.status = 'connecting'
+    this.status = 'unreachable'
     this.changed()
     this.retryListen()
   }

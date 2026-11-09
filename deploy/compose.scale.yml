@@ -10,8 +10,9 @@
 # 10.240.80.0/24) with the services, and they trust X-Forwarded-For only from that subnet.
 # Postgres, Valkey, embeds and jobs are only on the backend network.
 #
-# Open http://localhost:8080 (RCHAT_HTTP_PORT). PeerJS is on 9001 (RCHAT_PEERJS_PORT). To change
-# it, build the image with --build-arg NEXT_PUBLIC_PEERJS_PORT=<port>.
+# Open http://localhost:8080 (RCHAT_HTTP_PORT). PeerJS is on 9001 (RCHAT_PEERJS_PORT) and on
+# /peerjs of the HTTP port. To change it, set RCHAT_PUBLIC_PEERJS_URL, for example
+# https://chat.example.com/peerjs behind a TLS proxy that routes /peerjs.
 # Scale a role: docker compose -f deploy/compose.scale.yml up -d --scale gateway=4
 
 x-rchat: &rchat
@@ -35,6 +36,7 @@ x-env: &env
   INSTANCE_NAME: ${RCHAT_INSTANCE_NAME:-RChat}
   PUBLIC_URL: ${RCHAT_PUBLIC_URL:-}
   ALLOWED_HOSTS: ${RCHAT_ALLOWED_HOSTS:-}
+  PUBLIC_PEERJS_URL: ${RCHAT_PUBLIC_PEERJS_URL:-}
   # Connection helpers for calls and P2P files, all off by default. RCHAT_PUBLIC_STUN=true gives
   # public STUN servers. RCHAT_RELAY_ENABLED=true (with RCHAT_RELAY_PUBLIC_IP, and
   # RCHAT_RELAY_HOST if needed) turns on the built-in relay. Run it with --profile relay.
