@@ -6,6 +6,7 @@ import {
   shellInfo,
   shellOf,
   type Invoke,
+  type ShellSettings,
 } from '../platform/desktop'
 import { mobileSharing, onBack, pressEscape, shareText, type BackEnv } from '../platform/mobile'
 import { desktopNotifier } from '../platform/desktop_notifications'
@@ -204,7 +205,28 @@ describe('shell commands', () => {
   test('settings, autostart and links map to shell commands', async () => {
     const { call, calls } = fakeInvoke({ take_deep_links: () => ['rchat://a.example/'] })
     const shell = shellOf(call)
-    const settings = { close_to_tray: true, auto_update: false, channel: 'weekly' as const }
+    const settings: ShellSettings = {
+      minimize_to_tray: true,
+      mute_notifications: false,
+      auto_update: false,
+      channel: 'weekly',
+      boot: { on: true, client: true, hidden: true, server: false },
+      server: {
+        set_up: false,
+        run_on_open: true,
+        confirm_quit: true,
+        name: 'My server',
+        port: 3470,
+        data_dir: '',
+        access: { mode: 'local', address: '', proxy: 'local', proxy_device: '' },
+        serve_web: true,
+        database_url: '',
+        listen: '',
+        relay: false,
+        extra: '',
+      },
+      resume_server: false,
+    }
     await shell.setSettings(settings)
     await shell.setAutostart(true)
     await shell.openExternal('https://example.com/')

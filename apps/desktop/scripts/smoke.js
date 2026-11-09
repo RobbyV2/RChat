@@ -85,7 +85,21 @@
     })
 
     const prefs = await invoke('desktop_settings')
-    if (typeof prefs.close_to_tray !== 'boolean') throw new Error('settings command failed')
+    if (typeof prefs.minimize_to_tray !== 'boolean' || typeof prefs.server?.port !== 'number')
+      throw new Error('settings command failed')
+    await invoke('set_desktop_settings', {
+      settings: {
+        ...prefs,
+        auto_update: !prefs.auto_update,
+        resume_server: !prefs.resume_server,
+        server: { ...prefs.server, set_up: !prefs.server.set_up },
+      },
+    })
+    const kept = await invoke('desktop_settings')
+    if (kept.auto_update === prefs.auto_update) throw new Error('settings were not saved')
+    if (kept.resume_server !== prefs.resume_server || kept.server.set_up !== prefs.server.set_up)
+      throw new Error('the page changed settings that belong to the shell')
+    await invoke('set_desktop_settings', { settings: prefs })
     await invoke('set_badge', { count: 3 })
     const denied = await invoke('plugin:opener|open_url', { url: 'https://example.com' }).then(
       () => false,

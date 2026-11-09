@@ -4454,6 +4454,7 @@ checksum = "20675572f6f24e9e76ef639bc5552774ed45f1c30e2951e1e99c59888861c539"
 name = "rchat-desktop"
 version = "0.3.0"
 dependencies = [
+ "rchat-desktop-core",
  "serde",
  "serde_json",
  "tauri",
@@ -4470,6 +4471,14 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
  "url",
+]
+
+[[package]]
+name = "rchat-desktop-core"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

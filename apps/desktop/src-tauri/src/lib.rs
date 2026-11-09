@@ -1,12 +1,9 @@
-#[cfg(desktop)]
-mod badge;
 mod files;
 mod links;
-mod settings;
 #[cfg(feature = "smoke")]
 mod smoke;
 
-use settings::Settings;
+use rchat_desktop_core::settings::{self, Settings};
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 use tauri::ipc::{InvokeBody, Request};
@@ -39,7 +36,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl Shell {
     fn settings(&self) -> Settings {
-        *lock(&self.settings)
+        lock(&self.settings).clone()
     }
 }
 
@@ -116,8 +113,10 @@ fn desktop_settings(shell: State<'_, Shell>) -> Settings {
 
 #[tauri::command]
 fn set_desktop_settings(shell: State<'_, Shell>, settings: Settings) -> Result<(), String> {
-    *lock(&shell.settings) = settings;
-    settings::save(&shell.dir, &settings).map_err(|e| plain(e, "Could not save settings"))
+    let mut current = lock(&shell.settings);
+    let merged = settings::from_page(&current, settings);
+    *current = merged;
+    settings::save(&shell.dir, &current).map_err(|e| plain(e, "Could not save settings"))
 }
 
 // Commands that reach a mobile plugin run off the main thread there, as the plugins' own do.
@@ -323,6 +322,7 @@ async fn share_text(app: AppHandle, title: Option<String>, text: String) -> Resu
 #[cfg(desktop)]
 mod desktop {
     use super::*;
+    use rchat_desktop_core::badge;
     use serde::Serialize;
     use tauri::image::Image;
     use tauri::menu::{Menu, MenuItem};
@@ -411,7 +411,7 @@ mod desktop {
             && window.label() == MAIN
         {
             let app = window.app_handle();
-            if app.state::<Shell>().settings().close_to_tray && has_tray(app) {
+            if app.state::<Shell>().settings().minimize_to_tray && has_tray(app) {
                 api.prevent_close();
                 let _ = window.hide();
             }
@@ -632,6 +632,8 @@ pub fn run() {
             let handle = app.handle().clone();
             let dir = app.path().app_config_dir()?;
             let loaded = settings::load(&dir);
+            #[cfg(desktop)]
+            let auto_update = loaded.auto_update;
             app.manage(Shell {
                 dir,
                 settings: Mutex::new(loaded),
@@ -662,7 +664,7 @@ pub fn run() {
                 push_links(&handle, urls.iter().map(Url::to_string));
             }
             #[cfg(desktop)]
-            if loaded.auto_update {
+            if auto_update {
                 desktop::check_later(&handle);
             }
             Ok(())
@@ -687,7 +689,6 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use settings::Channel;
 
     #[test]
     fn init_script_names_the_os() {
@@ -695,19 +696,5 @@ mod tests {
         assert!(script.starts_with("Object.defineProperty(window,'__RCHAT_DESKTOP__'"));
         assert!(script.contains(&format!("\"os\":\"{}\"", os())));
         assert!(script.contains("\"version\":\"1.2.3\""));
-    }
-
-    #[test]
-    fn channels_have_endpoints() {
-        assert!(
-            Channel::Stable
-                .endpoint()
-                .ends_with("/releases/latest/download/latest.json")
-        );
-        assert!(
-            Channel::Weekly
-                .endpoint()
-                .ends_with("/releases/download/weekly/latest.json")
-        );
     }
 }

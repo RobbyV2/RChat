@@ -110,8 +110,8 @@ export function DesktopSection() {
         <p className={sectionCls}>Desktop app</p>
         <SettingSwitch
           label="Close to tray"
-          value={settings.close_to_tray}
-          onChange={v => save({ ...settings, close_to_tray: v })}
+          value={settings.minimize_to_tray}
+          onChange={v => save({ ...settings, minimize_to_tray: v })}
         />
         <p className={note}>Closing the window keeps the app running in the tray.</p>
         <div className="mt-2">

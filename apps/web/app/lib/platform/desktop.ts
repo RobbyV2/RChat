@@ -68,10 +68,44 @@ export const listen = async (event: string, cb: () => void) => {
 
 export type Channel = 'stable' | 'weekly'
 
+export interface BootSettings {
+  on: boolean
+  client: boolean
+  hidden: boolean
+  server: boolean
+}
+
+export interface ServerAccess {
+  mode: 'local' | 'https'
+  address: string
+  proxy: 'local' | 'device'
+  proxy_device: string
+}
+
+// Empty `data_dir`, `database_url` and `listen` mean the built-in choice.
+export interface ServerSettings {
+  set_up: boolean
+  run_on_open: boolean
+  confirm_quit: boolean
+  name: string
+  port: number
+  data_dir: string
+  access: ServerAccess
+  serve_web: boolean
+  database_url: string
+  listen: string
+  relay: boolean
+  extra: string
+}
+
 export interface ShellSettings {
-  close_to_tray: boolean
+  minimize_to_tray: boolean
+  mute_notifications: boolean
   auto_update: boolean
   channel: Channel
+  boot: BootSettings
+  server: ServerSettings
+  resume_server: boolean
 }
 
 export interface FoundUpdate {
@@ -81,6 +115,7 @@ export interface FoundUpdate {
 
 export interface Shell {
   settings: () => Promise<ShellSettings>
+  // The shell keeps `server`, `resume_server` and `boot.on` as they are, whatever is sent.
   setSettings: (next: ShellSettings) => Promise<void>
   autostart: () => Promise<boolean>
   setAutostart: (on: boolean) => Promise<void>

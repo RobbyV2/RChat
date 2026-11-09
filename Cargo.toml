@@ -2,12 +2,13 @@
 resolver = "3"
 members = [
   "apps/server",
+  "apps/desktop/core",
   "apps/desktop/src-tauri",
   "apps/desktop/plugins/share",
   "crates/profanity",
   "crates/wasm",
 ]
-default-members = ["apps/server"]
+default-members = ["apps/server", "apps/desktop/core"]
 
 [profile.release]
 opt-level = "z"

@@ -32,7 +32,6 @@ pub fn with_dot(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
 }
 
 // A dot alone, for the Windows taskbar overlay.
-#[cfg_attr(not(windows), allow(dead_code))]
 pub fn dot(size: u32) -> Vec<u8> {
     let half = size as f32 / 2.0;
     (0..size * size)

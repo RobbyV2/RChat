@@ -136,17 +136,18 @@ Open http://localhost:3000. The first account you register is the site admin. No
 
 ## Layout
 
-| Path           | What it is                                             |
-| -------------- | ------------------------------------------------------ |
-| `apps/web`     | The Next.js client (a Bun workspace).                  |
-| `apps/server`  | The Rust server (a Cargo workspace member).            |
-| `apps/desktop` | The Tauri app (Windows, macOS, Linux, Android, iOS).   |
-| `crates/wasm`  | The WASM module for the client.                        |
-| `assets`       | Logos, fonts and the bundled STUN list.                |
-| `deploy`       | Compose, Kubernetes and nginx files.                   |
-| `packaging`    | Package manager templates (see Releases).              |
-| `scripts`      | Release scripts for CI. Test: `bun test scripts`.      |
-| `jfiles`       | The `just` recipes. Run them from the repository root. |
+| Path                | What it is                                             |
+| ------------------- | ------------------------------------------------------ |
+| `apps/web`          | The Next.js client (a Bun workspace).                  |
+| `apps/server`       | The Rust server (a Cargo workspace member).            |
+| `apps/desktop`      | The Tauri app (Windows, macOS, Linux, Android, iOS).   |
+| `apps/desktop/core` | The desktop app's logic, without Tauri.                |
+| `crates/wasm`       | The WASM module for the client.                        |
+| `assets`            | Logos, fonts and the bundled STUN list.                |
+| `deploy`            | Compose, Kubernetes and nginx files.                   |
+| `packaging`         | Package manager templates (see Releases).              |
+| `scripts`           | Release scripts for CI. Test: `bun test scripts`.      |
+| `jfiles`            | The `just` recipes. Run them from the repository root. |
 
 Keep `.env.local` in the repository root.
 
