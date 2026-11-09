@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import { home } from '../instances'
 import {
@@ -23,6 +23,10 @@ import {
   selectionLabel,
   toggle,
 } from '../selection'
+import { ctxFor } from '../actions/ctx'
+import { registerAppActions } from '../actions/index'
+import { menuItems, openActionMenu } from '../actions/menu'
+import { actionById } from '../actions/registry'
 import { selectionActions } from '../selection_actions'
 import { exportBackoff } from '../selection_store'
 import { SHORTCUTS, allKey, conflicts, selectKey, shortcutLabel } from '../shortcuts'
@@ -31,6 +35,7 @@ import { webSharing } from '../platform/web_sharing'
 import type { BulkJob, Message, WsEvent } from '../types'
 import { me, media, memoryStorage, msg, serverDetail, user } from './fixtures'
 
+beforeAll(registerAppActions)
 afterAll(resetSessionCaches)
 
 const by = (id: number, author: string, over: Partial<Message> = {}) =>
@@ -576,5 +581,64 @@ describe('selection store', () => {
     ])
     st().toggleSelect('c1', general[1])
     expect(selectionActions(st()).map(a => a.id)).toContain('forward')
+  })
+
+  test('the selection menu, the bar and its More menu come from the registry', async () => {
+    useStore.setState({
+      me: me('alice', {
+        servers: [{ name: 's', display_name: 's', creator: null, is_admin: true }],
+      }),
+    })
+    st().startSelection('c1')
+    st().toggleSelect('c1', general[0])
+    st().toggleSelect('c1', general[1])
+    const target = { kind: 'selection', list: 'c1', author: user('bob') } as const
+    const labels = menuItems(ctxFor(st(), target, 'menu')).map(i => i.label)
+    expect(labels).toEqual(selectionActions(st(), user('bob')).map(a => a.label))
+    expect(labels).toEqual([
+      'Select all',
+      'Clear',
+      'Delete',
+      'Copy text',
+      'Copy links',
+      'Pin',
+      'Export as text',
+      'Export as JSON',
+      'Select all from this author',
+      'Select mine',
+      'Exit selection',
+    ])
+    expect(menuItems(ctxFor(st(), { kind: 'selection', list: 'c1' }, 'menu')).length).toBe(10)
+    expect(menuItems(ctxFor(st(), { kind: 'selection', list: 'c9' }, 'menu'))).toEqual([])
+    const bar = selectionActions(st(), user('bob'))
+    expect(bar.filter(a => a.primary).map(a => a.id)).toEqual([
+      'select_all',
+      'clear',
+      'delete',
+      'copy_text',
+    ])
+    expect(bar.find(a => a.id === 'delete')?.danger).toBe(true)
+    for (const a of bar) {
+      const reg = actionById(`selection_${a.id}`)
+      expect([a.id, reg?.scope, reg?.targets]).toEqual([a.id, 'message', ['selection']])
+    }
+
+    openActionMenu(5, 6, { ...target, more: true })
+    const more = st().contextMenu?.items ?? []
+    expect(more.map(i => i.label)).toEqual(
+      bar.filter(a => !a.primary && a.id !== 'exit').map(a => a.label)
+    )
+    more.find(i => i.label === 'Copy links')?.action?.()
+    await tick()
+    expect(copied.at(-1)?.split('\n')).toHaveLength(2)
+    more.find(i => i.label === 'Select all from this author')?.action?.()
+    expect(ids(selectedIn(st().selection, general))).toEqual([1, 2])
+    expect([...(st().selection?.authors ?? [])]).toEqual(['bob'])
+    st().closeContextMenu()
+
+    bar.find(a => a.id === 'exit')?.run()
+    expect(st().selection).toBeNull()
+    bar.find(a => a.id === 'clear')?.run()
+    expect(st().toast?.text).toBe("That's no longer available")
   })
 })

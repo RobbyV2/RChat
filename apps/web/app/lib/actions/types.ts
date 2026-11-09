@@ -27,7 +27,9 @@ export type MemberWhere =
 export type Target =
   | { kind: 'none' }
   | { kind: 'message'; message: Message; list: string }
-  | { kind: 'selection'; list: string }
+  // `author`: the picked row's or the bar's anchor's; `more`: the bar's More menu, without what
+  // the bar shows.
+  | { kind: 'selection'; list: string; author?: UserRef | null; more?: boolean }
   | { kind: 'member'; user: UserRef; server: string | null; where: MemberWhere }
   | { kind: 'server'; server: string; folder: string | null; at: number }
   | { kind: 'folder'; folder: Folder }

@@ -1,14 +1,12 @@
 'use client'
 
-import { useEffect, useMemo, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react'
 import { Check, Ellipsis, ListChecks, SquareCheckBig, X } from 'lucide-react'
+import { openActionMenu } from '../lib/actions/menu'
+import { actionsVersion, subscribeActions } from '../lib/actions/registry'
 import { useStore } from '../lib/store'
 import { isSelected, selectionLabel, selectable } from '../lib/selection'
-import {
-  selectionActions,
-  selectionMenuItems,
-  type SelectionAction,
-} from '../lib/selection_actions'
+import { selectionActions, type SelectionAction } from '../lib/selection_actions'
 import { canDeleteIn } from '../lib/selection_store'
 import { allKey, selectKey } from '../lib/shortcuts'
 import type { Message, UserRef } from '../lib/types'
@@ -48,9 +46,10 @@ export function useSelectionActions(author?: UserRef | null): SelectionAction[] 
   const list = useStore(s => (s.selection ? s.messages[s.selection.scope] : undefined))
   const me = useStore(s => s.me)
   const servers = useStore(s => s.servers)
+  const actions = useSyncExternalStore(subscribeActions, actionsVersion, actionsVersion)
   return useMemo(
     () => selectionActions(useStore.getState(), author),
-    [selection, list, me, servers, author]
+    [selection, list, me, servers, author, actions]
   )
 }
 
@@ -58,8 +57,7 @@ export function useSelectionActions(author?: UserRef | null): SelectionAction[] 
 export const openSelectionMenu = (scope: string | null, m: Message, x: number, y: number) => {
   const s = useStore.getState()
   if (!scope || s.selection?.scope !== scope || !isSelected(s.selection, m)) return false
-  const items = selectionMenuItems(selectionActions(s, m.author))
-  s.openContextMenu(x, y, items)
+  openActionMenu(x, y, { kind: 'selection', list: scope, author: m.author })
   return true
 }
 
@@ -253,7 +251,12 @@ export function SelectionBar({
   const more = actions.filter(a => !a.primary && a.id !== 'exit')
   const openMore = (e: MouseEvent) => {
     const r = e.currentTarget.getBoundingClientRect()
-    useStore.getState().openContextMenu(r.left, r.bottom, selectionMenuItems(more))
+    openActionMenu(r.left, r.bottom, {
+      kind: 'selection',
+      list: scope,
+      author: anchorAuthor,
+      more: true,
+    })
   }
   const exit = (
     <button
@@ -279,7 +282,7 @@ export function SelectionBar({
       onClick={a.run}
       className={`${barBtn} ${compact ? 'px-2' : 'px-3'} ${a.danger ? 'text-error' : ''}`}
     >
-      <a.icon size={16} />
+      {a.icon && <a.icon size={16} />}
       <span className={sheet || compact ? 'sr-only' : 'hidden lg:inline'}>{a.label}</span>
     </button>
   ))
