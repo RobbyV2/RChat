@@ -144,7 +144,7 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
               save()
             }
           }}
-          className="max-h-80 flex-1 resize-none bg-transparent py-0.5 text-base leading-relaxed outline-none md:text-sm"
+          className="max-h-80 min-w-0 flex-1 resize-none bg-transparent py-0.5 text-base leading-relaxed outline-none md:text-sm"
         />
         {count > counterFrom(max) && (
           <span

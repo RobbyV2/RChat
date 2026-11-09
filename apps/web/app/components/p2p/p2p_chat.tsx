@@ -820,7 +820,7 @@ export function P2pComposer({
             )
           }}
           placeholder={streamer ? 'Send a P2P message' : placeholder}
-          className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:text-on-surface-variant md:text-sm"
+          className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-base outline-none placeholder:text-on-surface-variant md:text-sm"
         />
         {(count > counterFrom(BODY_MAX) || tooLong) && (
           <span
