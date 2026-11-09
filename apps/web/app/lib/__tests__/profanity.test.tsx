@@ -11,6 +11,7 @@ import {
   lru,
   maskOutsideCode,
   maskProfanity,
+  maskRuns,
   parseProfanity,
   profanityKey,
   profanityValue,
@@ -19,11 +20,20 @@ import {
   setMasking,
   type Matcher,
 } from '../profanity'
-import { siteFilterOn } from '../rules'
+import { messageFilterOn, siteFilterOn } from '../rules'
 import { home } from '../instances'
 import { maskOf, useStore, resetSessionCaches } from '../store'
 import { MarkdownMessage } from '../../components/markdown_message'
-import { me, memoryStorage, msg, user } from './fixtures'
+import { MaskControl, Masked } from '../../components/ui'
+import { NameWithUsername } from '../../components/display_name'
+import { dmPlaceholder } from '../display_name'
+import { ReplyPreview } from '../../components/replies'
+import { Tile } from '../../components/voice_grid'
+import { nestedInteractive } from './nesting'
+import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
+import type { Message } from '../types'
+import { ownsP2pServer } from '../p2p/server/types'
+import { embed, me, memoryStorage, msg, user } from './fixtures'
 import samples from './fixtures/profanity.json'
 
 afterAll(resetSessionCaches)
@@ -58,6 +68,10 @@ const md = (text: string, mask: Matcher) =>
   renderToStaticMarkup(
     <ReactMarkdown remarkPlugins={[remarkGfm, remarkMask(mask)]}>{text}</ReactMarkdown>
   )
+
+// The same with each masked word's wrapper left out: the text as it reads.
+const mdText = (text: string, mask: Matcher) =>
+  md(text, mask).replace(/<span data-masked="[^"]*" data-mask-word="[^"]*">([^<]*)<\/span>/g, '$1')
 
 beforeEach(resetMasking)
 afterEach(resetMasking)
@@ -137,7 +151,7 @@ describe('masking rules', () => {
   })
 
   test('code blocks and inline code stay as written', () => {
-    const html = md('shit `fuck` here\n\n```\nfuck this\n```\n\nand `a shit` b', fake)
+    const html = mdText('shit `fuck` here\n\n```\nfuck this\n```\n\nand `a shit` b', fake)
     expect(html).toContain('<code>fuck</code>')
     expect(html).toContain('fuck this')
     expect(html).toContain('<code>a shit</code>')
@@ -148,7 +162,7 @@ describe('masking rules', () => {
   })
 
   test('words split by formatting are masked, code still splits them', () => {
-    const html = md('f**u**ck, sh*i*t and [fu](https://example.com/x)ck but fu`x`ck', fake)
+    const html = mdText('f**u**ck, sh*i*t and [fu](https://example.com/x)ck but fu`x`ck', fake)
     expect(html).toContain('*<strong>*</strong>**, **<em>*</em>* and ')
     expect(html).toContain('<a href="https://example.com/x">**</a>** but fu<code>x</code>ck')
   })
@@ -161,11 +175,57 @@ describe('masking rules', () => {
   })
 
   test('links keep their target and mask only the visible text', () => {
-    const html = md('[shit list](https://example.com/shit) and https://example.com/fuck', fake)
+    const html = mdText('[shit list](https://example.com/shit) and https://example.com/fuck', fake)
     expect(html).toContain('href="https://example.com/shit"')
     expect(html).toContain('>**** list</a>')
     expect(html).toContain('href="https://example.com/fuck"')
     expect(html).toContain('>https://example.com/****</a>')
+  })
+})
+
+describe('masked words', () => {
+  test('runs keep plain text and each masked word with what it hides', () => {
+    expect(maskRuns('hey, shit and fuck', 'hey, **** and ****')).toEqual([
+      { text: 'hey, ' },
+      { text: '****', hidden: 'shit', word: 0 },
+      { text: ' and ' },
+      { text: '****', hidden: 'fuck', word: 1 },
+    ])
+    expect(maskRuns('f.u.c.k off', '*.*.*.* off')).toEqual([
+      { text: '*.*.*.*', hidden: 'f.u.c.k', word: 0 },
+      { text: ' off' },
+    ])
+    expect(maskRuns('clean', 'clean')).toEqual([{ text: 'clean' }])
+    expect(maskRuns('', '')).toEqual([])
+    expect(maskRuns('a😀shit', 'a😀****')).toEqual([
+      { text: 'a😀' },
+      { text: '****', hidden: 'shit', word: 0 },
+    ])
+    expect(maskRuns('shit', '***')).toEqual([{ text: '***', hidden: 'shit', word: 0 }])
+  })
+
+  test('a masked message keeps every word revealable, one button per word', () => {
+    const html = md('hey, shit `fuck` and fuck', fake)
+    expect(html).toContain('hey, <span data-masked="shit" data-mask-word="0.0">****</span> ')
+    expect(html).toContain('<code>fuck</code>')
+    expect(html).toContain(' and <span data-masked="fuck" data-mask-word="0.1">****</span>')
+  })
+
+  test('the pieces of a word split by formatting reveal together', () => {
+    const html = md('f**u**ck and a [sh](https://x.co)it', fake)
+    expect(html).toContain(
+      '<span data-masked="f" data-mask-word="0.0">*</span><strong><span data-masked="u" data-mask-word="0.0">*</span></strong><span data-masked="ck" data-mask-word="0.0">**</span>'
+    )
+    expect(html).toContain(
+      '<a href="https://x.co"><span data-masked="sh" data-mask-word="0.1">**</span></a><span data-masked="it" data-mask-word="0.1">**</span>'
+    )
+  })
+
+  test('words in separate blocks are numbered apart', () => {
+    const html = md('shit\n\n# fuck\n\n| a |\n| - |\n| shit |', fake)
+    const words = [...html.matchAll(/data-mask-word="([^"]+)"/g)].map(m => m[1])
+    expect(words.length).toBe(3)
+    expect(new Set(words).size).toBe(3)
   })
 })
 
@@ -202,7 +262,7 @@ describe('in messages', () => {
     expect(useStore.getState().profanityReady).toBe(true)
     const mask = maskOf(useStore.getState())
     expect(mask('hey, shit')).toBe('hey, ****')
-    const html = md(message.content, mask)
+    const html = mdText(message.content, mask)
     expect(html).toContain('hey, **** <code>fuck</code>')
     expect(message.content).toBe('hey, shit `fuck`')
     useStore.getState().setProfanityOn(false)
@@ -210,6 +270,183 @@ describe('in messages', () => {
     expect(maskOf(useStore.getState())('hey, shit')).toBe('hey, shit')
     expect(maskProfanity('hey, shit')).toBe('hey, shit')
     expect(storage.get('rchat_profanity:alice')).toBe('{"v":1,"on":false}')
+  })
+
+  // Server rendering reads the store's initial state, so the test state goes there.
+  const initial = useStore.getInitialState()
+  const masking = async (on: Partial<typeof initial>) => {
+    await setMasking(true, counted().load)
+    Object.assign(initial, { profanityOn: true, profanityReady: true, me: me('alice'), ...on })
+  }
+  afterEach(() => {
+    Object.assign(initial, { profanityOn: false, profanityReady: false, me: null })
+  })
+
+  test('in plain text a masked word is a real button, and the hidden word is not in the page', async () => {
+    await masking({})
+    const html = render()
+    expect(html).toContain(
+      '<button type="button" data-masked-word="" aria-label="Masked word" title="Show masked word"'
+    )
+    expect(html).toContain('>****</button>')
+    expect(html.includes('role="button"')).toBe(false)
+    expect(html).toContain('>fuck</code>')
+    expect(html.includes('shit')).toBe(false)
+  })
+
+  test('inside another control a masked word is a plain span that reads as masked', async () => {
+    await masking({})
+    for (const html of [
+      renderToStaticMarkup(
+        <button type="button">
+          <Masked text="shit club" />
+        </button>
+      ),
+      renderToStaticMarkup(
+        <a href="/x">
+          <Masked text="shit club" />
+        </a>
+      ),
+      renderToStaticMarkup(
+        <MaskControl>
+          <Masked text="shit club" />
+        </MaskControl>
+      ),
+    ]) {
+      const word = html.slice(html.indexOf('<span data-masked-word'))
+      expect(word.startsWith('<span data-masked-word=""')).toBe(true)
+      expect(/role=|tabindex=|aria-label=/.test(word.slice(0, word.indexOf('>')))).toBe(false)
+      expect(html).toContain(
+        '<span aria-hidden="true">****</span><span class="sr-only">masked</span>'
+      )
+    }
+  })
+
+  test('no interactive element nests inside another where masked text renders', async () => {
+    await masking({
+      settings: { ...useStore.getInitialState().settings, asset_previews: true },
+    })
+    const quoted = msg(4, {
+      content: 'a [shit link](https://x.co) and ||shit|| and https://e1.com',
+      author: user('shitlord'),
+      embeds: [embed(1, { url: 'https://e1.com', title: 'shit title', site_name: 'shit site' })],
+    })
+    const reply = {
+      id: 3,
+      author: user('shitlord'),
+      content: 'shit reply',
+      has_media: false,
+      deleted: false,
+      mention: false,
+    }
+    const html =
+      renderToStaticMarkup(<MarkdownMessage message={quoted} />) +
+      renderToStaticMarkup(<ReplyPreview quote={reply} avatar={24} onJump={() => {}} />) +
+      renderToStaticMarkup(
+        <label>
+          <input type="checkbox" />
+          <Masked text="shit option" />
+        </label>
+      )
+    expect(html).toContain('data-masked-word')
+    expect(nestedInteractive(html)).toEqual([])
+    expect(nestedInteractive('<button><span role="button" tabindex="0">x</span></button>')).toEqual(
+      ['<span role="button" tabindex="0">']
+    )
+  })
+
+  test('your own messages and names are never masked for you', async () => {
+    await masking({})
+    const mine = msg(2, { content: 'hey, shit', author: user('alice') })
+    expect(renderToStaticMarkup(<MarkdownMessage message={mine} />)).toContain('hey, shit')
+    const hook = msg(3, {
+      content: 'hey, shit',
+      author: user('alice'),
+      webhook: { id: 1, name: 'alice', avatar: null, embeds: [] },
+    } as Partial<Message>)
+    expect(renderToStaticMarkup(<MarkdownMessage message={hook} />).includes('shit')).toBe(false)
+    const named = (by: string) => renderToStaticMarkup(<Masked text="shit head" by={by} />)
+    expect(named('alice')).toBe('shit head')
+    expect(named('bob')).toContain(
+      '<span aria-hidden="true">****</span><span class="sr-only">masked</span></span> head'
+    )
+    expect(renderToStaticMarkup(<Masked text="shit head" own />)).toBe('shit head')
+    expect(renderToStaticMarkup(<Masked text="no `shit` here, shit" code />)).toContain(
+      'no `shit` here, <span'
+    )
+  })
+
+  test("names with their usernames: yours stay plain, other people's are masked with reveal", async () => {
+    await masking({})
+    const name = (u: string, own?: boolean) =>
+      renderToStaticMarkup(
+        <button type="button">
+          <NameWithUsername user={user(u, { display_name: 'shit head' })} own={own} />
+        </button>
+      )
+    const mine = name('alice')
+    expect(mine).toContain('shit head')
+    expect(mine).toContain('(alice)')
+    expect(mine.includes('data-masked-word')).toBe(false)
+    const theirs = name('shit')
+    expect(theirs.includes('shit')).toBe(false)
+    expect(theirs.split('<span data-masked-word').length - 1).toBe(2)
+    expect(theirs).toContain('(<span data-masked-word')
+    expect(nestedInteractive(theirs)).toEqual([])
+    expect(name('alice', false).includes('shit')).toBe(false)
+    const tile = (u: string) =>
+      renderToStaticMarkup(
+        <Tile
+          tile={{
+            key: u,
+            user: user(u, { display_name: 'shit head' }),
+            stream: null,
+            hasVideo: false,
+            muted: false,
+            deafened: false,
+            speaking: false,
+            mirror: false,
+            pending: false,
+            tint: '#000000',
+            screen: false,
+            shareId: null,
+          }}
+          server={null}
+          focused={false}
+          compact
+          onToggle={() => {}}
+        />
+      )
+    expect(tile('alice')).toContain('aria-label="Focus shit head (alice)"')
+    expect(tile('shit')).toContain('aria-label="Focus **** head (****)"')
+    const mask = (t: string) => t.replace(/shit/g, '****')
+    expect(dmPlaceholder(user('shit'), false, mask)).toBe('Message @****')
+    expect(dmPlaceholder(user('shit'), true, mask)).toBe('Send a direct message')
+  })
+
+  test('your own text is never masked, whatever the filter', async () => {
+    await masking({})
+    expect(maskOf(useStore.getInitialState())('shit')).toBe('****')
+    expect(maskOf(useStore.getInitialState(), true)('shit')).toBe('shit')
+    const v = { owner: 'IK_A', owners: ['IK_A', 'IK_B'] }
+    expect(ownsP2pServer(v, 'IK_A')).toBe(true)
+    expect(ownsP2pServer(v, 'IK_B')).toBe(true)
+    expect(ownsP2pServer(v, 'IK_C')).toBe(false)
+    expect(ownsP2pServer(v, null)).toBe(false)
+    expect(ownsP2pServer(undefined, 'IK_A')).toBe(false)
+  })
+
+  test('in a P2P conversation your own identity is you', async () => {
+    await masking({})
+    const source = { self: 'IK_ME' } as unknown as ChatSource
+    const p2p = (by: string) =>
+      renderToStaticMarkup(
+        <ChatSourceProvider value={source}>
+          <Masked text="shit" by={by} />
+        </ChatSourceProvider>
+      )
+    expect(p2p('IK_ME')).toBe('shit')
+    expect(p2p('alice')).toContain('>****</span>')
   })
 
   test('an account that never chose has it on, one that turned it off keeps it off', async () => {
@@ -282,6 +519,34 @@ describe('the site filter line', () => {
     ).toBe(false)
     expect(
       siteFilterOn({ profanity_filter: true, profanity_targets: { ...off, bios: true } })
+    ).toBe(true)
+  })
+
+  test('the composer line shows only while the site filter checks messages', () => {
+    const off = Object.fromEntries(
+      [
+        'messages',
+        'links',
+        'usernames',
+        'server_names',
+        'channel_names',
+        'role_names',
+        'file_names',
+        'bios',
+        'channel_topics',
+        'category_names',
+      ].map(k => [k, false])
+    )
+    expect(messageFilterOn({ profanity_filter: true })).toBe(true)
+    expect(messageFilterOn({ profanity_filter: false })).toBe(false)
+    expect(
+      messageFilterOn({ profanity_filter: true, profanity_targets: { ...off, bios: true } })
+    ).toBe(false)
+    expect(
+      messageFilterOn({ profanity_filter: false, profanity_targets: { ...off, messages: true } })
+    ).toBe(false)
+    expect(
+      messageFilterOn({ profanity_filter: true, profanity_targets: { ...off, messages: true } })
     ).toBe(true)
   })
 })

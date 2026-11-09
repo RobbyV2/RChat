@@ -124,7 +124,7 @@ export function WebhookProfile({
           id={titleId}
           className="streamer mt-2 line-clamp-2 text-lg leading-6 font-semibold break-words text-on-surface"
         >
-          <Masked text={user.display_name} />
+          <Masked text={user.display_name} by={user.username} />
         </p>
         <p className="mt-2 rounded-xl bg-surface-container-low p-3 text-sm text-on-surface-variant">
           Posted by an app or service through a webhook. It is not a member and cannot get messages.

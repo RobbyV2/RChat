@@ -99,7 +99,7 @@ import {
 } from './code_block'
 import { Stamp } from './timestamp'
 import { splitStamps, type StampStyle } from '../lib/timestamps'
-import { Masked } from './ui'
+import { MaskControl, Masked, MaskedWord, MaskedWords, MaskPlain, useOwn } from './ui'
 import { mentionHandle } from '../lib/display_name'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
@@ -334,7 +334,7 @@ function SpoilerText({ children }: { children?: ReactNode }) {
       className="cursor-pointer rounded bg-spoiler px-0.5 select-none hover:bg-spoiler/85 focus-visible:outline-2 focus-visible:outline-primary"
     >
       <span className="invisible" aria-hidden>
-        {children}
+        <MaskControl>{children}</MaskControl>
       </span>
     </span>
   )
@@ -347,7 +347,6 @@ function Mention({ username }: { username: string }) {
   const storeMine = useStore(s => s.me?.username === username)
   const user = src ? src.user(username) : (stored as UserRef)
   const mine = src ? src.mine(username) : storeMine
-  const mask = useMask()
   return (
     <span
       {...(src ? {} : profileTrigger(user, server))}
@@ -356,7 +355,10 @@ function Mention({ username }: { username: string }) {
         mine ? 'bg-primary-container text-on-primary-container' : 'bg-primary/15 text-primary'
       }`}
     >
-      @{mask(mentionHandle(user))}
+      @
+      <MaskControl>
+        <Masked text={mentionHandle(user)} own={mine} />
+      </MaskControl>
     </span>
   )
 }
@@ -370,16 +372,17 @@ const childText = (c: ReactNode): string =>
 
 // `@everyone` and `@here` in a neutral pill, a role in its color.
 function GroupPill({ group, text }: { group: string; text: string }) {
+  const id = group[0] === 'r' ? Number(group.slice(1)) : null
   const role = useStore(s => {
-    if (group[0] !== 'r') return null
-    const id = Number(group.slice(1))
     for (const detail of Object.values(s.servers)) {
       const r = detail.roles.find(x => x.id === id)
       if (r) return r
     }
     return null
   })
-  const mask = useMask()
+  const owner = useStore(
+    s => Object.values(s.servers).find(d => d.roles.some(x => x.id === id))?.creator ?? null
+  )
   if (role)
     return (
       <span
@@ -387,7 +390,10 @@ function GroupPill({ group, text }: { group: string; text: string }) {
         style={{ color: role.color, backgroundColor: `${role.color}26` }}
         className="rounded px-0.5 font-medium"
       >
-        @{mask(role.name)}
+        @
+        <MaskControl>
+          <Masked text={role.name} by={owner} />
+        </MaskControl>
       </span>
     )
   return (
@@ -403,7 +409,11 @@ function GroupPill({ group, text }: { group: string; text: string }) {
 export function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
   const invite = href ? parseInvite(href, shareOrigin()) : null
   const target = href && !invite ? parseMessageLink(href, localOrigins()) : null
-  const body = <InLink.Provider value>{children}</InLink.Provider>
+  const body = (
+    <InLink.Provider value>
+      <MaskControl>{children}</MaskControl>
+    </InLink.Provider>
+  )
   if (target)
     return (
       <a
@@ -443,7 +453,14 @@ export function MessageLink({ href, children, ...props }: React.ComponentProps<'
 
 const components: Components = {
   span: ({ node, ...props }) =>
-    'data-spoiler' in props ? (
+    'data-masked' in props ? (
+      <MaskedWord
+        hidden={String((props as Record<string, unknown>)['data-masked'])}
+        word={String((props as Record<string, unknown>)['data-mask-word'])}
+      >
+        {props.children}
+      </MaskedWord>
+    ) : 'data-spoiler' in props ? (
       <SpoilerText>{props.children}</SpoilerText>
     ) : 'data-edited' in props ? (
       <EditedMark at={Number((props as Record<string, unknown>)['data-edited'])} />
@@ -676,7 +693,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
         P2P
       </span>
       <span className="streamer truncate">
-        <Masked text={hosterName} />
+        <Masked text={hosterName} own={own} />
       </span>
       <span>·</span>
       <span>{fmtExpiry(expires_at)}</span>
@@ -739,7 +756,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
         )}
         <span className="mt-1 flex items-center gap-2">
           <span className="max-w-60 truncate text-xs text-on-surface-variant">
-            <Masked text={filename} />
+            <Masked text={filename} own={own} />
           </span>
           {saveButton}
         </span>
@@ -762,7 +779,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
         <span className="flex items-center gap-2 text-sm text-on-surface-variant">
           <FileText size={18} className="shrink-0" />
           <span className="max-w-60 truncate">
-            <Masked text={filename} />
+            <Masked text={filename} own={own} />
           </span>
         </span>
         <p className="mt-1 text-xs text-on-surface-variant italic">
@@ -771,7 +788,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
             'the sender'
           ) : (
             <span className="streamer">
-              <Masked text={hosterName} />
+              <Masked text={hosterName} own={own} />
             </span>
           )}{' '}
           to send it again.
@@ -788,7 +805,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
       <div className="flex items-center gap-2">
         <FileText size={18} className="shrink-0 text-tertiary" />
         <span className="max-w-60 truncate text-sm">
-          <Masked text={filename} />
+          <Masked text={filename} own={own} />
         </span>
         {size !== null && (
           <span className="shrink-0 text-xs text-on-surface-variant tabular-nums">
@@ -858,7 +875,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   )
 }
 
-function MediaAttachment({ media }: { media: MessageMedia }) {
+function MediaAttachment({ media, own }: { media: MessageMedia; own: boolean }) {
   const previews = useStore(s => s.settings.asset_previews)
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const [revealed, setRevealed] = useState(false)
@@ -970,7 +987,7 @@ function MediaAttachment({ media }: { media: MessageMedia }) {
       <span className="flex items-center gap-2">
         <FileText size={18} className="shrink-0 text-primary" />
         <span className="max-w-60 truncate text-sm">
-          <Masked text={filename} />
+          <Masked text={filename} own={own} />
         </span>
         <Download size={14} className="shrink-0 text-on-surface-variant" />
       </span>
@@ -1007,7 +1024,6 @@ function EmbedCard({
   const path = banner_removed ? null : previewPath(message.id, ord, image_url)
   const src = usePreviewSrc(path, server)
   const [broken, setBroken] = useState<string | null>(null)
-  const mask = useMask()
   const url = useMemo(() => postedUrl(message.content, embed.url), [message.content, embed.url])
 
   const menu = (x: number, y: number) =>
@@ -1019,7 +1035,9 @@ function EmbedCard({
       className="group/embed relative mt-1 w-fit max-w-md rounded-lg border-l-4 border-primary bg-surface-container py-2 pr-8 pl-3"
     >
       {site_name !== null && (
-        <div className="text-xs text-on-surface-variant">{mask(site_name)}</div>
+        <div className="text-xs text-on-surface-variant">
+          <Masked text={site_name} />
+        </div>
       )}
       <a
         href={url}
@@ -1027,11 +1045,11 @@ function EmbedCard({
         rel="noreferrer"
         className="block text-sm font-medium break-words text-primary hover:underline"
       >
-        {title === null ? url : mask(title)}
+        {title === null ? url : <Masked text={title} />}
       </a>
       {description !== null && (
         <p className="mt-0.5 line-clamp-3 text-xs break-words text-on-surface-variant">
-          {mask(description)}
+          <Masked text={description} />
         </p>
       )}
       {src && broken !== src && (
@@ -1105,16 +1123,24 @@ function useCardText() {
     const plugins = [remarkGfm, remarkSpoiler, remarkMask(mask)]
     return {
       text: (text: string) => (
-        <ReactMarkdown remarkPlugins={plugins} components={components}>
-          {markSpoilers(text)}
-        </ReactMarkdown>
+        <MaskPlain>
+          <MaskedWords>
+            <ReactMarkdown remarkPlugins={plugins} components={components}>
+              {markSpoilers(text)}
+            </ReactMarkdown>
+          </MaskedWords>
+        </MaskPlain>
       ),
       line: (text: string) =>
         spoilerParts(text).map((part, i) =>
           part.spoiler ? (
-            <SpoilerText key={i}>{mask(part.text)}</SpoilerText>
+            <SpoilerText key={i}>
+              <Masked text={part.text} />
+            </SpoilerText>
           ) : (
-            <Fragment key={i}>{mask(part.text)}</Fragment>
+            <Fragment key={i}>
+              <Masked text={part.text} />
+            </Fragment>
           )
         ),
     }
@@ -1149,7 +1175,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   const stored = useStore(s => (src ? '' : knownMentions(s, message, candidates)))
   const known = src ? src.known(message, candidates) : stored
   const pills = useStore(s => groupPills(s, message))
-  const mask = useMask()
+  const own = useOwn(message.webhook || message.forward ? null : message.author.username)
+  const mask = useMask(own)
   const card = useCardText()
   // P2P conversations show no previews: they would ask the instance about what was said.
   const plugins = useMemo(
@@ -1199,9 +1226,13 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     <div className="min-w-0 text-sm leading-relaxed break-words">
       {editor ??
         (content.trim() !== '' ? (
-          <ReactMarkdown remarkPlugins={plugins} components={components}>
-            {source}
-          </ReactMarkdown>
+          <MaskPlain>
+            <MaskedWords>
+              <ReactMarkdown remarkPlugins={plugins} components={components}>
+                {source}
+              </ReactMarkdown>
+            </MaskedWords>
+          </MaskPlain>
         ) : (
           edited && (
             <p className="my-0.5">
@@ -1219,7 +1250,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
           ) : media.kind === 'p2p' && !media.removed ? (
             <P2pFile media={media} messageId={message.id} />
           ) : (
-            <MediaAttachment media={media} />
+            <MediaAttachment media={media} own={own} />
           )}
           {canDelete && !media.removed && (
             <button

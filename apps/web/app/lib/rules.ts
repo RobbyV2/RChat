@@ -79,6 +79,10 @@ export const siteFilterOn = (settings: ProfanitySettings) =>
     t => profanityTargetOn(settings, t.key) && !profanityTargetLocked(settings, t.key)
   )
 
+// Whether the site filter checks server messages, so the composer says so.
+export const messageFilterOn = (settings: ProfanitySettings) =>
+  profanityTargetOn(settings, 'messages') && !profanityTargetLocked(settings, 'messages')
+
 export const NAME_MAX = 100
 export const SLOWMODE_MAX = 21600
 

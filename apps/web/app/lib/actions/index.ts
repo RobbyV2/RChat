@@ -5,6 +5,7 @@ import { dmActions } from './dm'
 import { folderActions } from './folder'
 import { friendActions } from './friends'
 import { globalActions, goActions } from './global'
+import { maskedActions } from './masked'
 import { memberActions } from './member'
 import { embedActions, messageActions } from './message'
 import { p2pContactActions } from './p2p_contact'
@@ -39,6 +40,7 @@ export const registerAppActions = () => {
     cardActions,
     voiceActions,
     p2pContactActions,
+    maskedActions,
   ])
     for (const a of list) defineAction(a)
 }

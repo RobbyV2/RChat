@@ -8,16 +8,24 @@ import { FieldError, Masked, fieldCls, filledBtn } from './ui'
 
 const nameFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
-// The display name truncates; the username stays whole after it.
-export function NameWithUsername({ user }: { user: Pick<UserRef, 'username' | 'display_name'> }) {
-  if (!showsUsername(user)) return <Masked text={user.display_name} />
+// The display name truncates; the username stays whole after it. Both are masked for other
+// people's names only: `own` decides where the username is not an account here (P2P).
+export function NameWithUsername({
+  user,
+  own,
+}: {
+  user: Pick<UserRef, 'username' | 'display_name'>
+  own?: boolean
+}) {
+  const by = own === undefined ? user.username : null
+  if (!showsUsername(user)) return <Masked text={user.display_name} by={by} own={own} />
   return (
     <span className="inline-flex max-w-full min-w-0 items-baseline">
       <span className="min-w-0 truncate">
-        <Masked text={user.display_name} />
+        <Masked text={user.display_name} by={by} own={own} />
       </span>
       <span className="streamer max-w-full shrink-0 truncate pl-1 text-on-surface-variant">
-        ({user.username})
+        (<Masked text={user.username} by={by} own={own} />)
       </span>
     </span>
   )

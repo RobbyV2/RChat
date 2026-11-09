@@ -15,6 +15,7 @@ import {
 import { P } from '../../lib/p2p/state'
 import { VOICE_NOTICE } from '../../lib/p2p/voice'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
+import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { Dialog, fieldCls, filledBtn, Masked, sectionCls, Sentinel, textBtn } from '../ui'
 import { page, PAGE } from '../../lib/paging'
 import { KeyAvatar } from './p2p_badge'
@@ -50,6 +51,7 @@ const Note = ({ children }: { children: ReactNode }) => (
 )
 
 function Overview({ v }: { v: ServerView }) {
+  const me = useP2p(s => s.me)
   const [name, setName] = useState(v.name)
   const edit = can(v, P.ManageServer)
   const dirty = name.trim() !== v.name && name.trim() !== ''
@@ -88,7 +90,7 @@ function Overview({ v }: { v: ServerView }) {
             <li key={ik} className="flex items-center gap-2 py-1">
               <KeyAvatar ik={ik} size={24} />
               <span className="streamer min-w-0 truncate text-sm">
-                <Masked text={memberName(v.id, ik)} />
+                <Masked text={memberName(v.id, ik)} own={ik === me} />
               </span>
               <Crown size={14} className="shrink-0 text-tertiary" aria-hidden />
             </li>
@@ -102,7 +104,7 @@ function Overview({ v }: { v: ServerView }) {
 
 function Channels({ v }: { v: ServerView }) {
   const edit = can(v, P.ManageChannels)
-  const mask = useMask()
+  const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
   const [names, setNames] = useState<Record<string, string>>({})
   const [topics, setTopics] = useState<Record<string, string>>({})
   const [fresh, setFresh] = useState('')
@@ -253,7 +255,7 @@ function Channels({ v }: { v: ServerView }) {
 function System({ v }: { v: ServerView }) {
   const edit = can(v, P.ManageServer)
   const texts = v.channels.filter(c => c.kind === 'text')
-  const mask = useMask()
+  const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
   const set = (patch: Partial<ServerView['system']>) =>
     void p2pServer.setSystem(v.id, { ...v.system, ...patch })
   return (
@@ -336,6 +338,7 @@ function History({ v }: { v: ServerView }) {
 }
 
 function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children?: ReactNode }) {
+  const me = useP2p(s => s.me)
   return (
     <li
       data-p2p-member-line={m.name}
@@ -346,7 +349,7 @@ function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children
         className="streamer min-w-0 flex-1 truncate text-sm"
         style={{ color: hex(nameColor(m, v.roles)) }}
       >
-        <Masked text={m.name} />
+        <Masked text={m.name} own={m.ik === me} />
       </span>
       {m.owner && (
         <span title="Owner" aria-label="Owner" role="img" className="flex text-tertiary">

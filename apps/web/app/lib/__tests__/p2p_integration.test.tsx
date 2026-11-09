@@ -83,6 +83,7 @@ import { CallBanner } from '../../components/voice_grid'
 import { markAllReadItem } from '../../components/mark_read'
 import { p2p, p2pDm, p2pHost, p2pMarkAll, p2pServer } from '../p2p/app'
 import { me, memoryStorage } from './fixtures'
+import { readText } from './masked_text'
 
 afterAll(resetSessionCaches)
 
@@ -576,6 +577,7 @@ describe('removing P2P data while P2P is on', () => {
 
 describe('personal filter on P2P names', () => {
   const stub = (t: string) => t.replace(/shit/gi, '****')
+  const read = readText
 
   test('contacts, servers, channels, members and topics are masked when the filter is on', async () => {
     const c = contact(ALICE, 'Shitlord')
@@ -626,10 +628,11 @@ describe('personal filter on P2P names', () => {
 
     await setMasking(true, () => Promise.resolve(stub))
     Object.assign(initial, { profanityReady: true })
-    const html =
+    const html = read(
       render(<P2pHome onMenu={() => {}} />) +
-      render(<P2pServerSidebar />) +
-      render(<P2pMemberList />)
+        render(<P2pServerSidebar />) +
+        render(<P2pMemberList />)
+    )
     expect(html).toContain('****lord')
     expect(html).toContain('**** club')
     expect(html).toContain('****-talk')
@@ -702,7 +705,7 @@ describe('personal filter on P2P names', () => {
 
     await setMasking(true, () => Promise.resolve(stub))
     Object.assign(initial, { profanityReady: true })
-    const html = all()
+    const html = read(all())
     expect(html).toContain('****lord')
     expect(html).toContain('**** list.txt')
     expect(html).toContain('**** club')
@@ -710,7 +713,7 @@ describe('personal filter on P2P names', () => {
     expect(left.match(/.{0,80}shit.{0,40}/gi)).toBe(null)
   })
 
-  test('kick and ban labels and the channel delete tooltip are masked', async () => {
+  test('kick and ban labels and the channel delete tooltip are masked, but not in your server', async () => {
     const v = server({
       perms: 0xffff_ffff,
       owner: BOB,
@@ -740,6 +743,15 @@ describe('personal filter on P2P names', () => {
     const labels = memberMenu(v, member).map(i => i.label)
     expect(labels).toContain('Kick ****lord')
     expect(labels).toContain('Ban ****lord')
+    expect(render(<ServerSettingsDialog room={SRV} tab="channels" />)).toContain(
+      'title="Delete #shit-talk"'
+    )
+    p2pState({
+      enabled: true,
+      account: 'bob',
+      me: BOB,
+      servers: { [SRV]: { ...v, owner: ALICE, owners: [ALICE] } },
+    })
     const html = render(<ServerSettingsDialog room={SRV} tab="channels" />)
     expect(html).toContain('title="Delete #****-talk"')
   })

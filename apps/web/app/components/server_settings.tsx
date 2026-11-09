@@ -68,6 +68,7 @@ import {
 import {
   Dialog,
   FieldError,
+  Masked,
   Sentinel,
   dangerBtn,
   fieldCls,
@@ -218,7 +219,9 @@ function MemberPicker({
                 avatarColor={m.avatar_color}
                 size={20}
               />
-              <span className="streamer min-w-0 flex-1 truncate text-sm">{m.display_name}</span>
+              <span className="streamer min-w-0 flex-1 truncate text-sm">
+                <Masked text={m.display_name} by={m.username} />
+              </span>
             </button>
           ))}
           {!found.loading && hits.length === 0 && (
@@ -965,7 +968,9 @@ export function BanList({ server }: { server: string }) {
             size={28}
           />
           <span className="min-w-0 flex-1 truncate text-sm">
-            <span className="streamer">{b.display_name}</span>
+            <span className="streamer">
+              <Masked text={b.display_name} by={b.username} />
+            </span>
             <span className="text-xs text-on-surface-variant">
               {' '}
               · banned {new Date(b.banned_at * 1000).toLocaleDateString()}
@@ -1139,7 +1144,9 @@ function Settings({ server }: { server: string }) {
           size={28}
         />
         <span className="min-w-0 flex-1">
-          <span className="streamer block truncate text-sm">{m.display_name}</span>
+          <span className="streamer block truncate text-sm">
+            <Masked text={m.display_name} by={m.username} />
+          </span>
           {m.joined_via && (
             <span className="block truncate text-xs text-on-surface-variant">
               Joined with: {passwordName(m.joined_via.label)}

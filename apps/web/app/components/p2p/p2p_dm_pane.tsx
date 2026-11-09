@@ -22,6 +22,7 @@ import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { useRoomCallShare, VoiceGrid } from '../voice_grid'
 import { IncomingCallBar, P2pCallButtons } from './p2p_call'
 import { noteBarCls, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
+import { Masked } from '../ui'
 
 const NONE: string[] = []
 
@@ -75,12 +76,13 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
   const peerIk = chat?.peer ?? ''
   const chip = useHasChip(peerIk)
   const mask = useMask()
-  const peerName = peer ? mask(displayName(peer)) : 'Contact'
+  const peerRaw = peer ? displayName(peer) : 'Contact'
+  const peerName = mask(peerRaw)
   const online = presence === 'online'
   const canAct = !reader && !elsewhere && peer?.state === 'mutual' && status !== 'moved'
   const nameOf = useCallback(
-    (ik: string) => (ik === me ? mask(myName) || 'You' : peerName),
-    [me, myName, peerName, mask]
+    (ik: string) => (ik === me ? myName || 'You' : peerRaw),
+    [me, myName, peerRaw]
   )
   const people = useMemo<Mentionable[]>(() => {
     const out: Mentionable[] = []
@@ -114,13 +116,18 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
       <div className={noteBarCls}>This contact was removed.</div>
     ) : peer.state === 'blocked' ? (
       <div className={noteBarCls}>
-        You blocked <span className="streamer font-medium">{peerName}</span>. Remove the block to
-        message them again.
+        You blocked{' '}
+        <span className="streamer font-medium">
+          <Masked text={peerRaw} />
+        </span>
+        . Remove the block to message them again.
       </div>
     ) : peer.state !== 'mutual' ? (
       <div className={noteBarCls}>
-        <span className="streamer font-medium">{peerName}</span> isn&apos;t a mutual contact right
-        now.
+        <span className="streamer font-medium">
+          <Masked text={peerRaw} />
+        </span>{' '}
+        isn&apos;t a mutual contact right now.
       </div>
     ) : null
 
@@ -159,7 +166,7 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
             <span
               className={`streamer min-w-0 truncate text-sm font-medium ${chip ? 'sm:max-w-[60%] sm:shrink-0' : ''}`}
             >
-              {peerName}
+              <Masked text={peerRaw} />
             </span>
             {peer && <ContactShield kind={shieldOf(peer)} size={14} />}
             <span className="flex min-w-0 max-sm:hidden">
@@ -227,7 +234,11 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
       online={online}
       gapOffline={
         <>
-          Older messages unavailable until <span className="streamer">{peerName}</span> is online
+          Older messages unavailable until{' '}
+          <span className="streamer">
+            <Masked text={peerRaw} />
+          </span>{' '}
+          is online
         </>
       }
       empty={
@@ -238,7 +249,7 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
           </span>
         </>
       }
-      typingNames={typingIks.filter(ik => ik === peerIk).map(() => peerName)}
+      typingNames={typingIks.filter(ik => ik === peerIk).map(() => peerRaw)}
       mayDelete={mayDelete}
       mayPin
       forwardSkip={peerIk}

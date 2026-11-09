@@ -234,6 +234,12 @@ export interface ReachedView {
   lost: string[]
 }
 
+// Whether `me` owns server `v` (its owner or a co-owner), so its names are your own text.
+export const ownsP2pServer = (
+  v: Pick<ServerView, 'owner' | 'owners'> | undefined,
+  me: string | null
+) => !!v && !!me && (v.owner === me || v.owners.includes(me))
+
 export interface ServerView {
   id: string
   name: string

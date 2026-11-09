@@ -99,6 +99,9 @@ const idsOf = (built: Built[]) => JSON.stringify(built.map(r => r.id))
 
 let live: { ctx: ActionCtx; menu: ContextMenuState | null; ids: string } | null = null
 
+// Whether `menu` is the open action menu, which follows the registry by itself.
+export const isActionMenu = (menu: ContextMenuState | null) => menu !== null && live?.menu === menu
+
 export const openActionMenu = (
   x: number,
   y: number,

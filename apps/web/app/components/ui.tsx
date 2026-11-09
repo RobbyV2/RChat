@@ -1,9 +1,24 @@
 'use client'
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  Fragment,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type SyntheticEvent,
+} from 'react'
 import { X, type LucideIcon } from 'lucide-react'
-import { maskOutsideCode } from '../lib/profanity'
+import { maskOutsideCode, maskRuns } from '../lib/profanity'
 import { useMask, useStore } from '../lib/store'
+import { useChatSource } from './chat_source'
+import { REVEAL_EVENT } from '../lib/masked_reveal'
 import { ThemeToggle } from './status_clock'
 
 export const fieldCls =
@@ -283,11 +298,172 @@ export function LinkPage({
   )
 }
 
-// Text as the personal profanity filter shows it. `code`: plain text that may hold markdown
-// code, which stays as written.
-export function Masked({ text, code = false }: { text: string; code?: boolean }) {
-  const mask = useMask()
-  return <>{code ? maskOutsideCode(text, mask) : mask(text)}</>
+// Masked words whose reveal is shared, so the pieces of a word split by formatting open together.
+const RevealedWords = createContext<{ open: Set<string>; reveal: (word: string) => void } | null>(
+  null
+)
+
+export function MaskedWords({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState<Set<string>>(() => new Set())
+  const reveal = useCallback(
+    (word: string) => setOpen(o => (o.has(word) ? o : new Set(o).add(word))),
+    []
+  )
+  const value = useMemo(() => ({ open, reveal }), [open, reveal])
+  return <RevealedWords.Provider value={value}>{children}</RevealedWords.Provider>
+}
+
+// Elements that are controls: a masked word inside one may not be a control itself.
+const CONTROL =
+  'a[href],button,label,select,textarea,summary,[role=button],[role=link],[role=option],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=tab],[role=checkbox],[role=radio],[role=switch]'
+
+// Where masked words render: `plain` text (each word a button), inside a `control` (plain
+// spans), or not said (spans until the page shows they are outside any control).
+const MaskMode = createContext<'plain' | 'control' | null>(null)
+
+export function MaskControl({ children }: { children: ReactNode }) {
+  return <MaskMode.Provider value="control">{children}</MaskMode.Provider>
+}
+
+export function MaskPlain({ children }: { children: ReactNode }) {
+  const outer = useContext(MaskMode)
+  return (
+    <MaskMode.Provider value={outer === 'control' ? 'control' : 'plain'}>
+      {children}
+    </MaskMode.Provider>
+  )
+}
+
+const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
+
+// A word the personal filter masked, shown until the page reloads. In plain text it is a button
+// (click, tap, Enter or Space). Inside a control it is a span that a click or tap reveals; the
+// row's context menu and the palette reveal it from the keyboard (`REVEAL_EVENT`).
+export function MaskedWord({
+  hidden,
+  word,
+  children,
+}: {
+  hidden: string
+  word?: string
+  children: ReactNode
+}) {
+  const shared = useContext(RevealedWords)
+  const mode = useContext(MaskMode)
+  const [mine, setMine] = useState(false)
+  const [control, setControl] = useState(mode !== 'plain')
+  const node = useRef<HTMLElement | null>(null)
+  const shownRef = useRef<HTMLSpanElement>(null)
+  const focused = useRef(false)
+  const open = mine || (word !== undefined && !!shared && shared.open.has(word))
+  const show = useCallback(() => {
+    if (word !== undefined && shared) shared.reveal(word)
+    else setMine(true)
+  }, [word, shared])
+  useIsoLayoutEffect(() => {
+    if (open || mode === 'control') return
+    setControl(!!node.current?.parentElement?.closest(CONTROL))
+  }, [open, mode])
+  useEffect(() => {
+    const el = node.current
+    if (open || !el) return
+    el.addEventListener(REVEAL_EVENT, show)
+    return () => el.removeEventListener(REVEAL_EVENT, show)
+  }, [open, show, control])
+  useEffect(() => {
+    if (open && focused.current) shownRef.current?.focus()
+  }, [open])
+  if (open)
+    return (
+      <span ref={shownRef} tabIndex={-1} className="outline-none">
+        {hidden}
+      </span>
+    )
+  const reveal = (e: SyntheticEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    focused.current = document.activeElement === e.currentTarget
+    show()
+  }
+  const keep = (el: HTMLElement | null) => {
+    node.current = el
+  }
+  if (control)
+    return (
+      <span
+        ref={keep}
+        data-masked-word=""
+        onClick={reveal}
+        className="cursor-pointer rounded-sm underline decoration-dotted underline-offset-2 hover:bg-on-surface/10"
+      >
+        <span aria-hidden="true">{children}</span>
+        <span className="sr-only">masked</span>
+      </span>
+    )
+  return (
+    <button
+      ref={keep}
+      type="button"
+      data-masked-word=""
+      aria-label="Masked word"
+      title="Show masked word"
+      onClick={reveal}
+      className="inline cursor-pointer rounded-sm underline decoration-dotted underline-offset-2 hover:bg-on-surface/10 focus-visible:outline-2 focus-visible:outline-primary"
+    >
+      {children}
+    </button>
+  )
+}
+
+// Whether text written or owned by `by` is your own: your username, or your P2P identity inside
+// a P2P conversation.
+export const useOwn = (by?: string | null) => {
+  const src = useChatSource()
+  const me = useStore(s => s.me?.username ?? null)
+  return !!by && (src ? src.self === by : me === by)
+}
+
+// Whether you created instance server `name`: its server, channel, category and role names are
+// your own text.
+export const useOwnServer = (name: string | null | undefined) =>
+  useStore(s => {
+    const me = s.me
+    if (!me || !name) return false
+    const creator = me.servers.find(x => x.name === name)?.creator ?? s.servers[name]?.creator
+    return creator === me.username
+  })
+
+// Text as the personal profanity filter shows it, each masked word revealable. `code`: plain
+// text that may hold markdown code, which stays as written. Your own text (`own`, or `by` you) is
+// never masked.
+export function Masked({
+  text,
+  code = false,
+  by,
+  own = false,
+}: {
+  text: string
+  code?: boolean
+  by?: string | null
+  own?: boolean
+}) {
+  const mine = useOwn(by)
+  const mask = useMask(own || mine)
+  const shown = code ? maskOutsideCode(text, mask) : mask(text)
+  if (shown === text) return <>{text}</>
+  return (
+    <>
+      {maskRuns(text, shown).map((r, i) =>
+        r.hidden === undefined ? (
+          <Fragment key={i}>{r.text}</Fragment>
+        ) : (
+          <MaskedWord key={i} hidden={r.hidden}>
+            {r.text}
+          </MaskedWord>
+        )
+      )}
+    </>
+  )
 }
 
 // Placeholder rows while a section loads.

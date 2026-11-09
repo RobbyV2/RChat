@@ -1,14 +1,14 @@
 'use client'
 
 import { useState, useSyncExternalStore } from 'react'
-import { useMask, useStore } from '../lib/store'
+import { useStore } from '../lib/store'
 import { notifications, type Permission } from '../lib/platform'
 import { ruleSummary, type NotifyScope, type Rule } from '../lib/notify'
 import { useP2p } from '../lib/p2p/app'
 import { p2pOverride } from '../lib/p2p/alerts'
 import { displayName } from '../lib/p2p/contacts'
 import { SettingSwitch } from './admin_panel'
-import { sectionCls, textBtn } from './ui'
+import { Masked, sectionCls, textBtn } from './ui'
 
 interface Override {
   key: string
@@ -16,6 +16,8 @@ interface Override {
   name: string
   hint?: string
   prefix?: string
+  // Names you wrote (a server you created): never masked for you.
+  own?: boolean
   rule: Rule
 }
 
@@ -88,11 +90,15 @@ function OverrideRow({ o, now }: { o: Override; now: number }) {
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-sm text-on-surface">
           {o.prefix}
-          <span className="streamer">{o.name}</span>
+          <span className="streamer">
+            <Masked text={o.name} own={o.own} />
+          </span>
           {o.hint && (
             <span className="text-on-surface-variant">
               {' · '}
-              <span className="streamer">{o.hint}</span>
+              <span className="streamer">
+                <Masked text={o.hint} />
+              </span>
             </span>
           )}
         </span>
@@ -141,6 +147,7 @@ const useOverrides = () => {
     key: `s:${name}`,
     scope: { kind: 'server', name },
     name: serverName(name),
+    own: !!me && me.servers.find(x => x.name === name)?.creator === me.username,
     rule,
   }))
   const channelList: Override[] = Object.entries(prefs.channels).map(([id, rule]) => {
@@ -172,17 +179,11 @@ const useOverrides = () => {
     const c = contacts.find(x => x.ik === p2pRooms[room]?.peer)
     return c ? displayName(c) : null
   }
-  const mask = useMask()
-  const p2pList: Override[] = Object.entries(p2pOn ? prefs.p2p : {}).map(([key, rule]) => {
-    const o = p2pOverride(key, p2pServers, dmName)
-    return {
-      key: `p:${key}`,
-      ...o,
-      name: mask(o.name),
-      ...(o.hint ? { hint: mask(o.hint) } : {}),
-      rule,
-    }
-  })
+  const p2pList: Override[] = Object.entries(p2pOn ? prefs.p2p : {}).map(([key, rule]) => ({
+    key: `p:${key}`,
+    ...p2pOverride(key, p2pServers, dmName),
+    rule,
+  }))
   return { serverList, channelList, dmList, p2pList }
 }
 

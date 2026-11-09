@@ -5,7 +5,7 @@ import { FileText, Hash, Search } from 'lucide-react'
 import { useMask, useStore } from '../lib/store'
 import { dayEndTs, dayStartTs, type SearchArgs } from '../lib/search'
 import { UserAvatar } from './user_avatar'
-import { fieldCls, PanelHeader, Sentinel, useEscape } from './ui'
+import { fieldCls, Masked, PanelHeader, Sentinel, useEscape } from './ui'
 import { NameWithUsername } from './display_name'
 import { avatarTriggerCls, nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
@@ -29,12 +29,14 @@ const chipCls = (on: boolean) =>
 // here): where it is, who wrote it (`avatar` and `name` as the source shows people), and what.
 export interface SearchHitView {
   key: string
-  channel: string
-  server: string
+  channel: ReactNode
+  server: ReactNode
   avatar: ReactNode
   name: ReactNode
   createdAt: number
   content: string
+  // Your own message: its text and file name are never masked for you.
+  own: boolean
   forwarded: boolean
   // The attachment's label, or null without one.
   file: string | null
@@ -213,12 +215,19 @@ export function SearchView({
               )}
             </div>
             <p className="mt-0.5 line-clamp-2 text-sm break-words text-on-surface">
-              {r.content ? <SpoilerLine parts={spoilerParts(plainStamps(r.content))} /> : r.file}
+              {r.content ? (
+                <SpoilerLine
+                  parts={spoilerParts(plainStamps(r.content))}
+                  own={r.own && !r.forwarded}
+                />
+              ) : (
+                r.file !== null && <Masked text={r.file} own={r.own} />
+              )}
             </p>
             {r.file !== null && (
               <p className="mt-0.5 flex items-center gap-1 text-xs text-on-surface-variant">
                 <FileText size={12} />
-                {r.file}
+                <Masked text={r.file} own={r.own} />
               </p>
             )}
           </button>
@@ -232,10 +241,15 @@ export function SearchView({
   )
 }
 
-const instanceHit = (r: SearchResult, open: (r: SearchResult) => void): SearchHitView => ({
+const instanceHit = (
+  r: SearchResult,
+  me: string | null,
+  owns: (server: string) => boolean,
+  open: (r: SearchResult) => void
+): SearchHitView => ({
   key: String(r.message.id),
-  channel: r.channel_name,
-  server: r.server,
+  channel: <Masked text={r.channel_name} own={owns(r.server)} />,
+  server: <Masked text={r.server} own={owns(r.server)} />,
   avatar: (
     <span
       {...profileTrigger(r.message.author, r.server, false)}
@@ -260,6 +274,7 @@ const instanceHit = (r: SearchResult, open: (r: SearchResult) => void): SearchHi
   ),
   createdAt: r.message.created_at,
   content: r.message.content,
+  own: !r.message.webhook && r.message.author.username === me,
   forwarded: !!r.message.forward,
   file: r.message.media ? mediaLabel(r.message.media) : null,
   onOpen: () => open(r),
@@ -277,10 +292,13 @@ export default function SearchPanel() {
     () => channels?.map(c => ({ id: String(c.id), name: c.name })),
     [channels]
   )
-  const hits = useMemo(
-    () => search.results.map(r => instanceHit(r, x => void openResult(x))),
-    [search.results, openResult]
-  )
+  const me = useStore(s => s.me?.username ?? null)
+  const mine = useStore(s => s.me?.servers)
+  const hits = useMemo(() => {
+    const owns = (server: string) =>
+      me !== null && mine?.find(x => x.name === server)?.creator === me
+    return search.results.map(r => instanceHit(r, me, owns, x => void openResult(x)))
+  }, [search.results, me, mine, openResult])
   const run = useCallback(
     (f: SearchFilters, fresh: boolean) =>
       void searchRun(

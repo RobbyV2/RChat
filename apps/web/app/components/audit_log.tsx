@@ -36,7 +36,7 @@ import type { AuditEntry, UserRef } from '../lib/types'
 import { nameWithUsername } from '../lib/display_name'
 import { useMemberSearch } from './server_settings'
 import { UserAvatar } from './user_avatar'
-import { Dialog, Sentinel, fieldCls } from './ui'
+import { Dialog, Masked, Sentinel, fieldCls } from './ui'
 import { NameWithUsername } from './display_name'
 
 const TEXT_DEBOUNCE = 300
@@ -309,7 +309,7 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
           {sentence(entry).map((p, i) =>
             p.name ? (
               <span key={i} className="streamer font-medium">
-                {p.text}
+                <Masked text={p.text} />
               </span>
             ) : (
               <span key={i}>{p.text}</span>

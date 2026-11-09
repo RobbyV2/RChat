@@ -38,7 +38,7 @@ import { InstallButton } from './pwa_register'
 import { RailInstance } from './instance_badge'
 import { ThemeToggle } from './status_clock'
 import { PaletteButton } from './palette'
-import { Sentinel, iconBtn } from './ui'
+import { Sentinel, iconBtn, useOwnServer } from './ui'
 import { RailPingBadge, pingLabel } from './ping_badge'
 import { MutedIcon } from './notify_menu'
 import { P2pRailTile } from './p2p/p2p_home'
@@ -68,7 +68,7 @@ const dropServer = (name: string, { zone, index, onto }: DropTarget) => {
 }
 
 export function ServerGlyph({ name, displayName }: { name: string; displayName: string }) {
-  const mask = useMask()
+  const mask = useMask(useOwnServer(name))
   return name === 'rchat' ? (
     <img
       src="/rchat_r.png"
@@ -108,7 +108,7 @@ function ServerTile({
   const openServer = useStore(s => s.openServer)
   const muted = useStore(s => scopeMuted(s, { kind: 'server', name }))
   const mine = me !== null && creator === me.username
-  const mask = useMask()
+  const mask = useMask(mine)
   const streamer = useStore(s => s.streamer)
   const shown = streamer ? 'Server' : mask(display_name)
   const parent = folder === null ? null : folderKey(folder)
@@ -156,7 +156,7 @@ function PreviewTile() {
   const name = useStore(previewServer)
   const display = useStore(s => (name ? (s.servers[name]?.display_name ?? name) : ''))
   const openServer = useStore(s => s.openServer)
-  const mask = useMask()
+  const mask = useMask(useOwnServer(name))
   const streamer = useStore(s => s.streamer)
   if (!name) return null
   const label = streamer ? 'Previewing a server' : `Previewing ${mask(display)}`
@@ -188,7 +188,7 @@ function PreviewTile() {
 function MiniIcon({ server: { name, display_name } }: { server: RailServer }) {
   const p2pOpen = useP2p(s => s.home || s.server !== null)
   const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name) && !p2pOpen
-  const mask = useMask()
+  const mask = useMask(useOwnServer(name))
   return (
     <span
       className={`flex min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-md text-[9px] leading-none font-semibold ${

@@ -28,6 +28,7 @@ import { AutocompletePopup, useAutocomplete } from './autocomplete'
 import { useChatSource } from './chat_source'
 import { useEmojiData } from './emoji_picker'
 import { UserAvatar } from './user_avatar'
+import { Masked } from './ui'
 import {
   STYLE_LABELS,
   acceptStamp,
@@ -315,7 +316,9 @@ export function useTextAssist({
                 avatarColor={u.user.avatar_color}
                 size={24}
               />
-              <span className="streamer min-w-0 truncate font-medium">{u.user.display_name}</span>
+              <span className="streamer min-w-0 truncate font-medium">
+                <Masked text={u.user.display_name} by={u.user.username} />
+              </span>
               <span className="streamer min-w-0 shrink truncate text-xs opacity-70">
                 @{u.user.username}
               </span>

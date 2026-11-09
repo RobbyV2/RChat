@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { Ban, Check, Menu, QrCode as QrIcon, UserPlus, Waypoints, X } from 'lucide-react'
-import { useMask, useStore } from '../../lib/store'
+import { useStore } from '../../lib/store'
 import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
 import { badgePings, dmUnread, listedPeers } from '../../lib/p2p/alerts'
 import { dmRoomId, movedText, MOVING_TEXT, RESUME_TEXT } from '../../lib/p2p/dm'
@@ -358,7 +358,6 @@ function ContactRow({
   const notice = noticeText(c)
   const shield = shieldOf(c)
   const chip = useHasChip(c.ik)
-  const mask = useMask()
   return (
     <li>
       <button
@@ -393,7 +392,7 @@ function ContactRow({
           <span className="block truncate text-xs text-on-surface-variant">
             {shield === 'warning'
               ? 'New key: verify before you trust it'
-              : ((notice && mask(notice)) ??
+              : ((notice && <Masked text={notice} />) ??
                 (c.state === 'outgoing'
                   ? 'Request sent'
                   : c.state === 'blocked'

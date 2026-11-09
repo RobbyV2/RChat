@@ -127,7 +127,7 @@ interface MdNode {
   value?: string
   alt?: string | null
   children?: MdNode[]
-  data?: { hProperties?: Record<string, unknown> }
+  data?: { hName?: string; hProperties?: Record<string, unknown>; hChildren?: MdNode[] }
 }
 
 // Pills and timestamps render from their own data; their names are masked where they render.
@@ -136,18 +136,103 @@ const KEEP = ['data-stamp', 'data-mention', 'data-group', 'data-edited']
 // Blocks whose text reads as one line, so a word split by formatting (`f**u**ck`) is still found.
 const LINES = ['paragraph', 'heading', 'tableCell']
 
+const SPACE = /\s/u
+
 const kept = (node: MdNode) => {
   const props = node.data?.hProperties
   return !!props && KEEP.some(k => k in props)
 }
 
-// Masks the text nodes of one block together, then writes each part back in place (the mask
-// keeps the number of code points). Code, pills and breaks split the text.
-const maskLine = (block: MdNode, mask: Matcher) => {
-  const parts: (MdNode | null)[] = []
+// The masked words of `text` (code points) as `shown` shows it: [first, last] of each stretch
+// of changed code points with no space between them.
+export const maskSpans = (text: string[], shown: string[]): [number, number][] => {
+  const spans: [number, number][] = []
+  let i = 0
+  while (i < text.length) {
+    if (text[i] === shown[i]) {
+      i += 1
+      continue
+    }
+    let last = i
+    for (let j = i + 1; j < text.length && !SPACE.test(text[j]); j += 1)
+      if (text[j] !== shown[j]) last = j
+    spans.push([i, last])
+    i = last + 1
+  }
+  return spans
+}
+
+// A piece of shown text. A masked piece keeps what it hides, and `word`, the masked word it
+// belongs to (pieces of a word split by formatting share it).
+export interface MaskRun {
+  text: string
+  hidden?: string
+  word?: number
+}
+
+const slice = (
+  text: string[],
+  shown: string[],
+  spans: [number, number][],
+  from: number,
+  to: number
+) => {
+  const runs: MaskRun[] = []
+  let at = from
+  spans.forEach(([first, last], word) => {
+    const start = Math.max(first, from)
+    const end = Math.min(last + 1, to)
+    if (start >= end) return
+    if (start > at) runs.push({ text: shown.slice(at, start).join('') })
+    runs.push({
+      text: shown.slice(start, end).join(''),
+      hidden: text.slice(start, end).join(''),
+      word,
+    })
+    at = end
+  })
+  if (at < to) runs.push({ text: shown.slice(at, to).join('') })
+  return runs
+}
+
+// `text` as its masked form `shown` shows it: plain runs and masked words. A mask that changed
+// the length hides the whole text as one word.
+export const maskRuns = (text: string, shown: string): MaskRun[] => {
+  if (shown === text) return text ? [{ text }] : []
+  const a = Array.from(text)
+  const b = Array.from(shown)
+  if (a.length !== b.length) return [{ text: shown, hidden: text, word: 0 }]
+  return slice(a, b, maskSpans(a, b), 0, a.length)
+}
+
+// Markdown nodes for runs: masked words become `span[data-masked]` holding the hidden text,
+// `data-mask-word` naming the word within the message.
+const runNodes = (runs: MaskRun[], line: number): MdNode[] =>
+  runs.map(r =>
+    r.hidden === undefined
+      ? { type: 'text', value: r.text }
+      : {
+          type: 'maskedWord',
+          data: {
+            hName: 'span',
+            hProperties: { dataMasked: r.hidden, dataMaskWord: `${line}.${r.word}` },
+            hChildren: [{ type: 'text', value: r.text }],
+          },
+        }
+  )
+
+const replace = (parent: MdNode, node: MdNode, by: MdNode[]) => {
+  const kids = parent.children ?? []
+  kids.splice(kids.indexOf(node), 1, ...by)
+}
+
+// Masks the text nodes of one block together, then splits each into plain and masked runs in
+// place (the mask keeps the number of code points). Code, pills and breaks split the text.
+const maskLine = (block: MdNode, mask: Matcher, next: () => number) => {
+  const parts: ({ node: MdNode; parent: MdNode } | null)[] = []
   const collect = (node: MdNode) => {
     for (const child of node.children ?? []) {
-      if (child.type === 'text') parts.push(child)
+      if (child.type === 'text') parts.push({ node: child, parent: node })
       else if (child.type === 'image') {
         if (child.alt) child.alt = mask(child.alt)
         parts.push(null)
@@ -156,31 +241,55 @@ const maskLine = (block: MdNode, mask: Matcher) => {
     }
   }
   collect(block)
-  const texts = parts.filter((p): p is MdNode => p !== null && !!p.value)
+  const texts = parts.filter(p => p !== null && !!p.node.value)
   if (texts.length === 0) return
-  const points = parts.map(p => Array.from(p === null ? ' ' : (p.value ?? '')))
+  const points = parts.map(p => Array.from(p === null ? ' ' : (p.node.value ?? '')))
   const line = points.flat()
   const masked = Array.from(mask(line.join('')))
   if (masked.length !== line.length) {
-    for (const node of texts) node.value = mask(node.value ?? '')
+    for (const part of texts) {
+      if (!part) continue
+      const value = part.node.value ?? ''
+      const runs = maskRuns(value, mask(value))
+      if (runs.some(r => r.hidden !== undefined))
+        replace(part.parent, part.node, runNodes(runs, next()))
+    }
     return
   }
+  const spans = maskSpans(line, masked)
+  if (spans.length === 0) return
+  const id = next()
   let at = 0
   parts.forEach((part, i) => {
     const end = at + points[i].length
-    if (part !== null && part.value) part.value = masked.slice(at, end).join('')
+    if (part !== null && part.node.value) {
+      const runs = slice(line, masked, spans, at, end)
+      if (runs.some(r => r.hidden !== undefined))
+        replace(part.parent, part.node, runNodes(runs, id))
+    }
     at = end
   })
 }
 
-// Masks the visible text of a markdown tree: text and image alt text. Code (`code`,
-// `inlineCode`) and link targets are other fields, so they stay as written.
-export const maskTree = (node: MdNode, mask: Matcher) => {
-  if (LINES.includes(node.type)) return maskLine(node, mask)
-  if (node.type === 'text' && node.value) node.value = mask(node.value)
+const walk = (node: MdNode, mask: Matcher, next: () => number) => {
+  if (LINES.includes(node.type)) return maskLine(node, mask, next)
   if (node.type === 'image' && node.alt) node.alt = mask(node.alt)
   if (kept(node)) return
-  for (const child of node.children ?? []) maskTree(child, mask)
+  for (const child of [...(node.children ?? [])]) {
+    if (child.type !== 'text' || !child.value) walk(child, mask, next)
+    else {
+      const runs = maskRuns(child.value, mask(child.value))
+      if (runs.some(r => r.hidden !== undefined)) replace(node, child, runNodes(runs, next()))
+    }
+  }
+}
+
+// Masks the visible text of a markdown tree: text and image alt text. Code (`code`,
+// `inlineCode`) and link targets are other fields, so they stay as written. Masked words become
+// `span[data-masked]` nodes the renderer turns into reveal buttons.
+export const maskTree = (node: MdNode, mask: Matcher) => {
+  let line = 0
+  walk(node, mask, () => line++)
 }
 
 export const remarkMask = (mask: Matcher) => () => (tree: unknown) => maskTree(tree as MdNode, mask)

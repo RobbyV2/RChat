@@ -13,6 +13,7 @@ import {
 import { AtSign, Bell, Check, CheckCheck, Hash, MessageSquare, UserPlus, X } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
 import { useMask, useStore } from '../lib/store'
+import { showText } from '../lib/profanity'
 import { allPings } from '../lib/selectors'
 import {
   DEFAULT_VIEW,
@@ -39,7 +40,15 @@ import { UserAvatar } from './user_avatar'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { MessageTime } from './timestamp'
-import { Masked, Sentinel, SheetGrip, SkeletonRows, textBtn as textBtnCls, useEscape } from './ui'
+import {
+  Masked,
+  Sentinel,
+  SheetGrip,
+  SkeletonRows,
+  textBtn as textBtnCls,
+  useEscape,
+  useOwnServer,
+} from './ui'
 import { NameWithUsername } from './display_name'
 import { longPress, useMedia } from './context_menu'
 
@@ -170,6 +179,7 @@ function useInbox(view: InboxView) {
 
 function Place({ entry }: { entry: InboxEntry }) {
   const w = entry.where
+  const own = useOwnServer(w.kind === 'channel' ? w.server : null)
   if (w.kind === 'dm')
     return (
       <span className="flex min-w-0 items-center gap-1">
@@ -189,12 +199,12 @@ function Place({ entry }: { entry: InboxEntry }) {
     <span className="flex min-w-0 items-center gap-1">
       <Hash size={12} className="shrink-0" />
       <span className="streamer truncate">
-        <Masked text={w.channel} />
+        <Masked text={w.channel} own={own} />
         {w.thread ? ' (thread)' : ''}
       </span>
       <span className="shrink-0">·</span>
       <span className="streamer truncate">
-        <Masked text={w.serverName} />
+        <Masked text={w.serverName} own={own} />
       </span>
     </span>
   )
@@ -223,9 +233,8 @@ function Row({
   onOpen: (e: InboxEntry) => void
   onRead: (e: InboxEntry) => void
 }) {
-  const mask = useMask()
   const streamer = useStore(s => s.streamer)
-  const snippet = inboxSnippet(entry, streamer, mask)
+  const snippet = inboxSnippet(entry, streamer, showText)
   const menu = longPress((x, y) =>
     openActionMenu(x, y, {
       kind: 'inbox',
@@ -280,7 +289,9 @@ function Row({
             <Place entry={entry} />
           </span>
           {snippet && (
-            <span className="line-clamp-2 text-sm break-words text-on-surface">{snippet}</span>
+            <span className="line-clamp-2 text-sm break-words text-on-surface">
+              <Masked text={snippet} code />
+            </span>
           )}
           {entry.unread && <span className="sr-only">Unread</span>}
         </span>

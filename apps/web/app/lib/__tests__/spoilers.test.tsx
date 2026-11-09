@@ -18,6 +18,7 @@ import { resetSessionCaches, useStore } from '../store'
 import { MarkdownMessage } from '../../components/markdown_message'
 import { Snippet, SpoilerLine } from '../../components/replies'
 import { me, msg, user } from './fixtures'
+import { readText } from './masked_text'
 import fixture from './fixtures/spoilers.json'
 
 interface PartsCase {
@@ -98,6 +99,7 @@ describe('the message view', () => {
   const render = (content: string, over = {}) =>
     renderToStaticMarkup(<MarkdownMessage message={msg(1, { content, ...over })} />)
   const hidden = (html: string) => html.split('data-spoiler="hidden"').length - 1
+  const read = readText
 
   test('a spoiler is a button until revealed, one per spoiler', () => {
     const html = render('a ||one|| b ||two||')
@@ -191,8 +193,8 @@ describe('the message view', () => {
   test('the profanity filter masks inside spoilers too', async () => {
     await setMasking(true, () => Promise.resolve((t: string) => t.replace(/shit/g, '****')))
     setInitial({ profanityReady: true, showSpoilers: 'always' })
-    const html = render('||oh shit||')
-    expect(html).toContain('oh ****')
+    const html = render('||oh shit||', { author: user('bob') })
+    expect(read(html)).toContain('oh ****')
     expect(html.includes('shit')).toBe(false)
   })
   test('webhook embeds hide spoilers and go through the profanity filter', async () => {
@@ -214,8 +216,8 @@ describe('the message view', () => {
     await setMasking(true, () => Promise.resolve((t: string) => t.replace(/shit/g, '****')))
     setInitial({ profanityReady: true, showSpoilers: 'always' })
     const open = render('', { webhook })
-    expect(open).toContain('**** title')
-    expect(open).toContain('and ****')
+    expect(read(open)).toContain('**** title')
+    expect(read(open)).toContain('and ****')
     expect(open.includes('shit')).toBe(false)
   })
 })

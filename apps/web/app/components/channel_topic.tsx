@@ -17,7 +17,16 @@ import type { Channel } from '../lib/types'
 import { useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
 import { MessageLink } from './markdown_message'
-import { CloseButton, fieldCls, FieldError, filledBtn, Masked, SheetGrip, textBtn } from './ui'
+import {
+  CloseButton,
+  fieldCls,
+  FieldError,
+  filledBtn,
+  Masked,
+  SheetGrip,
+  textBtn,
+  useOwnServer,
+} from './ui'
 
 const topicFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
@@ -93,6 +102,7 @@ function TopicWindow({
   onClose: () => void
 }) {
   const sheet = useMedia(SHEET_QUERY)
+  const ownServer = useOwnServer(useStore(s => (s.view?.kind === 'channel' ? s.view.server : null)))
   const rootRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const [at, setAt] = useState<{ top: number; left: number } | null>(null)
@@ -172,7 +182,7 @@ function TopicWindow({
       <div className="flex shrink-0 items-center gap-2 px-4 pb-2">
         <Icon size={18} className="shrink-0 text-on-surface-variant" />
         <h2 id={titleId} className="min-w-0 flex-1 truncate text-base font-medium text-on-surface">
-          <Masked text={channel.name} />
+          <Masked text={channel.name} own={ownServer} />
         </h2>
         {!sheet && <CloseButton onClick={onClose} />}
       </div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import {
   ChartColumn,
   Check,
@@ -63,6 +63,20 @@ export const canManagePoll = (m: Message) => managesPoll(useStore.getState(), m)
 
 const openVoters = (m: Message) =>
   useStore.getState().openDialog({ kind: 'poll_voters', message: m })
+
+// Whether the question and the options are your own text: options only when nobody else could
+// add any.
+const OwnPoll = createContext({ question: false, options: false })
+
+const ownPoll = (m: Message, me: string | null | undefined) => {
+  const own = !m.webhook && !!me && m.author.username === me
+  return { question: own, options: own && !m.poll?.allow_add }
+}
+
+function PollText({ text, option = false }: { text: string; option?: boolean }) {
+  const own = useContext(OwnPoll)
+  return <Masked text={text} own={option ? own.options : own.question} />
+}
 
 function Bar({ share, mine, lead }: { share: number; mine: boolean; lead: boolean }) {
   return (
@@ -134,7 +148,7 @@ function ChoiceList({
                   <Mark on={sel} square={poll.kind === 'multiple'} />
                 ))}
               <span className="min-w-0 flex-1 break-words">
-                <Masked text={optionLabel(o)} />
+                <PollText text={optionLabel(o)} option />
               </span>
               {winner === o.id && (
                 <Trophy size={14} className="shrink-0 text-primary" aria-label="Winner" />
@@ -207,7 +221,7 @@ function RankOrder({
               {i + 1}
             </span>
             <span className="min-w-0 flex-1 truncate">
-              <Masked text={optionLabel(o)} />
+              <PollText text={optionLabel(o)} option />
             </span>
             <button
               type="button"
@@ -261,7 +275,7 @@ function Rounds({ poll }: { poll: Poll }) {
                     lead={round.eliminated === null && poll.results?.winner === row.option.id}
                   />
                   <span className="relative min-w-0 flex-1 truncate">
-                    <Masked text={optionLabel(row.option)} />
+                    <PollText text={optionLabel(row.option)} option />
                   </span>
                   <span className="relative shrink-0 tabular-nums">
                     {row.count} · {row.share}%
@@ -286,7 +300,7 @@ function RunoffSummary({ poll, closed }: { poll: Poll; closed: boolean }) {
       <Trophy size={12} className="shrink-0 text-primary" />
       <span className="min-w-0 break-words">
         <span className="font-medium">
-          <Masked text={optionLabel(winner)} />
+          <PollText text={optionLabel(winner)} option />
         </span>{' '}
         {closed ? 'won' : 'leads'} after {n} {n === 1 ? 'round' : 'rounds'}
       </span>
@@ -504,6 +518,7 @@ function VoterList({ id, option }: { id: number; option: number | null }) {
 
 function PollVoters({ m, onClose }: { m: Message; onClose: () => void }) {
   const poll = m.poll
+  const me = useStore(s => s.me?.username)
   const [option, setOption] = useState<number | null>(null)
   if (!poll) return null
   const scores =
@@ -515,32 +530,34 @@ function PollVoters({ m, onClose }: { m: Message; onClose: () => void }) {
       : poll.options.map(o => ({ key: o.id, label: optionLabel(o) }))),
   ]
   return (
-    <Dialog title="Votes" onClose={onClose} full>
-      <p className="text-sm break-words text-on-surface-variant">
-        <Masked text={poll.question} />
-      </p>
-      <div className="mt-3 flex flex-wrap gap-1.5" role="tablist" aria-label="Filter by option">
-        {chips.map(c => (
-          <button
-            key={c.key ?? 'all'}
-            role="tab"
-            aria-selected={option === c.key}
-            onClick={() => setOption(c.key)}
-            className={`max-w-full truncate rounded-full border px-3 py-1 text-xs font-medium ${
-              option === c.key
-                ? 'border-transparent bg-secondary-container text-on-secondary-container'
-                : 'border-outline-variant text-on-surface-variant hover:bg-surface-container-highest'
-            }`}
-          >
-            <Masked text={c.label} />
-          </button>
-        ))}
-      </div>
-      {poll.kind === 'ranked' && option !== null && (
-        <p className="mt-2 text-xs text-on-surface-variant">Voters who ranked it first</p>
-      )}
-      <VoterList key={option ?? 'all'} id={m.id} option={option} />
-    </Dialog>
+    <OwnPoll.Provider value={ownPoll(m, me)}>
+      <Dialog title="Votes" onClose={onClose} full>
+        <p className="text-sm break-words text-on-surface-variant">
+          <PollText text={poll.question} />
+        </p>
+        <div className="mt-3 flex flex-wrap gap-1.5" role="tablist" aria-label="Filter by option">
+          {chips.map(c => (
+            <button
+              key={c.key ?? 'all'}
+              role="tab"
+              aria-selected={option === c.key}
+              onClick={() => setOption(c.key)}
+              className={`max-w-full truncate rounded-full border px-3 py-1 text-xs font-medium ${
+                option === c.key
+                  ? 'border-transparent bg-secondary-container text-on-secondary-container'
+                  : 'border-outline-variant text-on-surface-variant hover:bg-surface-container-highest'
+              }`}
+            >
+              <PollText text={c.label} option />
+            </button>
+          ))}
+        </div>
+        {poll.kind === 'ranked' && option !== null && (
+          <p className="mt-2 text-xs text-on-surface-variant">Voters who ranked it first</p>
+        )}
+        <VoterList key={option ?? 'all'} id={m.id} option={option} />
+      </Dialog>
+    </OwnPoll.Provider>
   )
 }
 
@@ -602,138 +619,145 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
     poll.options.length < POLL_OPTIONS_MAX &&
     (poll.allow_add || m.author.username === me)
   return (
-    <div
-      data-poll={m.id}
-      className="mt-1 max-w-120 min-w-0 rounded-2xl border border-outline-variant bg-surface-container p-3"
-    >
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-on-surface-variant">
-        <span className="flex items-center gap-1 font-medium text-primary">
-          <ChartColumn size={14} />
-          {KIND_LABELS[poll.kind]}
-        </span>
-        {poll.anonymous && (
-          <span className="flex items-center gap-1">
-            <EyeOff size={12} />
-            Anonymous
+    <OwnPoll.Provider value={ownPoll(m, me)}>
+      <div
+        data-poll={m.id}
+        className="mt-1 max-w-120 min-w-0 rounded-2xl border border-outline-variant bg-surface-container p-3"
+      >
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-on-surface-variant">
+          <span className="flex items-center gap-1 font-medium text-primary">
+            <ChartColumn size={14} />
+            {KIND_LABELS[poll.kind]}
           </span>
-        )}
-        {static_ && <span>Snapshot</span>}
-        <span className="ml-auto" data-poll-status>
-          {closed ? 'Closed' : static_ ? null : (left ?? 'Open')}
-        </span>
-      </div>
-      <p className="mt-1.5 text-base font-medium break-words text-on-surface">
-        <Masked text={poll.question} />
-      </p>
-      {live && <p className="text-xs text-on-surface-variant">{hint}</p>}
-      {poll.kind === 'rating' ? (
-        <Rating
-          poll={poll}
-          picked={picked}
-          onPick={
-            live
-              ? v => {
-                  setPicked([v])
-                  void submit([v])
-                }
-              : null
-          }
-        />
-      ) : (
-        <ChoiceList poll={poll} picked={picked} onPick={choosing ? pick : null} live={choosing} />
-      )}
-      {choosing && poll.kind === 'ranked' && (
-        <RankOrder
-          poll={poll}
-          order={picked}
-          onMove={(id, by) => setPicked(cur => moveRank(cur, id, by))}
-        />
-      )}
-      {poll.results === null && (
-        <p className="mt-2 flex items-center gap-1.5 text-xs text-on-surface-variant">
-          <EyeOff size={12} />
-          {hiddenHint(poll)}
+          {poll.anonymous && (
+            <span className="flex items-center gap-1">
+              <EyeOff size={12} />
+              Anonymous
+            </span>
+          )}
+          {static_ && <span>Snapshot</span>}
+          <span className="ml-auto" data-poll-status>
+            {closed ? 'Closed' : static_ ? null : (left ?? 'Open')}
+          </span>
+        </div>
+        <p className="mt-1.5 text-base font-medium break-words text-on-surface">
+          <PollText text={poll.question} />
         </p>
-      )}
-      {poll.kind === 'ranked' && poll.results && poll.results.rounds.length > 0 && (
-        <>
-          <RunoffSummary poll={poll} closed={closed} />
-          <button
-            type="button"
-            aria-expanded={rounds}
-            onClick={() => setRounds(r => !r)}
-            className="mt-2 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-          >
-            {rounds ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            {rounds ? 'Hide rounds' : `Show ${poll.results.rounds.length} rounds`}
-          </button>
-          {rounds && <Rounds poll={poll} />}
-        </>
-      )}
-      {adding && <AddOption id={m.id} onDone={() => setAdding(false)} />}
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
-        <span data-poll-voters-count className="tabular-nums">
-          {votersLabel(poll.voters)}
-        </span>
-        {votersShown(poll) && (
-          <button
-            type="button"
-            onClick={() => openVoters(m)}
-            className="font-medium text-primary hover:underline pointer-coarse:min-h-8"
-          >
-            View votes
-          </button>
+        {live && <p className="text-xs text-on-surface-variant">{hint}</p>}
+        {poll.kind === 'rating' ? (
+          <Rating
+            poll={poll}
+            picked={picked}
+            onPick={
+              live
+                ? v => {
+                    setPicked([v])
+                    void submit([v])
+                  }
+                : null
+            }
+          />
+        ) : (
+          <ChoiceList poll={poll} picked={picked} onPick={choosing ? pick : null} live={choosing} />
         )}
-        {!static_ && !closed && canVote && voted && poll.allow_change && poll.kind !== 'rating' && (
-          <button
-            type="button"
-            onClick={() => setEditing(e => !e)}
-            className="font-medium text-primary hover:underline pointer-coarse:min-h-8"
-          >
-            {editing ? 'Cancel' : 'Change vote'}
-          </button>
+        {choosing && poll.kind === 'ranked' && (
+          <RankOrder
+            poll={poll}
+            order={picked}
+            onMove={(id, by) => setPicked(cur => moveRank(cur, id, by))}
+          />
         )}
-        {!static_ && !closed && canVote && voted && poll.allow_change && (
-          <button
-            type="button"
-            onClick={() => void retractVote(m.id)}
-            className="font-medium text-primary hover:underline pointer-coarse:min-h-8"
-          >
-            Remove vote
-          </button>
+        {poll.results === null && (
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-on-surface-variant">
+            <EyeOff size={12} />
+            {hiddenHint(poll)}
+          </p>
         )}
-        {canAdd && !adding && (
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            className="flex items-center gap-0.5 font-medium text-primary hover:underline pointer-coarse:min-h-8"
-          >
-            <Plus size={12} />
-            Add option
-          </button>
+        {poll.kind === 'ranked' && poll.results && poll.results.rounds.length > 0 && (
+          <>
+            <RunoffSummary poll={poll} closed={closed} />
+            <button
+              type="button"
+              aria-expanded={rounds}
+              onClick={() => setRounds(r => !r)}
+              className="mt-2 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+            >
+              {rounds ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              {rounds ? 'Hide rounds' : `Show ${poll.results.rounds.length} rounds`}
+            </button>
+            {rounds && <Rounds poll={poll} />}
+          </>
         )}
-        {manage && !static_ && (
-          <button
-            type="button"
-            onClick={() => void (closed ? reopenPoll(m.id) : closePoll(m.id))}
-            className="flex items-center gap-1 font-medium text-primary hover:underline pointer-coarse:min-h-8"
-          >
-            {closed ? <LockOpen size={12} /> : <Lock size={12} />}
-            {closed ? 'Reopen' : 'Close poll'}
-          </button>
-        )}
-        {choosing && (
-          <button
-            type="button"
-            data-poll-submit
-            disabled={!ready || busy}
-            onClick={() => void submit()}
-            className={`${filledBtn} ml-auto px-4 py-1.5`}
-          >
-            {voted ? 'Update vote' : 'Vote'}
-          </button>
-        )}
+        {adding && <AddOption id={m.id} onDone={() => setAdding(false)} />}
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-on-surface-variant">
+          <span data-poll-voters-count className="tabular-nums">
+            {votersLabel(poll.voters)}
+          </span>
+          {votersShown(poll) && (
+            <button
+              type="button"
+              onClick={() => openVoters(m)}
+              className="font-medium text-primary hover:underline pointer-coarse:min-h-8"
+            >
+              View votes
+            </button>
+          )}
+          {!static_ &&
+            !closed &&
+            canVote &&
+            voted &&
+            poll.allow_change &&
+            poll.kind !== 'rating' && (
+              <button
+                type="button"
+                onClick={() => setEditing(e => !e)}
+                className="font-medium text-primary hover:underline pointer-coarse:min-h-8"
+              >
+                {editing ? 'Cancel' : 'Change vote'}
+              </button>
+            )}
+          {!static_ && !closed && canVote && voted && poll.allow_change && (
+            <button
+              type="button"
+              onClick={() => void retractVote(m.id)}
+              className="font-medium text-primary hover:underline pointer-coarse:min-h-8"
+            >
+              Remove vote
+            </button>
+          )}
+          {canAdd && !adding && (
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="flex items-center gap-0.5 font-medium text-primary hover:underline pointer-coarse:min-h-8"
+            >
+              <Plus size={12} />
+              Add option
+            </button>
+          )}
+          {manage && !static_ && (
+            <button
+              type="button"
+              onClick={() => void (closed ? reopenPoll(m.id) : closePoll(m.id))}
+              className="flex items-center gap-1 font-medium text-primary hover:underline pointer-coarse:min-h-8"
+            >
+              {closed ? <LockOpen size={12} /> : <Lock size={12} />}
+              {closed ? 'Reopen' : 'Close poll'}
+            </button>
+          )}
+          {choosing && (
+            <button
+              type="button"
+              data-poll-submit
+              disabled={!ready || busy}
+              onClick={() => void submit()}
+              className={`${filledBtn} ml-auto px-4 py-1.5`}
+            >
+              {voted ? 'Update vote' : 'Vote'}
+            </button>
+          )}
+        </div>
       </div>
-    </div>
+    </OwnPoll.Provider>
   )
 }

@@ -1,3 +1,4 @@
+import { actionElement } from '../masked_reveal'
 import { memberState, messageServer } from '../selectors'
 import { OPT_BASE } from '../slices/messages'
 import { useStore } from '../store'
@@ -130,7 +131,12 @@ const listOf = (s: RChatState, t: Target) => {
   }
 }
 
-export const ctxFor = (s: RChatState, target: Target, via: Via): ActionCtx => ({
+const ctxWith = (
+  s: RChatState,
+  target: Target,
+  via: Via,
+  element: Element | null | undefined
+): ActionCtx => ({
   s,
   via,
   target,
@@ -138,7 +144,12 @@ export const ctxFor = (s: RChatState, target: Target, via: Via): ActionCtx => ({
   list: listOf(s, target),
   message: target.kind === 'message' || target.kind === 'embed' ? target.message : null,
   member: memberOf(s, target),
+  ...(element ? { element } : {}),
 })
+
+// A context made while a menu opens or a palette key runs carries the element it is for.
+export const ctxFor = (s: RChatState, target: Target, via: Via): ActionCtx =>
+  ctxWith(s, target, via, actionElement())
 
 export const paletteCtx = (s: RChatState) => ctxFor(s, { kind: 'none' }, 'palette')
 
@@ -204,11 +215,12 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
   }
 }
 
-// The same context on the store's current state, or null when its target is gone.
+// The same context on the store's current state, or null when its target is gone. The element
+// stays only while it is still on the page.
 export const refreshCtx = (ctx: ActionCtx): ActionCtx | null => {
   const s = useStore.getState()
   const t = freshTarget(s, ctx.target)
-  return t && ctxFor(s, t, ctx.via)
+  return t && ctxWith(s, t, ctx.via, ctx.element?.isConnected ? ctx.element : null)
 }
 
 bindActionHost({

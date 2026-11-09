@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { useMask, useStore } from '../../lib/store'
+import { useStore } from '../../lib/store'
 import {
   memberName,
   p2pDm,
@@ -61,11 +61,10 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
   const typers = useP2p(s => s.serverTyping[key] ?? NONE)
   const unseen = (v.chans[t.ch]?.threads?.[t.root] ?? 0) > 0
   const following = useStore(s => s.atBottom[scope] === true)
-  const mask = useMask()
   const listRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const room = v.id
-  const nameOf = useCallback((ik: string) => mask(memberName(room, ik)), [room, mask])
+  const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
   const members = v.members
   const people = useMemo<Mentionable[]>(
     () =>

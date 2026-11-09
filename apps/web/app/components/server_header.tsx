@@ -3,7 +3,7 @@
 import type { CSSProperties } from 'react'
 import { Settings } from 'lucide-react'
 import { GEAR_CHIP_CSS, headerColors } from '../lib/server_colors'
-import { Masked } from './ui'
+import { Masked, useOwnServer } from './ui'
 
 const gearCls =
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-full outline-offset-2 focus-visible:outline-2'
@@ -25,6 +25,7 @@ export function ServerHeader({
   preview?: boolean
   showGear?: boolean
 }) {
+  const own = useOwnServer(server)
   const colors = headerColors(bannerColor, nameColor)
   const style: CSSProperties | undefined = colors?.bg
     ? ({
@@ -51,7 +52,7 @@ export function ServerHeader({
           style={colors?.fg ? { color: colors.fg } : undefined}
           className="streamer truncate font-medium"
         >
-          <Masked text={displayName} />
+          <Masked text={displayName} own={own} />
         </span>
       )}
       {preview

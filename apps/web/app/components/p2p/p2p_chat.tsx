@@ -335,7 +335,7 @@ export const P2pRow = memo(function P2pRow({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
               <span className="streamer min-w-0 truncate text-sm font-medium">
-                <Masked text={m.author.display_name} />
+                <Masked text={m.author.display_name} by={m.author.username} />
               </span>
               <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
               {p.late && (
@@ -359,7 +359,7 @@ export const P2pRow = memo(function P2pRow({
                 />
               )
             )}
-            <AttachmentList att={p.fwd?.att ?? p.att} canFetch={canAct} />
+            <AttachmentList att={p.fwd?.att ?? p.att} canFetch={canAct} own={!p.fwd && mine} />
             <ReactionBar m={m} canReact={act} canRemove={act} />
             {threads && !!p.replies && !p.archived && (
               <button
@@ -406,7 +406,7 @@ function P2pSystemRow({ m, divider }: { m: Message; divider: boolean }) {
         <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
           {before}
           <span className="streamer font-medium text-on-surface">
-            <Masked text={m.author.display_name} />
+            <Masked text={m.author.display_name} by={m.author.username} />
           </span>
           {after}
           <MessageTime ts={m.created_at} className="ml-2 text-xs opacity-70" />
@@ -445,7 +445,7 @@ function P2pPinRow({
       press={longPress((x, y) => onMenu(p, x, y))}
       name={
         <span className="streamer font-medium text-on-surface">
-          <Masked text={m.author.display_name} />
+          <Masked text={m.author.display_name} by={m.author.username} />
         </span>
       }
       place={place}
@@ -515,7 +515,7 @@ export function P2pHiddenRow({ m, divider }: { m: Message; divider: boolean }) {
         <p className="min-w-0 flex-1 text-sm text-on-surface-variant italic">
           {before}
           <span className="streamer">
-            <Masked text={m.author.display_name} />
+            <Masked text={m.author.display_name} by={m.author.username} />
           </span>
           {after}
           <MessageTime ts={m.created_at} className="ml-2 text-xs not-italic opacity-70" />
@@ -686,7 +686,7 @@ export function P2pComposer({
     <ComposerBar onClose={p2pDm.cancelReply} closeLabel="Cancel reply">
       Replying to{' '}
       <span className="streamer font-semibold text-on-surface">
-        <Masked text={nameOf(replyTo.sender)} />
+        <Masked text={nameOf(replyTo.sender)} by={replyTo.sender} />
       </span>
     </ComposerBar>
   ) : forwarding ? (
@@ -988,6 +988,7 @@ export function useP2pList({
       known: (_m, candidates) => candidates.filter(c => names.has(c)).join('\n'),
       user: name => user(names.get(name) ?? ''),
       mine: name => names.get(name) === me,
+      self: me ?? '',
       people: q => {
         const needle = q.toLowerCase()
         return people

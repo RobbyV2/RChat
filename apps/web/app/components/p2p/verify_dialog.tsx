@@ -8,7 +8,7 @@ import { displayName, shieldOf, warningText } from '../../lib/p2p/contacts'
 import { fingerprint } from '../../lib/p2p/keys'
 import { safetyGroups } from '../../lib/p2p/safety'
 import { QrCode } from '../config_sync'
-import { Dialog, FieldError, fieldCls, filledBtn, textBtn } from '../ui'
+import { Dialog, FieldError, fieldCls, filledBtn, Masked, textBtn } from '../ui'
 import { ContactShield, shieldText } from './p2p_badge'
 import { QrScan } from './qr_scan'
 
@@ -27,7 +27,6 @@ export function VerifyDialog({ ik }: { ik: string }) {
   const groups = useMemo(() => (me ? safetyGroups(me, ik) : []), [me, ik])
   const mask = useMask()
   if (!contact || !me) return null
-  const name = mask(displayName(contact))
   const shield = shieldOf(contact)
   const lookalike = contact.warning ? all.find(c => c.ik === contact.warning) : undefined
   const hidden = streamer && !shown
@@ -42,7 +41,9 @@ export function VerifyDialog({ ik }: { ik: string }) {
       <div className="flex flex-col gap-4">
         <div className="flex items-center gap-2">
           <ContactShield kind={shield} size={20} />
-          <span className="streamer min-w-0 truncate font-medium">{name}</span>
+          <span className="streamer min-w-0 truncate font-medium">
+            <Masked text={displayName(contact)} />
+          </span>
           <span className="text-sm text-on-surface-variant">{shieldText(shield)}</span>
         </div>
         {contact.warning && (
@@ -92,8 +93,11 @@ export function VerifyDialog({ ik }: { ik: string }) {
         ) : mode === 'number' ? (
           <div className="flex flex-col gap-2">
             <p className="text-sm text-on-surface-variant">
-              Compare these numbers with <span className="streamer">{name}</span>, in person or on a
-              call. If they match, nobody is in between.
+              Compare these numbers with{' '}
+              <span className="streamer">
+                <Masked text={displayName(contact)} />
+              </span>
+              , in person or on a call. If they match, nobody is in between.
             </p>
             <div
               data-safety-number
@@ -110,8 +114,11 @@ export function VerifyDialog({ ik }: { ik: string }) {
         ) : mode === 'show' ? (
           <div className="flex flex-col gap-2">
             <p className="text-sm text-on-surface-variant">
-              Let <span className="streamer">{name}</span> scan this. When it matches, you both see
-              each other as verified.
+              Let{' '}
+              <span className="streamer">
+                <Masked text={displayName(contact)} />
+              </span>{' '}
+              scan this. When it matches, you both see each other as verified.
             </p>
             {code && (
               <div className="w-72 max-w-full">

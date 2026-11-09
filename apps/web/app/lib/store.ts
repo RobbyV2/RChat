@@ -495,7 +495,8 @@ useStore.subscribe((s, prev) => {
 })
 
 // What every display path masks names and text with: the personal profanity filter once it is
-// on and loaded, else the text as it is.
-export const maskOf = (s: RChatState) => (s.profanityReady ? maskProfanity : showText)
+// on and loaded, else the text as it is. Your own text (`own`) is never masked for you.
+export const maskOf = (s: RChatState, own = false) =>
+  s.profanityReady && !own ? maskProfanity : showText
 
-export const useMask = () => useStore(maskOf)
+export const useMask = (own = false) => useStore(s => maskOf(s, own))

@@ -525,8 +525,9 @@ function ProfanitySwitch() {
     <div className="mt-4">
       <SettingSwitch label="Filter profanity" value={on} onChange={setOn} />
       <p className="mt-2 px-2 text-xs text-on-surface-variant">
-        Masks profanity in messages and names you see, including P2P chats. P2P content is never
-        filtered by the instance.
+        Masks profanity in messages and names you see, including P2P chats. Click or tap a masked
+        word to show it. Your own messages, names and servers are never masked for you. P2P content
+        is never filtered by the instance.
       </p>
       {site && (
         <p className="mt-1 px-2 text-xs text-on-surface-variant">

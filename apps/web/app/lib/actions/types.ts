@@ -75,6 +75,10 @@ export interface ActionCtx {
   // The target member, a message target's author unless a webhook, a DM target's other person,
   // else the open profile card's.
   member: UserRef | null
+  // The row a `longPress` menu opened on (right-click, long-press, the menu key) or the palette
+  // option Alt+Enter acted on; none for button menus. Internal: it may be detached by click time
+  // and never goes into a serialized or plugin context.
+  element?: Element
 }
 
 export interface ArgChoice {

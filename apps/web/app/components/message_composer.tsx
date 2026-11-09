@@ -13,6 +13,7 @@ import {
   SendHorizontal,
   Server,
   Share2,
+  ShieldAlert,
   Smile,
   Timer,
   X,
@@ -20,7 +21,7 @@ import {
 import { errorText, type UploadMode, useMask, useStore, viewKey } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
 import { accountPrompt } from '../lib/features'
-import { charCount, counterFrom } from '../lib/rules'
+import { charCount, counterFrom, messageFilterOn } from '../lib/rules'
 import { dmPlaceholder } from '../lib/display_name'
 import { composing, sendKey } from '../lib/keys'
 import { runJoinStep, type JoinStep } from '../lib/join_flow'
@@ -31,7 +32,9 @@ import { parseSed } from '../lib/sed'
 import { readOnly } from '../lib/reactions'
 import { clock } from '../lib/slowmode'
 import { useCountdown } from '../lib/countdown'
-import { Dialog, FieldError, fieldCls, filledBtn } from './ui'
+import { Dialog, FieldError, fieldCls, filledBtn, Masked, useOwnServer } from './ui'
+import { SITE_FILTER_NOTE } from '../lib/home'
+import { hideTip, useHome } from '../lib/home_store'
 import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
 import { useMedia } from './context_menu'
 import { ReplyBar } from './replies'
@@ -184,7 +187,7 @@ function JoinBar({ server }: { server: string }) {
           <span className="min-w-0">
             You&apos;re previewing{' '}
             <span className="streamer font-medium text-on-surface">
-              {detail?.display_name ?? server}
+              <Masked text={detail?.display_name ?? server} />
             </span>
           </span>
         </p>
@@ -206,6 +209,30 @@ function JoinBar({ server }: { server: string }) {
   )
 }
 
+// Said once in server channels while the instance filter checks messages, until closed.
+function SiteFilterNote() {
+  const on = useStore(s => s.view?.kind === 'channel' && messageFilterOn(s.settings))
+  const owner = useHome(s => s.owner)
+  const seen = useHome(s => s.prefs.tips.includes(SITE_FILTER_NOTE))
+  if (!on || owner === null || seen) return null
+  return (
+    <p
+      data-filter-note
+      className="mb-2 flex items-center gap-2 rounded-2xl bg-surface-container px-3 py-1.5 text-xs text-on-surface-variant"
+    >
+      <ShieldAlert size={14} className="shrink-0" />
+      <span className="min-w-0 flex-1">This instance filters some words in server messages.</span>
+      <button
+        type="button"
+        onClick={() => hideTip(SITE_FILTER_NOTE)}
+        className="shrink-0 cursor-pointer rounded-full px-2 py-0.5 font-medium text-primary hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary"
+      >
+        Got it
+      </button>
+    </p>
+  )
+}
+
 const modeTitle = (mode: UploadMode, switchable: boolean) => {
   const what =
     mode === 'p2p'
@@ -222,7 +249,12 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
   const streamer = useStore(s => s.streamer)
-  const mask = useMask()
+  const ownServer = useOwnServer(view?.kind === 'channel' ? view.server : null)
+  const selfDm = useStore(s => {
+    const v = s.view
+    return v?.kind === 'dm' && s.dms.some(d => d.id === v.dmId && d.is_self)
+  })
+  const mask = useMask(ownServer || selfDm)
   const rootId = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.id : null))
   const member = useStore(s => {
     const v = s.view
@@ -366,7 +398,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     ? 'Message thread'
     : view?.kind === 'channel'
       ? `Message #${mask(servers[view.server]?.channels.find(c => c.id === view.channelId)?.name ?? '')}`
-      : dmPlaceholder(dms.find(d => d.id === view?.dmId)?.other, streamer)
+      : dmPlaceholder(dms.find(d => d.id === view?.dmId)?.other, streamer, mask)
 
   const setText = (value: string) => {
     if (draftKey) setDraft(draftKey, value)
@@ -499,6 +531,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
           Slow mode: {clock(slowLeft)}
         </p>
       )}
+      {!thread && <SiteFilterNote />}
       {bar}
       <div
         className={`relative flex items-end gap-2 bg-surface-container-high px-3 py-2 ${bar ? 'rounded-b-3xl' : 'rounded-3xl'}`}

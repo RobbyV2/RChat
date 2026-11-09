@@ -73,7 +73,7 @@ import {
   useFocusMessage,
   useScrollAnchor,
 } from './viewport_height'
-import { Masked, useEscape } from './ui'
+import { Masked, useEscape, useOwnServer } from './ui'
 import { NameWithUsername } from './display_name'
 import { showsUsername } from '../lib/display_name'
 import { PingBadge, pingLabel } from './ping_badge'
@@ -656,6 +656,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const dragDepth = useRef(0)
   const listRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  const ownServer = useOwnServer(view?.kind === 'channel' ? view.server : null)
 
   const channel =
     view?.kind === 'channel' ? detail?.channels.find(c => c.id === view.channelId) : undefined
@@ -857,7 +858,9 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
               ) : (
                 <Hash size={18} className="shrink-0 text-on-surface-variant" />
               )}
-              <span className="truncate">{channelName && <Masked text={channelName} />}</span>
+              <span className="truncate">
+                {channelName && <Masked text={channelName} own={ownServer} />}
+              </span>
               {channel?.restrict_view && (
                 <span
                   title="Private channel"

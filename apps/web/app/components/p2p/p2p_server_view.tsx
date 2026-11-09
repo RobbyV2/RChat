@@ -40,6 +40,7 @@ import { movedText, type P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
 import { serverPings, serverUnread } from '../../lib/p2p/alerts'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
+import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { levelOf, mutedOf } from '../../lib/notify'
 import { folderKey, railItems, serverKey, type Folder } from '../../lib/nav_layout'
 import { folderStyle } from '../../lib/folder_colors'
@@ -180,7 +181,7 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
   const unread = serverUnread(v, prefs)
   const muted = mutedOf(prefs, serverScope(v.id), Date.now())
   const parent = folder === null ? null : zoneOfFolder(folder)
-  const mask = useMask()
+  const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
   return (
     <button
       data-p2p-tile
@@ -397,6 +398,7 @@ const useOpen = () => {
 }
 
 function ServerHead({ v }: { v: ServerView }) {
+  const own = useP2p(s => ownsP2pServer(v, s.me))
   const openContextMenu = useStore(s => s.openContextMenu)
   const open = (x: number, y: number) => openContextMenu(x, y, serverMenu(v, null, 0))
   return (
@@ -411,7 +413,7 @@ function ServerHead({ v }: { v: ServerView }) {
       >
         <span className="flex w-full min-w-0 items-center gap-1.5">
           <span data-p2p-server-name className="streamer truncate font-medium">
-            <Masked text={v.name} />
+            <Masked text={v.name} own={own} />
           </span>
           <P2pBadge />
         </span>
@@ -486,6 +488,7 @@ const channelMenu = (
 
 export function P2pServerSidebar() {
   const { v } = useOpen()
+  const own = useP2p(s => ownsP2pServer(v, s.me))
   const active = useP2p(s => s.server?.ch ?? null)
   const prefs = useStore(s => s.notifyPrefs)
   const openContextMenu = useStore(s => s.openContextMenu)
@@ -578,7 +581,7 @@ export function P2pServerSidebar() {
             >
               <Hash size={16} className="shrink-0" />
               <span className="truncate">
-                <Masked text={c.name} />
+                <Masked text={c.name} own={own} />
               </span>
               {c.restrict_view && (
                 <span
@@ -748,7 +751,7 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
         </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="streamer truncate text-sm" style={{ color: hex(nameColor(m, v.roles)) }}>
-            <Masked text={m.name} />
+            <Masked text={m.name} own={m.ik === me} />
           </span>
           {m.ik !== me && (
             <span className="flex min-w-0 empty:hidden">
@@ -922,8 +925,9 @@ export function P2pChannelPane({
   const voiceCh = v?.channels.find(c => c.id === openCh && c.kind === 'voice')
   const channel = voiceCh ?? v?.channels.find(c => c.id === chat?.ch)
   const room = v?.id ?? ''
-  const mask = useMask()
-  const nameOf = useCallback((ik: string) => mask(memberName(room, ik)), [room, mask])
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  const mask = useMask(own)
+  const nameOf = useCallback((ik: string) => memberName(room, ik), [room])
   const members = v?.members
   const people = useMemo<Mentionable[]>(
     () =>
@@ -958,7 +962,7 @@ export function P2pChannelPane({
         <Hash size={20} className="shrink-0 text-on-surface-variant" />
       )}
       <span className="min-w-0 truncate font-medium">
-        <Masked text={channel?.name ?? v.name} />
+        <Masked text={channel?.name ?? v.name} own={own} />
       </span>
       {channel?.restrict_view && (
         <span
@@ -1065,7 +1069,7 @@ export function P2pChannelPane({
           ) : waiting ? (
             <>
               <span data-p2p-joining className="text-lg font-medium text-on-surface">
-                Joining <Masked text={v.name} />…
+                Joining <Masked text={v.name} own={own} />…
               </span>
               <span data-p2p-join-wait className="max-w-md text-sm">
                 {v.joinWait ??
@@ -1103,7 +1107,7 @@ export function P2pChannelPane({
       empty={
         <>
           <span className="text-2xl font-semibold">
-            Welcome to #<Masked text={channel.name} />
+            Welcome to #<Masked text={channel.name} own={own} />
           </span>
           <span className="text-sm">
             This is the start of the channel. Messages are stored on members&apos; devices.
@@ -1149,8 +1153,11 @@ export function ServerInviteRows() {
                   <Masked text={i.name} />
                 </p>
                 <p className="truncate text-xs text-on-surface-variant">
-                  From <span className="streamer">{c ? mask(displayName(c)) : 'a contact'}</span>.
-                  Someone in it must be online to let you in.
+                  From{' '}
+                  <span className="streamer">
+                    {c ? <Masked text={displayName(c)} /> : 'a contact'}
+                  </span>
+                  . Someone in it must be online to let you in.
                 </p>
               </div>
               <button

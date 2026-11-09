@@ -7,7 +7,7 @@ import type { ServerMatch } from '../lib/types'
 import { enterKey } from '../lib/keys'
 import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
 import { SHORT_PASSWORD, tooShort } from '../lib/passwords'
-import { Dialog, FieldError } from './ui'
+import { Dialog, FieldError, Masked } from './ui'
 
 function AddServerDialog({
   join,
@@ -155,7 +155,9 @@ function AddServerDialog({
                 onClick={() => rename(s.name)}
                 className="streamer flex items-center gap-1.5 rounded-lg px-2 py-1 text-left text-sm text-on-surface-variant hover:bg-surface-container"
               >
-                <span className="truncate">{s.display_name}</span>
+                <span className="truncate">
+                  <Masked text={s.display_name} />
+                </span>
               </button>
             ))}
         </div>

@@ -13,9 +13,11 @@ import { ArrowLeft, Command, CornerDownLeft, Search } from 'lucide-react'
 import { fuzzyParts } from '../lib/fuzzy'
 import { useHome } from '../lib/home_store'
 import { registerAppActions } from '../lib/actions'
+import { revealMasked } from '../lib/actions/masked'
 import { actionsVersion, subscribeActions } from '../lib/actions/registry'
 import { loadApiDoc, loadApiHistory, useApiDoc } from '../lib/api_console'
 import {
+  hasMasked,
   isMac,
   paletteKey,
   paletteShortcut,
@@ -43,7 +45,7 @@ import { useMask, useStore } from '../lib/store'
 import { ApiConsoleFor } from './api_console'
 import { useMedia } from './context_menu'
 import { CreatePollDialog } from './poll_dialog'
-import { SheetGrip, iconBtn, textBtn } from './ui'
+import { Masked, SheetGrip, iconBtn, textBtn } from './ui'
 
 const SHEET = '(max-width: 767px)'
 
@@ -117,21 +119,27 @@ export function PaletteButton({
 }
 
 function Title({ item, hits }: { item: PaletteItem; hits: number[] }) {
-  const mask = useMask()
-  const text = item.name ? mask(item.title) : item.title
-  const parts = hits.length && text === item.title ? fuzzyParts(text, hits) : [{ text, hit: false }]
+  const mask = useMask(item.own)
+  const masked = item.name === true && mask(item.title) !== item.title
+  const parts = hits.length && !masked ? fuzzyParts(item.title, hits) : null
   return (
     <span
       className={`truncate text-sm ${item.danger ? 'text-error' : 'text-on-surface'} ${item.name ? 'streamer' : ''}`}
     >
-      {parts.map((p, i) =>
-        p.hit ? (
-          <mark key={i} className="bg-transparent font-semibold text-primary">
-            {p.text}
-          </mark>
-        ) : (
-          <span key={i}>{p.text}</span>
+      {parts ? (
+        parts.map((p, i) =>
+          p.hit ? (
+            <mark key={i} className="bg-transparent font-semibold text-primary">
+              {p.text}
+            </mark>
+          ) : (
+            <span key={i}>{p.text}</span>
+          )
         )
+      ) : masked ? (
+        <Masked text={item.title} />
+      ) : (
+        item.title
       )}
     </span>
   )
@@ -153,7 +161,6 @@ function Row({
   onHover: () => void
 }) {
   const Icon = item.icon ?? Command
-  const mask = useMask()
   return (
     <div
       id={id}
@@ -176,7 +183,7 @@ function Row({
           <span
             className={`truncate text-xs text-on-surface-variant ${item.subtitleName ? 'streamer' : ''}`}
           >
-            {item.subtitleName ? mask(item.subtitle) : item.subtitle}
+            {item.subtitleName ? <Masked text={item.subtitle} own={item.own} /> : item.subtitle}
           </span>
         )}
       </span>
@@ -331,6 +338,7 @@ function ListView() {
   const apiError = useApiDoc(s => s.error)
   const sections = useResults(text)
   const items = useMemo(() => flatItems(sections), [sections])
+  const mask = useMask()
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const listId = useId()
@@ -375,6 +383,9 @@ function ListView() {
     } else if (e.key === 'PageDown' || e.key === 'PageUp') {
       e.preventDefault()
       if (n) setActive(Math.max(0, Math.min(n - 1, current + (e.key === 'PageDown' ? 8 : -8))))
+    } else if (e.key === 'Enter' && e.altKey && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      revealMasked(document.getElementById(`${listId}-${current}`))
     } else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
       e.preventDefault()
       pick(items[current])
@@ -489,6 +500,7 @@ function ListView() {
         <span>↑↓ Move</span>
         <span>Enter Run</span>
         <span>Esc Close</span>
+        {hasMasked(items[current], mask) && <span>Alt+Enter Show masked text</span>}
         <span className="ml-auto">? Help</span>
       </div>
     </div>

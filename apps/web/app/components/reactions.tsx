@@ -361,7 +361,7 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
               />
               <span className="min-w-0 flex-1">
                 <span className="streamer block truncate text-sm font-medium text-on-surface">
-                  <Masked text={u.display_name} />
+                  <Masked text={u.display_name} by={u.username} />
                 </span>
                 <span className="streamer block truncate text-xs text-on-surface-variant">
                   {u.username}

@@ -21,6 +21,7 @@ import { BIG_FILE, p2pFiles, useP2p, type FileView, type PendingFile } from '../
 import type { Attachment } from '../../lib/p2p/content'
 import { AUTO_PAUSED_TEXT } from '../../lib/p2p/dm'
 import { SpoilerCover } from '../markdown_message'
+import { Masked } from '../ui'
 
 // P2P attachments in messages and in the composer. What a file is shown as comes from its
 // stored bytes only (sniff.ts): images, video and audio play inline, everything else (SVG and
@@ -130,9 +131,10 @@ function useFileUrl(h: string, ready: boolean) {
   return url
 }
 
-function Tile({ att, canFetch }: { att: Attachment; canFetch: boolean }) {
+function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own: boolean }) {
   // Shown cleaned like the saved name: no direction overrides or control characters.
-  const name = useMask()(downloadName(att.name))
+  const clean = downloadName(att.name)
+  const name = useMask(own)(clean)
   const v = useP2p(s => s.files[att.h])
   const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
   const [revealed, setRevealed] = useState(false)
@@ -197,7 +199,9 @@ function Tile({ att, canFetch }: { att: Attachment; canFetch: boolean }) {
 
   const caption = (
     <span className="mt-1 flex max-w-full items-center gap-2">
-      <span className="max-w-60 truncate text-xs text-on-surface-variant">{name}</span>
+      <span className="max-w-60 truncate text-xs text-on-surface-variant">
+        <Masked text={clean} own={own} />
+      </span>
       <span className="shrink-0 text-xs text-on-surface-variant tabular-nums">
         {fmtSize(att.size)}
       </span>
@@ -294,7 +298,9 @@ function Tile({ att, canFetch }: { att: Attachment; canFetch: boolean }) {
       )}
       <div className="flex items-center gap-2">
         <Icon size={18} className="shrink-0 text-tertiary" />
-        <span className="max-w-60 truncate text-sm">{name}</span>
+        <span className="max-w-60 truncate text-sm">
+          <Masked text={clean} own={own} />
+        </span>
         <span className="shrink-0 text-xs text-on-surface-variant tabular-nums">
           {fmtSize(att.size)}
           {att.dur !== undefined && ` · ${fmtDur(att.dur)}`}
@@ -321,12 +327,21 @@ function Tile({ att, canFetch }: { att: Attachment; canFetch: boolean }) {
   )
 }
 
-export function AttachmentList({ att, canFetch }: { att: Attachment[]; canFetch: boolean }) {
+// `own`: files you sent, whose names are never masked for you.
+export function AttachmentList({
+  att,
+  canFetch,
+  own = false,
+}: {
+  att: Attachment[]
+  canFetch: boolean
+  own?: boolean
+}) {
   if (!att.length) return null
   return (
     <div className="flex flex-col gap-1">
       {att.map(a => (
-        <Tile key={a.h} att={a} canFetch={canFetch} />
+        <Tile key={a.h} att={a} canFetch={canFetch} own={own} />
       ))}
     </div>
   )
@@ -335,7 +350,6 @@ export function AttachmentList({ att, canFetch }: { att: Attachment[]; canFetch:
 function PendingChip({ room, p }: { room: string; p: PendingFile }) {
   const ready = p.hashed !== null && p.preview !== null
   const thumb = useThumb(p.preview?.thumb)
-  const mask = useMask()
   return (
     <div
       data-pending-file
@@ -370,7 +384,7 @@ function PendingChip({ room, p }: { room: string; p: PendingFile }) {
       </div>
       <span className="truncate text-xs">
         {p.spoiler ? 'Spoiler · ' : ''}
-        {mask(downloadName(p.file.name))}
+        {downloadName(p.file.name)}
       </span>
       <span
         className={`flex items-center gap-1 text-[11px] tabular-nums ${p.error ? 'text-error' : 'text-on-surface-variant'}`}

@@ -40,7 +40,7 @@ import { pastFit, VOICE_NOTICE, type VoiceUser } from '../lib/p2p/voice'
 import { displayName } from '../lib/p2p/contacts'
 import type { CallView } from '../lib/p2p/calls'
 import { P2pBadge } from './p2p/p2p_badge'
-import { userRefFor, useStore, voiceMutedIn } from '../lib/store'
+import { useMask, userRefFor, useStore, voiceMutedIn } from '../lib/store'
 import { accountPrompt } from '../lib/features'
 import { bannerColor, cachedProfile, profileKey } from '../lib/profile'
 import {
@@ -59,9 +59,10 @@ import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
 import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, useMedia } from './context_menu'
-import { Masked, useEscape } from './ui'
+import { Masked, useEscape, useOwn } from './ui'
 import { NameWithUsername } from './display_name'
 import { nameWithUsername } from '../lib/display_name'
+import { ownsP2pServer } from '../lib/p2p/server/types'
 import { ChannelTopic } from './channel_topic'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { shownMedia, TIMED_OUT_CAMERA, TIMED_OUT_MIC, TIMED_OUT_SHARE } from '../lib/timeouts'
@@ -326,7 +327,7 @@ function AvatarHidden({ size }: { size: number }) {
   )
 }
 
-function Tile({
+export function Tile({
   tile,
   server,
   focused,
@@ -347,7 +348,9 @@ function Tile({
   const streamer = useStore(s => s.streamer)
   const box = height ?? (compact ? 72 : 240)
   const avatar = compact ? 32 : Math.round(Math.max(40, Math.min(96, box * 0.3)))
-  const label = screen ? `${nameWithUsername(user)}'s screen` : nameWithUsername(user)
+  const mask = useMask(useOwn(user.username))
+  const name = mask(nameWithUsername(user))
+  const label = screen ? `${name}'s screen` : name
   return (
     <div
       style={{
@@ -624,6 +627,7 @@ export function VoiceDock() {
   const { voice, call, roomCall, roomVoice, connected, quality } = useCallMedia()
   const contactName = useP2p(s => (roomCall ? contactNameOf(s, roomCall.peer) : ''))
   const sv = useP2p(s => (roomVoice ? s.servers[roomVoice.room] : undefined))
+  const ownSv = useP2p(s => ownsP2pServer(sv, s.me))
   const servers = useStore(s => s.servers)
   const dms = useStore(s => s.dms)
   const me = useStore(s => s.me)
@@ -680,7 +684,7 @@ export function VoiceDock() {
               <>
                 <span className="shrink-0">/</span>
                 <span className="streamer truncate">
-                  <Masked text={detail.display_name} />
+                  <Masked text={detail.display_name} by={detail.creator} />
                 </span>
               </>
             )}
@@ -688,7 +692,7 @@ export function VoiceDock() {
               <>
                 <span className="shrink-0">/</span>
                 <span className="streamer min-w-0 truncate">
-                  <Masked text={sv.name} />
+                  <Masked text={sv.name} own={ownSv} />
                 </span>
               </>
             )}

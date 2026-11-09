@@ -9,6 +9,7 @@ import { plainStamps } from '../lib/timestamps'
 import type { ReplyRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { NameWithUsername } from './display_name'
+import { Masked, useOwn } from './ui'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 
@@ -25,7 +26,13 @@ export function ForwardedTag() {
   )
 }
 
-export function Snippet({ quote }: { quote: Pick<ReplyRef, 'content' | 'has_media'> }) {
+export function Snippet({
+  quote,
+  own = false,
+}: {
+  quote: Pick<ReplyRef, 'content' | 'has_media'>
+  own?: boolean
+}) {
   if (!quote.content)
     return (
       <span className="flex min-w-0 items-center gap-1 italic">
@@ -38,7 +45,7 @@ export function Snippet({ quote }: { quote: Pick<ReplyRef, 'content' | 'has_medi
   return (
     <span className="flex min-w-0 items-center gap-1">
       <span className="truncate">
-        <SpoilerLine parts={snippetParts(plainStamps(quote.content))} />
+        <SpoilerLine parts={snippetParts(plainStamps(quote.content))} own={own} />
       </span>
       {quote.has_media && <ImageIcon size={14} className="shrink-0" />}
     </span>
@@ -46,8 +53,9 @@ export function Snippet({ quote }: { quote: Pick<ReplyRef, 'content' | 'has_medi
 }
 
 // One line of preview text with its spoilers as dark bars (they never reveal in previews).
-export function SpoilerLine({ parts }: { parts: SnippetPart[] }) {
-  const mask = useMask()
+// `own`: your own text, never masked for you.
+export function SpoilerLine({ parts, own = false }: { parts: SnippetPart[]; own?: boolean }) {
+  const mask = useMask(own)
   return (
     <>
       {parts.map((p, i) =>
@@ -62,7 +70,9 @@ export function SpoilerLine({ parts }: { parts: SnippetPart[] }) {
             <span aria-hidden>{maskOutsideCode(p.text, mask)}</span>
           </span>
         ) : (
-          <span key={i}>{maskOutsideCode(p.text, mask)}</span>
+          <span key={i}>
+            <Masked text={p.text} code own={own} />
+          </span>
         )
       )}
     </>
@@ -82,6 +92,7 @@ export function ReplyPreview({
   onJump: (id: number) => void
 }) {
   const blocked = useStore(s => (quote.author ? s.blocked[quote.author.username] === true : false))
+  const own = useOwn(quote.author?.username)
   const connector = (
     <span
       aria-hidden
@@ -149,11 +160,11 @@ export function ReplyPreview({
         />
         <span style={{ color }} className="streamer shrink-0 font-medium text-on-surface">
           {quote.mention ? '@' : ''}
-          <NameWithUsername user={author} />
+          <NameWithUsername user={author} own={own} />
         </span>
         {isWebhookAuthor(author.username) && <WebhookBadge />}
         {quote.forwarded && <ForwardedTag />}
-        <Snippet quote={quote} />
+        <Snippet quote={quote} own={own && !quote.forwarded} />
       </button>
     </div>
   )

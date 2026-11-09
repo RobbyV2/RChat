@@ -61,12 +61,13 @@ import { PingBadge, pingLabel } from './ping_badge'
 import { ServerGlyph } from './server_rail'
 import StatusClock from './status_clock'
 import { UserAvatar } from './user_avatar'
-import { Masked, SkeletonRows, fieldCls, filledBtn, textBtn } from './ui'
+import { Masked, SkeletonRows, fieldCls, filledBtn, textBtn, useOwnServer } from './ui'
 import { p2p, p2pDm, p2pMarkAll, p2pServer, useP2p, type P2pState } from '../lib/p2p/app'
 import type { P2pDialog } from '../lib/p2p/app/store'
 import { cardRows, homeCard, onlineText, p2pEntry, type CardState } from '../lib/p2p/home_card'
 import { p2pUnread, type P2pUnreadRow } from '../lib/p2p/alerts'
 import { displayName } from '../lib/p2p/contacts'
+import { ownsP2pServer } from '../lib/p2p/server/types'
 import { placesOf } from '../lib/p2p/palette_source'
 import { mutedOf, levelOf } from '../lib/notify'
 import { serverInitial } from '../lib/rules'
@@ -137,7 +138,7 @@ function Greeting() {
           <>
             {greeting(hour)},{' '}
             <span className="streamer">
-              <Masked text={me.display_name} />
+              <Masked text={me.display_name} own />
             </span>
           </>
         )}
@@ -359,6 +360,7 @@ function RecentItem({
   title,
   glyph,
   label,
+  own = false,
   where,
   p2p = false,
   unread,
@@ -370,6 +372,7 @@ function RecentItem({
   title: string
   glyph: ReactNode
   label: string
+  own?: boolean
   where: ReactNode
   p2p?: boolean
   unread: boolean
@@ -391,7 +394,7 @@ function RecentItem({
         <span
           className={`streamer truncate text-sm ${unread || pings ? 'font-semibold text-on-surface' : 'text-on-surface'}`}
         >
-          <Masked text={label} />
+          <Masked text={label} own={own} />
         </span>
         <span className="flex min-w-0 items-center gap-1.5 text-xs text-on-surface-variant">
           <span className="streamer truncate">{where}</span>
@@ -425,7 +428,9 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
   const pings = useStore(s => scopePingCount(s, key))
   const markScopesRead = useStore(s => s.markScopesRead)
   const streamer = useStore(s => s.streamer)
-  const mask = useMask()
+  const ownServer = useOwnServer(recent.kind === 'channel' ? recent.server : null)
+  const own = recent.kind === 'dm' ? dm?.is_self === true : ownServer
+  const mask = useMask(own)
   const open = () => {
     const s = useStore.getState()
     if (recent.kind === 'dm') void s.openDm(recent.dmId)
@@ -460,6 +465,7 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
         )
       }
       label={label}
+      own={own}
       where={
         recent.kind === 'dm' ? (
           dm?.is_self ? (
@@ -468,7 +474,7 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
             'Direct message'
           )
         ) : (
-          <Masked text={serverName} />
+          <Masked text={serverName} own={own} />
         )
       }
       unread={unread}
@@ -494,7 +500,8 @@ function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) 
   const counts = useP2p(s => (ch === null ? s.rooms[room] : s.servers[room]?.chans[ch]))
   const prefs = useStore(s => s.notifyPrefs)
   const streamer = useStore(s => s.streamer)
-  const mask = useMask()
+  const own = useP2p(s => ch !== null && ownsP2pServer(s.servers[room], s.me))
+  const mask = useMask(own)
   const scope =
     ch === null ? ({ kind: 'p2p', room } as const) : ({ kind: 'p2pc', room, ch } as const)
   const pings = counts && levelOf(prefs, scope) !== 'nothing' ? counts.pings : 0
@@ -533,7 +540,8 @@ function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) 
         )
       }
       label={label}
-      where={ch === null ? 'P2P direct message' : <Masked text={server?.name ?? ''} />}
+      own={own}
+      where={ch === null ? 'P2P direct message' : <Masked text={server?.name ?? ''} own={own} />}
       p2p={ch !== null}
       unread={unread}
       pings={pings}
@@ -605,7 +613,7 @@ function UnreadRow({
 }: {
   id: string
   glyph: ReactNode
-  name: string
+  name: ReactNode
   streamer?: boolean
   p2p?: boolean
   detail: string
@@ -673,8 +681,8 @@ function ServerUnreadRow({
   )
   const openServer = useStore(s => s.openServer)
   const markServerRead = useStore(s => s.markServerRead)
-  const mask = useMask()
-  const shown = mask(display)
+  const own = useOwnServer(name)
+  const shown = useMask(own)(display)
   return (
     <UnreadRow
       id={name}
@@ -685,7 +693,7 @@ function ServerUnreadRow({
           </span>
         </PlaceGlyph>
       }
-      name={shown}
+      name={<Masked text={display} own={own} />}
       streamer
       detail={serverDetail(channels, pings)}
       pings={pings}
@@ -737,8 +745,8 @@ const useP2pUnread = () => {
 }
 
 function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {
-  const mask = useMask()
-  const shown = mask(v.name)
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  const shown = useMask(own)(v.name)
   return (
     <UnreadRow
       id={`p2p:${v.id}`}
@@ -747,7 +755,7 @@ function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {
           <span className="streamer text-on-surface">{serverInitial(shown)}</span>
         </PlaceGlyph>
       }
-      name={shown}
+      name={<Masked text={v.name} own={own} />}
       streamer
       p2p
       detail={serverDetail(channels, pings)}
@@ -847,7 +855,7 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
   const openDm = useStore(s => s.openDm)
   const placeDm = useStore(s => s.placeDm)
   const streamer = useStore(s => s.streamer)
-  const mask = useMask()
+  const mask = useMask(dm.is_self)
   return (
     <button
       type="button"
@@ -872,7 +880,7 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
         <span
           className={`streamer truncate text-sm text-on-surface ${unread || pings ? 'font-semibold' : ''}`}
         >
-          <Masked text={dm.other.display_name} />
+          <Masked text={dm.other.display_name} own={dm.is_self} />
         </span>
         <span className="streamer truncate text-xs text-on-surface-variant">
           {dm.is_self ? 'Notes to yourself' : `@${dm.other.username}`}

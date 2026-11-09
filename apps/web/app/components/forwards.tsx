@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Forward, Image as ImageIcon, SendHorizontal } from 'lucide-react'
-import { useMask, useStore } from '../lib/store'
+import { useStore } from '../lib/store'
 import { forwardOrigin, forwardPending } from '../lib/forward'
 import type { Message } from '../lib/types'
 import type { ToolbarAction } from './message_toolbar'
@@ -17,7 +17,6 @@ import { PollCard } from './poll_card'
 import { fullTimeOf, messageTime, plainStamps } from '../lib/timestamps'
 import { Masked } from './ui'
 import { NameWithUsername } from './display_name'
-import { nameWithUsername } from '../lib/display_name'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 
@@ -38,9 +37,10 @@ export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: ()
   const busy = useStore(s => (clip ? forwardPending(s.outbox[draftKey], clip.id) : false))
   const sendForward = useStore(s => s.sendForward)
   const clearForward = useStore(s => s.clearForward)
-  const mask = useMask()
+  const me = useStore(s => s.me?.username ?? null)
   const instance = useStore(s => s.instance?.name ?? 'this instance')
   if (!clip) return null
+  const own = !clip.p2p && clip.author !== null && clip.author.username === me
   // A P2P message stored only on two devices: copying it to the instance needs a yes first.
   const send = () =>
     onSend
@@ -76,7 +76,7 @@ export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: ()
           Forward{' '}
           {clip.author ? (
             <span className="streamer font-semibold text-on-surface">
-              {mask(nameWithUsername(clip.author))}
+              <NameWithUsername user={clip.author} own={own} />
             </span>
           ) : (
             <span className="font-semibold text-on-surface">{DELETED_USER}</span>
@@ -85,7 +85,7 @@ export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: ()
         </span>
         <span className="flex min-w-0 items-center gap-1 text-xs">
           <span className="truncate">
-            <SpoilerLine parts={snippetParts(plainStamps(clip.snippet))} />
+            <SpoilerLine parts={snippetParts(plainStamps(clip.snippet))} own={own} />
           </span>
           {clip.has_media && <ImageIcon size={12} className="shrink-0" aria-label="Attachment" />}
         </span>

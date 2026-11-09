@@ -166,6 +166,8 @@ export const shownTips = (prefs: HomePrefs, max = TIPS_SHOWN) =>
 // Notices outside Home that stay closed once closed, kept with the tips.
 export const P2P_SERVER_INTRO = 'p2p_server_intro'
 export const P2P_DM_INTRO = 'p2p_dm_intro'
+// The composer's line that the instance filters some words.
+export const SITE_FILTER_NOTE = 'site_filter_note'
 
 // Where older versions kept them, as '1'. Still read, never written.
 export const legacyIntroKeys = (username: string): [string, string][] => [

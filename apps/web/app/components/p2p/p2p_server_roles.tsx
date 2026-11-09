@@ -4,6 +4,7 @@ import { useState, type ReactNode, type SyntheticEvent } from 'react'
 import { Crown, GripVertical, Trash2, X } from 'lucide-react'
 import { maskOf, useMask, useStore, type ContextMenuItem } from '../../lib/store'
 import { memberName, p2pServer, useP2p } from '../../lib/p2p/app'
+import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { ROLE_DOWN_TEXT } from '../../lib/p2p/flows'
 import {
   ALLOW_BOTH,
@@ -122,7 +123,8 @@ const roleItems = (v: ServerView, r: RoleView): ContextMenuItem[] => {
 
 function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
   const openContextMenu = useStore(s => s.openContextMenu)
-  const mask = useMask()
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  const mask = useMask(own)
   const edit = can(v, P.ManageRoles) && r.below
   const locked = !can(v, P.ManageRoles) ? 'Needs Manage roles' : r.below ? null : ROLE_LOCKED
   const fixed = v.roles.filter(x => !x.below).length
@@ -172,7 +174,7 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
           <>
             <span aria-hidden className="h-5 w-5 shrink-0 rounded-full" style={swatch(r.color)} />
             <span className="min-w-0 flex-1 truncate text-sm font-medium">
-              <Masked text={r.name} />
+              <Masked text={r.name} own={own} />
             </span>
           </>
         )}
@@ -283,7 +285,8 @@ export const roleMenuItems = (v: ServerView, m: MemberView): ContextMenuItem[] =
 export function MemberCard({ room, ik }: { room: string; ik: string }) {
   const v = useP2p(s => s.servers[room])
   const me = useP2p(s => s.me)
-  const mask = useMask()
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  const mask = useMask(own)
   const m = v?.members.find(x => x.ik === ik)
   if (!v || !m) return null
   const roles = m.roles.flatMap(id => v.roles.find(r => r.id === id) ?? [])
@@ -296,7 +299,7 @@ export function MemberCard({ room, ik }: { room: string; ik: string }) {
             className="streamer truncate text-sm font-semibold"
             style={{ color: hex(nameColor(m, v.roles)) }}
           >
-            <Masked text={m.name} />
+            <Masked text={m.name} own={m.ik === me} />
           </span>
           <span className="text-xs text-on-surface-variant">
             {m.owner ? 'Owner' : m.m === 'join' ? 'Member' : 'Invited'}
@@ -317,7 +320,7 @@ export function MemberCard({ room, ik }: { room: string; ik: string }) {
               className="flex items-center gap-1 rounded-full bg-surface-container-highest py-0.5 pr-1 pl-2 text-xs"
             >
               <span aria-hidden className="h-2.5 w-2.5 rounded-full" style={swatch(r.color)} />
-              <Masked text={r.name} />
+              <Masked text={r.name} own={own} />
               {mayTake(v, m, r, me) ? (
                 <button
                   onClick={e => {
@@ -356,6 +359,8 @@ const subjectText = (v: ServerView, subj: string, mask: (t: string) => string) =
         : mask(memberName(v.id, subj.slice(2)))
 
 function SubjectName({ v, subj }: { v: ServerView; subj: string }) {
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  const me = useP2p(s => s.me)
   if (subj === `r:${EVERYONE}`)
     return <span className="min-w-0 flex-1 truncate text-sm">@everyone</span>
   if (subj.startsWith('r:')) {
@@ -368,7 +373,7 @@ function SubjectName({ v, subj }: { v: ServerView; subj: string }) {
           style={swatch(r?.color ?? null)}
         />
         <span className="truncate">
-          <Masked text={r?.name ?? 'Deleted role'} />
+          <Masked text={r?.name ?? 'Deleted role'} own={own} />
         </span>
       </span>
     )
@@ -378,7 +383,7 @@ function SubjectName({ v, subj }: { v: ServerView; subj: string }) {
     <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
       <KeyAvatar ik={ik} size={20} />
       <span className="streamer truncate">
-        <Masked text={memberName(v.id, ik)} />
+        <Masked text={memberName(v.id, ik)} own={ik === me} />
       </span>
     </span>
   )

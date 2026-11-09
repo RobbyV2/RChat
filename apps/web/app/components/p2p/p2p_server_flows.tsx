@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { CircleAlert, RefreshCw, ShieldCheck, X } from 'lucide-react'
-import { useMask, useStore } from '../../lib/store'
+import { useStore } from '../../lib/store'
 import { memberName, p2p, p2pDevices, p2pServer, useP2p, type P2pDialog } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
 import {
@@ -31,6 +31,7 @@ import {
 } from '../../lib/p2p/flows'
 import { reapplyLine } from '../../lib/p2p/roles'
 import type { ServerView } from '../../lib/p2p/server'
+import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { Dialog, dangerBtn, filledBtn, Masked, textBtn } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 import { andMore, fewOf, nextPage, page, PAGE } from '../../lib/paging'
@@ -44,8 +45,12 @@ const noteCls =
 
 // A member's name in a line, blurred in streamer mode.
 function Who({ room, ik }: { room: string; ik: string }) {
-  const mask = useMask()
-  return <span className="streamer font-medium text-on-surface">{mask(memberName(room, ik))}</span>
+  const own = useP2p(s => s.me === ik)
+  return (
+    <span className="streamer font-medium text-on-surface">
+      <Masked text={memberName(room, ik)} own={own} />
+    </span>
+  )
 }
 
 // Names inline: a few, then "and N more", which shows the rest 50 at a time.
@@ -170,7 +175,7 @@ function ReachedNote({ v, r }: { v: ServerView; r: ServerView['reached'][number]
 }
 
 function ReapplyNote({ v }: { v: ServerView }) {
-  const mask = useMask()
+  const own = useP2p(s => ownsP2pServer(v, s.me))
   return (
     <div role="status" data-p2p-reapply className={noteCls}>
       <span className="flex min-w-48 flex-1 flex-col gap-1">
@@ -188,7 +193,11 @@ function ReapplyNote({ v }: { v: ServerView }) {
                       <Who room={v.id} ik={who} />
                     </>
                   )}
-                  {role && `: ${mask(role)}`}
+                  {role && (
+                    <>
+                      : <Masked text={role} own={own} />
+                    </>
+                  )}
                 </li>
               )
             })}
@@ -394,7 +403,6 @@ export function TransferAsks({ room }: { room?: string }) {
 export function CoOwnerAsks() {
   const asks = useP2p(s => s.coOwnerAsks)
   const contacts = useP2p(s => s.contacts)
-  const mask = useMask()
   if (!asks.length) return null
   return (
     <section aria-label="Co-owner requests" className="flex flex-col gap-2">
@@ -413,7 +421,7 @@ export function CoOwnerAsks() {
               <KeyAvatar ik={a.from} size={32} />
               <p className="min-w-48 flex-1 text-sm">
                 <span className="streamer font-medium">
-                  {c ? mask(displayName(c)) : 'A contact'}
+                  {c ? <Masked text={displayName(c)} /> : 'A contact'}
                 </span>{' '}
                 wants you as a co-owner of{' '}
                 <span className="streamer font-medium">
@@ -447,7 +455,6 @@ export function CoOwnerPicker({
 }) {
   const contacts = useP2p(s => s.contacts)
   const presence = useP2p(s => s.presence)
-  const mask = useMask()
   const list = contacts.filter(c => c.state === 'mutual')
   return (
     <fieldset className="flex flex-col gap-1">
@@ -476,7 +483,9 @@ export function CoOwnerPicker({
                     }
                   />
                   <KeyAvatar ik={c.ik} size={24} />
-                  <span className="streamer min-w-0 flex-1 truncate">{mask(displayName(c))}</span>
+                  <span className="streamer min-w-0 flex-1 truncate">
+                    <Masked text={displayName(c)} />
+                  </span>
                   {!online && <span className="text-xs text-on-surface-variant">Offline</span>}
                 </label>
               </li>

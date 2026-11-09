@@ -15,6 +15,8 @@ export interface ChatSource {
   known: (m: Message, candidates: string[]) => string
   user: (username: string) => UserRef
   mine: (username: string) => boolean
+  // Your own identity here, as authors and users carry it in `username`.
+  self: string
   // Mention autocomplete.
   people: (query: string) => UserRef[]
 }

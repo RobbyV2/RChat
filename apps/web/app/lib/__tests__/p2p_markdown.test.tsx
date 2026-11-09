@@ -34,6 +34,7 @@ const source: ChatSource = {
     avatar_color: null,
   }),
   mine: () => false,
+  self: 'me',
   people: () => [],
 }
 

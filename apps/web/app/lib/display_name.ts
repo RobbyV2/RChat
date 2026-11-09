@@ -28,8 +28,11 @@ export const nameWithUsername = (u: Named) =>
 // What a mention pill shows: the handle that resolves.
 export const mentionHandle = (u: Named) => (showsUsername(u) ? u.username : u.display_name)
 
-export const dmPlaceholder = (other: Named | undefined, streamer: boolean) =>
-  streamer || !other ? 'Send a direct message' : `Message @${other.username}`
+export const dmPlaceholder = (
+  other: Named | undefined,
+  streamer: boolean,
+  mask: (text: string) => string = t => t
+) => (streamer || !other ? 'Send a direct message' : `Message @${mask(other.username)}`)
 
 export const canEditDisplayName = (s: RChatState) =>
   s.me !== null && !s.guest && s.settings.display_names

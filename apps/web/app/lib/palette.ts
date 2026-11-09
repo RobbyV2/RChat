@@ -97,6 +97,8 @@ export interface PaletteItem {
   // The title (or the subtitle) is a name: blurred in streamer mode.
   name?: boolean
   subtitleName?: boolean
+  // Your own text (a server you created, your notes): never masked for you.
+  own?: boolean
   hint?: string
   // Running it changes what the palette shows instead of closing it.
   keepOpen?: boolean
@@ -104,6 +106,13 @@ export interface PaletteItem {
   // `arg` is the text or choice value when the item has an `arg`.
   run: (arg?: string) => void | Promise<void>
 }
+
+// Whether `item` shows text the personal filter masks (its title or subtitle name).
+export const hasMasked = (item: PaletteItem | undefined, mask: (text: string) => string) =>
+  !!item &&
+  !item.own &&
+  ((!!item.name && mask(item.title) !== item.title) ||
+    (!!item.subtitleName && !!item.subtitle && mask(item.subtitle) !== item.subtitle))
 
 export interface PaletteCommand extends PaletteItem {
   // Also offered when the text starts with this after `/` (for example `/poll`).

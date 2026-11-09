@@ -64,7 +64,7 @@ import { limitsOf } from '../lib/instance_limits'
 import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
-import { Masked, useCopied } from './ui'
+import { Masked, useCopied, useOwnServer } from './ui'
 import { dmPlaceholder } from '../lib/display_name'
 import { ProfileFriendButton } from './friends'
 import { COARSE_QUERY, useMedia } from './context_menu'
@@ -337,7 +337,9 @@ function Card({ target }: { target: ProfileTarget }) {
   const user: UserRef = self && me ? me : (live ?? target.user)
   const banner = bannerColor(user, self ? me?.banner_color : profile?.banner_color)
   const bio = self ? (me?.bio ?? null) : (profile?.bio ?? null)
-  const mask = useMask()
+  const ownServer = useOwnServer(server)
+  const mask = useMask(ownServer)
+  const nameMask = useMask(self)
   const fetched = profile?.member ?? null
   const known = server === null || live !== undefined || profile !== null || missing
   const member = server === null ? null : live !== undefined ? live : fetched
@@ -483,7 +485,7 @@ function Card({ target }: { target: ProfileTarget }) {
             id={titleId}
             className="streamer line-clamp-2 text-xl leading-7 font-semibold break-words text-on-surface"
           >
-            <Masked text={user.display_name} />
+            <Masked text={user.display_name} own={self} />
           </p>
           <p className="streamer truncate text-sm text-on-surface-variant">
             @{remote ? formatQualified(user.username, remote) : user.username}
@@ -491,7 +493,7 @@ function Card({ target }: { target: ProfileTarget }) {
           {remote && <InstanceChip host={remote} className="mt-1" />}
           {bio && !missing && (
             <p className="streamer mt-2 text-sm break-words whitespace-pre-wrap text-on-surface">
-              <Masked text={bio} />
+              <Masked text={bio} own={self} />
             </p>
           )}
           {self && me && !guest && (
@@ -537,7 +539,7 @@ function Card({ target }: { target: ProfileTarget }) {
                       className="streamer min-w-0 truncate"
                       title={streamer ? undefined : join.label}
                     >
-                      {join.name}
+                      <Masked text={serverName ?? join.name} own={ownServer} />
                     </span>
                   </dt>
                   <dd className="shrink-0 text-on-surface">
@@ -563,7 +565,7 @@ function Card({ target }: { target: ProfileTarget }) {
                       <span
                         className={`truncate ${editRoles && roleEditable(input, r, true) ? '' : 'pr-1'}`}
                       >
-                        <Masked text={r.name} />
+                        <Masked text={r.name} own={ownServer} />
                       </span>
                       {editRoles && roleEditable(input, r, true) && (
                         <button
@@ -603,7 +605,7 @@ function Card({ target }: { target: ProfileTarget }) {
                           className="h-2.5 w-2.5 shrink-0 rounded-full"
                         />
                         <span className="truncate">
-                          <Masked text={r.name} />
+                          <Masked text={r.name} own={ownServer} />
                         </span>
                       </button>
                     ))}
@@ -683,7 +685,7 @@ function Card({ target }: { target: ProfileTarget }) {
                   }
                 }}
                 aria-label="Send a direct message"
-                placeholder={dmPlaceholder(user, streamer)}
+                placeholder={dmPlaceholder(user, streamer, nameMask)}
                 className="w-full rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2 text-base text-on-surface outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm"
               />
             )}

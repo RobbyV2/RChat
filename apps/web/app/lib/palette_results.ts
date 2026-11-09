@@ -88,6 +88,7 @@ export const serverItems = (s: RChatState): PaletteItem[] => {
     group: 'navigation',
     icon: Server,
     name: true,
+    own: !!s.me && s.me.servers.find(x => x.name === name)?.creator === s.me.username,
     run: () => void get().openServer(name),
   }))
 }
@@ -145,6 +146,7 @@ export const dmItems = (s: RChatState): PaletteItem[] =>
       group: 'navigation',
       icon: MessageSquare,
       name: true,
+      own: d.is_self,
       run: () => void get().openDm(d.id),
     }))
 

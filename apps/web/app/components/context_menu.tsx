@@ -17,6 +17,9 @@ import type {
   TouchEvent as ReactTouchEvent,
 } from 'react'
 import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ctxFor } from '../lib/actions/ctx'
+import { REVEAL_ACTION } from '../lib/actions/masked'
+import { isActionMenu, itemFor } from '../lib/actions/menu'
 import { useStore, type ContextMenuItem, type ContextMenuState } from '../lib/store'
 import {
   HOLD_MS,
@@ -27,11 +30,14 @@ import {
   type PressInput,
 } from '../lib/long_press'
 import { EDITABLE } from '../lib/follow'
+import { withActionElement } from '../lib/masked_reveal'
 import { dnd, type DragSpec } from './drag'
 import { SheetGrip } from './ui'
 
 let press = idlePress
 let owner: HTMLElement | null = null
+// The element a right-click or the menu key happened on.
+let nativeOwner: HTMLElement | null = null
 let opener: ((x: number, y: number) => void) | null = null
 let dragSpec: DragSpec | null = null
 let pointerId: number | null = null
@@ -42,6 +48,18 @@ let pressedTimer: number | null = null
 let guarded = false
 
 const onScroll = () => void drive({ kind: 'cancel', now: Date.now() })
+
+// Opens a row's menu for `el`. A menu built by hand gets the registry's Show masked text row
+// too; action menus list it themselves.
+const openFor = (el: Element | null, open: () => void) =>
+  withActionElement(el, () => {
+    const before = useStore.getState().contextMenu
+    open()
+    const menu = useStore.getState().contextMenu
+    if (!menu || menu === before || isActionMenu(menu)) return
+    const row = itemFor(REVEAL_ACTION, ctxFor(useStore.getState(), { kind: 'none' }, 'menu'))
+    if (row) useStore.setState({ contextMenu: { ...menu, items: [...menu.items, row] } })
+  })
 
 const clearPress = () => {
   if (holdTimer !== null) window.clearTimeout(holdTimer)
@@ -85,7 +103,8 @@ const drive = (input: PressInput, open = opener) => {
   if (out.drag === 'drop' || out.drag === 'cancel') dnd.finish(out.drag === 'drop')
   if (out.open && open) {
     if (press.phase === 'held') navigator.vibrate?.(10)
-    open(out.open.x, out.open.y)
+    const at = out.open
+    openFor(input.kind === 'native' ? nativeOwner : owner, () => open(at.x, at.y))
   }
   return out
 }
@@ -215,7 +234,9 @@ export function longPress(open: (x: number, y: number) => void, drag?: DragSpec)
     onContextMenu: e => {
       if (!claim(e)) return
       e.preventDefault()
+      nativeOwner = e.currentTarget
       drive({ kind: 'native', x: e.clientX, y: e.clientY, now: Date.now() }, open)
+      nativeOwner = null
     },
   }
   if (!drag) return props

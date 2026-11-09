@@ -401,7 +401,7 @@ function Incoming({ server }: { server: string }) {
                 />
                 <div className="min-w-0 flex-1">
                   <p className="streamer truncate text-sm font-medium text-on-surface">
-                    <Masked text={h.name} />
+                    <Masked text={h.name} by={h.creator?.username} />
                   </p>
                   <p className="truncate text-xs text-on-surface-variant">
                     #{channelName(h.channel_id)}
@@ -865,7 +865,7 @@ function Outgoing({ server }: { server: string }) {
                 />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-on-surface">
-                    <Masked text={h.name} />
+                    <Masked text={h.name} by={h.creator?.username} />
                   </p>
                   <p
                     className="truncate text-xs text-on-surface-variant"

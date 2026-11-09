@@ -20,6 +20,7 @@ import {
   scopeUnread,
   serverAdminPerms,
   userRefFor,
+  useMask,
   useStore,
 } from '../lib/store'
 import { openActionMenu } from '../lib/actions/menu'
@@ -45,7 +46,7 @@ import { FriendsEntry } from './friends'
 import { dragScope, useDrag, type DragSpec } from './drag'
 import { profileTrigger } from './profile_card'
 import { LiveBadge, VoiceDock } from './voice_grid'
-import { Masked, Sentinel } from './ui'
+import { Masked, Sentinel, useOwnServer } from './ui'
 import { NameWithUsername } from './display_name'
 import { useAuthorMembers } from './message_pane'
 import { PingBadge } from './ping_badge'
@@ -117,6 +118,7 @@ function PrivateIcon() {
 
 function VoiceChannelRow({
   channel,
+  own,
   active,
   connected,
   count,
@@ -125,6 +127,7 @@ function VoiceChannelRow({
   drag,
 }: {
   channel: Channel
+  own: boolean
   active: boolean
   connected: boolean
   count: number
@@ -132,10 +135,11 @@ function VoiceChannelRow({
   menu: (x: number, y: number) => void
   drag?: DragSpec
 }) {
+  const mask = useMask(own)
   return (
     <button
       title={connected ? 'Open voice channel' : 'Join voice channel'}
-      aria-label={`${connected ? 'Open' : 'Join'} voice channel ${channel.name}${
+      aria-label={`${connected ? 'Open' : 'Join'} voice channel ${mask(channel.name)}${
         count ? `, ${count} connected` : ''
       }`}
       onClick={onJoin}
@@ -148,7 +152,7 @@ function VoiceChannelRow({
     >
       <Volume2 size={16} className={`shrink-0 ${connected ? 'text-status-green' : ''}`} />
       <span className="truncate">
-        <Masked text={channel.name} />
+        <Masked text={channel.name} own={own} />
       </span>
       {channel.restrict_view && <PrivateIcon />}
       {count > 0 && (
@@ -222,6 +226,7 @@ function VoiceMemberRow({
 
 export function ChannelSidebar() {
   const view = useStore(s => s.view)
+  const ownServer = useOwnServer(view?.kind === 'channel' ? view.server : null)
   const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0))
   const panelPerms = useStore(s =>
     s.view?.kind === 'channel' ? serverAdminPerms(s, s.view.server) : 0
@@ -520,7 +525,7 @@ export function ChannelSidebar() {
     >
       <Hash size={16} className="shrink-0" />
       <span className="truncate">
-        <Masked text={c.name} />
+        <Masked text={c.name} own={ownServer} />
       </span>
       {c.restrict_view && <PrivateIcon />}
       <MutedIcon scope={{ kind: 'channel', id: c.id, server }} />
@@ -542,6 +547,7 @@ export function ChannelSidebar() {
     <div key={c.id} data-drag-box className="flex flex-col rounded-lg">
       <VoiceChannelRow
         channel={c}
+        own={ownServer}
         active={activeId === c.id}
         connected={voice?.channelId === c.id}
         count={(voiceUsers[c.id] ?? []).length}
@@ -595,7 +601,7 @@ export function ChannelSidebar() {
               <ChevronRight size={14} className="shrink-0" />
             )}
             <span className="truncate">
-              <Masked text={category.name} />
+              <Masked text={category.name} own={ownServer} />
             </span>
             {hiddenPings > 0 ? (
               <PingBadge count={hiddenPings} className="ml-auto" />

@@ -236,7 +236,7 @@ export function BlockedUsersSection() {
             />
             <span className="min-w-0 flex-1 truncate text-sm">
               <span className="streamer">
-                <Masked text={user.display_name} />
+                <Masked text={user.display_name} by={user.username} />
               </span>{' '}
               <span className="streamer text-on-surface-variant">@{user.username}</span>
             </span>

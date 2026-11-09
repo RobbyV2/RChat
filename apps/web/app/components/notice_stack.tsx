@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState, type FocusEvent } from 'react'
 import { User, X } from 'lucide-react'
-import { maskOutsideCode } from '../lib/profanity'
-import { useMask, useStore } from '../lib/store'
+import { useStore } from '../lib/store'
 import {
   alertBody,
   context,
@@ -14,18 +13,14 @@ import {
   type Piece,
 } from '../lib/notices'
 import { UserAvatar } from './user_avatar'
+import { Masked } from './ui'
 
 function Pieces({ pieces }: { pieces: Piece[] }) {
-  const mask = useMask()
-  return pieces.map((p, i) =>
-    p.blur ? (
-      <span key={i} className="streamer">
-        {mask(p.text)}
-      </span>
-    ) : (
-      <span key={i}>{mask(p.text)}</span>
-    )
-  )
+  return pieces.map((p, i) => (
+    <span key={i} className={p.blur ? 'streamer' : undefined}>
+      <Masked text={p.text} />
+    </span>
+  ))
 }
 
 // Time left, from where the timer stood when this run of the toast began; pausing freezes it.
@@ -49,8 +44,7 @@ function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
   const streamer = useStore(s => s.streamer)
   const dismiss = useStore(s => s.dismissNotice)
   const where = context(notice)
-  const mask = useMask()
-  const body = maskOutsideCode(alertBody(notice.body, streamer), mask)
+  const body = alertBody(notice.body, streamer)
   const { actor } = notice
   const card = useRef<HTMLDivElement>(null)
   // A removed element takes its focus with it, so focus moves to a neighbouring toast first.
@@ -101,7 +95,11 @@ function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
               <Pieces pieces={where} />
             </span>
           )}
-          {body && <span className="mt-0.5 block truncate text-sm text-on-surface">{body}</span>}
+          {body && (
+            <span className="mt-0.5 block truncate text-sm text-on-surface">
+              <Masked text={body} code />
+            </span>
+          )}
         </span>
       </button>
       <button
