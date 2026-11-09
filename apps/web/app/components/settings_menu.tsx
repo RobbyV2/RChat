@@ -10,6 +10,7 @@ import { ownTurn } from '../lib/relays'
 import { RelaySection } from './relay_settings'
 import { P2pOffSection, P2pSection } from './p2p/p2p_settings'
 import { useP2p } from '../lib/p2p/app'
+import { avatarColorFor, avatarDraft } from '../lib/identicon'
 import { defaultBanner } from '../lib/profile'
 import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio, siteFilterOn } from '../lib/rules'
@@ -49,7 +50,7 @@ function BannerPicker({
   username: string
   displayName: string
   kind: AvatarKind
-  avatarColor: string
+  avatarColor: string | null
   banner: string | null
   onBanner: (color: string | null) => void
 }) {
@@ -191,8 +192,10 @@ function AccountSection() {
   )
   const me = useStore(s => s.me)
   const patchMe = useStore(s => s.patchMe)
-  const [kind, setKind] = useState<AvatarKind>(me?.avatar_kind ?? 'identicon')
-  const [color, setColor] = useState(me?.avatar_color ?? '#6750a4')
+  const [draft] = useState(() => avatarDraft(me))
+  const [kind, setKind] = useState<AvatarKind>(draft.kind)
+  const [color, setColor] = useState(draft.color)
+  const [background, setBackground] = useState(draft.background)
   const [banner, setBanner] = useState<string | null>(me?.banner_color ?? null)
   if (!me) return null
   return (
@@ -208,18 +211,20 @@ function AccountSection() {
           color={color}
           onKind={setKind}
           onColor={setColor}
+          background={background}
+          onBackground={setBackground}
         />
         <BannerPicker
           username={me.username}
           displayName={me.display_name}
           kind={kind}
-          avatarColor={color}
+          avatarColor={kind === 'color' ? color : background}
           banner={banner}
           onBanner={setBanner}
         />
       </div>
       <button
-        onClick={() => void patchMe(kind, kind === 'color' ? color : undefined, banner)}
+        onClick={() => void patchMe(kind, avatarColorFor(kind, color, background), banner)}
         className={`mt-4 ${filledBtn}`}
       >
         Save profile

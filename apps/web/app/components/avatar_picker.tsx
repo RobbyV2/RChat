@@ -1,6 +1,9 @@
 'use client'
 
+import { IDENTICON_DEFAULT_BG, IDENTICON_PRESETS } from '../lib/identicon'
+import { useStore } from '../lib/store'
 import type { AvatarKind } from '../lib/types'
+import { ColorField } from './color_field'
 import { UserAvatar } from './user_avatar'
 
 interface Props {
@@ -9,9 +12,20 @@ interface Props {
   color: string
   onKind: (kind: AvatarKind) => void
   onColor: (color: string) => void
+  background?: string | null
+  onBackground?: (color: string | null) => void
 }
 
-export function AvatarPicker({ username, kind, color, onKind, onColor }: Props) {
+export function AvatarPicker({
+  username,
+  kind,
+  color,
+  onKind,
+  onColor,
+  background = null,
+  onBackground,
+}: Props) {
+  const theme = useStore(s => s.theme)
   const option = (value: AvatarKind, label: string) => (
     <button
       type="button"
@@ -26,7 +40,7 @@ export function AvatarPicker({ username, kind, color, onKind, onColor }: Props) 
       <UserAvatar
         username={username.trim().toLowerCase() || 'preview'}
         avatarKind={value}
-        avatarColor={color}
+        avatarColor={value === 'color' ? color : background}
         size={48}
       />
       <span className="text-xs text-on-surface-variant">{label}</span>
@@ -49,6 +63,20 @@ export function AvatarPicker({ username, kind, color, onKind, onColor }: Props) 
             className="h-8 w-12 cursor-pointer rounded bg-transparent"
           />
         </label>
+      )}
+      {kind === 'identicon' && onBackground && (
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm text-on-surface-variant">Identicon background</span>
+          <ColorField
+            label="Identicon background"
+            value={background}
+            shown={background ?? IDENTICON_DEFAULT_BG[theme]}
+            onChange={onBackground}
+            presets={IDENTICON_PRESETS}
+            defaultNote="Default"
+            resetLabel="Use default"
+          />
+        </div>
       )}
     </div>
   )

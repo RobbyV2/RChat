@@ -1,8 +1,8 @@
 'use client'
 
 import { useMemo } from 'react'
-import { minidenticon } from 'minidenticons'
 import { User } from 'lucide-react'
+import { identiconBackground, identiconSvg } from '../lib/identicon'
 import type { AvatarKind } from '../lib/types'
 
 interface Props {
@@ -13,12 +13,13 @@ interface Props {
 }
 
 export function UserAvatar({ username, avatarKind, avatarColor, size = 32 }: Props) {
+  const background = identiconBackground(avatarKind, avatarColor)
   const src = useMemo(
     () =>
       avatarKind === 'identicon'
-        ? `data:image/svg+xml;utf8,${encodeURIComponent(minidenticon(username, 95, 45))}`
+        ? `data:image/svg+xml;utf8,${encodeURIComponent(identiconSvg(username, background))}`
         : null,
-    [username, avatarKind]
+    [username, avatarKind, background]
   )
   return src ? (
     <img
@@ -26,6 +27,7 @@ export function UserAvatar({ username, avatarKind, avatarColor, size = 32 }: Pro
       alt={username}
       width={size}
       height={size}
+      style={background ? { background } : undefined}
       className="shrink-0 rounded-full bg-surface-container-highest"
     />
   ) : (

@@ -130,8 +130,8 @@ pub struct UserRef {
     pub display_name: String,
     /// How the avatar is drawn.
     pub avatar_kind: AvatarKind,
-    /// Avatar background as lowercase `#rrggbb` when `avatar_kind` is `color`; `null` for
-    /// identicons.
+    /// Avatar color as lowercase `#rrggbb` when `avatar_kind` is `color`. For identicons it is
+    /// the chosen background color, or `null` for the default background.
     #[schema(example = "#4caf50")]
     pub avatar_color: Option<String>,
 }

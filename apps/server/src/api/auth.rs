@@ -38,7 +38,8 @@ pub struct Me {
     pub display_name: String,
     /// Avatar style: a generated identicon or a solid color.
     pub avatar_kind: AvatarKind,
-    /// Lowercase `#rrggbb` avatar color when `avatar_kind` is `color`; null for identicons.
+    /// Lowercase `#rrggbb` avatar color when `avatar_kind` is `color`. For identicons it is the
+    /// chosen background color, or null for the default background.
     #[schema(example = "#3366ff")]
     pub avatar_color: Option<String>,
     /// Lowercase `#rrggbb` profile banner color; null means the default derived from the avatar.
@@ -109,8 +110,8 @@ pub struct RegisterReq {
     words: Option<Vec<String>>,
     /// Avatar style.
     avatar_kind: AvatarKind,
-    /// `#rrggbb` color, required when `avatar_kind` is `color` and ignored for `identicon`.
-    /// Stored lowercase.
+    /// `#rrggbb` color, stored lowercase. Required when `avatar_kind` is `color`. For
+    /// `identicon` it is the optional background color; omit it for the default background.
     #[schema(example = "#3366ff")]
     avatar_color: Option<String>,
 }
@@ -363,9 +364,13 @@ fn check_avatar(
     avatar_color: Option<String>,
 ) -> Result<Option<String>, ApiError> {
     match (avatar_kind, avatar_color) {
-        (AvatarKind::Identicon, _) => Ok(None),
-        (AvatarKind::Color, Some(color)) if valid_color(&color) => Ok(Some(color.to_lowercase())),
-        (AvatarKind::Color, _) => Err(bad("Invalid avatar color")),
+        (AvatarKind::Identicon, None) => Ok(None),
+        (AvatarKind::Identicon | AvatarKind::Color, Some(color)) if valid_color(&color) => {
+            Ok(Some(color.to_lowercase()))
+        }
+        (AvatarKind::Identicon, Some(_)) | (AvatarKind::Color, _) => {
+            Err(bad("Invalid avatar color"))
+        }
     }
 }
 
@@ -442,7 +447,7 @@ pub(crate) async fn words(Path(username): Path<String>) -> Json<WordsResp> {
 /// messages are on) and gets their self DM. Answers 404 unless `registration` is `open` and
 /// `password_login` is on in `GET /api/v1/settings`. No authentication.
 /// Strict and general rate-limit buckets.
-#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), NUL-containing, `@`-containing, banned, taken or profanity-filtered username; empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; or a missing/invalid avatar color for `color` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), NUL-containing, `@`-containing, banned, taken or profanity-filtered username; empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; a missing or invalid avatar color for `color` avatars; or an invalid background color for `identicon` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
@@ -808,8 +813,9 @@ where
 pub struct MePatch {
     /// New avatar style. Omit to keep the current avatar (and ignore `avatar_color`).
     avatar_kind: Option<AvatarKind>,
-    /// `#rrggbb` color, required when `avatar_kind` is `color`; ignored for `identicon` and
-    /// when `avatar_kind` is omitted. Stored lowercase.
+    /// `#rrggbb` color, stored lowercase. Required when `avatar_kind` is `color`. For
+    /// `identicon` it is the optional background color; omit it (or send `null`) for the
+    /// default background. Ignored when `avatar_kind` is omitted.
     #[schema(example = "#3366ff")]
     avatar_color: Option<String>,
     /// Appear offline to others (`true`) or show real presence again (`false`).
@@ -885,7 +891,7 @@ fn check_banner(color: Option<String>) -> Result<Option<String>, ApiError> {
 /// emits `presence_mode` to the user's own connections, and the user then shows as offline
 /// (or online again) to others. Banner color changes emit no event. Requires a bearer token.
 /// General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/v1/me", tag = "Account", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `avatar_color` is only read together with `avatar_kind`. `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar. `bio` is the profile description: trimmed, control characters other than newlines removed, 3 or more newlines in a row collapsed to 2, at most 190 characters; empty or `null` clears it. It is checked by the profanity filter (`bios` target)"), responses((status = 200, description = "Avatar, banner color, description and/or appear-offline preference updated; returns the user's public profile plus their banner color, description and appear-offline flag", body = MeUpdated), (status = 400, description = "Invalid or missing avatar color for a `color` avatar, invalid banner color, description over 190 characters, or description blocked by the profanity filter. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/v1/me", tag = "Account", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `avatar_color` is only read together with `avatar_kind`: the color of a `color` avatar, or the background of an `identicon` (left out or `null`: the default background). `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar. `bio` is the profile description: trimmed, control characters other than newlines removed, 3 or more newlines in a row collapsed to 2, at most 190 characters; empty or `null` clears it. It is checked by the profanity filter (`bios` target)"), responses((status = 200, description = "Avatar, banner color, description and/or appear-offline preference updated; returns the user's public profile plus their banner color, description and appear-offline flag", body = MeUpdated), (status = 400, description = "Invalid or missing avatar color for a `color` avatar, invalid background color for an `identicon`, invalid banner color, description over 190 characters, or description blocked by the profanity filter. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn patch_me(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1946,6 +1952,107 @@ mod tests {
                 seq: 3
             })
         ));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn identicon_background_is_validated() {
+        let (state, path) = temp_state("identicon_background").await;
+        let _ = register_text(&state, "ivy").await.expect("register");
+        let mut rx = state.hub.subscribe();
+        let patch = |avatar_kind: AvatarKind, avatar_color: Option<&str>| {
+            let state = state.clone();
+            let avatar_color = avatar_color.map(str::to_string);
+            async move {
+                let user = get_user(&state.db, "ivy")
+                    .await
+                    .expect("load user")
+                    .expect("user exists");
+                patch_me(
+                    State(state),
+                    Authed(user),
+                    Json(MePatch {
+                        avatar_kind: Some(avatar_kind),
+                        avatar_color,
+                        appear_offline: None,
+                        banner_color: None,
+                        bio: None,
+                    }),
+                )
+                .await
+            }
+        };
+        let stored = |state: AppState| async move {
+            let user = get_user(&state.db, "ivy")
+                .await
+                .expect("load user")
+                .expect("user exists");
+            (user.avatar_kind, user.avatar_color)
+        };
+        let set = patch(AvatarKind::Identicon, Some("#ABCDEF"))
+            .await
+            .expect("background")
+            .0;
+        assert_eq!(set.user.avatar_kind, AvatarKind::Identicon);
+        assert_eq!(set.user.avatar_color.as_deref(), Some("#abcdef"));
+        assert_eq!(
+            stored(state.clone()).await,
+            (AvatarKind::Identicon, Some("#abcdef".to_string()))
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::UserUpdated { user, scope: _ })
+                if user.avatar_kind == AvatarKind::Identicon
+                    && user.avatar_color.as_deref() == Some("#abcdef")
+        ));
+        for color in [
+            "red", "#12345", "#1234567", "abcdef", "#gggggg", "", "#abcde ",
+        ] {
+            let ApiError(status, message) = patch(AvatarKind::Identicon, Some(color))
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("{color:?} accepted"));
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{color:?}");
+            assert_eq!(message, "Invalid avatar color", "{color:?}");
+        }
+        assert_eq!(
+            stored(state.clone()).await,
+            (AvatarKind::Identicon, Some("#abcdef".to_string()))
+        );
+        let cleared = patch(AvatarKind::Identicon, None).await.expect("default").0;
+        assert_eq!(cleared.user.avatar_color, None);
+        assert_eq!(stored(state.clone()).await, (AvatarKind::Identicon, None));
+        let fresh = register(
+            State(state.clone()),
+            Json(RegisterReq {
+                username: "June".to_string(),
+                password: Some("a".to_string()),
+                words: None,
+                avatar_kind: AvatarKind::Identicon,
+                avatar_color: Some("#00FF7f".to_string()),
+            }),
+        )
+        .await
+        .expect("register with background")
+        .0;
+        assert_eq!(fresh.user.avatar_kind, AvatarKind::Identicon);
+        assert_eq!(fresh.user.avatar_color.as_deref(), Some("#00ff7f"));
+        let refused = register(
+            State(state.clone()),
+            Json(RegisterReq {
+                username: "Kit".to_string(),
+                password: Some("a".to_string()),
+                words: None,
+                avatar_kind: AvatarKind::Identicon,
+                avatar_color: Some("blue".to_string()),
+            }),
+        )
+        .await;
+        assert!(matches!(
+            refused,
+            Err(ApiError(StatusCode::BAD_REQUEST, message)) if message == "Invalid avatar color"
+        ));
+        assert!(get_user(&state.db, "kit").await.expect("lookup").is_none());
         done(state, path).await;
     }
 

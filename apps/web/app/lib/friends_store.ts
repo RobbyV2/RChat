@@ -19,6 +19,7 @@ import {
 import type { Paged, RChatState } from './store_types'
 import type { Friend, FriendRequest, Ping, UserRef, WsEvent } from './types'
 import type { Page } from './lists'
+import { mapWhere } from './window'
 
 type SetState = (partial: Partial<RChatState> | ((s: RChatState) => Partial<RChatState>)) => void
 
@@ -291,7 +292,7 @@ export const friendsSlice = (d: FriendsDeps) => {
     )
   }
 
-  // Returns true when the event was a friends event.
+  // Returns true when the event was a friends event and nothing else handles it.
   const onEvent = (ev: WsEvent): boolean => {
     switch (ev.type) {
       case 'friend_request_added': {
@@ -350,6 +351,21 @@ export const friendsSlice = (d: FriendsDeps) => {
       case 'privacy_changed': {
         if (mine(ev.username)) set({ privacy: parsePrivacy(ev.privacy) })
         return true
+      }
+      case 'user_updated': {
+        const u = ev.user
+        const same = (x: { user: UserRef }) => x.user.username === u.username
+        const fresh = <T extends { user: UserRef }, P extends { list: T[] }>(page: P): P => {
+          const list = mapWhere(page.list, same, x => ({ ...x, user: u }))
+          return list === page.list ? page : { ...page, list }
+        }
+        set(s => ({
+          friends: fresh(s.friends),
+          onlineFriends: fresh(s.onlineFriends),
+          incomingRequests: fresh(s.incomingRequests),
+          outgoingRequests: fresh(s.outgoingRequests),
+        }))
+        return false
       }
       default:
         return false

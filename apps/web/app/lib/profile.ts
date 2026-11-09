@@ -61,7 +61,7 @@ export const hslHex = (hue: number, sat: number, light: number) => {
 }
 
 export const defaultBanner = (user: Pick<UserRef, 'username' | 'avatar_kind' | 'avatar_color'>) =>
-  user.avatar_kind === 'color' && validColor(user.avatar_color)
+  validColor(user.avatar_color)
     ? user.avatar_color.toLowerCase()
     : hslHex(identiconHue(user.username), 0.6, 0.42)
 

@@ -1249,8 +1249,18 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     },
     user_updated: ev => {
       const u = ev.user
-      const byAuthor = (m: Message) => m.author.username === u.username
-      const reauthor = (list: Message[]) => mapWhere(list, byAuthor, m => ({ ...m, author: u }))
+      const wrote = (m: Message) => m.author.username === u.username
+      const quotes = (m: Message) => m.reply_to?.author?.username === u.username
+      const reauthor = (list: Message[]) =>
+        mapWhere(
+          list,
+          m => wrote(m) || quotes(m),
+          m => ({
+            ...m,
+            author: wrote(m) ? u : m.author,
+            ...(m.reply_to && quotes(m) ? { reply_to: { ...m.reply_to, author: u } } : {}),
+          })
+        )
       mapTails(reauthor)
       set(s => ({
         me: s.me && s.me.username === u.username ? { ...s.me, ...u } : s.me,

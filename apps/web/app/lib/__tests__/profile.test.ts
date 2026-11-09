@@ -58,8 +58,11 @@ describe('banner colors', () => {
       identicon
     )
     expect(
-      defaultBanner(user('alice', { avatar_kind: 'identicon', avatar_color: '#123456' }))
-    ).toBe(identicon)
+      defaultBanner(user('alice', { avatar_kind: 'identicon', avatar_color: '#ABC123' }))
+    ).toBe('#abc123')
+    expect(defaultBanner(user('alice', { avatar_kind: 'identicon', avatar_color: 'red' }))).toBe(
+      identicon
+    )
   })
 
   test('custom banner wins when valid', () => {

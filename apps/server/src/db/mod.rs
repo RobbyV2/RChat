@@ -39,8 +39,8 @@ pub use touch::{
 /// only, so no second verifier is kept.
 pub const NO_EXTRA_HASH: &str = "!lookup";
 
-/// How an avatar is drawn: `identicon` is a pattern generated from the username, `color` is a
-/// solid `avatar_color` circle.
+/// How an avatar is drawn: `identicon` is a pattern generated from the username (on the
+/// `avatar_color` background when one is set), `color` is a solid `avatar_color` circle.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum AvatarKind {
