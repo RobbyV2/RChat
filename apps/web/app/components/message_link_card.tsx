@@ -11,6 +11,7 @@ import { Snippet } from './replies'
 import { UserAvatar } from './user_avatar'
 import { BlockedQuote } from './blocking'
 import { Masked } from './ui'
+import { NameWithUsername } from './display_name'
 
 // A pasted link to a message on this instance. Shown only once the gated lookup says the viewer
 // can read the message; otherwise the link stays a plain link.
@@ -54,7 +55,7 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
             size={20}
           />
           <span className="streamer min-w-0 truncate text-sm font-medium">
-            <Masked text={author.display_name} />
+            <NameWithUsername user={author} />
           </span>
           <MessageTime ts={created_at} className="shrink-0 text-xs text-on-surface-variant" />
         </div>

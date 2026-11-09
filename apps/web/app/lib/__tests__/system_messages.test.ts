@@ -48,6 +48,13 @@ describe('system messages', () => {
     expect(JOIN_LINES).toHaveLength(6)
   })
 
+  test('a display name in a system line keeps its username', () => {
+    const renamed = user('bob', { display_name: 'alice' })
+    expect(systemText(msg(6, { kind: 'join', author: renamed, content: '' }))).toBe(
+      'alice (bob) joined the party.'
+    )
+  })
+
   test('leave has one line and never shows a reason', () => {
     for (const id of [1, 2, 3])
       expect(
@@ -58,7 +65,7 @@ describe('system messages', () => {
 
   test('names with replacement patterns stay literal', () => {
     const author = user('bob', { display_name: "$& $` $' $1" })
-    expect(systemText(msg(1, { kind: 'leave', author }))).toBe("$& $` $' $1 left the server.")
+    expect(systemText(msg(1, { kind: 'leave', author }))).toBe("$& $` $' $1 (bob) left the server.")
   })
 
   test('parts split around the name', () => {

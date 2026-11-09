@@ -15,6 +15,7 @@ import {
 import type { UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { Dialog, dangerBtn, fieldCls, filledDangerBtn, textBtn } from './ui'
+import { NameWithUsername } from './display_name'
 
 // The current time, ticking every `ms` while `on`.
 export function useNow(on: boolean, ms = 1000): number {
@@ -114,7 +115,7 @@ function TimeoutDialog({ server, user }: { server: string; user: UserRef }) {
         />
         <div className="min-w-0">
           <p className="streamer truncate text-sm font-medium text-on-surface">
-            {user.display_name}
+            <NameWithUsername user={user} />
           </p>
           <p className="streamer truncate text-xs text-on-surface-variant">@{user.username}</p>
         </div>

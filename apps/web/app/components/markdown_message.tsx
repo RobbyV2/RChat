@@ -100,6 +100,7 @@ import {
 import { Stamp } from './timestamp'
 import { splitStamps, type StampStyle } from '../lib/timestamps'
 import { Masked } from './ui'
+import { mentionHandle } from '../lib/display_name'
 
 export const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i
 
@@ -355,7 +356,7 @@ function Mention({ username }: { username: string }) {
         mine ? 'bg-primary-container text-on-primary-container' : 'bg-primary/15 text-primary'
       }`}
     >
-      @{mask(user.display_name)}
+      @{mask(mentionHandle(user))}
     </span>
   )
 }

@@ -60,6 +60,8 @@ import { profileTrigger } from './profile_card'
 import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, useMedia } from './context_menu'
 import { Masked, useEscape } from './ui'
+import { NameWithUsername } from './display_name'
+import { nameWithUsername } from '../lib/display_name'
 import { ChannelTopic } from './channel_topic'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { shownMedia, TIMED_OUT_CAMERA, TIMED_OUT_MIC, TIMED_OUT_SHARE } from '../lib/timeouts'
@@ -345,7 +347,7 @@ function Tile({
   const streamer = useStore(s => s.streamer)
   const box = height ?? (compact ? 72 : 240)
   const avatar = compact ? 32 : Math.round(Math.max(40, Math.min(96, box * 0.3)))
-  const label = screen ? `${user.display_name}'s screen` : user.display_name
+  const label = screen ? `${nameWithUsername(user)}'s screen` : nameWithUsername(user)
   return (
     <div
       style={{
@@ -432,7 +434,7 @@ function Tile({
           <StateIcons muted={muted} deafened={deafened} size={compact ? 10 : 12} />
         )}
         <span className="streamer truncate">
-          <Masked text={user.display_name} />
+          <NameWithUsername user={user} />
         </span>
         {pending && <span className="shrink-0 opacity-75">Ringing…</span>}
       </span>
@@ -613,6 +615,11 @@ export function MeshNotice({ users, className }: { users: VoiceUser[]; className
 
 const NO_USERS: VoiceUser[] = []
 
+// Where the dock's call is: the person of a DM call, else the channel or contact name.
+export function DockPlace({ place, peer }: { place: string; peer?: UserRef }) {
+  return peer ? <NameWithUsername user={peer} /> : <Masked text={place} />
+}
+
 export function VoiceDock() {
   const { voice, call, roomCall, roomVoice, connected, quality } = useCallMedia()
   const contactName = useP2p(s => (roomCall ? contactNameOf(s, roomCall.peer) : ''))
@@ -633,9 +640,9 @@ export function VoiceDock() {
       ? (sv?.channels.find(c => c.id === roomVoice.ch)?.name ?? 'voice')
       : roomCall
         ? contactName
-        : (dms.find(d => d.id === call?.dmId)?.other.display_name ??
-          call?.dmUsers.find(u => u !== me?.username) ??
-          'call')
+        : (call?.dmUsers.find(u => u !== me?.username) ?? 'call')
+  const dmPeer =
+    voice || roomVoice || roomCall ? undefined : dms.find(d => d.id === call?.dmId)?.other
   const inVoice = voice !== null || roomVoice !== null
   const ringing = !inVoice && (roomCall ? roomCall.state === 'ringing' : call?.state === 'ringing')
   const status = ringing
@@ -666,7 +673,7 @@ export function VoiceDock() {
           >
             {roomVoice && <P2pBadge />}
             <span className={`streamer truncate ${roomVoice ? 'max-w-[60%] shrink-0' : ''}`}>
-              <Masked text={place} />
+              <DockPlace place={place} peer={dmPeer} />
             </span>
             {roomCall && <P2pBadge />}
             {voice && detail && (
@@ -1097,7 +1104,7 @@ export function VoiceGrid({
           <span className="flex min-w-0 items-center gap-1">
             {forDm.state === 'active' ? 'In call with' : 'Calling'}
             <span className="streamer truncate font-medium text-on-surface">
-              <Masked text={dm?.other.display_name ?? pendingOther ?? ''} />
+              {dm ? <NameWithUsername user={dm.other} /> : <Masked text={pendingOther ?? ''} />}
               {forDm.state === 'ringing' && '…'}
             </span>
           </span>
@@ -1231,7 +1238,7 @@ export function CallBanner() {
               <span className="flex min-w-0 items-center gap-1 text-sm">
                 Calling
                 <span className="streamer truncate font-medium">
-                  <Masked text={other.display_name} />
+                  <NameWithUsername user={other} />
                 </span>
                 …
               </span>
@@ -1258,7 +1265,7 @@ export function CallBanner() {
         <span className="sm:hidden">{avatar(40)}</span>
         <div className="flex min-w-0 flex-col items-center gap-0.5 max-sm:flex-1 max-sm:items-start">
           <span className="streamer w-full truncate text-base font-semibold">
-            <Masked text={other.display_name} />
+            <NameWithUsername user={other} />
           </span>
           <CallType video={call.video} p2p={p2pCall} incoming />
           <button
@@ -1269,7 +1276,7 @@ export function CallBanner() {
             <MessageCircle size={12} aria-hidden className="shrink-0" />
             <span className="shrink-0">DM with</span>
             <span className="streamer truncate">
-              <Masked text={dm?.other.display_name ?? other.display_name} />
+              <NameWithUsername user={dm?.other ?? other} />
             </span>
           </button>
         </div>

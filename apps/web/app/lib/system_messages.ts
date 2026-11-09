@@ -1,3 +1,4 @@
+import { nameWithUsername } from './display_name'
 import type { Channel, Message } from './types'
 
 export const JOIN_LINES = [
@@ -33,7 +34,7 @@ export const systemParts = (m: SystemRow): [string, string] => {
 }
 
 export const systemText = (m: SystemRow & Pick<Message, 'author'>) =>
-  template(m).replace('{name}', () => m.author.display_name)
+  template(m).replace('{name}', () => nameWithUsername(m.author))
 
 export interface SystemChoice {
   value: string

@@ -11,6 +11,7 @@ import { ApiError } from './api'
 import { api, home } from './instances'
 import { blobs } from './platform'
 import { replaceSpoilers } from './spoilers'
+import { nameWithUsername } from './display_name'
 import type { IndexMode } from './palette'
 import {
   FULL_MAX_BYTES,
@@ -211,7 +212,7 @@ export const messageDoc = (
     thread: m.thread_root_id,
     msg: m.id,
     author: m.author.username,
-    name: m.author.display_name,
+    name: nameWithUsername(m.author),
     text,
     at: m.created_at,
   }

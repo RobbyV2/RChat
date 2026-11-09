@@ -126,7 +126,7 @@ pub struct UserRef {
     /// Lowercase username, the user's unique key.
     #[schema(example = "alice")]
     pub username: String,
-    /// The username in the casing chosen at registration.
+    /// The name shown for the user: the username as registered until they change it.
     #[schema(example = "Alice")]
     pub display_name: String,
     /// How the avatar is drawn.

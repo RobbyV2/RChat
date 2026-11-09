@@ -74,6 +74,8 @@ import {
   useScrollAnchor,
 } from './viewport_height'
 import { Masked, useEscape } from './ui'
+import { NameWithUsername } from './display_name'
+import { showsUsername } from '../lib/display_name'
 import { PingBadge, pingLabel } from './ping_badge'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { QuickReactions, ReactionBar, rowAt } from './reactions'
@@ -132,7 +134,7 @@ function CallLogRow({ message }: { message: Message }) {
   const other = dms.find(d => d.id === message.dm_id)?.other
   const name = (u: UserRef | undefined) => (
     <span className="streamer font-medium text-on-surface">
-      {u ? <Masked text={u.display_name} /> : 'Someone'}
+      {u ? <NameWithUsername user={u} /> : 'Someone'}
     </span>
   )
   const status: ReactNode =
@@ -300,7 +302,7 @@ export function AuthorRow({
             style={{ color }}
             className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
           >
-            <Masked text={author.display_name} />
+            <NameWithUsername user={author} />
           </span>
           {isWebhookAuthor(author.username) && <WebhookBadge />}
           {meta}
@@ -308,6 +310,28 @@ export function AuthorRow({
         {children}
       </div>
     </div>
+  )
+}
+
+// The other person in a DM's header: avatar and name, opening their profile.
+export function DmPeer({ other }: { other: UserRef }) {
+  return (
+    <span
+      {...profileTrigger(other, null)}
+      className="-ml-1.5 flex min-w-0 cursor-pointer items-center gap-2 rounded-full py-1 pr-2.5 pl-1.5 outline-offset-2 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary"
+    >
+      <span className={`flex shrink-0 ${showsUsername(other) ? 'max-sm:hidden' : ''}`.trim()}>
+        <UserAvatar
+          username={other.username}
+          avatarKind={other.avatar_kind}
+          avatarColor={other.avatar_color}
+          size={24}
+        />
+      </span>
+      <span className="streamer truncate">
+        <NameWithUsername user={other} />
+      </span>
+    </span>
   )
 }
 
@@ -864,20 +888,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         )}
         {dm && (
           <span className="flex min-w-20 items-center gap-2 font-medium">
-            <span
-              {...profileTrigger(dm.other, null)}
-              className="-ml-1.5 flex min-w-0 cursor-pointer items-center gap-2 rounded-full py-1 pr-2.5 pl-1.5 outline-offset-2 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary"
-            >
-              <UserAvatar
-                username={dm.other.username}
-                avatarKind={dm.other.avatar_kind}
-                avatarColor={dm.other.avatar_color}
-                size={24}
-              />
-              <span className="streamer truncate">
-                <Masked text={dm.other.display_name} />
-              </span>
-            </span>
+            <DmPeer other={dm.other} />
             {dm.is_self && (
               <span className="shrink-0 rounded-full bg-secondary-container px-2 py-0.5 text-xs text-on-secondary-container">
                 yourself

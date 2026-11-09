@@ -56,6 +56,7 @@ import { retrySeconds, tooManyText } from '../rate_limit'
 import { type Decision, mergeRelays, relayBook, relaysKey } from '../relays'
 import { rtc } from '../rtc'
 import { cleanBio } from '../rules'
+import { displayNameError } from '../display_name'
 import { selectionInitial, type selectionSlice } from '../selection_store'
 import { serverNames } from '../selectors'
 import { endsSession, meRetryIn } from '../session'
@@ -1126,6 +1127,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'answerRelayPrompt'
     | 'patchMe'
     | 'setBio'
+    | 'setDisplayName'
     | 'setAppearOffline'
     | 'refreshAccount'
     | 'changePassword'
@@ -1241,6 +1243,20 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       if (!me) return `${accountPrompt(settings)} to add a description`
       try {
         const user = await api.setBio(cleanBio(bio) ? bio : null)
+        set(s => (s.me?.username === me.username ? { me: { ...s.me, ...user } } : {}))
+        return null
+      } catch (e) {
+        return errorText(e)
+      }
+    },
+
+    setDisplayName: async name => {
+      const { me } = get()
+      if (!me) return `${accountPrompt(get().settings)} to change your display name`
+      const invalid = displayNameError(name)
+      if (invalid) return invalid
+      try {
+        const user = await api.setDisplayName(name.trim())
         set(s => (s.me?.username === me.username ? { me: { ...s.me, ...user } } : {}))
         return null
       } catch (e) {

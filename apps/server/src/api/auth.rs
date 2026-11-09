@@ -33,7 +33,7 @@ pub struct Me {
     /// Lowercase username, the account's unique key.
     #[schema(example = "alice")]
     pub username: String,
-    /// The username in the case it was registered with.
+    /// The name shown for the user: the username as registered until they change it.
     #[schema(example = "Alice")]
     pub display_name: String,
     /// Avatar style: a generated identicon or a solid color.
@@ -834,6 +834,12 @@ pub struct MePatch {
     avatar_color: Option<String>,
     /// Appear offline to others (`true`) or show real presence again (`false`).
     appear_offline: Option<bool>,
+    /// The name shown for you, 1 to 32 characters after trimming, without control, format or
+    /// invisible characters, never passing for the instance staff, and checked by the profanity
+    /// filter (`usernames` target). Not unique, and never used for mentions or sign-in. Omit to
+    /// keep it.
+    #[schema(example = "Alice")]
+    display_name: Option<String>,
     /// `#rrggbb` banner color, stored lowercase; `null` resets it to the default derived from
     /// the avatar. Omit to keep it.
     #[serde(default, deserialize_with = "present")]
@@ -861,6 +867,29 @@ pub struct MeUpdated {
 }
 
 pub const BIO_MAX: usize = 190;
+
+pub const DISPLAY_NAME_MAX: usize = 32;
+
+/// A display name as stored: trimmed, 1 to `DISPLAY_NAME_MAX` characters, no control, format or
+/// invisible characters, not passing for the instance staff, through the name profanity filter.
+pub(crate) async fn clean_display_name(db: &Db, raw: &str) -> Result<String, ApiError> {
+    let name = raw.trim().to_string();
+    if crate::api::webhooks::name_keys(&name)
+        .iter()
+        .any(String::is_empty)
+    {
+        return Err(bad("Display name required"));
+    }
+    check_len(&name, DISPLAY_NAME_MAX, "Display name")?;
+    if name.chars().any(crate::api::webhooks::hidden_char) {
+        return Err(bad("Display name has invalid characters"));
+    }
+    if crate::api::webhooks::passes_for_staff(&name) {
+        return Err(bad("That name is reserved"));
+    }
+    check_profanity(db, ProfanityTarget::Usernames, &name).await?;
+    Ok(name)
+}
 
 pub fn clean_bio(text: &str) -> Result<Option<String>, ApiError> {
     clean_multiline(text, BIO_MAX, "Description")
@@ -899,13 +928,14 @@ fn check_banner(color: Option<String>) -> Result<Option<String>, ApiError> {
 
 /// Update the signed-in account
 ///
-/// Changes the avatar, banner color, profile description and/or appear-offline preference;
-/// fields left out stay as they are. A new avatar or a changed description emits
-/// `user_updated` to users who share a server or DM with the user; changing `appear_offline`
+/// Changes the display name, avatar, banner color, profile description and/or appear-offline
+/// preference; fields left out stay as they are. A new avatar, display name or description
+/// emits `user_updated` to users who share a server or DM with the user; changing `appear_offline`
 /// emits `presence_mode` to the user's own connections, and the user then shows as offline
-/// (or online again) to others. Banner color changes emit no event. Requires a bearer token.
-/// General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/v1/me", tag = "Account", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `avatar_color` is only read together with `avatar_kind`: the color of a `color` avatar, or the background of an `identicon` (left out or `null`: the default background). `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar. `bio` is the profile description: trimmed, control characters other than newlines removed, 3 or more newlines in a row collapsed to 2, at most 190 characters; empty or `null` clears it. It is checked by the profanity filter (`bios` target)"), responses((status = 200, description = "Avatar, banner color, description and/or appear-offline preference updated; returns the user's public profile plus their banner color, description and appear-offline flag", body = MeUpdated), (status = 400, description = "Invalid or missing avatar color for a `color` avatar, invalid background color for an `identicon`, invalid banner color, description over 190 characters, or description blocked by the profanity filter. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// (or online again) to others. Banner color changes emit no event. A `display_name` answers
+/// 404 while the `display_names` switch of `GET /api/v1/settings` is off, and then nothing
+/// changes. Requires a bearer token. General rate-limit bucket.
+#[utoipa::path(patch, path = "/api/v1/me", tag = "Account", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `avatar_color` is only read together with `avatar_kind`: the color of a `color` avatar, or the background of an `identicon` (left out or `null`: the default background). `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar. `bio` is the profile description: trimmed, control characters other than newlines removed, 3 or more newlines in a row collapsed to 2, at most 190 characters; empty or `null` clears it. It is checked by the profanity filter (`bios` target). `display_name` is trimmed, 1 to 32 characters, and checked by the profanity filter (`usernames` target)"), responses((status = 200, description = "Display name, avatar, banner color, description and/or appear-offline preference updated; returns the user's public profile plus their banner color, description and appear-offline flag", body = MeUpdated), (status = 400, description = "Invalid or missing avatar color for a `color` avatar, invalid background color for an `identicon`, invalid banner color, description over 190 characters, description blocked by the profanity filter, or a display name that is blank, over 32 characters, holds control, format or invisible characters (`Display name has invalid characters`), passes for the instance staff (`That name is reserved`) or is blocked by the profanity filter. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: `display_name` was sent while the `display_names` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn patch_me(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -915,9 +945,15 @@ pub(crate) async fn patch_me(
         avatar_kind,
         avatar_color,
         appear_offline,
+        display_name,
         banner_color,
         bio,
     } = req;
+    let display_name = match display_name {
+        Some(_) if !Settings::cached(&state.db).await.display_names => return Err(not_found()),
+        Some(raw) => Some(clean_display_name(&state.db, &raw).await?),
+        None => None,
+    };
     let avatar = match avatar_kind {
         Some(kind) => Some((kind, check_avatar(kind, avatar_color)?)),
         None => None,
@@ -952,6 +988,13 @@ pub(crate) async fn patch_me(
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(name) = &display_name {
+        sqlx::query("UPDATE users SET display_name = $1 WHERE username = $2")
+            .bind(name)
+            .bind(&user.username)
+            .execute(&mut *tx)
+            .await?;
+    }
     if let Some(text) = &bio {
         sqlx::query("UPDATE users SET bio = $1 WHERE username = $2")
             .bind(text)
@@ -973,7 +1016,10 @@ pub(crate) async fn patch_me(
         .await?
         .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string()))?;
     let user_ref = UserRef::from_user(&stored);
-    if avatar.is_some() || bio.as_ref().is_some_and(|b| *b != user.bio) {
+    let renamed = display_name
+        .as_ref()
+        .is_some_and(|n| *n != user.display_name);
+    if avatar.is_some() || renamed || bio.as_ref().is_some_and(|b| *b != user.bio) {
         state.hub.broadcast(WsEvent::UserUpdated {
             user: user_ref.clone(),
             scope: crate::api::access::user_scope(&state.read(), &stored.username).await,
@@ -2000,6 +2046,7 @@ mod tests {
                             avatar_kind,
                             avatar_color,
                             appear_offline,
+                            display_name: None,
                             banner_color: None,
                             bio: None,
                         }),
@@ -2081,6 +2128,7 @@ mod tests {
                         avatar_kind: Some(avatar_kind),
                         avatar_color,
                         appear_offline: None,
+                        display_name: None,
                         banner_color: None,
                         bio: None,
                     }),
@@ -2379,6 +2427,137 @@ mod tests {
             assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{grant:?}");
         }
         server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn display_names_change_but_never_sign_in_or_mention() {
+        let (state, path) = temp_state("display_names").await;
+        let _ = register_text(&state, "Alice").await.expect("alice");
+        let _ = register_text(&state, "bob").await.expect("bob");
+        let mut rx = state.hub.subscribe();
+        let patch = |name: &'static str, body: String| {
+            let state = state.clone();
+            async move {
+                let user = get_user(&state.db, name)
+                    .await
+                    .expect("load user")
+                    .expect("user exists");
+                let req: MePatch = serde_json::from_str(&body).expect("patch body");
+                patch_me(State(state), Authed(user), Json(req))
+                    .await
+                    .map(|r| r.0.user.display_name)
+            }
+        };
+        let named = |name: &str| serde_json::json!({ "display_name": name }).to_string();
+        let stored = |name: &'static str| {
+            let state = state.clone();
+            async move {
+                get_user(&state.db, name)
+                    .await
+                    .expect("load")
+                    .expect("user")
+                    .display_name
+            }
+        };
+        assert_eq!(stored("alice").await, "Alice");
+        assert_eq!(
+            patch("alice", named("  Ally  ")).await.expect("set"),
+            "Ally"
+        );
+        assert_eq!(stored("alice").await, "Ally");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::UserUpdated { user, scope: _ })
+                if user.username == "alice" && user.display_name == "Ally"
+        ));
+        assert_eq!(patch("alice", named("Ally")).await.expect("same"), "Ally");
+        assert!(rx.try_recv().is_err(), "unchanged: no event");
+        assert_eq!(
+            patch("bob", named("Ally")).await.expect("not unique"),
+            "Ally"
+        );
+        let max = "\u{1f600}".repeat(DISPLAY_NAME_MAX);
+        assert_eq!(patch("bob", named(&max)).await.expect("32 characters"), max);
+        let bad = |code: StatusCode, msg: &str| Err::<String, _>((code, msg.to_string()));
+        let refused = |r: Result<String, ApiError>| r.map_err(|ApiError(c, m)| (c, m));
+        for (body, want) in [
+            (named(""), "Display name required"),
+            (named("   "), "Display name required"),
+            (named("\u{301}\u{301}"), "Display name required"),
+            (
+                named(&"a".repeat(33)),
+                "Display name must be at most 32 characters",
+            ),
+            (named("a\u{200b}b"), "Display name has invalid characters"),
+            (named("a\nb"), "Display name has invalid characters"),
+            (
+                named("ali\u{202e}ce"),
+                "Display name has invalid characters",
+            ),
+            (named("Instance Staff"), "That name is reserved"),
+            (
+                named("\u{ff29}\u{ff2e}\u{ff33}\u{ff34}\u{ff21}\u{ff2e}\u{ff23}\u{ff25} staff"),
+                "That name is reserved",
+            ),
+            (
+                named("what the fuck"),
+                "Content blocked by profanity filter",
+            ),
+        ] {
+            assert_eq!(
+                refused(patch("alice", body.clone()).await),
+                bad(StatusCode::BAD_REQUEST, want),
+                "{body}"
+            );
+        }
+        assert_eq!(stored("alice").await, "Ally");
+        let login = |username: &str| LoginReq {
+            username: username.to_string(),
+            password: Some("a".to_string()),
+            words: None,
+        };
+        let t = now();
+        assert!(login_at(&state, login("ally"), t).await.is_err());
+        let Json(AuthResp { user, .. }) = login_at(&state, login("alice"), t + 3)
+            .await
+            .expect("sign in by username");
+        assert_eq!(
+            (user.username.as_str(), user.display_name.as_str()),
+            ("alice", "Ally")
+        );
+        let found = crate::api::pings::mentioned_users(
+            &state.db,
+            &["ally".to_string(), "alice".to_string()],
+            "bob",
+        )
+        .await
+        .expect("mentions");
+        assert_eq!(found, ["alice"]);
+        sqlx::query("INSERT INTO settings(key, value) VALUES('display_names', '0') ON CONFLICT(key) DO UPDATE SET value = '0'")
+            .execute(&state.db)
+            .await
+            .expect("switch off");
+        crate::api::Settings::forget(&state.db);
+        let both = r##"{"display_name":"Al","banner_color":"#112233"}"##.to_string();
+        assert_eq!(
+            refused(patch("alice", both).await),
+            bad(StatusCode::NOT_FOUND, "Not found")
+        );
+        let user = get_user(&state.db, "alice")
+            .await
+            .expect("load")
+            .expect("alice");
+        assert_eq!(
+            (user.display_name.as_str(), user.banner_color),
+            ("Ally", None)
+        );
+        assert_eq!(
+            patch("alice", r##"{"banner_color":"#112233"}"##.to_string())
+                .await
+                .expect("other fields still change"),
+            "Ally"
+        );
         done(state, path).await;
     }
 }

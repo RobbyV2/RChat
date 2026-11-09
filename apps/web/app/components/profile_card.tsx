@@ -65,6 +65,7 @@ import { sendKey } from '../lib/keys'
 import type { Member, Profile, Role, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { Masked, useCopied } from './ui'
+import { dmPlaceholder } from '../lib/display_name'
 import { ProfileFriendButton } from './friends'
 import { COARSE_QUERY, useMedia } from './context_menu'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
@@ -682,7 +683,7 @@ function Card({ target }: { target: ProfileTarget }) {
                   }
                 }}
                 aria-label="Send a direct message"
-                placeholder={streamer ? 'Send a direct message' : `Message @${user.display_name}`}
+                placeholder={dmPlaceholder(user, streamer)}
                 className="w-full rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2 text-base text-on-surface outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm"
               />
             )}

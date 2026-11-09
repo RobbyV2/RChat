@@ -14,6 +14,7 @@ import { FRIENDS_SCOPE } from '../friends'
 import type { friendsSlice } from '../friends_store'
 import type { ReadMark } from '../lists'
 import { mentionsUser } from '../mentions'
+import { nameWithUsername } from '../display_name'
 import type { AlertInput } from '../notices'
 import { groupKindsShown, scopeOfKey } from '../notify'
 import {
@@ -252,7 +253,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
       channel: host?.channels.find(c => c.id === channelId)?.name ?? null,
       dm: false,
       message: true,
-      name: m.author.display_name,
+      name: nameWithUsername(m.author),
       generic: 'New notification',
       go: () => void get().openChannel(server, channelId, 'push', m.id),
     })

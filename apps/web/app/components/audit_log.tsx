@@ -32,10 +32,12 @@ import {
   type AuditGroup,
 } from '../lib/audit'
 import { fullTimeOf, relativeTime } from '../lib/timestamps'
-import type { AuditEntry } from '../lib/types'
+import type { AuditEntry, UserRef } from '../lib/types'
+import { nameWithUsername } from '../lib/display_name'
 import { useMemberSearch } from './server_settings'
 import { UserAvatar } from './user_avatar'
 import { Dialog, Sentinel, fieldCls } from './ui'
+import { NameWithUsername } from './display_name'
 
 const TEXT_DEBOUNCE = 300
 const SUGGESTIONS = 5
@@ -199,6 +201,27 @@ function AuditLog({ server }: { server: string }) {
   )
 }
 
+export function ActorHit({ m, onPick }: { m: UserRef; onPick: () => void }) {
+  return (
+    <button
+      type="button"
+      onMouseDown={e => e.preventDefault()}
+      onClick={onPick}
+      className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left hover:bg-surface-container-high"
+    >
+      <UserAvatar
+        username={m.username}
+        avatarKind={m.avatar_kind}
+        avatarColor={m.avatar_color}
+        size={20}
+      />
+      <span className="streamer min-w-0 flex-1 truncate text-sm">
+        <NameWithUsername user={m} />
+      </span>
+    </button>
+  )
+}
+
 function ActorField({
   server,
   value,
@@ -250,21 +273,7 @@ function ActorField({
       {open && found.active && hits.length > 0 && (
         <div className="absolute inset-x-0 top-full z-10 mt-1 rounded-xl bg-surface-container-highest p-1 shadow-elevation-2">
           {hits.map(m => (
-            <button
-              key={m.username}
-              type="button"
-              onMouseDown={e => e.preventDefault()}
-              onClick={() => pick(m.username, m.display_name)}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left hover:bg-surface-container-high"
-            >
-              <UserAvatar
-                username={m.username}
-                avatarKind={m.avatar_kind}
-                avatarColor={m.avatar_color}
-                size={20}
-              />
-              <span className="streamer min-w-0 flex-1 truncate text-sm">{m.display_name}</span>
-            </button>
+            <ActorHit key={m.username} m={m} onPick={() => pick(m.username, nameWithUsername(m))} />
           ))}
         </div>
       )}

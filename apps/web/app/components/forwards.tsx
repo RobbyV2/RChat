@@ -16,6 +16,8 @@ import { MessageTime } from './timestamp'
 import { PollCard } from './poll_card'
 import { fullTimeOf, messageTime, plainStamps } from '../lib/timestamps'
 import { Masked } from './ui'
+import { NameWithUsername } from './display_name'
+import { nameWithUsername } from '../lib/display_name'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 
@@ -74,7 +76,7 @@ export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: ()
           Forward{' '}
           {clip.author ? (
             <span className="streamer font-semibold text-on-surface">
-              {mask(clip.author.display_name)}
+              {mask(nameWithUsername(clip.author))}
             </span>
           ) : (
             <span className="font-semibold text-on-surface">{DELETED_USER}</span>
@@ -153,7 +155,7 @@ export function ForwardCard({
                   {...(local ? {} : profileTrigger(author, null))}
                   className={`streamer min-w-0 truncate rounded-sm text-sm font-medium ${local ? '' : 'cursor-pointer outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'}`}
                 >
-                  <Masked text={author.display_name} />
+                  <NameWithUsername user={author} />
                 </span>
                 {isWebhookAuthor(author.username) && <WebhookBadge />}
               </>

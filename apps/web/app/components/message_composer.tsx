@@ -21,6 +21,7 @@ import { errorText, type UploadMode, useMask, useStore, viewKey } from '../lib/s
 import { limitsOf } from '../lib/instance_limits'
 import { accountPrompt } from '../lib/features'
 import { charCount, counterFrom } from '../lib/rules'
+import { dmPlaceholder } from '../lib/display_name'
 import { composing, sendKey } from '../lib/keys'
 import { runJoinStep, type JoinStep } from '../lib/join_flow'
 import { spliceText } from '../lib/autocomplete'
@@ -365,9 +366,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     ? 'Message thread'
     : view?.kind === 'channel'
       ? `Message #${mask(servers[view.server]?.channels.find(c => c.id === view.channelId)?.name ?? '')}`
-      : streamer
-        ? 'Send a direct message'
-        : `Message ${mask(dms.find(d => d.id === view?.dmId)?.other.display_name ?? '')}`
+      : dmPlaceholder(dms.find(d => d.id === view?.dmId)?.other, streamer)
 
   const setText = (value: string) => {
     if (draftKey) setDraft(draftKey, value)

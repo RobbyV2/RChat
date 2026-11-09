@@ -8,7 +8,7 @@ import { snippetParts, type SnippetPart } from '../lib/replies'
 import { plainStamps } from '../lib/timestamps'
 import type { ReplyRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
-import { Masked } from './ui'
+import { NameWithUsername } from './display_name'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 
@@ -149,7 +149,7 @@ export function ReplyPreview({
         />
         <span style={{ color }} className="streamer shrink-0 font-medium text-on-surface">
           {quote.mention ? '@' : ''}
-          <Masked text={author.display_name} />
+          <NameWithUsername user={author} />
         </span>
         {isWebhookAuthor(author.username) && <WebhookBadge />}
         {quote.forwarded && <ForwardedTag />}
@@ -225,7 +225,7 @@ export function ReplyBar({ draftKey, onClose }: { draftKey: string; onClose: () 
     >
       Replying to{' '}
       <span className="streamer font-semibold text-on-surface">
-        <Masked text={author.display_name} />
+        <NameWithUsername user={author} />
       </span>
     </ComposerBar>
   )

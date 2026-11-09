@@ -124,7 +124,7 @@ export type ActiveDialog =
   | { kind: 'remove_phrase_confirm'; username: string }
   | {
       kind: 'settings'
-      focus?: 'bio' | 'p2p_limits'
+      focus?: 'bio' | 'display_name' | 'p2p_limits'
       section?: 'settings' | 'notifications' | 'privacy' | 'sync' | 'information' | 'palette'
     }
   | { kind: 'rename_folder'; id: string; focus?: 'color' }
@@ -355,6 +355,7 @@ export interface RChatState {
   ) => Promise<void>
   setAppearOffline: (appearOffline: boolean) => Promise<void>
   setBio: (bio: string) => Promise<string | null>
+  setDisplayName: (name: string) => Promise<string | null>
   changePassword: (current: Secret, next: Secret, kind: PassKind) => Promise<string | null>
   refreshAccount: () => Promise<void>
   syncFromUrl: (nav: 'replace' | 'none') => Promise<void>

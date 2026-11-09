@@ -5,7 +5,8 @@ import { FileText, Hash, Search } from 'lucide-react'
 import { useMask, useStore } from '../lib/store'
 import { dayEndTs, dayStartTs, type SearchArgs } from '../lib/search'
 import { UserAvatar } from './user_avatar'
-import { fieldCls, Masked, PanelHeader, Sentinel, useEscape } from './ui'
+import { fieldCls, PanelHeader, Sentinel, useEscape } from './ui'
+import { NameWithUsername } from './display_name'
 import { avatarTriggerCls, nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { plainStamps } from '../lib/timestamps'
@@ -254,7 +255,7 @@ const instanceHit = (r: SearchResult, open: (r: SearchResult) => void): SearchHi
       {...profileTrigger(r.message.author, r.server)}
       className={`streamer truncate text-sm font-medium ${nameTriggerCls}`}
     >
-      <Masked text={r.message.author.display_name} />
+      <NameWithUsername user={r.message.author} />
     </span>
   ),
   createdAt: r.message.created_at,

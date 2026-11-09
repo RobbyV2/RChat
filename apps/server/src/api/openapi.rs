@@ -194,7 +194,7 @@ impl Modify for Bearer {
 
 **Authentication.** Register or log in to get a session token and send it as `Authorization: Bearer <token>`. Endpoints marked with an optional security requirement also work without a token for guests, when the instance has guest access turned on (`guests_enabled` in `GET /api/v1/settings`); otherwise they answer 401. On endpoints that need a token, `401 Unauthorized` means the token is missing or unknown. When the token cannot be checked (the database is unavailable), any endpoint that reads it answers `503 {\"error\": \"Cannot check your session right now. Try again soon\"}`: keep the token and retry. Guests are read-only. Password-protected servers additionally need a guest grant from `POST /api/v1/servers/{name}/guest_access`, sent in the `X-Guest-Grant` header (comma-separated, up to 100 grants).
 
-**Names.** Server names and usernames are case-insensitive: they are matched by their lowercase form, and responses carry the lowercase `name`/`username` alongside the original-case `display_name`.
+**Names.** Server names and usernames are case-insensitive: they are matched by their lowercase form, and responses carry the lowercase `name`/`username` alongside `display_name`: a server's name in its original case, or the name a user shows, which starts as the username as registered and can change. Only usernames are used for mentions and sign-in.
 
 **Timestamps** are Unix time in seconds unless a field says otherwise.
 

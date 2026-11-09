@@ -42,6 +42,7 @@ import { useStore } from '../lib/store'
 import type { Message, Poll, PollVoter } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
 import { Dialog, fieldCls, FieldError, filledBtn, Masked, Sentinel, textBtn } from './ui'
+import { NameWithUsername } from './display_name'
 import { UserAvatar } from './user_avatar'
 import { MessageTime } from './timestamp'
 
@@ -445,6 +446,23 @@ export function PollVotersDialog() {
   return <PollVoters key={m.id} m={m} onClose={closeDialog} />
 }
 
+export function VoterRow({ v }: { v: PollVoter }) {
+  return (
+    <li className="flex items-center gap-3 py-1.5">
+      <UserAvatar
+        username={v.user.username}
+        avatarKind={v.user.avatar_kind}
+        avatarColor={v.user.avatar_color}
+        size={28}
+      />
+      <span className="streamer min-w-0 flex-1 truncate text-sm">
+        <NameWithUsername user={v.user} />
+      </span>
+      <MessageTime ts={v.voted_at} className="shrink-0 text-xs text-on-surface-variant" />
+    </li>
+  )
+}
+
 function VoterList({ id, option }: { id: number; option: number | null }) {
   const [list, setList] = useState<PollVoter[]>([])
   const [next, setNext] = useState<string | null>(null)
@@ -473,18 +491,7 @@ function VoterList({ id, option }: { id: number; option: number | null }) {
       <FieldError message={error} />
       <ul data-poll-voters className="mt-3 flex flex-col">
         {list.map(v => (
-          <li key={v.user.username} className="flex items-center gap-3 py-1.5">
-            <UserAvatar
-              username={v.user.username}
-              avatarKind={v.user.avatar_kind}
-              avatarColor={v.user.avatar_color}
-              size={28}
-            />
-            <span className="streamer min-w-0 flex-1 truncate text-sm">
-              <Masked text={v.user.display_name} />
-            </span>
-            <MessageTime ts={v.voted_at} className="shrink-0 text-xs text-on-surface-variant" />
-          </li>
+          <VoterRow key={v.user.username} v={v} />
         ))}
       </ul>
       {!error && !more && list.length === 0 && (

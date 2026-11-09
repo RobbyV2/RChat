@@ -46,6 +46,7 @@ import { dragScope, useDrag, type DragSpec } from './drag'
 import { profileTrigger } from './profile_card'
 import { LiveBadge, VoiceDock } from './voice_grid'
 import { Masked, Sentinel } from './ui'
+import { NameWithUsername } from './display_name'
 import { useAuthorMembers } from './message_pane'
 import { PingBadge } from './ping_badge'
 import { scopePings } from '../lib/pings'
@@ -54,7 +55,7 @@ import { shownMedia } from '../lib/timeouts'
 
 const base = 'flex h-full w-60 shrink-0 flex-col bg-surface-container-low'
 
-function DmRow({
+export function DmRow({
   dm,
   active,
   unread,
@@ -90,7 +91,7 @@ function DmRow({
         size={28}
       />
       <span className="streamer truncate">
-        <Masked text={other.display_name} />
+        <NameWithUsername user={other} />
       </span>
       <MutedIcon scope={{ kind: 'dm', id }} />
       {unread && !pings && (
@@ -200,7 +201,7 @@ function VoiceMemberRow({
         />
       </span>
       <span className={`streamer min-w-0 flex-1 truncate ${speaking ? 'text-on-surface' : ''}`}>
-        <Masked text={user.display_name} />
+        <NameWithUsername user={user} />
       </span>
       {live && (
         <LiveBadge size="sm" title={self ? "You're sharing your screen" : 'Sharing their screen'} />

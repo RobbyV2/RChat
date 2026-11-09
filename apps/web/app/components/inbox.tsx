@@ -40,6 +40,7 @@ import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
 import { MessageTime } from './timestamp'
 import { Masked, Sentinel, SheetGrip, SkeletonRows, textBtn as textBtnCls, useEscape } from './ui'
+import { NameWithUsername } from './display_name'
 import { longPress, useMedia } from './context_menu'
 
 const chipCls = (on: boolean) =>
@@ -261,7 +262,7 @@ function Row({
           <span className="flex min-w-0 items-baseline gap-1.5 text-sm">
             <span className="min-w-0 truncate">
               <span className={`streamer ${entry.unread ? 'font-semibold' : 'font-medium'}`}>
-                <Masked text={entry.actor.display_name} />
+                <NameWithUsername user={entry.actor} />
               </span>{' '}
               {isWebhookAuthor(entry.actor.username) && (
                 <>

@@ -475,6 +475,7 @@ export const endpoints = (c: ApiClient) => ({
   patchMe: (avatar_kind: AvatarKind, avatar_color?: string, banner_color?: string | null) =>
     c.req<MeUpdated>('PATCH', '/me', { avatar_kind, avatar_color, banner_color }),
   setBio: (bio: string | null) => c.req<MeUpdated>('PATCH', '/me', { bio }),
+  setDisplayName: (display_name: string) => c.req<MeUpdated>('PATCH', '/me', { display_name }),
   setAppearOffline: (appear_offline: boolean) =>
     c.req<MeUpdated>('PATCH', '/me', { appear_offline }),
   createConfigShare: (blob: string, expires_in: number) =>

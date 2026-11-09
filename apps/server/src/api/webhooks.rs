@@ -578,7 +578,7 @@ async fn manager_channel(
 
 /// Characters a name may not hold: control, format (zero-width, bidi, soft hyphen), line and
 /// paragraph separators, and the invisible fillers that render as nothing.
-fn hidden_char(c: char) -> bool {
+pub(crate) fn hidden_char(c: char) -> bool {
     use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
     matches!(
         c.general_category(),
@@ -628,6 +628,11 @@ pub fn name_keys(name: &str) -> [String; 2] {
 
 fn names_clash(a: &[String; 2], b: &[String; 2]) -> bool {
     a.iter().any(|x| b.contains(x))
+}
+
+/// Whether `name` passes for the instance staff, compared by `name_keys`.
+pub(crate) fn passes_for_staff(name: &str) -> bool {
+    names_clash(&name_keys(name), &name_keys(STAFF_NAME))
 }
 
 /// Checks a webhook name: 1 to 80 characters after trimming, no control, format or invisible

@@ -2,6 +2,7 @@
 // newer member pages are checked against, and who is typing where.
 
 import { home } from '../instances'
+import { nameWithUsername } from '../display_name'
 import {
   freshPresence,
   knownPresence,
@@ -267,7 +268,8 @@ export const presenceSlice = (set: SetState, get: GetState) => {
     typing: ev => {
       const { typingOn, me, blocked } = get()
       if (!typingOn || ev.username === me?.username || blocked[ev.username]) return
-      noteTyper(ev.scope, ev.username, ev.display_name, ev.until > 0)
+      const name = nameWithUsername({ username: ev.username, display_name: ev.display_name })
+      noteTyper(ev.scope, ev.username, name, ev.until > 0)
     },
   } satisfies Handlers
 

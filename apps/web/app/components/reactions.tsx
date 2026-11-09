@@ -19,6 +19,7 @@ import { EmojiPicker, useEmojiData, useTopEmojis } from './emoji_picker'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { UserAvatar } from './user_avatar'
 import { CloseButton, Masked, SheetGrip } from './ui'
+import { nameWithUsername } from '../lib/display_name'
 import { useReactionActions } from './chat_source'
 
 const EMPTY: Reaction[] = []
@@ -83,7 +84,7 @@ function ReactionTooltip({
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const code = data ? emojiCode(data, r.emoji) : null
-  const names = users?.map(u => u.display_name) ?? null
+  const names = users?.map(nameWithUsername) ?? null
 
   useLayoutEffect(() => {
     const el = ref.current

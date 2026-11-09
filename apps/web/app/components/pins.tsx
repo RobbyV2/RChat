@@ -13,6 +13,7 @@ import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
 import { profileTrigger } from './profile_card'
 import { UserAvatar } from './user_avatar'
 import { CloseButton, Masked, SheetGrip } from './ui'
+import { NameWithUsername } from './display_name'
 import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
 import { useMyTimeoutEnds } from './timeout_dialog'
@@ -154,7 +155,7 @@ export function PinNotice({
           {...profileTrigger(m.author, server)}
           className={`streamer font-medium text-on-surface ${nameTriggerCls}`}
         >
-          <Masked text={m.author.display_name} />
+          <NameWithUsername user={m.author} />
         </span>
       }
       place={m.dm_id !== null ? 'conversation' : 'channel'}
@@ -238,7 +239,7 @@ function PinEntry({
           {...(profiles ? profileTrigger(m.author, server) : {})}
           className={`streamer min-w-0 truncate text-sm font-medium text-on-surface ${profiles ? nameTriggerCls : ''}`}
         >
-          <Masked text={m.author.display_name} />
+          <NameWithUsername user={m.author} />
         </span>
         <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
       </div>

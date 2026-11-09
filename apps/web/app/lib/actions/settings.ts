@@ -9,10 +9,12 @@ import {
   Settings,
   ShieldOff,
   Type,
+  UserPen,
   type LucideIcon,
 } from 'lucide-react'
 import { useStore } from '../store'
 import type { RChatState } from '../store_types'
+import { canEditDisplayName } from '../display_name'
 import { signedIn } from './global'
 import { p2pLimitActions } from './p2p_limits'
 import type { Action } from './types'
@@ -42,6 +44,16 @@ const section = (
 })
 
 export const settingsActions: Action[] = [
+  {
+    id: 'display_name',
+    title: 'Change display name',
+    scope: 'global',
+    group: 'settings',
+    icon: UserPen,
+    keywords: ['name', 'nickname', 'profile'],
+    available: ({ s }) => canEditDisplayName(s),
+    run: () => get().openDialog({ kind: 'settings', focus: 'display_name' }),
+  },
   {
     id: 'theme',
     title: 'Theme',

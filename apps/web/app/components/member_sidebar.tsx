@@ -9,7 +9,8 @@ import { roleColor, useStore } from '../lib/store'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { Badge, profileTrigger } from './profile_card'
-import { Masked, Sentinel } from './ui'
+import { Sentinel } from './ui'
+import { NameWithUsername } from './display_name'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
 
 const byName = (a: Member, b: Member) => a.display_name.localeCompare(b.display_name)
@@ -153,7 +154,7 @@ export default function MemberSidebar() {
           style={{ color: roleColor(detail.roles, m.role_ids) }}
           className="streamer min-w-0 flex-1 truncate text-sm"
         >
-          <Masked text={m.display_name} />
+          <NameWithUsername user={m} />
         </span>
         <MemberTimeout server={detail.name} username={m.username} />
         {m.is_creator && <Badge tone="tertiary">Creator</Badge>}
@@ -180,7 +181,7 @@ export default function MemberSidebar() {
         size={28}
       />
       <span className="streamer min-w-0 flex-1 truncate text-sm">
-        <Masked text={u.display_name} />
+        <NameWithUsername user={u} />
       </span>
     </div>
   )

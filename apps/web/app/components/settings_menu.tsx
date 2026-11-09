@@ -17,6 +17,8 @@ import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio, siteFilterOn }
 import { SHORTCUTS, shortcutLabel, type Shortcut } from '../lib/shortcuts'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
+import { DisplayNameField, NameWithUsername } from './display_name'
+import { canEditDisplayName } from '../lib/display_name'
 import { ColorField } from './color_field'
 import { InstanceDetails } from './instance_badge'
 import { UserAvatar } from './user_avatar'
@@ -190,6 +192,10 @@ function AccountSection() {
   const focusBio = useStore(
     s => s.activeDialog?.kind === 'settings' && s.activeDialog.focus === 'bio'
   )
+  const focusName = useStore(
+    s => s.activeDialog?.kind === 'settings' && s.activeDialog.focus === 'display_name'
+  )
+  const editName = useStore(canEditDisplayName)
   const me = useStore(s => s.me)
   const patchMe = useStore(s => s.patchMe)
   const [draft] = useState(() => avatarDraft(me))
@@ -202,9 +208,13 @@ function AccountSection() {
     <section>
       <p className={sectionCls}>Account</p>
       <p className="mb-4 text-sm text-on-surface-variant">
-        Signed in as <span className="streamer font-medium text-on-surface">{me.display_name}</span>
+        Signed in as{' '}
+        <span className="streamer font-medium text-on-surface">
+          <NameWithUsername user={me} />
+        </span>
       </p>
       <div className="flex flex-col gap-5">
+        {editName && <DisplayNameField focus={focusName} />}
         <AvatarPicker
           username={me.username}
           kind={kind}

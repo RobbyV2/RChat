@@ -48,6 +48,7 @@ import {
   sendReply,
 } from '../replies'
 import { charCount } from '../rules'
+import { nameWithUsername } from '../display_name'
 import { SEARCH_PAGE, SEARCH_TRIES, addSearchPage, searchParams } from '../search'
 import { type Sed, applySed, lastEditable } from '../sed'
 import { myPerms, scopeRule } from '../selectors'
@@ -2006,7 +2007,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         channel,
         dm: dm_id !== null,
         message: true,
-        name: m.author.display_name,
+        name: nameWithUsername(m.author),
         generic: 'New message',
         go: () => {
           if (dm_id !== null) void get().openDm(dm_id, 'push', m.id)

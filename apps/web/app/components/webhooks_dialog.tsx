@@ -6,7 +6,7 @@ import { api, shareOrigin } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { sharing } from '../lib/platform'
 import { fullTimeOf, relativeTime } from '../lib/timestamps'
-import type { AvatarKind, Channel } from '../lib/types'
+import type { AvatarKind, Channel, UserRef } from '../lib/types'
 import {
   OUTGOING_EVENTS,
   OUTGOING_MAX,
@@ -28,6 +28,7 @@ import {
 } from '../lib/webhooks'
 import { AvatarPicker } from './avatar_picker'
 import { UserAvatar } from './user_avatar'
+import { NameWithUsername } from './display_name'
 import {
   Dialog,
   FieldError,
@@ -39,6 +40,18 @@ import {
   textBtn,
   useCopied,
 } from './ui'
+
+// Who made a webhook, on its own line under its details.
+export function CreatorNote({ creator }: { creator: UserRef }) {
+  return (
+    <p className="flex min-w-0 text-xs text-on-surface-variant">
+      <span className="shrink-0 pr-1">by</span>
+      <span className="streamer flex min-w-0">
+        <NameWithUsername user={creator} />
+      </span>
+    </p>
+  )
+}
 
 const DEFAULT_COLOR = '#5c6bc0'
 
@@ -396,15 +409,8 @@ function Incoming({ server }: { server: string }) {
                     <span title={h.last_used_at ? fullTimeOf(h.last_used_at) : undefined}>
                       {h.last_used_at ? `used ${ago(h.last_used_at)}` : 'never used'}
                     </span>
-                    {h.creator && (
-                      <>
-                        {' · by '}
-                        <span className="streamer">
-                          <Masked text={h.creator.display_name} />
-                        </span>
-                      </>
-                    )}
                   </p>
+                  {h.creator && <CreatorNote creator={h.creator} />}
                 </div>
                 <button
                   title="Edit"
@@ -866,15 +872,8 @@ function Outgoing({ server }: { server: string }) {
                     title={h.url_hidden ? `${h.url} (path hidden)` : h.url}
                   >
                     {hostOf(h.url)} · {h.events.map(eventLabel).join(', ')}
-                    {h.creator && (
-                      <>
-                        {' · by '}
-                        <span className="streamer">
-                          <Masked text={h.creator.display_name} />
-                        </span>
-                      </>
-                    )}
                   </p>
+                  {h.creator && <CreatorNote creator={h.creator} />}
                 </div>
                 <button
                   title={h.enabled ? 'Turn off' : 'Turn on'}
