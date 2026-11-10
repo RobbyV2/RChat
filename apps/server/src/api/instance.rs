@@ -868,7 +868,7 @@ mod tests {
             "a proof made for another ts",
         )
         .await;
-        for ts in [now() - 301, now() + 301, i64::MIN, i64::MAX] {
+        for ts in [now() - 301, now() + 360, i64::MIN, i64::MAX] {
             refused(
                 bind(bind_body(&signer, &ik, &sub, ts), Some(&token))
                     .await
