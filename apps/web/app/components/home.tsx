@@ -15,8 +15,11 @@ import {
   MessageCircle,
   Pin,
   Plus,
+  QrCode,
+  UserPlus,
   Users,
   Volume2,
+  Waypoints,
   X,
 } from 'lucide-react'
 import {
@@ -43,6 +46,7 @@ import {
 import { forgetRecent, hideTip, parseSummary, unreadSummaryKey, useHome } from '../lib/home_store'
 import { isMac, paletteShortcut, usePalette } from '../lib/palette'
 import { openActionMenu } from '../lib/actions/menu'
+import { openContactMenu } from '../lib/actions/p2p_contact'
 import type { Target } from '../lib/actions/types'
 import { dmSections } from '../lib/nav_layout'
 import { passwordSignup } from '../lib/features'
@@ -59,12 +63,15 @@ import StatusClock from './status_clock'
 import { UserAvatar } from './user_avatar'
 import { Masked, SkeletonRows, fieldCls, filledBtn, textBtn } from './ui'
 import { p2p, p2pDm, p2pMarkAll, p2pServer, useP2p, type P2pState } from '../lib/p2p/app'
+import type { P2pDialog } from '../lib/p2p/app/store'
+import { cardRows, homeCard, onlineText, p2pEntry, type CardState } from '../lib/p2p/home_card'
 import { p2pUnread, type P2pUnreadRow } from '../lib/p2p/alerts'
 import { displayName } from '../lib/p2p/contacts'
 import { placesOf } from '../lib/p2p/palette_source'
 import { mutedOf, levelOf } from '../lib/notify'
 import { serverInitial } from '../lib/rules'
-import { KeyAvatar, P2pBadge } from './p2p/p2p_badge'
+import { KeyAvatar, P2pBadge, PresenceDot } from './p2p/p2p_badge'
+import { ElsewhereNotice } from './p2p/p2p_home'
 
 const card = 'flex min-w-0 flex-col gap-1 rounded-3xl bg-surface-container-low p-4'
 
@@ -174,10 +181,61 @@ function Tips() {
 const actionCls =
   'flex min-w-0 items-center gap-3 rounded-2xl bg-surface-container-low px-4 py-3 text-left text-sm font-medium text-on-surface hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary'
 
+const p2pActionCls =
+  'flex min-w-0 items-center gap-3 rounded-2xl border-2 border-dashed border-tertiary/70 bg-surface-container-low px-[calc(1rem-2px)] py-[calc(0.75rem-2px)] text-left text-sm font-medium text-on-surface hover:bg-tertiary-container hover:text-on-tertiary-container focus-visible:outline-2 focus-visible:outline-primary'
+
+const useP2pCard = () => {
+  const enabled = useP2p(s => s.enabled)
+  const loading = useP2p(s => s.loading)
+  const status = useP2p(s => s.status)
+  const paused = useP2p(s => s.paused)
+  const elsewhere = useP2p(s => s.elsewhere)
+  const contacts = useP2p(s => s.contacts)
+  const presence = useP2p(s => s.presence)
+  const serverInvites = useP2p(s => s.serverInvites.length)
+  const coOwnerAsks = useP2p(s => s.coOwnerAsks.length)
+  const transferAsks = useP2p(s => s.transferAsks.length)
+  return useMemo(
+    () =>
+      homeCard({
+        enabled,
+        loading,
+        status,
+        paused,
+        elsewhere,
+        contacts,
+        presence,
+        serverInvites,
+        coOwnerAsks,
+        transferAsks,
+      }),
+    [
+      enabled,
+      loading,
+      status,
+      paused,
+      elsewhere,
+      contacts,
+      presence,
+      serverInvites,
+      coOwnerAsks,
+      transferAsks,
+    ]
+  )
+}
+
+const p2pAct = (state: CardState, dialog: P2pDialog) => {
+  const entry = p2pEntry(state)
+  if (entry === 'home') p2p.openHome()
+  else p2p.openDialog(entry === 'enable' ? { kind: 'enable' } : dialog)
+}
+
 function QuickActions() {
   const openDialog = useStore(s => s.openDialog)
   const startDm = useStore(s => s.startDm)
   const palette = usePalette(s => s.open)
+  const p2pOn = useStore(s => s.settings.p2p)
+  const p2pState = useP2pCard().state
   const [asking, setAsking] = useState(false)
   const [name, setName] = useState('')
   const submit = () => {
@@ -189,7 +247,9 @@ function QuickActions() {
   }
   return (
     <section aria-label="Quick actions" className="flex flex-col gap-2">
-      <div className={`grid grid-cols-2 gap-2 ${palette ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
+      <div
+        className={`grid grid-cols-2 gap-2 ${palette && !p2pOn ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}
+      >
         <button
           type="button"
           onClick={() => openDialog({ kind: 'add_server', tab: 'create' })}
@@ -219,10 +279,32 @@ function QuickActions() {
           <button type="button" onClick={palette} className={actionCls}>
             <Command size={18} className="shrink-0 text-primary" />
             <span className="min-w-0 leading-tight">Command palette</span>
-            <kbd className="ml-auto shrink-0 rounded-md border border-outline-variant px-1.5 font-sans text-xs text-on-surface-variant">
+            <kbd className="ml-auto shrink-0 rounded-md border border-outline-variant px-1.5 font-sans text-xs text-on-surface-variant max-sm:hidden">
               {paletteShortcut(isMac())}
             </kbd>
           </button>
+        )}
+        {p2pOn && (
+          <>
+            <button
+              type="button"
+              data-p2p-action="contact"
+              onClick={() => p2pAct(p2pState, { kind: 'add' })}
+              className={p2pActionCls}
+            >
+              <UserPlus size={18} className="shrink-0 text-tertiary" />
+              <span className="min-w-0 leading-tight">Add P2P contact</span>
+            </button>
+            <button
+              type="button"
+              data-p2p-action="join"
+              onClick={() => p2pAct(p2pState, { kind: 'server_new', tab: 'join' })}
+              className={p2pActionCls}
+            >
+              <Waypoints size={18} className="shrink-0 text-tertiary" />
+              <span className="min-w-0 leading-tight">Join P2P server</span>
+            </button>
+          </>
         )}
       </div>
       {asking && (
@@ -826,11 +908,144 @@ function PinnedDms() {
   )
 }
 
-function GetStarted() {
+const P2P_ROW_ICONS = { requests: MessageCircle, invites: Compass, asks: Users } as const
+
+function P2pCard() {
+  const card = useP2pCard()
+  const error = useP2p(s => s.error)
+  const me = useP2p(s => s.me)
+  const streamer = useStore(s => s.streamer)
+  const mask = useMask()
+  return (
+    <section
+      data-p2p-home
+      aria-labelledby="home-p2p"
+      className="flex min-w-0 flex-col gap-1 rounded-3xl border-2 border-dashed border-tertiary/70 bg-surface-container-low p-[calc(1rem-2px)]"
+    >
+      <div className="flex min-h-9 min-w-0 items-center gap-2 px-2">
+        <Waypoints size={18} className="shrink-0 text-tertiary" />
+        <h2 id="home-p2p" className="min-w-0 truncate font-medium text-on-surface">
+          Peer-to-peer
+        </h2>
+        <P2pBadge />
+        <button
+          type="button"
+          onClick={() => p2p.openHome()}
+          className={`${textBtn} ml-auto shrink-0`}
+        >
+          Open
+        </button>
+      </div>
+      {card.state === 'off' ? (
+        <>
+          <p className="px-2 text-sm text-on-surface-variant">
+            P2P is off. Turn it on to message contacts directly, device to device.
+          </p>
+          {error && (
+            <p role="alert" className="px-2 text-sm text-error">
+              {error}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => p2p.openDialog({ kind: 'enable' })}
+            className={`${filledBtn} mx-2 mt-2 self-start`}
+          >
+            Turn on P2P
+          </button>
+        </>
+      ) : card.state === 'elsewhere' ? (
+        <ElsewhereNotice />
+      ) : (
+        <>
+          <p
+            data-p2p-home-status={card.state}
+            className="px-2 text-sm break-words text-on-surface-variant"
+          >
+            <span className="font-medium text-on-surface">{card.status}</span>
+            {card.state === 'online' && ` \u00b7 ${onlineText(card.online)}`}
+          </p>
+          {cardRows(card).map(row => {
+            const Icon = P2P_ROW_ICONS[row.id]
+            return (
+              <button
+                key={row.id}
+                type="button"
+                data-p2p-home-row={row.id}
+                onClick={() => p2p.openHome()}
+                className={rowCls}
+              >
+                <PlaceGlyph p2p>
+                  <Icon size={16} className="text-on-surface" />
+                </PlaceGlyph>
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-on-surface">
+                  {row.text}
+                </span>
+              </button>
+            )
+          })}
+          {card.top.length > 0 && (
+            <ul aria-label="Online contacts" className="flex flex-wrap gap-2 px-2 py-1">
+              {card.top.map(c => {
+                const label = streamer ? 'Message contact' : `Message ${mask(displayName(c))}`
+                return (
+                  <li key={c.ik} className="flex">
+                    <button
+                      type="button"
+                      data-p2p-home-contact={c.ik}
+                      title={label}
+                      aria-label={label}
+                      onClick={() => void p2pDm.openDm(c.ik)}
+                      {...longPress((x, y) => openContactMenu(x, y, c, me))}
+                      className="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-primary"
+                    >
+                      <KeyAvatar ik={c.ik} />
+                      <PresenceDot presence="online" />
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          {card.state !== 'starting' && (
+            <div className="flex flex-wrap gap-2 px-2 pt-2">
+              <button
+                type="button"
+                onClick={() => p2p.openDialog({ kind: 'add' })}
+                className={`${textBtn} flex items-center gap-1.5`}
+              >
+                <UserPlus size={16} />
+                Add contact
+              </button>
+              <button
+                type="button"
+                onClick={() => p2p.openDialog({ kind: 'add', tab: 'mine' })}
+                className={`${textBtn} flex items-center gap-1.5`}
+              >
+                <QrCode size={16} />
+                Show my code
+              </button>
+              <button
+                type="button"
+                onClick={() => p2p.openDialog({ kind: 'server_new', tab: 'join' })}
+                className={`${textBtn} flex items-center gap-1.5`}
+              >
+                <Waypoints size={16} />
+                Join P2P server
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
+function GetStarted({ className = '' }: { className?: string }) {
   const openDialog = useStore(s => s.openDialog)
   const openFriends = useStore(s => s.openFriends)
   return (
-    <Card title="Get started" icon={<House size={18} />} className="lg:col-span-2">
+    <Card title="Get started" icon={<House size={18} />} className={className}>
       <p className="px-2 text-sm text-on-surface-variant">
         Join a server to start chatting, or add a friend to message them.
       </p>
@@ -917,23 +1132,49 @@ function MemberHome() {
     p2pRows.dms.unread ||
     p2pRows.dms.pings > 0 ||
     p2pRows.servers.length > 0
+  const p2pOn = useStore(s => s.settings.p2p)
   const fresh = isNewAccount(recents.length, otherDms, servers)
+  const showUnread = !fresh || unread
+  const inbox = (
+    <Card title="Inbox" icon={<Bell size={18} />}>
+      <InboxPreview max={INBOX_SHOWN} />
+    </Card>
+  )
+  const friends = (
+    <Card title="Friends" icon={<Users size={18} />}>
+      <FriendsSection max={5} />
+    </Card>
+  )
   return (
     <div className="flex flex-col gap-4">
       <Greeting />
       <Tips />
       <QuickActions />
-      <div className="grid gap-4 lg:grid-cols-2">
-        {fresh ? <GetStarted /> : <JumpBackIn recents={recents} />}
-        {(!fresh || unread) && <UnreadSummary />}
-        <Card title="Inbox" icon={<Bell size={18} />}>
-          <InboxPreview max={INBOX_SHOWN} />
-        </Card>
-        {!fresh && <PinnedDms />}
-        <Card title="Friends" icon={<Users size={18} />}>
-          <FriendsSection max={5} />
-        </Card>
-      </div>
+      {p2pOn ? (
+        <>
+          {fresh && <GetStarted />}
+          <div className="flex flex-col gap-4 lg:grid lg:grid-cols-2 lg:items-start">
+            <div className="contents lg:order-2 lg:flex lg:min-w-0 lg:flex-col lg:gap-4">
+              {showUnread && <UnreadSummary />}
+              <P2pCard />
+            </div>
+            <div className="contents lg:flex lg:min-w-0 lg:flex-col lg:gap-4">
+              {!fresh && <JumpBackIn recents={recents} />}
+              {inbox}
+              {!fresh && <PinnedDms />}
+              {friends}
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {fresh ? <GetStarted className="lg:col-span-2" /> : <JumpBackIn recents={recents} />}
+          {showUnread && <UnreadSummary />}
+          {inbox}
+          {!fresh && <PinnedDms />}
+          {friends}
+        </div>
+      )}
     </div>
   )
 }

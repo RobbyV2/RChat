@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import type { InboxEntry } from '../inbox'
 import type { Folder } from '../nav_layout'
+import type { Contact } from '../p2p/contacts'
 import type { PaletteGroup } from '../palette'
 import type { RChatState } from '../store_types'
 import type { Category, Channel, DmSummary, Message, UserRef } from '../types'
@@ -56,6 +57,8 @@ export type Target =
     }
   // The call buttons' chevron: how a call or video call with the DM's other person connects.
   | { kind: 'call'; dm: DmSummary; video: boolean }
+  // A P2P contact; `me`: this account's P2P key, which names the DM's room.
+  | { kind: 'p2p_contact'; c: Contact; me: string | null }
 
 export interface ActionCtx {
   s: RChatState

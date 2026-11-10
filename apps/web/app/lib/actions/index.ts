@@ -7,6 +7,7 @@ import { friendActions } from './friends'
 import { globalActions, goActions } from './global'
 import { memberActions } from './member'
 import { embedActions, messageActions } from './message'
+import { p2pContactActions } from './p2p_contact'
 import { placeActions } from './place'
 import { defineAction } from './registry'
 import { selectionActions } from './selection'
@@ -37,6 +38,7 @@ export const registerAppActions = () => {
     channelActions,
     cardActions,
     voiceActions,
+    p2pContactActions,
   ])
     for (const a of list) defineAction(a)
 }

@@ -1,19 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import {
-  Ban,
-  Check,
-  Menu,
-  MessageCircle,
-  Pencil,
-  QrCode as QrIcon,
-  ShieldCheck,
-  Trash2,
-  UserPlus,
-  Waypoints,
-  X,
-} from 'lucide-react'
+import { Ban, Check, Menu, QrCode as QrIcon, UserPlus, Waypoints, X } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
 import { badgePings, dmUnread, listedPeers } from '../../lib/p2p/alerts'
@@ -28,12 +16,12 @@ import {
   type Contact,
 } from '../../lib/p2p/contacts'
 import { fingerprint } from '../../lib/p2p/keys'
-import { SQUATTED, type Presence } from '../../lib/p2p/node'
-import type { ContextMenuItem } from '../../lib/store_types'
+import type { Presence } from '../../lib/p2p/node'
+import { statusText } from '../../lib/p2p/home_card'
 import { enterKey } from '../../lib/keys'
 import { longPress } from '../context_menu'
 import { PingBadge, RailPingBadge } from '../ping_badge'
-import { MutedIcon, notifyMenuItems } from '../notify_menu'
+import { MutedIcon } from '../notify_menu'
 import { P2pDmPane } from './p2p_dm_pane'
 import { VoiceDock } from '../voice_grid'
 import { dangerBtn, Dialog, fieldCls, filledBtn, iconBtn, Masked, textBtn } from '../ui'
@@ -56,7 +44,8 @@ import {
 } from './p2p_badge'
 import { badgeState } from '../../lib/p2p/badge'
 import { ctxFor } from '../../lib/actions/ctx'
-import { itemFor } from '../../lib/actions/menu'
+import { itemFor, menuItems } from '../../lib/actions/menu'
+import { openContactMenu } from '../../lib/actions/p2p_contact'
 import { p2pLimitActions } from '../../lib/actions/p2p_limits'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
@@ -294,69 +283,12 @@ function DroppedNote({ n }: { n: number }) {
   )
 }
 
-const statusText = (status: string, paused: boolean) =>
-  status === 'online'
-    ? 'Online'
-    : status === 'paused' || paused
-      ? 'Paused'
-      : status === 'squatted'
-        ? SQUATTED
-        : status === 'moved'
-          ? 'Moved to another device'
-          : 'Connecting…'
-
 const noticeText = (c: Contact) =>
   c.notice?.kind === 'moved'
     ? `${displayName(c)} moved to a new device`
     : c.notice?.kind === 'reset'
       ? `${displayName(c)} reset their P2P identity`
       : null
-
-export const contactMenu = (c: Contact, me: string | null = null): ContextMenuItem[] => {
-  const ask = useStore.getState().askConfirm
-  const name = displayName(c)
-  const items: ContextMenuItem[] = []
-  if (c.state === 'mutual') {
-    items.push({ label: 'Message', icon: MessageCircle, action: () => void p2pDm.openDm(c.ik) })
-    if (me) items.push(...notifyMenuItems({ kind: 'p2p', room: dmRoomId(me, c.ik) }, 'DM'))
-  }
-  if (c.state !== 'blocked')
-    items.push(
-      { label: 'Rename', icon: Pencil, action: () => p2p.openDialog({ kind: 'rename', ik: c.ik }) },
-      {
-        label: 'Verify',
-        icon: ShieldCheck,
-        action: () => p2p.openDialog({ kind: 'verify', ik: c.ik }),
-      },
-      {
-        label: 'Block',
-        icon: Ban,
-        danger: true,
-        action: () =>
-          ask({
-            title: `Block ${useStore.getState().streamer ? 'this contact' : name}?`,
-            body: 'They can no longer reach you over P2P. You can remove the block later.',
-            confirm: 'Block',
-            action: () => void p2p.block(c.ik),
-          }),
-      }
-    )
-  items.push({
-    label: c.state === 'blocked' ? 'Remove block' : 'Remove',
-    icon: Trash2,
-    danger: c.state !== 'blocked',
-    action: () =>
-      c.state === 'blocked'
-        ? void p2p.remove(c.ik)
-        : ask({
-            title: `Remove ${useStore.getState().streamer ? 'this contact' : name}?`,
-            body: 'They stay able to send you a new request.',
-            confirm: 'Remove',
-            action: () => void p2p.remove(c.ik),
-          }),
-  })
-  return items
-}
 
 function ContactRow({
   c,
@@ -367,7 +299,6 @@ function ContactRow({
   presence: Presence
   active?: boolean
 }) {
-  const openMenu = useStore(s => s.openContextMenu)
   const me = useP2p(s => s.me)
   const room = me && c.state === 'mutual' ? dmRoomId(me, c.ik) : null
   const summary = useP2p(s => (room ? s.rooms[room] : undefined))
@@ -390,7 +321,7 @@ function ContactRow({
             ? void p2pDm.openDm(c.ik)
             : p2p.openDialog({ kind: 'contact', ik: c.ik })
         }
-        {...longPress((x, y) => openMenu(x, y, contactMenu(c, me)))}
+        {...longPress((x, y) => openContactMenu(x, y, c, me))}
         className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left ${
           active ? 'bg-surface-container-highest' : 'hover:bg-surface-container-high'
         }`}
@@ -758,7 +689,13 @@ function ContactDialog({ ik }: { ik: string }) {
         )}
         <p className="streamer font-mono text-xs text-on-surface-variant">{fingerprint(c.ik)}</p>
         <div className="flex flex-wrap justify-end gap-2">
-          {contactMenu(c, useP2p.getState().me)
+          {menuItems(
+            ctxFor(
+              useStore.getState(),
+              { kind: 'p2p_contact', c, me: useP2p.getState().me },
+              'menu'
+            )
+          )
             .filter(item => item.action && !item.submenu)
             .map(item => (
               <button

@@ -73,6 +73,7 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'timestamp':
     case 'inbox':
     case 'card':
+    case 'p2p_contact':
       return openPlace(s)
   }
 }
@@ -98,6 +99,8 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'inbox':
     case 'card':
       return s.profile?.user ?? null
+    case 'p2p_contact':
+      return null
   }
 }
 
@@ -122,6 +125,7 @@ const listOf = (s: RChatState, t: Target) => {
     case 'timestamp':
     case 'inbox':
     case 'card':
+    case 'p2p_contact':
       return currentList(s)
   }
 }
@@ -195,6 +199,7 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
     case 'timestamp':
     case 'inbox':
     case 'card':
+    case 'p2p_contact':
       return t
   }
 }

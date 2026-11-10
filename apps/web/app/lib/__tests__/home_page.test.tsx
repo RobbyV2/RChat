@@ -8,6 +8,8 @@ import { emptyLayout } from '../nav_layout'
 import { loadHome, noteVisit, parseSummary, unreadSummaryKey, useHome } from '../home_store'
 import { registerPalette, usePalette } from '../palette'
 import { HomePage } from '../../components/home'
+import { useP2p } from '../p2p/app'
+import type { Contact } from '../p2p/contacts'
 import type { Channel, DmSummary } from '../types'
 import { me, memoryStorage, serverDetail, user } from './fixtures'
 
@@ -43,6 +45,23 @@ const saved = { ...initial }
 const paletteInitial = usePalette.getInitialState()
 const homeInitial = useHome.getInitialState()
 const homeSaved = { ...homeInitial }
+const p2pInitial = useP2p.getInitialState()
+const p2pSaved = { ...p2pInitial }
+const contact = (ik: string, state: Contact['state'] = 'mutual') =>
+  ({
+    ik,
+    name: ik,
+    petname: null,
+    profile: null,
+    certs: [],
+    revocations: [],
+    state,
+    ignored: false,
+    intros: [],
+    verified: false,
+    verifiedAt: null,
+    added: 1,
+  }) as unknown as Contact
 
 const render = () => {
   Object.assign(initial, useStore.getState())
@@ -114,6 +133,7 @@ afterEach(() => {
   Object.assign(initial, saved)
   Object.assign(paletteInitial, { open: null })
   Object.assign(homeInitial, homeSaved)
+  Object.assign(p2pInitial, p2pSaved)
   useStore.setState({ token: null, view: null, home: false })
   loadHome(null)
 })
@@ -266,7 +286,124 @@ describe('home markup', () => {
     const html = render()
     expect(html).toContain('Find a server')
     expect(html).toContain('Sign up')
-    for (const word of ['Friends', 'Inbox', 'Pinned DMs', 'Jump back in', 'Message someone'])
+    for (const word of [
+      'Friends',
+      'Inbox',
+      'Pinned DMs',
+      'Jump back in',
+      'Message someone',
+      'data-p2p-home',
+      'P2P',
+    ])
       expect(html.includes(word)).toBe(false)
+  })
+})
+
+describe('P2P on Home', () => {
+  const cardTag = (html: string) => /<section[^>]*data-p2p-home[^>]*>/.exec(html)?.[0] ?? ''
+  afterEach(() => useStore.setState({ settings: saved.settings }))
+
+  test('P2P that is not turned on gets a dashed card that offers to turn it on', () => {
+    const html = render()
+    const tag = cardTag(html)
+    for (const cls of ['border-2', 'border-dashed', 'border-tertiary/70'])
+      expect(tag.split(/[\s"]/)).toContain(cls)
+    expect(html).toContain('Peer-to-peer')
+    expect(html).toContain('Turn on P2P')
+    expect(html).toContain('Add P2P contact')
+    expect(html).toContain('Join P2P server')
+    for (const word of ['Show my code', 'contacts online', 'data-p2p-home-status'])
+      expect(html.includes(word)).toBe(false)
+  })
+
+  test('an instance with P2P switched off shows no P2P card or actions', () => {
+    useStore.setState({ settings: { ...st().settings, p2p: false } })
+    const html = render()
+    for (const word of ['data-p2p-home', 'Add P2P contact', 'Join P2P server', 'Turn on P2P'])
+      expect(html.includes(word)).toBe(false)
+    expect(html).toContain('Create server')
+    const order = ['id="home-jump-back-in"', 'id="home-unread"', 'id="home-inbox"'].map(mark =>
+      html.indexOf(mark)
+    )
+    expect(order.every(at => at >= 0)).toBe(true)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+    expect(html).toContain('<div class="grid gap-4 lg:grid-cols-2">')
+    useStore.setState({ dms: [dm(1, 'alice', true)], layout: emptyLayout })
+    expect(
+      /<section aria-labelledby="home-get-started" class="[^"]*lg:col-span-2/.test(render())
+    ).toBe(true)
+  })
+
+  test('running P2P shows its status, what waits for an answer and who is online', () => {
+    Object.assign(p2pInitial, {
+      enabled: true,
+      loading: false,
+      status: 'online',
+      contacts: [contact('dana'), contact('eve'), contact('asker', 'incoming')],
+      presence: { dana: 'online' },
+      serverInvites: [{ room: 'r', name: 'Club', from: 'dana', at: 1 }],
+      transferAsks: [{ key: 'k', kind: 'take', from: 'dana', room: 'r', to: 'x', name: 'Club' }],
+    })
+    const html = render()
+    expect(html).toContain('data-p2p-home-status="online"')
+    expect(html).toContain('Online')
+    expect(html).toContain('1 contact online')
+    expect(html).toContain('1 message request')
+    expect(html).toContain('1 server invite')
+    expect(html).toContain('1 co-owner or transfer request')
+    expect(html).toContain('data-p2p-home-contact="dana"')
+    expect(html.includes('data-p2p-home-contact="eve"')).toBe(false)
+    const avatar = /<button[^>]*data-p2p-home-contact="dana"[^>]*>/.exec(html)?.[0] ?? ''
+    expect(avatar).toContain('data-long-press=""')
+    for (const word of ['Add contact', 'Show my code', 'Join P2P server'])
+      expect(html).toContain(word)
+    expect(html.includes('Turn on P2P')).toBe(false)
+  })
+
+  test('streamer mode keeps contact names out of the card', () => {
+    Object.assign(p2pInitial, {
+      enabled: true,
+      status: 'online',
+      contacts: [contact('dana')],
+      presence: { dana: 'online' },
+    })
+    useStore.setState({ streamer: true })
+    const html = render()
+    expect(html).toContain('data-p2p-home-contact="dana"')
+    expect(html.includes('Message dana')).toBe(false)
+  })
+
+  test('another tab running P2P is said so, with a way to use it here', () => {
+    Object.assign(p2pInitial, { enabled: true, elsewhere: true, status: 'online' })
+    const html = render()
+    expect(html).toContain('P2P is open in another tab.')
+    expect(html).toContain('Use here')
+    expect(html.includes('Show my code')).toBe(false)
+  })
+
+  test('in one column Unread comes first, then Peer-to-peer, then the rest', () => {
+    const html = render()
+    const order = [
+      'Quick actions',
+      'id="home-unread"',
+      'data-p2p-home',
+      'id="home-jump-back-in"',
+      'id="home-inbox"',
+      'id="home-pinned-dms"',
+      'id="home-friends"',
+    ].map(mark => html.indexOf(mark))
+    expect(order.every(at => at >= 0)).toBe(true)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+  })
+
+  test('a new account keeps Get started above the two columns', () => {
+    useStore.setState({ dms: [dm(1, 'alice', true)], layout: emptyLayout })
+    const html = render()
+    const order = ['id="home-get-started"', 'data-p2p-home', 'id="home-inbox"'].map(mark =>
+      html.indexOf(mark)
+    )
+    expect(order.every(at => at >= 0)).toBe(true)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+    expect(html.includes('id="home-unread"')).toBe(false)
   })
 })
