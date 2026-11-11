@@ -56,7 +56,7 @@ use utoipa::ToSchema;
 
 use crate::api::controls::Control;
 use crate::api::features::{Feature, Registration};
-use crate::api::policy::{ServerCreation, ServerJoining};
+use crate::api::policy::{DmCreation, ServerCreation, ServerJoining};
 use crate::config::Roles;
 use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, pool_key};
 use crate::server::client_ip::ClientIp;
@@ -1241,6 +1241,16 @@ pub struct Settings {
     /// Server search. Off: `GET /api/v1/server_search` answers 404.
     #[serde(default = "yes")]
     pub server_search: bool,
+    /// Who may start a direct conversation: `everyone`, `friends` (only with a friend) or
+    /// `nobody`. `POST /api/v1/dms` answers 404 for a conversation it would have to create;
+    /// conversations that exist, and the self DM, keep working.
+    #[serde(default)]
+    pub dm_creation: DmCreation,
+    /// New friend requests. Off: `POST /api/v1/friends/requests` answers 404, except that it
+    /// still accepts a request the other user sent. Pending requests can be accepted or
+    /// denied, and friends stay.
+    #[serde(default = "yes")]
+    pub friend_requests: bool,
 }
 
 pub(crate) fn yes() -> bool {
@@ -1282,6 +1292,8 @@ impl Settings {
         server_creation: ServerCreation::Nobody,
         server_joining: ServerJoining::Nobody,
         server_search: false,
+        dm_creation: DmCreation::Nobody,
+        friend_requests: false,
     };
 
     pub async fn load(db: &Db) -> Settings {
@@ -1356,6 +1368,8 @@ impl Settings {
             server_joining: ServerJoining::parse(&stored(ServerJoining::KEY))
                 .unwrap_or(ServerJoining::Nobody),
             server_search: on(policy::SERVER_SEARCH),
+            dm_creation: DmCreation::parse(&stored(DmCreation::KEY)).unwrap_or(DmCreation::Nobody),
+            friend_requests: on(policy::FRIEND_REQUESTS),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1412,6 +1426,8 @@ impl Settings {
             server_creation: _,
             server_joining: _,
             server_search: _,
+            dm_creation: _,
+            friend_requests: _,
         } = *self;
         match feature {
             Feature::ServerReports => server_reports,

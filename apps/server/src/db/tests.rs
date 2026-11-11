@@ -4875,3 +4875,17 @@ async fn server_joining_controls_are_added_to_an_old_database() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn dm_and_friend_controls_are_added_to_an_old_database() {
+    controls_reach_an_old_database(
+        "dm_controls",
+        &["dm_creation", "friend_requests"],
+        &["everyone", "1"],
+        &[
+            ("DM_CREATION", "friends", "friends"),
+            ("FEATURE_FRIEND_REQUESTS", "off", "0"),
+        ],
+    )
+    .await;
+}

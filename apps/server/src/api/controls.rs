@@ -4,7 +4,10 @@ use std::sync::LazyLock;
 use sqlx::Row;
 
 use crate::api::features::{Feature, Registration};
-use crate::api::policy::{Creator, SERVER_CREATORS, SERVER_SEARCH, ServerCreation, ServerJoining};
+use crate::api::policy::{
+    Creator, DmCreation, FRIEND_REQUESTS, SERVER_CREATORS, SERVER_SEARCH, ServerCreation,
+    ServerJoining,
+};
 use crate::api::{ProfanitySwitch, ProfanityTargets, Settings, upload_expiry};
 use crate::db::{ConfigStart, Db};
 use crate::limits::Env;
@@ -117,6 +120,14 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
         public: true,
     });
     all.push(switch(SERVER_SEARCH, "SERVER_SEARCH", true));
+    all.push(Control {
+        key: DmCreation::KEY,
+        env: DmCreation::ENV,
+        kind: Kind::Choice(&DmCreation::WORDS),
+        default: "everyone",
+        public: true,
+    });
+    all.push(switch(FRIEND_REQUESTS, "FEATURE_FRIEND_REQUESTS", true));
     all
 });
 
@@ -496,19 +507,26 @@ mod tests {
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
         assert_eq!(
-            table[table.len() - 5..],
+            table[table.len() - 7..],
             [
                 ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
                 ("server_creation", "SERVER_CREATION", "everyone"),
                 ("server_creators", "SERVER_CREATORS", ""),
                 ("server_joining", "SERVER_JOINING", "everyone"),
                 ("server_search", "SERVER_SEARCH", "1"),
+                ("dm_creation", "DM_CREATION", "everyone"),
+                ("friend_requests", "FEATURE_FRIEND_REQUESTS", "1"),
             ]
         );
         assert_eq!(
             control("upload_expiry_max_days").kind,
             Kind::Number { min: 0, max: 365 }
         );
+        assert_eq!(
+            control("dm_creation").kind,
+            Kind::Choice(&["everyone", "friends", "nobody"])
+        );
+        assert_eq!(control("friend_requests").kind, Kind::Switch);
         assert_eq!(
             control("server_joining").kind,
             Kind::Choice(&["everyone", "invites", "nobody"])
@@ -659,6 +677,9 @@ mod tests {
                     }
                     ["everyone", "invites", "nobody"] => {
                         "expected everyone, invites or nobody".to_string()
+                    }
+                    ["everyone", "friends", "nobody"] => {
+                        "expected everyone, friends or nobody".to_string()
                     }
                     other => panic!("{other:?} has no expected text"),
                 },

@@ -752,9 +752,11 @@ fn unfriend_events(state: &AppState, a: &str, b: &str) {
 /// emits `friend_request_added` to both users and a `ping` of kind `friend_request` (scope
 /// `friends`) to the recipient. A user who does not exist, does not take requests from you (their
 /// "Who can send you friend requests" setting), has 1000 pending requests, or blocked you, all
-/// give the same `404`. At most 100 pending sent requests and 20 requests per 10 minutes.
+/// give the same `404`. So does every new request while the instance has friend requests off
+/// (`friend_requests` in `GET /api/v1/settings`); answering a request they sent you still
+/// works. At most 100 pending sent requests and 20 requests per 10 minutes.
 /// Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/friends/requests", tag = "Friends", request_body = FriendReq, responses((status = 200, description = "Sent, accepted (they had asked you) or already friends", body = RequestOutcome), (status = 400, description = "`You cannot add yourself as a friend`, `You have too many pending friend requests`, `You can have at most 1000 friends` or `That user has too many friends`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "You blocked this user", body = ApiErrorBody), (status = 404, description = "`Could not send a friend request to that user.`: no such user, or they do not take requests from you", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many friend requests. Try again later.` (JSON), or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/friends/requests", tag = "Friends", request_body = FriendReq, responses((status = 200, description = "Sent, accepted (they had asked you) or already friends", body = RequestOutcome), (status = 400, description = "`You cannot add yourself as a friend`, `You have too many pending friend requests`, `You can have at most 1000 friends` or `That user has too many friends`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "You blocked this user", body = ApiErrorBody), (status = 404, description = "`Could not send a friend request to that user.`: no such user, they do not take requests from you, or friend requests are off on this instance", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many friend requests. Try again later.` (JSON), or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn send_request(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -762,6 +764,15 @@ pub(crate) async fn send_request(
 ) -> Result<Json<RequestOutcome>, ApiError> {
     let FriendReq { username } = req;
     let target = target_name(&username);
+    let on = crate::api::policy::effective(&state.db, Some(&user))
+        .await
+        .friend_requests();
+    if !on && !requested(&state.db, &target, &user.username).await? {
+        return Err(crate::api::policy::refused(
+            crate::api::policy::FRIEND_REQUESTS,
+            refused(),
+        ));
+    }
     let pace = format!("{}\n{}", crate::db::pool_key(&state.db), user.username);
     if !REQUEST_PACE.take(&pace) {
         return Err(ApiError(
@@ -786,6 +797,16 @@ pub(crate) async fn send_request(
     };
     if are_friends(&state.db, &user.username, &other.username).await? {
         return outcome(RequestStatus::Friends);
+    }
+    if !on {
+        return match befriend(&state, &user, &other).await {
+            Ok(_) => outcome(RequestStatus::Accepted),
+            Err(ApiError(StatusCode::NOT_FOUND, _)) => Err(crate::api::policy::refused(
+                crate::api::policy::FRIEND_REQUESTS,
+                refused(),
+            )),
+            Err(e) => Err(e),
+        };
     }
     let t = now();
     let mut tx = state.db.begin().await?;
@@ -1862,6 +1883,243 @@ mod tests {
         set_privacy(&state, "bob", json!({ "dms": "everyone" })).await;
         let _ = say("alice", old.id).await.expect("everyone again");
         let _ = open("carol", "bob").await.expect("carol opens");
+        done(state, path).await;
+    }
+
+    /// What the admin page does to a control, as this process sees it once its cache is gone.
+    async fn set_control(db: &Db, key: &str, value: &str) {
+        sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+            .bind(key)
+            .bind(value)
+            .execute(db)
+            .await
+            .expect("setting");
+        crate::api::Settings::forget(db);
+    }
+
+    async fn befriend(state: &AppState, a: &str, b: &str) {
+        send(state, a, b).await.expect("ask");
+        let _ = accept_request(State(state.clone()), me(b), Path(a.to_string()))
+            .await
+            .expect("accept");
+    }
+
+    #[tokio::test]
+    async fn the_dm_switch_stops_new_conversations_and_keeps_the_old_ones() {
+        let (state, path) = temp_state("dm_creation").await;
+        for name in ["alice", "bob", "carol", "dave", "root"] {
+            add_user(&state.db, name, name).await;
+        }
+        let open = |by: &str, name: &str| {
+            let user = mem_user(by, by == "root");
+            open_dm(
+                State(state.clone()),
+                Authed(user),
+                Json(serde_json::from_value(json!({ "username": name })).expect("req")),
+            )
+        };
+        let say = |by: &str, id: i64| {
+            send_dm_message(
+                State(state.clone()),
+                Path(id),
+                me(by),
+                Json(serde_json::from_value(json!({ "content": "hi" })).expect("req")),
+            )
+        };
+        let dms = || async {
+            sqlx::query("SELECT COUNT(*) FROM dms")
+                .fetch_one(&state.db)
+                .await
+                .expect("n")
+                .try_get::<i64, _>(0)
+                .expect("n")
+        };
+        let old = open("alice", "bob").await.expect("everyone: a new DM").0;
+        let own = open("alice", "alice").await.expect("the self DM").0;
+        befriend(&state, "alice", "carol").await;
+        let none = Some((StatusCode::NOT_FOUND, "User not found".to_string()));
+        assert_eq!(code(open("alice", "nobody-here").await), none);
+        let before = dms().await;
+
+        set_control(&state.db, "dm_creation", "friends").await;
+        assert_eq!(
+            code(open("alice", "dave").await),
+            none,
+            "friends: not a friend, the same 404 as an unknown user"
+        );
+        assert_eq!(code(open("dave", "alice").await), none);
+        assert_eq!(code(open("root", "dave").await), none, "the site admin too");
+        assert_eq!(dms().await, before, "nothing was created");
+        let with_friend = open("alice", "carol").await.expect("friends: a friend").0;
+        assert_eq!(
+            open("carol", "alice").await.expect("both ways").0.id,
+            with_friend.id
+        );
+        assert_eq!(
+            open("bob", "alice").await.expect("an old DM opens").0.id,
+            old.id
+        );
+        let _ = say("bob", old.id).await.expect("and takes messages");
+
+        set_control(&state.db, "dm_creation", "nobody").await;
+        befriend(&state, "alice", "dave").await;
+        for (by, name) in [
+            ("alice", "dave"),
+            ("dave", "alice"),
+            ("root", "bob"),
+            ("bob", "carol"),
+        ] {
+            assert_eq!(code(open(by, name).await), none, "nobody: {by} to {name}");
+        }
+        assert_eq!(code(open("alice", "nobody-here").await), none);
+        assert_eq!(dms().await, before + 1, "only the friends' DM was added");
+        assert_eq!(open("alice", "bob").await.expect("old").0.id, old.id);
+        assert_eq!(open("alice", "alice").await.expect("self").0.id, own.id);
+        assert!(
+            open("dave", "dave")
+                .await
+                .expect("a first self DM")
+                .0
+                .is_self,
+            "the self DM is not a conversation with someone"
+        );
+        let _ = say("alice", old.id).await.expect("old DMs keep working");
+        let _ = say("alice", own.id).await.expect("the self DM too");
+        let _ = crate::api::dms::close_dm(State(state.clone()), Path(old.id), me("alice"))
+            .await
+            .expect("close");
+        let reopened = open("alice", "bob").await.expect("a closed DM reopens").0;
+        assert_eq!((reopened.id, reopened.closed), (old.id, false));
+
+        set_control(&state.db, "dm_creation", "everyone").await;
+        let _ = open("bob", "carol").await.expect("everyone again");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_friend_switch_stops_new_requests_and_keeps_pending_ones_answerable() {
+        let (state, path) = temp_state("friend_requests_switch").await;
+        for name in ["alice", "bob", "carol", "dave", "erin", "root"] {
+            add_user(&state.db, name, name).await;
+        }
+        befriend(&state, "alice", "bob").await;
+        for (by, name) in [
+            ("carol", "alice"),
+            ("dave", "alice"),
+            ("erin", "alice"),
+            ("alice", "root"),
+        ] {
+            assert_eq!(
+                send(&state, by, name).await.expect("pending"),
+                RequestStatus::Sent
+            );
+        }
+
+        set_control(&state.db, "friend_requests", "0").await;
+        let off = Some((StatusCode::NOT_FOUND, REFUSED.to_string()));
+        for (by, name) in [
+            ("bob", "carol"),
+            ("carol", "bob"),
+            ("bob", "nobody-here"),
+            ("bob", "alice"),
+            ("root", "bob"),
+        ] {
+            assert_eq!(code(send(&state, by, name).await), off, "{by} asks {name}");
+        }
+        let asked: i64 = sqlx::query("SELECT COUNT(*) FROM friend_requests")
+            .fetch_one(&state.db)
+            .await
+            .expect("n")
+            .try_get(0)
+            .expect("n");
+        assert_eq!(asked, 4, "no new request was stored");
+        assert_eq!(friends(&state, "alice").await, ["bob"], "friends stay");
+        assert_eq!(
+            requests(&state, "alice", true).await.len(),
+            3,
+            "pending ones stay listed"
+        );
+
+        let _ = accept_request(State(state.clone()), me("alice"), Path("carol".into()))
+            .await
+            .expect("accepting works");
+        let _ = deny_request(State(state.clone()), me("alice"), Path("dave".into()))
+            .await
+            .expect("denying works");
+        assert_eq!(
+            send(&state, "alice", "erin")
+                .await
+                .expect("answering by asking back"),
+            RequestStatus::Accepted
+        );
+        let _ = cancel_request(State(state.clone()), me("alice"), Path("root".into()))
+            .await
+            .expect("cancelling works");
+        let mut now_friends = friends(&state, "alice").await;
+        now_friends.sort();
+        assert_eq!(now_friends, ["bob", "carol", "erin"]);
+        let _ = remove_friend(State(state.clone()), me("alice"), Path("bob".into()))
+            .await
+            .expect("removing works");
+        assert_eq!(
+            code(send(&state, "alice", "bob").await),
+            off,
+            "and can't be asked back"
+        );
+
+        set_control(&state.db, "friend_requests", "1").await;
+        assert_eq!(
+            send(&state, "alice", "bob").await.expect("on again"),
+            RequestStatus::Sent
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_request_withdrawn_mid_answer_is_not_replaced_while_requests_are_off() {
+        use sqlx::Connection;
+        let (state, path) = temp_state("friend_switch_race").await;
+        for name in ["alice", "dave"] {
+            add_user(&state.db, name, name).await;
+        }
+        assert_eq!(
+            send(&state, "dave", "alice").await.expect("pending"),
+            RequestStatus::Sent
+        );
+        set_control(&state.db, "friend_requests", "0").await;
+        let url = format!("sqlite://{}?mode=rw", path.display());
+        let mut other = sqlx::AnyConnection::connect(&url)
+            .await
+            .expect("a second connection");
+        for sql in [
+            "BEGIN IMMEDIATE",
+            "DELETE FROM friend_requests WHERE sender = 'dave' AND recipient = 'alice'",
+        ] {
+            sqlx::query(sql).execute(&mut other).await.expect(sql);
+        }
+        let withdrawn = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            sqlx::query("COMMIT")
+                .execute(&mut other)
+                .await
+                .expect("commit");
+            other.close().await.expect("close");
+        });
+        let answered = send(&state, "alice", "dave").await;
+        withdrawn.await.expect("withdrawn");
+        assert_eq!(
+            code(answered),
+            Some((StatusCode::NOT_FOUND, REFUSED.to_string())),
+            "the request was there when the answer started and is gone when it is stored"
+        );
+        let left: i64 = sqlx::query("SELECT COUNT(*) FROM friend_requests")
+            .fetch_one(&state.db)
+            .await
+            .expect("n")
+            .try_get(0)
+            .expect("n");
+        assert_eq!(left, 0, "no new request is stored while requests are off");
+        assert_eq!(friends(&state, "alice").await, Vec::<String>::new());
         done(state, path).await;
     }
 

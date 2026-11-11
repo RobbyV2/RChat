@@ -80,6 +80,43 @@ impl ServerJoining {
     }
 }
 
+/// Who may start a direct conversation with `POST /api/v1/dms`: `everyone`, `friends` (only
+/// with a friend) or `nobody`. Conversations that exist keep working, and so does the self DM.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum DmCreation {
+    #[default]
+    Everyone,
+    Friends,
+    Nobody,
+}
+
+impl DmCreation {
+    pub const KEY: &str = "dm_creation";
+    pub const ENV: &str = "DM_CREATION";
+    pub const WORDS: [&str; 3] = ["everyone", "friends", "nobody"];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DmCreation::Everyone => "everyone",
+            DmCreation::Friends => "friends",
+            DmCreation::Nobody => "nobody",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<DmCreation> {
+        match value {
+            "everyone" => Some(DmCreation::Everyone),
+            "friends" => Some(DmCreation::Friends),
+            "nobody" => Some(DmCreation::Nobody),
+            _ => None,
+        }
+    }
+}
+
+/// The switch for new friend requests.
+pub const FRIEND_REQUESTS: &str = "friend_requests";
+
 /// The switch for `GET /api/v1/server_search`.
 pub const SERVER_SEARCH: &str = "server_search";
 
@@ -319,6 +356,16 @@ impl Effective<'_> {
     /// Whether the user may search servers.
     pub fn server_search(&self) -> bool {
         self.settings.server_search
+    }
+
+    /// Who the user may start a direct conversation with.
+    pub fn dm_creation(&self) -> DmCreation {
+        self.settings.dm_creation
+    }
+
+    /// Whether the user may send new friend requests.
+    pub fn friend_requests(&self) -> bool {
+        self.settings.friend_requests
     }
 
     /// Whether the user may create a server with `POST /api/v1/servers`. A site admin follows
@@ -652,6 +699,51 @@ mod tests {
         .expect("a copy from before the switches");
         assert_eq!(older.server_joining, ServerJoining::Everyone);
         assert!(older.server_search);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_dm_and_friend_switches_are_public_and_change_live() {
+        use crate::api::admin::get_settings;
+        use crate::api::policy::DmCreation;
+        let (state, path) = temp_state("dm_settings").await;
+        let wire = || async {
+            serde_json::to_value(get_settings(State(state.clone())).await.0).expect("json")
+        };
+        let fresh = wire().await;
+        assert_eq!(fresh["dm_creation"], json!("everyone"));
+        assert_eq!(fresh["friend_requests"], json!(true));
+        let mut rx = state.hub.subscribe();
+        set(
+            &state,
+            json!({"dm_creation": "friends", "friend_requests": false}),
+        )
+        .await
+        .expect("patch");
+        let event = serde_json::to_value(rx.try_recv().expect("settings_changed")).expect("json");
+        assert_eq!(event["settings"]["dm_creation"], json!("friends"));
+        assert_eq!(event["settings"]["friend_requests"], json!(false));
+        let user = mem_user("alice", false);
+        let allowed = effective(&state.db, Some(&user)).await;
+        assert_eq!(allowed.dm_creation(), DmCreation::Friends);
+        assert!(!allowed.friend_requests());
+        set(&state, json!({"dm_creation": "nobody"}))
+            .await
+            .expect("nobody");
+        assert_eq!(wire().await["dm_creation"], json!("nobody"));
+        assert!(serde_json::from_value::<SettingsPatch>(json!({"dm_creation": "some"})).is_err());
+        let denied = Settings::DENY;
+        assert_eq!(denied.dm_creation, DmCreation::Nobody);
+        assert!(!denied.friend_requests);
+        let older: Settings = serde_json::from_value(json!({
+            "profanity_filter": true,
+            "asset_previews": true,
+            "asset_uploads": true,
+            "guests_enabled": true,
+        }))
+        .expect("a copy from before the switches");
+        assert_eq!(older.dm_creation, DmCreation::Everyone);
+        assert!(older.friend_requests);
         done(state, path).await;
     }
 
