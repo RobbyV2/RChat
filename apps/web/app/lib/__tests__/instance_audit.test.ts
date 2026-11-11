@@ -87,3 +87,28 @@ test('other actions keep their lines', () => {
     'root sso.config okta'
   )
 })
+
+test('a server the admin made for someone names the server and its owner', () => {
+  const made = entry({ action: 'server.create', target: 'club', detail: { owner: 'dave' } })
+  expect(text(made)).toBe('root created the server club for dave')
+  expect(names(made)).toEqual(['root', 'club', 'dave'])
+  const gone = entry({ action: 'server.create', target: 'club', detail: { owner: null } })
+  expect(text(gone)).toBe('root created the server club for a deleted user')
+  expect(names(gone)).toEqual(['root', 'club'])
+  expect(text(entry({ action: 'server.create', target: 'club', detail: {} }))).toBe(
+    'root created the server club'
+  )
+  expect(text(entry({ action: 'server.create', target: null, detail: null }))).toBe(
+    'root created a server'
+  )
+})
+
+test('the list of server creators holds names, so its values are marked', () => {
+  const list = entry({
+    target: 'server_creators',
+    detail: { key: 'server_creators', from: '', to: 'bob,lobby:Staff' },
+  })
+  expect(text(list)).toBe('root changed server_creators from nothing to bob,lobby:Staff')
+  expect(names(list)).toEqual(['root', 'bob,lobby:Staff'])
+  expect(names(entry())).toEqual(['root'])
+})

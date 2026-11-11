@@ -4,6 +4,7 @@ use std::sync::LazyLock;
 use sqlx::Row;
 
 use crate::api::features::{Feature, Registration};
+use crate::api::policy::{Creator, SERVER_CREATORS, ServerCreation};
 use crate::api::{ProfanitySwitch, ProfanityTargets, Settings, upload_expiry};
 use crate::db::{ConfigStart, Db};
 use crate::limits::Env;
@@ -22,6 +23,8 @@ pub enum Kind {
     Targets,
     /// A whole number from `min` to `max`.
     Number { min: i64, max: i64 },
+    /// A comma list of up to 500 usernames and `server:role` entries.
+    Names,
 }
 
 /// Something the site admin page changes while the server runs: one or more rows of the
@@ -92,6 +95,20 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
         default: "0",
         public: true,
     });
+    all.push(Control {
+        key: ServerCreation::KEY,
+        env: ServerCreation::ENV,
+        kind: Kind::Choice(&ServerCreation::WORDS),
+        default: "everyone",
+        public: true,
+    });
+    all.push(Control {
+        key: SERVER_CREATORS,
+        env: "SERVER_CREATORS",
+        kind: Kind::Names,
+        default: "",
+        public: false,
+    });
     all
 });
 
@@ -147,6 +164,9 @@ impl Control {
                 .filter(|n| (min..=max).contains(n))
                 .map(|n| n.to_string())
                 .ok_or_else(|| format!("expected {min} to {max}")),
+            Kind::Names => parse_names(raw).ok_or_else(|| {
+                format!("expected up to {NAMES_MAX} usernames or server:role entries")
+            }),
         }
     }
 
@@ -155,16 +175,19 @@ impl Control {
         match (self.kind, stored) {
             (Kind::Switch, "1") => "on".to_string(),
             (Kind::Switch, _) => "off".to_string(),
-            (Kind::Choice(_) | Kind::Targets | Kind::Number { min: _, max: _ }, stored) => {
-                stored.to_string()
-            }
+            (
+                Kind::Choice(_) | Kind::Targets | Kind::Number { min: _, max: _ } | Kind::Names,
+                stored,
+            ) => stored.to_string(),
         }
     }
 
     /// The `settings` rows that hold it.
     pub fn keys(&self) -> Vec<&'static str> {
         match self.kind {
-            Kind::Switch | Kind::Choice(_) | Kind::Number { min: _, max: _ } => vec![self.key],
+            Kind::Switch | Kind::Choice(_) | Kind::Number { min: _, max: _ } | Kind::Names => {
+                vec![self.key]
+            }
             Kind::Targets => ProfanitySwitch::ALL.into_iter().map(|t| t.key()).collect(),
         }
     }
@@ -172,7 +195,7 @@ impl Control {
     /// The `settings` rows of the stored value `stored`.
     pub fn rows(&self, stored: &str) -> Vec<(&'static str, String)> {
         match self.kind {
-            Kind::Switch | Kind::Choice(_) | Kind::Number { min: _, max: _ } => {
+            Kind::Switch | Kind::Choice(_) | Kind::Number { min: _, max: _ } | Kind::Names => {
                 vec![(self.key, stored.to_string())]
             }
             Kind::Targets => {
@@ -188,7 +211,7 @@ impl Control {
     /// The stored value in `rows` (`settings` rows by key), `None` when no row holds it.
     pub fn read(&self, rows: &HashMap<String, String>) -> Option<String> {
         match self.kind {
-            Kind::Switch | Kind::Choice(_) | Kind::Number { min: _, max: _ } => {
+            Kind::Switch | Kind::Choice(_) | Kind::Number { min: _, max: _ } | Kind::Names => {
                 rows.get(self.key).cloned()
             }
             Kind::Targets => ProfanitySwitch::ALL
@@ -201,6 +224,34 @@ impl Control {
                 }),
         }
     }
+}
+
+/// The most entries a list of names holds.
+pub const NAMES_MAX: usize = 500;
+
+/// A comma list of usernames and `server:role` entries as it is stored: each entry as written,
+/// trimmed, without empty or repeated entries. `None` for more than `NAMES_MAX` entries, an
+/// entry longer than two names, a NUL, or a role entry without its server or its role.
+fn parse_names(list: &str) -> Option<String> {
+    let mut seen = Vec::new();
+    let mut kept = Vec::new();
+    for entry in list.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        if entry.contains('\0') || entry.chars().count() > 2 * crate::api::NAME_MAX + 1 {
+            return None;
+        }
+        if entry.starts_with(':') || entry.ends_with(':') {
+            return None;
+        }
+        let who = Creator::parse(entry);
+        if !seen.contains(&who) {
+            seen.push(who);
+            kept.push(entry);
+        }
+        if kept.len() > NAMES_MAX {
+            return None;
+        }
+    }
+    Some(kept.join(","))
 }
 
 /// `a, b or c`.
@@ -437,13 +488,22 @@ mod tests {
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
         assert_eq!(
-            table[table.len() - 1..],
-            [("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0")]
+            table[table.len() - 3..],
+            [
+                ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
+                ("server_creation", "SERVER_CREATION", "everyone"),
+                ("server_creators", "SERVER_CREATORS", ""),
+            ]
         );
         assert_eq!(
             control("upload_expiry_max_days").kind,
             Kind::Number { min: 0, max: 365 }
         );
+        assert_eq!(
+            control("server_creation").kind,
+            Kind::Choice(&["everyone", "nobody", "some"])
+        );
+        assert_eq!(control("server_creators").kind, Kind::Names);
         let registration = control(Registration::KEY);
         assert_eq!(registration.env, Registration::ENV);
         assert_eq!(registration.kind, Kind::Choice(&["open", "sso", "closed"]));
@@ -531,23 +591,65 @@ mod tests {
         }
         let set = ControlSeeds::of(&[("UPLOAD_EXPIRY_MAX_DAYS", " 30 ")]).expect("set");
         assert_eq!(set.value("upload_expiry_max_days"), Some("30"));
+        let creation = control("server_creation");
+        for (raw, stored) in [
+            ("Everyone", "everyone"),
+            (" nobody ", "nobody"),
+            ("some", "some"),
+        ] {
+            assert_eq!(creation.parse(raw).as_deref(), Ok(stored), "{raw}");
+        }
+        let creators = control("server_creators");
+        for (raw, stored) in [
+            ("bob", "bob"),
+            (" Bob , lobby:Staff ,bob,, lobby:Staff", "Bob,lobby:Staff"),
+            ("Team:a:Staff, team:a:Staff", "Team:a:Staff,team:a:Staff"),
+            ("a:b:c", "a:b:c"),
+        ] {
+            assert_eq!(creators.parse(raw).as_deref(), Ok(stored), "{raw}");
+        }
+        assert_eq!(creators.shown("bob,lobby:Staff"), "bob,lobby:Staff");
+        assert_eq!(creators.parse(" , ").as_deref(), Ok(""), "an empty list");
+        let many: Vec<String> = (0..501).map(|n| format!("user{n}")).collect();
+        assert!(creators.parse(&many[..500].join(",")).is_ok());
+        for bad in [
+            many.join(","),
+            ":Staff".to_string(),
+            "lobby:".to_string(),
+            "a\u{0}b".to_string(),
+            "x".repeat(202),
+        ] {
+            assert_eq!(
+                creators.parse(&bad).unwrap_err(),
+                "expected up to 500 usernames or server:role entries",
+                "{}",
+                &bad[..bad.len().min(20)]
+            );
+        }
     }
 
     #[test]
     fn bad_env_values_name_what_they_expect() {
         for c in Control::all() {
+            if c.kind == Kind::Names {
+                continue;
+            }
             let err = c.parse("maybe").unwrap_err();
             let want = match c.kind {
                 Kind::Switch => "expected on or off".to_string(),
-                Kind::Choice(words) => {
-                    assert_eq!(words, ["open", "sso", "closed"]);
-                    "expected open, sso or closed".to_string()
-                }
+                Kind::Choice(words) => match words {
+                    ["open", "sso", "closed"] => "expected open, sso or closed".to_string(),
+                    ["everyone", "nobody", "some"] => {
+                        "expected everyone, nobody or some".to_string()
+                    }
+                    other => panic!("{other:?} has no expected text"),
+                },
                 Kind::Targets => format!(
                     "expected all, none or a list of {}",
                     TARGETS.replace(',', ", ")
                 ),
                 Kind::Number { min, max } => format!("expected {min} to {max}"),
+                Kind::Names => unreachable!("a name list takes any word"),
             };
             assert_eq!(err, want, "{}", c.key);
             assert!(err.is_ascii());
@@ -726,9 +828,10 @@ mod tests {
         for c in Control::all() {
             let words = match c.kind {
                 Kind::Switch => "on or off".to_string(),
-                Kind::Choice(_) => "open, sso or closed".to_string(),
+                Kind::Choice(words) => super::any_of(words),
                 Kind::Targets => "all, none, or a list".to_string(),
                 Kind::Number { min, max } => format!("{min} to {max}"),
+                Kind::Names => "server:role".to_string(),
             };
             let value = documented(c.env, &[&words, "Admin page"]);
             assert_eq!(

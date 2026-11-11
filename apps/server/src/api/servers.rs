@@ -24,6 +24,7 @@ use crate::api::categories::{
 };
 use crate::api::messages::recent_channel_messages;
 use crate::api::pings::forget_server_pings;
+use crate::api::policy::ServerCreation;
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::timeouts::{running_timeouts, timeout_event};
 use crate::api::{
@@ -1382,7 +1383,10 @@ pub(crate) async fn list_interacted(
 ///
 /// Creates a server owned by the caller: they become its creator and an admin with all
 /// permissions, and it starts with one text channel named `general`. Requires a bearer token.
-/// Emits `server_created` to the creator. Strict and general rate-limit buckets.
+/// The instance may limit who creates servers (`server_creation` in `GET /api/v1/settings`):
+/// accounts it leaves out get 404, and `can_create_servers` in `GET /api/v1/me` says which
+/// applies to the caller. Emits `server_created` to the creator. Strict and general rate-limit
+/// buckets.
 #[utoipa::path(
     post,
     path = "/api/v1/servers",
@@ -1392,6 +1396,7 @@ pub(crate) async fn list_interacted(
         (status = 200, description = "The created server, with the caller as admin and a default `general` text channel", body = ServerDetail),
         (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or a password shorter than 8 characters. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: the instance does not let this account create servers", body = ApiErrorBody),
         (status = 409, description = "That name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the strict or the general bucket", content_type = "text/plain", body = String)
@@ -1403,21 +1408,54 @@ pub(crate) async fn create_server(
     Authed(user): Authed,
     Json(req): Json<CreateServerReq>,
 ) -> Result<Json<ServerDetail>, ApiError> {
-    let display = req.name.trim().to_string();
+    let allowed = crate::api::policy::effective(&state.db, Some(&user))
+        .await
+        .can_create_servers()
+        .await?;
+    if !allowed {
+        return Err(crate::api::policy::refused(
+            ServerCreation::KEY,
+            crate::api::access::not_found(),
+        ));
+    }
+    let CreateServerReq { name, password } = req;
+    let founder = Founder::Creator(&user.username);
+    let key = found_server(&state, &name, password.as_deref(), founder).await?;
+    let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
+    Ok(Json(server_detail(&state.db, &state.hub, &access).await?))
+}
+
+/// Who a new server belongs to.
+enum Founder<'a> {
+    /// The account that creates it.
+    Creator(&'a str),
+    /// An account the site admin `by` picked. The server has no creator, and the owner is its
+    /// admin with every permission, like in a server whose creator left.
+    Owner { owner: &'a str, by: &'a str },
+}
+
+/// Creates the server `name` with a `general` channel and its founder as the only member, and
+/// announces it. Returns its key.
+async fn found_server(
+    state: &AppState,
+    name: &str,
+    password: Option<&str>,
+    founder: Founder<'_>,
+) -> Result<String, ApiError> {
+    let display = name.trim().to_string();
     let key = display.to_lowercase();
     check_server_name(&state.db, &display).await?;
     name_free(&state.db, &key).await?;
-    let password_hash = match req
-        .password
-        .as_deref()
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-    {
+    let password_hash = match password.map(str::trim).filter(|p| !p.is_empty()) {
         Some(password) => {
             crate::api::passwords::check_strength(password)?;
             Some(hash_in(Work::Server, password).await?)
         }
         None => None,
+    };
+    let (creator, member, perms) = match founder {
+        Founder::Creator(user) => (Some(user), user, 0),
+        Founder::Owner { owner, by: _ } => (None, owner, ALL_PERMS),
     };
     let t = now();
     let mut tx = state.db.begin().await?;
@@ -1426,36 +1464,80 @@ pub(crate) async fn create_server(
     )
     .bind(&key)
     .bind(&display)
-    .bind(&user.username)
+    .bind(creator)
     .bind(&password_hash)
     .bind(t)
     .execute(&mut *tx)
     .await?;
-    sqlx::query("INSERT INTO members(server, username, is_admin, joined_at) VALUES($1, $2, 1, $3)")
-        .bind(&key)
-        .bind(&user.username)
-        .bind(t)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES($1, $2, 1, $3, $4)",
+    )
+    .bind(&key)
+    .bind(member)
+    .bind(perms)
+    .bind(t)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query("INSERT INTO channels(server, name, created_at) VALUES($1, 'general', $2)")
         .bind(&key)
         .bind(t)
         .execute(&mut *tx)
         .await?;
+    if let Founder::Owner { owner, by } = founder {
+        crate::api::instance_audit::record_in(
+            &mut tx,
+            by,
+            "server.create",
+            Some(&key),
+            serde_json::json!({ "owner": owner }),
+            t,
+        )
+        .await?;
+    }
     tx.commit().await?;
-    let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
-    let detail = server_detail(&state.db, &state.hub, &access).await?;
     state.hub.broadcast(WsEvent::ServerCreated {
         server: ServerSummaryLite {
-            name: key,
+            name: key.clone(),
             display_name: display,
-            creator: Some(user.username),
+            creator: creator.map(str::to_string),
             has_password: password_hash.is_some(),
             banner_color: None,
             name_color: None,
         },
     });
-    Ok(Json(detail))
+    Ok(key)
+}
+
+/// Creates a server for `owner` on behalf of the site admin `admin`, whatever the instance
+/// allows people to create themselves. Answers the server as the admin sees it.
+pub(crate) async fn found_for(
+    state: &AppState,
+    admin: &User,
+    name: &str,
+    password: Option<&str>,
+    owner: &User,
+) -> Result<Json<ServerDetail>, ApiError> {
+    let founder = Founder::Owner {
+        owner: &owner.username,
+        by: &admin.username,
+    };
+    let key = found_server(state, name, password, founder).await?;
+    let member = build_member(
+        &state.db,
+        &state.hub,
+        &key,
+        None,
+        &owner.username,
+        true,
+        ALL_PERMS,
+    )
+    .await?;
+    state.hub.broadcast(WsEvent::MemberJoined {
+        server: key.clone(),
+        member,
+    });
+    let access = resolve_server(&state.db, &key, Some(admin), &Proof::none()).await?;
+    Ok(Json(server_detail(&state.db, &state.hub, &access).await?))
 }
 
 /// Get a server
@@ -2133,6 +2215,9 @@ pub(crate) async fn update_server(
     };
     let mut tx = state.db.begin().await?;
     rename_live(&mut tx, &key, &new_key, &display, password_hash.as_ref()).await?;
+    if new_key != key {
+        crate::api::policy::move_creator_roles(&mut tx, &key, Some(&new_key)).await?;
+    }
     set_colors(
         &mut tx,
         &new_key,
@@ -2211,6 +2296,9 @@ pub(crate) async fn update_server(
         .await?;
     }
     tx.commit().await?;
+    if new_key != key {
+        crate::api::policy::Policy::load(&state.db).await;
+    }
     let renamed = new_key != key || display != lite.display_name;
     let server = ServerSummaryLite {
         name: new_key,

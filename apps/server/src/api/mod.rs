@@ -22,6 +22,7 @@ pub mod openapi;
 pub mod passwords;
 pub mod pings;
 pub mod pins;
+pub mod policy;
 pub mod polls;
 pub mod preview_images;
 pub mod reactions;
@@ -55,6 +56,7 @@ use utoipa::ToSchema;
 
 use crate::api::controls::Control;
 use crate::api::features::{Feature, Registration};
+use crate::api::policy::ServerCreation;
 use crate::config::Roles;
 use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, pool_key};
 use crate::server::client_ip::ClientIp;
@@ -1226,13 +1228,18 @@ pub struct Settings {
     /// 0 by default (`UPLOAD_EXPIRY_MAX_DAYS`).
     #[serde(default)]
     pub upload_expiry_max_days: i64,
+    /// Who may create servers: `everyone`, `nobody` or `some` (listed accounts and role
+    /// holders; the list is not public). `POST /api/v1/servers` answers 404 to everyone else.
+    /// Existing servers are not affected.
+    #[serde(default)]
+    pub server_creation: ServerCreation,
 }
 
 pub(crate) fn yes() -> bool {
     true
 }
 
-const SETTINGS_TTL: Duration = Duration::from_secs(5);
+pub(crate) const SETTINGS_TTL: Duration = Duration::from_secs(5);
 
 static SETTINGS_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Settings)>>> =
     LazyLock::new(Default::default);
@@ -1264,6 +1271,7 @@ impl Settings {
         client_other_instances: false,
         registration: Registration::Closed,
         upload_expiry_max_days: 1,
+        server_creation: ServerCreation::Nobody,
     };
 
     pub async fn load(db: &Db) -> Settings {
@@ -1333,6 +1341,8 @@ impl Settings {
                 value(upload_expiry::CAP_KEY).as_deref(),
             )
             .unwrap_or(1),
+            server_creation: ServerCreation::parse(&stored(ServerCreation::KEY))
+                .unwrap_or(ServerCreation::Nobody),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1386,6 +1396,7 @@ impl Settings {
             client_other_instances,
             registration: _,
             upload_expiry_max_days: _,
+            server_creation: _,
         } = *self;
         match feature {
             Feature::ServerReports => server_reports,
@@ -1418,14 +1429,15 @@ impl Settings {
         }
     }
 
-    /// Keeps this process's cached settings current: reloads them whenever `settings_changed`
-    /// arrives, from this process or from another one over the bus.
+    /// Keeps this process's cached settings and lists current: reloads them whenever
+    /// `settings_changed` arrives, from this process or from another one over the bus.
     pub fn follow(state: &AppState) {
         let mut changes = state.hub.settings_changes();
         let db = state.db.clone();
         tokio::spawn(async move {
             while changes.changed().await.is_ok() {
                 Settings::load(&db).await;
+                policy::Policy::load(&db).await;
             }
         });
     }
@@ -1683,6 +1695,7 @@ pub fn routes(
             )
             .route("/servers/{name}/guest_access", post(servers::guest_access))
             .route("/servers", post(servers::create_server))
+            .route("/admin/servers", post(admin::create_server_for))
             .route("/servers/{name}", patch(servers::update_server))
             .route(
                 "/servers/{name}/passwords",
@@ -3066,6 +3079,8 @@ mod tests {
             ("POST", "/servers/club/passwords"),
             ("GET", "/servers/club"),
             ("GET", "/servers/club/passwords"),
+            ("POST", "/admin/servers"),
+            ("GET", "/admin/servers"),
         ]
         .into_iter()
         .enumerate()
@@ -3093,6 +3108,8 @@ mod tests {
         assert!(limited["POST /servers/club/passwords"] >= 5, "{limited:?}");
         assert_eq!(limited["GET /servers/club"], 0, "{limited:?}");
         assert_eq!(limited["GET /servers/club/passwords"], 0, "{limited:?}");
+        assert!(limited["POST /admin/servers"] >= 5, "{limited:?}");
+        assert_eq!(limited["GET /admin/servers"], 0, "{limited:?}");
         done(state, path).await;
     }
 

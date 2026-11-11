@@ -10,11 +10,12 @@ use sqlx::Row;
 use crate::api::access::{MsgScope, not_found, staff_message};
 use crate::api::controls::{ConfigRecords, Control, ROWS_SQL};
 use crate::api::features::{Feature, Registration};
+use crate::api::policy::{Policy, SERVER_CREATORS, ServerCreation};
 use crate::api::{
-    ApiError, Authed, OkResp, Paged, ProfanitySwitch, ServerSummaryLite, Settings, UserRef, bad,
-    decode_cursor, encode_cursor, ok, upload_expiry,
+    ApiError, Authed, OkResp, Paged, ProfanitySwitch, ServerDetail, ServerSummaryLite, Settings,
+    UserRef, bad, decode_cursor, encode_cursor, ok, upload_expiry,
 };
-use crate::db::{AvatarKind, Db, User, now, purge_messages, recount_members, user_row};
+use crate::db::{AvatarKind, Db, User, get_user, now, purge_messages, recount_members, user_row};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -244,6 +245,8 @@ pub struct SettingsPatch {
     client_other_instances: Option<bool>,
     registration: Option<Registration>,
     upload_expiry_max_days: Option<i64>,
+    server_creation: Option<ServerCreation>,
+    server_creators: Option<Vec<String>>,
 }
 
 pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
@@ -258,13 +261,14 @@ pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
 /// The instance-wide feature switches clients need to adapt their UI: profanity filter and
 /// its targets, link previews, uploads, P2P attachments, guest access, outgoing webhooks,
 /// reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding,
-/// password sign-in and sign-up, the media server, P2P, and whether the web app this instance
-/// serves offers other instances. A switched-off feature's endpoints answer 404, except that
+/// password sign-in and sign-up, the media server, P2P, whether the web app this instance
+/// serves offers other instances, and who may create servers. A switched-off feature's
+/// endpoints answer 404, except that
 /// uploads, P2P attachments and outgoing webhooks answer 403, guests get 401 while guest
 /// access is off, and `client_other_instances` gates no endpoint. No authentication. Values
 /// may lag a change by up to 5 seconds per server process; live changes also arrive as the
 /// `settings_changed` WebSocket event. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/settings", tag = "Instance", responses((status = 200, description = "Site-wide switches: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, guest access, outgoing webhooks, reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding, password sign-in, the media server, P2P, other instances in this instance's web app, and `registration`", body = Settings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(get, path = "/api/v1/settings", tag = "Instance", responses((status = 200, description = "Site-wide switches: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, guest access, outgoing webhooks, reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding, password sign-in, the media server, P2P, other instances in this instance's web app, `registration` and `server_creation`", body = Settings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
     Json(Settings::cached(&state.db).await)
 }
@@ -301,10 +305,30 @@ pub(crate) async fn patch_settings(
         client_other_instances,
         registration,
         upload_expiry_max_days,
+        server_creation,
+        server_creators,
     } = req;
     if upload_expiry_max_days.is_some_and(|d| !(0..=upload_expiry::CAP_DAYS_MAX).contains(&d)) {
         return Err(bad("The longest file expiry must be 0 to 365 days"));
     }
+    let creators = match server_creators {
+        Some(entries) => {
+            let stored = match entries
+                .iter()
+                .any(|e| e.trim().is_empty() || e.contains(','))
+            {
+                true => Err(format!(
+                    "expected up to {} usernames or server:role entries",
+                    crate::api::controls::NAMES_MAX
+                )),
+                false => Control::find(SERVER_CREATORS)
+                    .ok_or_else(not_found)?
+                    .parse(&entries.join(",")),
+            };
+            Some(stored.map_err(|expected| bad(&format!("{SERVER_CREATORS}: {expected}")))?)
+        }
+        None => None,
+    };
     let feature = |f: Feature| match f {
         Feature::ServerReports => server_reports,
         Feature::InstanceReports => instance_reports,
@@ -338,21 +362,12 @@ pub(crate) async fn patch_settings(
             .map(|t| (t.key(), profanity_targets.get(t))),
     )
     .chain(Feature::ALL.into_iter().map(|f| (f.key(), feature(f))))
-    .filter_map(|(key, on)| {
-        on.map(|on| {
-            (
-                key,
-                match on {
-                    true => "1",
-                    false => "0",
-                },
-            )
-        })
-    });
-    let cap = upload_expiry_max_days.map(|d| d.to_string());
-    let pairs: Vec<(&str, &str)> = switches
-        .chain(registration.map(|r| (Registration::KEY, r.as_str())))
-        .chain(cap.as_deref().map(|d| (upload_expiry::CAP_KEY, d)))
+    .filter_map(|(key, on)| on.map(|on| (key, u8::from(on).to_string())));
+    let pairs: Vec<(&str, String)> = switches
+        .chain(registration.map(|r| (Registration::KEY, r.as_str().to_string())))
+        .chain(upload_expiry_max_days.map(|d| (upload_expiry::CAP_KEY, d.to_string())))
+        .chain(server_creation.map(|c| (ServerCreation::KEY, c.as_str().to_string())))
+        .chain(creators.map(|list| (SERVER_CREATORS, list)))
         .collect();
     let records = ConfigRecords::load(&state.db).await?;
     let touched: Vec<&Control> = Control::all()
@@ -370,10 +385,10 @@ pub(crate) async fn patch_settings(
             "INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         )
         .bind(key)
-        .bind(value)
+        .bind(&value)
         .execute(&mut *tx)
         .await?;
-        after.insert(key.to_string(), value.to_string());
+        after.insert(key.to_string(), value);
     }
     let t = now();
     for control in touched {
@@ -395,6 +410,7 @@ pub(crate) async fn patch_settings(
     }
     tx.commit().await?;
     let settings = Settings::load(&state.db).await;
+    Policy::load(&state.db).await;
     if let Some(cap) = upload_expiry_max_days {
         upload_expiry::retime_all(&state.db, cap).await?;
     }
@@ -472,6 +488,36 @@ pub(crate) async fn get_config(
         })
         .collect();
     Ok(Json(ConfigView { controls, limits }))
+}
+
+/// Request body of `POST /api/v1/admin/servers`.
+#[derive(Deserialize)]
+pub struct AdminServerReq {
+    /// The server's name, with the rules of `POST /api/v1/servers`.
+    name: String,
+    /// The account that gets the server: its admin with every permission.
+    owner: String,
+    /// Optional join password, 8 characters or more.
+    password: Option<String>,
+}
+
+/// Creates a server for `owner`, whatever `server_creation` says: the operator's way to make
+/// servers while people can't. The server has no creator, like one whose creator left.
+pub(crate) async fn create_server_for(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Json(req): Json<AdminServerReq>,
+) -> Result<Json<ServerDetail>, ApiError> {
+    require_site_admin(&user)?;
+    let AdminServerReq {
+        name,
+        owner,
+        password,
+    } = req;
+    let Some(owner) = get_user(&state.db, &owner).await? else {
+        return Err(bad("No such account"));
+    };
+    crate::api::servers::found_for(&state, &user, &name, password.as_deref(), &owner).await
 }
 
 pub(crate) async fn overview(
@@ -666,8 +712,10 @@ pub(crate) async fn remove_server(state: &AppState, name: &str) -> Result<bool, 
         .execute(&mut *tx)
         .await?;
     }
+    crate::api::policy::move_creator_roles(&mut tx, name, None).await?;
     note_purge(&mut tx, PurgeKind::Server, name, now()).await?;
     tx.commit().await?;
+    Policy::load(&state.db).await;
     state.hub.broadcast(WsEvent::ServerDeleted {
         name: name.to_string(),
     });
@@ -892,6 +940,7 @@ async fn run_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result
             clear_purge(&mut tx, kind, key).await?;
             tx.commit().await?;
             if let Some((gone, polls)) = gone {
+                Policy::load(&state.db).await;
                 for id in polls {
                     crate::api::polls::schedule_update(state, id);
                 }
@@ -1027,6 +1076,7 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         .await?;
     crate::api::bulk_delete::forget_author(tx, key).await?;
     crate::api::audit::forget_user(tx, key).await?;
+    crate::api::policy::forget_creator(tx, key).await?;
     crate::api::instance_audit::forget_user(tx, key).await
 }
 
@@ -2650,6 +2700,428 @@ mod tests {
         crate::db::close(&a.db).await;
         crate::db::close(&b.db).await;
         wipe();
+    }
+
+    #[tokio::test]
+    async fn a_deleted_account_leaves_the_list_of_server_creators() {
+        use crate::api::policy::{Creator, Policy, effective};
+        use crate::api::servers::{CreateServerReq, create_server};
+        let (state, path) = temp_state("creators_forget").await;
+        let db = &state.db;
+        for name in ["root", "bob", "carol", "dave"] {
+            let _ = reg(&state, name).await.expect(name);
+        }
+        let patch: SettingsPatch = serde_json::from_value(json!({
+            "server_creation": "some",
+            "server_creators": ["Bob", "carol", "lobby:Staff", "bob:Staff", "dave"],
+        }))
+        .expect("patch");
+        let _ = patch_settings(State(state.clone()), authed(db, "root").await, Json(patch))
+            .await
+            .expect("some people");
+        let may = |name: &'static str| async move {
+            let user = get_user(db, name).await.expect("user").expect("exists");
+            effective(db, Some(&user))
+                .await
+                .can_create_servers()
+                .await
+                .expect("effective")
+        };
+        let stored = || async {
+            sqlx::query("SELECT value FROM settings WHERE key = 'server_creators'")
+                .fetch_one(db)
+                .await
+                .expect("row")
+                .try_get::<String, _>(0)
+                .expect("value")
+        };
+        assert!(may("bob").await && may("carol").await);
+        assert!(!may("root").await, "the admin is not on the list");
+
+        let _ = delete_user(
+            State(state.clone()),
+            authed(db, "root").await,
+            Path("Bob".to_string()),
+        )
+        .await
+        .expect("delete bob");
+        settle(db).await;
+        assert_eq!(
+            stored().await,
+            "carol,lobby:Staff,bob:Staff,dave",
+            "the account's entry is gone, the role entries stay"
+        );
+        assert!(
+            !Policy::cached(db)
+                .await
+                .server_creators
+                .contains(&Creator::User("bob".to_string())),
+            "this copy forgets it at once"
+        );
+
+        let _ = reg(&state, "bob")
+            .await
+            .expect("someone takes the freed name");
+        assert!(!may("bob").await, "the newcomer got nothing from the name");
+        let req: CreateServerReq = serde_json::from_value(json!({"name": "Mine"})).expect("req");
+        let refused = create_server(State(state.clone()), authed(db, "bob").await, Json(req)).await;
+        assert!(matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"));
+        assert!(may("carol").await && may("dave").await, "the others stay");
+
+        let _ = ban_user(
+            State(state.clone()),
+            authed(db, "root").await,
+            Json(BanReq {
+                username: "carol".to_string(),
+            }),
+        )
+        .await
+        .expect("ban carol");
+        settle(db).await;
+        assert_eq!(
+            stored().await,
+            "lobby:Staff,bob:Staff,dave",
+            "a ban does the same"
+        );
+        assert!(may("dave").await);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_renamed_or_deleted_server_takes_its_role_entries_along() {
+        use crate::api::policy::effective;
+        use crate::api::servers::{CreateServerReq, ServerPatch, create_server, update_server};
+        let (state, path) = temp_state("creators_server_gone").await;
+        let db = &state.db;
+        for name in ["root", "alice", "carol", "dave"] {
+            let _ = reg(&state, name).await.expect(name);
+        }
+        for (owner, name) in [("alice", "Lobby"), ("dave", "Den")] {
+            let req: CreateServerReq =
+                serde_json::from_value(json!({ "name": name })).expect("req");
+            let _ = create_server(State(state.clone()), authed(db, owner).await, Json(req))
+                .await
+                .expect("create");
+        }
+        let staff = |server: &'static str, who: &'static str| async move {
+            sqlx::query("INSERT INTO roles(server, name, color) VALUES($1, 'Staff', '#000000')")
+                .bind(server)
+                .execute(db)
+                .await
+                .expect("role");
+            sqlx::query("INSERT INTO members(server, username, joined_at) VALUES($1, $2, 0) ON CONFLICT(server, username) DO NOTHING")
+                .bind(server)
+                .bind(who)
+                .execute(db)
+                .await
+                .expect("member");
+            sqlx::query("INSERT INTO user_roles(server, username, role_id) SELECT $1, $2, id FROM roles WHERE server = $1 AND name = 'Staff' ON CONFLICT(server, username, role_id) DO NOTHING")
+                .bind(server)
+                .bind(who)
+                .execute(db)
+                .await
+                .expect("holds it");
+        };
+        staff("lobby", "carol").await;
+        let patch: SettingsPatch = serde_json::from_value(json!({
+            "server_creation": "some",
+            "server_creators": ["Lobby:Staff", "lobby:Later", "alice", "lobby"],
+        }))
+        .expect("patch");
+        let _ = patch_settings(State(state.clone()), authed(db, "root").await, Json(patch))
+            .await
+            .expect("some people");
+        let may = |name: &'static str| async move {
+            let user = get_user(db, name).await.expect("user").expect("exists");
+            effective(db, Some(&user))
+                .await
+                .can_create_servers()
+                .await
+                .expect("effective")
+        };
+        let stored = || async {
+            sqlx::query("SELECT value FROM settings WHERE key = 'server_creators'")
+                .fetch_one(db)
+                .await
+                .expect("row")
+                .try_get::<String, _>(0)
+                .expect("value")
+        };
+        let rename = async |by: &str, server: &str, name: &str| {
+            let patch: ServerPatch = serde_json::from_value(json!({ "name": name })).expect("req");
+            update_server(
+                State(state.clone()),
+                authed(db, by).await,
+                Path(server.to_string()),
+                Json(patch),
+            )
+            .await
+            .map(|_| ())
+        };
+        assert!(may("carol").await && !may("dave").await);
+
+        rename("alice", "lobby", "Lounge").await.expect("rename");
+        assert_eq!(
+            stored().await,
+            "lounge:Staff,lounge:Later,alice,lobby",
+            "its role entries follow the server; the account named lobby is not one"
+        );
+        assert!(may("carol").await, "the same people keep the grant");
+        rename("dave", "den", "Lobby")
+            .await
+            .expect("the freed name is taken");
+        staff("lobby", "dave").await;
+        assert!(!may("dave").await, "the old name gives nothing");
+
+        let _ = delete_server(
+            State(state.clone()),
+            authed(db, "root").await,
+            Path("lounge".to_string()),
+        )
+        .await
+        .expect("delete");
+        settle(db).await;
+        assert_eq!(
+            stored().await,
+            "alice,lobby",
+            "a deleted server's entries go"
+        );
+        assert!(!may("carol").await);
+        rename("dave", "lobby", "Lounge")
+            .await
+            .expect("that name too");
+        staff("lounge", "dave").await;
+        assert!(!may("dave").await);
+        assert!(may("alice").await, "accounts on the list stay");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_deleted_account_leaves_the_details_of_the_instance_audit() {
+        let (state, path) = temp_state("audit_details_forget").await;
+        let db = &state.db;
+        for name in ["root", "bob", "dave"] {
+            let _ = reg(&state, name).await.expect(name);
+        }
+        let set = |body: serde_json::Value| async {
+            let patch: SettingsPatch = serde_json::from_value(body).expect("patch");
+            let _ = patch_settings(State(state.clone()), authed(db, "root").await, Json(patch))
+                .await
+                .expect("patch");
+        };
+        set(json!({"server_creators": ["bob", "Dave", "lobby:dave"]})).await;
+        set(json!({"server_creators": ["dave"]})).await;
+        for (name, owner) in [("Club", "dave"), ("Den", "bob")] {
+            let req: AdminServerReq =
+                serde_json::from_value(json!({"name": name, "owner": owner})).expect("req");
+            let _ = create_server_for(State(state.clone()), authed(db, "root").await, Json(req))
+                .await
+                .expect("create");
+        }
+        let mut conn = db.acquire().await.expect("conn");
+        crate::api::instance_audit::record_config(
+            &mut conn,
+            "settings.config",
+            Some("server_creators"),
+            json!({"key": "server_creators", "from": "dave", "to": "dave,bob"}),
+            now(),
+        )
+        .await
+        .expect("a start changed the list");
+        drop(conn);
+
+        let _ = delete_user(
+            State(state.clone()),
+            authed(db, "root").await,
+            Path("dave".to_string()),
+        )
+        .await
+        .expect("delete dave");
+        settle(db).await;
+        let details: Vec<(String, Option<String>, serde_json::Value)> = audit_rows(db)
+            .await
+            .into_iter()
+            .map(|(_, action, target, detail)| {
+                (action, target, serde_json::from_str(&detail).expect("json"))
+            })
+            .collect();
+        assert_eq!(
+            details,
+            [
+                (
+                    "settings.change".to_string(),
+                    Some("server_creators".to_string()),
+                    json!({"key": "server_creators", "from": "", "to": "bob,lobby:dave"}),
+                ),
+                (
+                    "settings.change".to_string(),
+                    Some("server_creators".to_string()),
+                    json!({"key": "server_creators", "from": "bob,lobby:dave", "to": ""}),
+                ),
+                (
+                    "server.create".to_string(),
+                    Some("club".to_string()),
+                    json!({"owner": null}),
+                ),
+                (
+                    "server.create".to_string(),
+                    Some("den".to_string()),
+                    json!({"owner": "bob"}),
+                ),
+                (
+                    "settings.config".to_string(),
+                    Some("server_creators".to_string()),
+                    json!({"key": "server_creators", "from": "", "to": "bob", "by": "config"}),
+                ),
+            ],
+            "the deleted name is gone from the lists and as an owner; the rest stays"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_admin_creates_a_server_for_an_owner_whatever_the_switch_says() {
+        use crate::api::access::perms::ALL_PERMS;
+        let (state, path) = temp_state("admin_create_server").await;
+        let db = &state.db;
+        for name in ["bob", "root"] {
+            sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, is_site_admin, created_at) VALUES($1, $1, '', 'text', 'identicon', $2, 0)")
+                .bind(name)
+                .bind(i64::from(name == "root"))
+                .execute(db)
+                .await
+                .expect("user");
+        }
+        let root = || Authed(crate::api::test_util::mem_user("root", true));
+        let req = |body: serde_json::Value| -> Json<AdminServerReq> {
+            Json(serde_json::from_value(body).expect("req"))
+        };
+        let patch: SettingsPatch =
+            serde_json::from_value(json!({"server_creation": "nobody"})).expect("patch");
+        let _ = patch_settings(State(state.clone()), root(), Json(patch))
+            .await
+            .expect("creation off");
+        let refused = create_server_for(
+            State(state.clone()),
+            Authed(crate::api::test_util::mem_user("bob", false)),
+            req(json!({"name": "Club", "owner": "bob"})),
+        )
+        .await;
+        assert!(
+            matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"),
+            "only the site admin, and the same 404 as an unknown path"
+        );
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM servers WHERE name = 'club'").await,
+            0
+        );
+
+        let mut rx = state.hub.subscribe();
+        let detail = create_server_for(
+            State(state.clone()),
+            root(),
+            req(json!({"name": " Club ", "owner": "Bob"})),
+        )
+        .await
+        .expect("create")
+        .0;
+        assert_eq!(
+            (detail.name.as_str(), detail.display_name.as_str()),
+            ("club", "Club")
+        );
+        assert_eq!(detail.creator, None);
+        assert_eq!(detail.member_count, 1);
+        assert_eq!(detail.channels.len(), 1);
+        let row = sqlx::query("SELECT is_admin, perms, joined_via FROM members WHERE server = 'club' AND username = 'bob'")
+            .fetch_one(db)
+            .await
+            .expect("the owner is a member");
+        assert_eq!(
+            (
+                row.try_get::<i64, _>(0).expect("is_admin"),
+                row.try_get::<i64, _>(1).expect("perms"),
+                row.try_get::<Option<i64>, _>(2).expect("joined_via"),
+            ),
+            (1, ALL_PERMS, None),
+            "an admin with every permission"
+        );
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM servers WHERE name = 'club' AND creator IS NULL AND password_hash IS NULL AND member_count = 1").await,
+            1
+        );
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM members WHERE server = 'club'").await,
+            1
+        );
+        let events = drained(&mut rx);
+        assert!(
+            events.iter().any(|ev| matches!(ev, WsEvent::ServerCreated { server } if server.name == "club" && server.creator.is_none())),
+            "server_created without a creator"
+        );
+        assert!(
+            events.iter().any(|ev| matches!(ev, WsEvent::MemberJoined { server, member } if server == "club" && member.user.username == "bob")),
+            "the owner's apps hear member_joined"
+        );
+        let audit = sqlx::query(
+            "SELECT actor, target, detail FROM instance_audit WHERE action = 'server.create'",
+        )
+        .fetch_all(db)
+        .await
+        .expect("audit");
+        assert_eq!(audit.len(), 1);
+        assert_eq!(
+            (
+                audit[0].try_get::<String, _>(0).expect("actor"),
+                audit[0].try_get::<String, _>(1).expect("target"),
+                audit[0].try_get::<String, _>(2).expect("detail"),
+            ),
+            (
+                "root".to_string(),
+                "club".to_string(),
+                json!({"owner": "bob"}).to_string()
+            )
+        );
+
+        let own = create_server_for(
+            State(state.clone()),
+            root(),
+            req(json!({"name": "Vault", "owner": "root", "password": "long enough"})),
+        )
+        .await
+        .expect("the admin as owner, with a password")
+        .0;
+        assert_eq!(own.creator, None);
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM servers WHERE name = 'vault' AND creator IS NULL AND password_hash IS NOT NULL").await,
+            1
+        );
+        for (body, error) in [
+            (
+                json!({"name": "Club", "owner": "bob"}),
+                "Server name is taken",
+            ),
+            (json!({"name": "  ", "owner": "bob"}), "Name required"),
+            (
+                json!({"name": "Other", "owner": "nobody"}),
+                "No such account",
+            ),
+            (
+                json!({"name": "Other", "owner": "bob", "password": "short"}),
+                "Use at least 8 characters, or leave it blank for a generated one",
+            ),
+        ] {
+            let refused = create_server_for(State(state.clone()), root(), req(body.clone())).await;
+            assert!(
+                matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == error),
+                "{body}: {:?}",
+                refused.err().map(|ApiError(_, m)| m)
+            );
+        }
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM servers WHERE name = 'other'").await,
+            0
+        );
+        done(state, path).await;
     }
 
     #[tokio::test]

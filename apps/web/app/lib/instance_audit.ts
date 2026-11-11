@@ -2,7 +2,7 @@ import type { InstanceAuditEntry } from './types'
 
 export interface AuditPart {
   text: string
-  // A username: blurred in streamer mode.
+  // A username or a server name: blurred in streamer mode.
   name?: boolean
 }
 
@@ -24,27 +24,45 @@ const actorOf = (e: InstanceAuditEntry): AuditPart => {
   return detailOf(e).by === 'config' ? { text: 'Server config' } : { text: 'Deleted user' }
 }
 
-// A setting's value in a line: an empty one reads "nothing", a long list is cut.
-const shown = (value: string): string => {
-  if (value === '') return 'nothing'
-  return value.length > VALUE_MAX ? `${value.slice(0, VALUE_MAX)}...` : value
+// A setting's value in a line: an empty one reads "nothing", a long list is cut. `names` marks
+// the values of a list of usernames.
+const valuePart = (value: string, names: boolean): AuditPart => {
+  if (value === '') return { text: 'nothing' }
+  const text = value.length > VALUE_MAX ? `${value.slice(0, VALUE_MAX)}...` : value
+  return names ? { text, name: true } : { text }
 }
+
+// Settings whose values are usernames.
+const NAME_LISTS = new Set(['server_creators'])
 
 // A changed setting: its key and, when the entry has them, the old and the new value.
 const settingLine = (e: InstanceAuditEntry): AuditPart[] => {
   const { key, from, to } = detailOf(e)
   const name = typeof key === 'string' && key !== '' ? key : (e.target ?? 'a setting')
-  const values =
-    typeof from === 'string' && typeof to === 'string'
-      ? [{ text: ` from ${shown(from)} to ${shown(to)}` }]
-      : []
-  return [{ text: ` changed ${name}` }, ...values]
+  if (typeof from !== 'string' || typeof to !== 'string') return [{ text: ` changed ${name}` }]
+  const names = NAME_LISTS.has(name)
+  return [
+    { text: ` changed ${name} from ` },
+    valuePart(from, names),
+    { text: ' to ' },
+    valuePart(to, names),
+  ]
+}
+
+// A server the admin made for an account, which may have been deleted since.
+const serverLine = (e: InstanceAuditEntry): AuditPart[] => {
+  if (e.target === null) return [{ text: ' created a server' }]
+  const { owner } = detailOf(e)
+  const made: AuditPart[] = [{ text: ' created the server ' }, { text: e.target, name: true }]
+  if (typeof owner === 'string') return [...made, { text: ' for ' }, { text: owner, name: true }]
+  return owner === null ? [...made, { text: ' for a deleted user' }] : made
 }
 
 // Actions with a line of their own: what follows the actor.
 const LINES: Record<string, (e: InstanceAuditEntry) => AuditPart[]> = {
   'settings.change': settingLine,
   'settings.config': settingLine,
+  'server.create': serverLine,
 }
 
 // One line of the instance audit log: who did what to whom. Unknown actions show their code.

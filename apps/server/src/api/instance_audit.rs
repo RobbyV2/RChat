@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::Row;
 
+use crate::api::policy::{SERVER_CREATORS, without_creator};
 use crate::api::{ApiError, Authed, Paged, cursor_int, decode_cursor, encode_cursor};
 use crate::db::{Db, now};
 use crate::state::AppState;
@@ -81,12 +82,54 @@ async fn insert(
     Ok(())
 }
 
-/// Drops a deleted account's name from the log (as actor, and as the target of `user.*`
-/// actions), so a new account with the same username never inherits its history.
+/// Drops a deleted account's name from the log (as actor, as the target of `user.*` actions,
+/// as the owner a server was made for, and from recorded lists of server creators), so a new
+/// account with the same username never inherits its history.
 pub(crate) async fn forget_user(
     conn: &mut sqlx::AnyConnection,
     username: &str,
 ) -> sqlx::Result<()> {
+    let named = sqlx::query(
+        "SELECT id, action, detail FROM instance_audit WHERE action = 'server.create' OR (target = $1 AND action IN ('settings.change', 'settings.config'))",
+    )
+    .bind(SERVER_CREATORS)
+    .fetch_all(&mut *conn)
+    .await?;
+    for row in &named {
+        let (id, action, detail): (i64, String, String) =
+            (row.try_get(0)?, row.try_get(1)?, row.try_get(2)?);
+        let Ok(Value::Object(mut fields)) = serde_json::from_str::<Value>(&detail) else {
+            continue;
+        };
+        let mut changed = false;
+        match action.as_str() {
+            "server.create" => {
+                if fields.get("owner").and_then(Value::as_str) == Some(username) {
+                    fields.insert("owner".to_string(), Value::Null);
+                    changed = true;
+                }
+            }
+            _ => {
+                for side in ["from", "to"] {
+                    let kept = fields
+                        .get(side)
+                        .and_then(Value::as_str)
+                        .and_then(|list| without_creator(list, username));
+                    if let Some(kept) = kept {
+                        fields.insert(side.to_string(), Value::from(kept));
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            sqlx::query("UPDATE instance_audit SET detail = $1 WHERE id = $2")
+                .bind(Value::Object(fields).to_string())
+                .bind(id)
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
     sqlx::query("UPDATE instance_audit SET actor = NULL WHERE actor = $1")
         .bind(username)
         .execute(&mut *conn)

@@ -302,12 +302,13 @@ mod tests {
         ),
     ];
 
-    const ADMIN_ROUTES: [(&str, &str); 12] = [
+    const ADMIN_ROUTES: [(&str, &str); 13] = [
         ("patch", "/api/v1/admin/settings"),
         ("get", "/api/v1/admin/config"),
         ("get", "/api/v1/admin/overview"),
         ("get", "/api/v1/admin/users"),
         ("get", "/api/v1/admin/servers"),
+        ("post", "/api/v1/admin/servers"),
         ("delete", "/api/v1/admin/servers/{name}"),
         ("delete", "/api/v1/admin/users/{username}"),
         ("delete", "/api/v1/admin/users/{username}/recovery"),
@@ -731,6 +732,7 @@ mod tests {
             dms: Vec::new(),
             dms_more: false,
             dms_cursor: None,
+            can_create_servers: true,
         };
         let value = serde_json::to_value(me).expect("me");
         assert_eq!(value["is_site_admin"], Value::Bool(true));

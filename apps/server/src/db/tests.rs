@@ -4847,3 +4847,17 @@ async fn the_upload_expiry_cap_reaches_an_old_database() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn server_creation_controls_are_added_to_an_old_database() {
+    controls_reach_an_old_database(
+        "creation_controls",
+        &["server_creation", "server_creators"],
+        &["everyone", ""],
+        &[
+            ("SERVER_CREATION", "some", "some"),
+            ("SERVER_CREATORS", " bob, lobby:Staff ", "bob,lobby:Staff"),
+        ],
+    )
+    .await;
+}

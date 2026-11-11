@@ -66,6 +66,9 @@ pub struct Me {
     pub dms_more: bool,
     /// `cursor` value for the next page of `GET /api/v1/dms`; null when there are no more.
     pub dms_cursor: Option<String>,
+    /// Whether this account may create servers (`server_creation` in `GET /api/v1/settings`
+    /// applied to it).
+    pub can_create_servers: bool,
 }
 
 fn password_kind_schema() -> utoipa::openapi::Object {
@@ -425,6 +428,10 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
         dms,
         dms_more,
         dms_cursor,
+        can_create_servers: crate::api::policy::effective(db, Some(user))
+            .await
+            .can_create_servers()
+            .await?,
     })
 }
 

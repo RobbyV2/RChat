@@ -83,6 +83,34 @@ pub async fn perm_subjects(
     Ok(subjects)
 }
 
+/// The roles `username` holds in the servers they are in, as (server, role name).
+pub async fn held_roles(db: &Db, username: &str) -> sqlx::Result<Vec<(String, String)>> {
+    sqlx::query(
+        "SELECT r.server, r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.username = $1",
+    )
+    .bind(username)
+    .fetch_all(db)
+    .await?
+    .iter()
+    .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
+    .collect()
+}
+
+/// Whether the live server `server` has a role named `name`.
+pub async fn role_named<'e, E>(ex: E, server: &str, name: &str) -> sqlx::Result<bool>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Any>,
+{
+    Ok(sqlx::query(
+        "SELECT 1 FROM roles r JOIN servers s ON s.name = r.server WHERE r.server = $1 AND r.name = $2 AND COALESCE(s.password_hash, '') <> '!purging' LIMIT 1",
+    )
+    .bind(server)
+    .bind(name)
+    .fetch_optional(ex)
+    .await?
+    .is_some())
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PermRow {
     pub subject: String,

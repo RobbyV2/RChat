@@ -81,6 +81,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         client_other_instances: _,
         registration: _,
         upload_expiry_max_days: _,
+        server_creation: _,
     } = Settings::cached(&state.read()).await;
     state.instance.discovery(
         &state.instance.origin(peer, headers),
