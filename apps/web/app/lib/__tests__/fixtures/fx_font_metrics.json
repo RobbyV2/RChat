@@ -1,0 +1,26 @@
+{
+  "roboto": {
+    "upm": 2048,
+    "ascent": 1900,
+    "descent": -500,
+    "lineGap": 0,
+    "avgWidth": 925.032,
+    "avgCapWidth": 1298.654
+  },
+  "pixelify": {
+    "upm": 1000,
+    "ascent": 920,
+    "descent": -280,
+    "lineGap": 0,
+    "avgWidth": 514.0,
+    "avgCapWidth": 592.923
+  },
+  "silkscreen": {
+    "upm": 1000,
+    "ascent": 1030,
+    "descent": -250,
+    "lineGap": 0,
+    "avgWidth": 677.076,
+    "avgCapWidth": 740.385
+  }
+}

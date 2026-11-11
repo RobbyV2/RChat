@@ -1,0 +1,155 @@
+{
+  "_about": "Every same-element text-* and bg-* color pair in apps/web/app/components/**/*.tsx on 2026-11-14 (main 1e63e85), with a file that uses it, frozen for the vintage style's tests until the style is wired in.",
+  "pairs": [
+    {
+      "fg": "--color-error",
+      "bg": "--color-surface-container-high",
+      "file": "p2p/p2p_server_roles.tsx"
+    },
+    {
+      "fg": "--color-error",
+      "bg": "--color-surface-container-highest",
+      "file": "p2p/p2p_server_roles.tsx"
+    },
+    {
+      "fg": "--color-inverse-on-surface",
+      "bg": "--color-inverse-surface",
+      "file": "reactions.tsx"
+    },
+    {
+      "fg": "--color-on-danger",
+      "bg": "--color-danger",
+      "file": "p2p/p2p_call.tsx"
+    },
+    {
+      "fg": "--color-on-error",
+      "bg": "--color-error",
+      "file": "p2p/p2p_server_settings.tsx"
+    },
+    {
+      "fg": "--color-on-error-container",
+      "bg": "--color-error-container",
+      "file": "p2p/verify_dialog.tsx"
+    },
+    {
+      "fg": "--color-on-mute",
+      "bg": "--color-mute",
+      "file": "voice_grid.tsx"
+    },
+    {
+      "fg": "--color-on-primary",
+      "bg": "--color-primary",
+      "file": "p2p/p2p_chat.tsx"
+    },
+    {
+      "fg": "--color-on-primary-container",
+      "bg": "--color-primary-container",
+      "file": "p2p/p2p_server_view.tsx"
+    },
+    {
+      "fg": "--color-on-secondary-container",
+      "bg": "--color-secondary-container",
+      "file": "p2p/verify_dialog.tsx"
+    },
+    {
+      "fg": "--color-on-surface",
+      "bg": "--color-surface-container",
+      "file": "p2p/p2p_voice.tsx"
+    },
+    {
+      "fg": "--color-on-surface",
+      "bg": "--color-surface-container-high",
+      "file": "p2p/p2p_call.tsx"
+    },
+    {
+      "fg": "--color-on-surface",
+      "bg": "--color-surface-container-highest",
+      "file": "p2p/p2p_chat.tsx"
+    },
+    {
+      "fg": "--color-on-surface",
+      "bg": "--color-surface-container-low",
+      "file": "home.tsx"
+    },
+    {
+      "fg": "--color-on-surface",
+      "bg": "--color-surface-variant",
+      "file": "reactions.tsx"
+    },
+    {
+      "fg": "--color-on-surface-variant",
+      "bg": "--color-surface",
+      "file": "settings_menu.tsx"
+    },
+    {
+      "fg": "--color-on-surface-variant",
+      "bg": "--color-surface-container",
+      "file": "p2p/p2p_chat.tsx"
+    },
+    {
+      "fg": "--color-on-surface-variant",
+      "bg": "--color-surface-container-high",
+      "file": "p2p/p2p_call.tsx"
+    },
+    {
+      "fg": "--color-on-surface-variant",
+      "bg": "--color-surface-container-highest",
+      "file": "p2p/p2p_voice.tsx"
+    },
+    {
+      "fg": "--color-on-surface-variant",
+      "bg": "--color-surface-container-low",
+      "file": "profile_card.tsx"
+    },
+    {
+      "fg": "--color-on-surface-variant",
+      "bg": "--color-surface-container-lowest",
+      "file": "title_bar.tsx"
+    },
+    {
+      "fg": "--color-on-tertiary",
+      "bg": "--color-tertiary",
+      "file": "p2p/p2p_server_view.tsx"
+    },
+    {
+      "fg": "--color-on-tertiary-container",
+      "bg": "--color-tertiary-container",
+      "file": "p2p/p2p_call.tsx"
+    },
+    {
+      "fg": "--color-outline",
+      "bg": "--color-surface-container-high",
+      "file": "code_block.tsx"
+    },
+    {
+      "fg": "--color-primary",
+      "bg": "--color-surface-container",
+      "file": "p2p/p2p_chat.tsx"
+    },
+    {
+      "fg": "--color-primary",
+      "bg": "--color-surface-container-high",
+      "file": "p2p/p2p_files.tsx"
+    },
+    {
+      "fg": "--color-primary",
+      "bg": "--color-surface-container-highest",
+      "file": "p2p/p2p_chat.tsx"
+    },
+    {
+      "fg": "--color-surface",
+      "bg": "--color-on-surface",
+      "file": "voice_grid.tsx"
+    },
+    {
+      "fg": "--color-surface",
+      "bg": "--color-status-green",
+      "file": "p2p/p2p_call.tsx"
+    },
+    {
+      "fg": "--color-tertiary",
+      "bg": "--color-surface-container-high",
+      "file": "p2p/p2p_home.tsx"
+    }
+  ]
+}
