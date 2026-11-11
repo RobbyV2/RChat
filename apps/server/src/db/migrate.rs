@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use sha2::{Digest, Sha256};
 use sqlx::{AnyConnection, Row};
 
@@ -5,7 +7,7 @@ use super::schema::{POSTGRES_SCHEMA, POSTGRES_TRIGGERS, SQLITE_SCHEMA, SQLITE_TR
 use super::secrets::secret_key;
 use super::{NO_EXTRA_HASH, now};
 use crate::api::access::perms::{ALL_PERMS, PRE_REPORT_PERMS, Perm};
-use crate::config::Seeds;
+use crate::api::controls::{Control, ControlSeeds};
 
 const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "password_hash TEXT"),
@@ -339,16 +341,8 @@ async fn postgres_triggers(conn: &mut AnyConnection) -> anyhow::Result<()> {
 pub(super) async fn init_schema(
     conn: &mut AnyConnection,
     is_sqlite: bool,
-    seeds: &Seeds,
-) -> anyhow::Result<()> {
-    let Seeds {
-        guests_enabled,
-        profanity_filter,
-        profanity_targets,
-        p2p_attachments,
-        outgoing_webhooks,
-        features,
-    } = seeds;
+    controls: Option<&ControlSeeds>,
+) -> anyhow::Result<ConfigStart> {
     let schema = match is_sqlite {
         true => SQLITE_SCHEMA,
         false => POSTGRES_SCHEMA,
@@ -474,31 +468,10 @@ pub(super) async fn init_schema(
         .bind(t)
         .execute(&mut *conn)
         .await?;
-    let guests = match guests_enabled {
-        Some(v) if matches!(v.trim().to_lowercase().as_str(), "0" | "false" | "off") => "0",
-        _ => "1",
+    let started = match controls {
+        Some(controls) => apply_controls(conn, controls).await?,
+        None => ConfigStart::default(),
     };
-    seed_setting(conn, "guests_enabled", guests).await?;
-    let profanity =
-        crate::api::profanity_seed(profanity_filter.as_deref(), profanity_targets.as_deref());
-    seed_settings(&mut *conn, &profanity).await?;
-    let p2p = crate::api::switch_seed(p2p_attachments.as_deref());
-    seed_settings(&mut *conn, &[("p2p_attachments", p2p)]).await?;
-    let outgoing = crate::api::switch_off_seed(outgoing_webhooks.as_deref());
-    seed_settings(&mut *conn, &[("outgoing_webhooks", outgoing)]).await?;
-    seed_settings(&mut *conn, &features.pairs()).await?;
-    seed_setting(
-        conn,
-        crate::api::features::Registration::KEY,
-        features.registration().as_str(),
-    )
-    .await?;
-    seed_setting(
-        conn,
-        crate::api::upload_expiry::CAP_KEY,
-        &features.upload_expiry_max_days.unwrap_or(0).to_string(),
-    )
-    .await?;
     for (key, value) in [
         ("instance_id", crate::identity::random_id()),
         ("instance_signing_key", crate::identity::new_seed()),
@@ -509,7 +482,7 @@ pub(super) async fn init_schema(
         seed_setting(conn, key, &value).await?;
     }
     store_setting(conn, "schema_version", &SCHEMA_VERSION.to_string()).await?;
-    Ok(())
+    Ok(started)
 }
 
 /// Gives Manage reports to admins with every permission, and to every admin permission set and
@@ -600,16 +573,131 @@ async fn restrict_old_rules(conn: &mut AnyConnection) -> sqlx::Result<()> {
     Ok(())
 }
 
-pub(crate) async fn seed_settings(
+/// A stored control that a start changed because the server config changed or pins it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigChange {
+    pub key: &'static str,
+    /// The stored value before.
+    pub from: String,
+    pub to: String,
+    /// Another start recorded a different env value in the last 10 minutes.
+    pub flips: bool,
+}
+
+/// What a start did to the stored controls.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ConfigStart {
+    /// The stored values it changed because the server config changed or pins them.
+    pub changes: Vec<ConfigChange>,
+    /// Controls this start's env leaves unset although another start set them in the last 10
+    /// minutes: copies are running with different settings.
+    pub forgotten: Vec<&'static str>,
+}
+
+/// Set once a start has recorded the env values of the controls.
+const RECORDS: &str = "env:records";
+/// The keys of the pinned controls, comma separated.
+pub(crate) const PINNED: &str = "env:pinned";
+/// How recent a record of another env value is for `ConfigChange::flips`.
+const FLIP_SECS: i64 = 600;
+
+async fn drop_setting(conn: &mut AnyConnection, key: &str) -> sqlx::Result<()> {
+    sqlx::query("DELETE FROM settings WHERE key = $1")
+        .bind(key)
+        .execute(&mut *conn)
+        .await
+        .map(|_| ())
+}
+
+/// Brings the stored controls in line with the server config. A control the env sets is
+/// written when nothing is stored, when the env value differs from the one recorded at the
+/// last start that set it (`env:<key>`), when it was unset at a start with records and is set
+/// again, or when it is pinned. Otherwise the stored value stays, so a change made in the admin
+/// page stands. The first start with records only records. Unset controls lose their record
+/// and get their default when nothing is stored. Each change of a stored value is noted in the
+/// instance audit log as `settings.config`, made by the server config. Only a server start
+/// runs this: a tool that opens the database without the server's env must leave the records
+/// alone, or the next start would apply its env over what the admin page chose.
+async fn apply_controls(
     conn: &mut AnyConnection,
-    pairs: &[(&str, bool)],
-) -> sqlx::Result<()> {
-    for (key, on) in pairs {
-        let value = match on {
-            true => "1",
-            false => "0",
-        };
-        seed_setting(conn, key, value).await?;
+    seeds: &ControlSeeds,
+) -> sqlx::Result<ConfigStart> {
+    let mut table = HashMap::new();
+    for row in sqlx::query("SELECT key, value FROM settings")
+        .fetch_all(&mut *conn)
+        .await?
+    {
+        table.insert(row.try_get::<String, _>(0)?, row.try_get::<String, _>(1)?);
     }
-    Ok(())
+    let records = table.contains_key(RECORDS);
+    let t = now();
+    let recent = |at_key: &str| {
+        table
+            .get(at_key)
+            .and_then(|at| at.parse::<i64>().ok())
+            .is_some_and(|at| t - at < FLIP_SECS)
+    };
+    let (mut changes, mut forgotten) = (Vec::new(), Vec::new());
+    for control in Control::all() {
+        let stored = control.read(&table);
+        let (record_key, at_key) = (
+            format!("env:{}", control.key),
+            format!("env_at:{}", control.key),
+        );
+        let record = table.get(&record_key);
+        let env = seeds.value(control.key);
+        if let (Some(env), Some(stored)) = (env, &stored) {
+            let changed = match record {
+                Some(record) => record != env,
+                None => records,
+            };
+            if (changed || seeds.pins(control.key)) && stored != env {
+                for (key, value) in control.rows(env) {
+                    store_setting(conn, key, &value).await?;
+                }
+                crate::api::instance_audit::record_config(
+                    conn,
+                    "settings.config",
+                    Some(control.key),
+                    serde_json::json!({
+                        "key": control.key,
+                        "from": control.shown(stored),
+                        "to": control.shown(env),
+                    }),
+                    t,
+                )
+                .await?;
+                changes.push(ConfigChange {
+                    key: control.key,
+                    from: stored.clone(),
+                    to: env.to_string(),
+                    flips: record.is_some_and(|record| record != env) && recent(&at_key),
+                });
+            }
+        }
+        for (key, value) in control.rows(env.unwrap_or(control.default)) {
+            seed_setting(conn, key, &value).await?;
+        }
+        match (env, record) {
+            (Some(env), Some(record)) if record == env => {}
+            (Some(env), _) => {
+                store_setting(conn, &record_key, env).await?;
+                store_setting(conn, &at_key, &t.to_string()).await?;
+            }
+            (None, Some(_)) => {
+                if recent(&at_key) {
+                    forgotten.push(control.key);
+                }
+                drop_setting(conn, &record_key).await?;
+                drop_setting(conn, &at_key).await?;
+            }
+            (None, None) => {}
+        }
+    }
+    match seeds.pinned.is_empty() {
+        true => drop_setting(conn, PINNED).await?,
+        false => store_setting(conn, PINNED, &seeds.pinned.join(",")).await?,
+    }
+    seed_setting(conn, RECORDS, "1").await?;
+    Ok(ConfigStart { changes, forgotten })
 }

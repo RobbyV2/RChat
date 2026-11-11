@@ -6,7 +6,7 @@ use s3::creds::Credentials;
 use s3::{Bucket, Region};
 use serde::Deserialize;
 
-use crate::api::features::FeatureSeeds;
+use crate::api::controls::ControlSeeds;
 use crate::db::DbOptions;
 use crate::instance::InstanceConfig;
 use crate::limits::Limits;
@@ -193,7 +193,7 @@ pub struct AppConfig {
     #[serde(skip)]
     pub secrets: Secrets,
     #[serde(skip)]
-    pub seeds: Seeds,
+    pub controls: ControlSeeds,
     #[serde(skip)]
     pub swagger_ui: Option<String>,
 }
@@ -210,17 +210,6 @@ impl std::fmt::Debug for Secrets {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Secrets").finish_non_exhaustive()
     }
-}
-
-/// The env values that seed instance settings at first start, as given.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Seeds {
-    pub guests_enabled: Option<String>,
-    pub profanity_filter: Option<String>,
-    pub profanity_targets: Option<String>,
-    pub p2p_attachments: Option<String>,
-    pub outgoing_webhooks: Option<String>,
-    pub features: FeatureSeeds,
 }
 
 fn lookup(env: &Option<HashMap<String, String>>, name: &str) -> Option<String> {
@@ -310,14 +299,7 @@ impl AppConfig {
             relay_secret: secret(&env, "RELAY_SECRET"),
             p2p_secret: secret(&env, "P2P_SECRET"),
         };
-        config.seeds = Seeds {
-            guests_enabled: lookup(&env, "GUESTS_ENABLED"),
-            profanity_filter: lookup(&env, "PROFANITY_FILTER"),
-            profanity_targets: lookup(&env, "PROFANITY_TARGETS"),
-            p2p_attachments: lookup(&env, "P2P_ATTACHMENTS"),
-            outgoing_webhooks: lookup(&env, "OUTGOING_WEBHOOKS"),
-            features: FeatureSeeds::load(&|name| lookup(&env, name))?,
-        };
+        config.controls = ControlSeeds::load(&|name| lookup(&env, name))?;
         config.swagger_ui = lookup(&env, "SWAGGER_UI");
         config.roles = config.resolve_roles()?;
         config.check_shared_state()?;
@@ -345,12 +327,13 @@ impl AppConfig {
         }
     }
 
-    /// What the database layer reads at open: the limits, the pepper and the setting seeds.
+    /// What the database layer reads at open: the limits, the pepper and the controls the env
+    /// sets and pins.
     pub fn db_options(&self) -> DbOptions {
         DbOptions {
             limits: self.limits.clone(),
             pepper: self.secrets.password_pepper.clone(),
-            seeds: self.seeds.clone(),
+            controls: Some(self.controls.clone()),
         }
     }
 
@@ -626,6 +609,22 @@ impl AppConfig {
         AppConfig::load_from(&cli, Some(HashMap::new())).expect("default config")
     }
 
+    /// The configuration of an env given as pairs.
+    #[cfg(test)]
+    pub(crate) fn from_map(pairs: &[(&str, &str)]) -> anyhow::Result<AppConfig> {
+        let cli = CliOverrides {
+            host: None,
+            port: None,
+            mode: None,
+            roles: None,
+        };
+        let env = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        AppConfig::load_from(&cli, Some(env))
+    }
+
     pub fn s3(&self) -> anyhow::Result<Option<Arc<Bucket>>> {
         match (
             &self.s3_endpoint,
@@ -692,7 +691,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::api::features::{Feature, FeatureSeeds, Registration};
+    use crate::api::controls::ControlSeeds;
     use crate::hub::Limits as WsLimits;
 
     #[test]
@@ -1278,17 +1277,17 @@ mod tests {
             ),
             (0, true, 9000, 0, 7, 500, 10 * 1024 * 1024)
         );
-        let f = config.seeds.features;
+        let c = &config.controls;
         assert_eq!(
             (
-                f.on(Feature::E2ee),
-                f.on(Feature::E2eeCompliance),
-                f.on(Feature::Widgets),
-                f.on(Feature::WidgetBridge),
-                f.on(Feature::Sfu)
+                c.value("e2ee"),
+                c.value("e2ee_compliance"),
+                c.value("widgets"),
+                c.value("widget_bridge"),
+                c.value("sfu")
             ),
-            (true, true, false, false, false),
-            "the switch booleans seed Settings; SFU_ENABLED stays a limit"
+            (Some("1"), Some("1"), Some("0"), None, None),
+            "the switch booleans set Settings; SFU_ENABLED stays a limit"
         );
     }
 
@@ -1320,11 +1319,12 @@ mod tests {
             ("RELAY_SECRET", " relay "),
             ("P2P_SECRET", " "),
             ("GUESTS_ENABLED", "off"),
-            ("PROFANITY_TARGETS", "names"),
+            ("PROFANITY_TARGETS", "usernames"),
             ("OUTGOING_WEBHOOKS", "on"),
             ("SWAGGER_UI", "no"),
             ("FEATURE_P2P", "off"),
             ("AUTH_REGISTRATION", "closed"),
+            ("SETTINGS_PINNED", "AUTH_REGISTRATION"),
         ];
         let config = AppConfig::load_from(&cli(None, None), env(&set)).unwrap();
         let Secrets {
@@ -1336,31 +1336,46 @@ mod tests {
         assert_eq!(relay_secret.as_deref(), Some("relay"));
         assert_eq!(p2p_secret.as_deref(), None);
         assert_eq!(
-            config.seeds,
-            Seeds {
-                guests_enabled: Some("off".into()),
-                profanity_filter: None,
-                profanity_targets: Some("names".into()),
-                p2p_attachments: None,
-                outgoing_webhooks: Some("on".into()),
-                features: FeatureSeeds {
-                    switches: vec![(Feature::P2p, false)],
-                    registration: Some(Registration::Closed),
-                    upload_expiry_max_days: None,
-                },
+            config.controls,
+            ControlSeeds {
+                set: vec![
+                    ("profanity_targets", "usernames".into()),
+                    ("guests_enabled", "0".into()),
+                    ("outgoing_webhooks", "1".into()),
+                    ("p2p", "0".into()),
+                    ("registration", "closed".into()),
+                ],
+                pinned: vec!["registration"],
             }
         );
         assert_eq!(config.swagger_ui.as_deref(), Some("no"));
         let opts = config.db_options();
         assert_eq!(opts.pepper.as_deref(), Some("from-file"));
         assert_eq!(
-            (opts.limits, opts.seeds),
-            (config.limits.clone(), config.seeds.clone())
+            (opts.limits, opts.controls),
+            (config.limits.clone(), Some(config.controls.clone()))
         );
         assert!(!format!("{:?}", config.db_options()).contains("from-file"));
         let _ = std::fs::remove_file(file);
         let defaults = AppConfig::defaults();
-        assert_eq!(defaults.seeds, Seeds::default());
+        assert_eq!(defaults.controls, ControlSeeds::default());
+        for (pairs, error) in [
+            (
+                [("SETTINGS_PINNED", "FEATURE_P2P"), ("E2EE", "on")],
+                "SETTINGS_PINNED names FEATURE_P2P, but it is not set",
+            ),
+            (
+                [("SETTINGS_PINNED", "all"), ("GUESTS_ENABLED", "maybe")],
+                "GUESTS_ENABLED: expected on or off, got maybe",
+            ),
+            (
+                [("SETTINGS_PINNED", "E2EE"), ("PROFANITY_TARGETS", "names")],
+                "PROFANITY_TARGETS: expected all, none or a list of messages, links, usernames, server_names, channel_names, role_names, file_names, bios, channel_topics, category_names, got names",
+            ),
+        ] {
+            let stopped = AppConfig::from_map(&pairs).unwrap_err().to_string();
+            assert_eq!(stopped, error, "a bad control stops the start");
+        }
         assert_eq!(defaults.secrets.password_pepper, None);
         assert_eq!(defaults.swagger_ui, None);
     }

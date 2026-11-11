@@ -400,7 +400,9 @@ mod tests {
     #[tokio::test]
     async fn instance_id_and_key_are_generated_once_and_shared() {
         let (state, path) = temp_state("instance_once").await;
-        let reopened = crate::db::open(path.to_str()).await.expect("reopen");
+        let reopened = crate::db::open_started(path.to_str())
+            .await
+            .expect("reopen");
         let again = Instance::load(&reopened, &InstanceConfig::default())
             .await
             .expect("load");
@@ -1358,7 +1360,9 @@ mod tests {
             .expect("reload");
         assert!(none.ice_servers(&base, "alice", now()).0.is_empty());
         server.abort();
-        let reopened = crate::db::open(path.to_str()).await.expect("reopen");
+        let reopened = crate::db::open_started(path.to_str())
+            .await
+            .expect("reopen");
         let again = Instance::load(&reopened, &InstanceConfig::default())
             .await
             .expect("load");

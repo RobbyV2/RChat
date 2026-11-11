@@ -202,6 +202,21 @@ pub(crate) async fn retime_all(db: &Db, cap_days: i64) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// After a start changed the stored cap from the server config: the files are re-timed under
+/// the cap the config asked for (`to`, as stored), the way a change in the admin page does it.
+/// A value that is no number is no cap read, and nothing is shortened.
+pub(crate) async fn retime_from_config(db: &Db, to: &str) -> sqlx::Result<()> {
+    match crate::api::controls::number(CAP_KEY, Some(to)) {
+        Some(days) => retime_all(db, days).await,
+        None => {
+            tracing::warn!(
+                "the upload expiry cap from the server config is not a number, the files wait"
+            );
+            Ok(())
+        }
+    }
+}
+
 /// The cap as stored (0 for none), or `None` when it can't be read or is not a number. Steps that
 /// shorten or delete files skip a cap they could not read rather than use a fail-closed one.
 pub(crate) async fn stored_cap(conn: &mut sqlx::AnyConnection) -> Option<i64> {
@@ -1032,6 +1047,140 @@ mod tests {
         }
         assert!(heard);
         done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_cap_that_cannot_be_read_is_no_cap_and_shortens_nothing() {
+        use super::{CAP_DAYS_MAX, CAP_KEY};
+        use crate::api::controls::{Control, Kind, ROWS_SQL, number};
+        let line = Control::find(CAP_KEY).expect("the cap has its registry line");
+        assert_eq!(
+            (line.env, line.kind, line.default),
+            (
+                "UPLOAD_EXPIRY_MAX_DAYS",
+                Kind::Number {
+                    min: 0,
+                    max: CAP_DAYS_MAX
+                },
+                "0"
+            )
+        );
+        assert!(
+            ROWS_SQL.contains("'upload_expiry_max_days'"),
+            "settings read its row"
+        );
+        for (stored, read) in [
+            (None, Some(0)),
+            (Some("7"), Some(7)),
+            (Some(" 30 "), Some(30)),
+            (Some("999"), Some(CAP_DAYS_MAX)),
+            (Some("x"), None),
+            (Some(""), None),
+            (Some("1.5"), None),
+        ] {
+            assert_eq!(number(CAP_KEY, stored), read, "{stored:?}");
+        }
+        assert_eq!(
+            number("upload_expiry_cap", Some("7")),
+            None,
+            "a key without a registry line is no cap read"
+        );
+        assert_eq!(number("p2p", Some("1")), None, "nor is a switch");
+
+        let (state, path) = temp_state("upload_expiry_no_cap_read").await;
+        let db = &state.db;
+        let cid = club(&state).await;
+        set(&state, "alice", "club", NEVER).await.expect("never");
+        let (file, msg, _) = post_file(&state, cid).await;
+        age(db, &file, 10 * DAY).await;
+        exec(
+            db,
+            "UPDATE settings SET value = '7' WHERE key = 'upload_expiry_max_days'",
+        )
+        .await;
+        Settings::forget(db);
+        assert_eq!(
+            Settings::load(db).await.upload_expiry_max_days,
+            7,
+            "a stored cap is read, never taken for no cap"
+        );
+        exec(
+            db,
+            "UPDATE settings SET value = 'x' WHERE key = 'upload_expiry_max_days'",
+        )
+        .await;
+        Settings::forget(db);
+        assert_eq!(
+            Settings::load(db).await.upload_expiry_max_days,
+            1,
+            "one that can't be read is not taken for no cap either"
+        );
+        super::retime_from_config(db, "x")
+            .await
+            .expect("no cap read");
+        sweep(db, None).await.expect("sweep");
+        assert_eq!(ttl(db, &file).await, Some(Some(0)), "nothing is shortened");
+        assert_eq!(removed(db, msg).await, 0, "and nothing is deleted");
+        super::retime_from_config(db, "7")
+            .await
+            .expect("a cap the config asked for");
+        assert_eq!(ttl(db, &file).await, Some(Some(7 * DAY)));
+        Settings::forget(db);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_start_that_changes_the_cap_retimes_with_the_value_the_config_asked_for() {
+        use crate::config::AppConfig;
+        use crate::instance::{Instance, InstanceConfig};
+        use crate::ws::{Hub, WsEvent};
+        let (state, path) = temp_state("upload_expiry_cap_config").await;
+        let cid = club(&state).await;
+        set(&state, "alice", "club", NEVER).await.expect("never");
+        let (file, msg, _) = post_file(&state, cid).await;
+        age(&state.db, &file, 3 * DAY).await;
+        // The stored cap reads back as nonsense, which settings take as a 1 day cap.
+        exec(&state.db, "CREATE TRIGGER garble AFTER UPDATE ON settings WHEN new.key = 'upload_expiry_max_days' AND new.value = '7' BEGIN UPDATE settings SET value = 'x' WHERE key = 'upload_expiry_max_days'; END").await;
+        Settings::forget(&state.db);
+        crate::db::close(&state.db).await;
+
+        let opts = AppConfig::from_map(&[("UPLOAD_EXPIRY_MAX_DAYS", "7")])
+            .expect("config")
+            .db_options();
+        let db = crate::db::open_with(path.to_str(), &opts)
+            .await
+            .expect("a start with the cap set in the env");
+        let instance = Instance::load(&db, &InstanceConfig::default())
+            .await
+            .expect("instance");
+        let started = AppState::new(db, Hub::new(), None, None, instance);
+        let db = &started.db;
+        let mut rx = started.hub.subscribe();
+        assert_eq!(
+            ttl(db, &file).await,
+            Some(Some(0)),
+            "init leaves files alone"
+        );
+        crate::api::controls::config_applied(&started).await;
+        assert_eq!(
+            ttl(db, &file).await,
+            Some(Some(7 * DAY)),
+            "the cap the config asked for"
+        );
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::SettingsChanged { settings: _ })
+        ));
+        Settings::forget(db);
+        sweep(db, None).await.expect("sweep");
+        assert_eq!(
+            ttl(db, &file).await,
+            Some(Some(7 * DAY)),
+            "a cap that reads as nonsense is not applied"
+        );
+        assert_eq!(removed(db, msg).await, 0);
+        Settings::forget(db);
+        done(started, path).await;
     }
 
     async fn club_channel(db: &Db) -> i64 {

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use axum::Json;
@@ -7,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::api::access::{MsgScope, not_found, staff_message};
+use crate::api::controls::{ConfigRecords, Control, ROWS_SQL};
 use crate::api::features::{Feature, Registration};
 use crate::api::{
     ApiError, Authed, OkResp, Paged, ProfanitySwitch, ServerSummaryLite, Settings, UserRef, bad,
@@ -348,24 +350,128 @@ pub(crate) async fn patch_settings(
         })
     });
     let cap = upload_expiry_max_days.map(|d| d.to_string());
-    let pairs = switches
+    let pairs: Vec<(&str, &str)> = switches
         .chain(registration.map(|r| (Registration::KEY, r.as_str())))
-        .chain(cap.as_deref().map(|d| (upload_expiry::CAP_KEY, d)));
+        .chain(cap.as_deref().map(|d| (upload_expiry::CAP_KEY, d)))
+        .collect();
+    let records = ConfigRecords::load(&state.db).await?;
+    let touched: Vec<&Control> = Control::all()
+        .iter()
+        .filter(|c| pairs.iter().any(|(key, _)| c.keys().contains(key)))
+        .collect();
+    if let Some(control) = touched.iter().find(|c| records.pins(c)) {
+        return Err(bad(&format!("Set in the server config: {}", control.env)));
+    }
+    let mut tx = state.db.begin().await?;
+    let before = control_rows(&mut tx).await?;
+    let mut after = before.clone();
     for (key, value) in pairs {
         sqlx::query(
             "INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         )
         .bind(key)
         .bind(value)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
+        after.insert(key.to_string(), value.to_string());
     }
+    let t = now();
+    for control in touched {
+        let shown = |rows: &HashMap<String, String>| {
+            control.shown(control.read(rows).as_deref().unwrap_or(control.default))
+        };
+        let (from, to) = (shown(&before), shown(&after));
+        if from != to {
+            crate::api::instance_audit::record_in(
+                &mut tx,
+                &user.username,
+                "settings.change",
+                Some(control.key),
+                serde_json::json!({"key": control.key, "from": from, "to": to}),
+                t,
+            )
+            .await?;
+        }
+    }
+    tx.commit().await?;
     let settings = Settings::load(&state.db).await;
     if let Some(cap) = upload_expiry_max_days {
         upload_expiry::retime_all(&state.db, cap).await?;
     }
     state.hub.broadcast(WsEvent::SettingsChanged { settings });
     Ok(Json(settings))
+}
+
+/// The `settings` rows of every control, by key.
+async fn control_rows(conn: &mut sqlx::AnyConnection) -> sqlx::Result<HashMap<String, String>> {
+    let mut rows = HashMap::new();
+    for row in sqlx::query(sqlx::AssertSqlSafe(ROWS_SQL.as_str()))
+        .fetch_all(&mut *conn)
+        .await?
+    {
+        rows.insert(row.try_get::<String, _>(0)?, row.try_get::<String, _>(1)?);
+    }
+    Ok(rows)
+}
+
+/// One control in the config view: its stored value, what the server config said at the last
+/// start that set it, and whether the config pins it.
+#[derive(Serialize)]
+pub struct ControlRow {
+    pub key: &'static str,
+    pub env: &'static str,
+    pub value: String,
+    pub config: Option<String>,
+    pub pinned: bool,
+}
+
+/// One limit in the config view. Limits change only in the server config, at a start.
+#[derive(Serialize)]
+pub struct LimitRow {
+    pub env: &'static str,
+    pub value: Option<i64>,
+    pub default: Option<i64>,
+    pub range: String,
+}
+
+#[derive(Serialize)]
+pub struct ConfigView {
+    pub controls: Vec<ControlRow>,
+    pub limits: Vec<LimitRow>,
+}
+
+pub(crate) async fn get_config(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+) -> Result<Json<ConfigView>, ApiError> {
+    require_site_admin(&user)?;
+    let records = ConfigRecords::load(&state.db).await?;
+    let stored = control_rows(&mut *state.db.acquire().await?).await?;
+    let controls = Control::all()
+        .iter()
+        .map(|c| ControlRow {
+            key: c.key,
+            env: c.env,
+            value: c.shown(c.read(&stored).as_deref().unwrap_or(c.default)),
+            config: records.config(c).map(|value| c.shown(value)),
+            pinned: records.pins(c),
+        })
+        .collect();
+    let defaults = crate::limits::Limits::default().rows();
+    let limits = state
+        .limits
+        .rows()
+        .into_iter()
+        .zip(defaults)
+        .map(|((env, value), (_, default))| LimitRow {
+            env,
+            value,
+            default,
+            range: crate::limits::Limits::range(env)
+                .map_or(String::new(), |(lo, hi)| format!("{lo}-{hi}")),
+        })
+        .collect();
+    Ok(Json(ConfigView { controls, limits }))
 }
 
 pub(crate) async fn overview(
@@ -2105,6 +2211,445 @@ mod tests {
             serde_json::from_value::<SettingsPatch>(json!({"registration": "invite"})).is_err()
         );
         done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn page_changes_are_audited_with_the_old_and_new_value() {
+        let (state, path) = temp_state("settings_audit").await;
+        let root = || Authed(crate::api::test_util::mem_user("root", true));
+        let patch = |body: serde_json::Value| -> Json<SettingsPatch> {
+            Json(serde_json::from_value(body).expect("patch"))
+        };
+        let audit = || async {
+            let rows =
+                sqlx::query("SELECT actor, action, target, detail FROM instance_audit ORDER BY id")
+                    .fetch_all(&state.db)
+                    .await
+                    .expect("audit");
+            rows.iter()
+                .map(|r| {
+                    let detail: String = r.try_get(3).expect("detail");
+                    json!({
+                        "actor": r.try_get::<Option<String>, _>(0).expect("actor"),
+                        "action": r.try_get::<String, _>(1).expect("action"),
+                        "target": r.try_get::<Option<String>, _>(2).expect("target"),
+                        "detail": serde_json::from_str::<serde_json::Value>(&detail).expect("json"),
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let refused = patch_settings(
+            State(state.clone()),
+            Authed(crate::api::test_util::mem_user("alice", false)),
+            patch(json!({"p2p": false})),
+        )
+        .await;
+        assert!(refused.is_err());
+        assert_eq!(audit().await, Vec::<serde_json::Value>::new());
+
+        let _ = patch_settings(
+            State(state.clone()),
+            root(),
+            patch(json!({
+                "p2p": false,
+                "e2ee": false,
+                "registration": "closed",
+                "profanity_targets": {"bios": false, "links": true},
+            })),
+        )
+        .await
+        .expect("patch");
+        let row = |key: &str, from: &str, to: &str| {
+            json!({
+                "actor": "root",
+                "action": "settings.change",
+                "target": key,
+                "detail": {"key": key, "from": from, "to": to},
+            })
+        };
+        assert_eq!(
+            audit().await,
+            [
+                row(
+                    "profanity_targets",
+                    "all",
+                    "messages,links,usernames,server_names,channel_names,role_names,file_names,channel_topics,category_names"
+                ),
+                row("p2p", "on", "off"),
+                row("registration", "open", "closed"),
+            ],
+            "one row per control that changed, none for e2ee, which stayed off"
+        );
+        let _ = patch_settings(State(state.clone()), root(), patch(json!({"p2p": false})))
+            .await
+            .expect("the same value");
+        assert_eq!(audit().await.len(), 3, "no change, no row");
+        let text = serde_json::to_string(&audit().await).expect("text");
+        assert!(text.is_ascii());
+
+        crate::api::instance_audit::record(
+            &state.db,
+            "root",
+            "settings.config",
+            Some("p2p"),
+            json!({"key": "p2p", "from": "off", "to": "on", "by": "config"}),
+        )
+        .await
+        .expect("a row an account made");
+        let mut conn = state.db.acquire().await.expect("conn");
+        crate::api::instance_audit::forget_user(&mut conn, "root")
+            .await
+            .expect("the account is deleted");
+        crate::api::instance_audit::record_config(
+            &mut conn,
+            "settings.config",
+            Some("p2p"),
+            json!({"key": "p2p", "from": "on", "to": "off"}),
+            now(),
+        )
+        .await
+        .expect("a row the server config made");
+        drop(conn);
+        let rows = audit().await;
+        let (config, deleted) = rows.split_last().expect("rows");
+        assert_eq!(deleted.len(), 4);
+        for row in deleted {
+            assert!(row["actor"].is_null(), "{row}");
+            assert!(
+                row["detail"].get("by").is_none(),
+                "a deleted account's row never carries the config mark: {row}"
+            );
+        }
+        assert_eq!(
+            config,
+            &json!({
+                "actor": null,
+                "action": "settings.config",
+                "target": "p2p",
+                "detail": {"key": "p2p", "from": "on", "to": "off", "by": "config"},
+            })
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_pinned_control_is_refused_with_its_env_name() {
+        let env = [
+            ("FEATURE_P2P", "off"),
+            ("PROFANITY_TARGETS", "messages"),
+            ("E2EE", "on"),
+            ("SETTINGS_PINNED", "FEATURE_P2P,PROFANITY_TARGETS"),
+        ];
+        let (state, path) = crate::api::test_util::temp_state_env("pinned_patch", &env).await;
+        let mut rx = state.hub.subscribe();
+        let root = || Authed(crate::api::test_util::mem_user("root", true));
+        let patch = |body: serde_json::Value| -> Json<SettingsPatch> {
+            Json(serde_json::from_value(body).expect("patch"))
+        };
+        for (body, env) in [
+            (json!({"p2p": true}), "FEATURE_P2P"),
+            (json!({"e2ee": false, "p2p": false}), "FEATURE_P2P"),
+            (
+                json!({"e2ee": false, "profanity_targets": {"bios": true}}),
+                "PROFANITY_TARGETS",
+            ),
+        ] {
+            let refused = patch_settings(State(state.clone()), root(), patch(body.clone())).await;
+            let want = format!("Set in the server config: {env}");
+            assert!(
+                matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if *m == want),
+                "{body}"
+            );
+        }
+        assert!(rx.try_recv().is_err(), "a refused patch sends nothing");
+        Settings::forget(&state.db);
+        let kept = Settings::load(&state.db).await;
+        assert!(!kept.p2p && kept.e2ee && !kept.profanity_targets.bios);
+        assert!(kept.profanity_targets.messages, "nothing was written");
+
+        let got = patch_settings(
+            State(state.clone()),
+            root(),
+            patch(json!({"e2ee": false, "profanity_filter": false})),
+        )
+        .await
+        .expect("unpinned controls change")
+        .0;
+        assert!(!got.e2ee && !got.profanity_filter && !got.p2p);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::SettingsChanged { settings: _ })
+        ));
+
+        sqlx::query("UPDATE settings SET value = 'p2p,e2ee' WHERE key = 'env:pinned'")
+            .execute(&state.db)
+            .await
+            .expect("the newest start pins another one");
+        let refused =
+            patch_settings(State(state.clone()), root(), patch(json!({"e2ee": true}))).await;
+        assert!(
+            matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "Set in the server config: E2EE"),
+            "every copy reads the stored pins"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_upload_cap_follows_pins_and_is_audited_like_every_control() {
+        let root = || Authed(crate::api::test_util::mem_user("root", true));
+        let patch = |body: serde_json::Value| -> Json<SettingsPatch> {
+            Json(serde_json::from_value(body).expect("patch"))
+        };
+        let pinned = [
+            ("UPLOAD_EXPIRY_MAX_DAYS", "30"),
+            ("SETTINGS_PINNED", "UPLOAD_EXPIRY_MAX_DAYS"),
+        ];
+        let (state, path) = crate::api::test_util::temp_state_env("cap_pinned", &pinned).await;
+        assert_eq!(
+            Settings::load(&state.db).await.upload_expiry_max_days,
+            30,
+            "the env sets it"
+        );
+        let refused = patch_settings(
+            State(state.clone()),
+            root(),
+            patch(json!({"upload_expiry_max_days": 7})),
+        )
+        .await;
+        assert!(
+            matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "Set in the server config: UPLOAD_EXPIRY_MAX_DAYS")
+        );
+        Settings::forget(&state.db);
+        assert_eq!(Settings::load(&state.db).await.upload_expiry_max_days, 30);
+        done(state, path).await;
+
+        let (state, path) = temp_state("cap_audit").await;
+        let got = patch_settings(
+            State(state.clone()),
+            root(),
+            patch(json!({"upload_expiry_max_days": 7})),
+        )
+        .await
+        .expect("patch")
+        .0;
+        assert_eq!(got.upload_expiry_max_days, 7);
+        let rows = sqlx::query("SELECT actor, action, target, detail FROM instance_audit")
+            .fetch_all(&state.db)
+            .await
+            .expect("audit");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (
+                rows[0].try_get::<String, _>(0).expect("actor"),
+                rows[0].try_get::<String, _>(1).expect("action"),
+                rows[0].try_get::<String, _>(2).expect("target"),
+                rows[0].try_get::<String, _>(3).expect("detail"),
+            ),
+            (
+                "root".to_string(),
+                "settings.change".to_string(),
+                "upload_expiry_max_days".to_string(),
+                json!({"key": "upload_expiry_max_days", "from": "0", "to": "7"}).to_string(),
+            )
+        );
+        let view = get_config(State(state.clone()), root())
+            .await
+            .expect("config")
+            .0;
+        let view = serde_json::to_value(view).expect("json");
+        let row = view["controls"]
+            .as_array()
+            .expect("controls")
+            .iter()
+            .find(|c| c["key"] == "upload_expiry_max_days")
+            .expect("listed")
+            .clone();
+        assert_eq!(
+            row,
+            json!({"key": "upload_expiry_max_days", "env": "UPLOAD_EXPIRY_MAX_DAYS", "value": "7", "config": null, "pinned": false})
+        );
+        Settings::forget(&state.db);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_config_view_lists_controls_and_limits_for_the_admin_only() {
+        use crate::api::controls::Control;
+        use crate::limits::Limits;
+        let env = [
+            ("FEATURE_P2P", "off"),
+            ("AUTH_REGISTRATION", "closed"),
+            ("PROFANITY_TARGETS", "messages,links"),
+            ("SETTINGS_PINNED", "FEATURE_P2P"),
+            ("PASSWORD_PEPPER", "pepper-in-env"),
+            ("RELAY_SECRET", "relay-in-env"),
+        ];
+        let (state, path) = crate::api::test_util::temp_state_env("config_view", &env).await;
+        let state = state.with_limits(std::sync::Arc::new(Limits {
+            upload_max_mib: 100,
+            database_max_connections: Some(4),
+            ..Limits::default()
+        }));
+        let root = || Authed(crate::api::test_util::mem_user("root", true));
+        let refused = get_config(
+            State(state.clone()),
+            Authed(crate::api::test_util::mem_user("alice", false)),
+        )
+        .await;
+        assert!(
+            matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"),
+            "the same answer as any unknown path"
+        );
+        let patch: SettingsPatch =
+            serde_json::from_value(json!({"registration": "sso"})).expect("patch");
+        let _ = patch_settings(State(state.clone()), root(), Json(patch))
+            .await
+            .expect("page change");
+
+        let view = get_config(State(state.clone()), root())
+            .await
+            .expect("config")
+            .0;
+        let view = serde_json::to_value(view).expect("json");
+        let controls = view["controls"].as_array().expect("controls");
+        let listed: Vec<(&str, &str)> = controls
+            .iter()
+            .map(|c| {
+                (
+                    c["key"].as_str().expect("key"),
+                    c["env"].as_str().expect("env"),
+                )
+            })
+            .collect();
+        let all: Vec<(&str, &str)> = Control::all().iter().map(|c| (c.key, c.env)).collect();
+        assert_eq!(listed, all, "every control, in order");
+        let control = |key: &str| {
+            controls
+                .iter()
+                .find(|c| c["key"] == key)
+                .unwrap_or_else(|| panic!("{key} is listed"))
+                .clone()
+        };
+        assert_eq!(
+            control("p2p"),
+            json!({"key": "p2p", "env": "FEATURE_P2P", "value": "off", "config": "off", "pinned": true})
+        );
+        assert_eq!(
+            control("registration"),
+            json!({"key": "registration", "env": "AUTH_REGISTRATION", "value": "sso", "config": "closed", "pinned": false})
+        );
+        assert_eq!(
+            control("sfu"),
+            json!({"key": "sfu", "env": "FEATURE_SFU", "value": "off", "config": null, "pinned": false})
+        );
+        assert_eq!(
+            control("profanity_targets"),
+            json!({"key": "profanity_targets", "env": "PROFANITY_TARGETS", "value": "messages,links", "config": "messages,links", "pinned": false})
+        );
+
+        let limits = view["limits"].as_array().expect("limits");
+        assert_eq!(limits.len(), Limits::default().rows().len());
+        let limit = |env: &str| {
+            limits
+                .iter()
+                .find(|l| l["env"] == env)
+                .unwrap_or_else(|| panic!("{env} is listed"))
+                .clone()
+        };
+        assert_eq!(
+            limit("UPLOAD_MAX_MIB"),
+            json!({"env": "UPLOAD_MAX_MIB", "value": 100, "default": 25, "range": "1-512"})
+        );
+        assert_eq!(
+            limit("DATABASE_MAX_CONNECTIONS"),
+            json!({"env": "DATABASE_MAX_CONNECTIONS", "value": 4, "default": null, "range": "1-1000"})
+        );
+
+        let text = view.to_string();
+        assert!(text.is_ascii());
+        let lower = text.to_lowercase();
+        for secret in [
+            "pepper",
+            "secret",
+            "signing",
+            "token",
+            "database_url",
+            "redis_url",
+            "s3_",
+            "relay-in-env",
+        ] {
+            assert!(!lower.contains(secret), "{secret} is never listed");
+        }
+        for key in [
+            "password_pepper",
+            "relay_secret",
+            "p2p_secret",
+            "instance_signing_key",
+        ] {
+            let value: String = sqlx::query("SELECT value FROM settings WHERE key = $1")
+                .bind(key)
+                .fetch_one(&state.db)
+                .await
+                .expect(key)
+                .try_get(0)
+                .expect("value");
+            assert!(!value.is_empty() && !text.contains(&value), "{key}");
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_change_on_one_copy_reaches_the_other_before_the_ttl() {
+        use crate::instance::{Instance, InstanceConfig};
+        let bus = crate::hub::tests::MemBus::new();
+        let path = crate::db::temp_db_path("settings_bus");
+        let wipe = || {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+            }
+        };
+        wipe();
+        let a_db = crate::db::open_started(Some(&format!("sqlite://{}?mode=rwc", path.display())))
+            .await
+            .expect("one copy");
+        let b_db = crate::db::open_started(Some(&format!("sqlite://{}?mode=rw", path.display())))
+            .await
+            .expect("another copy");
+        assert_ne!(
+            crate::db::pool_key(&a_db),
+            crate::db::pool_key(&b_db),
+            "each copy has its own cache"
+        );
+        let instance = Instance::load(&a_db, &InstanceConfig::default())
+            .await
+            .expect("instance");
+        let a = AppState::new(a_db, bus.join(), None, None, instance.clone());
+        let b = AppState::new(b_db, bus.join(), None, None, instance);
+        Settings::follow(&a);
+        Settings::follow(&b);
+        assert!(Settings::cached(&b.db).await.p2p);
+        let started = std::time::Instant::now();
+        let patch: SettingsPatch =
+            serde_json::from_value(json!({"p2p": false, "registration": "closed"})).expect("patch");
+        let _ = patch_settings(
+            State(a.clone()),
+            Authed(crate::api::test_util::mem_user("root", true)),
+            Json(patch),
+        )
+        .await
+        .expect("patch");
+        let mut seen = Settings::cached(&b.db).await;
+        while seen.p2p && started.elapsed() < Duration::from_secs(2) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            seen = Settings::cached(&b.db).await;
+        }
+        assert!(
+            !seen.p2p && seen.registration == Registration::Closed,
+            "the other copy follows settings_changed inside the 5 s cache time"
+        );
+        crate::db::close(&a.db).await;
+        crate::db::close(&b.db).await;
+        wipe();
     }
 
     #[tokio::test]

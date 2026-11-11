@@ -234,6 +234,112 @@ impl Limits {
         Ok(limits)
     }
 
+    /// Every numeric limit by env name, in the order of `RANGES`. `None`: unset, and the
+    /// process picks its own value.
+    pub fn rows(&self) -> Vec<(&'static str, Option<i64>)> {
+        let Limits {
+            rate_limit_per_second,
+            rate_limit_burst,
+            ws_connections_per_user,
+            ws_connect_burst,
+            ws_connects_per_minute,
+            ws_sockets_per_ip,
+            ws_guest_sockets_per_ip,
+            ws_guest_sockets_max,
+            redis_hub_maxlen,
+            database_max_connections,
+            database_min_connections,
+            database_acquire_timeout_secs,
+            database_read_connections,
+            upload_max_mib,
+            upload_budget_mib,
+            upload_buffer_mib,
+            message_max_chars,
+            guest_grant_days,
+            embed_cache_days,
+            voice_idle_secs,
+            voice_room_max,
+            relay_user_allocations,
+            relay_max_allocations,
+            relay_user_kib_per_sec,
+            relay_max_kib_per_sec,
+            report_same_target_hours,
+            report_targets_per_day,
+            report_max_per_week,
+            report_retention_days,
+            e2ee_guests_per_group,
+            e2ee_key_retention_days,
+            sfu_enabled: _,
+            sfu_max_participants,
+            sfu_max_streams,
+            sfu_user_kib_per_sec,
+            p2p_backup_max_mib,
+            widget_quick_joins_per_hour,
+            widget_viewers_max,
+            widget_bridge_servers_max,
+        } = *self;
+        fn set<T: TryInto<i64>>(value: T) -> Option<i64> {
+            value.try_into().ok()
+        }
+        fn opt<T: TryInto<i64>>(value: Option<T>) -> Option<i64> {
+            value.and_then(set)
+        }
+        vec![
+            ("RATE_LIMIT_PER_SECOND", set(rate_limit_per_second)),
+            ("RATE_LIMIT_BURST", set(rate_limit_burst)),
+            ("WS_CONNECTIONS_PER_USER", set(ws_connections_per_user)),
+            ("WS_CONNECT_BURST", set(ws_connect_burst)),
+            ("WS_CONNECTS_PER_MINUTE", set(ws_connects_per_minute)),
+            ("WS_SOCKETS_PER_IP", set(ws_sockets_per_ip)),
+            ("WS_GUEST_SOCKETS_PER_IP", set(ws_guest_sockets_per_ip)),
+            ("WS_GUEST_SOCKETS_MAX", set(ws_guest_sockets_max)),
+            ("REDIS_HUB_MAXLEN", set(redis_hub_maxlen)),
+            ("DATABASE_MAX_CONNECTIONS", opt(database_max_connections)),
+            ("DATABASE_MIN_CONNECTIONS", opt(database_min_connections)),
+            (
+                "DATABASE_ACQUIRE_TIMEOUT_SECS",
+                opt(database_acquire_timeout_secs),
+            ),
+            ("DATABASE_READ_CONNECTIONS", opt(database_read_connections)),
+            ("UPLOAD_MAX_MIB", set(upload_max_mib)),
+            ("UPLOAD_BUDGET_MIB", set(upload_budget_mib)),
+            ("UPLOAD_BUFFER_MIB", set(upload_buffer_mib)),
+            ("MESSAGE_MAX_CHARS", set(message_max_chars)),
+            ("GUEST_GRANT_DAYS", set(guest_grant_days)),
+            ("EMBED_CACHE_DAYS", set(embed_cache_days)),
+            ("VOICE_IDLE_SECS", set(voice_idle_secs)),
+            ("VOICE_ROOM_MAX", set(voice_room_max)),
+            ("RELAY_USER_ALLOCATIONS", set(relay_user_allocations)),
+            ("RELAY_MAX_ALLOCATIONS", opt(relay_max_allocations)),
+            ("RELAY_USER_KIB_PER_SEC", set(relay_user_kib_per_sec)),
+            ("RELAY_MAX_KIB_PER_SEC", set(relay_max_kib_per_sec)),
+            ("REPORT_SAME_TARGET_HOURS", set(report_same_target_hours)),
+            ("REPORT_TARGETS_PER_DAY", set(report_targets_per_day)),
+            ("REPORT_MAX_PER_WEEK", set(report_max_per_week)),
+            ("REPORT_RETENTION_DAYS", set(report_retention_days)),
+            ("E2EE_GUESTS_PER_GROUP", set(e2ee_guests_per_group)),
+            ("E2EE_KEY_RETENTION_DAYS", set(e2ee_key_retention_days)),
+            ("SFU_MAX_PARTICIPANTS", set(sfu_max_participants)),
+            ("SFU_MAX_STREAMS", set(sfu_max_streams)),
+            ("SFU_USER_KIB_PER_SEC", set(sfu_user_kib_per_sec)),
+            ("P2P_BACKUP_MAX_MIB", set(p2p_backup_max_mib)),
+            (
+                "WIDGET_QUICK_JOINS_PER_HOUR",
+                set(widget_quick_joins_per_hour),
+            ),
+            ("WIDGET_VIEWERS_MAX", set(widget_viewers_max)),
+            ("WIDGET_BRIDGE_SERVERS_MAX", set(widget_bridge_servers_max)),
+        ]
+    }
+
+    /// The smallest and largest value of the numeric limit `env`.
+    pub fn range(env: &str) -> Option<(i64, i64)> {
+        RANGES
+            .iter()
+            .find(|(name, _, _)| *name == env)
+            .map(|(_, lo, hi)| (*lo, *hi))
+    }
+
     /// The checks between limits.
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.upload_buffer_mib < self.upload_max_mib {
@@ -368,6 +474,42 @@ mod tests {
             }
             assert_eq!(load(&[(&name, "  ".to_string())]).expect("blank"), default);
         }
+    }
+
+    #[test]
+    fn every_ranged_limit_is_listed_with_its_value() {
+        let default = Limits::default().rows();
+        let names: Vec<&str> = default.iter().map(|(name, _)| *name).collect();
+        let ranged: Vec<&str> = RANGES.iter().map(|(name, _, _)| *name).collect();
+        assert_eq!(names, ranged);
+        let unset: Vec<&str> = default
+            .iter()
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| *name)
+            .collect();
+        assert_eq!(
+            unset,
+            [
+                "DATABASE_MAX_CONNECTIONS",
+                "DATABASE_MIN_CONNECTIONS",
+                "DATABASE_ACQUIRE_TIMEOUT_SECS",
+                "DATABASE_READ_CONNECTIONS",
+                "RELAY_MAX_ALLOCATIONS",
+            ]
+        );
+        for (name, lo, hi) in RANGES {
+            let mut pairs = vec![(name, hi.to_string())];
+            match name {
+                "UPLOAD_MAX_MIB" => pairs.push(("UPLOAD_BUFFER_MIB", "1048576".to_string())),
+                "UPLOAD_BUFFER_MIB" => pairs.push(("UPLOAD_MAX_MIB", "1".to_string())),
+                _ => {}
+            }
+            let rows = load(&pairs).expect("loads").rows();
+            let value = rows.iter().find(|(n, _)| *n == name).map(|(_, v)| *v);
+            assert_eq!(value, Some(Some(hi)), "{name}");
+            assert_eq!(Limits::range(name), Some((lo, hi)), "{name}");
+        }
+        assert_eq!(Limits::range("SFU_ENABLED"), None);
     }
 
     #[test]

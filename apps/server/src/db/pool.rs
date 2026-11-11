@@ -5,10 +5,10 @@ use std::time::Duration;
 use sqlx::AnyPool;
 use sqlx::any::{AnyPoolOptions, install_default_drivers};
 
-use super::migrate::init_schema;
+use super::migrate::{ConfigChange, ConfigStart, init_schema};
 use super::schema::{postgres_search_index, probe_fts, set_fts, sqlite_search_index};
 use super::secrets::{PEPPERS, pepper_with};
-use crate::config::Seeds;
+use crate::api::controls::{Control, ControlSeeds};
 use crate::limits::Limits;
 
 pub type Db = AnyPool;
@@ -17,22 +17,36 @@ const SCHEMA_LOCK: i64 = 0x7263_6861_7400;
 
 static READERS: LazyLock<Mutex<HashMap<String, Db>>> = LazyLock::new(Default::default);
 
-/// What `open_with` reads from the configuration: the limits, `PASSWORD_PEPPER` and the env
-/// values that seed settings at first start.
+static CONFIG_STARTS: LazyLock<Mutex<HashMap<String, ConfigStart>>> =
+    LazyLock::new(Default::default);
+
+/// What `open_with` reads from the configuration: the limits, `PASSWORD_PEPPER` and the
+/// controls the env sets and pins. `controls` is `Some` only for a server start, which brings
+/// the stored controls in line with its env. `None` (the default, for tools that open the
+/// database without the server's env) leaves the controls and their records as they are.
 #[derive(Clone, Default)]
 pub struct DbOptions {
     pub limits: Limits,
     pub pepper: Option<String>,
-    pub seeds: Seeds,
+    pub controls: Option<ControlSeeds>,
 }
 
 impl std::fmt::Debug for DbOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DbOptions")
             .field("limits", &self.limits)
-            .field("seeds", &self.seeds)
+            .field("controls", &self.controls)
             .finish_non_exhaustive()
     }
+}
+
+/// What the `open_with` of `db` did to the stored controls. Answers it once.
+pub fn take_config_start(db: &Db) -> ConfigStart {
+    CONFIG_STARTS
+        .lock()
+        .ok()
+        .and_then(|mut starts| starts.remove(&pool_key(db)))
+        .unwrap_or_default()
 }
 
 pub fn reader(db: &Db) -> Db {
@@ -47,6 +61,7 @@ pub async fn close(db: &Db) {
     if let Ok(mut peppers) = PEPPERS.lock() {
         peppers.remove(&pool_key(db));
     }
+    take_config_start(db);
     let read = READERS
         .lock()
         .ok()
@@ -83,15 +98,27 @@ pub(crate) fn temp_db_path(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("rchat_{tag}_{}_{test}_{n}.db", std::process::id()))
 }
 
+/// Opens the database for a tool: the schema is brought up to date, and the controls and what
+/// the server config recorded about them stay untouched.
 pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
     open_with(database_url, &DbOptions::default()).await
+}
+
+/// Opens the database the way a server with no control in its env starts.
+#[cfg(test)]
+pub(crate) async fn open_started(database_url: Option<&str>) -> anyhow::Result<Db> {
+    let opts = DbOptions {
+        controls: Some(ControlSeeds::default()),
+        ..DbOptions::default()
+    };
+    open_with(database_url, &opts).await
 }
 
 pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::Result<Db> {
     let DbOptions {
         limits,
         pepper,
-        seeds,
+        controls,
     } = opts;
     install_default_drivers();
     let url = match database_url {
@@ -137,11 +164,42 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
             .execute(&mut *tx)
             .await?;
     }
-    init_schema(&mut tx, is_sqlite, seeds).await?;
+    let started = init_schema(&mut tx, is_sqlite, controls.as_ref()).await?;
     if !is_sqlite {
         postgres_search_index(&mut tx).await;
     }
     tx.commit().await?;
+    for ConfigChange {
+        key,
+        from,
+        to,
+        flips,
+    } in &started.changes
+    {
+        let Some(control) = Control::find(key) else {
+            continue;
+        };
+        let env = control.env;
+        tracing::info!(
+            "server config: {env} changed {key} from {} to {}",
+            control.shown(from),
+            control.shown(to)
+        );
+        if *flips {
+            tracing::warn!(
+                "{env} had another value at a start in the last 10 minutes. Copies started with different values change {key} at each start"
+            );
+        }
+    }
+    for key in &started.forgotten {
+        let env = Control::find(key).map_or(*key, |c| c.env);
+        tracing::warn!(
+            "{env} is not set at this start, and a start in the last 10 minutes set it. Start every copy with the same settings"
+        );
+    }
+    if let Ok(mut map) = CONFIG_STARTS.lock() {
+        map.insert(pool_key(&pool), started);
+    }
     match is_sqlite {
         true => {
             if let Err(e) = sqlite_search_index(&pool).await {

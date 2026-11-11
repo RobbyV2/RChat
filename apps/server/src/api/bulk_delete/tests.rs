@@ -944,7 +944,7 @@ async fn forgetting_an_author_locks_only_the_jobs_naming_them() {
     let Ok(url) = std::env::var("RCHAT_TEST_POSTGRES") else {
         return;
     };
-    let db = crate::db::open(Some(&url)).await.expect("postgres");
+    let db = crate::db::open_started(Some(&url)).await.expect("postgres");
     let tag = format!("fa{}", rand::random::<u32>());
     let job = |who: String| {
         let db = db.clone();

@@ -360,7 +360,7 @@ Upgrade all copies together. From 0.3.0 on, an older copy refuses to start once 
 
 ## Configuration
 
-Put settings in `.env.local`. Refer to `.env.local.example` for all settings and the range of each limit. A limit outside its range stops the server at start. Settings marked "First start only" seed the Features section of the site admin panel, which controls them after that. These are the most useful ones:
+Put settings in `.env.local`. Refer to `.env.local.example` for all settings and the range of each limit. A limit outside its range, or a setting with a value it does not take, stops the server at start and names the variable. Settings marked "Admin page" can also be changed in the site admin panel while the server runs. At a start, a value you changed in `.env.local` is applied, and an unchanged one leaves the panel's choice. `SETTINGS_PINNED` lists settings that always follow `.env.local` and are read-only in the panel. Start every copy with the same settings: a start without a value forgets it, and the next start that sets it applies it again. These are the most useful ones:
 
 | Variable            | Default     | What it does                                                                                            |
 | ------------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
@@ -372,7 +372,7 @@ Put settings in `.env.local`. Refer to `.env.local.example` for all settings and
 | `PUBLIC_PEERJS_URL` | none        | Where browsers reach PeerJS, for example `https://chat.example.com/peerjs`. Default: port 9001.         |
 | `INSTANCE_NAME`     | `RChat`     | The name people see for your instance.                                                                  |
 | `GUESTS_ENABLED`    | `true`      | Lets people read public servers without an account.                                                     |
-| `P2P_ATTACHMENTS`   | `true`      | Lets people send P2P attachments. The admin panel controls it after the first start.                    |
+| `P2P_ATTACHMENTS`   | `true`      | Lets people send P2P attachments.                                                                       |
 | `AUTH_REGISTRATION` | `open`      | Who can sign up with a password: `open`, `sso` or `closed`. Keep it open until your own account exists. |
 | `S3_ENDPOINT`       | none        | Stores uploads in an S3 bucket. Also set the bucket and keys.                                           |
 | `RCHAT_ROLES`       | `all`       | The roles this process runs (see Scaling).                                                              |
@@ -395,7 +395,7 @@ Data is not encrypted at rest.
 
 Any web app may call the API with a token; cookies are never sent cross-site.
 
-`FEATURE_CLIENT_OTHER_INSTANCES` (first start only, default `on`) lets people add other instances in the web app this site serves. The desktop and mobile apps and other web apps ignore it.
+`FEATURE_CLIENT_OTHER_INSTANCES` (default `on`) lets people add other instances in the web app this site serves. The desktop and mobile apps and other web apps ignore it.
 
 ## Product rules
 

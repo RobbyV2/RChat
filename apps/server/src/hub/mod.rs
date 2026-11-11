@@ -87,6 +87,7 @@ struct Inner {
     conns: AtomicU64,
     link: Option<Link>,
     epoch: watch::Sender<Epoch>,
+    settings: watch::Sender<u64>,
     aftermath: mpsc::UnboundedSender<Aftermath>,
     aftermath_rx: Mutex<Option<mpsc::UnboundedReceiver<Aftermath>>>,
     shown: mpsc::UnboundedSender<(String, bool)>,
@@ -138,6 +139,7 @@ impl Hub {
                 conns: AtomicU64::new(0),
                 link,
                 epoch: watch::channel(Epoch::default()).0,
+                settings: watch::channel(0).0,
                 aftermath,
                 aftermath_rx: Mutex::new(Some(aftermath_rx)),
                 shown,
@@ -255,6 +257,11 @@ impl Hub {
         self.inner.epoch.subscribe()
     }
 
+    /// Counts the `settings_changed` events this process saw, its own and those from the bus.
+    pub fn settings_changes(&self) -> watch::Receiver<u64> {
+        self.inner.settings.subscribe()
+    }
+
     pub fn is_replicated(&self) -> bool {
         self.inner.link.is_some()
     }
@@ -317,6 +324,9 @@ impl Hub {
             if let WsEvent::UserShown { username, online } = ev {
                 let _ = self.inner.shown.send((username, online));
                 continue;
+            }
+            if let WsEvent::SettingsChanged { settings: _ } = ev {
+                self.inner.settings.send_modify(|n| *n += 1);
             }
             if self.inner.tx.receiver_count() > 0 {
                 let _ = self.inner.tx.send(ev.clone());

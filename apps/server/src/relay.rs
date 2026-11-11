@@ -2623,7 +2623,9 @@ mod tests {
         async fn temp_db(tag: &str) -> (crate::db::Db, std::path::PathBuf) {
             let path = crate::db::temp_db_path(&format!("relay_{tag}"));
             let _ = std::fs::remove_file(&path);
-            let db = crate::db::open(path.to_str()).await.expect("open db");
+            let db = crate::db::open_started(path.to_str())
+                .await
+                .expect("open db");
             (db, path)
         }
 

@@ -1372,7 +1372,7 @@ mod tests {
     use crate::api::access::Proof;
     use crate::api::test_util::{done, mem_user, temp_state};
     use crate::api::{ApiError, Authed};
-    use crate::db::{now, open};
+    use crate::db::{now, open_started as open};
     use axum::extract::{Path, State};
     use axum::http::StatusCode;
     use sqlx::Row;

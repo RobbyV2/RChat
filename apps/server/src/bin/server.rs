@@ -97,9 +97,11 @@ async fn main() -> anyhow::Result<()> {
     rust_next::api::media::configure(config.upload_limits());
     rust_next::api::webhooks::spawn(&state, roles.jobs);
     rust_next::ws::spawn_aftermath(&state);
+    rust_next::api::Settings::follow(&state);
     if let Some(bus) = &state.bus {
         bus.spawn_workers(&state);
     }
+    rust_next::api::controls::config_applied(&state).await;
     let ticks = state.hub.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1));

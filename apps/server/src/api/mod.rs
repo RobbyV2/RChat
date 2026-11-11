@@ -7,6 +7,7 @@ pub mod budget;
 pub mod bulk_delete;
 pub mod categories;
 pub mod config_shares;
+pub mod controls;
 pub mod dms;
 pub mod embeds;
 pub mod features;
@@ -52,6 +53,7 @@ use tower_governor::key_extractor::KeyExtractor;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use utoipa::ToSchema;
 
+use crate::api::controls::Control;
 use crate::api::features::{Feature, Registration};
 use crate::config::Roles;
 use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, pool_key};
@@ -1024,11 +1026,11 @@ impl ProfanitySwitch {
     }
 }
 
-const DEPRECATED_DISPLAY_NAMES: &str = "display_names";
+pub(crate) const DEPRECATED_DISPLAY_NAMES: &str = "display_names";
 
 static DISPLAY_NAMES_WARNED: std::sync::Once = std::sync::Once::new();
 
-fn warn_display_names() {
+pub(crate) fn warn_display_names() {
     DISPLAY_NAMES_WARNED.call_once(|| {
         tracing::warn!(
             "profanity target \"display_names\" is deprecated and ignored: display names are covered by usernames and server_names"
@@ -1131,83 +1133,6 @@ impl ProfanityTargets {
             ProfanitySwitch::CategoryNames => category_names,
         }
     }
-
-    pub fn parse_list(list: &str) -> ProfanityTargets {
-        let names: Vec<&str> = list
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .collect();
-        if names
-            .iter()
-            .any(|n| n.eq_ignore_ascii_case(DEPRECATED_DISPLAY_NAMES))
-        {
-            warn_display_names();
-        }
-        let names: Vec<&str> = names
-            .into_iter()
-            .filter(|n| !n.eq_ignore_ascii_case(DEPRECATED_DISPLAY_NAMES))
-            .collect();
-        let unknown: Vec<&str> = names
-            .iter()
-            .copied()
-            .filter(|n| {
-                ProfanitySwitch::parse(n).is_none()
-                    && !n.eq_ignore_ascii_case("none")
-                    && !n.eq_ignore_ascii_case("all")
-            })
-            .collect();
-        let none = names.iter().any(|n| n.eq_ignore_ascii_case("none"));
-        let all = names.iter().any(|n| n.eq_ignore_ascii_case("all"));
-        let known = names.iter().any(|n| ProfanitySwitch::parse(n).is_some());
-        if !unknown.is_empty() {
-            tracing::warn!(
-                "PROFANITY_TARGETS: unknown target(s) {unknown:?}, filtering everything instead"
-            );
-            return ProfanityTargets::ALL;
-        }
-        match (all, known, none) {
-            (true, _, _) | (false, false, false) => ProfanityTargets::ALL,
-            _ => ProfanityTargets::from_fn(|t| {
-                names.iter().any(|n| ProfanitySwitch::parse(n) == Some(t))
-            }),
-        }
-    }
-}
-
-/// A switch that starts off: on only for `1`, `true`, `on` or `yes`.
-pub fn switch_off_seed(value: Option<&str>) -> bool {
-    value.is_some_and(|v| {
-        matches!(
-            v.trim().to_lowercase().as_str(),
-            "1" | "true" | "on" | "yes"
-        )
-    })
-}
-
-/// Seed value of an on/off setting from its environment variable: on unless it says off.
-pub fn switch_seed(value: Option<&str>) -> bool {
-    !value.is_some_and(|v| {
-        matches!(
-            v.trim().to_lowercase().as_str(),
-            "0" | "false" | "off" | "no"
-        )
-    })
-}
-
-pub fn profanity_seed(filter: Option<&str>, targets: Option<&str>) -> Vec<(&'static str, bool)> {
-    let filter = switch_off_seed(filter);
-    let targets = match targets.map(str::trim).filter(|v| !v.is_empty()) {
-        Some(list) => ProfanityTargets::parse_list(list),
-        None => ProfanityTargets::ALL,
-    };
-    std::iter::once(("profanity_filter", filter))
-        .chain(
-            ProfanitySwitch::ALL
-                .into_iter()
-                .map(|t| (t.key(), targets.get(t))),
-        )
-        .collect()
 }
 
 /// Instance-wide feature switches. Changes reach clients through the `settings_changed`
@@ -1216,7 +1141,7 @@ pub fn profanity_seed(filter: Option<&str>, targets: Option<&str>) -> Vec<(&'sta
 /// `client_other_instances` gates no endpoint.
 #[derive(Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub struct Settings {
-    /// Master switch of the profanity filter. Off by default (`PROFANITY_FILTER` seeds it).
+    /// Master switch of the profanity filter. Off by default (`PROFANITY_FILTER`).
     /// When on, content matching a target in `profanity_targets` is rejected with 400
     /// `Content blocked by profanity filter`.
     pub profanity_filter: bool,
@@ -1235,7 +1160,7 @@ pub struct Settings {
     /// Guest access: reading servers without an account.
     pub guests_enabled: bool,
     /// Outgoing webhooks: servers may have the instance POST signed event payloads to URLs
-    /// their managers choose. Off by default (`OUTGOING_WEBHOOKS` seeds it); while off, nothing
+    /// their managers choose. Off by default (`OUTGOING_WEBHOOKS`); while off, nothing
     /// is queued or sent and outgoing webhooks cannot be created.
     #[serde(default)]
     pub outgoing_webhooks: bool,
@@ -1298,7 +1223,7 @@ pub struct Settings {
     pub registration: Registration,
     /// Longest upload expiry a server may choose, in days: 1 to 365, or 0 for no cap (servers
     /// may then also keep files until they are removed). Longer choices are shortened to it.
-    /// `UPLOAD_EXPIRY_MAX_DAYS` seeds it; 0 by default.
+    /// 0 by default (`UPLOAD_EXPIRY_MAX_DAYS`).
     #[serde(default)]
     pub upload_expiry_max_days: i64,
 }
@@ -1342,9 +1267,7 @@ impl Settings {
     };
 
     pub async fn load(db: &Db) -> Settings {
-        let rows = match sqlx::query(
-            "SELECT key, value FROM settings WHERE key IN ('profanity_filter', 'asset_previews', 'asset_uploads', 'p2p_attachments', 'guests_enabled', 'outgoing_webhooks', 'server_reports', 'instance_reports', 'widgets', 'widget_chat', 'widget_read_links', 'widget_bridge', 'e2ee', 'e2ee_compliance', 'backup_phrase', 'p2p_backup', 'display_names', 'onboarding', 'password_login', 'sfu', 'p2p', 'client_other_instances', 'registration', 'upload_expiry_max_days') OR key LIKE 'profanity\\_%' ESCAPE '\\'",
-        )
+        let rows = match sqlx::query(sqlx::AssertSqlSafe(controls::ROWS_SQL.as_str()))
             .fetch_all(db)
             .await
         {
@@ -1369,23 +1292,23 @@ impl Settings {
                 .find(|r| r.try_get::<String, _>(0).is_ok_and(|k| k == key))
                 .and_then(|r| r.try_get::<String, _>(1).ok())
         };
-        let on = |key: &str| value(key).is_none_or(|v| v == "1");
-        let feature = |f: Feature| value(f.key()).map_or(f.default_on(), |v| v == "1");
+        let stored = |key: &str| {
+            value(key).unwrap_or_else(|| {
+                Control::find(key).map_or(String::new(), |c| c.default.to_string())
+            })
+        };
+        let on = |key: &str| stored(key) == "1";
+        let feature = |f: Feature| on(f.key());
         let settings = Settings {
-            profanity_filter: value("profanity_filter").is_some_and(|v| v == "1"),
-            profanity_targets: ProfanityTargets::from_fn(|t| on(t.key())),
+            profanity_filter: on("profanity_filter"),
+            profanity_targets: ProfanityTargets::from_fn(|t| {
+                value(t.key()).is_none_or(|v| v == "1")
+            }),
             asset_previews: on("asset_previews"),
             asset_uploads: on("asset_uploads"),
             p2p_attachments: on("p2p_attachments"),
             guests_enabled: on("guests_enabled"),
-            outgoing_webhooks: rows
-                .iter()
-                .find(|r| {
-                    r.try_get::<String, _>(0)
-                        .is_ok_and(|k| k == "outgoing_webhooks")
-                })
-                .and_then(|r| r.try_get::<String, _>(1).ok())
-                .is_some_and(|v| v == "1"),
+            outgoing_webhooks: on("outgoing_webhooks"),
             server_reports: feature(Feature::ServerReports),
             instance_reports: feature(Feature::InstanceReports),
             widgets: feature(Feature::Widgets),
@@ -1405,11 +1328,11 @@ impl Settings {
             registration: value(Registration::KEY)
                 .map_or(Some(Registration::Open), |v| Registration::parse(&v))
                 .unwrap_or(Registration::Closed),
-            upload_expiry_max_days: value(upload_expiry::CAP_KEY).map_or(0, |v| {
-                v.trim()
-                    .parse::<i64>()
-                    .map_or(1, |d| d.clamp(0, upload_expiry::CAP_DAYS_MAX))
-            }),
+            upload_expiry_max_days: controls::number(
+                upload_expiry::CAP_KEY,
+                value(upload_expiry::CAP_KEY).as_deref(),
+            )
+            .unwrap_or(1),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1493,6 +1416,18 @@ impl Settings {
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.remove(&pool_key(db));
         }
+    }
+
+    /// Keeps this process's cached settings current: reloads them whenever `settings_changed`
+    /// arrives, from this process or from another one over the bus.
+    pub fn follow(state: &AppState) {
+        let mut changes = state.hub.settings_changes();
+        let db = state.db.clone();
+        tokio::spawn(async move {
+            while changes.changed().await.is_ok() {
+                Settings::load(&db).await;
+            }
+        });
     }
 }
 
@@ -2030,6 +1965,7 @@ fn api_routes(
             "/servers/{name}/upload_expiry",
             get(upload_expiry::get_upload_expiry).put(upload_expiry::set_upload_expiry),
         )
+        .route("/admin/config", get(admin::get_config))
         .route("/admin/overview", get(admin::overview))
         .route("/admin/users", get(admin::list_users))
         .route("/admin/servers", get(admin::list_servers))
@@ -2052,7 +1988,7 @@ fn api_routes(
 pub(crate) mod test_util {
     use std::path::PathBuf;
 
-    use crate::db::{AvatarKind, Db, User, now, open};
+    use crate::db::{AvatarKind, Db, User, now, open_started};
     use crate::instance::{Instance, InstanceConfig};
     use crate::state::AppState;
     use crate::ws::Hub;
@@ -2083,7 +2019,23 @@ pub(crate) mod test_util {
     pub(crate) async fn temp_state(tag: &str) -> (AppState, PathBuf) {
         let path = crate::db::temp_db_path(tag);
         let _ = std::fs::remove_file(&path);
-        let db = open(path.to_str()).await.expect("open db");
+        let db = open_started(path.to_str()).await.expect("open db");
+        let instance = Instance::load(&db, &InstanceConfig::default())
+            .await
+            .expect("instance");
+        (AppState::new(db, Hub::new(), None, None, instance), path)
+    }
+
+    /// `temp_state` on a database started with the env `pairs`.
+    pub(crate) async fn temp_state_env(tag: &str, pairs: &[(&str, &str)]) -> (AppState, PathBuf) {
+        let path = crate::db::temp_db_path(tag);
+        let _ = std::fs::remove_file(&path);
+        let opts = crate::config::AppConfig::from_map(pairs)
+            .expect("config")
+            .db_options();
+        let db = crate::db::open_with(path.to_str(), &opts)
+            .await
+            .expect("open db");
         let instance = Instance::load(&db, &InstanceConfig::default())
             .await
             .expect("instance");
@@ -2167,7 +2119,9 @@ pub(crate) mod test_util {
     /// `temp_state` on a `pg_temp` database.
     pub(crate) async fn pg_state(tag: &str) -> Option<(AppState, PgTemp)> {
         let temp = pg_temp(tag).await?;
-        let db = open(Some(temp.url.as_str())).await.expect("open postgres");
+        let db = open_started(Some(temp.url.as_str()))
+            .await
+            .expect("open postgres");
         let instance = Instance::load(&db, &InstanceConfig::default())
             .await
             .expect("instance");
@@ -2453,117 +2407,6 @@ mod tests {
         assert!(!no_messages.blocks(m, "https://x.co/fuck and fuck"));
     }
 
-    #[test]
-    fn profanity_env_seed_parsing() {
-        let seed = |f: Option<&str>, t: Option<&str>| profanity_seed(f, t);
-        let on = |pairs: &[(&str, bool)], key: &str| {
-            pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
-        };
-        let defaults = seed(None, None);
-        assert_eq!(defaults.len(), 1 + ProfanitySwitch::ALL.len());
-        assert!(
-            defaults
-                .iter()
-                .all(|(k, v)| *v == (*k != "profanity_filter"))
-        );
-        for off in ["off", "0", "false", " OFF ", "no", "", "maybe"] {
-            assert_eq!(
-                on(&seed(Some(off), None), "profanity_filter"),
-                Some(false),
-                "{off}"
-            );
-        }
-        for v in ["on", "1", "true", " YES "] {
-            assert_eq!(
-                on(&seed(Some(v), None), "profanity_filter"),
-                Some(true),
-                "{v}"
-            );
-        }
-        let some = seed(None, Some(" Messages, server_names,display_names "));
-        for switch in ProfanitySwitch::ALL {
-            let want = matches!(
-                switch,
-                ProfanitySwitch::Messages | ProfanitySwitch::ServerNames
-            );
-            assert_eq!(on(&some, switch.key()), Some(want), "{switch:?}");
-        }
-        assert!(!some.iter().any(|(k, _)| k.contains("display")));
-        for typo in [
-            "message",
-            "bogus",
-            "messages,bogus",
-            "none,bogus",
-            "display_names",
-            ",",
-        ] {
-            assert!(
-                seed(Some("on"), Some(typo)).iter().all(|(_, v)| *v),
-                "{typo} must fail closed"
-            );
-        }
-        let targets_all =
-            |pairs: Vec<(&str, bool)>| pairs.iter().all(|(k, v)| *k == "profanity_filter" || *v);
-        assert!(targets_all(seed(None, Some("all"))));
-        assert!(targets_all(seed(None, Some("messages,all"))));
-        assert!(targets_all(seed(None, Some("  "))));
-        let none = seed(Some("on"), Some("none"));
-        assert!(none.iter().all(|(k, v)| *v == (*k == "profanity_filter")));
-        let bios = seed(None, Some("bios"));
-        for switch in ProfanitySwitch::ALL {
-            let want = switch == ProfanitySwitch::Bios;
-            assert_eq!(on(&bios, switch.key()), Some(want), "{switch:?}");
-        }
-        assert_eq!(on(&bios, "profanity_bios"), Some(true));
-        let topics = seed(None, Some("channel_topics"));
-        for switch in ProfanitySwitch::ALL {
-            let want = switch == ProfanitySwitch::ChannelTopics;
-            assert_eq!(on(&topics, switch.key()), Some(want), "{switch:?}");
-        }
-        let categories = seed(None, Some("category_names"));
-        for switch in ProfanitySwitch::ALL {
-            let want = switch == ProfanitySwitch::CategoryNames;
-            assert_eq!(on(&categories, switch.key()), Some(want), "{switch:?}");
-        }
-    }
-
-    #[tokio::test]
-    async fn profanity_env_seed_fills_only_missing_settings() {
-        let (state, path) = temp_state("profanity_seed").await;
-        let db = state.db.clone();
-        sqlx::query("DELETE FROM settings WHERE key LIKE 'profanity%'")
-            .execute(&db)
-            .await
-            .expect("clear");
-        sqlx::query("INSERT INTO settings(key, value) VALUES('profanity_role_names', '1'), ('profanity_display_names', '0')")
-            .execute(&db)
-            .await
-            .expect("stored");
-        let mut conn = db.acquire().await.expect("conn");
-        crate::db::seed_settings(
-            &mut conn,
-            &profanity_seed(Some("off"), Some("messages,links")),
-        )
-        .await
-        .expect("seed");
-        crate::db::seed_settings(&mut conn, &profanity_seed(None, None))
-            .await
-            .expect("reseed");
-        drop(conn);
-        let s = Settings::load(&db).await;
-        assert!(!s.profanity_filter);
-        assert_eq!(
-            s.profanity_targets,
-            ProfanityTargets {
-                messages: true,
-                links: true,
-                role_names: true,
-                ..ProfanityTargets::from_fn(|_| false)
-            }
-        );
-        done(state, path).await;
-    }
-
     #[tokio::test]
     async fn the_instance_filter_starts_off_and_a_stored_choice_stays() {
         let (state, path) = temp_state("profanity_fresh").await;
@@ -2585,7 +2428,9 @@ mod tests {
             .expect("an existing instance with the filter on");
         crate::db::close(&db).await;
         Settings::forget(&db);
-        let reopened = crate::db::open(path.to_str()).await.expect("restart");
+        let reopened = crate::db::open_started(path.to_str())
+            .await
+            .expect("restart");
         let kept = Settings::load(&reopened).await;
         assert!(kept.profanity_filter);
         assert!(kept.blocks(ProfanityTarget::Messages, "fuck"));

@@ -4782,7 +4782,11 @@ mod tests {
         assert_eq!(like.len(), 10);
         state.db.close().await;
         for _ in 0..2 {
-            let state = reopened(crate::db::open(path.to_str()).await.expect("reopen"));
+            let state = reopened(
+                crate::db::open_started(path.to_str())
+                    .await
+                    .expect("reopen"),
+            );
             assert!(has_fts(&state.db));
             assert_eq!(fts_hits(&state.db, "needle").await, 10);
             fts_ok(&state.db).await;
@@ -4790,7 +4794,11 @@ mod tests {
             assert_eq!(got, like);
             state.db.close().await;
         }
-        let state = reopened(crate::db::open(path.to_str()).await.expect("reopen"));
+        let state = reopened(
+            crate::db::open_started(path.to_str())
+                .await
+                .expect("reopen"),
+        );
         done(state, path).await;
     }
 

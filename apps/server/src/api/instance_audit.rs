@@ -32,6 +32,42 @@ pub(crate) async fn record_in(
     detail: Value,
     t: i64,
 ) -> Result<(), ApiError> {
+    Ok(insert(conn, Some(actor), action, target, detail, t).await?)
+}
+
+/// Notes a change the server config made at a start. Such an entry has no actor, like one
+/// whose actor's account was deleted since; `by: "config"` in its detail tells the two apart,
+/// and only this function writes that mark.
+pub(crate) async fn record_config(
+    conn: &mut sqlx::AnyConnection,
+    action: &str,
+    target: Option<&str>,
+    detail: Value,
+    t: i64,
+) -> sqlx::Result<()> {
+    insert(conn, None, action, target, detail, t).await
+}
+
+/// The detail key that marks an entry the server config made.
+const BY: &str = "by";
+
+async fn insert(
+    conn: &mut sqlx::AnyConnection,
+    actor: Option<&str>,
+    action: &str,
+    target: Option<&str>,
+    detail: Value,
+    t: i64,
+) -> sqlx::Result<()> {
+    let mut fields = match detail {
+        Value::Object(fields) => fields,
+        _ => serde_json::Map::new(),
+    };
+    match actor {
+        Some(_) => fields.remove(BY),
+        None => fields.insert(BY.to_string(), Value::from("config")),
+    };
+    let detail = Value::Object(fields);
     sqlx::query(
         "INSERT INTO instance_audit(at, actor, action, target, detail) VALUES($1, $2, $3, $4, $5)",
     )

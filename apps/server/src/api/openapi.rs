@@ -302,8 +302,9 @@ mod tests {
         ),
     ];
 
-    const ADMIN_ROUTES: [(&str, &str); 11] = [
+    const ADMIN_ROUTES: [(&str, &str); 12] = [
         ("patch", "/api/v1/admin/settings"),
+        ("get", "/api/v1/admin/config"),
         ("get", "/api/v1/admin/overview"),
         ("get", "/api/v1/admin/users"),
         ("get", "/api/v1/admin/servers"),

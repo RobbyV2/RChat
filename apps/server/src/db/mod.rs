@@ -11,13 +11,16 @@ use serde::{Deserialize, Serialize};
 use sqlx::any::AnyRow;
 use sqlx::{AnyConnection, Row};
 
+pub(crate) use migrate::PINNED;
+pub use migrate::{ConfigChange, ConfigStart, SCHEMA_VERSION, trigger_version};
 #[cfg(test)]
-pub(crate) use migrate::seed_settings;
-pub use migrate::{SCHEMA_VERSION, trigger_version};
+pub(crate) use pool::open_started;
 pub(crate) use pool::pool_key;
 #[cfg(test)]
 pub(crate) use pool::temp_db_path;
-pub use pool::{Db, DbOptions, close, is_sqlite, open, open_with, reader, writer_connections};
+pub use pool::{
+    Db, DbOptions, close, is_sqlite, open, open_with, reader, take_config_start, writer_connections,
+};
 pub use schema::has_fts;
 #[cfg(test)]
 pub(crate) use schema::set_fts;

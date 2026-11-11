@@ -9,8 +9,15 @@ use super::sweep::*;
 
 use super::*;
 use crate::api::access::perms::{ALL_PERMS, Restrict, fold_access, perm_row};
+use crate::api::controls::ControlSeeds;
 use crate::api::test_util::{add_member, done, temp_state};
 use crate::limits::Limits;
+
+/// A server start with nothing set in the env, which is what these tests mean by opening a
+/// database. `super::open` is the tool's way in.
+async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
+    open_started(database_url).await
+}
 
 async fn general_id(db: &Db) -> i64 {
     sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
@@ -2518,21 +2525,6 @@ async fn p2p_hashes_and_the_p2p_switch_are_added_to_an_old_database() {
     wipe();
 }
 
-#[test]
-fn switch_seeds_are_on_unless_turned_off() {
-    for (value, on) in [
-        (None, true),
-        (Some("true"), true),
-        (Some("on"), true),
-        (Some(" OFF "), false),
-        (Some("false"), false),
-        (Some("0"), false),
-        (Some("no"), false),
-    ] {
-        assert_eq!(crate::api::switch_seed(value), on, "{value:?}");
-    }
-}
-
 #[tokio::test]
 async fn restrict_backfill_survives_an_interrupted_upgrade() {
     let path = crate::db::temp_db_path("restrict_marker");
@@ -3712,12 +3704,14 @@ async fn open_with_uses_the_configured_options() {
             ..Default::default()
         },
         pepper: Some("configured".into()),
-        seeds: crate::config::Seeds {
-            guests_enabled: Some(" Off ".into()),
-            p2p_attachments: Some("off".into()),
-            outgoing_webhooks: Some("on".into()),
-            ..Default::default()
-        },
+        controls: Some(
+            ControlSeeds::of(&[
+                ("GUESTS_ENABLED", " Off "),
+                ("P2P_ATTACHMENTS", "off"),
+                ("OUTGOING_WEBHOOKS", "on"),
+            ])
+            .expect("controls"),
+        ),
     };
     let db = open_with(path.to_str(), &opts).await.expect("open");
     assert_eq!(pepper(&db).await.expect("pepper"), b"configured");
@@ -3744,8 +3738,8 @@ async fn open_with_uses_the_configured_options() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// An old database: no feature switch rows yet, older switches set away from their defaults, and
-/// a message.
+/// An old database: no feature switch rows and no env records yet, older switches set away from
+/// their defaults, and a message.
 async fn old_feature_settings(db: &Db) {
     use crate::api::features::{Feature, Registration};
     let keys: Vec<String> = Feature::ALL
@@ -3755,6 +3749,7 @@ async fn old_feature_settings(db: &Db) {
         .collect();
     for stmt in [
         format!("DELETE FROM settings WHERE key IN ({})", keys.join(", ")),
+        "DELETE FROM settings WHERE key LIKE 'env%'".to_string(),
         "UPDATE settings SET value = '0' WHERE key = 'guests_enabled'".to_string(),
         "UPDATE settings SET value = '1' WHERE key = 'outgoing_webhooks'".to_string(),
         "UPDATE settings SET value = '0' WHERE key = 'profanity_links'".to_string(),
@@ -3779,7 +3774,7 @@ async fn old_feature_settings(db: &Db) {
     );
 }
 
-/// The switches hold the first start's seeds, and nothing older changed.
+/// The switches hold the env's values, and nothing older changed.
 async fn seeded_feature_settings(db: &Db, round: usize) {
     use crate::api::Settings;
     use crate::api::features::{Feature, Registration};
@@ -3819,41 +3814,23 @@ async fn seeded_feature_settings(db: &Db, round: usize) {
     );
 }
 
+/// A release that adds switches writes their env values at its first start, records the env of
+/// the older ones without touching what the admin page chose, and changes nothing at the next
+/// start with the same env.
 #[tokio::test]
-async fn feature_switches_are_seeded_once_on_an_old_database() {
-    use crate::api::features::FeatureSeeds;
-    let first = DbOptions {
-        seeds: crate::config::Seeds {
-            features: FeatureSeeds::load(&|name| {
-                match name {
-                    "FEATURE_P2P" | "WIDGETS" | "AUTH_PASSWORD_LOGIN" => Some("off"),
-                    "E2EE" | "FEATURE_SFU" => Some("on"),
-                    "AUTH_REGISTRATION" => Some("sso"),
-                    _ => None,
-                }
-                .map(str::to_string)
-            })
-            .expect("seeds"),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let later = DbOptions {
-        seeds: crate::config::Seeds {
-            features: FeatureSeeds::load(&|name| {
-                match name {
-                    "AUTH_REGISTRATION" => Some("closed"),
-                    "FEATURE_SFU" | "E2EE" => Some("off"),
-                    "UPLOAD_EXPIRY_MAX_DAYS" => Some("30"),
-                    _ => Some("on"),
-                }
-                .map(str::to_string)
-            })
-            .expect("other seeds"),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+async fn new_switches_take_the_env_on_an_old_database_and_older_ones_stay() {
+    let env = env_opts(&[
+        ("FEATURE_P2P", "off"),
+        ("WIDGETS", "off"),
+        ("AUTH_PASSWORD_LOGIN", "off"),
+        ("E2EE", "on"),
+        ("FEATURE_SFU", "on"),
+        ("AUTH_REGISTRATION", "sso"),
+        ("GUESTS_ENABLED", "on"),
+        ("OUTGOING_WEBHOOKS", "off"),
+        ("PROFANITY_TARGETS", "all"),
+        ("UPLOAD_EXPIRY_MAX_DAYS", "30"),
+    ]);
     let path = temp_db_path("feature_seeds");
     let wipe = || {
         for suffix in ["", "-wal", "-shm"] {
@@ -3864,9 +3841,10 @@ async fn feature_switches_are_seeded_once_on_an_old_database() {
     let db = open(path.to_str()).await.expect("open");
     old_feature_settings(&db).await;
     close(&db).await;
-    for (round, opts) in [&first, &later].into_iter().enumerate() {
-        let db = open_with(path.to_str(), opts).await.expect("upgrade");
+    for round in 0..2 {
+        let db = open_with(path.to_str(), &env).await.expect("upgrade");
         seeded_feature_settings(&db, round).await;
+        assert_eq!(take_config_start(&db).changes, [], "start {round}");
         close(&db).await;
     }
     wipe();
@@ -3874,8 +3852,8 @@ async fn feature_switches_are_seeded_once_on_an_old_database() {
         let db = open(Some(pg.url.as_str())).await.expect("open postgres");
         old_feature_settings(&db).await;
         close(&db).await;
-        for (round, opts) in [&first, &later].into_iter().enumerate() {
-            let db = open_with(Some(pg.url.as_str()), opts)
+        for round in 0..2 {
+            let db = open_with(Some(pg.url.as_str()), &env)
                 .await
                 .expect("upgrade postgres");
             seeded_feature_settings(&db, round).await;
@@ -3901,10 +3879,12 @@ async fn other_instances(db: &Db) -> (Vec<String>, serde_json::Value) {
     (stored, sent[OTHER_INSTANCES].clone())
 }
 
-/// A database from before the switch: no row for it, other settings changed, and a message.
+/// A database from before the switch: no row for it, no env records, other settings changed,
+/// and a message.
 async fn before_other_instances(db: &Db) {
     for stmt in [
         format!("DELETE FROM settings WHERE key = '{OTHER_INSTANCES}'"),
+        "DELETE FROM settings WHERE key LIKE 'env%'".to_string(),
         "UPDATE settings SET value = '0' WHERE key = 'p2p'".to_string(),
         "UPDATE settings SET value = '0' WHERE key = 'guests_enabled'".to_string(),
         "UPDATE settings SET value = 'sso' WHERE key = 'registration'".to_string(),
@@ -3921,17 +3901,9 @@ async fn before_other_instances(db: &Db) {
 }
 
 async fn other_instances_upgrade(fresh: Option<&str>, off: Option<&str>, old: Option<&str>) {
-    use crate::api::features::{FeatureSeeds, Registration};
-    let seeded_off = DbOptions {
-        seeds: crate::config::Seeds {
-            features: FeatureSeeds::load(&|name| {
-                (name == "FEATURE_CLIENT_OTHER_INSTANCES").then(|| "off".to_string())
-            })
-            .expect("seeds"),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    use crate::api::features::Registration;
+    let seeded_off = env_opts(&[("FEATURE_CLIENT_OTHER_INSTANCES", "off")]);
+    let unset = env_opts(&[]);
     let on = (vec!["1".to_string()], serde_json::json!(true));
 
     let db = open(fresh).await.expect("fresh");
@@ -3950,9 +3922,16 @@ async fn other_instances_upgrade(fresh: Option<&str>, off: Option<&str>, old: Op
     before_other_instances(&db).await;
     assert_eq!(other_instances(&db).await.0, Vec::<String>::new());
     close(&db).await;
-    for (round, opts) in [&DbOptions::default(), &seeded_off].into_iter().enumerate() {
+    let off = (vec!["0".to_string()], serde_json::json!(false));
+    let rounds = [
+        (&unset, &on, "the default"),
+        (&unset, &on, "the default again"),
+        (&seeded_off, &off, "set in the env later, it applies"),
+        (&seeded_off, &off, "and stays"),
+    ];
+    for (round, (opts, want, why)) in rounds.into_iter().enumerate() {
         let db = open_with(old, opts).await.expect("upgrade");
-        assert_eq!(other_instances(&db).await, on, "after start {round}");
+        assert_eq!(&other_instances(&db).await, want, "start {round}: {why}");
         let s = crate::api::Settings::load(&db).await;
         assert!(!s.p2p && !s.guests_enabled && s.password_login, "{round}");
         assert_eq!(s.registration, Registration::Sso, "after start {round}");
@@ -3996,47 +3975,6 @@ async fn the_other_instances_switch_is_seeded_on_new_and_old_databases() {
         other_instances_upgrade(Some(&fresh.url), Some(&off.url), Some(&old.url)).await;
         drop((fresh, off, old));
     }
-}
-
-#[tokio::test]
-async fn the_upload_expiry_cap_is_seeded_once() {
-    let path = temp_db_path("expiry_cap_seed");
-    let wipe = || {
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
-        }
-    };
-    wipe();
-    let with = |days: Option<i64>| DbOptions {
-        seeds: crate::config::Seeds {
-            features: crate::api::features::FeatureSeeds {
-                upload_expiry_max_days: days,
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let db = open(path.to_str()).await.expect("fresh, unset");
-    assert_eq!(
-        crate::api::Settings::load(&db).await.upload_expiry_max_days,
-        0
-    );
-    sqlx::query("DELETE FROM settings WHERE key = 'upload_expiry_max_days'")
-        .execute(&db)
-        .await
-        .expect("forget");
-    close(&db).await;
-    for (round, days) in [Some(30), Some(7)].into_iter().enumerate() {
-        let db = open_with(path.to_str(), &with(days)).await.expect("start");
-        assert_eq!(
-            crate::api::Settings::load(&db).await.upload_expiry_max_days,
-            30,
-            "start {round}: the first seed stays"
-        );
-        close(&db).await;
-    }
-    wipe();
 }
 
 async fn old_upload_expiry_db(db: &Db) {
@@ -4189,4 +4127,723 @@ async fn upload_expiry_columns_are_added_to_an_old_database() {
         upload_expiry_upgrade(&pg.url).await;
         drop(pg);
     }
+}
+
+/// The database options of an env given as pairs, as the server reads them at start.
+fn env_opts(pairs: &[(&str, &str)]) -> DbOptions {
+    crate::config::AppConfig::from_map(pairs)
+        .expect("config")
+        .db_options()
+}
+
+async fn stored(db: &Db, key: &str) -> Option<String> {
+    sqlx::query("SELECT value FROM settings WHERE key = $1")
+        .bind(key)
+        .fetch_optional(db)
+        .await
+        .expect("setting")
+        .map(|r| r.try_get(0).expect("value"))
+}
+
+/// What the admin page does: writes `value` over the stored one.
+async fn page_sets(db: &Db, key: &str, value: &str) {
+    let n = sqlx::query("UPDATE settings SET value = $1 WHERE key = $2")
+        .bind(value)
+        .bind(key)
+        .execute(db)
+        .await
+        .expect("page change")
+        .rows_affected();
+    assert_eq!(n, 1, "{key} is stored");
+}
+
+/// One start with the env `pairs`: what it did to `keys` (stored value, record), and the
+/// changes it reports.
+async fn start(
+    url: &str,
+    pairs: &[(&str, &str)],
+    keys: &[&str],
+) -> (Vec<(Option<String>, Option<String>)>, Vec<ConfigChange>) {
+    let db = open_with(Some(url), &env_opts(pairs)).await.expect("start");
+    let mut seen = Vec::new();
+    for key in keys {
+        seen.push((
+            stored(&db, key).await,
+            stored(&db, &format!("env:{key}")).await,
+        ));
+    }
+    let changes = take_config_start(&db).changes;
+    assert_eq!(stored(&db, "env:records").await.as_deref(), Some("1"));
+    close(&db).await;
+    (seen, changes)
+}
+
+/// Runs `body` on a fresh SQLite file and, when `TEST_POSTGRES_URL` is set, on a fresh Postgres
+/// database.
+async fn on_each_database<F, Fut>(tag: &str, body: F)
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let path = temp_db_path(tag);
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    body(path.to_str().expect("path").to_string()).await;
+    wipe();
+    if let Some(pg) = crate::api::test_util::pg_temp(tag).await {
+        body(pg.url.clone()).await;
+        drop(pg);
+    }
+}
+
+/// The instance audit log as (actor, action, target, detail), oldest first.
+async fn config_audit(db: &Db) -> Vec<(Option<String>, String, Option<String>, serde_json::Value)> {
+    sqlx::query("SELECT actor, action, target, detail FROM instance_audit ORDER BY id")
+        .fetch_all(db)
+        .await
+        .expect("audit")
+        .iter()
+        .map(|r| {
+            let detail: String = r.try_get(3).expect("detail");
+            (
+                r.try_get(0).expect("actor"),
+                r.try_get(1).expect("action"),
+                r.try_get(2).expect("target"),
+                serde_json::from_str(&detail).expect("json"),
+            )
+        })
+        .collect()
+}
+
+fn pair(value: &str, record: Option<&str>) -> (Option<String>, Option<String>) {
+    (Some(value.to_string()), record.map(str::to_string))
+}
+
+fn change(key: &'static str, from: &str, to: &str) -> ConfigChange {
+    ConfigChange {
+        key,
+        from: from.to_string(),
+        to: to.to_string(),
+        flips: false,
+    }
+}
+
+#[tokio::test]
+async fn a_set_env_value_is_written_and_recorded_at_the_first_start() {
+    on_each_database("env_first", |url| async move {
+        let env = [("FEATURE_P2P", "off"), ("AUTH_REGISTRATION", "closed")];
+        let keys = ["p2p", "registration", "sfu", "asset_uploads"];
+        for round in 0..2 {
+            let (seen, changes) = start(&url, &env, &keys).await;
+            assert_eq!(
+                seen,
+                [
+                    pair("0", Some("0")),
+                    pair("closed", Some("closed")),
+                    pair("0", None),
+                    pair("1", None),
+                ],
+                "start {round}"
+            );
+            assert_eq!(changes, [], "start {round}: a first value is not a change");
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn unset_controls_hold_their_defaults_without_records() {
+    use crate::api::controls::Control;
+    on_each_database("env_unset", |url| async move {
+        for round in 0..2 {
+            let db = open_with(Some(&url), &env_opts(&[])).await.expect("start");
+            for c in Control::all() {
+                let rows: std::collections::HashMap<String, String> = {
+                    let mut rows = std::collections::HashMap::new();
+                    for key in c.keys() {
+                        if let Some(value) = stored(&db, key).await {
+                            rows.insert(key.to_string(), value);
+                        }
+                    }
+                    rows
+                };
+                assert_eq!(rows.len(), c.keys().len(), "{}: every row", c.key);
+                assert_eq!(
+                    c.read(&rows).as_deref(),
+                    Some(c.default),
+                    "{} after start {round}",
+                    c.key
+                );
+            }
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM settings WHERE key LIKE 'env:%' AND key <> 'env:records'"
+                )
+                .await,
+                0
+            );
+            assert_eq!(take_config_start(&db).changes, []);
+            close(&db).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_unchanged_env_value_leaves_a_page_change_standing() {
+    on_each_database("env_unchanged", |url| async move {
+        let env = [("FEATURE_P2P", "off"), ("AUTH_REGISTRATION", "open")];
+        let keys = ["p2p", "registration"];
+        start(&url, &env, &keys).await;
+        let db = open_with(Some(&url), &env_opts(&env)).await.expect("run");
+        page_sets(&db, "p2p", "1").await;
+        page_sets(&db, "registration", "sso").await;
+        close(&db).await;
+        for round in 0..2 {
+            let (seen, changes) = start(&url, &env, &keys).await;
+            assert_eq!(
+                seen,
+                [pair("1", Some("0")), pair("sso", Some("open"))],
+                "start {round}"
+            );
+            assert_eq!(changes, [], "start {round}");
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_changed_env_value_is_applied_once() {
+    on_each_database("env_changed", |url| async move {
+        let keys = ["registration", "p2p", "sfu"];
+        let first = [("AUTH_REGISTRATION", "open"), ("FEATURE_P2P", "on")];
+        start(&url, &first, &keys).await;
+        let db = open_with(Some(&url), &env_opts(&first)).await.expect("run");
+        page_sets(&db, "registration", "sso").await;
+        page_sets(&db, "p2p", "0").await;
+        page_sets(&db, "sfu", "1").await;
+        sqlx::query("UPDATE settings SET value = '0' WHERE key = 'env_at:registration'")
+            .execute(&db)
+            .await
+            .expect("an old record");
+        close(&db).await;
+
+        let second = [
+            ("AUTH_REGISTRATION", "closed"),
+            ("FEATURE_P2P", "on"),
+            ("FEATURE_SFU", "off"),
+        ];
+        let (seen, changes) = start(&url, &second, &keys).await;
+        assert_eq!(
+            seen,
+            [
+                pair("closed", Some("closed")),
+                pair("0", Some("1")),
+                pair("0", Some("0")),
+            ],
+            "the changed value and the newly set one are written, the unchanged one is not"
+        );
+        assert_eq!(
+            changes,
+            [
+                change("sfu", "1", "0"),
+                change("registration", "sso", "closed")
+            ]
+        );
+
+        let db = open_with(Some(&url), &env_opts(&second))
+            .await
+            .expect("run");
+        let row = |key: &str, from: &str, to: &str| {
+            (
+                None,
+                "settings.config".to_string(),
+                Some(key.to_string()),
+                serde_json::json!({"key": key, "from": from, "to": to, "by": "config"}),
+            )
+        };
+        assert_eq!(
+            config_audit(&db).await,
+            [
+                row("sfu", "on", "off"),
+                row("registration", "sso", "closed")
+            ],
+            "the audit log notes what the config changed, with no actor"
+        );
+        page_sets(&db, "registration", "open").await;
+        close(&db).await;
+        for round in 0..2 {
+            let (seen, changes) = start(&url, &second, &keys).await;
+            assert_eq!(seen[0], pair("open", Some("closed")), "start {round}");
+            assert_eq!(changes, [], "start {round}: config is applied once");
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_start_soon_after_another_value_is_flagged() {
+    on_each_database("env_flips", |url| async move {
+        let keys = ["registration"];
+        start(&url, &[("AUTH_REGISTRATION", "open")], &keys).await;
+        let (seen, changes) = start(&url, &[("AUTH_REGISTRATION", "closed")], &keys).await;
+        assert_eq!(seen, [pair("closed", Some("closed"))]);
+        assert_eq!(
+            changes,
+            [ConfigChange {
+                flips: true,
+                ..change("registration", "open", "closed")
+            }],
+            "another copy recorded open in the last 10 minutes"
+        );
+        let closed = env_opts(&[("AUTH_REGISTRATION", "closed")]);
+        let db = open_with(Some(&url), &closed).await.expect("run");
+        let recent = now() - 540;
+        page_sets(&db, "env_at:registration", &recent.to_string()).await;
+        close(&db).await;
+        let sso = [("AUTH_REGISTRATION", "sso")];
+        let (_, changes) = start(&url, &sso, &keys).await;
+        assert!(changes[0].flips, "9 minutes ago is recent");
+        let db = open_with(Some(&url), &env_opts(&sso)).await.expect("run");
+        let old = now() - 660;
+        page_sets(&db, "env_at:registration", &old.to_string()).await;
+        close(&db).await;
+        let (_, changes) = start(&url, &[("AUTH_REGISTRATION", "open")], &keys).await;
+        assert_eq!(changes, [change("registration", "sso", "open")]);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn the_first_start_with_records_only_records() {
+    on_each_database("env_upgrade", |url| async move {
+        let env = [
+            ("FEATURE_P2P", "on"),
+            ("AUTH_REGISTRATION", "open"),
+            ("GUESTS_ENABLED", "true"),
+            ("PROFANITY_TARGETS", "all"),
+        ];
+        let keys = [
+            "p2p",
+            "registration",
+            "guests_enabled",
+            "profanity_links",
+            "sfu",
+        ];
+        let db = open_with(Some(&url), &env_opts(&env)).await.expect("old");
+        for (key, value) in [
+            ("p2p", "0"),
+            ("registration", "sso"),
+            ("guests_enabled", "0"),
+            ("profanity_links", "0"),
+            ("sfu", "1"),
+        ] {
+            page_sets(&db, key, value).await;
+        }
+        sqlx::query("DELETE FROM settings WHERE key LIKE 'env%'")
+            .execute(&db)
+            .await
+            .expect("an old release has no records");
+        sqlx::query(
+            "INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', 'old', 7)",
+        )
+        .bind(general_id(&db).await)
+        .execute(&db)
+        .await
+        .expect("old message");
+        close(&db).await;
+
+        for round in 0..2 {
+            let (seen, changes) = start(&url, &env, &keys).await;
+            assert_eq!(
+                seen,
+                [
+                    pair("0", Some("1")),
+                    pair("sso", Some("open")),
+                    pair("0", Some("1")),
+                    pair("0", None),
+                    pair("1", None),
+                ],
+                "start {round}: the page's values stay and the env is recorded"
+            );
+            assert_eq!(changes, [], "start {round}");
+        }
+        let db = open_with(Some(&url), &env_opts(&env)).await.expect("run");
+        assert_eq!(
+            stored(&db, "env:profanity_targets").await.as_deref(),
+            Some("all")
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM messages WHERE author = 'alice' AND content = 'old' AND created_at = 7"
+            )
+            .await,
+            1
+        );
+        page_sets(&db, "env_at:registration", "0").await;
+        assert_eq!(config_audit(&db).await, [], "recording changes nothing");
+        close(&db).await;
+
+        let mut changed = env;
+        changed[1] = ("AUTH_REGISTRATION", "closed");
+        let (seen, changes) = start(&url, &changed, &keys).await;
+        assert_eq!(
+            seen,
+            [
+                pair("0", Some("1")),
+                pair("closed", Some("closed")),
+                pair("0", Some("1")),
+                pair("0", None),
+                pair("1", None),
+            ],
+            "only the changed variable applies"
+        );
+        assert_eq!(changes, [change("registration", "sso", "closed")]);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_unset_env_value_drops_its_record() {
+    on_each_database("env_dropped", |url| async move {
+        let keys = ["p2p"];
+        let off = [("FEATURE_P2P", "off")];
+        start(&url, &off, &keys).await;
+        for round in 0..2 {
+            let (seen, changes) = start(&url, &[], &keys).await;
+            assert_eq!(seen, [pair("0", None)], "start {round}: the value stays");
+            assert_eq!(changes, []);
+        }
+        let db = open(Some(&url)).await.expect("run");
+        assert_eq!(stored(&db, "env_at:p2p").await, None);
+        page_sets(&db, "p2p", "1").await;
+        close(&db).await;
+        let (seen, changes) = start(&url, &off, &keys).await;
+        assert_eq!(
+            seen,
+            [pair("0", Some("0"))],
+            "set again, it applies though it is the old value"
+        );
+        assert_eq!(changes, [change("p2p", "1", "0")]);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn pinned_controls_follow_the_env_at_every_start() {
+    on_each_database("env_pinned", |url| async move {
+        let keys = ["p2p", "registration"];
+        let pinned = [
+            ("FEATURE_P2P", "off"),
+            ("AUTH_REGISTRATION", "open"),
+            ("SETTINGS_PINNED", "FEATURE_P2P"),
+        ];
+        let (seen, changes) = start(&url, &pinned, &keys).await;
+        assert_eq!(seen, [pair("0", Some("0")), pair("open", Some("open"))]);
+        assert_eq!(changes, []);
+        for round in 0..2 {
+            let db = open_with(Some(&url), &env_opts(&pinned))
+                .await
+                .expect("run");
+            assert_eq!(stored(&db, "env:pinned").await.as_deref(), Some("p2p"));
+            page_sets(&db, "p2p", "1").await;
+            page_sets(&db, "registration", "sso").await;
+            close(&db).await;
+            let (seen, changes) = start(&url, &pinned, &keys).await;
+            assert_eq!(
+                seen,
+                [pair("0", Some("0")), pair("sso", Some("open"))],
+                "start {round}: the pinned one goes back, the other stays"
+            );
+            assert_eq!(changes, [change("p2p", "1", "0")], "start {round}");
+        }
+        let all = [
+            ("FEATURE_P2P", "off"),
+            ("AUTH_REGISTRATION", "open"),
+            ("SETTINGS_PINNED", "all"),
+        ];
+        let (seen, _) = start(&url, &all, &keys).await;
+        assert_eq!(seen, [pair("0", Some("0")), pair("open", Some("open"))]);
+        let db = open_with(Some(&url), &env_opts(&all)).await.expect("run");
+        assert_eq!(
+            stored(&db, "env:pinned").await.as_deref(),
+            Some("p2p,registration")
+        );
+        page_sets(&db, "p2p", "1").await;
+        close(&db).await;
+        let unpinned = [("FEATURE_P2P", "off"), ("AUTH_REGISTRATION", "open")];
+        let (seen, changes) = start(&url, &unpinned, &keys).await;
+        assert_eq!(seen[0], pair("1", Some("0")), "no pin, so the page wins");
+        assert_eq!(changes, []);
+        let db = open_with(Some(&url), &env_opts(&unpinned))
+            .await
+            .expect("run");
+        assert_eq!(stored(&db, "env:pinned").await, None);
+        close(&db).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn profanity_targets_follow_the_same_rules_row_by_row() {
+    on_each_database("env_targets", |url| async move {
+        let keys = [
+            "profanity_messages",
+            "profanity_links",
+            "profanity_bios",
+            "profanity_targets",
+        ];
+        let some = [("PROFANITY_TARGETS", "messages,links")];
+        let (seen, _) = start(&url, &some, &keys).await;
+        assert_eq!(
+            seen,
+            [
+                pair("1", None),
+                pair("1", None),
+                pair("0", None),
+                (None, Some("messages,links".to_string())),
+            ]
+        );
+        let db = open_with(Some(&url), &env_opts(&some)).await.expect("run");
+        page_sets(&db, "profanity_bios", "1").await;
+        sqlx::query("DELETE FROM settings WHERE key = 'profanity_usernames'")
+            .execute(&db)
+            .await
+            .expect("a target from a later release");
+        close(&db).await;
+        let (seen, changes) = start(&url, &some, &keys).await;
+        assert_eq!(seen[2], pair("1", None), "the page's change stays");
+        assert_eq!(changes, []);
+        let db = open_with(Some(&url), &env_opts(&some)).await.expect("run");
+        assert_eq!(
+            stored(&db, "profanity_usernames").await.as_deref(),
+            Some("0"),
+            "a missing row takes the env value"
+        );
+        page_sets(&db, "env_at:profanity_targets", "0").await;
+        close(&db).await;
+        let (seen, changes) = start(&url, &[("PROFANITY_TARGETS", "none")], &keys).await;
+        assert_eq!(
+            seen,
+            [
+                pair("0", None),
+                pair("0", None),
+                pair("0", None),
+                (None, Some("none".to_string())),
+            ]
+        );
+        assert_eq!(
+            changes,
+            [change("profanity_targets", "messages,links,bios", "none")]
+        );
+    })
+    .await;
+}
+
+/// Every row the controls and the server config's records keep, in key order.
+async fn control_table(db: &Db) -> Vec<(String, String)> {
+    use crate::api::controls::Control;
+    let keys: Vec<&str> = Control::all().iter().flat_map(|c| c.keys()).collect();
+    sqlx::query("SELECT key, value FROM settings ORDER BY key")
+        .fetch_all(db)
+        .await
+        .expect("settings")
+        .iter()
+        .map(|r| {
+            (
+                r.try_get::<String, _>(0).expect("key"),
+                r.try_get::<String, _>(1).expect("value"),
+            )
+        })
+        .filter(|(key, _)| key.starts_with("env") || keys.contains(&key.as_str()))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_tool_open_leaves_the_controls_and_their_records_alone() {
+    use crate::api::features::Registration;
+    on_each_database("env_tool", |url| async move {
+        let db = super::open(Some(&url))
+            .await
+            .expect("a tool, before any start");
+        assert_eq!(
+            control_table(&db).await,
+            [],
+            "it writes no control and no record"
+        );
+        let read = crate::api::Settings::load(&db).await;
+        assert!(read.p2p && read.registration == Registration::Open);
+        assert_eq!(take_config_start(&db), ConfigStart::default());
+        close(&db).await;
+
+        let env = [
+            ("FEATURE_P2P", "off"),
+            ("AUTH_REGISTRATION", "closed"),
+            ("SETTINGS_PINNED", "FEATURE_P2P"),
+        ];
+        let keys = ["p2p", "registration"];
+        let (seen, changes) = start(&url, &env, &keys).await;
+        assert_eq!(
+            seen,
+            [pair("0", Some("0")), pair("closed", Some("closed"))],
+            "the first server start after it still takes its env"
+        );
+        assert_eq!(changes, []);
+        let db = open_with(Some(&url), &env_opts(&env)).await.expect("run");
+        page_sets(&db, "registration", "sso").await;
+        let before = control_table(&db).await;
+        assert!(before.contains(&("env:pinned".to_string(), "p2p".to_string())));
+        close(&db).await;
+
+        for round in 0..2 {
+            let db = super::open(Some(&url)).await.expect("a tool");
+            assert_eq!(control_table(&db).await, before, "tool open {round}");
+            assert_eq!(take_config_start(&db), ConfigStart::default());
+            close(&db).await;
+        }
+        let (seen, changes) = start(&url, &env, &keys).await;
+        assert_eq!(
+            seen,
+            [pair("0", Some("0")), pair("sso", Some("closed"))],
+            "the next server start finds its records, so the page's choice stands"
+        );
+        assert_eq!(changes, []);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_start_that_leaves_a_recently_set_value_unset_is_reported() {
+    on_each_database("env_forgotten", |url| async move {
+        let both = [("FEATURE_P2P", "off"), ("AUTH_REGISTRATION", "closed")];
+        let one = [("AUTH_REGISTRATION", "closed")];
+        start(&url, &both, &[]).await;
+        for (round, forgotten) in [vec!["p2p"], vec![]].into_iter().enumerate() {
+            let db = open_with(Some(&url), &env_opts(&one)).await.expect("start");
+            let started = take_config_start(&db);
+            assert_eq!(
+                started.forgotten, forgotten,
+                "start {round} without FEATURE_P2P"
+            );
+            assert_eq!(started.changes, []);
+            close(&db).await;
+        }
+        start(&url, &both, &[]).await;
+        let db = open_with(Some(&url), &env_opts(&both)).await.expect("run");
+        let old = now() - 660;
+        page_sets(&db, "env_at:p2p", &old.to_string()).await;
+        close(&db).await;
+        let db = open_with(Some(&url), &env_opts(&one)).await.expect("start");
+        assert_eq!(
+            take_config_start(&db),
+            ConfigStart::default(),
+            "a value another start set 11 minutes ago is not reported"
+        );
+        assert_eq!(stored(&db, "env:p2p").await, None);
+        close(&db).await;
+    })
+    .await;
+}
+
+/// A database from before the controls `keys` existed: no rows for them and no env records, an
+/// older switch changed in the admin page, and a message.
+async fn before_controls(url: &str, keys: &[&str]) {
+    let db = open(Some(url)).await.expect("old");
+    for key in keys {
+        sqlx::query("DELETE FROM settings WHERE key = $1")
+            .bind(*key)
+            .execute(&db)
+            .await
+            .expect("no row yet");
+    }
+    sqlx::query("DELETE FROM settings WHERE key LIKE 'env%'")
+        .execute(&db)
+        .await
+        .expect("no records yet");
+    page_sets(&db, "p2p", "0").await;
+    sqlx::query(
+        "INSERT INTO messages(channel_id, author, content, created_at) SELECT $1, 'alice', 'old', 7 WHERE NOT EXISTS(SELECT 1 FROM messages WHERE author = 'alice' AND content = 'old')",
+    )
+    .bind(general_id(&db).await)
+    .execute(&db)
+    .await
+    .expect("old message");
+    close(&db).await;
+}
+
+/// What an upgrade must leave alone: the page's older choice and the message.
+async fn kept_through_the_upgrade(url: &str, env: &[(&str, &str)]) {
+    let db = open_with(Some(url), &env_opts(env)).await.expect("run");
+    assert!(!crate::api::Settings::load(&db).await.p2p);
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM messages WHERE author = 'alice' AND content = 'old' AND created_at = 7"
+        )
+        .await,
+        1
+    );
+    close(&db).await;
+}
+
+/// New controls on an old database: with the env silent they get their defaults; set in the env
+/// at the release's first start they take the env value; set later, the env value applies as a
+/// change. `set` is (env name, env value, stored value) per key.
+async fn controls_reach_an_old_database(
+    tag: &str,
+    keys: &'static [&'static str],
+    defaults: &'static [&'static str],
+    set: &'static [(&'static str, &'static str, &'static str)],
+) {
+    on_each_database(tag, |url| async move {
+        let env: Vec<(&str, &str)> = set.iter().map(|(name, value, _)| (*name, *value)).collect();
+        let from_env: Vec<_> = set
+            .iter()
+            .map(|(_, _, stored)| pair(stored, Some(stored)))
+            .collect();
+        before_controls(&url, keys).await;
+        for round in 0..2 {
+            let (seen, changes) = start(&url, &env, keys).await;
+            assert_eq!(seen, from_env, "start {round}: the env value");
+            assert_eq!(changes, [], "start {round}");
+        }
+        kept_through_the_upgrade(&url, &env).await;
+
+        before_controls(&url, keys).await;
+        let silent: Vec<_> = defaults.iter().map(|d| pair(d, None)).collect();
+        for round in 0..2 {
+            let (seen, changes) = start(&url, &[], keys).await;
+            assert_eq!(seen, silent, "start {round}: the defaults");
+            assert_eq!(changes, [], "start {round}");
+        }
+        let (seen, changes) = start(&url, &env, keys).await;
+        assert_eq!(seen, from_env, "set later, the env applies");
+        let want: Vec<ConfigChange> = keys
+            .iter()
+            .zip(defaults)
+            .zip(set)
+            .filter(|((_, default), (_, _, stored))| **default != *stored)
+            .map(|((key, default), (_, _, stored))| change(key, default, stored))
+            .collect();
+        assert_eq!(changes, want);
+        kept_through_the_upgrade(&url, &env).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn the_upload_expiry_cap_reaches_an_old_database() {
+    controls_reach_an_old_database(
+        "cap_control",
+        &["upload_expiry_max_days"],
+        &["0"],
+        &[("UPLOAD_EXPIRY_MAX_DAYS", " 30 ", "30")],
+    )
+    .await;
 }
