@@ -1,0 +1,292 @@
+{
+  "bind": [
+    [
+      "a",
+      "acct",
+      "h:00ff",
+      "a:437fbaaa3120d91b3bd0"
+    ],
+    [
+      "g",
+      "addr",
+      "203.0.113.9",
+      "g:9901d645e972ed82d154"
+    ],
+    [
+      "g",
+      "addr",
+      "2001:db8:1:2::",
+      "g:665d1e495b99f9c20cfa"
+    ],
+    [
+      "u",
+      "user",
+      "alice",
+      "u:a54955449a347cd8622a"
+    ],
+    [
+      "b",
+      "ua",
+      "Mozilla/5.0",
+      "b:67c6adf4e6e2a47dd7a1"
+    ]
+  ],
+  "binding": [
+    [
+      "session",
+      "a:437fbaaa3120d91b3bd0"
+    ],
+    [
+      "guest",
+      "g:9901d645e972ed82d154,c:a41b6dac2255e2c6017d"
+    ],
+    [
+      "guest without client id",
+      "g:9901d645e972ed82d154"
+    ],
+    [
+      "signin alice",
+      "g:9901d645e972ed82d154,u:a54955449a347cd8622a,c:a41b6dac2255e2c6017d"
+    ],
+    [
+      "signin without username",
+      "g:9901d645e972ed82d154,c:a41b6dac2255e2c6017d"
+    ],
+    [
+      "page bound to address",
+      "b:67c6adf4e6e2a47dd7a1,g:9901d645e972ed82d154"
+    ]
+  ],
+  "bulk_changes": [
+    [
+      0,
+      1
+    ],
+    [
+      1,
+      1
+    ],
+    [
+      20,
+      1
+    ],
+    [
+      21,
+      2
+    ],
+    [
+      200,
+      10
+    ],
+    [
+      500,
+      10
+    ]
+  ],
+  "bulk_media_batch": 8,
+  "bulk_page": [
+    [
+      null,
+      20
+    ],
+    [
+      "100",
+      1
+    ],
+    [
+      "150",
+      2
+    ],
+    [
+      "5000",
+      50
+    ],
+    [
+      "99999",
+      50
+    ],
+    [
+      "0",
+      1
+    ]
+  ],
+  "bulk_range_bytes": [
+    [
+      1,
+      1
+    ],
+    [
+      1048576,
+      1
+    ],
+    [
+      1048577,
+      2
+    ],
+    [
+      8388608,
+      8
+    ],
+    [
+      104857600,
+      8
+    ]
+  ],
+  "bulk_range_none": 8,
+  "challenge": "c1.1.eyJ2IjoxLCJhbGciOiJzMjU2IiwiY2xzIjoiZ2VuZXJhbCIsInN1YiI6Imc6NWUzYzFkMmE5ZjBiN2M0MWEyYjMiLCJrIjo0LCJ3Ijo0MDk2LCJpYXQiOjE3NjcyMjU2MDAsImV4cCI6MTc2NzIyNTkwMSwiciI6IkFBRUNBd1FGQmdjSUNRb0xEQTBPRHcifQ.GEhvC5Yc2YNzTBA-0S5uGQ",
+  "challenge_payload": "{\"v\":1,\"alg\":\"s256\",\"cls\":\"general\",\"sub\":\"g:5e3c1d2a9f0b7c41a2b3\",\"k\":4,\"w\":4096,\"iat\":1767225600,\"exp\":1767225901,\"r\":\"AAECAwQFBgcICQoLDA0ODw\"}",
+  "forward_verifier": [
+    "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+    "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+  ],
+  "hash_sub0_nonce0_hex": "4d9d5d7388122febf43a93f38b271ce919e4c38cb233699218aeede3cb56df49",
+  "k": 4,
+  "key_hex": "3031323334353637383961626364656630313233343536373839616263646566",
+  "kid": "1",
+  "life_secs": [
+    [
+      1048576,
+      500000,
+      303
+    ],
+    [
+      33554432,
+      500000,
+      368
+    ],
+    [
+      1073741824,
+      500000,
+      2448
+    ]
+  ],
+  "nonces": [
+    "2403",
+    "3043",
+    "932",
+    "775"
+  ],
+  "nonces_wire": "6309000000000000e30b000000000000a4030000000000000703000000000000",
+  "redeemers": [
+    [
+      "token",
+      [
+        "general",
+        "signin"
+      ]
+    ],
+    [
+      "pass",
+      [
+        "page"
+      ]
+    ],
+    [
+      "redeem",
+      [
+        "general"
+      ]
+    ]
+  ],
+  "requester": [
+    [
+      "client id",
+      "c:203.0.113.9|AAECAwQFBgcICQoLDA0ODw"
+    ],
+    [
+      "no client id",
+      "u:203.0.113.9|1066b48224bb188c"
+    ]
+  ],
+  "seed_hex": "28cc57bf7416808e462723478b182693d9756b87fe2e4a4d45161a60700385dc",
+  "target": "18014398509481984",
+  "targets": [
+    [
+      16,
+      1048576,
+      "281474976710656"
+    ],
+    [
+      16,
+      16777216,
+      "17592186044416"
+    ],
+    [
+      1,
+      1,
+      "18446744073709551615"
+    ],
+    [
+      16,
+      3,
+      "18446744073709551615"
+    ],
+    [
+      64,
+      18446744073709551615,
+      "64"
+    ]
+  ],
+  "token": "t1.1.eyJ2IjoxLCJpZCI6IkVCRVNFeFFWRmhjWUdSb2JIQjBlSHciLCJzdWIiOiJnOjVlM2MxZDJhOWYwYjdjNDFhMmIzIiwiY2xzIjoiZ2VuZXJhbCIsImx2bCI6NDA5NiwiaWF0IjoxNzY3MjI1NjEwLCJleHAiOjE3NjcyMjkyMTAsImJ1ZCI6MTAwMH0.3zNRILTD7EPHkOT1Xs2Rjw",
+  "token_payload": "{\"v\":1,\"id\":\"EBESExQVFhcYGRobHB0eHw\",\"sub\":\"g:5e3c1d2a9f0b7c41a2b3\",\"cls\":\"general\",\"lvl\":4096,\"iat\":1767225610,\"exp\":1767229210,\"bud\":1000}",
+  "tries": 7157,
+  "work": 4096,
+  "work_for": [
+    [
+      1048576,
+      0,
+      8,
+      1048576
+    ],
+    [
+      1048576,
+      2,
+      8,
+      1246974
+    ],
+    [
+      1048576,
+      8,
+      8,
+      2097152
+    ],
+    [
+      1048576,
+      30,
+      8,
+      14107900
+    ],
+    [
+      1048576,
+      80,
+      8,
+      1073741824
+    ]
+  ],
+  "work_with_load": [
+    [
+      4194304,
+      24,
+      4,
+      8,
+      33554432,
+      33554432
+    ],
+    [
+      4194304,
+      16,
+      4,
+      8,
+      33554432,
+      23726566
+    ],
+    [
+      4194304,
+      32,
+      4,
+      8,
+      33554432,
+      null
+    ]
+  ]
+}

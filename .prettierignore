@@ -30,3 +30,4 @@ temp
 
 # Test vectors, kept byte for byte
 crates/fed/tests/vectors
+crates/pow/tests/vectors.json
