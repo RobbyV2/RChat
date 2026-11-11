@@ -1,0 +1,406 @@
+/* The vintage style: the late-1990s desktop over the app's own layout. Every rule is under
+   :root[data-style='vintage'], and none changes a size except the one minimum width below.
+   Token values come from lib/fx/vintage_tokens.ts and the font overrides from its faceOverrides
+   (lib/__tests__/fx_vintage_css.test.ts holds the two together). */
+
+@font-face {
+  font-family: 'Pixelify Sans';
+  src: url(/fonts/pixelify-sans.woff2) format('woff2');
+  font-display: swap;
+  font-weight: 400 700;
+  size-adjust: 87.87%;
+  ascent-override: 105.57%;
+  descent-override: 27.78%;
+  line-gap-override: 0%;
+  unicode-range: U+0020-007E, U+00A0-00FF, U+0100-017F;
+}
+
+@font-face {
+  font-family: 'Silkscreen';
+  src: url(/fonts/silkscreen-400.woff2) format('woff2');
+  font-display: swap;
+  font-weight: 400;
+  unicode-range: U+0020-007E, U+00A0-00FF, U+0100-017F;
+}
+
+@font-face {
+  font-family: 'Silkscreen';
+  src: url(/fonts/silkscreen-700.woff2) format('woff2');
+  font-display: swap;
+  font-weight: 700;
+  unicode-range: U+0020-007E, U+00A0-00FF, U+0100-017F;
+}
+
+/* Dark: the late-90s homepage at night. */
+:root[data-style='vintage'] {
+  --color-primary: #00ffff;
+  --color-on-primary: #000000;
+  --color-primary-container: #000080;
+  --color-on-primary-container: #ffffff;
+  --color-secondary: #00ff00;
+  --color-on-secondary: #000000;
+  --color-secondary-container: #000080;
+  --color-on-secondary-container: #ffff00;
+  --color-tertiary: #ff66ff;
+  --color-on-tertiary: #000000;
+  --color-tertiary-container: #400040;
+  --color-on-tertiary-container: #ffccff;
+  --color-error: #ff6060;
+  --color-on-error: #000000;
+  --color-error-container: #600000;
+  --color-on-error-container: #ffd0d0;
+  --color-surface: #000000;
+  --color-on-surface: #e0e0e0;
+  --color-surface-variant: #24244a;
+  --color-on-surface-variant: #b8b8d0;
+  --color-surface-container-lowest: #000000;
+  --color-surface-container-low: #0b0b18;
+  --color-surface-container: #10102a;
+  --color-surface-container-high: #1a1a3a;
+  --color-surface-container-highest: #24244a;
+  --color-surface-dim: #000000;
+  --color-surface-bright: #2c2c58;
+  --color-outline: #8888aa;
+  --color-outline-variant: #404060;
+  --color-inverse-surface: #e0e0e0;
+  --color-inverse-on-surface: #000000;
+  --color-inverse-primary: #000080;
+  --color-scrim: #000000;
+  --color-spoiler: #24244a;
+  --color-status-green: #00ff00;
+  --color-status-yellow: #ffff00;
+  --color-status-red: #ff6060;
+  --color-danger: #d00000;
+  --color-on-danger: #ffffff;
+  --color-mute: #d00000;
+  --color-on-mute: #ffffff;
+  --color-mute-hover: #a00000;
+  --color-mute-fg: #ff6060;
+  --color-code-blue: #80c0ff;
+  --color-code-orange: #ffb060;
+  --vt-face: #24244a;
+  --vt-light: #7070a8;
+  --vt-hi: #3a3a6a;
+  --vt-shade: #101028;
+  --vt-dark: #000000;
+  --vt-title-from: #000080;
+  --vt-title-to: #800080;
+  --vt-title-text: #ffff00;
+  --vt-title-off-from: #202040;
+  --vt-title-off-to: #303060;
+  --vt-title-off-text: #a0a0c0;
+  --vt-desktop: #000000;
+  --vt-desktop-text: #e0e0e0;
+  --vt-dither-a: #000000;
+  --vt-dither-b: #0b0b24;
+  --vt-link: #00ffff;
+  --vt-visited: #ff66ff;
+  --vt-focus: #ffff00;
+  --vt-marquee: #ffff00;
+  --vt-bevel-raised:
+    inset -1px -1px var(--vt-dark), inset 1px 1px var(--vt-light), inset -2px -2px var(--vt-shade),
+    inset 2px 2px var(--vt-hi);
+  --vt-bevel-sunken:
+    inset -1px -1px var(--vt-light), inset 1px 1px var(--vt-shade), inset -2px -2px var(--vt-hi),
+    inset 2px 2px var(--vt-dark);
+  --vt-bevel-pressed:
+    inset -1px -1px var(--vt-light), inset 1px 1px var(--vt-dark), inset -2px -2px var(--vt-hi),
+    inset 2px 2px var(--vt-shade);
+  --vt-bevel-window:
+    inset -1px -1px var(--vt-dark), inset 1px 1px var(--vt-hi), inset -2px -2px var(--vt-shade),
+    inset 2px 2px var(--vt-light);
+  --vt-dither: repeating-conic-gradient(var(--vt-dither-a) 0 25%, var(--vt-dither-b) 0 50%) 0 0 /
+    2px 2px;
+}
+
+/* Light: the 1995-98 desktop. */
+:root[data-style='vintage'][data-theme='light'] {
+  --color-primary: #000080;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #000080;
+  --color-on-primary-container: #ffffff;
+  --color-secondary: #006060;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #000080;
+  --color-on-secondary-container: #ffffff;
+  --color-tertiary: #800080;
+  --color-on-tertiary: #ffffff;
+  --color-tertiary-container: #ffccff;
+  --color-on-tertiary-container: #400040;
+  --color-error: #b00000;
+  --color-on-error: #ffffff;
+  --color-error-container: #ffd0d0;
+  --color-on-error-container: #600000;
+  --color-surface: #ffffff;
+  --color-on-surface: #000000;
+  --color-surface-variant: #c0c0c0;
+  --color-on-surface-variant: #303030;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #c0c0c0;
+  --color-surface-container: #c0c0c0;
+  --color-surface-container-high: #d4d0c8;
+  --color-surface-container-highest: #dfdfdf;
+  --color-surface-dim: #a0a0a0;
+  --color-surface-bright: #ffffff;
+  --color-outline: #505050;
+  --color-outline-variant: #808080;
+  --color-inverse-surface: #000080;
+  --color-inverse-on-surface: #ffffff;
+  --color-inverse-primary: #00ffff;
+  --color-scrim: #000000;
+  --color-spoiler: #000000;
+  --color-status-green: #006400;
+  --color-status-yellow: #806000;
+  --color-status-red: #b00000;
+  --color-danger: #b00000;
+  --color-on-danger: #ffffff;
+  --color-mute: #b00000;
+  --color-on-mute: #ffffff;
+  --color-mute-hover: #800000;
+  --color-mute-fg: #b00000;
+  --color-code-blue: #0000c0;
+  --color-code-orange: #804000;
+  --vt-face: #c0c0c0;
+  --vt-light: #ffffff;
+  --vt-hi: #dfdfdf;
+  --vt-shade: #808080;
+  --vt-dark: #000000;
+  --vt-title-from: #000080;
+  --vt-title-to: #0a6ab8;
+  --vt-title-text: #ffffff;
+  --vt-title-off-from: #606060;
+  --vt-title-off-to: #707070;
+  --vt-title-off-text: #ffffff;
+  --vt-desktop: #008080;
+  --vt-desktop-text: #ffffff;
+  --vt-dither-a: #008080;
+  --vt-dither-b: #007070;
+  --vt-link: #0000ee;
+  --vt-visited: #551a8b;
+  --vt-focus: #000000;
+  --vt-marquee: #000080;
+}
+
+/* Filled and tonal buttons: the 88x31 button look at their own size. */
+:root[data-style='vintage'] .vt-button,
+:root[data-style='vintage'] .vt-icon-button {
+  background: var(--vt-face);
+  color: var(--color-on-surface);
+  border-radius: 0;
+  box-shadow: var(--vt-bevel-raised);
+}
+
+:root[data-style='vintage'] .vt-button:active,
+:root[data-style='vintage'] .vt-icon-button:active {
+  box-shadow: var(--vt-bevel-pressed);
+}
+
+/* Text buttons in dialog footers and settings rows. */
+:root[data-style='vintage'] .vt-wide {
+  min-width: min(88px, 100%);
+}
+
+/* Text fields and the composer. */
+:root[data-style='vintage'] .vt-field {
+  background: var(--color-surface);
+  color: var(--color-on-surface);
+  border-color: transparent;
+  border-radius: 0;
+  box-shadow: var(--vt-bevel-sunken);
+}
+
+/* Dialogs and sheets are windows; their header row, and channel and thread headers, are
+   title bars. */
+:root[data-style='vintage'] .vt-window {
+  background: var(--vt-face);
+  color: var(--color-on-surface);
+  border-radius: 0;
+  box-shadow: var(--vt-bevel-window);
+}
+
+:root[data-style='vintage'] .vt-title-bar {
+  background: linear-gradient(90deg, var(--vt-title-from), var(--vt-title-to));
+  color: var(--vt-title-text);
+}
+
+:root[data-style='vintage'] .vt-title-bar.vt-off {
+  background: linear-gradient(90deg, var(--vt-title-off-from), var(--vt-title-off-to));
+  color: var(--vt-title-off-text);
+}
+
+:root[data-style='vintage'] .vt-title {
+  font-family: 'Pixelify Sans', var(--font-sans);
+}
+
+/* Menus, context menus and bottom sheets. */
+:root[data-style='vintage'] .vt-menu {
+  background: var(--vt-face);
+  color: var(--color-on-surface);
+  border-radius: 0;
+  box-shadow: var(--vt-bevel-raised);
+}
+
+:root[data-style='vintage'] .vt-menu-item {
+  border-radius: 0;
+}
+
+:root[data-style='vintage'] .vt-menu-item:hover,
+:root[data-style='vintage'] .vt-menu-item:focus-visible,
+:root[data-style='vintage'] .vt-menu-item.vt-on {
+  background: var(--color-primary-container);
+  color: var(--color-on-primary-container);
+}
+
+/* Rail tiles; the selected one is pressed. */
+:root[data-style='vintage'] .vt-tile {
+  border-radius: 0;
+  box-shadow: var(--vt-bevel-raised);
+}
+
+:root[data-style='vintage'] .vt-tile.vt-on {
+  box-shadow: var(--vt-bevel-pressed);
+}
+
+/* The message list is a document: plain page, classic links. */
+:root[data-style='vintage'] .vt-doc {
+  background: var(--color-surface);
+  color: var(--color-on-surface);
+}
+
+:root[data-style='vintage'] .vt-doc a {
+  color: var(--vt-link);
+  text-decoration: underline;
+}
+
+:root[data-style='vintage'] .vt-doc a:visited {
+  color: var(--vt-visited);
+}
+
+/* The typing row, and the frame around a wall of web buttons. */
+:root[data-style='vintage'] .vt-status,
+:root[data-style='vintage'] .retro-wall {
+  background: var(--color-surface);
+  color: var(--color-on-surface);
+  border-radius: 0;
+  box-shadow: var(--vt-bevel-sunken);
+}
+
+:root[data-style='vintage'] .retro-button {
+  font-family: 'Silkscreen', var(--font-sans);
+}
+
+/* Home, empty states, the rail and the settings nav sit on the desktop. */
+:root[data-style='vintage'] .vt-desktop {
+  background: var(--vt-dither);
+  color: var(--vt-desktop-text);
+}
+
+:root[data-style='vintage'][data-vt-dither='off'] .vt-desktop {
+  background: var(--vt-desktop);
+}
+
+/* The unread divider's label. */
+:root[data-style='vintage'] .vt-new {
+  background: var(--color-error);
+  color: var(--color-on-error);
+  border-radius: 0;
+}
+
+:root[data-style='vintage'] :focus-visible {
+  outline-color: var(--vt-focus);
+}
+
+/* Scrollbars keep their width. */
+:root[data-style='vintage'] * {
+  scrollbar-color: var(--vt-face) var(--color-surface-container-low);
+}
+
+:root[data-style='vintage'] ::-webkit-scrollbar-thumb {
+  background: var(--vt-face);
+  box-shadow: var(--vt-bevel-raised);
+}
+
+:root[data-style='vintage'] ::-webkit-scrollbar-track {
+  background: var(--color-surface-container-low);
+}
+
+/* Classic cursors: the arrow over the chrome, and the pointing hand wherever the app shows the
+   hand. The message list keeps the browser's own cursors, so text still shows the text cursor. */
+:root[data-style='vintage']:not([data-vt-cursors='off'])
+  :where(.vt-desktop, .vt-window, .vt-menu, .vt-title-bar) {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='21' shape-rendering='crispEdges'%3E%3Cpath d='M1 1v16l4-4 3 7 2-1-3-7h5z' fill='%23fff' stroke='%23000'/%3E%3C/svg%3E")
+      1 1,
+    default;
+}
+
+:root[data-style='vintage']:not([data-vt-cursors='off']) .vt-doc {
+  cursor: auto;
+}
+
+:root[data-style='vintage']:not([data-vt-cursors='off'])
+  :where(
+    button,
+    [role='button'],
+    [role='link'],
+    [role='menuitem'],
+    [role='menuitemcheckbox'],
+    [role='menuitemradio'],
+    [role='tab'],
+    [role='option'],
+    [role='switch'],
+    [role='checkbox'],
+    [role='radio'],
+    a[href],
+    summary,
+    select,
+    label:has(input:is([type='checkbox'], [type='radio']):enabled),
+    input:is([type='checkbox'], [type='radio'], [type='color'], [type='file'], [type='range'])
+  ):not(:disabled, [aria-disabled='true']) {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='23' shape-rendering='crispEdges'%3E%3Cpath d='M5 1h3v8h2V8h3v1h1V9h2v1h1v7l-2 5H6l-5-7v-2h2l2 2z' fill='%23fff' stroke='%23000'/%3E%3C/svg%3E")
+      6 1,
+    pointer;
+}
+
+/* Pixel font everywhere: an explicit choice that may move text. */
+:root[data-style='vintage'][data-vt-pixel='on'] body {
+  font-family: 'Pixelify Sans', var(--font-sans);
+}
+
+@media (prefers-contrast: more) {
+  :root[data-style='vintage'] .vt-desktop {
+    background: var(--vt-desktop);
+  }
+}
+
+/* Forced colors: no shadows, gradients or dither; an inset outline stands in for the bevel, so
+   no box grows. An element showing its focus ring keeps that ring. */
+@media (forced-colors: active) {
+  :root[data-style='vintage'] .vt-button:not(:focus-visible),
+  :root[data-style='vintage'] .vt-icon-button:not(:focus-visible),
+  :root[data-style='vintage'] .vt-field:not(:focus-visible),
+  :root[data-style='vintage'] .vt-window:not(:focus-visible),
+  :root[data-style='vintage'] .vt-menu:not(:focus-visible),
+  :root[data-style='vintage'] .vt-tile:not(:focus-visible),
+  :root[data-style='vintage'] .vt-status:not(:focus-visible),
+  :root[data-style='vintage'] .retro-wall:not(:focus-visible) {
+    box-shadow: none;
+    outline: 1px solid ButtonBorder;
+    outline-offset: -1px;
+  }
+
+  :root[data-style='vintage'] .vt-title-bar,
+  :root[data-style='vintage'] .vt-title-bar.vt-off,
+  :root[data-style='vintage'] .vt-desktop {
+    background-image: none;
+  }
+
+  :root[data-style='vintage'] .vt-menu-item:hover,
+  :root[data-style='vintage'] .vt-menu-item:focus-visible,
+  :root[data-style='vintage'] .vt-menu-item.vt-on {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+}
