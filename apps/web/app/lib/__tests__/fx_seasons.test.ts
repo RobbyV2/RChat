@@ -107,6 +107,11 @@ describe('computed dates', () => {
     expect(ids(2026, 9, 26)).toContain('mid_autumn')
     expect(ids(2026, 9, 27)).not.toContain('mid_autumn')
   })
+  test('Mid-Autumn 2052 is in the regular 8th month (7 September), not the leap one', () => {
+    expect(ids(2052, 9, 6)).toContain('mid_autumn')
+    expect(ids(2052, 9, 8)).toContain('mid_autumn')
+    expect(ids(2052, 10, 7)).not.toContain('mid_autumn')
+  })
   test('Friday the 13th', () => {
     expect(ids(2026, 11, 13)).toContain('friday_13')
     expect(ids(2026, 12, 13)).not.toContain('friday_13')

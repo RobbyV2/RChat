@@ -1,0 +1,41 @@
+Gregorian-Lunar Calendar Conversion Table of 2051 Xin-wei  -  year of the Goat)
+Gregorian date    Lunar date              Day-of-week    Solar terms
+2051/1/1          19                      Sunday                           
+2051/1/5          23                      Thursday       Moderate Cold       
+2051/1/13         12th Lunar Month        Friday                           
+2051/1/20         8                       Friday       Severe Cold         
+2051/2/4          23                      Saturday         Spring Commences    
+2051/2/11         1st Lunar Month         Saturday                             
+2051/2/19         9                       Sunday       Spring Showers      
+2051/3/5          23                      Sunday       Insects Waken       
+2051/3/13         2nd Lunar Month         Monday                             
+2051/3/20         8                       Monday         Vernal Equinox      
+2051/4/5          24                      Wednesday        Bright & Clear      
+2051/4/11         3rd Lunar Month         Tuesday                             
+2051/4/20         10                      Thursday       Corn Rain           
+2051/5/5          25                      Friday       Summer Commences    
+2051/5/10         4th Lunar Month         Wednesday                            
+2051/5/21         12                      Sunday       Corn Forms          
+2051/6/6          28                      Tuesday         Corn on Ear         
+2051/6/9          5th Lunar Month         Friday                           
+2051/6/21         13                      Wednesday        Summer Solstice     
+2051/7/7          29                      Friday       Moderate Heat       
+2051/7/8          6th Lunar Month         Saturday                             
+2051/7/23         16                      Sunday       Great Heat          
+2051/8/6          7th Lunar Month         Sunday                           
+2051/8/7          2                       Monday         Autumn Commences    
+2051/8/23         18                      Wednesday        End of Heat         
+2051/9/5          8th Lunar Month         Tuesday                             
+2051/9/7          3                       Thursday       White Dew           
+2051/9/23         19                      Saturday         Autumnal Equinox    
+2051/10/5         9th Lunar Month         Thursday                           
+2051/10/8         4                       Sunday       Cold Dew            
+2051/10/23        19                      Monday         Frost               
+2051/11/3         10th Lunar Month        Friday                           
+2051/11/7         5                       Tuesday         Winter Commences    
+2051/11/22        20                      Wednesday        Light Snow          
+2051/12/3         11th Lunar Month        Sunday                           
+2051/12/7         5                       Thursday       Heavy Snow          
+2051/12/22        20                      Friday       Winter Solstice     
+2051/12/30        28                      Saturday                             
+2051/12/31        29                      Sunday                           

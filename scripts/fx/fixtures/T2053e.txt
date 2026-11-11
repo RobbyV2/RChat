@@ -1,0 +1,39 @@
+Gregorian-Lunar Calendar Conversion Table of 2053 (Gui-you  -  year of the Rooster)
+Gregorian date    Lunar date              Day-of-week    Solar terms
+2053/1/1          12                      Wednesday                          
+2053/1/5          16                      Sunday         Moderate Cold       
+2053/1/19         30                      Sunday         Severe Cold         
+2053/1/20         12th Lunar Month        Monday                             
+2053/2/3          15                      Monday         Spring Commences    
+2053/2/18         30                      Tuesday        Spring Showers      
+2053/2/19         1st Lunar Month         Wednesday                          
+2053/3/5          15                      Wednesday      Insects Waken       
+2053/3/20         2nd Lunar Month         Thursday       Vernal Equinox      
+2053/4/4          16                      Friday         Bright & Clear      
+2053/4/19         3rd Lunar Month         Saturday       Corn Rain           
+2053/5/5          17                      Monday         Summer Commences    
+2053/5/18         4th Lunar Month         Sunday                             
+2053/5/20         3                       Tuesday        Corn Forms          
+2053/6/5          19                      Thursday       Corn on Ear         
+2053/6/16         5th Lunar Month         Monday                             
+2053/6/21         6                       Saturday       Summer Solstice     
+2053/7/6          21                      Sunday         Moderate Heat       
+2053/7/16         6th Lunar Month         Wednesday                          
+2053/7/22         7                       Tuesday        Great Heat          
+2053/8/7          23                      Thursday       Autumn Commences    
+2053/8/14         7th Lunar Month         Thursday                           
+2053/8/22         9                       Friday         End of Heat         
+2053/9/7          25                      Sunday         White Dew           
+2053/9/12         8th Lunar Month         Friday                             
+2053/9/22         11                      Monday         Autumnal Equinox    
+2053/10/8         27                      Wednesday      Cold Dew            
+2053/10/12        9th Lunar Month         Sunday                             
+2053/10/23        12                      Thursday       Frost               
+2053/11/7         27                      Friday         Winter Commences    
+2053/11/10        10th Lunar Month        Monday                             
+2053/11/22        13                      Saturday       Light Snow          
+2053/12/7         28                      Sunday         Heavy Snow          
+2053/12/10        11th Lunar Month        Wednesday                          
+2053/12/21        12                      Sunday         Winter Solstice     
+2053/12/30        21                      Tuesday                            
+2053/12/31        22                      Wednesday                          

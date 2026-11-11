@@ -1,0 +1,40 @@
+Gregorian-Lunar Calendar Conversion Table of 2052 (Ren-shen  -  year of the Monkey)
+Gregorian date    Lunar date              Day-of-week    Solar terms
+2052/1/1          30                      Monday                             
+2052/1/2          12th Lunar Month        Tuesday                            
+2052/1/5          4                       Friday         Moderate Cold       
+2052/1/20         19                      Saturday       Severe Cold         
+2052/2/1          1st Lunar Month         Thursday                           
+2052/2/4          4                       Sunday         Spring Commences    
+2052/2/19         19                      Monday         Spring Showers      
+2052/3/1          2nd Lunar Month         Friday                             
+2052/3/5          5                       Tuesday        Insects Waken       
+2052/3/20         20                      Wednesday      Vernal Equinox      
+2052/3/31         3rd Lunar Month         Sunday                             
+2052/4/4          5                       Thursday       Bright & Clear      
+2052/4/19         20                      Friday         Corn Rain           
+2052/4/29         4th Lunar Month         Monday                             
+2052/5/5          7                       Sunday         Summer Commences    
+2052/5/20         22                      Monday         Corn Forms          
+2052/5/28         5th Lunar Month         Tuesday                            
+2052/6/5          9                       Wednesday      Corn on Ear         
+2052/6/20         24                      Thursday       Summer Solstice     
+2052/6/27         6th Lunar Month         Thursday                           
+2052/7/6          10                      Saturday       Moderate Heat       
+2052/7/22         26                      Monday         Great Heat          
+2052/7/26         7th Lunar Month         Friday                             
+2052/8/7          13                      Wednesday      Autumn Commences    
+2052/8/22         28                      Thursday       End of Heat         
+2052/8/24         8th Lunar Month         Saturday                           
+2052/9/7          15                      Saturday       White Dew           
+2052/9/22         30                      Sunday         Autumnal Equinox    
+2052/9/23         8th Lunar Month         Monday                             
+2052/10/7         15                      Monday         Cold Dew            
+2052/10/22        9th Lunar Month         Tuesday                            
+2052/10/23        2                       Wednesday      Frost               
+2052/11/7         17                      Thursday       Winter Commences    
+2052/11/21        10th Lunar Month        Thursday       Light Snow          
+2052/12/6         16                      Friday         Heavy Snow          
+2052/12/21        11th Lunar Month        Saturday       Winter Solstice     
+2052/12/30        10                      Monday                             
+2052/12/31        11                      Tuesday                            
