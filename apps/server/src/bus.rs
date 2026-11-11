@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use redis::aio::{ConnectionManager, ConnectionManagerConfig};
@@ -9,7 +9,7 @@ use redis::streams::{
 };
 use redis::{Client, RedisResult};
 use tokio::sync::mpsc;
-use tokio::task::JoinSet;
+use tokio::task::{AbortHandle, JoinSet};
 use tracing::{error, info, warn};
 
 use crate::api::embeds::{UnfurlJob, unfurl};
@@ -71,6 +71,7 @@ pub struct Bus {
     prefix: Arc<str>,
     roles: Roles,
     instance: u32,
+    tasks: Arc<Mutex<Vec<AbortHandle>>>,
 }
 
 #[derive(Clone)]
@@ -207,18 +208,22 @@ pub async fn connect(
     };
     let (hub, out) = Hub::replicated();
     hub.coalesce_reads();
-    tokio::spawn(publish(out, conn.clone(), log.clone(), hub.clone()));
-    tokio::spawn(follow(tail, log.clone(), hub.clone()));
-    tokio::spawn(heartbeats(hub.clone()));
-    tokio::spawn(reads(hub.clone()));
+    let tasks = Arc::new(Mutex::new(vec![
+        tokio::spawn(publish(out, conn.clone(), log.clone(), hub.clone())).abort_handle(),
+        tokio::spawn(follow(tail, log.clone(), hub.clone())).abort_handle(),
+        tokio::spawn(heartbeats(hub.clone())).abort_handle(),
+        tokio::spawn(reads(hub.clone())).abort_handle(),
+    ]));
     let bus = Bus {
         conn,
         client,
         prefix: Arc::from(prefix),
         roles,
         instance: hub.instance(),
+        tasks,
     };
-    tokio::spawn(snapshots(bus.clone(), log.snapshot, hub.clone()));
+    let snapshots = tokio::spawn(snapshots(bus.clone(), log.snapshot, hub.clone()));
+    bus.hold(snapshots.abort_handle());
     Ok((hub, bus))
 }
 
@@ -587,14 +592,30 @@ impl Bus {
         }
         match self.client.get_connection_manager_lazy(blocking_config()) {
             Ok(conn) => {
-                tokio::spawn(embeds_worker(
+                let worker = tokio::spawn(embeds_worker(
                     state.clone(),
                     conn,
                     self.key("embeds"),
                     format!("{:08x}", self.instance),
                 ));
+                self.hold(worker.abort_handle());
             }
             Err(e) => warn!("embeds worker not started: {e}"),
+        }
+    }
+
+    fn hold(&self, task: AbortHandle) {
+        if let Ok(mut tasks) = self.tasks.lock() {
+            tasks.push(task);
+        }
+    }
+
+    /// Ends the tasks that publish to and follow the bus.
+    pub fn stop(&self) {
+        if let Ok(mut tasks) = self.tasks.lock() {
+            for task in tasks.drain(..) {
+                task.abort();
+            }
         }
     }
 }

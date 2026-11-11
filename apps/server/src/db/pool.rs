@@ -98,6 +98,67 @@ pub(crate) fn temp_db_path(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("rchat_{tag}_{}_{test}_{n}.db", std::process::id()))
 }
 
+/// The URL `DATABASE_URL` stands for: itself when it is a URL, else a SQLite file at that path.
+fn connect_url(database_url: Option<&str>) -> String {
+    match database_url {
+        Some(u)
+            if u.starts_with("postgres://")
+                || u.starts_with("postgresql://")
+                || u.starts_with("sqlite:") =>
+        {
+            u.to_string()
+        }
+        Some(path) => format!("sqlite://{path}?mode=rwc"),
+        None => "sqlite://rchat.db?mode=rwc".to_string(),
+    }
+}
+
+/// The schema version stored in the database `DATABASE_URL` names, without changing it: `None`
+/// when there is no database yet (no SQLite file, or no tables), 0 for one from before versions
+/// were stored. A missing SQLite file is not created.
+pub async fn stored_schema_version(database_url: Option<&str>) -> anyhow::Result<Option<i64>> {
+    use sqlx::Connection;
+    install_default_drivers();
+    let url = connect_url(database_url);
+    let (url, tables) = match url.starts_with("sqlite:") {
+        true => {
+            let file = url.parse::<sqlx::sqlite::SqliteConnectOptions>()?;
+            if !file.get_filename().is_file() {
+                return Ok(None);
+            }
+            let (base, query) = url.split_once('?').unwrap_or((&url, ""));
+            let query: Vec<&str> = query
+                .split('&')
+                .filter(|pair| !pair.is_empty() && !pair.starts_with("mode="))
+                .chain(["mode=ro"])
+                .collect();
+            (
+                format!("{base}?{}", query.join("&")),
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'",
+            )
+        }
+        false => (
+            url,
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'settings'",
+        ),
+    };
+    let mut conn = sqlx::AnyConnection::connect(&url).await?;
+    let version = match sqlx::query(tables).fetch_optional(&mut conn).await? {
+        Some(_) => Some(super::migrate::schema_version(&mut conn).await?),
+        None => None,
+    };
+    conn.close().await?;
+    Ok(version)
+}
+
+/// Whether any account exists. The first one registered manages the instance.
+pub async fn has_accounts(db: &Db) -> sqlx::Result<bool> {
+    Ok(sqlx::query("SELECT 1 FROM users LIMIT 1")
+        .fetch_optional(db)
+        .await?
+        .is_some())
+}
+
 /// Opens the database for a tool: the schema is brought up to date, and the controls and what
 /// the server config recorded about them stay untouched.
 pub async fn open(database_url: Option<&str>) -> anyhow::Result<Db> {
@@ -121,17 +182,7 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
         controls,
     } = opts;
     install_default_drivers();
-    let url = match database_url {
-        Some(u)
-            if u.starts_with("postgres://")
-                || u.starts_with("postgresql://")
-                || u.starts_with("sqlite:") =>
-        {
-            u.to_string()
-        }
-        Some(path) => format!("sqlite://{path}?mode=rwc"),
-        None => "sqlite://rchat.db?mode=rwc".to_string(),
-    };
+    let url = connect_url(database_url);
     let is_sqlite = url.starts_with("sqlite:");
     let max = limits.database_max_connections;
     if is_sqlite && max.is_some_and(|n| n != 1) {

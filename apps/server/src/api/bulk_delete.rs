@@ -966,6 +966,16 @@ fn running_key(db: &Db, id: i64) -> String {
     format!("{}\n{id}", pool_key(db))
 }
 
+/// Forgets which jobs of `db` this process runs, when it closes: a runner that ended with the
+/// server would otherwise keep its job from being picked up again.
+pub(crate) fn forget(db: &Db) {
+    let prefix = format!("{}\n", pool_key(db));
+    RUNNING
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .retain(|key| !key.starts_with(&prefix));
+}
+
 /// Batches running at once in this process, over every job.
 static BATCHES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 /// Times a batch that hit an error is tried again before the job fails.

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::Json;
@@ -1793,23 +1793,35 @@ impl Outbound {
     }
 }
 
-static OUTBOUND: OnceLock<Outbound> = OnceLock::new();
+static OUTBOUND: RwLock<Option<Outbound>> = RwLock::new(None);
 
-/// Sets the operator's outbound rules once at startup. Allowlist entries without a port open
-/// every port of that host, so they are logged as a warning.
+/// Sets the operator's outbound rules at startup. A later start in the same process replaces
+/// them. Allowlist entries without a port open every port of that host, so they are logged as
+/// a warning.
 pub fn configure(outbound: Outbound) {
     for host in outbound.allowed.iter().filter(|h| h.any_port()) {
         tracing::warn!(
             "WEBHOOK_ALLOWED_HOSTS entry {host} has no port: outgoing webhooks may reach every port of it; prefer host:port"
         );
     }
-    let _ = OUTBOUND.set(outbound);
+    match OUTBOUND.write() {
+        Ok(mut held) => *held = Some(outbound),
+        Err(poisoned) => *poisoned.into_inner() = Some(outbound),
+    }
+}
+
+fn outbound() -> Outbound {
+    match OUTBOUND.read() {
+        Ok(held) => held.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
+    .unwrap_or_default()
 }
 
 /// Link previews and their images: public addresses on the web ports, never this instance's
 /// own addresses or host names.
 pub(crate) fn previews_policy() -> Policy {
-    let Outbound { own, own_hosts, .. } = OUTBOUND.get().cloned().unwrap_or_default();
+    let Outbound { own, own_hosts, .. } = outbound();
     Policy {
         own,
         own_hosts,
@@ -1818,7 +1830,7 @@ pub(crate) fn previews_policy() -> Policy {
 }
 
 fn outbound_policy() -> Policy {
-    OUTBOUND.get().cloned().unwrap_or_default().policy()
+    outbound().policy()
 }
 
 /// An outgoing webhook. The signing secret is never listed.
@@ -2612,23 +2624,24 @@ pub fn wanted(ev: &WsEvent) -> bool {
 }
 
 /// Starts the outgoing webhook queue: events this process broadcasts are turned into
-/// deliveries. With `deliver`, also the worker that sends due deliveries.
-pub fn spawn(state: &AppState, deliver: bool) {
+/// deliveries. With `deliver`, also the worker that sends due deliveries. Returns the tasks it
+/// started.
+pub fn spawn(state: &AppState, deliver: bool) -> Vec<tokio::task::JoinHandle<()>> {
     let (tx, mut rx) = mpsc::channel::<WsEvent>(4096);
     state.hub.set_tap(tx);
     ARMED.store(true, Ordering::Relaxed);
     let events = state.clone();
-    tokio::spawn(async move {
+    let mut tasks = vec![tokio::spawn(async move {
         while let Some(ev) = rx.recv().await {
             if let Err(ApiError(_, e)) = enqueue(&events, ev).await {
                 tracing::warn!("outgoing webhook event not queued: {e}");
             }
         }
-    });
+    })];
     if deliver {
         let worker = state.clone();
         let pool = Pool::new(CONCURRENCY);
-        tokio::spawn(async move {
+        tasks.push(tokio::spawn(async move {
             loop {
                 let _ = tokio::time::timeout(Duration::from_secs(2), WAKE.notified()).await;
                 let policy = outbound_policy();
@@ -2636,8 +2649,9 @@ pub fn spawn(state: &AppState, deliver: bool) {
                     tracing::warn!("outgoing webhook deliveries failed: {e}");
                 }
             }
-        });
+        }));
     }
+    tasks
 }
 
 /// What happened, by id only: the queue never holds message content. The payload is built

@@ -224,7 +224,7 @@ async fn seed_setting(conn: &mut AnyConnection, key: &str, value: &str) -> sqlx:
         .map(|_| ())
 }
 
-async fn schema_version(conn: &mut AnyConnection) -> anyhow::Result<i64> {
+pub(super) async fn schema_version(conn: &mut AnyConnection) -> anyhow::Result<i64> {
     let have = stored_setting(conn, "schema_version").await?;
     Ok(have.and_then(|v| v.trim().parse().ok()).unwrap_or(0))
 }

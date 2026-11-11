@@ -255,9 +255,46 @@ impl std::fmt::Debug for AppConfig {
     }
 }
 
+/// An env for `AppConfig::from_map`: a map, or pairs of name and value.
+pub trait EnvPairs {
+    fn into_env(self) -> HashMap<String, String>;
+}
+
+impl EnvPairs for HashMap<String, String> {
+    fn into_env(self) -> HashMap<String, String> {
+        self
+    }
+}
+
+impl EnvPairs for &[(&str, &str)] {
+    fn into_env(self) -> HashMap<String, String> {
+        self.iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect()
+    }
+}
+
+impl<const N: usize> EnvPairs for &[(&str, &str); N] {
+    fn into_env(self) -> HashMap<String, String> {
+        self.as_slice().into_env()
+    }
+}
+
 impl AppConfig {
     pub fn load(cli: &CliOverrides) -> anyhow::Result<Self> {
         Self::load_from(cli, None)
+    }
+
+    /// The configuration from `env` (the names of `.env.local.example`) alone, given as a map or
+    /// as pairs: the process environment is not read.
+    pub fn from_map(env: impl EnvPairs) -> anyhow::Result<Self> {
+        let cli = CliOverrides {
+            host: None,
+            port: None,
+            mode: None,
+            roles: None,
+        };
+        Self::load_from(&cli, Some(env.into_env()))
     }
 
     fn load_from(cli: &CliOverrides, env: Option<HashMap<String, String>>) -> anyhow::Result<Self> {
@@ -600,29 +637,7 @@ impl AppConfig {
 
     #[cfg(test)]
     pub(crate) fn defaults() -> AppConfig {
-        let cli = CliOverrides {
-            host: None,
-            port: None,
-            mode: None,
-            roles: None,
-        };
-        AppConfig::load_from(&cli, Some(HashMap::new())).expect("default config")
-    }
-
-    /// The configuration of an env given as pairs.
-    #[cfg(test)]
-    pub(crate) fn from_map(pairs: &[(&str, &str)]) -> anyhow::Result<AppConfig> {
-        let cli = CliOverrides {
-            host: None,
-            port: None,
-            mode: None,
-            roles: None,
-        };
-        let env = pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
-        AppConfig::load_from(&cli, Some(env))
+        AppConfig::from_map(HashMap::new()).expect("default config")
     }
 
     pub fn s3(&self) -> anyhow::Result<Option<Arc<Bucket>>> {
@@ -880,6 +895,42 @@ mod tests {
         ])
         .unwrap();
         assert!(!format!("{config:?}").contains("hunter2"));
+    }
+
+    #[test]
+    fn a_map_is_the_whole_configuration() {
+        let map = |pairs: &[(&str, &str)]| AppConfig::from_map(env(pairs).unwrap_or_default());
+        let config = map(&[
+            ("APP_MODE", "api-only"),
+            ("HOST", "0.0.0.0"),
+            ("SERVER_PORT", "3470"),
+            ("DATABASE_URL", "sqlite:///data/rchat.db?mode=rwc"),
+            ("INSTANCE_NAME", "My server"),
+            ("UPLOAD_BUDGET_MIB", "64"),
+            ("PASSWORD_PEPPER", "pepper"),
+        ])
+        .unwrap();
+        assert_eq!(config.addr(), "0.0.0.0:3470");
+        assert!(!config.roles.web && config.roles.api);
+        assert_eq!(config.proxy_url(), None);
+        assert_eq!(
+            config.database_url.as_deref(),
+            Some("sqlite:///data/rchat.db?mode=rwc")
+        );
+        assert_eq!(config.instance_name.as_deref(), Some("My server"));
+        assert_eq!(config.limits.upload_budget_mib, 64);
+        assert_eq!(config.secrets.password_pepper.as_deref(), Some("pepper"));
+        let unset = map(&[]).unwrap();
+        assert_eq!(unset.addr(), "127.0.0.1:3000");
+        assert_eq!(unset.roles, Roles::ALL);
+        assert_eq!(unset.limits, Limits::default());
+        let refused = map(&[("UPLOAD_BUDGET_MIB", "-1")]).unwrap_err().to_string();
+        assert!(
+            refused.starts_with("UPLOAD_BUDGET_MIB: expected "),
+            "{refused}"
+        );
+        assert!(refused.is_ascii());
+        assert!(map(&[("SERVER_PORT", "70000")]).is_err());
     }
 
     #[test]

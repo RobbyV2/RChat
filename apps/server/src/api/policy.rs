@@ -311,6 +311,12 @@ impl Policy {
             None => Policy::load(db).await,
         }
     }
+
+    pub fn forget(db: &Db) {
+        if let Ok(mut cache) = POLICY_CACHE.lock() {
+            cache.remove(&pool_key(db));
+        }
+    }
 }
 
 /// The answer to a request that the control `control` refuses, because it is off or leaves the

@@ -19,7 +19,8 @@ pub(crate) use pool::pool_key;
 #[cfg(test)]
 pub(crate) use pool::temp_db_path;
 pub use pool::{
-    Db, DbOptions, close, is_sqlite, open, open_with, reader, take_config_start, writer_connections,
+    Db, DbOptions, close, has_accounts, is_sqlite, open, open_with, reader, stored_schema_version,
+    take_config_start, writer_connections,
 };
 pub use schema::has_fts;
 #[cfg(test)]
@@ -34,7 +35,7 @@ pub use sweep::{
 #[cfg(test)]
 pub(crate) use touch::grant_touch_queued;
 pub use touch::{
-    GRANT_TOUCH_SECS, GRANT_TOUCHES_MAX, flush_grant_touches, queue_grant_touches,
+    GRANT_TOUCH_SECS, GRANT_TOUCHES_MAX, flush_grant_touches, forget, queue_grant_touches,
     touch_interaction,
 };
 

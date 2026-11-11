@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -1568,7 +1568,11 @@ impl Relay {
 /// happens: the event reaches this process through the hub (and the bus with replicas).
 /// When events may have been missed (the subscriber lagged or the bus resynced) and every
 /// `RECONCILE_EVERY`, the relay checks its allocations against the database instead.
-pub fn follow_revocations(relay: &Arc<Relay>, hub: &crate::ws::Hub, db: &crate::db::Db) {
+pub fn follow_revocations(
+    relay: &Arc<Relay>,
+    hub: &crate::ws::Hub,
+    db: &crate::db::Db,
+) -> tokio::task::JoinHandle<()> {
     use tokio::sync::broadcast::error::RecvError;
     let relay = Arc::downgrade(relay);
     let mut events = hub.subscribe();
@@ -1615,7 +1619,7 @@ pub fn follow_revocations(relay: &Arc<Relay>, hub: &crate::ws::Hub, db: &crate::
                 }
             }
         }
-    });
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -1624,15 +1628,31 @@ pub struct Status {
     pub allocations: usize,
 }
 
-static RUNNING: OnceLock<(u16, Arc<Quotas>)> = OnceLock::new();
+static RUNNING: RwLock<Option<(u16, Arc<Quotas>)>> = RwLock::new(None);
 
+fn running() -> std::sync::RwLockWriteGuard<'static, Option<(u16, Arc<Quotas>)>> {
+    match RUNNING.write() {
+        Ok(held) => held,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+/// Names `relay` as the relay running in this process.
 pub fn register(relay: &Relay) {
-    let _ = RUNNING.set((relay.addr.port(), Arc::clone(&relay.quotas)));
+    *running() = Some((relay.addr.port(), Arc::clone(&relay.quotas)));
+}
+
+/// Forgets `relay` when it is the registered one.
+pub fn unregister(relay: &Relay) {
+    let mut held = running();
+    if matches!(&*held, Some((_, quotas)) if Arc::ptr_eq(quotas, &relay.quotas)) {
+        *held = None;
+    }
 }
 
 /// The relay running in this process, if any.
 pub fn status() -> Option<Status> {
-    RUNNING.get().map(|(port, quotas)| Status {
+    running().as_ref().map(|(port, quotas)| Status {
         port: *port,
         allocations: quotas.allocations(),
     })
@@ -2391,6 +2411,23 @@ mod tests {
             .expect("client");
             client.listen().await.expect("listen");
             client
+        }
+
+        #[tokio::test]
+        async fn only_the_registered_relay_is_forgotten() {
+            let _one = crate::run::tests::ONE.lock().await;
+            let (first, second) = (relay(false, 49120).await, relay(false, 49080).await);
+            assert!(status().is_none());
+            register(&first);
+            assert_eq!(status().map(|s| s.port), Some(first.addr.port()));
+            register(&second);
+            assert_eq!(status().map(|s| s.port), Some(second.addr.port()));
+            unregister(&first);
+            assert_eq!(status().map(|s| s.port), Some(second.addr.port()));
+            unregister(&second);
+            assert!(status().is_none());
+            first.close().await;
+            second.close().await;
         }
 
         async fn signed_in(relay: &Relay, user: &str, now: i64) -> Client {

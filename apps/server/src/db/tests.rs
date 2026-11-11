@@ -4889,3 +4889,156 @@ async fn dm_and_friend_controls_are_added_to_an_old_database() {
     )
     .await;
 }
+
+async fn set_schema_version(url: &str, value: Option<&str>) {
+    use sqlx::Connection;
+    let mut conn = sqlx::AnyConnection::connect(url).await.expect("connect");
+    let sql = match value {
+        Some(v) => format!("UPDATE settings SET value = '{v}' WHERE key = 'schema_version'"),
+        None => "DELETE FROM settings WHERE key = 'schema_version'".to_string(),
+    };
+    sqlx::query(sqlx::AssertSqlSafe(sql))
+        .execute(&mut conn)
+        .await
+        .expect("set schema_version");
+    conn.close().await.expect("close");
+}
+
+async fn stored_versions(url: &str) {
+    let stored = |url: &str| {
+        let url = url.to_string();
+        async move { stored_schema_version(Some(&url)).await.expect("read") }
+    };
+    let db = open(Some(url)).await.expect("open");
+    close(&db).await;
+    assert_eq!(stored(url).await, Some(SCHEMA_VERSION));
+    set_schema_version(url, Some("7")).await;
+    assert_eq!(stored(url).await, Some(7));
+    let newer = SCHEMA_VERSION + 980;
+    set_schema_version(url, Some(&newer.to_string())).await;
+    assert_eq!(stored(url).await, Some(newer));
+    assert!(
+        open(Some(url)).await.is_err(),
+        "a newer database is refused"
+    );
+    assert_eq!(stored(url).await, Some(newer), "and left as it was");
+    set_schema_version(url, None).await;
+    assert_eq!(stored(url).await, Some(0), "before versions were stored");
+}
+
+#[tokio::test]
+async fn the_stored_schema_version_is_read_without_creating_a_database() {
+    let path = crate::db::temp_db_path("stored_version");
+    let files = || ["", "-wal", "-shm"].map(|suffix| format!("{}{suffix}", path.display()));
+    let wipe = || {
+        for file in files() {
+            let _ = std::fs::remove_file(file);
+        }
+    };
+    wipe();
+    let plain = path.to_str().expect("path");
+    let url = format!("sqlite://{plain}?mode=rwc");
+    for asked in [plain, url.as_str()] {
+        assert_eq!(
+            stored_schema_version(Some(asked)).await.expect("no file"),
+            None
+        );
+        for file in files() {
+            assert!(!std::path::Path::new(&file).exists(), "{file} was created");
+        }
+    }
+    std::fs::write(&path, b"").expect("empty file");
+    assert_eq!(
+        stored_schema_version(Some(plain)).await.expect("empty"),
+        None
+    );
+    assert_eq!(std::fs::metadata(&path).expect("kept").len(), 0);
+    wipe();
+    assert_eq!(
+        stored_schema_version(Some("sqlite::memory:"))
+            .await
+            .expect("memory"),
+        None
+    );
+    stored_versions(&url).await;
+    let before = std::fs::read(&path).expect("database file");
+    assert_eq!(
+        stored_schema_version(Some(plain)).await.expect("plain"),
+        Some(0)
+    );
+    assert_eq!(std::fs::read(&path).expect("database file"), before);
+    std::fs::write(&path, b"not a database, just some text in a file").expect("garbage");
+    assert!(stored_schema_version(Some(plain)).await.is_err());
+    wipe();
+    if let Some(pg) = crate::api::test_util::pg_temp("stored_version").await {
+        assert_eq!(
+            stored_schema_version(Some(&pg.url)).await.expect("empty"),
+            None
+        );
+        stored_versions(&pg.url).await;
+        drop(pg);
+    }
+}
+
+#[tokio::test]
+async fn an_instance_has_accounts_once_one_exists() {
+    let (state, path) = temp_state("has_accounts").await;
+    assert!(!has_accounts(&state.db).await.expect("none"));
+    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'h', 'text', 'identicon', 1)")
+        .execute(&state.db)
+        .await
+        .expect("user");
+    assert!(has_accounts(&state.db).await.expect("one"));
+    done(state, path).await;
+}
+
+#[tokio::test]
+async fn a_stopped_database_is_forgotten() {
+    let path = crate::db::temp_db_path("db_forget");
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    let last_at = |db: Db| async move {
+        count(
+            &db,
+            "SELECT COALESCE(MAX(last_at), 0) FROM interactions WHERE server = 'rchat' AND username = 'alice'",
+        )
+        .await
+    };
+    let db = open(path.to_str()).await.expect("open");
+    queue_grant_touches(&db, ["some-grant".to_string()]);
+    assert!(grant_touch_queued(&db, "some-grant"));
+    touch_interaction(&db, "rchat", "alice")
+        .await
+        .expect("touch");
+    sqlx::query("UPDATE interactions SET last_at = 5")
+        .execute(&db)
+        .await
+        .expect("age");
+    touch_interaction(&db, "rchat", "alice")
+        .await
+        .expect("touch");
+    assert_eq!(
+        last_at(db.clone()).await,
+        5,
+        "a recent touch is not written twice"
+    );
+    forget(&db);
+    close(&db).await;
+    assert!(!grant_touch_queued(&db, "some-grant"));
+    let again = open(path.to_str()).await.expect("open again");
+    assert_eq!(pool_key(&db), pool_key(&again));
+    assert!(!grant_touch_queued(&again, "some-grant"));
+    touch_interaction(&again, "rchat", "alice")
+        .await
+        .expect("touch");
+    assert!(
+        last_at(again.clone()).await > 5,
+        "the database that is open now gets the touch"
+    );
+    close(&again).await;
+    wipe();
+}

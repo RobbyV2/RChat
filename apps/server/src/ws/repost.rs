@@ -47,18 +47,20 @@ pub async fn settle(state: &AppState, purge: Purge) {
     }
 }
 
-pub fn spawn_aftermath(state: &AppState) {
+/// Starts the tasks that follow up on what the hub did. Returns them.
+pub fn spawn_aftermath(state: &AppState) -> Vec<tokio::task::JoinHandle<()>> {
+    let mut tasks = Vec::new();
     if let Some(mut shown) = state.hub.take_shown() {
         let state = state.clone();
-        tokio::spawn(async move {
+        tasks.push(tokio::spawn(async move {
             while let Some((user, online)) = shown.recv().await {
                 crate::api::friends::tell_friends(&state, &user, online).await;
             }
-        });
+        }));
     }
     if let Some(mut rx) = state.hub.take_aftermath() {
         let state = state.clone();
-        tokio::spawn(async move {
+        tasks.push(tokio::spawn(async move {
             while let Some(job) = rx.recv().await {
                 match job {
                     Aftermath::Settle(purge) => settle(&state, purge).await,
@@ -69,8 +71,9 @@ pub fn spawn_aftermath(state: &AppState) {
                     }
                 }
             }
-        });
+        }));
     }
+    tasks
 }
 
 pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {

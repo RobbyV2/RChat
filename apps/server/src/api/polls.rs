@@ -865,6 +865,15 @@ pub(crate) fn tally_runs(db: &Db, id: i64) -> u64 {
         .unwrap_or(0)
 }
 
+/// Forgets the tallies kept for `db`, when it closes: another database at the same address has
+/// its own polls.
+pub(crate) fn forget(db: &Db) {
+    let pool = pool_key(db);
+    if let Ok(mut tallies) = TALLIES.lock() {
+        tallies.retain(|(of, _), _| *of != pool);
+    }
+}
+
 fn cached(db: &Db, id: i64, version: i64) -> Option<Arc<Tally>> {
     let tallies = TALLIES.lock().ok()?;
     match tallies.get(&(pool_key(db), id)) {
@@ -4458,6 +4467,13 @@ mod tests {
             tally_runs(db, m.id) - before,
             0,
             "the vote's own response already counted it"
+        );
+        forget(db);
+        seen(&state, Some(&voters[0]), m.id).await.expect("read");
+        assert_eq!(
+            tally_runs(db, m.id) - before,
+            1,
+            "a forgotten database is counted again"
         );
         done(state, path).await;
     }

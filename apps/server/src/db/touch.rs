@@ -30,6 +30,18 @@ fn recently_touched(db: &Db, server: &str, username: &str) -> bool {
     false
 }
 
+/// Forgets what this process noted about `db`, when its server stops: its recent interactions
+/// and the grant uses still queued. Another database may open at the same address.
+pub fn forget(db: &Db) {
+    let key = pool_key(db);
+    if let Ok(mut touched) = TOUCHED.lock() {
+        touched.retain(|(pool, _, _), _| *pool != key);
+    }
+    if let Ok(mut touches) = GRANT_TOUCHES.lock() {
+        touches.remove(&key);
+    }
+}
+
 pub async fn touch_interaction(db: &Db, server: &str, username: &str) -> sqlx::Result<()> {
     if recently_touched(db, server, username) {
         return Ok(());

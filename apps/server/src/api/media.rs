@@ -105,17 +105,44 @@ impl Default for UploadLimits {
 pub const DEFAULT_BUDGET_MIB: u64 = 2048;
 pub const DEFAULT_BUFFER_MIB: u64 = 256;
 
-static LIMITS: std::sync::OnceLock<UploadLimits> = std::sync::OnceLock::new();
-static BUFFER: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
-    std::sync::OnceLock::new();
+/// The upload limits in effect and the upload buffer sized from them.
+struct Upload {
+    limits: UploadLimits,
+    /// Upload bodies in memory, counted in KiB.
+    buffer: std::sync::Arc<tokio::sync::Semaphore>,
+}
 
-/// Sets the upload limits once at startup.
+impl Upload {
+    fn new(limits: UploadLimits) -> std::sync::Arc<Upload> {
+        let kib = (limits.buffer / 1024).min(u32::MAX as u64);
+        std::sync::Arc::new(Upload {
+            limits,
+            buffer: std::sync::Arc::new(tokio::sync::Semaphore::new(kib as usize)),
+        })
+    }
+}
+
+static UPLOAD: std::sync::LazyLock<std::sync::RwLock<std::sync::Arc<Upload>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(Upload::new(UploadLimits::default())));
+
+/// Sets the upload limits at startup. A later start in the same process replaces them.
 pub fn configure(limits: UploadLimits) {
-    let _ = LIMITS.set(limits);
+    let upload = Upload::new(limits);
+    match UPLOAD.write() {
+        Ok(mut held) => *held = upload,
+        Err(poisoned) => *poisoned.into_inner() = upload,
+    }
+}
+
+fn upload() -> std::sync::Arc<Upload> {
+    match UPLOAD.read() {
+        Ok(held) => std::sync::Arc::clone(&held),
+        Err(poisoned) => std::sync::Arc::clone(&poisoned.into_inner()),
+    }
 }
 
 fn limits() -> UploadLimits {
-    LIMITS.get().copied().unwrap_or_default()
+    upload().limits
 }
 
 #[cfg(test)]
@@ -138,12 +165,7 @@ fn buffer() -> std::sync::Arc<tokio::sync::Semaphore> {
     if let Ok(buffer) = TEST_BUFFER.try_with(std::sync::Arc::clone) {
         return buffer;
     }
-    BUFFER
-        .get_or_init(|| {
-            let kib = (limits().buffer / 1024).min(u32::MAX as u64);
-            std::sync::Arc::new(tokio::sync::Semaphore::new(kib as usize))
-        })
-        .clone()
+    std::sync::Arc::clone(&upload().buffer)
 }
 
 /// The upload buffer, and the most KiB of it one account holds at once.
@@ -1376,6 +1398,23 @@ mod tests {
     use axum::extract::{Path, State};
     use axum::http::StatusCode;
     use sqlx::Row;
+
+    #[test]
+    fn the_upload_buffer_is_sized_from_its_limits() {
+        let mib = 1024 * 1024;
+        let small = super::Upload::new(super::UploadLimits {
+            budget: 7 * mib,
+            buffer: 64 * mib,
+        });
+        assert_eq!(small.limits.budget, 7 * mib);
+        assert_eq!(small.buffer.available_permits(), 64 * 1024);
+        let large = super::Upload::new(super::UploadLimits {
+            budget: 0,
+            buffer: 512 * mib,
+        });
+        assert_eq!(large.buffer.available_permits(), 512 * 1024);
+        assert_eq!(large.limits.budget, 0);
+    }
 
     #[test]
     fn file_names_are_cleaned_and_capped() {

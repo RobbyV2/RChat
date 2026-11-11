@@ -5,6 +5,7 @@ use axum::{
     body::Body,
     extract::{OriginalUri, Request},
     http::{StatusCode, Uri},
+    middleware::Next,
     response::{IntoResponse, Response},
 };
 use hyper::upgrade::OnUpgrade;
@@ -35,11 +36,19 @@ pub const VERSIONS: [&str; 1] = ["v1"];
 /// The version `/api/...` without a version segment resolves to.
 pub const LATEST: &str = "v1";
 
-pub fn register_routes(proxy_url: Option<&str>, config: &AppConfig, state: AppState) -> Router {
+/// What answers the paths outside the API.
+#[derive(Clone)]
+pub enum Frontend {
+    /// The Next server at this URL.
+    Proxy(Arc<str>),
+    /// This service. It never sees `/api` paths.
+    Service(Router),
+}
+
+pub fn register_routes(frontend: Option<Frontend>, config: &AppConfig, state: AppState) -> Router {
     let router = api_router(config, state);
-    let router = match proxy_url {
-        Some(url) => {
-            let url: Arc<str> = Arc::from(url);
+    let router = match frontend {
+        Some(Frontend::Proxy(url)) => {
             let client: ProxyClient = Client::builder(TokioExecutor::new()).build_http();
             router.fallback(move |OriginalUri(asked): OriginalUri, mut req: Request| {
                 *req.uri_mut() = asked;
@@ -48,9 +57,34 @@ pub fn register_routes(proxy_url: Option<&str>, config: &AppConfig, state: AppSt
                 async move { proxy_to_frontend(url, client, req).await }
             })
         }
+        Some(Frontend::Service(service)) => router.fallback_service(outside_api(service)),
         None => router,
     };
     resolve_versions(router)
+}
+
+/// `service` for the paths outside the API, as the client asked for them. API paths without a
+/// route stay 404.
+fn outside_api(service: Router) -> Router {
+    Router::new()
+        .fallback_service(service)
+        .layer(axum::middleware::from_fn(
+            |OriginalUri(asked): OriginalUri, mut req: Request, next: Next| async move {
+                match api_rest(asked.path()) {
+                    Some(_) => StatusCode::NOT_FOUND.into_response(),
+                    None => {
+                        *req.uri_mut() = asked;
+                        next.run(req).await
+                    }
+                }
+            },
+        ))
+}
+
+/// What follows `/api` in `path`, when it is an API path.
+fn api_rest(path: &str) -> Option<&str> {
+    path.strip_prefix("/api")
+        .filter(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 pub(crate) fn api_router(config: &AppConfig, state: AppState) -> Router {
@@ -109,10 +143,7 @@ fn resolve_version(mut req: Request) -> Request {
 
 /// `path` under `/api/{LATEST}` when it is an `/api` path without a version.
 fn resolved(path: &str) -> Option<String> {
-    let rest = path.strip_prefix("/api")?;
-    if !(rest.is_empty() || rest.starts_with('/')) {
-        return None;
-    }
+    let rest = api_rest(path)?;
     let segment = rest.split('/').nth(1).unwrap_or("");
     match VERSIONS.contains(&segment) {
         true => None,
@@ -363,7 +394,11 @@ mod tests {
             },
             ..AppConfig::defaults()
         };
-        let app = register_routes(Some(&url), &config, state.clone());
+        let app = register_routes(
+            Some(Frontend::Proxy(Arc::from(url))),
+            &config,
+            state.clone(),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");

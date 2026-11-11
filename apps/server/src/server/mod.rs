@@ -13,8 +13,10 @@ pub mod route_builder;
 
 const CORS_MAX_AGE: Duration = Duration::from_secs(600);
 
-pub fn build_router(proxy_url: Option<&str>, config: &AppConfig, state: AppState) -> Router {
-    route_builder::register_routes(proxy_url, config, state)
+pub use route_builder::Frontend;
+
+pub fn build_router(frontend: Option<Frontend>, config: &AppConfig, state: AppState) -> Router {
+    route_builder::register_routes(frontend, config, state)
 }
 
 pub fn cors_layer() -> CorsLayer {

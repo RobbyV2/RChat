@@ -990,3 +990,28 @@ async fn forgetting_an_author_locks_only_the_jobs_naming_them() {
         .await
         .expect("clean up");
 }
+
+#[tokio::test]
+async fn a_closed_database_keeps_no_job_marked_as_running() {
+    let (state, path) = temp_state("bulk_forget").await;
+    let (other, other_path) = temp_state("bulk_forget_other").await;
+    let marked = |db: &Db, id: i64| {
+        RUNNING
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(&running_key(db, id))
+    };
+    for (db, id) in [(&state.db, 7), (&state.db, 71), (&other.db, 7)] {
+        RUNNING
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(running_key(db, id));
+    }
+    forget(&state.db);
+    assert!(!marked(&state.db, 7) && !marked(&state.db, 71));
+    assert!(marked(&other.db, 7), "another database keeps its own");
+    forget(&other.db);
+    assert!(!marked(&other.db, 7));
+    done(state, path).await;
+    done(other, other_path).await;
+}

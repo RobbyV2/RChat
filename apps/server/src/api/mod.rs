@@ -1462,7 +1462,7 @@ impl Settings {
 
     /// Keeps this process's cached settings and lists current: reloads them whenever
     /// `settings_changed` arrives, from this process or from another one over the bus.
-    pub fn follow(state: &AppState) {
+    pub fn follow(state: &AppState) -> tokio::task::JoinHandle<()> {
         let mut changes = state.hub.settings_changes();
         let db = state.db.clone();
         tokio::spawn(async move {
@@ -1470,7 +1470,7 @@ impl Settings {
                 Settings::load(&db).await;
                 policy::Policy::load(&db).await;
             }
-        });
+        })
     }
 }
 
