@@ -369,6 +369,9 @@ pub(crate) async fn remove_phrase_at(
 
 #[cfg(test)]
 mod tests {
+    use std::pin::{Pin, pin};
+    use std::task::Poll;
+
     use axum::Json;
     use axum::http::StatusCode;
     use serde_json::json;
@@ -952,28 +955,44 @@ mod tests {
         done(state, path).await;
     }
 
+    /// Polls `recovery` until it has read the account and checked the phrase, then leaves it
+    /// there: it changes nothing until it is polled again.
+    async fn proved(
+        recovery: &mut Pin<&mut impl Future<Output = Result<Json<AuthResp>, ApiError>>>,
+        checks: u64,
+    ) {
+        std::future::poll_fn(|cx| match recovery.as_mut().poll(cx) {
+            Poll::Ready(_) => panic!("a recovery ended before the other one started"),
+            Poll::Pending if phrase_checks() == checks => Poll::Ready(()),
+            Poll::Pending => Poll::Pending,
+        })
+        .await
+    }
+
     async fn one_of_two_racing_recoveries_wins(state: &AppState) {
         add_user(state, "alice", "a", Some(KEY)).await;
         let tomorrow = T + 86400;
         let first = nonce_for(state, "alice", T).await;
         let second = nonce_for(state, "alice", tomorrow - 10).await;
-        let (a, b) = tokio::join!(
-            recover_at(
-                state,
-                recovery("alice", &first, &sign(RECOVER, "alice", &first), text("p1")),
-                T,
+        let mut a = pin!(recover_at(
+            state,
+            recovery("alice", &first, &sign(RECOVER, "alice", &first), text("p1")),
+            T,
+        ));
+        let mut b = pin!(recover_at(
+            state,
+            recovery(
+                "alice",
+                &second,
+                &sign(RECOVER, "alice", &second),
+                text("p2")
             ),
-            recover_at(
-                state,
-                recovery(
-                    "alice",
-                    &second,
-                    &sign(RECOVER, "alice", &second),
-                    text("p2")
-                ),
-                tomorrow,
-            ),
-        );
+            tomorrow,
+        ));
+        let checked = phrase_checks();
+        proved(&mut a, checked + 1).await;
+        proved(&mut b, checked + 2).await;
+        let (a, b) = tokio::join!(a, b);
         let (winner, password, loser) = match (a, b) {
             (Ok(Json(won)), Err(lost)) => (won, "p1", lost),
             (Err(lost), Ok(Json(won))) => (won, "p2", lost),
@@ -1000,6 +1019,60 @@ mod tests {
         done(state, path).await;
         if let Some((state, pg)) = pg_state("recovery_race").await {
             one_of_two_racing_recoveries_wins(&state).await;
+            pg_done(state, pg).await;
+        }
+    }
+
+    async fn two_recoveries_in_turn_both_work(state: &AppState) {
+        add_user(state, "alice", "a", Some(KEY)).await;
+        let tomorrow = T + 86400;
+        let first = nonce_for(state, "alice", T).await;
+        let second = nonce_for(state, "alice", tomorrow - 10).await;
+        let mut rx = state.hub.subscribe();
+        let Json(early) = recover_at(
+            state,
+            recovery("alice", &first, &sign(RECOVER, "alice", &first), text("p1")),
+            T,
+        )
+        .await
+        .expect("the first recovery");
+        assert_eq!(
+            tokens_of(state, "alice").await,
+            vec![secret_key(&early.token)]
+        );
+        let Json(late) = recover_at(
+            state,
+            recovery(
+                "alice",
+                &second,
+                &sign(RECOVER, "alice", &second),
+                text("p2"),
+            ),
+            tomorrow,
+        )
+        .await
+        .expect("the second recovery");
+        assert_eq!(
+            tokens_of(state, "alice").await,
+            vec![secret_key(&late.token)]
+        );
+        assert_eq!(revoked(&mut rx), ["alice", "alice"]);
+        let user = get_user(&state.db, "alice")
+            .await
+            .expect("load")
+            .expect("alice");
+        assert!(verify_password("p2", &user.password_hash).await);
+        assert!(!verify_password("p1", &user.password_hash).await);
+        assert_eq!(user.recovery_pub.as_deref(), Some(KEY));
+    }
+
+    #[tokio::test]
+    async fn recoveries_in_turn_each_replace_the_one_before() {
+        let (state, path) = temp_state("recovery_turns").await;
+        two_recoveries_in_turn_both_work(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("recovery_turns").await {
+            two_recoveries_in_turn_both_work(&state).await;
             pg_done(state, pg).await;
         }
     }
