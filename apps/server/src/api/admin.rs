@@ -10,7 +10,7 @@ use sqlx::Row;
 use crate::api::access::{MsgScope, not_found, staff_message};
 use crate::api::controls::{ConfigRecords, Control, ROWS_SQL};
 use crate::api::features::{Feature, Registration};
-use crate::api::policy::{Policy, SERVER_CREATORS, ServerCreation};
+use crate::api::policy::{Policy, SERVER_CREATORS, SERVER_SEARCH, ServerCreation, ServerJoining};
 use crate::api::{
     ApiError, Authed, OkResp, Paged, ProfanitySwitch, ServerDetail, ServerSummaryLite, Settings,
     UserRef, bad, decode_cursor, encode_cursor, ok, upload_expiry,
@@ -247,6 +247,8 @@ pub struct SettingsPatch {
     upload_expiry_max_days: Option<i64>,
     server_creation: Option<ServerCreation>,
     server_creators: Option<Vec<String>>,
+    server_joining: Option<ServerJoining>,
+    server_search: Option<bool>,
 }
 
 pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
@@ -262,13 +264,13 @@ pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
 /// its targets, link previews, uploads, P2P attachments, guest access, outgoing webhooks,
 /// reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding,
 /// password sign-in and sign-up, the media server, P2P, whether the web app this instance
-/// serves offers other instances, and who may create servers. A switched-off feature's
-/// endpoints answer 404, except that
+/// serves offers other instances, who may create servers, how people join them and whether
+/// they can be searched. A switched-off feature's endpoints answer 404, except that
 /// uploads, P2P attachments and outgoing webhooks answer 403, guests get 401 while guest
 /// access is off, and `client_other_instances` gates no endpoint. No authentication. Values
 /// may lag a change by up to 5 seconds per server process; live changes also arrive as the
 /// `settings_changed` WebSocket event. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/settings", tag = "Instance", responses((status = 200, description = "Site-wide switches: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, guest access, outgoing webhooks, reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding, password sign-in, the media server, P2P, other instances in this instance's web app, `registration` and `server_creation`", body = Settings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(get, path = "/api/v1/settings", tag = "Instance", responses((status = 200, description = "Site-wide switches: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, guest access, outgoing webhooks, reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding, password sign-in, the media server, P2P, other instances in this instance's web app, `registration`, `server_creation`, `server_joining` and `server_search`", body = Settings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
     Json(Settings::cached(&state.db).await)
 }
@@ -307,6 +309,8 @@ pub(crate) async fn patch_settings(
         upload_expiry_max_days,
         server_creation,
         server_creators,
+        server_joining,
+        server_search,
     } = req;
     if upload_expiry_max_days.is_some_and(|d| !(0..=upload_expiry::CAP_DAYS_MAX).contains(&d)) {
         return Err(bad("The longest file expiry must be 0 to 365 days"));
@@ -354,6 +358,7 @@ pub(crate) async fn patch_settings(
         ("p2p_attachments", p2p_attachments),
         ("guests_enabled", guests_enabled),
         ("outgoing_webhooks", outgoing_webhooks),
+        (SERVER_SEARCH, server_search),
     ]
     .into_iter()
     .chain(
@@ -368,6 +373,7 @@ pub(crate) async fn patch_settings(
         .chain(upload_expiry_max_days.map(|d| (upload_expiry::CAP_KEY, d.to_string())))
         .chain(server_creation.map(|c| (ServerCreation::KEY, c.as_str().to_string())))
         .chain(creators.map(|list| (SERVER_CREATORS, list)))
+        .chain(server_joining.map(|j| (ServerJoining::KEY, j.as_str().to_string())))
         .collect();
     let records = ConfigRecords::load(&state.db).await?;
     let touched: Vec<&Control> = Control::all()

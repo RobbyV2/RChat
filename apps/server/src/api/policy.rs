@@ -45,6 +45,44 @@ impl ServerCreation {
     }
 }
 
+/// How people get into servers by themselves: `everyone` may join any server they can open,
+/// `invites` needs a server password or a ticket (a server without a password can't be joined
+/// by its name alone), `nobody` turns joining off. Members stay in their servers either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ServerJoining {
+    #[default]
+    Everyone,
+    Invites,
+    Nobody,
+}
+
+impl ServerJoining {
+    pub const KEY: &str = "server_joining";
+    pub const ENV: &str = "SERVER_JOINING";
+    pub const WORDS: [&str; 3] = ["everyone", "invites", "nobody"];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ServerJoining::Everyone => "everyone",
+            ServerJoining::Invites => "invites",
+            ServerJoining::Nobody => "nobody",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<ServerJoining> {
+        match value {
+            "everyone" => Some(ServerJoining::Everyone),
+            "invites" => Some(ServerJoining::Invites),
+            "nobody" => Some(ServerJoining::Nobody),
+            _ => None,
+        }
+    }
+}
+
+/// The switch for `GET /api/v1/server_search`.
+pub const SERVER_SEARCH: &str = "server_search";
+
 /// The control that lists who may create servers while `server_creation` is `some`.
 pub const SERVER_CREATORS: &str = "server_creators";
 
@@ -273,6 +311,16 @@ pub async fn effective<'a>(db: &'a Db, user: Option<&'a User>) -> Effective<'a> 
 }
 
 impl Effective<'_> {
+    /// How the user may get into servers by themselves.
+    pub fn server_joining(&self) -> ServerJoining {
+        self.settings.server_joining
+    }
+
+    /// Whether the user may search servers.
+    pub fn server_search(&self) -> bool {
+        self.settings.server_search
+    }
+
     /// Whether the user may create a server with `POST /api/v1/servers`. A site admin follows
     /// the same rule as everyone.
     pub async fn can_create_servers(&self) -> Result<bool, ApiError> {
@@ -555,6 +603,55 @@ mod tests {
         }
         exec(db, "DELETE FROM roles WHERE server = 'team'").await;
         assert!(may(&state, "frank").await, "one reading again");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_joining_switches_are_public_and_change_live() {
+        use crate::api::admin::get_settings;
+        use crate::api::policy::ServerJoining;
+        let (state, path) = temp_state("joining_settings").await;
+        let wire = || async {
+            serde_json::to_value(get_settings(State(state.clone())).await.0).expect("json")
+        };
+        let fresh = wire().await;
+        assert_eq!(fresh["server_joining"], json!("everyone"));
+        assert_eq!(fresh["server_search"], json!(true));
+        let mut rx = state.hub.subscribe();
+        set(
+            &state,
+            json!({"server_joining": "invites", "server_search": false}),
+        )
+        .await
+        .expect("patch");
+        let event = serde_json::to_value(rx.try_recv().expect("settings_changed")).expect("json");
+        assert_eq!(event["settings"]["server_joining"], json!("invites"));
+        assert_eq!(event["settings"]["server_search"], json!(false));
+        let user = mem_user("alice", false);
+        for who in [Some(&user), None] {
+            let allowed = effective(&state.db, who).await;
+            assert_eq!(allowed.server_joining(), ServerJoining::Invites);
+            assert!(!allowed.server_search());
+        }
+        set(&state, json!({"server_joining": "nobody"}))
+            .await
+            .expect("nobody");
+        assert_eq!(wire().await["server_joining"], json!("nobody"));
+        assert!(
+            serde_json::from_value::<SettingsPatch>(json!({"server_joining": "friends"})).is_err()
+        );
+        let denied = Settings::DENY;
+        assert_eq!(denied.server_joining, ServerJoining::Nobody);
+        assert!(!denied.server_search);
+        let older: Settings = serde_json::from_value(json!({
+            "profanity_filter": true,
+            "asset_previews": true,
+            "asset_uploads": true,
+            "guests_enabled": true,
+        }))
+        .expect("a copy from before the switches");
+        assert_eq!(older.server_joining, ServerJoining::Everyone);
+        assert!(older.server_search);
         done(state, path).await;
     }
 

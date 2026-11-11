@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 use sqlx::Row;
 
 use crate::api::features::{Feature, Registration};
-use crate::api::policy::{Creator, SERVER_CREATORS, ServerCreation};
+use crate::api::policy::{Creator, SERVER_CREATORS, SERVER_SEARCH, ServerCreation, ServerJoining};
 use crate::api::{ProfanitySwitch, ProfanityTargets, Settings, upload_expiry};
 use crate::db::{ConfigStart, Db};
 use crate::limits::Env;
@@ -109,6 +109,14 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
         default: "",
         public: false,
     });
+    all.push(Control {
+        key: ServerJoining::KEY,
+        env: ServerJoining::ENV,
+        kind: Kind::Choice(&ServerJoining::WORDS),
+        default: "everyone",
+        public: true,
+    });
+    all.push(switch(SERVER_SEARCH, "SERVER_SEARCH", true));
     all
 });
 
@@ -488,17 +496,24 @@ mod tests {
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
         assert_eq!(
-            table[table.len() - 3..],
+            table[table.len() - 5..],
             [
                 ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
                 ("server_creation", "SERVER_CREATION", "everyone"),
                 ("server_creators", "SERVER_CREATORS", ""),
+                ("server_joining", "SERVER_JOINING", "everyone"),
+                ("server_search", "SERVER_SEARCH", "1"),
             ]
         );
         assert_eq!(
             control("upload_expiry_max_days").kind,
             Kind::Number { min: 0, max: 365 }
         );
+        assert_eq!(
+            control("server_joining").kind,
+            Kind::Choice(&["everyone", "invites", "nobody"])
+        );
+        assert_eq!(control("server_search").kind, Kind::Switch);
         assert_eq!(
             control("server_creation").kind,
             Kind::Choice(&["everyone", "nobody", "some"])
@@ -641,6 +656,9 @@ mod tests {
                     ["open", "sso", "closed"] => "expected open, sso or closed".to_string(),
                     ["everyone", "nobody", "some"] => {
                         "expected everyone, nobody or some".to_string()
+                    }
+                    ["everyone", "invites", "nobody"] => {
+                        "expected everyone, invites or nobody".to_string()
                     }
                     other => panic!("{other:?} has no expected text"),
                 },

@@ -11,6 +11,7 @@ use sqlx::{AnyConnection, Row};
 use crate::api::audit::Actor;
 use crate::api::auth::{Work, derive_key, dummy_hash, verify_in};
 use crate::api::budget::{self, Backoff, Budget, slow_down};
+use crate::api::policy::ServerJoining;
 use crate::api::{ApiError, Channel, ServerSummaryLite, header_grants};
 use crate::db::{ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, User, now, pool_key};
 use crate::limits::Limits;
@@ -115,6 +116,7 @@ pub struct Proof<'a> {
     password: Slot<'a>,
     grants: Vec<String>,
     grant_ttl: i64,
+    by_name: bool,
 }
 
 impl<'a> Proof<'a> {
@@ -123,6 +125,17 @@ impl<'a> Proof<'a> {
             password: Slot::Closed,
             grants: Vec::new(),
             grant_ttl: 0,
+            by_name: true,
+        }
+    }
+
+    /// The same proof where a name alone opens nothing: a server without a password answers
+    /// like a password-protected one, so only a password, a ticket, a grant or a membership
+    /// gets in.
+    fn not_by_name(self) -> Proof<'a> {
+        Proof {
+            by_name: false,
+            ..self
         }
     }
 
@@ -468,7 +481,7 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
         name_color: row.try_get(5)?,
     };
     let mut ticket = None;
-    let via = match (hash.is_some(), member) {
+    let via = match (hash.is_some() || !proof.by_name, member) {
         (_, true) => Via::Member,
         (false, false) => Via::Public,
         (true, false) => match (granted, who.site_admin, proof.password, checked) {
@@ -513,6 +526,26 @@ pub async fn resolve_server(
     match resolve_invite(db, name, viewer, proof).await? {
         InviteView::Banned(_) => Err(banned()),
         InviteView::Open(access) => Ok(*access),
+    }
+}
+
+/// Resolves a server for someone getting in by themselves: an account joining it, or a guest
+/// asking for guest access. `joining` is the instance's rule for that. Under `Invites` a name
+/// alone opens nothing, so every name without a working password or ticket gets the answers of
+/// a password-protected server. Under `Nobody` every name gets the uniform denial, and nothing
+/// is looked up.
+pub async fn resolve_join(
+    db: &Db,
+    name: &str,
+    viewer: Option<&User>,
+    password: Option<&str>,
+    joining: ServerJoining,
+) -> Result<ServerAccess, ApiError> {
+    let proof = Proof::password(password);
+    match joining {
+        ServerJoining::Everyone => resolve_server(db, name, viewer, &proof).await,
+        ServerJoining::Invites => resolve_server(db, name, viewer, &proof.not_by_name()).await,
+        ServerJoining::Nobody => Err(crate::api::policy::refused(ServerJoining::KEY, denied())),
     }
 }
 
@@ -3186,6 +3219,420 @@ mod tests {
             let _ = resolve_server(db, "ghost", Some(&bob), &proof).await;
         }
         assert_eq!(argon2_runs(), before, "no password, no argon2");
+        done(state, path).await;
+    }
+
+    /// What the admin page does to a control, as every process sees it once its cache is gone.
+    async fn set_control(db: &Db, key: &str, value: &str) {
+        exec(db, &format!("INSERT INTO settings(key, value) VALUES('{key}', '{value}') ON CONFLICT(key) DO UPDATE SET value = excluded.value")).await;
+        crate::api::Settings::forget(db);
+    }
+
+    /// The fixture plus `open`, a server without a password that alice made and bob is in, and
+    /// the accounts carol, dave and erin.
+    async fn joining_fixture(state: &AppState) {
+        fixture(state).await;
+        let db = &state.db;
+        for name in ["carol", "dave", "erin"] {
+            user(db, name).await;
+        }
+        exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('open', 'Open', 'alice', 0)").await;
+        exec(
+            db,
+            "INSERT INTO channels(server, name, created_at) VALUES('open', 'general', 0)",
+        )
+        .await;
+        add_member(db, "open", "alice", 1, 0, 0).await;
+        add_member(db, "open", "bob", 0, 0, 0).await;
+    }
+
+    const NEEDS_PASSWORD: &[u8] = br#"{"error":"Password required"}"#;
+    const NO_ENTRY: &[u8] = br#"{"error":"Server not found or wrong password"}"#;
+
+    fn answer(reply: &Reply) -> (u16, &[u8]) {
+        (reply.0, reply.2.as_slice())
+    }
+
+    #[tokio::test]
+    async fn invites_only_refuses_a_join_by_name_and_takes_a_password_or_a_ticket() {
+        let (state, path) = temp_state("joining_invites").await;
+        joining_fixture(&state).await;
+        let db = &state.db;
+        extra(db, "vault", "ticket-pw", None, Some(1), 0, None).await;
+        let (client, server) = serve(&state).await;
+        let join = async |who: &str, name: &str, body: Option<&str>| {
+            client
+                .call(
+                    "POST",
+                    &format!("/servers/{name}/join"),
+                    Some(who),
+                    body,
+                    &[],
+                )
+                .await
+        };
+        let members = async |server: &str, who: &str| {
+            scalar(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM members WHERE server = '{server}' AND username = '{who}'"
+                ),
+            )
+            .await
+        };
+        assert_eq!(join("erin", "open", None).await.0, 200, "everyone: by name");
+        exec(
+            db,
+            "DELETE FROM members WHERE server = 'open' AND username = 'erin'",
+        )
+        .await;
+
+        set_control(db, "server_joining", "invites").await;
+        let guess = Some(r#"{"password":"a guess"}"#);
+        for who in ["carol", "root"] {
+            for name in ["open", "vault", "closed", "nope"] {
+                let by_name = join(who, name, None).await;
+                assert_eq!(
+                    answer(&by_name),
+                    (401, NEEDS_PASSWORD),
+                    "{who} joins {name} by name"
+                );
+                let wrong = join(who, name, guess).await;
+                assert_eq!(
+                    answer(&wrong),
+                    (404, NO_ENTRY),
+                    "{who} joins {name} with a guess"
+                );
+            }
+        }
+        assert_eq!(members("open", "carol").await, Some(0));
+        assert_eq!(members("open", "root").await, Some(0));
+
+        assert_eq!(
+            join("carol", "vault", Some(r#"{"password":"pw"}"#)).await.0,
+            200
+        );
+        let ticket = Some(r#"{"password":"ticket-pw"}"#);
+        assert_eq!(join("dave", "vault", ticket).await.0, 200, "a ticket");
+        assert_eq!(
+            answer(&join("erin", "vault", ticket).await),
+            (404, NO_ENTRY),
+            "it had one use"
+        );
+        assert_eq!(members("vault", "carol").await, Some(1));
+        assert_eq!(members("vault", "dave").await, Some(1));
+
+        assert_eq!(join("bob", "open", None).await.0, 200, "a member stays one");
+        assert_eq!(
+            client
+                .call("GET", "/servers/open", Some("bob"), None, &[])
+                .await
+                .0,
+            200
+        );
+        assert_eq!(
+            client
+                .call("POST", "/servers/open/leave", Some("bob"), None, &[])
+                .await
+                .0,
+            200,
+            "leaving works"
+        );
+        assert_eq!(
+            answer(&join("bob", "open", None).await),
+            (401, NEEDS_PASSWORD)
+        );
+
+        let guest = async |name: &str, body: &str| {
+            client
+                .call(
+                    "POST",
+                    &format!("/servers/{name}/guest_access"),
+                    None,
+                    Some(body),
+                    &[],
+                )
+                .await
+        };
+        for name in ["open", "vault", "nope"] {
+            assert_eq!(
+                answer(&guest(name, "{}").await),
+                (401, NEEDS_PASSWORD),
+                "a guest, {name} by name"
+            );
+        }
+        assert_eq!(
+            answer(&guest("open", r#"{"password":"a guess"}"#).await),
+            (404, NO_ENTRY)
+        );
+        let granted = guest("vault", r#"{"password":"pw"}"#).await;
+        assert_eq!(granted.0, 200);
+        assert!(
+            json(&granted)["grant"].is_string(),
+            "a guest with the password"
+        );
+
+        set_control(db, "server_joining", "everyone").await;
+        assert_eq!(join("carol", "open", None).await.0, 200, "back on");
+        assert_eq!(
+            json(&guest("open", "{}").await)["grant"],
+            serde_json::Value::Null
+        );
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn under_invites_every_name_costs_the_same_work() {
+        let (state, path) = temp_state("joining_invites_work").await;
+        joining_fixture(&state).await;
+        let db = &state.db;
+        let carol = mem_user("carol", false);
+        let code = |r: Result<ServerAccess, ApiError>| r.err().map(|ApiError(c, m)| (c, m));
+        let names = ["open", "vault", "closed", "nope"];
+        for round in 0..10 {
+            for name in names {
+                let before = argon2_runs();
+                let by_name =
+                    resolve_join(db, name, Some(&carol), None, ServerJoining::Invites).await;
+                assert_eq!(
+                    diff(argon2_runs(), before),
+                    (0, 0),
+                    "{name}, round {round}: no password is checked"
+                );
+                assert_eq!(
+                    code(by_name),
+                    Some((StatusCode::UNAUTHORIZED, PASSWORD_REQUIRED.to_string())),
+                    "{name}"
+                );
+            }
+        }
+        for name in names {
+            let before = argon2_runs();
+            let guess = resolve_join(
+                db,
+                name,
+                Some(&carol),
+                Some("a guess"),
+                ServerJoining::Invites,
+            )
+            .await;
+            assert_eq!(
+                diff(argon2_runs(), before),
+                (1, 1),
+                "{name}: a guess costs the same two checks"
+            );
+            assert_eq!(
+                code(guess),
+                Some((StatusCode::NOT_FOUND, DENIED.to_string())),
+                "{name}"
+            );
+        }
+        let joined = resolve_join(
+            db,
+            "vault",
+            Some(&carol),
+            Some("pw"),
+            ServerJoining::Invites,
+        )
+        .await
+        .expect("forty answers by name spent no budget");
+        assert_eq!(joined.via(), Via::Password);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn nobody_refuses_every_self_service_join_and_leaves_members_alone() {
+        let (state, path) = temp_state("joining_nobody").await;
+        joining_fixture(&state).await;
+        let db = &state.db;
+        extra(db, "vault", "ticket-pw", None, None, 0, None).await;
+        set_control(db, "server_joining", "nobody").await;
+        let (client, server) = serve(&state).await;
+        let before = scalar(db, "SELECT COUNT(*) FROM members").await;
+        let bodies = [
+            None,
+            Some(r#"{"password":"pw"}"#),
+            Some(r#"{"password":"ticket-pw"}"#),
+            Some(r#"{"password":"a guess"}"#),
+        ];
+        for who in ["carol", "root", "bob"] {
+            for name in ["open", "vault", "closed", "rchat", "nope"] {
+                for body in bodies {
+                    let refused = client
+                        .call(
+                            "POST",
+                            &format!("/servers/{name}/join"),
+                            Some(who),
+                            body,
+                            &[],
+                        )
+                        .await;
+                    assert_eq!(
+                        answer(&refused),
+                        (404, NO_ENTRY),
+                        "{who} joins {name} with {body:?}"
+                    );
+                }
+            }
+        }
+        for name in ["open", "vault", "nope"] {
+            for body in ["{}", r#"{"password":"pw"}"#] {
+                let refused = client
+                    .call(
+                        "POST",
+                        &format!("/servers/{name}/guest_access"),
+                        None,
+                        Some(body),
+                        &[],
+                    )
+                    .await;
+                assert_eq!(
+                    answer(&refused),
+                    (404, NO_ENTRY),
+                    "a guest asks for {name} with {body}"
+                );
+            }
+        }
+        assert_eq!(scalar(db, "SELECT COUNT(*) FROM members").await, before);
+        assert_eq!(
+            scalar(db, "SELECT COUNT(*) FROM guest_grants").await,
+            Some(0)
+        );
+        assert_eq!(
+            scalar(
+                db,
+                "SELECT uses FROM server_passwords WHERE label = 'ticket-pw'"
+            )
+            .await,
+            Some(0),
+            "nothing was spent"
+        );
+
+        assert_eq!(
+            client
+                .call("GET", "/servers/open", Some("bob"), None, &[])
+                .await
+                .0,
+            200,
+            "members stay"
+        );
+        assert_eq!(
+            client
+                .call("GET", "/servers/vault", Some("alice"), None, &[])
+                .await
+                .0,
+            200
+        );
+        let sent = client
+            .call(
+                "POST",
+                &format!(
+                    "/channels/{}/messages",
+                    scalar(db, "SELECT id FROM channels WHERE server = 'open'")
+                        .await
+                        .expect("channel")
+                ),
+                Some("bob"),
+                Some(r#"{"content":"still here"}"#),
+                &[],
+            )
+            .await;
+        assert_eq!(sent.0, 200, "and keep talking");
+        assert_eq!(
+            client
+                .call("POST", "/servers/open/leave", Some("bob"), None, &[])
+                .await
+                .0,
+            200,
+            "leaving works"
+        );
+
+        let registered = client
+            .call(
+                "POST",
+                "/auth/register",
+                None,
+                Some(r#"{"username":"frank","password":"pw-frank-1","avatar_kind":"identicon"}"#),
+                &[],
+            )
+            .await;
+        assert_eq!(registered.0, 200);
+        assert_eq!(
+            scalar(
+                db,
+                "SELECT COUNT(*) FROM members WHERE server = 'rchat' AND username = 'frank'"
+            )
+            .await,
+            Some(1),
+            "new accounts still land in the default server"
+        );
+        let made = client
+            .call(
+                "POST",
+                "/admin/servers",
+                Some("root"),
+                Some(r#"{"name":"Staffroom","owner":"carol"}"#),
+                &[],
+            )
+            .await;
+        assert_eq!(made.0, 200, "the operator still puts people in servers");
+        assert_eq!(
+            scalar(
+                db,
+                "SELECT COUNT(*) FROM members WHERE server = 'staffroom' AND username = 'carol'"
+            )
+            .await,
+            Some(1)
+        );
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn server_search_answers_404_when_off() {
+        let (state, path) = temp_state("search_switch").await;
+        joining_fixture(&state).await;
+        let db = &state.db;
+        let (client, server) = serve(&state).await;
+        let search = async |who: Option<&str>, q: &str| {
+            client
+                .call("GET", &format!("/server_search?q={q}"), who, None, &[])
+                .await
+        };
+        for who in [Some("carol"), None] {
+            let found = search(who, "ope").await;
+            assert_eq!(found.0, 200);
+            assert_eq!(json(&found)[0]["name"], "open", "{who:?}");
+        }
+        set_control(db, "server_search", "0").await;
+        for who in [Some("carol"), Some("bob"), Some("root"), None] {
+            for q in ["ope", "", "vault", "zzz"] {
+                assert_eq!(
+                    answer(&search(who, q).await),
+                    (404, br#"{"error":"Not found"}"#.as_slice()),
+                    "{who:?} searches {q}"
+                );
+            }
+        }
+        assert_eq!(
+            client
+                .call("GET", "/servers/open", Some("carol"), None, &[])
+                .await
+                .0,
+            200,
+            "servers stay reachable by name"
+        );
+        assert_eq!(
+            client
+                .call("POST", "/servers/open/join", Some("carol"), None, &[])
+                .await
+                .0,
+            200
+        );
+        set_control(db, "server_search", "1").await;
+        assert_eq!(search(Some("carol"), "ope").await.0, 200);
+        server.abort();
         done(state, path).await;
     }
 

@@ -13,7 +13,7 @@ use crate::api::access::perms::{
 };
 use crate::api::access::{
     BANNED, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, forbidden, is_member,
-    member_role, resolve_channel, resolve_invite, resolve_server,
+    member_role, resolve_channel, resolve_invite, resolve_join, resolve_server,
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
@@ -1626,7 +1626,8 @@ pub(crate) async fn server_available(
 /// match as a substring. Only servers without a password and servers the caller is a member of
 /// are searched; other password-protected servers never appear. A blank `q` returns an empty
 /// list. Signed-in users may call it, and guests when guest access is on (guests only find
-/// servers without a password). General rate-limit bucket.
+/// servers without a password). Answers 404 while the instance has server search off
+/// (`server_search` in `GET /api/v1/settings`). General rate-limit bucket.
 #[utoipa::path(
     get,
     path = "/api/v1/server_search",
@@ -1635,6 +1636,7 @@ pub(crate) async fn server_available(
     responses(
         (status = 200, description = "Up to 10 servers without a password or that you are a member of, whose name or display name matches the query", body = Vec<ServerMatch>),
         (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: server search is off on this instance", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security((), ("bearer" = []))
@@ -1645,6 +1647,15 @@ pub(crate) async fn search_servers(
     Query(sq): Query<ServerSearchQuery>,
 ) -> Result<Json<Vec<ServerMatch>>, ApiError> {
     let db = &state.read();
+    if !crate::api::policy::effective(db, viewer.as_ref())
+        .await
+        .server_search()
+    {
+        return Err(crate::api::policy::refused(
+            crate::api::policy::SERVER_SEARCH,
+            crate::api::access::not_found(),
+        ));
+    }
     require_guest_ok(db, viewer.as_ref()).await?;
     let q = sq.q.as_deref().unwrap_or("").trim().to_lowercase();
     if q.is_empty() {
@@ -1689,7 +1700,10 @@ pub(crate) async fn search_servers(
 /// name that is not a server without a password gets the same `401 Password required`, and a
 /// wrong password or a name that does not exist gets the same `404 Server not found or wrong
 /// password` (the password is always hashed, also for names that do not exist). Anyone may call
-/// it, guests only when guest access is on. Strict and general rate-limit buckets.
+/// it, guests only when guest access is on. The instance's `server_joining` applies as for
+/// `POST /api/v1/servers/{name}/join`: under `invites` a server without a password answers
+/// like a password-protected one, and under `nobody` every call gets the 404. Strict and
+/// general rate-limit buckets.
 #[utoipa::path(
     post,
     path = "/api/v1/servers/{name}/guest_access",
@@ -1713,13 +1727,10 @@ pub(crate) async fn guest_access(
     Json(req): Json<GuestAccessReq>,
 ) -> Result<Json<GuestGrant>, ApiError> {
     require_guest_ok(&state.db, viewer.as_ref()).await?;
-    let access = resolve_server(
-        &state.db,
-        &name,
-        None,
-        &Proof::password(req.password.as_deref()),
-    )
-    .await?;
+    let joining = crate::api::policy::effective(&state.db, viewer.as_ref())
+        .await
+        .server_joining();
+    let access = resolve_join(&state.db, &name, None, req.password.as_deref(), joining).await?;
     if access.via() == Via::Public {
         return Ok(Json(GuestGrant { grant: None }));
     }
@@ -1978,8 +1989,11 @@ async fn insert_member(
 /// names. A ban (403) shows only after you prove access: no password, the correct password, or
 /// earlier membership. A new membership emits `member_joined` to the server and the user. Then a
 /// `join` system message (`message` event) goes to the system channel, unless join messages are
-/// off or the user got one in this server in the last 10 minutes. Join and general rate-limit
-/// buckets.
+/// off or the user got one in this server in the last 10 minutes. The instance may limit
+/// joining (`server_joining` in `GET /api/v1/settings`): under `invites` a server without a
+/// password answers like a password-protected one unless you are a member, so a name alone
+/// gets `401 Password required` and only a password or ticket joins; under `nobody` every call
+/// gets `404 Server not found or wrong password`. Join and general rate-limit buckets.
 #[utoipa::path(
     post,
     path = "/api/v1/servers/{name}/join",
@@ -2004,7 +2018,10 @@ pub(crate) async fn join_server(
     body: Option<Json<JoinReq>>,
 ) -> Result<Json<ServerDetail>, ApiError> {
     let given = body.as_ref().and_then(|Json(j)| j.password.as_deref());
-    let access = resolve_server(&state.db, &name, Some(&user), &Proof::password(given)).await?;
+    let joining = crate::api::policy::effective(&state.db, Some(&user))
+        .await
+        .server_joining();
+    let access = resolve_join(&state.db, &name, Some(&user), given, joining).await?;
     let key = access.name().to_string();
     let inserted = insert_member(&state.db, &access, &user.username).await?;
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;

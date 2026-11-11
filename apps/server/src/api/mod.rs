@@ -56,7 +56,7 @@ use utoipa::ToSchema;
 
 use crate::api::controls::Control;
 use crate::api::features::{Feature, Registration};
-use crate::api::policy::ServerCreation;
+use crate::api::policy::{ServerCreation, ServerJoining};
 use crate::config::Roles;
 use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, pool_key};
 use crate::server::client_ip::ClientIp;
@@ -1233,6 +1233,14 @@ pub struct Settings {
     /// Existing servers are not affected.
     #[serde(default)]
     pub server_creation: ServerCreation,
+    /// How people get into servers by themselves: `everyone`, `invites` (only with a server
+    /// password or a ticket: without one, every name gets the answers of a password-protected
+    /// server) or `nobody` (joining and guest access requests answer 404). Members stay.
+    #[serde(default)]
+    pub server_joining: ServerJoining,
+    /// Server search. Off: `GET /api/v1/server_search` answers 404.
+    #[serde(default = "yes")]
+    pub server_search: bool,
 }
 
 pub(crate) fn yes() -> bool {
@@ -1272,6 +1280,8 @@ impl Settings {
         registration: Registration::Closed,
         upload_expiry_max_days: 1,
         server_creation: ServerCreation::Nobody,
+        server_joining: ServerJoining::Nobody,
+        server_search: false,
     };
 
     pub async fn load(db: &Db) -> Settings {
@@ -1343,6 +1353,9 @@ impl Settings {
             .unwrap_or(1),
             server_creation: ServerCreation::parse(&stored(ServerCreation::KEY))
                 .unwrap_or(ServerCreation::Nobody),
+            server_joining: ServerJoining::parse(&stored(ServerJoining::KEY))
+                .unwrap_or(ServerJoining::Nobody),
+            server_search: on(policy::SERVER_SEARCH),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1397,6 +1410,8 @@ impl Settings {
             registration: _,
             upload_expiry_max_days: _,
             server_creation: _,
+            server_joining: _,
+            server_search: _,
         } = *self;
         match feature {
             Feature::ServerReports => server_reports,

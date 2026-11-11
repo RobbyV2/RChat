@@ -4861,3 +4861,17 @@ async fn server_creation_controls_are_added_to_an_old_database() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn server_joining_controls_are_added_to_an_old_database() {
+    controls_reach_an_old_database(
+        "joining_controls",
+        &["server_joining", "server_search"],
+        &["everyone", "1"],
+        &[
+            ("SERVER_JOINING", "invites", "invites"),
+            ("SERVER_SEARCH", "off", "0"),
+        ],
+    )
+    .await;
+}
