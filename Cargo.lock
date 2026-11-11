@@ -4667,6 +4667,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rchat-pow-wasm"
+version = "0.3.0"
+dependencies = [
+ "rchat-pow",
+ "serde_json",
+ "sha2 0.11.1",
+]
+
+[[package]]
 name = "rchat-profanity"
 version = "0.3.0"
 dependencies = [

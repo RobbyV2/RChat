@@ -42,6 +42,15 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: cargo test --workspace --exclude rchat-desktop --exclude tauri-plugin-rchat-share
 
+  # The committed solver module, rebuilt with its pinned toolchain and compared byte for byte.
+  pow-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install 1.99.1 --profile minimal --target wasm32-unknown-unknown
+      - run: sh crates/pow-wasm/build.sh
+      - run: git diff --exit-code apps/web/public/pow
+
   # The desktop crates need the WebKitGTK headers and the static web build (Tauri embeds it).
   desktop-lint:
     runs-on: ubuntu-latest

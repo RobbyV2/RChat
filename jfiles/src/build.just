@@ -12,6 +12,10 @@ build-wasm:
 build-wasm-dev:
   cd {{ROOT}} && wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --dev
 
+# Rebuild the committed proof-of-work solver (apps/web/public/pow) and its source hash
+pow-wasm:
+  cd {{ROOT}} && sh crates/pow-wasm/build.sh
+
 # Build the API server binary
 build-api:
   cd {{ROOT}} && cargo build --release --bin server

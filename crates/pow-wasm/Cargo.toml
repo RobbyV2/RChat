@@ -1,0 +1,16 @@
+[package]
+name = "rchat-pow-wasm"
+version = "0.3.0"
+edition = "2024"
+license = "MIT"
+description = "The proof-of-work solver as a raw wasm module: memory, seed_ptr, pow_chunk"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rchat-pow = { path = "../pow", default-features = false }
+
+[dev-dependencies]
+serde_json = "1"
+sha2 = "0.11.1"
