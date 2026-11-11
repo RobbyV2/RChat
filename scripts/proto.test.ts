@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 
 setDefaultTimeout(120_000)
 
@@ -18,15 +18,44 @@ const root = join(import.meta.dir, '..')
 const proto = join(root, 'proto')
 const pkg = join(proto, 'rchat/fed/v1')
 const baselines = join(proto, 'baseline')
+const gen = join(root, 'apps/web/app/lib/fed/gen')
+const GEN_OUT = 'apps/web/app/lib/fed/gen'
 
-// The buf launcher is a script with a node shebang; bun runs it, so node isn't needed.
+// The buf launcher and the generator are scripts with a node shebang; bun runs both, so node
+// isn't needed. The template starts the generator with `bun`, found through PATH.
 const buf = (args: string[], cwd = proto) => {
   const run = Bun.spawnSync(
     [process.execPath, join(root, 'node_modules/@bufbuild/buf/bin/buf'), ...args],
-    { cwd, stdout: 'pipe', stderr: 'pipe' }
+    {
+      cwd,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH ?? ''}` },
+    }
   )
   return { code: run.exitCode, out: `${run.stdout}${run.stderr}` }
 }
+
+const files = (dir: string) =>
+  readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter(entry => entry.isFile())
+    .map(entry => relative(dir, join(entry.parentPath, entry.name)))
+    .sort()
+
+// A fresh generation of `input` (the schema itself, or a changed copy), compared with the
+// committed files: the names of the files that differ or exist on one side only.
+const stale = (input: string) =>
+  scratch(dir => {
+    expect(buf(['generate', input, '-o', join(dir, 'proto')])).toEqual({ code: 0, out: '' })
+    const fresh = join(dir, GEN_OUT)
+    const names = [...new Set([...files(fresh), ...files(gen)])].sort()
+    const read = (base: string, name: string) =>
+      existsSync(join(base, name)) ? readFileSync(join(base, name)) : null
+    return names.filter(name => {
+      const [a, b] = [read(fresh, name), read(gen, name)]
+      return a === null || b === null || !a.equals(b)
+    })
+  })
 
 const scratch = <T>(use: (dir: string) => T): T => {
   const dir = mkdtempSync(join(tmpdir(), 'rchat-proto-'))
@@ -174,6 +203,39 @@ describe('instance protocol schema', () => {
         '',
       ].join('\n')
     )
+  })
+})
+
+describe('generated TypeScript', () => {
+  test('one committed file per schema file', () => {
+    expect(files(gen)).toEqual(
+      readdirSync(pkg)
+        .map(name => `rchat/fed/v1/${name.replace(/\.proto$/, '_pb.ts')}`)
+        .sort()
+    )
+  })
+
+  test('the committed files are a fresh generation of the schema, byte for byte', () => {
+    expect(stale(proto)).toEqual([])
+  })
+
+  test('a schema change without a new generation is caught', () => {
+    scratch(dir => {
+      cpSync(proto, dir, { recursive: true })
+      const file = join(dir, 'rchat/fed/v1/call.proto')
+      const text = readFileSync(file, 'utf8')
+      writeFileSync(
+        file,
+        text.replace('bytes stamp = 12;', 'bytes stamp = 12;\n  bytes added = 13;')
+      )
+      expect(stale(dir)).toEqual(['rchat/fed/v1/call_pb.ts'])
+      writeFileSync(file, text)
+      writeFileSync(
+        join(dir, 'rchat/fed/v1/moves.proto'),
+        'syntax = "proto3";\npackage rchat.fed.v1;\n'
+      )
+      expect(stale(dir)).toEqual(['rchat/fed/v1/moves_pb.ts'])
+    })
   })
 })
 

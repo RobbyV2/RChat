@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "@bufbuild/buf": "1.74.0",
+    "@bufbuild/protoc-gen-es": "2.16.0",
     "@dotenvx/dotenvx": "^2.38.2",
     "@eslint/js": "^10.0.1",
     "eslint": "^10.13.0",

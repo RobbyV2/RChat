@@ -1,9 +1,7 @@
 version: v2
 plugins:
-  - local: protoc-gen-es
+  - local: [bun, ../node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es]
     out: ../apps/web/app/lib/fed/gen
     opt:
       - target=ts
       - import_extension=none
-inputs:
-  - directory: .

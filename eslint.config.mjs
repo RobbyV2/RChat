@@ -10,6 +10,7 @@ export default tseslint.config(
       '**/node_modules/**',
       'target/**',
       'apps/web/public/wasm/**',
+      'apps/web/app/lib/fed/gen/**',
       '**/out/**',
       '.remember/**',
       '.venv/**',
