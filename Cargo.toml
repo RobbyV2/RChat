@@ -5,6 +5,7 @@ members = [
   "apps/desktop/core",
   "apps/desktop/src-tauri",
   "apps/desktop/plugins/share",
+  "crates/fed",
   "crates/profanity",
   "crates/wasm",
 ]

@@ -27,3 +27,5 @@ next-env.d.ts
 .remember
 temp
 
+# Test vectors, kept byte for byte
+crates/fed/tests/vectors

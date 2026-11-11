@@ -110,3 +110,7 @@ clean:
 # Refresh the bundled public STUN list (assets/stun_servers.json) from always-online-stun
 refresh-stun:
   cd {{ROOT}} && bun assets/refresh_stun.ts
+
+# Refresh the bundled Public Suffix List (crates/fed/data/public_suffix_list.dat) from publicsuffix.org
+refresh-psl:
+  cd {{ROOT}} && bun scripts/refresh_psl.ts
