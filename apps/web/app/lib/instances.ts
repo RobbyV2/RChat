@@ -99,19 +99,23 @@ export function sameSite(
   }
 }
 
+const webPort = (secure: boolean, port?: string) => Number(port || (secure ? 443 : 80))
+
+// PeerJS for an instance: the address it advertises, else /peerjs on its own origin.
 export function peerFrom(raw: string | undefined, origin: string): PeerTarget {
   try {
     const url = new URL(raw ?? '')
     const secure = url.protocol === 'https:'
     return {
       host: url.hostname,
-      port: Number(url.port || (secure ? 443 : 80)),
+      port: webPort(secure, url.port),
       path: trimSlash(url.pathname) || '/',
       secure,
     }
   } catch {
     const url = new URL(origin)
-    return { host: url.hostname, port: 9001, path: '/peerjs', secure: url.protocol === 'https:' }
+    const secure = url.protocol === 'https:'
+    return { host: url.hostname, port: webPort(secure, url.port), path: '/peerjs', secure }
   }
 }
 
@@ -124,30 +128,45 @@ const urlOf = (raw: string | undefined) => {
 }
 
 // PeerJS for the web app on the instance's own site: the build's NEXT_PUBLIC_PEERJS_HOST and
-// _PORT when set, else the address the instance advertises on the page's host (PUBLIC_PEERJS_URL,
-// PEERJS_PORT), else port 9001 of the page's host. The page's https always means wss.
+// _PORT when set, else the address the instance advertises (PUBLIC_PEERJS_URL, PEERJS_PORT, or
+// /peerjs on its origin), else /peerjs on the page's own origin. An instance that names itself
+// differently from the page (`site`, its public_url) means the page's host; another host is one
+// the operator named, where every client of the instance registers. The page's https always
+// means wss.
 export function homePeer(
-  page: { hostname: string; protocol: string },
+  page: { hostname: string; protocol: string; port?: string },
   advertised: string | undefined,
   baked: { host?: string; port?: string } = {
     host: process.env.NEXT_PUBLIC_PEERJS_HOST,
     port: process.env.NEXT_PUBLIC_PEERJS_PORT,
-  }
+  },
+  site?: string
 ): PeerTarget {
   const pageSecure = page.protocol === 'https:'
-  const url = baked.host || baked.port ? null : urlOf(advertised)
-  if (url && url.hostname === page.hostname && /^https?:$/.test(url.protocol)) {
-    const secure = pageSecure || url.protocol === 'https:'
+  if (baked.host || baked.port)
     return {
-      host: url.hostname,
-      port: Number(url.port || (secure ? 443 : 80)),
-      path: trimSlash(url.pathname) || '/',
-      secure,
+      host: baked.host || page.hostname,
+      port: Number(baked.port || '9001'),
+      path: '/peerjs',
+      secure: pageSecure,
     }
+  const url = urlOf(advertised)
+  if (url && /^https?:$/.test(url.protocol)) {
+    const secure = pageSecure || url.protocol === 'https:'
+    const path = trimSlash(url.pathname) || '/'
+    const own = urlOf(site)
+    if (url.hostname !== page.hostname && own && url.hostname === own.hostname)
+      return {
+        host: page.hostname,
+        port: url.host === own.host ? webPort(pageSecure, page.port) : webPort(secure, url.port),
+        path,
+        secure: pageSecure,
+      }
+    return { host: url.hostname, port: webPort(secure, url.port), path, secure }
   }
   return {
-    host: baked.host || page.hostname,
-    port: Number(baked.port || '9001'),
+    host: page.hostname,
+    port: webPort(pageSecure, page.port),
     path: '/peerjs',
     secure: pageSecure,
   }
@@ -170,18 +189,35 @@ export function endpointsFrom(origin: string, info: InstanceInfo | null): Endpoi
 const bakedApi = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, '') || undefined
 const bakedWs = process.env.NEXT_PUBLIC_WS_URL?.replace(/\/+$/, '') || undefined
 
-function defaultEndpoints(): Endpoints {
-  const hasWindow = typeof window !== 'undefined'
-  const api = resolveApiBase(bakedApi, hasWindow, process.env.HOST, process.env.SERVER_PORT)
-  const origin = new URL(api, hasWindow ? window.location.href : undefined).origin
+type Page = { href: string; protocol: string; host: string; hostname: string; port?: string }
+
+// The page's own instance. Unless the build names another address (`baked`), every address is
+// on the page's origin. The page is asked for each time an address is built. Without a page
+// (the server render) the API is the local server.
+export function homeEndpoints(
+  page: () => Page | undefined,
+  baked: { api?: string; ws?: string; peer?: { host?: string; port?: string } } = {},
+  basePath: () => string = () => '',
+  server: { host?: string; port?: string } = {}
+): Endpoints {
+  const now = page()
+  const api = resolveApiBase(baked.api, now !== undefined, server.host, server.port)
   return {
-    origin,
+    origin: new URL(api, now?.href).origin,
     api,
-    url: () => wsUrlFrom(bakedApi, window.location, getBasePath(), bakedWs),
-    probe: () => (bakedApi ? `${bakedApi}/api/health` : `${getBasePath()}/api/health`),
-    peer: info => homePeer(window.location, info?.peerjs_url),
+    url: () => wsUrlFrom(baked.api, page(), basePath(), baked.ws),
+    probe: () => (baked.api ? `${baked.api}/api/health` : `${basePath()}/api/health`),
+    peer: info => homePeer(page() as Page, info?.peerjs_url, baked.peer, info?.public_url),
   }
 }
+
+const defaultEndpoints = (): Endpoints =>
+  homeEndpoints(
+    () => (typeof window !== 'undefined' ? window.location : undefined),
+    { api: bakedApi, ws: bakedWs },
+    getBasePath,
+    { host: process.env.HOST, port: process.env.SERVER_PORT }
+  )
 
 const isUrl = (v: unknown, protocols: string[]) => {
   if (typeof v !== 'string') return false

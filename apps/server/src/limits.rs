@@ -140,7 +140,7 @@ impl Default for Limits {
             widget_quick_joins_per_hour: 10,
             widget_viewers_max: 5000,
             widget_bridge_servers_max: 50,
-            peerjs_builtin: false,
+            peerjs_builtin: true,
             peerjs_peers_per_ip: crate::peerjs::DEFAULT_PEERS_PER_IP,
             peerjs_concurrent_limit: crate::peerjs::DEFAULT_CONCURRENT_LIMIT,
         }

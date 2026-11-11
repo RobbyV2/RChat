@@ -87,6 +87,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 - Every device holds your identity key. Marking a device lost or recovering does not stop a thief who uses that key. Use Reset identity in Settings and set up a new device. Your contacts must verify you again.
 - Voice uses a mesh: each person connects to every other person. It works best with up to 8 people (4 with video).
 - Large P2P servers sync slowly. The app shows "Syncing the server, N changes so far" while it works.
+- P2P signaling ids are not secret, and signaling does not check who asks. Anyone who has a device's contact code can work out its id, see whether that device is online, and hold the id while the device is offline, which keeps it off this instance's signaling until they leave. They can not read what the device sends or pose as it.
 
 <p align="center">
   <img src="docs/screenshots/p2p-server-dark.png" alt="A P2P server channel in the dark theme with members grouped by role" width="900">
@@ -134,6 +135,8 @@ just src dev
 
 Open http://localhost:3000. The first account you register is the site admin. Nobody else can see this.
 
+The app needs only this one port.
+
 ## Layout
 
 | Path                | What it is                                             |
@@ -152,6 +155,8 @@ Open http://localhost:3000. The first account you register is the site admin. No
 Keep `.env.local` in the repository root.
 
 ## Deployment modes
+
+An instance needs one public address: one domain and one port (`SERVER_PORT`). The app, the API, the WebSocket and P2P signaling (`/peerjs`) all use it. Calls and P2P files go straight from browser to browser. The STUN and TURN relay and the media server for calls are optional and off by default. They need their own ports (see Configuration).
 
 Run everything in one process (the default):
 
@@ -341,7 +346,9 @@ Signing uses repository secrets when they exist. Without them the builds are uns
 
 One process is enough for most groups. For more load, run many copies of the same image. All copies share one Postgres database and one Redis server. Valkey, KeyDB and Dragonfly also work.
 
-Give each copy one or more roles with `RCHAT_ROLES`. The roles are `api`, `gateway`, `media`, `search`, `embeds`, `jobs`, `web`, `relay` and `sfu`. Your load balancer sends each path to the correct role.
+Give each copy one or more roles with `RCHAT_ROLES`. The roles are `api`, `gateway`, `media`, `search`, `embeds`, `jobs`, `web`, `relay` and `sfu`. Your load balancer sends each path to the correct role, all on one domain and port.
+
+With many copies, set `PEERJS_BUILTIN=false`, run one separate PeerJS server and send `/peerjs` to it: the server's own PeerJS only knows the peers of its process. Both examples do this.
 
 There are two examples:
 
@@ -362,35 +369,37 @@ Upgrade all copies together. From 0.3.0 on, an older copy refuses to start once 
 
 Put settings in `.env.local`. Refer to `.env.local.example` for all settings and the range of each limit. A limit outside its range, or a setting with a value it does not take, stops the server at start and names the variable. Settings marked "Admin page" can also be changed in the site admin panel while the server runs. At a start, a value you changed in `.env.local` is applied, and an unchanged one leaves the panel's choice. `SETTINGS_PINNED` lists settings that always follow `.env.local` and are read-only in the panel. Start every copy with the same settings: a start without a value forgets it, and the next start that sets it applies it again. These are the most useful ones:
 
-| Variable            | Default     | What it does                                                                                            |
-| ------------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
-| `APP_MODE`          | `full`      | `full` serves the API and the app. `api-only` serves only the API.                                      |
-| `HOST`              | `127.0.0.1` | The address the server listens on. Use `0.0.0.0` for remote access.                                     |
-| `SERVER_PORT`       | `3000`      | The public port.                                                                                        |
-| `DATABASE_URL`      | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                                                  |
-| `PUBLIC_URL`        | none        | The address people open, for example `https://chat.example.com`.                                        |
-| `PUBLIC_PEERJS_URL` | none        | Where browsers reach PeerJS, for example `https://chat.example.com/peerjs`. Default: port 9001.         |
-| `PEERJS_BUILTIN`    | `false`     | Serves PeerJS at `/peerjs` on the server's own port, with no PeerJS server. Use it with one process.    |
-| `INSTANCE_NAME`     | `RChat`     | The name people see for your instance.                                                                  |
-| `GUESTS_ENABLED`    | `true`      | Lets people read public servers without an account.                                                     |
-| `P2P_ATTACHMENTS`   | `true`      | Lets people send P2P attachments.                                                                       |
-| `AUTH_REGISTRATION` | `open`      | Who can sign up with a password: `open`, `sso` or `closed`. Keep it open until your own account exists. |
-| `S3_ENDPOINT`       | none        | Stores uploads in an S3 bucket. Also set the bucket and keys.                                           |
-| `RCHAT_ROLES`       | `all`       | The roles this process runs (see Scaling).                                                              |
-| `REDIS_URL`         | none        | The shared Redis server for many processes.                                                             |
-| `TRUSTED_PROXIES`   | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.                            |
-| `PUBLIC_STUN`       | `false`     | Gives calls a list of public STUN servers.                                                              |
-| `RELAY_ENABLED`     | `false`     | Starts the built-in STUN and TURN relay on UDP port 3478.                                               |
-| `RELAY_PUBLIC_IP`   | none        | The public IP of the relay. TURN needs it.                                                              |
-| `VOICE_ROOM_MAX`    | `25`        | The most people in one voice channel. `0` means no limit.                                               |
-| `UPLOAD_MAX_MIB`    | `25`        | The largest upload in MiB. Raise your proxy's body size limit to match.                                 |
-| `MESSAGE_MAX_CHARS` | `4000`      | The longest message in characters.                                                                      |
+| Variable            | Default     | What it does                                                                                                                    |
+| ------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_MODE`          | `full`      | `full` serves the API and the app. `api-only` serves only the API.                                                              |
+| `HOST`              | `127.0.0.1` | The address the server listens on. Use `0.0.0.0` for remote access.                                                             |
+| `SERVER_PORT`       | `3000`      | The public port.                                                                                                                |
+| `DATABASE_URL`      | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                                                                          |
+| `PUBLIC_URL`        | none        | The address people open, for example `https://chat.example.com`.                                                                |
+| `PUBLIC_PEERJS_URL` | none        | Where browsers reach PeerJS when it is not `/peerjs` on the public address.                                                     |
+| `PEERJS_BUILTIN`    | `true`      | Serves PeerJS at `/peerjs` on the server's own port. Off needs a separate PeerJS server and a proxy that sends `/peerjs` to it. |
+| `INSTANCE_NAME`     | `RChat`     | The name people see for your instance.                                                                                          |
+| `GUESTS_ENABLED`    | `true`      | Lets people read public servers without an account.                                                                             |
+| `P2P_ATTACHMENTS`   | `true`      | Lets people send P2P attachments.                                                                                               |
+| `AUTH_REGISTRATION` | `open`      | Who can sign up with a password: `open`, `sso` or `closed`. Keep it open until your own account exists.                         |
+| `S3_ENDPOINT`       | none        | Stores uploads in an S3 bucket. Also set the bucket and keys.                                                                   |
+| `RCHAT_ROLES`       | `all`       | The roles this process runs (see Scaling).                                                                                      |
+| `REDIS_URL`         | none        | The shared Redis server for many processes.                                                                                     |
+| `TRUSTED_PROXIES`   | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.                                                    |
+| `PUBLIC_STUN`       | `false`     | Gives calls a list of public STUN servers.                                                                                      |
+| `RELAY_ENABLED`     | `false`     | Optional. Starts the built-in STUN and TURN relay on UDP port 3478 and UDP ports 49160 to 49415.                                |
+| `RELAY_PUBLIC_IP`   | none        | The public IP of the relay. TURN needs it.                                                                                      |
+| `VOICE_ROOM_MAX`    | `25`        | The most people in one voice channel. `0` means no limit.                                                                       |
+| `UPLOAD_MAX_MIB`    | `25`        | The largest upload in MiB. Raise your proxy's body size limit to match.                                                         |
+| `MESSAGE_MAX_CHARS` | `4000`      | The longest message in characters.                                                                                              |
 
-Behind a TLS proxy that serves only 443, route `/peerjs` (with the WebSocket upgrade) to the PeerJS server and set `PUBLIC_PEERJS_URL`.
+A proxy in front of the instance needs only one domain and port 443. It sends every path, `/peerjs` included, to `SERVER_PORT` and passes the WebSocket upgrade for `/api/ws` and `/peerjs`. Calls and P2P files (WebRTC) go between browsers, not through the proxy.
+
+An instance that sets `PEERJS_PORT` or `PUBLIC_PEERJS_URL`, or whose web build was given `NEXT_PUBLIC_PEERJS_HOST` or `NEXT_PUBLIC_PEERJS_PORT`, keeps its separate PeerJS server (`deploy/peer/server.mjs`): browsers dial that address, and `just src dev`, `just src prod` and the Docker image (built with those two build args, if any) start that server. To use `/peerjs` on the public port, remove those settings, rebuild the web app without the two build settings, and remove any proxy route that sends `/peerjs` to the separate server.
 
 When you raise `UPLOAD_MAX_MIB`, keep `UPLOAD_BUFFER_MIB` (256 by default) at least twice as large.
 
-The relay uses UDP ports 49160 to 49415. Open them in the firewall. Reserve them so no other program uses them (`sysctl -w net.ipv4.ip_local_reserved_ports=49160-49415`).
+The relay is optional. It uses UDP port 3478 and UDP ports 49160 to 49415. Open them in the firewall. Reserve the range so no other program uses it (`sysctl -w net.ipv4.ip_local_reserved_ports=49160-49415`). The media server for calls (`SFU_ENABLED`) is optional and off by default too.
 
 Data is not encrypted at rest.
 
@@ -403,6 +412,7 @@ Any web app may call the API with a token; cookies are never sent cross-site.
 Every change keeps these true:
 
 - The app calls no outside service at runtime unless the operator or user sets one up (S3, SSO, public STUN, relays). Package dependencies are fine.
+- One address: everything an instance serves, and everything instances say to each other, uses HTTPS and WebSocket on the instance's one public address. Only WebRTC between clients goes elsewhere. Optional services on other protocols (the STUN and TURN relay, the media server) are off by default and need their own ports.
 - Icon-only controls have a hover `title` and an `aria-label`.
 - Usernames, display names and server names have the `streamer` class.
 - Every message, channel, DM and server action is reachable by right-click on desktop and by long-press (a bottom sheet) on touch.

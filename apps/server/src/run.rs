@@ -262,6 +262,9 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
         Some(Frontend::Service(_)) | None => None,
     };
     let peers = config.peerjs().map(Peers::new);
+    if let Some(warning) = config.peerjs_warning() {
+        tracing::warn!("{warning}");
+    }
     if let Some(peers) = &peers {
         held.peers = Some(peers.clone());
         held.spawn(peers.clone().expire());
@@ -747,71 +750,54 @@ pub(crate) mod tests {
         wipe(&path);
     }
 
+    async fn advertised(addr: SocketAddr) -> String {
+        let (status, body) = fetch(addr, "/api/instance").await;
+        assert_eq!(status, StatusCode::OK);
+        let doc: serde_json::Value = serde_json::from_str(&body).expect("json");
+        doc["peerjs_url"].as_str().expect("peerjs_url").to_string()
+    }
+
+    fn hello(addr: SocketAddr, id: &str) -> String {
+        format!("ws://{addr}/peerjs/peerjs?key=peerjs&id={id}&token=t&version=1.5.5")
+    }
+
+    type Signaling = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+
+    /// A PeerJS client that registered `id` on the server's own port.
+    async fn signaling(addr: SocketAddr, id: &str) -> Signaling {
+        use futures_util::StreamExt;
+        use tokio_tungstenite::tungstenite::Message;
+        let (mut peer, _) = tokio_tungstenite::connect_async(hello(addr, id))
+            .await
+            .expect("signaling");
+        let opened = peer.next().await.expect("a frame").expect("frame");
+        assert_eq!(opened, Message::text(r#"{"type":"OPEN"}"#));
+        peer
+    }
+
     #[tokio::test]
-    async fn peerjs_signaling_is_served_when_it_is_on() {
+    async fn a_default_server_answers_peerjs_on_its_own_port() {
         use futures_util::StreamExt;
         use tokio_tungstenite::tungstenite::{Error, Message};
         let _one = ONE.lock().await;
         let path = crate::db::temp_db_path("run_peerjs");
         wipe(&path);
-        let advertised = |addr: SocketAddr| async move {
-            let (status, body) = fetch(addr, "/api/instance").await;
-            assert_eq!(status, StatusCode::OK);
-            let doc: serde_json::Value = serde_json::from_str(&body).expect("json");
-            doc["peerjs_url"].as_str().expect("peerjs_url").to_string()
-        };
-        let hello = |addr: SocketAddr, id: &str| {
-            format!("ws://{addr}/peerjs/peerjs?key=peerjs&id={id}&token=t&version=1.5.5")
-        };
-
-        let off = start(config(&path, 0, &[]), RunOptions::default())
+        let plain = start(config(&path, 0, &[]), RunOptions::default())
             .await
             .expect("start");
-        for route in ["/peerjs", "/peerjs/peerjs/id"] {
-            assert_eq!(fetch(off.addr, route).await.0, StatusCode::NOT_FOUND);
-        }
-        match tokio_tungstenite::connect_async(hello(off.addr, "a")).await {
-            Err(Error::Http(res)) => assert_eq!(res.status(), StatusCode::NOT_FOUND),
-            other => panic!("signaling answered while off: {:?}", other.is_ok()),
-        }
-        assert_eq!(advertised(off.addr).await, "http://127.0.0.1:9001/peerjs");
-        off.shutdown().await;
-
-        let web = Router::new().fallback(|uri: Uri| async move { format!("page {uri}") });
-        let on = start(
-            config(
-                &path,
-                0,
-                &[("PEERJS_BUILTIN", "on"), ("PEERJS_PEERS_PER_IP", "1")],
-            ),
-            RunOptions {
-                frontend: Some(Frontend::Service(web)),
-            },
-        )
-        .await
-        .expect("start");
-        let addr = on.addr;
+        let addr = plain.addr;
         assert_eq!(advertised(addr).await, format!("http://{addr}/peerjs"));
         let (status, about) = fetch(addr, "/peerjs").await;
         assert_eq!(status, StatusCode::OK);
         assert!(about.contains("PeerJS Server"), "{about}");
         let (status, id) = fetch(addr, "/peerjs/peerjs/id").await;
         assert_eq!((status, id.len()), (StatusCode::OK, 32));
-        assert_eq!(
-            fetch(addr, "/peerjs/other").await,
-            (StatusCode::OK, "page /peerjs/other".to_string())
-        );
-        let (mut peer, _) = tokio_tungstenite::connect_async(hello(addr, &id))
-            .await
-            .expect("signaling");
-        let opened = peer.next().await.expect("a frame").expect("frame");
-        assert_eq!(opened, Message::text(r#"{"type":"OPEN"}"#));
-        match tokio_tungstenite::connect_async(hello(addr, "b")).await {
-            Err(Error::Http(res)) => assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS),
-            other => panic!("PEERJS_PEERS_PER_IP was not applied: {:?}", other.is_ok()),
-        }
+        let mut peer = signaling(addr, &id).await;
+        let _second = signaling(addr, "b").await;
         assert_eq!(fetch(addr, "/api/health").await.0, StatusCode::OK);
-        on.shutdown().await;
+        plain.shutdown().await;
         let closed = tokio::time::timeout(Duration::from_secs(30), peer.next())
             .await
             .expect("the signaling socket closes with the server");
@@ -820,14 +806,66 @@ pub(crate) mod tests {
             "{closed:?}"
         );
 
+        let web = Router::new().fallback(|uri: Uri| async move { format!("page {uri}") });
+        let capped = start(
+            config(&path, 0, &[("PEERJS_PEERS_PER_IP", "1")]),
+            RunOptions {
+                frontend: Some(Frontend::Service(web)),
+            },
+        )
+        .await
+        .expect("start");
+        let addr = capped.addr;
+        assert_eq!(advertised(addr).await, format!("http://{addr}/peerjs"));
+        assert_eq!(
+            fetch(addr, "/peerjs/other").await,
+            (StatusCode::OK, "page /peerjs/other".to_string())
+        );
+        let _peer = signaling(addr, "a").await;
+        match tokio_tungstenite::connect_async(hello(addr, "b")).await {
+            Err(Error::Http(res)) => assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS),
+            other => panic!("PEERJS_PEERS_PER_IP was not applied: {:?}", other.is_ok()),
+        }
+        capped.shutdown().await;
+        wipe(&path);
+    }
+
+    #[tokio::test]
+    async fn an_instance_with_its_own_peerjs_server_keeps_it() {
+        use tokio_tungstenite::tungstenite::Error;
+        let _one = ONE.lock().await;
+        let path = crate::db::temp_db_path("run_peerjs_own");
+        wipe(&path);
+
+        // An instance from before the built-in signaling that had PEERJS_PORT set.
+        let ported = start(
+            config(&path, 0, &[("PEERJS_PORT", "9100")]),
+            RunOptions::default(),
+        )
+        .await
+        .expect("start");
+        assert_eq!(
+            advertised(ported.addr).await,
+            "http://127.0.0.1:9100/peerjs"
+        );
+        let _also = signaling(ported.addr, "a").await;
+        ported.shutdown().await;
+
+        // One whose web build was given its own PeerJS port, and nothing else.
+        let baked = start(
+            config(&path, 0, &[("NEXT_PUBLIC_PEERJS_PORT", "9443")]),
+            RunOptions::default(),
+        )
+        .await
+        .expect("start");
+        assert_eq!(advertised(baked.addr).await, "http://127.0.0.1:9443/peerjs");
+        baked.shutdown().await;
+
         let elsewhere = start(
             config(
                 &path,
                 0,
-                &[
-                    ("PEERJS_BUILTIN", "on"),
-                    ("PUBLIC_PEERJS_URL", "https://peer.example/peerjs"),
-                ],
+                &[("PUBLIC_PEERJS_URL", "https://peer.example/peerjs")],
             ),
             RunOptions::default(),
         )
@@ -838,6 +876,32 @@ pub(crate) mod tests {
             "https://peer.example/peerjs"
         );
         elsewhere.shutdown().await;
+
+        for (more, port) in [
+            (vec![("PEERJS_BUILTIN", "false")], None),
+            (
+                vec![("PEERJS_BUILTIN", "off"), ("PEERJS_PORT", "9100")],
+                Some(9100),
+            ),
+        ] {
+            let off = start(config(&path, 0, &more), RunOptions::default())
+                .await
+                .expect("start");
+            let addr = off.addr;
+            for route in ["/peerjs", "/peerjs/peerjs/id"] {
+                assert_eq!(fetch(addr, route).await.0, StatusCode::NOT_FOUND);
+            }
+            match tokio_tungstenite::connect_async(hello(addr, "a")).await {
+                Err(Error::Http(res)) => assert_eq!(res.status(), StatusCode::NOT_FOUND),
+                other => panic!("signaling answered while off: {:?}", other.is_ok()),
+            }
+            let expected = match port {
+                Some(port) => format!("http://127.0.0.1:{port}/peerjs"),
+                None => format!("http://{addr}/peerjs"),
+            };
+            assert_eq!(advertised(addr).await, expected);
+            off.shutdown().await;
+        }
         crate::api::webhooks::configure(crate::api::webhooks::Outbound::default());
         wipe(&path);
     }

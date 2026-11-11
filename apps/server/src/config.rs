@@ -196,6 +196,10 @@ pub struct AppConfig {
     pub controls: ControlSeeds,
     #[serde(skip)]
     pub swagger_ui: Option<String>,
+    /// The PeerJS port the web build dials on the page's host (`NEXT_PUBLIC_PEERJS_PORT` without
+    /// `NEXT_PUBLIC_PEERJS_HOST`), when this process is told.
+    #[serde(skip)]
+    pub web_peerjs_port: Option<u16>,
 }
 
 /// Secrets from `NAME` or the file named by `NAME_FILE`, resolved like `env_secret`.
@@ -338,6 +342,13 @@ impl AppConfig {
         };
         config.controls = ControlSeeds::load(&|name| lookup(&env, name))?;
         config.swagger_ui = lookup(&env, "SWAGGER_UI");
+        let set = |name: &str| lookup(&env, name).filter(|v| !v.trim().is_empty());
+        config.web_peerjs_port = match set("NEXT_PUBLIC_PEERJS_HOST") {
+            Some(_) => None,
+            None => set("NEXT_PUBLIC_PEERJS_PORT")
+                .and_then(|port| port.trim().parse::<u16>().ok())
+                .filter(|port| *port != 0),
+        };
         config.roles = config.resolve_roles()?;
         config.check_shared_state()?;
         config.proxy_trust =
@@ -364,7 +375,15 @@ impl AppConfig {
         }
     }
 
-    /// The PeerJS signaling this process serves at `/peerjs`, when `PEERJS_BUILTIN` is on, with
+    /// The warning to log at start when this process serves PeerJS signaling and may be one of
+    /// several.
+    pub fn peerjs_warning(&self) -> Option<&'static str> {
+        (self.limits.peerjs_builtin && self.redis_url.is_some()).then_some(
+            "PEERJS_BUILTIN is on and REDIS_URL is set, so this may be one of several processes; built-in PeerJS signaling is per process, so send /peerjs to exactly one of them, or run the separate PeerJS server and set PEERJS_BUILTIN=false",
+        )
+    }
+
+    /// The PeerJS signaling this process serves at `/peerjs`, unless `PEERJS_BUILTIN` is off, with
     /// `PEERJS_PEERS_PER_IP` and `PEERJS_CONCURRENT_LIMIT`.
     pub fn peerjs(&self) -> Option<crate::peerjs::Settings> {
         self.limits.peerjs_builtin.then(|| crate::peerjs::Settings {
@@ -639,8 +658,7 @@ impl AppConfig {
             relay_secret: self.secrets.relay_secret.clone(),
             p2p_secret: self.secrets.p2p_secret.clone(),
             allowed_hosts: self.allowed_hosts.clone(),
-            peerjs_port: self.peerjs_port,
-            peerjs_builtin: self.limits.peerjs_builtin,
+            peerjs_port: self.peerjs_port.or(self.web_peerjs_port),
             proxy_trust: self.proxy_trust.clone(),
             ice: self.ice().unwrap_or_default(),
         }
@@ -945,15 +963,50 @@ mod tests {
     }
 
     #[test]
-    fn built_in_peerjs_is_off_by_default_and_takes_the_peerjs_limits() {
+    fn built_in_peerjs_is_on_by_default_and_takes_the_peerjs_limits() {
         let load = |pairs: &[(&str, &str)]| AppConfig::load_from(&cli(None, None), env(pairs));
-        let off = load(&[]).unwrap();
-        assert_eq!(off.peerjs(), None);
-        assert!(!off.instance().peerjs_builtin);
-        assert_eq!(load(&[("PEERJS_BUILTIN", "off")]).unwrap().peerjs(), None);
-        let on = load(&[("PEERJS_BUILTIN", "on")]).unwrap();
+        let default = load(&[]).unwrap();
+        assert_eq!(default.peerjs(), Some(crate::peerjs::Settings::default()));
+        assert_eq!(default.instance().peerjs_port, None);
+        assert_eq!(default.peerjs_warning(), None);
+        for off in ["off", "false", "0"] {
+            assert_eq!(load(&[("PEERJS_BUILTIN", off)]).unwrap().peerjs(), None);
+        }
+        let on = load(&[("PEERJS_BUILTIN", "on"), ("PEERJS_PORT", "9100")]).unwrap();
         assert_eq!(on.peerjs(), Some(crate::peerjs::Settings::default()));
-        assert!(on.instance().peerjs_builtin);
+        assert_eq!(on.instance().peerjs_port, Some(9100));
+        // A web build that was given its own PeerJS port dials it: the instance names it too.
+        let port = |pairs: &[(&str, &str)]| load(pairs).unwrap().instance().peerjs_port;
+        assert_eq!(port(&[("NEXT_PUBLIC_PEERJS_PORT", "9443")]), Some(9443));
+        assert_eq!(
+            port(&[("NEXT_PUBLIC_PEERJS_PORT", "9443"), ("PEERJS_PORT", "9100")]),
+            Some(9100)
+        );
+        for unusable in [
+            vec![("NEXT_PUBLIC_PEERJS_PORT", "")],
+            vec![("NEXT_PUBLIC_PEERJS_PORT", " ")],
+            vec![("NEXT_PUBLIC_PEERJS_PORT", "0")],
+            vec![("NEXT_PUBLIC_PEERJS_PORT", "peer")],
+            vec![("NEXT_PUBLIC_PEERJS_PORT", "70000")],
+            vec![
+                ("NEXT_PUBLIC_PEERJS_PORT", "9443"),
+                ("NEXT_PUBLIC_PEERJS_HOST", "peer.example.com"),
+            ],
+            vec![("NEXT_PUBLIC_PEERJS_HOST", "peer.example.com")],
+            vec![("NEXT_PUBLIC_PEERJS_HOST", "")],
+        ] {
+            assert_eq!(port(&unusable), None, "{unusable:?}");
+        }
+        let shared = [
+            ("DATABASE_URL", "postgres://u:p@db/x"),
+            ("REDIS_URL", "redis://r:6379"),
+        ];
+        let several = load(&shared).unwrap();
+        let warning = several.peerjs_warning().expect("a warning");
+        assert!(warning.contains("PEERJS_BUILTIN=false"), "{warning}");
+        assert!(warning.is_ascii());
+        let separate = load(&[shared[0], shared[1], ("PEERJS_BUILTIN", "false")]).unwrap();
+        assert_eq!(separate.peerjs_warning(), None);
         let set = load(&[
             ("PEERJS_BUILTIN", "true"),
             ("PEERJS_PEERS_PER_IP", "0"),

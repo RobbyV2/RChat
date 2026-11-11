@@ -1014,12 +1014,12 @@ mod tests {
         assert_eq!(info.host, "chat.example");
         assert_eq!(info.api_url, "https://chat.example/api");
         assert_eq!(info.ws_url, "wss://gw.example/api/ws");
-        assert_eq!(info.peerjs_url, "https://chat.example:9001/peerjs");
+        assert_eq!(info.peerjs_url, "https://chat.example/peerjs");
         done(state, path).await;
     }
 
     #[tokio::test]
-    async fn built_in_peerjs_is_advertised_on_the_instance_origin() {
+    async fn peerjs_is_advertised_on_the_instance_origin_unless_set_elsewhere() {
         let (state, path) = temp_state("instance_peerjs").await;
         let features = Features {
             guests: true,
@@ -1036,38 +1036,94 @@ mod tests {
                 instance.discovery(origin, features, &limits).peerjs_url
             }
         };
-        let built_in = || InstanceConfig {
-            peerjs_builtin: true,
-            ..Default::default()
-        };
-        for (origin, url) in [
-            ("https://chat.example", "https://chat.example/peerjs"),
-            ("http://127.0.0.1:3000", "http://127.0.0.1:3000/peerjs"),
+        for (origin, same, ported) in [
+            (
+                "https://chat.example",
+                "https://chat.example/peerjs",
+                "https://chat.example:9443/peerjs",
+            ),
+            (
+                "http://127.0.0.1:3000",
+                "http://127.0.0.1:3000/peerjs",
+                "http://127.0.0.1:9443/peerjs",
+            ),
             (
                 "https://chat.example:8443",
                 "https://chat.example:8443/peerjs",
+                "https://chat.example:9443/peerjs",
             ),
         ] {
-            assert_eq!(advertised(built_in(), origin).await, url);
+            assert_eq!(advertised(InstanceConfig::default(), origin).await, same);
             let port = InstanceConfig {
                 peerjs_port: Some(9443),
-                ..built_in()
+                ..Default::default()
             };
-            assert_eq!(advertised(port, origin).await, url);
+            assert_eq!(
+                advertised(port, origin).await,
+                ported,
+                "PEERJS_PORT names the separate PeerJS server"
+            );
         }
         let elsewhere = InstanceConfig {
             peerjs_url: Some("https://peer.example/peerjs/".to_string()),
-            ..built_in()
+            peerjs_port: Some(9443),
+            ..Default::default()
         };
         assert_eq!(
             advertised(elsewhere, "https://chat.example").await,
             "https://peer.example/peerjs"
         );
-        assert_eq!(
-            advertised(InstanceConfig::default(), "https://chat.example").await,
-            "https://chat.example:9001/peerjs",
-            "off: the separate PeerJS server"
-        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_default_instance_names_only_its_one_address() {
+        let (state, path) = temp_state("instance_one_address").await;
+        let features = Features {
+            guests: true,
+            uploads: true,
+            p2p_attachments: true,
+            previews: true,
+            identity_assertions: true,
+            backup_phrase: true,
+        };
+        let instance = Instance::load(&state.db, &InstanceConfig::default())
+            .await
+            .expect("instance");
+        for origin in [
+            "https://chat.example",
+            "https://chat.example:8443",
+            "http://127.0.0.1:3000",
+            "http://[::1]:3000",
+        ] {
+            let site = url::Url::parse(origin).expect("origin");
+            let schemes = match site.scheme() {
+                "https" => ["https", "wss"],
+                _ => ["http", "ws"],
+            };
+            let info = instance.discovery(origin, features, &state.limits);
+            assert_eq!(info.public_url, origin);
+            for (what, address) in [
+                ("api_url", &info.api_url),
+                ("ws_url", &info.ws_url),
+                ("peerjs_url", &info.peerjs_url),
+                ("instance_url", &info.instance_url),
+                ("jwks_uri", &info.jwks_uri),
+            ] {
+                let url = url::Url::parse(address).expect(what);
+                assert_eq!(
+                    (url.host_str(), url.port_or_known_default()),
+                    (site.host_str(), site.port_or_known_default()),
+                    "{what} of {origin}: {address}"
+                );
+                assert!(
+                    schemes.contains(&url.scheme()),
+                    "{what} of {origin}: {address}"
+                );
+            }
+            assert!(info.ice.stun.is_empty(), "{:?}", info.ice.stun);
+            assert!(!info.ice.turn && !info.ice.relay);
+        }
         done(state, path).await;
     }
 

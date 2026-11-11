@@ -15,7 +15,6 @@ use crate::server::client_ip::ProxyTrust;
 pub const SOFTWARE: &str = "rchat";
 pub const API_VERSION: &str = "1.1";
 pub const DEFAULT_NAME: &str = "RChat";
-pub const DEFAULT_PEERJS_PORT: u16 = 9001;
 
 #[derive(Clone, Default)]
 pub struct InstanceConfig {
@@ -27,7 +26,6 @@ pub struct InstanceConfig {
     pub signing_key: Option<String>,
     pub allowed_hosts: Option<String>,
     pub peerjs_port: Option<u16>,
-    pub peerjs_builtin: bool,
     pub proxy_trust: ProxyTrust,
     pub ice: IceConfig,
     pub relay_secret: Option<String>,
@@ -98,9 +96,8 @@ pub struct Instance {
     pub peerjs_url: Option<Url>,
     pub keys: Keyring,
     pub allowed_hosts: Vec<AllowedHost>,
-    pub peerjs_port: u16,
-    /// This instance serves PeerJS signaling itself, at `/peerjs`.
-    pub peerjs_builtin: bool,
+    /// The port of a separate PeerJS server on this host (`PEERJS_PORT`).
+    pub peerjs_port: Option<u16>,
     pub proxy_trust: ProxyTrust,
     pub stun: Vec<String>,
     pub ice: IceConfig,
@@ -145,7 +142,6 @@ impl Instance {
             signing_key,
             allowed_hosts,
             peerjs_port,
-            peerjs_builtin,
             proxy_trust,
             ice,
             relay_secret,
@@ -195,8 +191,7 @@ impl Instance {
             peerjs_url: parse(peerjs_url, "PUBLIC_PEERJS_URL", &["http", "https"])?,
             keys,
             allowed_hosts: parse_allowed_hosts(allowed_hosts.as_deref().unwrap_or_default())?,
-            peerjs_port: peerjs_port.unwrap_or(DEFAULT_PEERJS_PORT),
-            peerjs_builtin: *peerjs_builtin,
+            peerjs_port: *peerjs_port,
             proxy_trust: proxy_trust.clone(),
         }))
     }
@@ -212,8 +207,7 @@ impl Instance {
             peerjs_url: None,
             keys: Keyring::parse(&crate::identity::new_seed()).expect("keyring"),
             allowed_hosts: Vec::new(),
-            peerjs_port: DEFAULT_PEERJS_PORT,
-            peerjs_builtin: false,
+            peerjs_port: None,
             proxy_trust: ProxyTrust::default(),
             stun: Vec::new(),
             ice: IceConfig::default(),
@@ -399,18 +393,17 @@ impl Instance {
                 format!("{scheme}://{ws_host}/api/ws")
             }
         };
-        let peerjs_url = match &self.peerjs_url {
-            Some(url) => trimmed(url),
-            None if self.peerjs_builtin => format!("{origin}/peerjs"),
-            None => {
+        let peerjs_url = match (&self.peerjs_url, self.peerjs_port) {
+            (Some(url), _) => trimmed(url),
+            (None, Some(port)) => {
                 let hostname = site
                     .as_ref()
                     .and_then(|u| u.host_str().map(str::to_string))
                     .unwrap_or_else(|| "localhost".to_string());
-                let port = self.peerjs_port;
                 let scheme = if secure { "https" } else { "http" };
                 format!("{scheme}://{hostname}:{port}/peerjs")
             }
+            (None, None) => format!("{origin}/peerjs"),
         };
         InstanceInfo {
             software: SOFTWARE.to_string(),
@@ -532,10 +525,10 @@ pub struct InstanceInfo {
     /// version 1.
     #[schema(example = "wss://chat.example.com/api/ws")]
     pub ws_url: String,
-    /// PeerJS signalling server used for peer-to-peer file sharing and calls: `PUBLIC_PEERJS_URL`,
-    /// else `/peerjs` of this origin when the instance serves it itself (`PEERJS_BUILTIN`), else
-    /// port `PEERJS_PORT` (9001) of this host.
-    #[schema(example = "https://chat.example.com:9001/peerjs")]
+    /// PeerJS signalling server used for peer-to-peer file sharing and calls: `/peerjs` of this
+    /// origin, unless the operator names another address (`PUBLIC_PEERJS_URL`) or the port of a
+    /// separate PeerJS server on this host (`PEERJS_PORT`).
+    #[schema(example = "https://chat.example.com/peerjs")]
     pub peerjs_url: String,
     /// URL of this document on this instance (`GET /api/instance`, the latest version).
     #[schema(example = "https://chat.example.com/api/instance")]

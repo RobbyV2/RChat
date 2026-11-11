@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Server } from 'node:http'
 import {
@@ -9,7 +11,10 @@ import {
   proxyList,
   setting,
   start,
+  wanted,
 } from '../deploy/peer/server.mjs'
+
+const repo = join(import.meta.dir, '..')
 
 const read = (path: string) => readFileSync(join(import.meta.dir, '..', path), 'utf8')
 
@@ -106,7 +111,7 @@ describe('PeerJS per-address limit', () => {
     expect(peerjs).toContain('TRUSTED_PROXIES: ${RCHAT_EDGE_SUBNET')
     const nginx = read('deploy/nginx.conf')
     expect(nginx).toContain('limit_conn_zone $binary_remote_addr zone=peers')
-    expect(nginx.split('limit_conn peers ').length - 1).toBe(2)
+    expect(nginx.split('limit_conn peers ').length - 1).toBe(1)
     const env = read('.env.local.example')
     expect(env).toContain('# PEERJS_PEERS_PER_IP=50')
     expect(env).toContain('# PEERJS_CONCURRENT_LIMIT=5000')
@@ -120,5 +125,141 @@ describe('PeerJS per-address limit', () => {
     ]
     expect(names.length).toBeGreaterThan(5)
     expect(names.filter((name, i) => names.indexOf(name) !== i)).toEqual([])
+  })
+})
+
+describe('one public port by default', () => {
+  test('the separate PeerJS server is wanted only when the settings name one', () => {
+    expect(wanted({})).toBe(false)
+    expect(wanted({ PEERJS_BUILTIN: '', PEERJS_PORT: ' ', PUBLIC_PEERJS_URL: '' })).toBe(false)
+    for (const on of ['on', 'true', 'yes', '1', ' ON '])
+      expect(wanted({ PEERJS_BUILTIN: on })).toBe(false)
+    for (const off of ['off', 'false', 'no', '0', ' Off ', 'FALSE'])
+      expect(wanted({ PEERJS_BUILTIN: off })).toBe(true)
+    expect(wanted({ PEERJS_PORT: '9001' })).toBe(true)
+    expect(wanted({ PUBLIC_PEERJS_URL: 'https://chat.example.com/peerjs' })).toBe(true)
+    // A web build that names its own PeerJS port or host dials the separate server.
+    expect(wanted({ NEXT_PUBLIC_PEERJS_PORT: '443' })).toBe(true)
+    expect(wanted({ NEXT_PUBLIC_PEERJS_HOST: 'peer.example.com' })).toBe(true)
+    expect(wanted({ NEXT_PUBLIC_PEERJS_PORT: '', NEXT_PUBLIC_PEERJS_HOST: ' ' })).toBe(false)
+    expect(wanted({ PEERJS_PEERS_PER_IP: '50', PEERJS_CONCURRENT_LIMIT: '5000' })).toBe(false)
+    const asked = (env: Record<string, string>) =>
+      spawnSync(process.execPath, [join(repo, 'deploy/peer/server.mjs'), '--wanted'], {
+        env: { PATH: process.env.PATH ?? '', ...env },
+        timeout: 60_000,
+      })
+    const no = asked({})
+    expect([no.status, no.stdout.toString(), no.stderr.toString()]).toEqual([1, '', ''])
+    expect(asked({ PEERJS_PORT: '9001' }).status).toBe(0)
+  }, 120_000)
+
+  // deploy/start.sh with `bun` and `./server` replaced by scripts that write down what ran.
+  const started = (env: Record<string, string>, arg = '') => {
+    const dir = mkdtempSync(join(tmpdir(), 'rchat-start-'))
+    try {
+      mkdirSync(join(dir, 'bin'))
+      mkdirSync(join(dir, 'peer'))
+      const log = join(dir, 'log')
+      writeFileSync(log, '')
+      writeFileSync(
+        join(dir, 'bin', 'bun'),
+        [
+          '#!/bin/sh',
+          `if [ "$2" = "--wanted" ]; then exec "${process.execPath}" "${repo}/deploy/peer/server.mjs" --wanted; fi`,
+          `echo "bun $*" >> "${log}"`,
+          'exec sleep 20 < /dev/null > /dev/null 2>&1',
+          '',
+        ].join('\n'),
+        { mode: 0o755 }
+      )
+      writeFileSync(join(dir, 'server'), `#!/bin/sh\nsleep 2\necho server >> "${log}"\n`, {
+        mode: 0o755,
+      })
+      const script = [
+        `cd() { case "$1" in /app/peer) command cd "${dir}/peer" ;; *) command cd "$@" ;; esac; }`,
+        arg ? `set -- ${arg}` : 'set --',
+        `. "${repo}/deploy/start.sh"`,
+      ].join('\n')
+      const run = spawnSync('sh', ['-c', script], {
+        cwd: dir,
+        env: { PATH: `${join(dir, 'bin')}:/usr/bin:/bin`, ...env },
+        timeout: 15_000,
+      })
+      const ran = readFileSync(log, 'utf8').split('\n').filter(Boolean).sort()
+      return { ran, status: run.status }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+  const api = { APP_MODE: 'api-only' }
+  const PEER = 'bun server.mjs'
+
+  test('the image starts only the server unless the settings ask for the PeerJS server', () => {
+    expect(started(api)).toEqual({ ran: ['server'], status: 0 })
+    expect(started({}).ran).toEqual(['bun server.js', 'server'])
+    expect(started({ ...api, PEERJS_PEERS_PER_IP: '9' }).ran).toEqual(['server'])
+    // An instance from before the built-in signaling: its own port or address keeps its server.
+    expect(started({ ...api, PEERJS_PORT: '9100' }).ran).toEqual([PEER, 'server'])
+    expect(started({ ...api, PUBLIC_PEERJS_URL: 'https://chat.example.com/peerjs' }).ran).toEqual([
+      PEER,
+      'server',
+    ])
+    expect(started({ ...api, PEERJS_BUILTIN: 'false' }).ran).toEqual([PEER, 'server'])
+    // An image whose web build was given its own PeerJS port or host carries that setting.
+    expect(started({ ...api, NEXT_PUBLIC_PEERJS_PORT: '443' }).ran).toEqual([PEER, 'server'])
+    expect(started({ ...api, NEXT_PUBLIC_PEERJS_HOST: 'peer.example.com' }).ran).toEqual([
+      PEER,
+      'server',
+    ])
+    expect(
+      started({ ...api, NEXT_PUBLIC_PEERJS_PORT: '', NEXT_PUBLIC_PEERJS_HOST: '' }).ran
+    ).toEqual(['server'])
+    // RCHAT_PEERJS says it outright.
+    expect(started({ ...api, RCHAT_PEERJS: 'on' }).ran).toEqual([PEER, 'server'])
+    expect(started({ ...api, RCHAT_PEERJS: 'off', PEERJS_PORT: '9100' }).ran).toEqual(['server'])
+    // A process with only some roles never starts it: the peer role is its own container.
+    expect(started({ RCHAT_ROLES: 'api,gateway', PEERJS_BUILTIN: 'false' }).ran).toEqual(['server'])
+    expect(started({ RCHAT_ROLES: 'web', PEERJS_PORT: '9100' }).ran).toEqual([
+      'bun server.js',
+      'server',
+    ])
+    expect(started({ RCHAT_ROLES: 'all', PEERJS_PORT: '9100' }).ran).toEqual([
+      'bun server.js',
+      PEER,
+      'server',
+    ])
+  }, 240_000)
+
+  test('nothing starts, publishes or names the PeerJS port without being asked', () => {
+    const recipes = read('jfiles/src/run.just')
+    const peerLines = recipes.split('\n').filter(line => line.includes('deploy/peer/server.mjs'))
+    expect(peerLines.length).toBe(3)
+    for (const line of peerLines)
+      expect(line).toContain(
+        "bun deploy/peer/server.mjs --wanted && exec bun deploy/peer/server.mjs'"
+      )
+    expect(read('deploy/start.sh')).toContain('bun server.mjs --wanted')
+    const expose = read('Dockerfile')
+      .split('\n')
+      .filter(line => line.startsWith('EXPOSE'))
+    expect(expose).toEqual(['EXPOSE 3000 3478/udp 49160-49415/udp'])
+    // The image remembers the PeerJS address its web build was given, for start.sh to see.
+    const runtime = read('Dockerfile').split('# Stage 5: Runtime')[1]
+    for (const name of ['NEXT_PUBLIC_PEERJS_HOST', 'NEXT_PUBLIC_PEERJS_PORT']) {
+      expect(runtime).toContain(`ARG ${name}\n`)
+      expect(runtime).toContain(`${name}=\${${name}}`)
+    }
+    expect(read('docker-compose.yml')).not.toContain('9001')
+    expect(read('.env.local.example')).toContain('# PEERJS_BUILTIN=true')
+    // The scaled setups keep the PeerJS role behind the one HTTP port.
+    const compose = read('deploy/compose.scale.yml')
+    expect(compose).toContain('PEERJS_BUILTIN: "false"')
+    expect(compose).toContain('command: ["/app/start.sh", "peer"]')
+    expect(compose).not.toContain(':9001"')
+    expect(read('deploy/k8s/config.yaml')).toContain('PEERJS_BUILTIN: "false"')
+    const nginx = read('deploy/nginx.conf')
+    expect(nginx).toContain('location /peerjs {')
+    expect(nginx).not.toContain('listen 9001')
+    expect(nginx.split('listen ').length - 1).toBe(1)
   })
 })

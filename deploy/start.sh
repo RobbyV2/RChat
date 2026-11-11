@@ -29,16 +29,25 @@ fi
 roles=$(printf '%s' "${RCHAT_ROLES:-}" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
 case ",$roles," in
     ,,)
-        peer_default=on
-        if [ "$APP_MODE" = "api-only" ]; then web=off; else web=on; fi
+        single=on
+        if [ "${APP_MODE:-}" = "api-only" ]; then web=off; else web=on; fi
         ;;
-    *,all,*) peer_default=on web=on ;;
-    *,web,*) peer_default=off web=on ;;
-    *) peer_default=off web=off ;;
+    *,all,*) single=on web=on ;;
+    *,web,*) single=off web=on ;;
+    *) single=off web=off ;;
 esac
-case "${RCHAT_PEERJS:-$peer_default}" in
+# The server answers /peerjs itself. The separate PeerJS server runs next to it only when
+# RCHAT_PEERJS says so, or when the settings of a single process ask for it (PEERJS_BUILTIN
+# off, or PEERJS_PORT, PUBLIC_PEERJS_URL or the web build's NEXT_PUBLIC_PEERJS_* set).
+with_peer=off
+case "${RCHAT_PEERJS:-}" in
     1 | true | on | yes) with_peer=on ;;
-    *) with_peer=off ;;
+    "")
+        if [ "$single" = on ] && (cd /app/peer && bun server.mjs --wanted); then
+            with_peer=on
+        fi
+        ;;
+    *) ;;
 esac
 
 if [ "$with_peer" = off ] && [ "$web" = off ]; then

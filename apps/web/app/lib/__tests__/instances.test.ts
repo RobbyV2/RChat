@@ -137,9 +137,22 @@ describe('instance addresses', () => {
       path: '/peerjs',
       secure: true,
     })
+    // No address, or junk: /peerjs on the instance's own origin.
     expect(peerFrom(undefined, 'http://h:1')).toEqual({
       host: 'h',
-      port: 9001,
+      port: 1,
+      path: '/peerjs',
+      secure: false,
+    })
+    expect(peerFrom('not a url', 'https://chat.example.com')).toEqual({
+      host: 'chat.example.com',
+      port: 443,
+      path: '/peerjs',
+      secure: true,
+    })
+    expect(peerFrom('', 'http://chat.example.com')).toEqual({
+      host: 'chat.example.com',
+      port: 80,
       path: '/peerjs',
       secure: false,
     })
@@ -170,20 +183,105 @@ describe('instance addresses', () => {
       path: '/peerjs',
       secure: false,
     })
-    // Another host (an instance without PUBLIC_URL names localhost), none, or junk: port 9001.
-    for (const advertised of [
-      'https://localhost:9001/peerjs',
-      'https://peer.example.com/peerjs',
-      undefined,
-      'not a url',
-      'ftp://chat.example.com/peerjs',
-    ])
-      expect(homePeer(page, advertised, {})).toEqual(at(9001))
+    // None, or junk: /peerjs on the page's own origin, never another port.
+    for (const advertised of [undefined, '', 'not a url', 'ftp://chat.example.com/peerjs']) {
+      expect(homePeer(page, advertised, {})).toEqual(at(443))
+      expect(homePeer({ ...page, port: '8443' }, advertised, {})).toEqual(at(8443))
+      expect(homePeer({ ...plain, port: '3000' }, advertised, {})).toEqual({
+        host: '127.0.0.1',
+        port: 3000,
+        path: '/peerjs',
+        secure: false,
+      })
+    }
+    expect(homePeer({ hostname: 'chat.example.com', protocol: 'http:' }, undefined, {})).toEqual(
+      at(80, '/peerjs', false)
+    )
     // A build with NEXT_PUBLIC_PEERJS_HOST or _PORT keeps it.
     expect(homePeer(page, 'https://chat.example.com/peerjs', { port: '7000' })).toEqual(at(7000))
     expect(homePeer(page, 'https://chat.example.com/peerjs', { host: 'peer.example.com' })).toEqual(
       { ...at(9001), host: 'peer.example.com' }
     )
+    expect(homePeer({ ...page, port: '8443' }, undefined, { port: '7000' })).toEqual(at(7000))
+  })
+
+  test('an instance that names itself differently from the page means the page host', () => {
+    // No PUBLIC_URL and no ALLOWED_HOSTS: the instance calls itself localhost.
+    const lan = { hostname: '192.168.1.5', protocol: 'http:', port: '3000' }
+    const on = (port: number, path = '/peerjs') => ({
+      host: '192.168.1.5',
+      port,
+      path,
+      secure: false,
+    })
+    expect(homePeer(lan, 'http://localhost/peerjs', {}, 'http://localhost')).toEqual(on(3000))
+    expect(homePeer(lan, 'http://localhost:3000/peerjs', {}, 'http://localhost:3000')).toEqual(
+      on(3000)
+    )
+    // A separate PeerJS server on its own port (PEERJS_PORT) keeps that port.
+    expect(homePeer(lan, 'http://localhost:9100/peerjs', {}, 'http://localhost')).toEqual(on(9100))
+    expect(homePeer(lan, 'http://localhost:9100/p/peerjs/', {}, 'http://localhost:3000')).toEqual(
+      on(9100, '/p/peerjs')
+    )
+    // Behind TLS on another name than PUBLIC_URL: the page's scheme and port.
+    const alias = { hostname: 'alias.example.com', protocol: 'https:' }
+    expect(
+      homePeer(alias, 'https://chat.example.com/peerjs', {}, 'https://chat.example.com')
+    ).toEqual({ host: 'alias.example.com', port: 443, path: '/peerjs', secure: true })
+    expect(
+      homePeer(alias, 'http://chat.example.com:9443/peerjs', {}, 'http://chat.example.com')
+    ).toEqual({ host: 'alias.example.com', port: 9443, path: '/peerjs', secure: true })
+    expect(homePeer(lan, 'http://localhost:9100/peerjs', {}, 'not a url')).toEqual({
+      ...on(9100),
+      host: 'localhost',
+    })
+    // The build's own setting still wins.
+    expect(
+      homePeer(lan, 'http://localhost:9100/peerjs', { port: '7000' }, 'http://localhost')
+    ).toEqual(on(7000))
+  })
+
+  test('a PeerJS server the instance names on another host is where its own web app goes too', () => {
+    // PUBLIC_PEERJS_URL on another host: everyone registers there, so nobody is split off.
+    const page = { hostname: 'chat.example.com', protocol: 'https:' }
+    const site = 'https://chat.example.com'
+    const peer = (port: number, path = '/peerjs', secure = true) => ({
+      host: 'peer.example.com',
+      port,
+      path,
+      secure,
+    })
+    expect(homePeer(page, 'https://peer.example.com/peerjs', {}, site)).toEqual(peer(443))
+    expect(homePeer(page, 'https://peer.example.com:8443/p2p/', {}, site)).toEqual(
+      peer(8443, '/p2p')
+    )
+    // The page's https means wss there as well.
+    expect(homePeer(page, 'http://peer.example.com:9001/peerjs', {}, site)).toEqual(peer(9001))
+    const plain = { hostname: '127.0.0.1', protocol: 'http:', port: '3950' }
+    expect(homePeer(plain, 'http://localhost:3952/peerjs', {}, 'http://127.0.0.1:3950')).toEqual({
+      host: 'localhost',
+      port: 3952,
+      path: '/peerjs',
+      secure: false,
+    })
+    expect(homePeer(plain, 'http://peer.example.com/peerjs', {}, 'http://127.0.0.1:3950')).toEqual(
+      peer(80, '/peerjs', false)
+    )
+    // Without the instance's own name to compare, a named host is still followed.
+    expect(homePeer(page, 'https://peer.example.com/peerjs', {})).toEqual(peer(443))
+    // The instance's own name stays the page's host (the test above), and a build's setting wins.
+    expect(homePeer(page, 'https://chat.internal/peerjs', {}, 'https://chat.internal')).toEqual({
+      host: 'chat.example.com',
+      port: 443,
+      path: '/peerjs',
+      secure: true,
+    })
+    expect(homePeer(page, 'https://peer.example.com/peerjs', { port: '7000' }, site)).toEqual({
+      host: 'chat.example.com',
+      port: 7000,
+      path: '/peerjs',
+      secure: true,
+    })
   })
 
   test('the home connection hands its discovery document to the PeerJS address', () => {

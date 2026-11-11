@@ -1,4 +1,4 @@
-// P2P in Firefox, end to end against a running instance (full mode, PeerJS server up). It
+// P2P in Firefox, end to end against a running instance (full mode). It
 // registers accounts: run it only against a scratch instance.
 //
 //   PLAYWRIGHT_BROWSERS_PATH=<dir with firefox and chromium for playwright-core 1.64.1> \

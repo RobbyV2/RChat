@@ -3,8 +3,9 @@ import process from 'node:process'
 import { PeerServer } from 'peer'
 import { WebSocketServer } from 'ws'
 
-// The PeerJS signaling server (the stock `peer` package), with a cap on open connections per
-// client address next to its global cap. IPv6 addresses count per /64.
+// The separate PeerJS signaling server (the stock `peer` package), with a cap on open connections
+// per client address next to its global cap. IPv6 addresses count per /64. The Rust server
+// serves the same protocol at /peerjs itself unless PEERJS_BUILTIN is off.
 
 export const setting = (env, name, fallback) => {
   const raw = env[name]
@@ -13,6 +14,25 @@ export const setting = (env, name, fallback) => {
   if (!Number.isSafeInteger(n) || n < 0) throw new Error(`${name} must be a whole number`)
   return n
 }
+
+const filled = raw => String(raw ?? '').trim() !== ''
+const off = raw =>
+  ['off', 'false', 'no', '0'].includes(
+    String(raw ?? '')
+      .trim()
+      .toLowerCase()
+  )
+
+// Whether the settings ask for this server: the built-in signaling is off, or the instance or
+// its web build names a PeerJS port or address of its own. `--wanted` exits 0 when they do.
+export const wanted = env =>
+  off(env.PEERJS_BUILTIN) ||
+  [
+    env.PEERJS_PORT,
+    env.PUBLIC_PEERJS_URL,
+    env.NEXT_PUBLIC_PEERJS_HOST,
+    env.NEXT_PUBLIC_PEERJS_PORT,
+  ].some(filled)
 
 export const proxyList = text => {
   const list = new BlockList()
@@ -113,6 +133,7 @@ export const start = (env = process.env) => {
 }
 
 if (import.meta.main) {
+  if (process.argv.includes('--wanted')) process.exit(wanted(process.env) ? 0 : 1)
   const { server } = await start()
   const addr = server.address()
   process.stdout.write(`PeerJS server on port ${typeof addr === 'object' ? addr?.port : addr}\n`)

@@ -11,7 +11,7 @@ dev: deps
   wasm-pack build crates/wasm --mode no-install --target web --out-dir ../../apps/web/public/wasm --dev
   trap 'kill 0' SIGINT
   {{DOTENVX}} bash -c 'FRONTEND_HOST=${FRONTEND_HOST:-127.0.0.1} exec bun run dev' 2>&1 | sed 's/^/[WEB] /' &
-  {{DOTENVX}} bash -c 'bun deploy/peer/server.mjs 2>&1' | sed 's/^/[PEER] /' &
+  {{DOTENVX}} bash -c 'bun deploy/peer/server.mjs --wanted && exec bun deploy/peer/server.mjs' 2>&1 | sed 's/^/[PEER] /' &
   sleep 2
   {{DOTENVX}} cargo run --bin server 2>&1 | sed 's/^/[RUST] /' &
   wait
@@ -68,7 +68,7 @@ prod mode="ask": deps
   echo "Starting servers..."
   trap 'kill 0' SIGINT
   {{DOTENVX}} bash -c 'HOSTNAME=${FRONTEND_HOST:-127.0.0.1} exec bun ./apps/web/.next/standalone/apps/web/server.js' 2>&1 | sed 's/^/[WEB] /' &
-  {{DOTENVX}} bash -c 'bun deploy/peer/server.mjs 2>&1' | sed 's/^/[PEER] /' &
+  {{DOTENVX}} bash -c 'bun deploy/peer/server.mjs --wanted && exec bun deploy/peer/server.mjs' 2>&1 | sed 's/^/[PEER] /' &
   sleep 2
   {{DOTENVX}} "$server_bin" 2>&1 | sed 's/^/[RUST] /' &
   wait
@@ -112,7 +112,7 @@ start-prod: deps
   cd "{{ROOT}}"
   trap 'kill 0' SIGINT
   {{DOTENVX}} bash -c 'HOSTNAME=${FRONTEND_HOST:-127.0.0.1} exec bun ./apps/web/.next/standalone/apps/web/server.js' 2>&1 | sed 's/^/[WEB] /' &
-  {{DOTENVX}} bash -c 'bun deploy/peer/server.mjs 2>&1' | sed 's/^/[PEER] /' &
+  {{DOTENVX}} bash -c 'bun deploy/peer/server.mjs --wanted && exec bun deploy/peer/server.mjs' 2>&1 | sed 's/^/[PEER] /' &
   sleep 2
   {{DOTENVX}} "{{CARGO_TARGET}}/release/server" 2>&1 | sed 's/^/[RUST] /' &
   wait

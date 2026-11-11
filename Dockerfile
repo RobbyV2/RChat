@@ -48,6 +48,12 @@ RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib
 COPY --from=oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d /usr/local/bin/bun /usr/local/bin/bun
 RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
 
+# A web build that was given its own PeerJS address keeps the separate PeerJS server (start.sh).
+ARG NEXT_PUBLIC_PEERJS_HOST
+ARG NEXT_PUBLIC_PEERJS_PORT
+ENV NEXT_PUBLIC_PEERJS_HOST=${NEXT_PUBLIC_PEERJS_HOST}
+ENV NEXT_PUBLIC_PEERJS_PORT=${NEXT_PUBLIC_PEERJS_PORT}
+
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOST=0.0.0.0
@@ -71,7 +77,7 @@ COPY --chmod=755 deploy/start.sh /app/start.sh
 
 USER rchat
 
-EXPOSE 3000 9001 3478/udp 49160-49415/udp
+EXPOSE 3000 3478/udp 49160-49415/udp
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fs "http://localhost:${SERVER_PORT:-3000}/api/health" > /dev/null || exit 1

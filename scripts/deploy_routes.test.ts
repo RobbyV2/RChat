@@ -138,3 +138,120 @@ describe('deploy routing of both API prefixes', () => {
     expect(catchAll?.pathType).toBe('Prefix')
   })
 })
+
+describe('one public address', () => {
+  type Compose = { services: Record<string, { ports?: string[]; profiles?: string[] }> }
+  const compose = (path: string) => (Bun.YAML.parse(read(path)) as Compose).services
+  const published = (path: string) =>
+    Object.entries(compose(path)).flatMap(([service, s]) =>
+      (s.ports ?? []).map(port => ({ service, port }))
+    )
+
+  // The paths a server answers itself outside /api.
+  const wellKnown = [
+    ...read('apps/server/src/api/instance.rs').matchAll(/\.route\("(\/\.well-known\/[^"]+)"/g),
+  ].map(m => m[1])
+  // What each kind of request is, and the role that answers it.
+  const kinds: [string, string][] = [
+    ['/api/me', 'api'],
+    ['/api/v1/me', 'api'],
+    ['/api/ws', 'gateway'],
+    ['/api/v1/ws', 'gateway'],
+    ['/api/media/abc', 'media'],
+    ['/api/instance', 'api'],
+    ['/peerjs', 'peerjs'],
+    ['/peerjs/peerjs', 'peerjs'],
+    ['/peerjs/peerjs/id', 'peerjs'],
+    ...wellKnown.map((path): [string, string] => [path, 'api']),
+    ['/', 'web'],
+    ['/login/', 'web'],
+  ]
+
+  test('the server answers two well-known paths', () => {
+    expect(wellKnown.sort()).toEqual(['/.well-known/jwks.json', '/.well-known/rchat'])
+  })
+
+  test('the single-container example publishes one port', () => {
+    expect(published('docker-compose.yml')).toEqual([{ service: 'app', port: '3000:3000' }])
+  })
+
+  test('in the scaled compose example only the proxy publishes a port, and the relay behind its switch', () => {
+    const ports = published('deploy/compose.scale.yml')
+    expect(ports.filter(p => p.service !== 'relay')).toEqual([
+      { service: 'nginx', port: '${RCHAT_HTTP_PORT:-8080}:80' },
+    ])
+    expect(ports.filter(p => p.service === 'relay').map(p => p.port)).toEqual([
+      '3478:3478/udp',
+      '49160-49415:49160-49415/udp',
+    ])
+    expect(compose('deploy/compose.scale.yml').relay.profiles).toEqual(['relay'])
+    expect(read('deploy/compose.scale.yml')).toContain(
+      'RELAY_ENABLED: ${RCHAT_RELAY_ENABLED:-false}'
+    )
+  })
+
+  test('nginx answers every kind of request by path on one listener', () => {
+    const conf = read('deploy/nginx.conf')
+    expect(conf.match(/^\s*listen\s/gm)?.length).toBe(1)
+    expect(conf.match(/^\s*server\s*\{/gm)?.length).toBe(1)
+    expect(conf).not.toMatch(/^\s*server_name\s/m)
+    const nginx = locations(conf)
+    for (const [path, role] of kinds)
+      expect({ path, role: route(pick(nginx, path)).upstream }).toEqual({ path, role })
+  })
+
+  test('in the Kubernetes example only the Ingress is public, on one host', () => {
+    type Port = { hostPort?: number; protocol?: string }
+    type Pod = { hostNetwork?: boolean; containers: { ports?: Port[] }[] }
+    type Path = { path: string; backend: { service: { name: string } } }
+    type Doc = {
+      kind: string
+      metadata: { name: string }
+      spec?: {
+        type?: string
+        template?: { spec: Pod }
+        rules?: { host?: string; http: { paths: Path[] } }[]
+      }
+    }
+    const docs = (file: string) =>
+      [Bun.YAML.parse(read(`deploy/k8s/${file}`)) as Doc | Doc[] | null]
+        .flat()
+        .filter((d): d is Doc => d !== null)
+    const { resources } = Bun.YAML.parse(read('deploy/k8s/kustomization.yaml')) as {
+      resources: string[]
+    }
+    expect(resources).toContain('ingress.yaml')
+    expect(resources).not.toContain('relay.yaml')
+    const all = resources.flatMap(docs)
+    expect(all.length).toBeGreaterThan(10)
+    for (const doc of all) {
+      const name = `${doc.kind} ${doc.metadata.name}`
+      if (doc.kind === 'Service')
+        expect({ name, type: doc.spec?.type ?? 'ClusterIP' }).toEqual({ name, type: 'ClusterIP' })
+      const pod = doc.spec?.template?.spec
+      if (!pod) continue
+      expect({ name, hostNetwork: pod.hostNetwork ?? false }).toEqual({ name, hostNetwork: false })
+      const hostPorts = pod.containers.flatMap(c => c.ports ?? []).filter(p => p.hostPort)
+      expect({ name, hostPorts }).toEqual({ name, hostPorts: [] })
+    }
+
+    const rules = all.filter(d => d.kind === 'Ingress').flatMap(d => d.spec?.rules ?? [])
+    expect([...new Set(rules.map(r => r.host))]).toEqual(['chat.example.com'])
+    const paths = rules.flatMap(r => r.http.paths)
+    const backend = (path: string) =>
+      paths.find(p => p.path === path)?.backend.service.name.replace('rchat-', '')
+    expect(backend('/api')).toBe('api')
+    expect(backend('/api/ws')).toBe('gateway')
+    expect(backend('/api/media')).toBe('media')
+    expect(backend('/peerjs')).toBe('peerjs')
+    expect(backend('/')).toBe('web')
+    for (const path of wellKnown)
+      expect({ path, role: backend(path) }).toEqual({ path, role: 'api' })
+
+    // The relay is its own file, added by hand: the only pod on the host network, for UDP.
+    const [relay] = docs('relay.yaml')
+    const pod = relay.spec?.template?.spec
+    expect(pod?.hostNetwork).toBe(true)
+    expect(pod?.containers.flatMap(c => c.ports ?? []).map(p => p.protocol)).toEqual(['UDP'])
+  })
+})
