@@ -8,7 +8,7 @@ use crate::relay::{DEFAULT_TOTAL_KIB_PER_SEC, DEFAULT_USER_ALLOCATIONS, DEFAULT_
 const MIB: usize = 1024 * 1024;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 38] = [
+const RANGES: [(&str, i64, i64); 40] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("WS_CONNECTIONS_PER_USER", 1, 10_000),
@@ -47,6 +47,8 @@ const RANGES: [(&str, i64, i64); 38] = [
     ("WIDGET_QUICK_JOINS_PER_HOUR", 1, 10_000),
     ("WIDGET_VIEWERS_MAX", 0, 1_000_000),
     ("WIDGET_BRIDGE_SERVERS_MAX", 1, 10_000),
+    ("PEERJS_PEERS_PER_IP", 0, 1_000_000),
+    ("PEERJS_CONCURRENT_LIMIT", 1, 1_000_000),
 ];
 
 /// The operator's instance limits, one field per env name (the name lowercased).
@@ -91,6 +93,9 @@ pub struct Limits {
     pub widget_quick_joins_per_hour: u32,
     pub widget_viewers_max: u32,
     pub widget_bridge_servers_max: u32,
+    pub peerjs_builtin: bool,
+    pub peerjs_peers_per_ip: usize,
+    pub peerjs_concurrent_limit: usize,
 }
 
 impl Default for Limits {
@@ -135,6 +140,9 @@ impl Default for Limits {
             widget_quick_joins_per_hour: 10,
             widget_viewers_max: 5000,
             widget_bridge_servers_max: 50,
+            peerjs_builtin: false,
+            peerjs_peers_per_ip: crate::peerjs::DEFAULT_PEERS_PER_IP,
+            peerjs_concurrent_limit: crate::peerjs::DEFAULT_CONCURRENT_LIMIT,
         }
     }
 }
@@ -229,6 +237,9 @@ impl Limits {
             widget_viewers_max: e.num("WIDGET_VIEWERS_MAX", d.widget_viewers_max)?,
             widget_bridge_servers_max: e
                 .num("WIDGET_BRIDGE_SERVERS_MAX", d.widget_bridge_servers_max)?,
+            peerjs_builtin: e.switch("PEERJS_BUILTIN", d.peerjs_builtin)?,
+            peerjs_peers_per_ip: e.num("PEERJS_PEERS_PER_IP", d.peerjs_peers_per_ip)?,
+            peerjs_concurrent_limit: e.num("PEERJS_CONCURRENT_LIMIT", d.peerjs_concurrent_limit)?,
         };
         limits.validate()?;
         Ok(limits)
@@ -277,6 +288,9 @@ impl Limits {
             widget_quick_joins_per_hour,
             widget_viewers_max,
             widget_bridge_servers_max,
+            peerjs_builtin: _,
+            peerjs_peers_per_ip,
+            peerjs_concurrent_limit,
         } = *self;
         fn set<T: TryInto<i64>>(value: T) -> Option<i64> {
             value.try_into().ok()
@@ -329,6 +343,8 @@ impl Limits {
             ),
             ("WIDGET_VIEWERS_MAX", set(widget_viewers_max)),
             ("WIDGET_BRIDGE_SERVERS_MAX", set(widget_bridge_servers_max)),
+            ("PEERJS_PEERS_PER_IP", set(peerjs_peers_per_ip)),
+            ("PEERJS_CONCURRENT_LIMIT", set(peerjs_concurrent_limit)),
         ]
     }
 

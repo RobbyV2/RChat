@@ -177,6 +177,9 @@ impl Modify for Bearer {
         super::instance::p2p_binding,
         super::instance::ice,
         crate::ws::handler,
+        crate::peerjs::about,
+        crate::peerjs::new_id,
+        crate::peerjs::socket,
     ),
     components(schemas(
         super::ApiErrorBody,
@@ -233,7 +236,7 @@ impl Modify for Bearer {
         (name = "Media", description = "File uploads attached to messages, and downloads."),
         (name = "Search", description = "Message and server search."),
         (name = "Invites", description = "Invite link previews."),
-        (name = "Realtime", description = "The WebSocket gateway for live events, presence, voice and calls."),
+        (name = "Realtime", description = "The WebSocket gateway for live events, presence, voice and calls, and the PeerJS signaling for peer-to-peer connections when the instance serves it itself."),
         (name = "Instance", description = "Instance discovery, public settings, identity assertions for federation, P2P identity bindings for account badges and ICE servers for peer-to-peer connections."),
         (name = "Health", description = "Liveness and readiness probes for load balancers and orchestrators."),
     )
@@ -327,11 +330,12 @@ mod tests {
     const ADMIN_REASON: &str =
         "site-admin only; site admins must stay hidden, so the public document leaves these out";
 
-    const ROUTE_SOURCES: [(&str, &str); 4] = [
+    const ROUTE_SOURCES: [(&str, &str); 5] = [
         ("/api/v1", include_str!("mod.rs")),
         ("/api/v1", include_str!("health.rs")),
         ("/api/v1", include_str!("openapi.rs")),
         ("", include_str!("instance.rs")),
+        ("", include_str!("../peerjs.rs")),
     ];
 
     const METHODS: [&str; 5] = ["get", "post", "put", "patch", "delete"];

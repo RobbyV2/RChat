@@ -7,7 +7,10 @@ use tokio::sync::watch;
 use tokio::task::{AbortHandle, JoinHandle};
 use tracing::info;
 
+use crate::api::Settings;
+use crate::api::features::Feature;
 use crate::config::{AppConfig, Roles};
+use crate::peerjs::Peers;
 use crate::relay::Relay;
 pub use crate::server::Frontend;
 use crate::server::client_ip::ProxyTrust;
@@ -29,6 +32,7 @@ struct Held {
     db: Option<crate::db::Db>,
     bus: Option<crate::bus::Bus>,
     relay: Option<Arc<Relay>>,
+    peers: Option<Peers>,
     tasks: Vec<AbortHandle>,
     /// Seconds an unused guest grant lives, for the last write of queued grant uses.
     grant_ttl: i64,
@@ -49,11 +53,15 @@ impl Held {
             db,
             bus,
             relay,
+            peers,
             tasks,
             grant_ttl,
         } = self;
         for task in tasks {
             task.abort();
+        }
+        if let Some(peers) = peers {
+            peers.close();
         }
         if let Some(bus) = bus {
             bus.stop();
@@ -253,7 +261,16 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
         Some(Frontend::Proxy(url)) => Some(Arc::clone(url)),
         Some(Frontend::Service(_)) | None => None,
     };
-    let app = build_router(frontend, config, state.clone()).layer(cors_layer());
+    let peers = config.peerjs().map(Peers::new);
+    if let Some(peers) = &peers {
+        held.peers = Some(peers.clone());
+        held.spawn(peers.clone().expire());
+        let changes = state.hub.settings_changes();
+        peers.set_on(p2p_serves(Settings::cached(&state.db).await));
+        held.spawn(follow_p2p(peers.clone(), state.clone(), changes));
+    }
+    let signaling = peers.is_some();
+    let app = build_router(frontend, peers, config, state.clone()).layer(cors_layer());
 
     let listener = tokio::net::TcpListener::bind(&config.addr()).await?;
     let addr = listener.local_addr()?;
@@ -268,6 +285,9 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
 
     if let Some(url) = proxy_url {
         info!("Proxying frontend requests to {url}");
+    }
+    if signaling {
+        info!("PeerJS signaling at http://{addr}/peerjs");
     }
 
     info!(
@@ -373,6 +393,20 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
             }
         }
     });
+}
+
+/// The built-in PeerJS signaling serves while P2P or P2P attachments are on.
+fn p2p_serves(settings: Settings) -> bool {
+    settings.on(Feature::P2p) || settings.p2p_attachments
+}
+
+/// Keeps the built-in PeerJS signaling in step with the instance's switches, closing its
+/// connections when both are off. A change is read again from the database, because the
+/// cached settings may still be the earlier ones.
+async fn follow_p2p(peers: Peers, state: AppState, mut changes: watch::Receiver<u64>) {
+    while changes.changed().await.is_ok() {
+        peers.set_on(p2p_serves(Settings::load(&state.db).await));
+    }
 }
 
 /// Whether this instance runs the periodic `job` now: always without a bus, else while it
@@ -713,6 +747,101 @@ pub(crate) mod tests {
         wipe(&path);
     }
 
+    #[tokio::test]
+    async fn peerjs_signaling_is_served_when_it_is_on() {
+        use futures_util::StreamExt;
+        use tokio_tungstenite::tungstenite::{Error, Message};
+        let _one = ONE.lock().await;
+        let path = crate::db::temp_db_path("run_peerjs");
+        wipe(&path);
+        let advertised = |addr: SocketAddr| async move {
+            let (status, body) = fetch(addr, "/api/instance").await;
+            assert_eq!(status, StatusCode::OK);
+            let doc: serde_json::Value = serde_json::from_str(&body).expect("json");
+            doc["peerjs_url"].as_str().expect("peerjs_url").to_string()
+        };
+        let hello = |addr: SocketAddr, id: &str| {
+            format!("ws://{addr}/peerjs/peerjs?key=peerjs&id={id}&token=t&version=1.5.5")
+        };
+
+        let off = start(config(&path, 0, &[]), RunOptions::default())
+            .await
+            .expect("start");
+        for route in ["/peerjs", "/peerjs/peerjs/id"] {
+            assert_eq!(fetch(off.addr, route).await.0, StatusCode::NOT_FOUND);
+        }
+        match tokio_tungstenite::connect_async(hello(off.addr, "a")).await {
+            Err(Error::Http(res)) => assert_eq!(res.status(), StatusCode::NOT_FOUND),
+            other => panic!("signaling answered while off: {:?}", other.is_ok()),
+        }
+        assert_eq!(advertised(off.addr).await, "http://127.0.0.1:9001/peerjs");
+        off.shutdown().await;
+
+        let web = Router::new().fallback(|uri: Uri| async move { format!("page {uri}") });
+        let on = start(
+            config(
+                &path,
+                0,
+                &[("PEERJS_BUILTIN", "on"), ("PEERJS_PEERS_PER_IP", "1")],
+            ),
+            RunOptions {
+                frontend: Some(Frontend::Service(web)),
+            },
+        )
+        .await
+        .expect("start");
+        let addr = on.addr;
+        assert_eq!(advertised(addr).await, format!("http://{addr}/peerjs"));
+        let (status, about) = fetch(addr, "/peerjs").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(about.contains("PeerJS Server"), "{about}");
+        let (status, id) = fetch(addr, "/peerjs/peerjs/id").await;
+        assert_eq!((status, id.len()), (StatusCode::OK, 32));
+        assert_eq!(
+            fetch(addr, "/peerjs/other").await,
+            (StatusCode::OK, "page /peerjs/other".to_string())
+        );
+        let (mut peer, _) = tokio_tungstenite::connect_async(hello(addr, &id))
+            .await
+            .expect("signaling");
+        let opened = peer.next().await.expect("a frame").expect("frame");
+        assert_eq!(opened, Message::text(r#"{"type":"OPEN"}"#));
+        match tokio_tungstenite::connect_async(hello(addr, "b")).await {
+            Err(Error::Http(res)) => assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS),
+            other => panic!("PEERJS_PEERS_PER_IP was not applied: {:?}", other.is_ok()),
+        }
+        assert_eq!(fetch(addr, "/api/health").await.0, StatusCode::OK);
+        on.shutdown().await;
+        let closed = tokio::time::timeout(Duration::from_secs(30), peer.next())
+            .await
+            .expect("the signaling socket closes with the server");
+        assert!(
+            matches!(closed, Some(Ok(Message::Close(_)) | Err(_)) | None),
+            "{closed:?}"
+        );
+
+        let elsewhere = start(
+            config(
+                &path,
+                0,
+                &[
+                    ("PEERJS_BUILTIN", "on"),
+                    ("PUBLIC_PEERJS_URL", "https://peer.example/peerjs"),
+                ],
+            ),
+            RunOptions::default(),
+        )
+        .await
+        .expect("start");
+        assert_eq!(
+            advertised(elsewhere.addr).await,
+            "https://peer.example/peerjs"
+        );
+        elsewhere.shutdown().await;
+        crate::api::webhooks::configure(crate::api::webhooks::Outbound::default());
+        wipe(&path);
+    }
+
     /// A frontend that answers every request with its request target.
     async fn echo_frontend() -> (String, JoinHandle<()>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -794,6 +923,148 @@ pub(crate) mod tests {
         assert_eq!(res.status(), StatusCode::OK);
         assert!(running.has_accounts().await.expect("one"));
         running.shutdown().await;
+        wipe(&path);
+    }
+
+    #[tokio::test]
+    async fn signaling_follows_the_p2p_switches() {
+        use futures_util::StreamExt;
+        use tokio_tungstenite::tungstenite::{Error, Message};
+        const OFF: &str = "P2P is turned off on this instance";
+        let _one = ONE.lock().await;
+        let path = crate::db::temp_db_path("run_peerjs_switch");
+        wipe(&path);
+        let on = [("PEERJS_BUILTIN", "on")];
+        let running = start(config(&path, 0, &on), RunOptions::default())
+            .await
+            .expect("start");
+        let addr = running.addr;
+        let http = reqwest::Client::new();
+        let registered = http
+            .post(format!("http://{addr}/api/auth/register"))
+            .header("content-type", "application/json")
+            .body(r#"{"username":"Root","password":"a long enough password","avatar_kind":"identicon"}"#)
+            .send()
+            .await
+            .expect("register");
+        assert_eq!(registered.status(), StatusCode::OK);
+        let account: serde_json::Value =
+            serde_json::from_str(&registered.text().await.expect("body")).expect("json");
+        let token = account["token"].as_str().expect("token").to_string();
+        let switch = |body: &'static str| {
+            let (http, token) = (http.clone(), token.clone());
+            async move {
+                let res = http
+                    .patch(format!("http://{addr}/api/admin/settings"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(body)
+                    .send()
+                    .await
+                    .expect("patch");
+                assert_eq!(res.status(), StatusCode::OK, "{body}");
+            }
+        };
+        let dial = |id: &'static str| async move {
+            let url = format!("ws://{addr}/peerjs/peerjs?key=peerjs&id={id}&token=t");
+            tokio_tungstenite::connect_async(url)
+                .await
+                .map(|(peer, _)| peer)
+        };
+        type Peer = tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >;
+        let closed = |mut peer: Peer| async move {
+            loop {
+                let frame = tokio::time::timeout(Duration::from_secs(30), peer.next())
+                    .await
+                    .expect("the signaling socket closes");
+                match frame {
+                    Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+                    Some(Ok(_)) => {}
+                }
+            }
+        };
+
+        let first = dial("a").await.expect("signaling");
+        switch(r#"{"p2p":false}"#).await;
+        let second = dial("b")
+            .await
+            .expect("P2P attachments still need the signaling");
+        switch(r#"{"p2p_attachments":false}"#).await;
+        closed(first).await;
+        closed(second).await;
+        match dial("c").await {
+            Err(Error::Http(res)) => assert_eq!(res.status(), StatusCode::NOT_FOUND),
+            other => panic!("signaling answered while P2P is off: {:?}", other.is_ok()),
+        }
+        for route in ["/peerjs", "/peerjs/peerjs/id"] {
+            assert_eq!(
+                fetch(addr, route).await,
+                (StatusCode::NOT_FOUND, OFF.to_string())
+            );
+        }
+        assert_eq!(fetch(addr, "/api/health").await.0, StatusCode::OK);
+
+        // A server that starts while both are off refuses from its first moment on.
+        running.shutdown().await;
+        let again = start(config(&path, 0, &on), RunOptions::default())
+            .await
+            .expect("start again");
+        let addr = again.addr;
+        assert_eq!(
+            fetch(addr, "/peerjs").await,
+            (StatusCode::NOT_FOUND, OFF.to_string()),
+            "off from the start"
+        );
+        let http = reqwest::Client::new();
+        let res = http
+            .patch(format!("http://{addr}/api/admin/settings"))
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .body(r#"{"p2p":true}"#)
+            .send()
+            .await
+            .expect("patch");
+        assert_eq!(res.status(), StatusCode::OK);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        while fetch(addr, "/peerjs").await.0 != StatusCode::OK {
+            assert!(tokio::time::Instant::now() < deadline, "on again");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let url = format!("ws://{addr}/peerjs/peerjs?key=peerjs&id=a&token=t");
+        let (mut peer, _) = tokio_tungstenite::connect_async(url)
+            .await
+            .expect("signaling again");
+        let opened = peer.next().await.expect("a frame").expect("frame");
+        assert_eq!(opened, Message::text(r#"{"type":"OPEN"}"#));
+        again.shutdown().await;
+        wipe(&path);
+
+        // The server config sets the same switches: off there is off from the start.
+        let set = [
+            ("PEERJS_BUILTIN", "on"),
+            ("FEATURE_P2P", "off"),
+            ("P2P_ATTACHMENTS", "off"),
+        ];
+        let configured = start(config(&path, 0, &set), RunOptions::default())
+            .await
+            .expect("start with the switches off");
+        assert_eq!(
+            fetch(configured.addr, "/peerjs").await,
+            (StatusCode::NOT_FOUND, OFF.to_string())
+        );
+        configured.shutdown().await;
+        let kept = [
+            ("PEERJS_BUILTIN", "on"),
+            ("FEATURE_P2P", "off"),
+            ("P2P_ATTACHMENTS", "on"),
+        ];
+        let half = start(config(&path, 0, &kept), RunOptions::default())
+            .await
+            .expect("start with one switch on");
+        assert_eq!(fetch(half.addr, "/peerjs").await.0, StatusCode::OK);
+        half.shutdown().await;
         wipe(&path);
     }
 }

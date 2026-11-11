@@ -17,6 +17,7 @@ use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 
 use crate::config::AppConfig;
 use crate::limits::Limits;
+use crate::peerjs::Peers;
 use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
 
@@ -45,8 +46,21 @@ pub enum Frontend {
     Service(Router),
 }
 
-pub fn register_routes(frontend: Option<Frontend>, config: &AppConfig, state: AppState) -> Router {
+pub fn register_routes(
+    frontend: Option<Frontend>,
+    peers: Option<Peers>,
+    config: &AppConfig,
+    state: AppState,
+) -> Router {
+    let signaling = peers.map(|peers| {
+        let key = ClientIp(config.proxy_trust.clone());
+        limited(peers.routes(key.clone()), key, &state.limits)
+    });
     let router = api_router(config, state);
+    let router = match signaling {
+        Some(signaling) => router.merge(signaling),
+        None => router,
+    };
     let router = match frontend {
         Some(Frontend::Proxy(url)) => {
             let client: ProxyClient = Client::builder(TokioExecutor::new()).build_http();
@@ -396,6 +410,7 @@ mod tests {
         };
         let app = register_routes(
             Some(Frontend::Proxy(Arc::from(url))),
+            None,
             &config,
             state.clone(),
         );

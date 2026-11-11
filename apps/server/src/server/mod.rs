@@ -6,6 +6,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::api::{CORS_REQUEST_HEADERS, CORS_RESPONSE_HEADERS};
 use crate::config::AppConfig;
+use crate::peerjs::Peers;
 use crate::state::AppState;
 
 pub mod client_ip;
@@ -15,8 +16,13 @@ const CORS_MAX_AGE: Duration = Duration::from_secs(600);
 
 pub use route_builder::Frontend;
 
-pub fn build_router(frontend: Option<Frontend>, config: &AppConfig, state: AppState) -> Router {
-    route_builder::register_routes(frontend, config, state)
+pub fn build_router(
+    frontend: Option<Frontend>,
+    peers: Option<Peers>,
+    config: &AppConfig,
+    state: AppState,
+) -> Router {
+    route_builder::register_routes(frontend, peers, config, state)
 }
 
 pub fn cors_layer() -> CorsLayer {

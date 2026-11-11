@@ -370,6 +370,7 @@ Put settings in `.env.local`. Refer to `.env.local.example` for all settings and
 | `DATABASE_URL`      | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                                                  |
 | `PUBLIC_URL`        | none        | The address people open, for example `https://chat.example.com`.                                        |
 | `PUBLIC_PEERJS_URL` | none        | Where browsers reach PeerJS, for example `https://chat.example.com/peerjs`. Default: port 9001.         |
+| `PEERJS_BUILTIN`    | `false`     | Serves PeerJS at `/peerjs` on the server's own port, with no PeerJS server. Use it with one process.    |
 | `INSTANCE_NAME`     | `RChat`     | The name people see for your instance.                                                                  |
 | `GUESTS_ENABLED`    | `true`      | Lets people read public servers without an account.                                                     |
 | `P2P_ATTACHMENTS`   | `true`      | Lets people send P2P attachments.                                                                       |

@@ -364,6 +364,16 @@ impl AppConfig {
         }
     }
 
+    /// The PeerJS signaling this process serves at `/peerjs`, when `PEERJS_BUILTIN` is on, with
+    /// `PEERJS_PEERS_PER_IP` and `PEERJS_CONCURRENT_LIMIT`.
+    pub fn peerjs(&self) -> Option<crate::peerjs::Settings> {
+        self.limits.peerjs_builtin.then(|| crate::peerjs::Settings {
+            peers_per_ip: self.limits.peerjs_peers_per_ip,
+            concurrent_limit: self.limits.peerjs_concurrent_limit,
+            ..crate::peerjs::Settings::default()
+        })
+    }
+
     /// What the database layer reads at open: the limits, the pepper and the controls the env
     /// sets and pins.
     pub fn db_options(&self) -> DbOptions {
@@ -630,6 +640,7 @@ impl AppConfig {
             p2p_secret: self.secrets.p2p_secret.clone(),
             allowed_hosts: self.allowed_hosts.clone(),
             peerjs_port: self.peerjs_port,
+            peerjs_builtin: self.limits.peerjs_builtin,
             proxy_trust: self.proxy_trust.clone(),
             ice: self.ice().unwrap_or_default(),
         }
@@ -931,6 +942,57 @@ mod tests {
         );
         assert!(refused.is_ascii());
         assert!(map(&[("SERVER_PORT", "70000")]).is_err());
+    }
+
+    #[test]
+    fn built_in_peerjs_is_off_by_default_and_takes_the_peerjs_limits() {
+        let load = |pairs: &[(&str, &str)]| AppConfig::load_from(&cli(None, None), env(pairs));
+        let off = load(&[]).unwrap();
+        assert_eq!(off.peerjs(), None);
+        assert!(!off.instance().peerjs_builtin);
+        assert_eq!(load(&[("PEERJS_BUILTIN", "off")]).unwrap().peerjs(), None);
+        let on = load(&[("PEERJS_BUILTIN", "on")]).unwrap();
+        assert_eq!(on.peerjs(), Some(crate::peerjs::Settings::default()));
+        assert!(on.instance().peerjs_builtin);
+        let set = load(&[
+            ("PEERJS_BUILTIN", "true"),
+            ("PEERJS_PEERS_PER_IP", "0"),
+            ("PEERJS_CONCURRENT_LIMIT", "12"),
+        ])
+        .unwrap();
+        assert_eq!(
+            set.peerjs(),
+            Some(crate::peerjs::Settings {
+                peers_per_ip: 0,
+                concurrent_limit: 12,
+                ..crate::peerjs::Settings::default()
+            })
+        );
+        let stock = crate::peerjs::Settings::default();
+        assert_eq!((stock.peers_per_ip, stock.concurrent_limit), (50, 5000));
+        assert_eq!(
+            (stock.expire, stock.alive),
+            (Duration::from_secs(5), Duration::from_secs(90))
+        );
+        for (name, bad, expected) in [
+            (
+                "PEERJS_BUILTIN",
+                "maybe",
+                "PEERJS_BUILTIN: expected on or off, got maybe",
+            ),
+            (
+                "PEERJS_PEERS_PER_IP",
+                "-1",
+                "PEERJS_PEERS_PER_IP: expected 0 to 1000000, got -1",
+            ),
+            (
+                "PEERJS_CONCURRENT_LIMIT",
+                "0",
+                "PEERJS_CONCURRENT_LIMIT: expected 1 to 1000000, got 0",
+            ),
+        ] {
+            assert_eq!(load(&[(name, bad)]).unwrap_err().to_string(), expected);
+        }
     }
 
     #[test]

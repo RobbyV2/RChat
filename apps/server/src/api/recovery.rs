@@ -1543,7 +1543,7 @@ mod tests {
             },
             ..AppConfig::defaults()
         };
-        let app = crate::server::build_router(None, &config, state.clone());
+        let app = crate::server::build_router(None, None, &config, state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");

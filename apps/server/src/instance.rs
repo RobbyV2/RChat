@@ -27,6 +27,7 @@ pub struct InstanceConfig {
     pub signing_key: Option<String>,
     pub allowed_hosts: Option<String>,
     pub peerjs_port: Option<u16>,
+    pub peerjs_builtin: bool,
     pub proxy_trust: ProxyTrust,
     pub ice: IceConfig,
     pub relay_secret: Option<String>,
@@ -98,6 +99,8 @@ pub struct Instance {
     pub keys: Keyring,
     pub allowed_hosts: Vec<AllowedHost>,
     pub peerjs_port: u16,
+    /// This instance serves PeerJS signaling itself, at `/peerjs`.
+    pub peerjs_builtin: bool,
     pub proxy_trust: ProxyTrust,
     pub stun: Vec<String>,
     pub ice: IceConfig,
@@ -142,6 +145,7 @@ impl Instance {
             signing_key,
             allowed_hosts,
             peerjs_port,
+            peerjs_builtin,
             proxy_trust,
             ice,
             relay_secret,
@@ -192,6 +196,7 @@ impl Instance {
             keys,
             allowed_hosts: parse_allowed_hosts(allowed_hosts.as_deref().unwrap_or_default())?,
             peerjs_port: peerjs_port.unwrap_or(DEFAULT_PEERJS_PORT),
+            peerjs_builtin: *peerjs_builtin,
             proxy_trust: proxy_trust.clone(),
         }))
     }
@@ -208,6 +213,7 @@ impl Instance {
             keys: Keyring::parse(&crate::identity::new_seed()).expect("keyring"),
             allowed_hosts: Vec::new(),
             peerjs_port: DEFAULT_PEERJS_PORT,
+            peerjs_builtin: false,
             proxy_trust: ProxyTrust::default(),
             stun: Vec::new(),
             ice: IceConfig::default(),
@@ -395,6 +401,7 @@ impl Instance {
         };
         let peerjs_url = match &self.peerjs_url {
             Some(url) => trimmed(url),
+            None if self.peerjs_builtin => format!("{origin}/peerjs"),
             None => {
                 let hostname = site
                     .as_ref()
@@ -525,7 +532,9 @@ pub struct InstanceInfo {
     /// version 1.
     #[schema(example = "wss://chat.example.com/api/ws")]
     pub ws_url: String,
-    /// PeerJS signalling server used for peer-to-peer file sharing and calls.
+    /// PeerJS signalling server used for peer-to-peer file sharing and calls: `PUBLIC_PEERJS_URL`,
+    /// else `/peerjs` of this origin when the instance serves it itself (`PEERJS_BUILTIN`), else
+    /// port `PEERJS_PORT` (9001) of this host.
     #[schema(example = "https://chat.example.com:9001/peerjs")]
     pub peerjs_url: String,
     /// URL of this document on this instance (`GET /api/instance`, the latest version).

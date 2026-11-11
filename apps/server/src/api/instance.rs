@@ -368,7 +368,7 @@ mod tests {
             },
             ..AppConfig::defaults()
         };
-        let app = crate::server::build_router(None, &config, state);
+        let app = crate::server::build_router(None, None, &config, state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
@@ -1015,6 +1015,59 @@ mod tests {
         assert_eq!(info.api_url, "https://chat.example/api");
         assert_eq!(info.ws_url, "wss://gw.example/api/ws");
         assert_eq!(info.peerjs_url, "https://chat.example:9001/peerjs");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn built_in_peerjs_is_advertised_on_the_instance_origin() {
+        let (state, path) = temp_state("instance_peerjs").await;
+        let features = Features {
+            guests: true,
+            uploads: true,
+            p2p_attachments: true,
+            previews: true,
+            identity_assertions: true,
+            backup_phrase: true,
+        };
+        let advertised = |config: InstanceConfig, origin: &'static str| {
+            let (db, limits) = (state.db.clone(), state.limits.clone());
+            async move {
+                let instance = Instance::load(&db, &config).await.expect("instance");
+                instance.discovery(origin, features, &limits).peerjs_url
+            }
+        };
+        let built_in = || InstanceConfig {
+            peerjs_builtin: true,
+            ..Default::default()
+        };
+        for (origin, url) in [
+            ("https://chat.example", "https://chat.example/peerjs"),
+            ("http://127.0.0.1:3000", "http://127.0.0.1:3000/peerjs"),
+            (
+                "https://chat.example:8443",
+                "https://chat.example:8443/peerjs",
+            ),
+        ] {
+            assert_eq!(advertised(built_in(), origin).await, url);
+            let port = InstanceConfig {
+                peerjs_port: Some(9443),
+                ..built_in()
+            };
+            assert_eq!(advertised(port, origin).await, url);
+        }
+        let elsewhere = InstanceConfig {
+            peerjs_url: Some("https://peer.example/peerjs/".to_string()),
+            ..built_in()
+        };
+        assert_eq!(
+            advertised(elsewhere, "https://chat.example").await,
+            "https://peer.example/peerjs"
+        );
+        assert_eq!(
+            advertised(InstanceConfig::default(), "https://chat.example").await,
+            "https://chat.example:9001/peerjs",
+            "off: the separate PeerJS server"
+        );
         done(state, path).await;
     }
 
