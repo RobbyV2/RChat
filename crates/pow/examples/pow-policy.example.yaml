@@ -1,0 +1,41 @@
+# Proof of work policy. Point POW_POLICY_FILE at a copy of this file.
+#
+# Rules run top down. The first ALLOW, DENY or CHALLENGE that matches decides.
+# WEIGH rules add their weight to the score and go on.
+# scope: pages (the default), api, or both. A pages rule never touches API requests.
+#
+# A rule needs at least one matcher and matches when every matcher it has matches. A matcher
+# that is written but empty (remote_addresses: []) is refused: it never means "everything".
+#   path_regex, user_agent_regex   regular expressions, at most 1000 characters each
+#   headers_regex                  header name to regular expression; a missing header is empty
+#   remote_addresses               addresses or CIDR ranges
+#   methods                        HTTP methods
+#   who                            guest or account, for rules with scope: api
+# action: ALLOW, DENY, CHALLENGE or WEIGH. WEIGH needs weight.adjust, -64 to 64.
+# At least one rule and at most 1000, in a file of at most 1 MiB. Imports are not supported: copy
+# the rules in. A request whose path, user agent or a header that a rule reads is over 8 KiB is
+# denied without being read.
+bots:
+  - name: office-network
+    scope: both
+    remote_addresses: ["203.0.113.0/24", "2001:db8:42::/48"]
+    action: ALLOW
+  - name: known-ai-crawlers
+    user_agent_regex: (GPTBot|ClaudeBot|CCBot|Bytespider|PerplexityBot|Amazonbot)
+    action: DENY
+  - name: no-accept-language
+    scope: both
+    headers_regex:
+      Accept-Language: ^$
+    action: WEIGH
+    weight:
+      adjust: 8
+  - name: datacenter-ranges
+    scope: both
+    remote_addresses: ["198.51.100.0/22"]
+    action: WEIGH
+    weight:
+      adjust: 8
+  - name: browsers
+    user_agent_regex: Mozilla|Opera
+    action: CHALLENGE

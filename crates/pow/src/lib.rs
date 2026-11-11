@@ -6,6 +6,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "policy")]
+pub mod policy;
 pub mod puzzle;
 #[cfg(feature = "threads")]
 mod solve;

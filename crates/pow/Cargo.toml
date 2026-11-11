@@ -8,15 +8,29 @@ description = "The proof-of-work puzzle, sealed trust strings and solver shared 
 [features]
 default = ["threads"]
 threads = []
+policy = ["dep:regex", "dep:serde", "dep:serde_norway"]
 
 [dependencies]
 sha2 = { version = "0.11.1", default-features = false }
 hmac = "0.13"
 base64 = "0.22"
+regex = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_norway = { version = "=0.9.42", optional = true }
 
 [dev-dependencies]
+rchat-pow = { path = ".", features = ["policy"] }
 serde_json = "1"
+regex = "1"
 
 [[test]]
 name = "solve"
 required-features = ["threads"]
+
+[[test]]
+name = "policy_props"
+required-features = ["policy"]
+
+[[test]]
+name = "policy"
+required-features = ["policy"]
