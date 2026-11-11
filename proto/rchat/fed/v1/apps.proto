@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package rchat.fed.v1;
+
+// Feature `apps`: reserved. Members on other instances will reach a server's app through their
+// own instance. The slot has no methods yet; they are added by the release that ships it.
+service AppsService {}

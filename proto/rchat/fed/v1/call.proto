@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package rchat.fed.v1;
+
+// The signed head of every instance-to-instance call (spec 4.3). It travels in the header
+// `Authorization: RChat-Fed <base64url(head bytes)>.<base64url(sig)>`; the HTTP body is the
+// request message itself (Connect unary, `application/proto`).
+// sig = Ed25519 under the caller's call key `kid` over "rchat-fed-call1" || 0x00 || head bytes.
+// The callee finds the key by the RFC 7638 thumbprint it computes itself, never by a JWKS label,
+// and accepts only keys the caller's Hello lists in `call_kids`.
+message CallHead {
+  // The caller's origin, `https://host` (port 443, no path).
+  string iss = 1;
+  // The callee's origin, as its PUBLIC_URL says.
+  string aud = 2;
+  // The full method path, for example `/rchat.fed.v1.LettersService/Deliver`.
+  string method = 3;
+  // Unix seconds, on the callee's clock as the caller estimates it (spec 4.3.4). The callee
+  // accepts |iat - now| <= 30.
+  int64 iat = 4;
+  // iat < exp <= iat + 60, and now <= exp + 30.
+  int64 exp = 5;
+  // 16 random bytes, never reused by the caller.
+  bytes jti = 6;
+  // SHA-256 of the HTTP body.
+  bytes body_sha256 = 7;
+  uint64 body_len = 8;
+  // RFC 7638 thumbprint of the signing key; it must be in iss's JWKS and in its Hello's call_kids.
+  string kid = 9;
+  // The caller's discovery id (`GET /api/instance` `id`). Information only: identity is the key.
+  string instance_id = 10;
+  // The caller's current Hello revision; the callee refetches the caller's Hello when it differs.
+  uint64 hello_rev = 11;
+  // A proof-of-work stamp over `jti` (0.5.0's scheme), sent on a Hello when the callee asked for
+  // one (REFUSAL_REASON_STAMP_NEEDED) because its key-fetch budget is under pressure.
+  bytes stamp = 12;
+}
+
+// A feature the instance speaks, with its level window (spec 4.4).
+message FeatureLevel {
+  // Lowercase, dot separated: `core`, `letters`, `letters.files`.
+  string name = 1;
+  // The highest level this instance speaks.
+  uint32 level = 2;
+  // The lowest level it still accepts from others.
+  uint32 min = 3;
+}
+
+// Sent in the Connect error details of an authenticated call that is not served.
+message Refusal {
+  RefusalReason reason = 1;
+  // Unix seconds when an automatic pause ends; 0 when it is not automatic.
+  int64 until = 2;
+  // For REFUSAL_REASON_VERSION: the callee's window for the features involved.
+  repeated FeatureLevel need = 3;
+  // Plain ASCII, at most 200 characters, for the caller's operator.
+  string notice = 4;
+  // For REFUSAL_REASON_STAMP_NEEDED: the work the stamp must carry.
+  uint64 stamp_work = 5;
+}
+
+enum RefusalReason {
+  REFUSAL_REASON_UNSPECIFIED = 0;
+  // Policy: the feature is off, the caller isn't on an allow list, or it is blocked. Coarse on purpose.
+  REFUSAL_REASON_REFUSED = 1;
+  // An automatic pause on the callee's side (malformed calls, abuse limits).
+  REFUSAL_REASON_PAUSED = 2;
+  // No common level for the feature this method belongs to.
+  REFUSAL_REASON_VERSION = 3;
+  // The callee doesn't recognize this host's key and waits for its operator.
+  REFUSAL_REASON_IDENTITY = 4;
+  // The callee has no current Hello for the caller: say Hello, then call again.
+  REFUSAL_REASON_HELLO_NEEDED = 5;
+  // A cap the caller shares with others (its domain or network) is full: hold every call to this
+  // instance until `until`. Never counted against the caller (spec 4.5.1).
+  REFUSAL_REASON_BUSY = 6;
+  // Key fetches are under pressure: say Hello again with a stamp of `stamp_work`.
+  REFUSAL_REASON_STAMP_NEEDED = 7;
+}

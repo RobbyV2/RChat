@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package rchat.fed.v1;
+
+// Feature `invites` (0.9.0): invite cards fetched by the reader's own instance.
+service InvitesService {
+  // What `GET /api/v1/invites/{server}` shows a guest, for an invite link someone pasted.
+  rpc Preview(PreviewRequest) returns (PreviewResponse);
+  // The server icon of a previewed invite, at most 256 KiB.
+  rpc Icon(IconRequest) returns (IconResponse);
+}
+
+message PreviewRequest {
+  string server = 1;
+  // Only when a reader clicked to try the link's password; automatic previews never send one.
+  string password = 2;
+}
+
+message PreviewResponse {
+  // False for a missing, private or closed-to-this-password server (uniform).
+  bool found = 1;
+  InvitePreview invite = 2;
+}
+
+message InvitePreview {
+  string server = 1;
+  string name = 2;
+  string description = 3;
+  bytes icon_sha256 = 4;
+  uint32 members = 5;
+  uint32 online = 6;
+  InviteStatus status = 7;
+  string preview_channel = 8;
+  // At most 3 (the guest view's INVITE_PREVIEW), already filtered by the callee's own rules.
+  repeated PreviewMessage preview = 9;
+  int64 password_expires_at = 10;
+  uint32 password_uses_left = 11;
+}
+
+enum InviteStatus {
+  INVITE_STATUS_UNSPECIFIED = 0;
+  INVITE_STATUS_OPEN = 1;
+  INVITE_STATUS_PASSWORD = 2;
+  INVITE_STATUS_CLOSED = 3;
+}
+
+message PreviewMessage {
+  // `user@host` of the callee.
+  string author = 1;
+  string display_name = 2;
+  string text = 3;
+  int64 ts = 4;
+}
+
+message IconRequest {
+  string server = 1;
+  bytes sha256 = 2;
+}
+
+message IconResponse {
+  string mime = 1;
+  bytes data = 2;
+}

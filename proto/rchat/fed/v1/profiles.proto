@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package rchat.fed.v1;
+
+// Feature `profiles` (0.9.0): public cards of people the caller's users write to.
+service ProfilesService {
+  rpc Get(GetRequest) returns (GetResponse);
+  // At most 256 KiB.
+  rpc Avatar(AvatarRequest) returns (AvatarResponse);
+}
+
+message GetRequest {
+  // Local usernames at the callee, at most 50.
+  repeated string usernames = 1;
+}
+
+message GetResponse {
+  // Only the profiles the callee shows this caller; the others are absent (uniform).
+  repeated Profile profiles = 1;
+}
+
+message Profile {
+  string username = 1;
+  string display_name = 2;
+  bytes avatar_sha256 = 3;
+  // Identicon background (N10), `#rrggbb`, when the person has no picture.
+  string identicon_bg = 4;
+  // Unix seconds of the last change, for caching.
+  int64 updated_at = 5;
+}
+
+message AvatarRequest {
+  string username = 1;
+  bytes sha256 = 2;
+}
+
+message AvatarResponse {
+  string mime = 1;
+  bytes data = 2;
+}

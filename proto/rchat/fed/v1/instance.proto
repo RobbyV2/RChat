@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package rchat.fed.v1;
+
+import "rchat/fed/v1/call.proto";
+
+// Feature `core`. Every instance that speaks the protocol serves it.
+service InstanceService {
+  // Exchange capabilities. The request carries the caller's own Hello, so one round trip tells
+  // both sides what the other speaks and whether it serves the caller.
+  rpc Hello(HelloRequest) returns (HelloResponse);
+}
+
+message HelloRequest {
+  Hello caller = 1;
+}
+
+// The Hello answer. `answer` holds HelloAnswer bytes; the proof signs them, so everything in them
+// is the key's own word (spec 4.3.5). Later calls within the hour rest on TLS to the host.
+message HelloResponse {
+  bytes answer = 1;
+  // A call key of the callee: Ed25519 over
+  // "rchat-fed-hello1" || 0x00 || the request's jti || the callee's origin || 0x00 || answer.
+  string proof_kid = 2;
+  bytes proof = 3;
+}
+
+message HelloAnswer {
+  Hello callee = 1;
+  // Whether the callee serves this caller, per feature it lists. Off, allow lists and blocks all
+  // read POLICY_REFUSED.
+  repeated FeaturePolicy policy = 2;
+  // The callee's clock (the database's), unix seconds, for skew compensation and notices.
+  int64 now = 3;
+}
+
+message Hello {
+  // Always "rchat".
+  string software = 1;
+  // Server version, for example "0.9.0".
+  string version = 2;
+  string instance_id = 3;
+  // `https://host`.
+  string origin = 4;
+  // Instance name, at most 64 characters.
+  string name = 5;
+  // Protocol majors served (packages `rchat.fed.vN`), for example [1].
+  repeated uint32 majors = 6;
+  // Every feature the software speaks, whether or not it is switched on.
+  repeated FeatureLevel features = 7;
+  // Bumps whenever anything above or below changes.
+  uint64 rev = 8;
+  Limits limits = 9;
+  // Thumbprints of the keys that may sign calls, proofs and endorsements (a subset of the JWKS).
+  // Other published keys only check old seals. A key a proven Hello leaves out for an hour is
+  // retired for good at the receiver (spec 4.3.5).
+  repeated string call_kids = 10;
+  // Statements by older keys that vouch for newer ones (key rotation, spec 4.3.5).
+  repeated KeyEndorsement endorsements = 11;
+  // What this instance budgets per calling host, per service; callers pace to it (spec 4.5.1).
+  repeated ServiceBudget budgets = 12;
+}
+
+// sig = Ed25519 under `by_kid`, a current call key, over
+// "rchat-fed-rotate1" || 0x00 || at (8 bytes, big endian) || origin || 0x00 || new_kid.
+message KeyEndorsement {
+  string new_kid = 1;
+  // Unix seconds.
+  int64 at = 2;
+  string by_kid = 3;
+  bytes sig = 4;
+}
+
+message ServiceBudget {
+  // A service name of spec 4.1.1 (`letters`, `invites`, ...).
+  string service = 1;
+  uint32 calls_per_minute = 2;
+}
+
+message FeaturePolicy {
+  string name = 1;
+  Policy policy = 2;
+}
+
+enum Policy {
+  POLICY_UNSPECIFIED = 0;
+  POLICY_ACCEPTED = 1;
+  POLICY_REFUSED = 2;
+}
+
+message Limits {
+  reserved 3;
+  reserved "calls_per_minute";
+  // Largest request body accepted, in KiB.
+  uint32 call_body_kib = 1;
+  // Largest single file, in MiB.
+  uint32 file_mib = 2;
+  // Calls a minute this instance grants one calling host across all services; the per-service
+  // budgets add up to at most this.
+  uint32 total_calls_per_minute = 4;
+}

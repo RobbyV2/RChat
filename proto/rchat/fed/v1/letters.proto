@@ -1,0 +1,409 @@
+syntax = "proto3";
+
+package rchat.fed.v1;
+
+// Feature `letters` (0.8.0), final for v1 and frozen (0.8.0 spec B revision 4, section 6). Built on the
+// instance protocol core (0.9.0 spec A): every call carries its CallHead, every signed thing
+// travels as bytes as authored and is stored and passed on as those bytes.
+//
+// Who decides what travels: the sender's instance. The receiver's answers are uniform and never
+// say what it stores or what a recipient holds; whatever a recipient still lacks, the receiver
+// pulls, and the sender serves it only to that recipient (spec B 6.4, R1).
+//
+// Features: `letters` (Deliver, PutObjects, Pull), `letters.files` (PullFile),
+// `letters.keys` (GetKey), `letters.sealed` (sealed objects: `kc`, `sealed`, `wraps`). A sender
+// sends a sealed object only to a host whose Hello lists `letters.sealed`; a host that doesn't
+// list it answers a call carrying one with VERSION and never shows it as a plain letter.
+//
+// Times are unix seconds everywhere, as in the core.
+service LettersService {
+  // A bundle: direct messages for listed local recipients, the earlier messages the sender
+  // chose to send, forwarded snapshots, annotations and leave notices. Always answered
+  // `accepted` when the call itself is valid.
+  rpc Deliver(DeliverRequest) returns (DeliverResponse);
+  // The rest of a bundle too large for one Deliver, in chunks, under the upload token.
+  rpc PutObjects(PutObjectsRequest) returns (PutObjectsResponse);
+  // At the sender's instance: earlier messages and snapshots one recipient of the caller lacks,
+  // served only when the recipient's host is the caller (the verified CallHead's iss) and the
+  // sender's instance delivered `via` to that recipient; otherwise every id is `missing`.
+  rpc Pull(PullRequest) returns (PullResponse);
+  // At the sender's instance: one chunk of a file of such a message, for that recipient, under
+  // the same rule.
+  rpc PullFile(PullFileRequest) returns (PullFileResponse);
+  // A local user's letter key (lane S). Uniform: absent for no key and no user.
+  rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
+}
+
+// One signed message. `core` holds LetterCore bytes exactly as the author encoded them.
+// id = base64url(SHA-256("rchat-letter2" || 0x00 || core))[0..43]; receivers recompute it and
+// use their own result.
+message LetterObject {
+  string id = 1;
+  bytes core = 2;
+  // Seal bytes for an account author; for a P2P author, the device signature
+  // Ed25519(dk, "rchat-letter-p2p-sig1" || 0x00 || core) with `certs`.
+  bytes seal = 3;
+  // A P2P author's device certificate and, for protected identities, its creation record and
+  // chain head (0.4.0 r8's introduction format).
+  bytes certs = 4;
+  // The badge binding (the 0.3.0 JWT) of a P2P author writing to accounts, issued by the
+  // instance that delivers it.
+  string binding = 5;
+}
+
+message LetterCore {
+  uint32 v = 1;
+  LetterKind kind = 2;
+  // Empty for a root, whose own id is the letter id; otherwise the root's id.
+  string cid = 3;
+  // Empty for a root.
+  string parent = 4;
+  // `user@host` (lowercase), or `p2p:<identity id>`.
+  string author = 5;
+  // The author's registration id (spec B 5.7); empty for P2P authors.
+  string uid = 6;
+  repeated LetterEntry to = 7;
+  repeated LetterEntry cc = 8;
+  string subject = 9;
+  // Empty in a sealed object.
+  string body = 10;
+  // In a sealed object: only the encrypted blobs (`sha256` of the ciphertext, `size` padded,
+  // `name` and `mime` empty); names, types and file keys are inside `sealed`.
+  repeated LetterFile files = 11;
+  // The author's clock, unix seconds; receivers clamp to their receipt time + 5 minutes.
+  int64 ts = 12;
+  // For a message: the ids of the earlier messages on its path, root first (its chain).
+  // For a forward: the ids of its Snapshots, oldest first.
+  repeated string share = 13;
+  // Roots only: 16 random bytes. Keys the P2P blinds of plain letters.
+  bytes salt = 14;
+  // Sealed objects only: HMAC-SHA256(content key K, "rchat-letter-kc1"), 32 bytes. An object is
+  // sealed when `kc` is set; a reply is sealed exactly when its parent is.
+  bytes kc = 15;
+  // Replies only: SHA-256("rchat-letter-pp2" || 0x00 || the parent's core bytes as authored ||
+  // 0x00 || author || 0x00 || uid). Proves this author holds the parent: knowing its id, or
+  // another reply's proof, is not enough to reply into a letter (R1, n1).
+  bytes parent_proof = 16;
+  // Sealed objects only: nonce (12 bytes) || AES-256-GCM ciphertext and tag of SealedContent
+  // bytes, under HKDF-SHA256(K, "rchat-letter-enc1"); `subject` and `body` are then empty.
+  bytes sealed = 17;
+}
+
+// The plaintext of a sealed message or snapshot (never seen by instances).
+message SealedContent {
+  string subject = 1;
+  string body = 2;
+  // In the order of the core's `files`.
+  repeated SealedFile files = 3;
+  // The content keys of the messages in the core's `share` (the replier's re-wraps): whoever
+  // opens this message opens its path, which it holds anyway (path closure).
+  repeated ShareKey keys = 4;
+}
+
+message SealedFile {
+  string name = 1;
+  string mime = 2;
+  // AES-256-GCM key of the blob.
+  bytes key = 3;
+  // The plaintext's size and SHA-256.
+  uint64 size = 4;
+  bytes sha256 = 5;
+}
+
+message ShareKey {
+  string id = 1;
+  // That message's content key K, 32 bytes.
+  bytes key = 2;
+}
+
+// The plaintext of a sealed annotation, under the target's HKDF-SHA256(K, "rchat-letter-enc1").
+message SealedAnnotation {
+  string subject = 1;
+  string body = 2;
+  string emoji = 3;
+}
+
+// One recipient's wrap of a sealed object's content key: HPKE (RFC 9180, base mode,
+// DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM) to the recipient's letter key, with
+// info "rchat-letter-wrap1" || 0x00 || object || 0x00 || recipient address.
+message KeyWrap {
+  // The sealed object (message or forward) whose K this wraps.
+  string object = 1;
+  // base64url of the recipient's X25519 letter key it is wrapped to.
+  string key = 2;
+  // The HPKE encapsulated key (32 bytes) || the ciphertext of K.
+  bytes wrap = 3;
+}
+
+enum LetterKind {
+  LETTER_KIND_UNSPECIFIED = 0;
+  LETTER_KIND_MESSAGE = 1;
+  LETTER_KIND_FORWARD = 2;
+}
+
+message LetterEntry {
+  oneof who {
+    // `user@host`, lowercase.
+    string acct = 1;
+    P2pEntry p2p = 2;
+  }
+}
+
+message P2pEntry {
+  reserved 2;
+  reserved "name";
+  // base64url(SHA-256("rchat-letter-p2p2" || 0x00 || key || 0x00 || identity id))[0..22], where
+  // key is the root's salt (plain letters) or HKDF-SHA256(root content key, "rchat-letter-blind1")
+  // (sealed letters). No name: instances never read P2P names (R8).
+  string blind = 1;
+}
+
+message LetterFile {
+  string name = 1;
+  uint64 size = 2;
+  bytes sha256 = 3;
+  string mime = 4;
+}
+
+// The instance seal of an account's message, annotation, leave notice or snapshot.
+// sig = Ed25519 under `kid` over "rchat-letter-seal2" || 0x00 || body.
+message Seal {
+  // SealBody bytes.
+  bytes body = 1;
+  // RFC 7638 thumbprint, computed by the checker from the key.
+  string kid = 2;
+  bytes sig = 3;
+}
+
+message SealBody {
+  // "msg", "ann", "leave" or "snap".
+  string typ = 1;
+  // The signer's instance origin, `https://host`; its host is the author's (the forwarder's for
+  // "snap").
+  string iss = 2;
+  // The author, `user@host`; equal to the sealed core's author (or forwarder, actor).
+  string sub = 3;
+  // The author's registration id; equal to the core's.
+  string uid = 4;
+  // The sealed object's content id.
+  string id = 5;
+}
+
+message Delivery {
+  // A local username at the callee, lowercase.
+  string to = 1;
+  Via via = 2;
+  // The id of the direct object this recipient gets.
+  string object = 3;
+  // Sealed direct objects only: this recipient's wrap of the direct object's K (BCC wraps travel
+  // only in their own Delivery). Earlier messages' keys come inside its SealedContent.
+  repeated KeyWrap wraps = 4;
+}
+
+enum Via {
+  VIA_UNSPECIFIED = 0;
+  VIA_TO = 1;
+  VIA_CC = 2;
+  VIA_BCC = 3;
+}
+
+message LetterAnnotation {
+  // base64url(SHA-256("rchat-letter-ann2" || 0x00 || core))[0..43].
+  string aid = 1;
+  // AnnotationCore bytes.
+  bytes core = 2;
+  // Seal bytes.
+  bytes seal = 3;
+  // The callee's local holders it is for: the author's known holders (edits, unsends) or the
+  // actor's witnesses (reactions). Never landed on anyone else (R2). Empty when it travels with
+  // a chain: then only an edit or unsend by the target's author, applied to whoever lands its
+  // target from this bundle; a reaction with no `to` lands nowhere.
+  repeated string to = 4;
+}
+
+message AnnotationCore {
+  uint32 v = 1;
+  AnnotationKind kind = 2;
+  string target = 3;
+  string actor = 4;
+  string emoji = 5;
+  bool on = 6;
+  string body = 7;
+  string subject = 8;
+  // Unix seconds; strictly increasing per (actor, target): the actor's instance never issues two
+  // with the same time.
+  int64 ts = 9;
+  string uid = 10;
+  // When the target is sealed: SealedAnnotation, encrypted as LetterCore.sealed under the
+  // target's K (fresh nonce); `emoji`, `body` and `subject` are then empty.
+  bytes sealed = 11;
+}
+
+enum AnnotationKind {
+  ANNOTATION_KIND_UNSPECIFIED = 0;
+  ANNOTATION_KIND_EDIT = 1;
+  ANNOTATION_KIND_RETRACT = 2;
+  ANNOTATION_KIND_REACT = 3;
+}
+
+message LeaveNotice {
+  // LeaveCore bytes.
+  bytes core = 1;
+  // Seal bytes.
+  bytes seal = 2;
+  // The callee's local holders it is for: the leaver's witnesses (R2).
+  repeated string to = 3;
+}
+
+message LeaveCore {
+  uint32 v = 1;
+  string cid = 2;
+  string actor = 3;
+  // Unix seconds.
+  int64 ts = 4;
+  string uid = 5;
+}
+
+// A forwarded message as the forwarder held it (R3): content addressed and sealed by the
+// forwarder's instance (SealBody.typ "snap").
+// id = base64url(SHA-256("rchat-letter-snap1" || 0x00 || core))[0..43].
+message Snapshot {
+  string id = 1;
+  // SnapshotCore bytes.
+  bytes core = 2;
+  bytes seal = 3;
+}
+
+message SnapshotCore {
+  uint32 v = 1;
+  // The original message's content id, author and time, as the forwarder's copy says.
+  string source = 2;
+  string author = 3;
+  // Unix seconds.
+  int64 ts = 4;
+  string subject = 5;
+  // The text as the forwarder held it, with the edits the forwarder had; empty when removed.
+  string body = 6;
+  // Only when the forwarder included files.
+  repeated LetterFile files = 7;
+  // `user@host` of the forwarder; equal to the forward's author.
+  string forwarder = 8;
+  bool removed = 9;
+  // When the forward is sealed: SealedContent (no `keys`) under the forward's K; `subject` and
+  // `body` are then empty and `files` lists the encrypted blobs.
+  bytes sealed = 10;
+}
+
+message DeliverRequest {
+  // Direct messages first, then the earlier messages the sender chose to send.
+  repeated LetterObject objects = 1;
+  reserved 2, 3;
+  reserved "share", "files";
+  repeated Delivery rcpt = 4;
+  repeated LetterAnnotation anns = 5;
+  LeaveNotice leave = 6;
+  repeated Snapshot snapshots = 7;
+  // 16 random bytes naming this bundle for PutObjects and the callee's logs.
+  bytes bundle = 8;
+  // More objects follow through PutObjects; the callee lands nothing until `last`.
+  bool more = 9;
+}
+
+message DeliverResponse {
+  // Always true when the call is valid: one uniform answer per bundle (spec B D23). Nothing
+  // here depends on what the callee stores or what its users hold or accept.
+  bool accepted = 1;
+  reserved 2, 3;
+  reserved "nonce", "need";
+  // For PutObjects when `more` was set; scoped to this caller and this bundle.
+  bytes upload = 4;
+  // Unix seconds.
+  int64 upload_expires = 5;
+}
+
+message PutObjectsRequest {
+  bytes upload = 1;
+  repeated LetterObject objects = 2;
+  reserved 3;
+  reserved "proofs";
+  repeated Snapshot snapshots = 4;
+  repeated LetterAnnotation anns = 5;
+  // The last chunk: the callee checks and lands the whole bundle.
+  bool last = 6;
+}
+
+message PutObjectsResponse {
+  reserved 1;
+  reserved "need_objects";
+  bool accepted = 2;
+}
+
+message PullRequest {
+  // `user@callerhost`, the recipient the items are for; its host must be the caller's.
+  string recipient = 1;
+  // The letter id.
+  string letter = 2;
+  // Ids of earlier messages or snapshots; at most 200.
+  repeated string objects = 3;
+  reserved 4;
+  reserved "files";
+  // The direct message the recipient got from this instance that lists them.
+  string via = 5;
+}
+
+message PullResponse {
+  repeated LetterObject objects = 1;
+  // Ids the sender's instance no longer has or won't serve for that recipient (uniform).
+  repeated string missing = 2;
+  repeated Snapshot snapshots = 3;
+  // The edits and unsends the sender's instance holds for the served objects.
+  repeated LetterAnnotation anns = 4;
+}
+
+message PullFileRequest {
+  // `user@callerhost`; its host must be the caller's.
+  string recipient = 1;
+  bytes sha256 = 2;
+  uint64 offset = 3;
+  // At most 2 MiB.
+  uint32 max = 4;
+  // The message or snapshot that lists the file.
+  string via = 5;
+}
+
+message PullFileResponse {
+  bytes data = 1;
+  uint64 size = 2;
+  // True when the sender's instance won't serve it (uniform: no file, not for this recipient,
+  // expired).
+  bool missing = 3;
+}
+
+message GetKeyRequest {
+  string username = 1;
+}
+
+message GetKeyResponse {
+  reserved 1;
+  // Absent when the user has no letter key or doesn't exist (uniform).
+  LetterKey letter_key = 2;
+}
+
+// A sealed-letters key (lane S): `binding` is LetterKeyBinding bytes as the owner encoded them;
+// sig = Ed25519(aek, "rchat-letter-key2" || 0x00 || binding), where aek is the account's 0.4.0
+// encryption identity key (m7).
+message LetterKey {
+  bytes binding = 1;
+  bytes aek = 2;
+  bytes sig = 3;
+}
+
+message LetterKeyBinding {
+  // `user@host`, lowercase.
+  string user = 1;
+  string uid = 2;
+  // X25519 public key, 32 bytes.
+  bytes pub = 3;
+  // Unix seconds.
+  int64 created = 4;
+}

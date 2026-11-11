@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package rchat.fed.v1;
+
+// Feature `reports` (0.9.0): a report about one of the callee's users, forwarded by the
+// reporter's instance. Nothing in it names the reporter: letter evidence is sent as references to
+// messages the callee itself sealed and stores, never as the cores (which list their recipients).
+service ReportsService {
+  rpc Forward(ForwardRequest) returns (ForwardResponse);
+}
+
+message ForwardRequest {
+  ReportKind kind = 1;
+  // `user@calleehost`.
+  string subject = 2;
+  ReportReason reason = 3;
+  // The reporter's own words only when they chose to include them; at most 1000 characters.
+  string note = 4;
+  // Content ids of letter messages the subject wrote (the callee looks them up in its own store
+  // and checks its own seals); at most 20.
+  repeated string message_ids = 5;
+  // Annotation ids (edits, reactions) by the subject on those messages; at most 20.
+  repeated string annotation_ids = 6;
+  // For sealed letters the reporter opened: the content keys, checked against the key commitment
+  // inside the stored core.
+  repeated SealedKey sealed_keys = 7;
+  // P2P evidence: the badge binding JWT the callee issued, and signed P2P server events authored
+  // by that identity (never P2P DM events, which would name the reporter), with device certificates.
+  string binding = 8;
+  repeated bytes p2p_events = 9;
+  // Opaque id the reporter's instance can quote later; random, unlinkable to the reporter.
+  bytes ref = 10;
+}
+
+message SealedKey {
+  string message_id = 1;
+  bytes key = 2;
+}
+
+enum ReportKind {
+  REPORT_KIND_UNSPECIFIED = 0;
+  REPORT_KIND_LETTER = 1;
+  REPORT_KIND_PROFILE = 2;
+  REPORT_KIND_P2P_BADGE = 3;
+}
+
+enum ReportReason {
+  REPORT_REASON_UNSPECIFIED = 0;
+  REPORT_REASON_SPAM = 1;
+  REPORT_REASON_HARASSMENT = 2;
+  REPORT_REASON_ILLEGAL = 3;
+  REPORT_REASON_OTHER = 4;
+}
+
+message ForwardResponse {
+  // Always true on success (uniform).
+  bool received = 1;
+}
