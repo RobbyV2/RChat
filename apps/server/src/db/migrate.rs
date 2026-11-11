@@ -111,6 +111,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("media", "ttl {INT}"),
     ("media", "kept_by TEXT"),
     ("servers", "upload_expiry_by TEXT"),
+    ("users", "username_key TEXT"),
+    ("users", "username_key_alt TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -190,11 +192,14 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 22: `media.kept_by` (a file kept longer than the default counts against its server),
 /// `servers.upload_expiry_by` (the account charged for a server's longer choice), their indexes
 /// and the indexes of the upload budget sums.
-pub const SCHEMA_VERSION: i64 = 22;
+/// 23: the look-alike keys of usernames (`users.username_key`, `users.username_key_alt`).
+pub const SCHEMA_VERSION: i64 = 23;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 17] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 19] {
     [
+        "CREATE INDEX IF NOT EXISTS idx_users_username_key ON users(username_key)",
+        "CREATE INDEX IF NOT EXISTS idx_users_username_key_alt ON users(username_key_alt)",
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_revoked ON server_passwords(revoked_at) WHERE revoked_at IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_expires ON server_passwords(expires_at) WHERE expires_at IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_used_up ON server_passwords(used_up_at) WHERE used_up_at IS NOT NULL",
@@ -288,6 +293,52 @@ async fn hash_stored_secrets(conn: &mut AnyConnection) -> anyhow::Result<()> {
         if total > 0 {
             tracing::info!("hashed {total} stored {table} rows");
         }
+    }
+    Ok(())
+}
+
+/// Stores the look-alike keys (`names::username_keys`) of usernames that have none: accounts
+/// from before the columns existed. Keyed on the stored form, so an account that was written
+/// without keys gets them on the next start. Keys made by another `names::KEY_VERSION` are all
+/// made again.
+async fn key_usernames(conn: &mut AnyConnection) -> anyhow::Result<()> {
+    const VERSION: &str = "username_key_version";
+    let current = crate::api::names::KEY_VERSION.to_string();
+    if stored_setting(conn, VERSION).await?.as_deref() != Some(current.as_str()) {
+        sqlx::query(
+            "UPDATE users SET username_key = NULL, username_key_alt = NULL WHERE username_key IS NOT NULL",
+        )
+        .execute(&mut *conn)
+        .await?;
+        store_setting(conn, VERSION, &current).await?;
+    }
+    let mut total = 0;
+    loop {
+        let names: Vec<String> =
+            sqlx::query("SELECT username FROM users WHERE username_key IS NULL LIMIT 500")
+                .fetch_all(&mut *conn)
+                .await?
+                .iter()
+                .map(|r| r.try_get(0))
+                .collect::<Result<_, _>>()?;
+        if names.is_empty() {
+            break;
+        }
+        for name in &names {
+            let (key, alt) = crate::api::names::username_keys(name);
+            sqlx::query(
+                "UPDATE users SET username_key = $1, username_key_alt = $2 WHERE username = $3",
+            )
+            .bind(key)
+            .bind(alt)
+            .bind(name)
+            .execute(&mut *conn)
+            .await?;
+        }
+        total += names.len();
+    }
+    if total > 0 {
+        tracing::info!("stored the name keys of {total} usernames");
     }
     Ok(())
 }
@@ -397,6 +448,7 @@ pub(super) async fn init_schema(
         sqlx::query(stmt).execute(&mut *conn).await?;
     }
     hash_stored_secrets(conn).await?;
+    key_usernames(conn).await?;
     sqlx::query("UPDATE server_passwords SET hash = $1 WHERE hash <> $1")
         .bind(NO_EXTRA_HASH)
         .execute(&mut *conn)

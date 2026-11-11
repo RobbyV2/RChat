@@ -3276,12 +3276,10 @@ mod tests {
         let (state, path) = temp_state("admin_create_server").await;
         let db = &state.db;
         for name in ["bob", "root"] {
-            sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, is_site_admin, created_at) VALUES($1, $1, '', 'text', 'identicon', $2, 0)")
-                .bind(name)
-                .bind(i64::from(name == "root"))
-                .execute(db)
-                .await
-                .expect("user");
+            crate::db::NewUser::plain(name)
+                .admin(name == "root")
+                .add(db)
+                .await;
         }
         let root = || Authed(crate::api::test_util::mem_user("root", true));
         let req = |body: serde_json::Value| -> Json<AdminServerReq> {
@@ -3472,11 +3470,9 @@ mod tests {
         let (state, path) = temp_state("admin_cursor").await;
         let db = &state.db;
         for n in 0..57 {
-            sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $1, '', 'text', 'identicon', 0)")
-                .bind(format!("user{n:02}"))
-                .execute(db)
-                .await
-                .expect("user");
+            crate::db::NewUser::plain(&format!("user{n:02}"))
+                .add(db)
+                .await;
             sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES($1, $1, 'user00', 0)")
                 .bind(format!("srv{n:02}"))
                 .execute(db)

@@ -60,6 +60,7 @@ ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
 base64 = "0.22"
 regex = "1"
 emojis = "0.9.1"
+# Stored username keys are made with these four (api/names.rs): raise names::KEY_VERSION when one changes.
 unicode-security = "=0.1.2"
 caseless = "=0.2.2"
 unicode-normalization = "=0.1.26"

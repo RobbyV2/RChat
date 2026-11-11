@@ -410,12 +410,11 @@ mod tests {
     async fn challenges_look_the_same_for_any_account() {
         let (state, path) = temp_state("recovery_challenge").await;
         for (name, key) in [("alice", Some(KEY)), ("bob", None)] {
-            sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, recovery_pub) VALUES($1, $1, 'x', 'text', 'identicon', 1, $2)")
-                .bind(name)
-                .bind(key)
-                .execute(&state.db)
-                .await
-                .expect("user");
+            crate::db::NewUser::plain(name)
+                .hash("x")
+                .at(1)
+                .add_recoverable(&state.db, key, None)
+                .await;
         }
         let mut nonces = Vec::new();
         for name in ["alice", "Bob", "nobody"] {
@@ -467,11 +466,11 @@ mod tests {
     }
 
     async fn nul_bytes_are_refused(state: &AppState) {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, recovery_pub) VALUES('alice', 'alice', 'x', 'text', 'identicon', 1, $1)")
-            .bind(KEY)
-            .execute(&state.db)
-            .await
-            .expect("user");
+        crate::db::NewUser::plain("alice")
+            .hash("x")
+            .at(1)
+            .add_recoverable(&state.db, Some(KEY), None)
+            .await;
         let ApiError(code, msg) = challenge_at(state, req("ali\0ce"), T)
             .await
             .err()
@@ -557,14 +556,11 @@ mod tests {
     }
 
     async fn add_hashed(state: &AppState, name: &str, hash: &str, key: Option<&str>) {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, recovery_pub, recovery_set_at) VALUES($1, $1, $2, 'text', 'identicon', 1, $3, $4)")
-            .bind(name)
-            .bind(hash)
-            .bind(key)
-            .bind(key.map(|_| 2i64))
-            .execute(&state.db)
-            .await
-            .expect("insert user");
+        crate::db::NewUser::plain(name)
+            .hash(hash)
+            .at(1)
+            .add_recoverable(&state.db, key, key.map(|_| 2i64))
+            .await;
     }
 
     async fn add_token(state: &AppState, name: &str, token: &str) {

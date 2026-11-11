@@ -433,13 +433,12 @@ mod tests {
     use crate::db::now;
 
     async fn add_user(db: &Db, name: &str, display: &str) {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, avatar_color, created_at) VALUES($1, $2, '', 'text', 'color', '#123456', $3)")
-            .bind(name)
-            .bind(display)
-            .bind(now())
-            .execute(db)
-            .await
-            .expect("insert user");
+        crate::db::NewUser::plain(name)
+            .shown(display)
+            .color("#123456")
+            .at(now())
+            .add(db)
+            .await;
     }
 
     async fn add_dm(db: &Db, a: &str, b: &str) -> i64 {

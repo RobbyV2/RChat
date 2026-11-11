@@ -975,7 +975,7 @@ mod tests {
         let (state, path) = temp_state(tag).await;
         let db = &state.db;
         for name in ["alice", "bob", "carol", "dave", "root", "erin"] {
-            exec(db, &format!("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('{name}', '{name}', '', 'text', 'identicon', 0)")).await;
+            crate::db::NewUser::plain(name).add(db).await;
         }
         exec(
             db,
@@ -2148,7 +2148,10 @@ mod tests {
         crate::api::admin::finish_purge(&state, crate::api::admin::PurgeKind::User, "bob")
             .await
             .expect("purge");
-        exec(db, "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('bob', 'Newcomer', '', 'text', 'identicon', 0)").await;
+        crate::db::NewUser::plain("bob")
+            .shown("Newcomer")
+            .add(db)
+            .await;
         let (entries, _) = page(&state, "alice", json!({})).await.expect("log");
         assert_eq!(entries.len(), 4);
         let json = serde_json::to_string(&entries).expect("json");

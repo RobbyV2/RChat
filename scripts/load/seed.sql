@@ -3,8 +3,9 @@
 \timing on
 SET synchronous_commit = off;
 
-INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at)
-SELECT 'u' || lpad(i::text, 5, '0'), 'User ' || i, (SELECT password_hash FROM users WHERE username = 'pwref'), 'text', 'identicon', 1700000000 + i
+-- username_key: what the server stores for these names (0 reads as o, 1 as l).
+INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, username_key)
+SELECT 'u' || lpad(i::text, 5, '0'), 'User ' || i, (SELECT password_hash FROM users WHERE username = 'pwref'), 'text', 'identicon', 1700000000 + i, translate('u' || lpad(i::text, 5, '0'), '01', 'ol')
 FROM generate_series(0, 4999) i;
 INSERT INTO tokens(token, username, created_at)
 SELECT 'h:' || encode(sha256(convert_to('tok-u' || lpad(i::text, 5, '0'), 'UTF8')), 'hex'), 'u' || lpad(i::text, 5, '0'), 1700000000

@@ -2015,12 +2015,11 @@ mod tests {
     }
 
     async fn add_user(db: &Db, name: &str) {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $2, '', 'text', 'identicon', 1)")
-            .bind(name)
-            .bind(name.to_uppercase())
-            .execute(db)
-            .await
-            .expect("user");
+        crate::db::NewUser::plain(name)
+            .shown(&name.to_uppercase())
+            .at(1)
+            .add(db)
+            .await;
     }
 
     async fn world(tag: &str) -> (AppState, std::path::PathBuf, i64) {
@@ -4370,10 +4369,11 @@ mod tests {
         );
         let after = seen(&state, Some("alice"), public.id).await.expect("seen");
         assert_eq!((counts(&after), after.voters), (Some(vec![0, 0, 0]), 0));
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('bob', 'New Bob', '', 'text', 'identicon', 2)")
-            .execute(db)
-            .await
-            .expect("re-register");
+        crate::db::NewUser::plain("bob")
+            .shown("New Bob")
+            .at(2)
+            .add(db)
+            .await;
         add_member(db, "rchat", "bob", 0, 0, 1).await;
         let newcomer = User {
             created_at: 2,

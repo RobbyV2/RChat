@@ -187,12 +187,7 @@ mod tests {
     use crate::api::{Authed, MaybeAuthed};
 
     async fn insert_user(db: &Db, name: &str, created_at: i64) {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, avatar_color, created_at) VALUES($1, $1, '', 'text', 'identicon', NULL, $2)")
-            .bind(name)
-            .bind(created_at)
-            .execute(db)
-            .await
-            .expect("insert user");
+        crate::db::NewUser::plain(name).at(created_at).add(db).await;
     }
 
     async fn view(

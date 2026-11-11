@@ -198,6 +198,132 @@ where
         .transpose()
 }
 
+/// The row of a new account. `username` is the lowercase name the account signs in with.
+pub struct NewUser<'a> {
+    pub username: &'a str,
+    pub display_name: &'a str,
+    pub password_hash: &'a str,
+    pub password_kind: &'a str,
+    pub avatar_kind: &'a str,
+    pub avatar_color: Option<&'a str>,
+    pub is_site_admin: bool,
+    pub created_at: i64,
+}
+
+/// Inserts an account. Every account creation goes through here: it also stores the look-alike
+/// keys of the username (`names::username_keys`) that display names are checked against. A test
+/// (`accounts_are_only_inserted_with_their_keys`) fails on any other insert into `users`.
+pub async fn insert_user<'e, E>(ex: E, user: NewUser<'_>) -> sqlx::Result<()>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Any>,
+{
+    let NewUser {
+        username,
+        display_name,
+        password_hash,
+        password_kind,
+        avatar_kind,
+        avatar_color,
+        is_site_admin,
+        created_at,
+    } = user;
+    let (key, alt) = crate::api::names::username_keys(username);
+    sqlx::query(
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, avatar_color, is_site_admin, created_at, username_key, username_key_alt) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+    )
+    .bind(username)
+    .bind(display_name)
+    .bind(password_hash)
+    .bind(password_kind)
+    .bind(avatar_kind)
+    .bind(avatar_color)
+    .bind(i64::from(is_site_admin))
+    .bind(created_at)
+    .bind(key)
+    .bind(alt)
+    .execute(ex)
+    .await?;
+    Ok(())
+}
+
+/// Accounts for tests, written the way every account is.
+#[cfg(test)]
+impl<'a> NewUser<'a> {
+    /// `username` shown as itself, with no password and an identicon, created at 0.
+    pub(crate) fn plain(username: &'a str) -> Self {
+        Self {
+            username,
+            display_name: username,
+            password_hash: "",
+            password_kind: "text",
+            avatar_kind: "identicon",
+            avatar_color: None,
+            is_site_admin: false,
+            created_at: 0,
+        }
+    }
+
+    pub(crate) fn shown(self, display_name: &'a str) -> Self {
+        Self {
+            display_name,
+            ..self
+        }
+    }
+
+    pub(crate) fn hash(self, password_hash: &'a str) -> Self {
+        Self {
+            password_hash,
+            ..self
+        }
+    }
+
+    pub(crate) fn kind(self, password_kind: &'a str) -> Self {
+        Self {
+            password_kind,
+            ..self
+        }
+    }
+
+    pub(crate) fn color(self, color: &'a str) -> Self {
+        Self {
+            avatar_kind: "color",
+            avatar_color: Some(color),
+            ..self
+        }
+    }
+
+    pub(crate) fn admin(self, is_site_admin: bool) -> Self {
+        Self {
+            is_site_admin,
+            ..self
+        }
+    }
+
+    pub(crate) fn at(self, created_at: i64) -> Self {
+        Self { created_at, ..self }
+    }
+
+    pub(crate) async fn add<'e, E>(self, ex: E)
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Any>,
+    {
+        insert_user(ex, self).await.expect("user");
+    }
+
+    /// Adds the account with a recovery key, which the app sets through its own endpoint.
+    pub(crate) async fn add_recoverable(self, db: &Db, key: Option<&str>, set_at: Option<i64>) {
+        let username = self.username;
+        self.add(db).await;
+        sqlx::query("UPDATE users SET recovery_pub = $1, recovery_set_at = $2 WHERE username = $3")
+            .bind(key)
+            .bind(set_at)
+            .bind(username)
+            .execute(db)
+            .await
+            .expect("recovery key");
+    }
+}
+
 pub async fn setting_on<'e, E>(ex: E, key: &str) -> sqlx::Result<bool>
 where
     E: sqlx::Executor<'e, Database = sqlx::Any>,

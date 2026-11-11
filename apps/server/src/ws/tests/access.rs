@@ -16,7 +16,10 @@ use crate::ws::filter::{on_event, wants};
 #[tokio::test]
 async fn reauthorize_drops_revoked_access() {
     let (state, path) = crate::api::test_util::temp_state("ws_reauthorize").await;
-    exec(&state.db, "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, is_site_admin, created_at) VALUES('alice', 'alice', '', 'text', 'identicon', 0, 1)").await;
+    crate::db::NewUser::plain("alice")
+        .at(1)
+        .add(&state.db)
+        .await;
     exec(&state.db, "INSERT INTO servers(name, display_name, password_hash, created_at) VALUES('vault', 'vault', 'hash', 1)").await;
     exec(
         &state.db,

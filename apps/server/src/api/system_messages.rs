@@ -365,12 +365,11 @@ mod tests {
         let (state, path) = temp_state(tag).await;
         let db = &state.db;
         for name in ["alice", "bob", "carol", "dora", "erin", "frank"] {
-            sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $2, '', 'text', 'identicon', 1)")
-                .bind(name)
-                .bind(name.to_uppercase())
-                .execute(db)
-                .await
-                .expect("user");
+            crate::db::NewUser::plain(name)
+                .shown(&name.to_uppercase())
+                .at(1)
+                .add(db)
+                .await;
         }
         exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 1)").await;
         add_member(db, "club", "alice", 1, 0, 1).await;
@@ -866,11 +865,7 @@ mod tests {
         let db = &state.db;
         for n in 0..SERVER_NOTICES_MAX + 5 {
             let name = format!("wave{n}");
-            sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $1, '', 'text', 'identicon', 1)")
-                .bind(&name)
-                .execute(db)
-                .await
-                .expect("user");
+            crate::db::NewUser::plain(&name).at(1).add(db).await;
             join(&state, &name, "club").await.expect("join");
         }
         assert_eq!(

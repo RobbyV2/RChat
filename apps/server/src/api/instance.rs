@@ -640,10 +640,10 @@ mod tests {
             verifier.verify(&foreign, "https://b.example", None).await,
             Err(VerifyError::UnknownKey)
         );
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('old@name', 'old@name', 'x', 'text', 'identicon', 0)")
-            .execute(&state.db)
-            .await
-            .unwrap();
+        crate::db::NewUser::plain("old@name")
+            .hash("x")
+            .add(&state.db)
+            .await;
         sqlx::query(
             "INSERT INTO tokens(token, username, created_at) VALUES('h:c49fea7425fa7f8699897a97c159c6690267d9003bb78c53fafa8fc15c325d84', 'old@name', 0)",
         )
@@ -968,10 +968,10 @@ mod tests {
         )
         .await;
 
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('old@name', 'old@name', 'x', 'text', 'identicon', 0)")
-            .execute(&state.db)
-            .await
-            .unwrap();
+        crate::db::NewUser::plain("old@name")
+            .hash("x")
+            .add(&state.db)
+            .await;
         sqlx::query(
             "INSERT INTO tokens(token, username, created_at) VALUES('h:c49fea7425fa7f8699897a97c159c6690267d9003bb78c53fafa8fc15c325d84', 'old@name', 0)",
         )

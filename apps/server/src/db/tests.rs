@@ -3695,6 +3695,213 @@ async fn instance_audit_is_added_to_an_old_database() {
     }
 }
 
+const OLD_USER: &str = "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES";
+
+async fn old_username_keys_db(db: &Db) {
+    for stmt in [
+        "DROP INDEX idx_users_username_key".to_string(),
+        "DROP INDEX idx_users_username_key_alt".to_string(),
+        "ALTER TABLE users DROP COLUMN username_key".to_string(),
+        "ALTER TABLE users DROP COLUMN username_key_alt".to_string(),
+        "UPDATE settings SET value = '22' WHERE key = 'schema_version'".to_string(),
+        format!("{OLD_USER}('alice', 'Alice', 'a-hash', 'text', 'identicon', 7)"),
+        format!("{OLD_USER}('carol', 'alice', 'c-hash', 'words', 'identicon', 8)"),
+        format!("{OLD_USER}('b\u{43e}b', 'B\u{43e}b', 'b-hash', 'text', 'identicon', 9)"),
+        format!("{OLD_USER}('\u{2110}an', '\u{2110}an', 'i-hash', 'text', 'identicon', 10)"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(db)
+            .await
+            .expect(&stmt);
+    }
+}
+
+async fn upgraded_username_keys_db(db: &Db) {
+    let users = sqlx::query("SELECT username, display_name, password_hash, password_kind, created_at, username_key, username_key_alt FROM users WHERE created_at BETWEEN 7 AND 10 ORDER BY created_at")
+        .fetch_all(db)
+        .await
+        .expect("users");
+    type Kept = (
+        String,
+        String,
+        String,
+        String,
+        i64,
+        Option<String>,
+        Option<String>,
+    );
+    let kept: Vec<Kept> = users
+        .iter()
+        .map(|r| {
+            (
+                r.try_get(0).expect("username"),
+                r.try_get(1).expect("display_name"),
+                r.try_get(2).expect("password_hash"),
+                r.try_get(3).expect("password_kind"),
+                r.try_get(4).expect("created_at"),
+                r.try_get(5).expect("username_key"),
+                r.try_get(6).expect("username_key_alt"),
+            )
+        })
+        .collect();
+    let s = |v: &str| v.to_string();
+    assert_eq!(
+        kept,
+        vec![
+            (
+                s("alice"),
+                s("Alice"),
+                s("a-hash"),
+                s("text"),
+                7,
+                Some(s("alice")),
+                None
+            ),
+            (
+                s("carol"),
+                s("alice"),
+                s("c-hash"),
+                s("words"),
+                8,
+                Some(s("carol")),
+                None
+            ),
+            (
+                s("b\u{43e}b"),
+                s("B\u{43e}b"),
+                s("b-hash"),
+                s("text"),
+                9,
+                Some(s("bob")),
+                None
+            ),
+            (
+                s("\u{2110}an"),
+                s("\u{2110}an"),
+                s("i-hash"),
+                s("text"),
+                10,
+                Some(s("ian")),
+                Some(s("lan"))
+            ),
+        ]
+    );
+    let carol = get_user(db, "carol").await.expect("load").expect("carol");
+    assert_eq!(carol.display_name, "alice", "a name from before the rule");
+    for index in ["idx_users_username_key", "idx_users_username_key_alt"] {
+        let sql = match is_sqlite(db) {
+            true => format!(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = '{index}'"
+            ),
+            false => format!(
+                "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = '{index}'"
+            ),
+        };
+        assert_eq!(count(db, &sql).await, 1, "{index}");
+    }
+    for (name, me, taken) in [
+        ("Alice", "carol", true),
+        ("Bob", "carol", true),
+        ("Ian", "carol", true),
+        ("lan", "carol", true),
+        ("alice", "alice", false),
+        ("Erin", "carol", false),
+    ] {
+        assert_eq!(
+            crate::api::names::passes_for_another(db, name, me)
+                .await
+                .expect("lookup"),
+            taken,
+            "{name} for {me}"
+        );
+    }
+    assert_eq!(
+        count(
+            db,
+            "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+        )
+        .await,
+        SCHEMA_VERSION
+    );
+}
+
+async fn username_keys_upgrade(url: &str) {
+    let db = open(Some(url)).await.expect("open");
+    old_username_keys_db(&db).await;
+    close(&db).await;
+    for _ in 0..2 {
+        let db = open(Some(url)).await.expect("upgrade");
+        upgraded_username_keys_db(&db).await;
+        close(&db).await;
+    }
+    let db = open(Some(url)).await.expect("open");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "{OLD_USER}('dave', 'Dave', 'd-hash', 'text', 'identicon', 11)"
+    )))
+    .execute(&db)
+    .await
+    .expect("an account written without keys");
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM users WHERE username = 'dave' AND username_key IS NULL AND username_key_alt IS NULL"
+        )
+        .await,
+        1
+    );
+    close(&db).await;
+    let db = open(Some(url)).await.expect("restart");
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM users WHERE username = 'dave' AND username_key = 'dave' AND username_key_alt IS NULL"
+        )
+        .await,
+        1
+    );
+    upgraded_username_keys_db(&db).await;
+    // Keys made by the current rule are left alone; keys of another version are made again.
+    let stale = "UPDATE users SET username_key = 'stale', username_key_alt = 'stale' WHERE username = 'dave'";
+    let kept = "SELECT COUNT(*) FROM users WHERE username = 'dave' AND username_key = 'stale' AND username_key_alt = 'stale'";
+    let made = "SELECT COUNT(*) FROM users WHERE username = 'dave' AND username_key = 'dave' AND username_key_alt IS NULL";
+    let version = format!(
+        "SELECT COUNT(*) FROM settings WHERE key = 'username_key_version' AND value = '{}'",
+        crate::api::names::KEY_VERSION
+    );
+    assert_eq!(count(&db, &version).await, 1);
+    sqlx::query(stale).execute(&db).await.expect("stale keys");
+    close(&db).await;
+    let db = open(Some(url)).await.expect("same version");
+    assert_eq!(count(&db, kept).await, 1);
+    sqlx::query("UPDATE settings SET value = '0' WHERE key = 'username_key_version'")
+        .execute(&db)
+        .await
+        .expect("an older version");
+    close(&db).await;
+    let db = open(Some(url)).await.expect("another version");
+    assert_eq!((count(&db, made).await, count(&db, &version).await), (1, 1));
+    upgraded_username_keys_db(&db).await;
+    close(&db).await;
+}
+
+#[tokio::test]
+async fn username_keys_are_added_to_an_old_database() {
+    const { assert!(SCHEMA_VERSION >= 23) };
+    let path = crate::db::temp_db_path("username_keys_upgrade");
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    username_keys_upgrade(path.to_str().expect("path")).await;
+    wipe();
+    if let Some(pg) = crate::api::test_util::pg_temp("username_keys_upgrade").await {
+        username_keys_upgrade(&pg.url).await;
+        drop(pg);
+    }
+}
+
 #[tokio::test]
 async fn open_with_uses_the_configured_options() {
     let path = temp_db_path("open_with");
@@ -5230,7 +5437,7 @@ async fn has_column(db: &Db, table: &str, column: &str) -> bool {
     count(db, &sql).await > 0
 }
 
-/// A schema 22 database (the look-alike keys of usernames, from the lane that takes 22): alice's
+/// A schema 21 database, before kept files were counted: alice's
 /// `club` keeps files until removed, `den`, whose creator has no account, for a week, with
 /// files kept under that schema (one forwarded to `plain`, one from a webhook), files at the
 /// default and one in a DM. `heir` keeps files too, but its creator's name was registered again
@@ -5381,7 +5588,7 @@ async fn upgraded_kept_db(db: &Db) {
         )
         .await,
         4,
-        "the columns of schema 22 are left as they were"
+        "the look-alike key columns are left as they were"
     );
     for (id, server) in [
         ("a", Some("club")),

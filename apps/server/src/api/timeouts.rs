@@ -447,7 +447,7 @@ mod tests {
         let (state, path) = temp_state(tag).await;
         let db = &state.db;
         for name in ["alice", "mo", "bob", "carol", "dave", "root"] {
-            exec(db, &format!("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('{name}', '{name}', '', 'text', 'identicon', 0)")).await;
+            crate::db::NewUser::plain(name).add(db).await;
         }
         exec(
             db,

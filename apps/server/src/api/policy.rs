@@ -432,12 +432,10 @@ mod tests {
     use crate::state::AppState;
 
     async fn add_user(db: &Db, username: &str, site_admin: bool) {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, is_site_admin, created_at) VALUES($1, $1, '', 'text', 'identicon', $2, 0)")
-            .bind(username)
-            .bind(i64::from(site_admin))
-            .execute(db)
-            .await
-            .expect("insert user");
+        crate::db::NewUser::plain(username)
+            .admin(site_admin)
+            .add(db)
+            .await;
     }
 
     async fn exec(db: &Db, sql: &str) {

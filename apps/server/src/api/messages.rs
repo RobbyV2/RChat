@@ -3814,13 +3814,11 @@ mod tests {
     }
 
     async fn add_user(db: &Db, name: &str, display: &str) {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, avatar_color, created_at) VALUES($1, $2, '', 'text', 'identicon', NULL, $3)")
-            .bind(name)
-            .bind(display)
-            .bind(now())
-            .execute(db)
-            .await
-            .expect("insert user");
+        crate::db::NewUser::plain(name)
+            .shown(display)
+            .at(now())
+            .add(db)
+            .await;
     }
 
     async fn insert(
@@ -8601,11 +8599,14 @@ mod tests {
         let c = format!("c{cid}");
         add_user(db, "boss", "boss").await;
         add_member(db, "rchat", "boss", 1, 0, 1).await;
-        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < $1) INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) SELECT 'u' || i, 'u' || i, '', 'text', 'identicon', 1 FROM n")
-            .bind(MEMBERS)
-            .execute(db)
-            .await
-            .expect("users");
+        let mut tx = db.begin().await.expect("begin");
+        for i in 1..=MEMBERS {
+            crate::db::NewUser::plain(&format!("u{i}"))
+                .at(1)
+                .add(&mut *tx)
+                .await;
+        }
+        tx.commit().await.expect("users");
         sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < $1) INSERT INTO members(server, username, is_admin, perms, joined_at) SELECT 'rchat', 'u' || i, 0, 0, 1 FROM n")
             .bind(MEMBERS)
             .execute(db)

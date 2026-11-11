@@ -351,12 +351,11 @@ mod tests {
     }
 
     async fn add_user(db: &Db, name: &str) {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $2, '', 'text', 'identicon', 1)")
-            .bind(name)
-            .bind(name.to_uppercase())
-            .execute(db)
-            .await
-            .expect("user");
+        crate::db::NewUser::plain(name)
+            .shown(&name.to_uppercase())
+            .at(1)
+            .add(db)
+            .await;
     }
 
     async fn post(db: &Db, cid: Option<i64>, dm: Option<i64>, author: &str, at: i64) -> i64 {

@@ -18,6 +18,7 @@ pub mod instance;
 pub mod instance_audit;
 pub mod media;
 pub mod messages;
+pub mod names;
 pub mod openapi;
 pub mod passwords;
 pub mod pings;
@@ -2624,11 +2625,7 @@ mod tests {
                 .is_err()
         );
         for name in ["alice", "bob"] {
-            sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $1, '', 'text', 'identicon', 0)")
-                .bind(name)
-                .execute(&state.db)
-                .await
-                .expect("user");
+            crate::db::NewUser::plain(name).add(&state.db).await;
         }
         let media_seq = std::sync::atomic::AtomicU8::new(0);
         let upload = |filename: &str| {
@@ -2952,10 +2949,7 @@ mod tests {
     async fn a_token_lookup_that_fails_is_503_not_401() {
         let (state, path) = temp_state("auth_unavailable").await;
         let db = &state.db;
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('bob', 'bob', 'x', 'text', 'identicon', 0)")
-            .execute(db)
-            .await
-            .expect("user");
+        crate::db::NewUser::plain("bob").hash("x").add(db).await;
         sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, 'bob', 0)")
             .bind(crate::db::secret_key("tok-bob"))
             .execute(db)

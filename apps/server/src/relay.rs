@@ -2674,13 +2674,7 @@ mod tests {
         }
 
         async fn add_user(db: &crate::db::Db, name: &str) {
-            sqlx::query(
-                "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES ($1, $1, 'x', 'text', 'identicon', 0)",
-            )
-            .bind(name)
-            .execute(db)
-            .await
-            .expect("user");
+            crate::db::NewUser::plain(name).hash("x").add(db).await;
         }
 
         async fn until(what: &str, check: impl Fn() -> bool) {

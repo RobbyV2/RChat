@@ -921,7 +921,11 @@ mod tests {
     async fn club(state: &AppState) -> i64 {
         let db = &state.db;
         for name in ["alice", "bob", "carol"] {
-            exec(db, &format!("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('{name}', '{name}', 'x', 'text', 'identicon', 1)")).await;
+            crate::db::NewUser::plain(name)
+                .hash("x")
+                .at(1)
+                .add(db)
+                .await;
         }
         exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 1)").await;
         exec(db, "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('hidden', 'Hidden', 'alice', 'x', 1)").await;

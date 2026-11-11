@@ -1313,12 +1313,11 @@ mod tests {
     use crate::fanout::Topic;
 
     async fn add_user(db: &Db, name: &str, display: &str) {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $2, '', 'text', 'identicon', 1)")
-            .bind(name)
-            .bind(display)
-            .execute(db)
-            .await
-            .expect("user");
+        crate::db::NewUser::plain(name)
+            .shown(display)
+            .at(1)
+            .add(db)
+            .await;
     }
 
     fn me(name: &str) -> Authed {

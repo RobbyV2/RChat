@@ -2344,12 +2344,11 @@ mod tests {
     async fn fixture(state: &AppState) -> Fixture {
         let db = &state.db;
         for (name, admin) in [("alice", 0), ("bob", 0), ("root", 1)] {
-            sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, is_site_admin, created_at) VALUES($1, $1, 'x', 'text', 'identicon', $2, 0)")
-                .bind(name)
-                .bind(admin)
-                .execute(db)
-                .await
-                .expect("user");
+            crate::db::NewUser::plain(name)
+                .hash("x")
+                .admin(admin == 1)
+                .add(db)
+                .await;
             sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, 0)")
                 .bind(crate::db::secret_key(name))
                 .bind(name)
@@ -3104,7 +3103,7 @@ mod tests {
     }
 
     async fn user(db: &Db, name: &str) {
-        exec(db, &format!("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, is_site_admin, created_at) VALUES('{name}', '{name}', 'x', 'text', 'identicon', 0, 0)")).await;
+        crate::db::NewUser::plain(name).hash("x").add(db).await;
         exec(
             db,
             &format!(

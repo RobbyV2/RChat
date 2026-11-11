@@ -1497,10 +1497,7 @@ mod tests {
     }
 
     async fn add_alice(db: &crate::db::Db) {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'alice', 'x', 'text', 'identicon', 0)")
-            .execute(db)
-            .await
-            .expect("user");
+        crate::db::NewUser::plain("alice").hash("x").add(db).await;
         sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, 'alice', 0)")
             .bind(crate::db::secret_key("tok-alice"))
             .execute(db)

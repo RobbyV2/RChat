@@ -64,11 +64,7 @@ fn set(items: &[&str]) -> HashSet<String> {
 }
 
 async fn add_user(db: &Db, name: &str) {
-    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, is_site_admin, created_at) VALUES($1, $1, '', 'text', 'identicon', 0, 1)")
-        .bind(name)
-        .execute(db)
-        .await
-        .unwrap();
+    crate::db::NewUser::plain(name).at(1).add(db).await;
 }
 
 async fn post_message(db: &Db, channel_id: i64, content: &str) -> Message {
@@ -147,11 +143,7 @@ async fn insert_id(db: &Db, sql: &'static str) -> i64 {
 }
 
 async fn add_user_row(db: &Db, name: &str) {
-    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $1, 'x', 'text', 'identicon', 0)")
-        .bind(name)
-        .execute(db)
-        .await
-        .expect("user");
+    crate::db::NewUser::plain(name).hash("x").add(db).await;
 }
 
 fn viewer(user: &str, hidden: bool) -> Access {

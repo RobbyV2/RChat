@@ -5129,12 +5129,10 @@ mod tests {
     }
 
     async fn add_user(db: &Db, username: &str, display_name: &str) {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $2, '', 'text', 'identicon', 0)")
-            .bind(username)
-            .bind(display_name)
-            .execute(db)
-            .await
-            .expect("insert user");
+        crate::db::NewUser::plain(username)
+            .shown(display_name)
+            .add(db)
+            .await;
     }
 
     async fn count(db: &Db, sql: &str) -> i64 {
@@ -5837,10 +5835,11 @@ mod tests {
     async fn members_batch_refs_and_roles() {
         let (state, path) = temp_state("members_batch").await;
         let db = &state.db;
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, avatar_color, created_at) VALUES('alice', 'Alice A', '', 'text', 'color', '#abcdef', 0)")
-            .execute(db)
-            .await
-            .expect("insert user");
+        crate::db::NewUser::plain("alice")
+            .shown("Alice A")
+            .color("#abcdef")
+            .add(db)
+            .await;
         for name in ["alice", "bob", "carol"] {
             add_member(db, "rchat", name, 0, 0, 0).await;
         }

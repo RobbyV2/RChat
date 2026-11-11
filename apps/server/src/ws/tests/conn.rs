@@ -293,11 +293,10 @@ async fn silent_sockets_close_and_addresses_are_capped() {
 async fn a_recovery_closes_the_sockets_of_old_sessions() {
     use crate::api::test_util::{PHRASE_KEY, phrase_sign};
     let (state, path, addr) = live("ws_recovery").await;
-    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, recovery_pub, recovery_set_at) VALUES('alice', 'alice', 'x', 'text', 'identicon', 0, $1, 0)")
-        .bind(PHRASE_KEY)
-        .execute(&state.db)
-        .await
-        .expect("user");
+    crate::db::NewUser::plain("alice")
+        .hash("x")
+        .add_recoverable(&state.db, Some(PHRASE_KEY), Some(0))
+        .await;
     sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, 'alice', 0)")
         .bind(crate::db::secret_key("thief-token"))
         .execute(&state.db)

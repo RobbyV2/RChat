@@ -30,6 +30,7 @@ use crate::api::messages::{
     Place, Quoted, Quotes, SendReq, attach_embeds, cannot_reply, insert_message, load_broadcast,
     load_message, partial_quote, replied,
 };
+use crate::api::names::{STAFF_NAME, hidden_char, name_keys, names_clash};
 use crate::api::pings::{
     GroupRights, PingScope, RoleRights, UserMentions, announce_counts, group_mentions_as,
     ping_message_for, pinged_by, store_group_pings,
@@ -91,7 +92,6 @@ const FIELDS_MAX: usize = 25;
 const AUTHOR_PREFIX: &str = "@webhook:";
 const UNKNOWN: &str = "Unknown webhook";
 const UNKNOWN_MESSAGE: &str = "Unknown message";
-const STAFF_NAME: &str = "instance staff";
 const MANAGE_BITS: i64 = Perm::ManageWebhooks as i64 | Perm::ManageChannels as i64;
 
 /// The events an outgoing webhook can subscribe to.
@@ -574,65 +574,6 @@ async fn manager_channel(
         ChannelKind::Text => Ok(channel),
         ChannelKind::Voice => Err(bad("Webhooks post only in text channels")),
     }
-}
-
-/// Characters a name may not hold: control, format (zero-width, bidi, soft hyphen), line and
-/// paragraph separators, and the invisible fillers that render as nothing.
-pub(crate) fn hidden_char(c: char) -> bool {
-    use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
-    matches!(
-        c.general_category(),
-        GeneralCategory::Control
-            | GeneralCategory::Format
-            | GeneralCategory::LineSeparator
-            | GeneralCategory::ParagraphSeparator
-            | GeneralCategory::PrivateUse
-            | GeneralCategory::Surrogate
-            | GeneralCategory::Unassigned
-    ) || matches!(
-        c as u32,
-        0x34f | 0x115f | 0x1160 | 0x17b4 | 0x17b5 | 0x180b..=0x180f | 0x2800 | 0x3164 | 0xffa0
-    )
-}
-
-/// What a name looks like, for comparing names: NFKC, variation selectors dropped, full case
-/// folding, whitespace collapsed, then the UTS #39 confusable skeleton (folded again), so
-/// `ALICE` in fullwidth letters, a Cyrillic a (U+0430) or a no-break space all match the plain
-/// name.
-pub fn name_key(name: &str) -> String {
-    name_keys(name)[1].clone()
-}
-
-/// The keys two names are compared by: lookalike skeletons taken both before and after case
-/// folding (capital I passes for l only before folding), with combining marks dropped so a
-/// mark stacked on a letter cannot hide the match. Two names clash when any keys are equal.
-pub fn name_keys(name: &str) -> [String; 2] {
-    use unicode_normalization::UnicodeNormalization;
-    use unicode_normalization::char::is_combining_mark;
-    let fold = |s: &str| {
-        caseless::default_case_fold_str(s)
-            .nfkc()
-            .filter(|c| !matches!(*c as u32, 0xfe00..=0xfe0f | 0xe0100..=0xe01ef))
-            .collect::<String>()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
-    let bare: String = name.nfkd().filter(|c| !is_combining_mark(*c)).collect();
-    let skeleton = |s: &str| unicode_security::skeleton(s).collect::<String>();
-    [
-        fold(&skeleton(&bare.nfkc().collect::<String>())),
-        fold(&skeleton(&fold(&bare))),
-    ]
-}
-
-fn names_clash(a: &[String; 2], b: &[String; 2]) -> bool {
-    a.iter().any(|x| b.contains(x))
-}
-
-/// Whether `name` passes for the instance staff, compared by `name_keys`.
-pub(crate) fn passes_for_staff(name: &str) -> bool {
-    names_clash(&name_keys(name), &name_keys(STAFF_NAME))
 }
 
 /// Checks a webhook name: 1 to 80 characters after trimming, no control, format or invisible
@@ -3626,12 +3567,11 @@ mod tests {
     }
 
     async fn add_user(db: &Db, name: &str, display: &str) {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $2, '', 'text', 'identicon', 1)")
-            .bind(name)
-            .bind(display)
-            .execute(db)
-            .await
-            .expect("user");
+        crate::db::NewUser::plain(name)
+            .shown(display)
+            .at(1)
+            .add(db)
+            .await;
     }
 
     async fn general(db: &Db) -> i64 {
@@ -4925,43 +4865,6 @@ mod tests {
         )
         .await;
         exec(db, "INSERT INTO user_roles(server, username, role_id) SELECT 'rchat', 'moder', id FROM roles WHERE name = 'hooks'").await;
-    }
-
-    #[test]
-    fn name_keys_see_through_lookalikes() {
-        for (a, b) in [
-            ("ＡＬＩＣＥ", "alice"),
-            ("\u{430}lice", "alice"),
-            ("Instance\u{a0}staff", "instance staff"),
-            ("Instance   Staff", "instance staff"),
-            ("ÉLODIE", "élodie"),
-            ("E\u{301}lodie", "élodie"),
-            ("0wner", "owner"),
-            ("STRASSE", "straße"),
-        ] {
-            assert_eq!(name_key(a), name_key(b), "{a} vs {b}");
-        }
-        assert_ne!(name_key("alice"), name_key("alicia"));
-        for (a, b) in [
-            ("AIice", "alice"),
-            ("lan", "Ian"),
-            ("BiII", "Bill"),
-            ("OIivia", "Olivia"),
-            ("ali\u{307}ce", "alice"),
-            ("A\u{301}lice", "alice"),
-        ] {
-            assert!(names_clash(&name_keys(a), &name_keys(b)), "{a} vs {b}");
-        }
-        assert!(!names_clash(&name_keys("alice"), &name_keys("alicia")));
-        for c in [
-            '\u{200b}', '\u{200d}', '\u{2060}', '\u{feff}', '\u{ad}', '\u{202e}', '\u{2028}',
-            '\u{3164}', '\t',
-        ] {
-            assert!(hidden_char(c), "{:?}", c);
-        }
-        for c in ['a', ' ', 'é', '☕', '\u{fe0f}'] {
-            assert!(!hidden_char(c), "{:?}", c);
-        }
     }
 
     #[tokio::test]

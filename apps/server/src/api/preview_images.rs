@@ -902,11 +902,7 @@ mod tests {
     }
 
     async fn token(db: &Db, user: &str) -> String {
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES($1, $1, '', 'text', 'identicon', 0)")
-            .bind(user)
-            .execute(db)
-            .await
-            .expect("user");
+        crate::db::NewUser::plain(user).add(db).await;
         let token = format!("tok-{user}");
         sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, 0)")
             .bind(crate::db::secret_key(&token))

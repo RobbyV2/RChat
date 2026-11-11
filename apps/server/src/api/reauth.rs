@@ -344,15 +344,12 @@ mod tests {
 
     async fn add_user(state: &AppState, name: &str, kind: &str, secret: &str, key: Option<&str>) {
         let hash = hash_password(secret).await.expect("hash");
-        sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, recovery_pub, recovery_set_at) VALUES($1, $1, $2, $3, 'identicon', 1, $4, $5)")
-            .bind(name)
-            .bind(hash)
-            .bind(kind)
-            .bind(key)
-            .bind(key.map(|_| 2i64))
-            .execute(&state.db)
-            .await
-            .expect("insert user");
+        crate::db::NewUser::plain(name)
+            .hash(&hash)
+            .kind(kind)
+            .at(1)
+            .add_recoverable(&state.db, key, key.map(|_| 2i64))
+            .await;
     }
 
     async fn session(state: &AppState, name: &str, token: &str, created_at: i64) -> Session {
