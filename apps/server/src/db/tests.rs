@@ -5042,3 +5042,163 @@ async fn a_stopped_database_is_forgotten() {
     close(&again).await;
     wipe();
 }
+
+/// A database from before a deleted account took its name off the servers it made: `gone` made
+/// `relic`, owned a webhook whose file is still charged to it and was pinged by an `@here`, and
+/// no such account exists. `reborn` made `heir` and was deleted too, but someone registered the
+/// name again later; `skewed` made `drift` on a copy whose clock ran ahead.
+async fn stale_creator_db(db: &Db) {
+    let user = |name: &str, hash: &str, at: i64| {
+        format!(
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('{name}', '{name}', '{hash}', 'text', 'identicon', {at})"
+        )
+    };
+    let server = |name: &str, creator: &str, at: i64| {
+        format!(
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('{name}', '{name}', '{creator}', {at})"
+        )
+    };
+    let hook_file = |id: &str, owner: &str| {
+        format!(
+            "INSERT INTO media(id, filename, mime, size, uploader, uploaded_at, charged_to, charged_server) VALUES('{id}', 'h.txt', 'text/plain', 1, '@webhook:1', 1, '{owner}', 'relic')"
+        )
+    };
+    let here = |content: &str, at: i64, to: &str| {
+        [
+            format!(
+                "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alive', '{content}', {at} FROM channels WHERE server = 'home'"
+            ),
+            format!(
+                "INSERT INTO group_pings(message_id, channel_id, server, kind, actor, created_at) SELECT id, channel_id, 'home', 'here', 'alive', {at} FROM messages WHERE content = '{content}'"
+            ),
+            format!(
+                "INSERT INTO here_pings(ping_id, username) SELECT g.id, u.name FROM group_pings g JOIN messages m ON m.id = g.message_id, (SELECT 'gone' AS name UNION ALL SELECT 'reborn' UNION ALL SELECT 'skewed' UNION ALL SELECT 'leaving' UNION ALL SELECT '{to}') u WHERE m.content = '{content}'"
+            ),
+        ]
+    };
+    for stmt in [
+        "DELETE FROM settings WHERE key = 'creator_cleanup_v1'".to_string(),
+        user("alive", "x", 1),
+        user("leaving", "!purging", 1),
+        user("reborn", "x", 1602),
+        user("skewed", "x", 1600),
+        server("relic", "gone", 1),
+        server("home", "alive", 1),
+        server("limbo", "leaving", 1),
+        server("heir", "reborn", 1000),
+        server("drift", "skewed", 1000),
+        hook_file("h1", "gone"),
+        hook_file("h2", "alive"),
+        hook_file("h3", "reborn"),
+        "INSERT INTO channels(server, name, created_at) VALUES('home', 'general', 1)".to_string(),
+    ]
+    .into_iter()
+    .chain(here("old", 1000, "alive"))
+    .chain(here("new", 2000, "nobody"))
+    {
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(db)
+            .await
+            .expect(&stmt);
+    }
+}
+
+async fn stale_creators_cleared(url: &str) {
+    let db = open(Some(url)).await.expect("open");
+    stale_creator_db(&db).await;
+    close(&db).await;
+    for round in 0..2 {
+        let db = open(Some(url)).await.expect("start");
+        let creator = |server: &'static str| {
+            let db = db.clone();
+            async move {
+                sqlx::query("SELECT creator FROM servers WHERE name = $1")
+                    .bind(server)
+                    .fetch_one(&db)
+                    .await
+                    .expect("server")
+                    .try_get::<Option<String>, _>(0)
+                    .expect("creator")
+            }
+        };
+        assert_eq!(
+            creator("relic").await,
+            None,
+            "start {round}: no account has that name"
+        );
+        assert_eq!(creator("home").await.as_deref(), Some("alive"));
+        assert_eq!(
+            creator("limbo").await.as_deref(),
+            Some("leaving"),
+            "an account still being deleted is cleared by its own purge"
+        );
+        assert_eq!(creator("rchat").await, None);
+        assert_eq!(
+            creator("heir").await,
+            None,
+            "start {round}: an account made after the server did not make it"
+        );
+        assert_eq!(
+            creator("drift").await.as_deref(),
+            Some("skewed"),
+            "ten minutes are left for clocks that differ between copies"
+        );
+        for (id, owner) in [("h1", None), ("h2", Some("alive")), ("h3", None)] {
+            let charged: Option<String> = sqlx::query(
+                "SELECT charged_to FROM media WHERE id = $1 AND uploader = '@webhook:1'",
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .expect("file")
+            .try_get(0)
+            .expect("charged_to");
+            assert_eq!(charged.as_deref(), owner, "start {round}: file {id}");
+        }
+        let pinged: Vec<String> = sqlx::query("SELECT m.content || ':' || h.username FROM here_pings h JOIN group_pings g ON g.id = h.ping_id JOIN messages m ON m.id = g.message_id ORDER BY 1")
+            .fetch_all(&db)
+            .await
+            .expect("here pings")
+            .iter()
+            .map(|r| r.try_get(0).expect("row"))
+            .collect();
+        assert_eq!(
+            pinged,
+            [
+                "new:leaving",
+                "new:reborn",
+                "new:skewed",
+                "old:alive",
+                "old:leaving",
+                "old:skewed"
+            ],
+            "start {round}: only pings to an account that existed then are kept"
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM settings WHERE key = 'creator_cleanup_v1'"
+            )
+            .await,
+            1
+        );
+        close(&db).await;
+    }
+}
+
+#[tokio::test]
+async fn stale_creators_are_cleared_once_on_an_old_database() {
+    let path = crate::db::temp_db_path("creator_cleanup");
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    stale_creators_cleared(path.to_str().expect("path")).await;
+    wipe();
+    if let Some(pg) = crate::api::test_util::pg_temp("creator_cleanup").await {
+        stale_creators_cleared(&pg.url).await;
+        drop(pg);
+    }
+}

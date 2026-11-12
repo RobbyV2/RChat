@@ -141,6 +141,11 @@ const BACKFILLS: &[(&str, &str, &str)] = &[
 
 const RESTRICT_BACKFILL: &str = "restrict_backfill_v1";
 
+/// Set once the names of deleted accounts were cleared from `servers.creator`, `media.charged_to`
+/// and `here_pings`: names no account has, and names registered again more than ten minutes after
+/// the row was made. Since then the purge of an account clears them with it.
+const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
+
 /// The newest schema this binary knows. Raise it with every schema change (new tables, columns,
 /// indexes or data conversions), or older binaries of this line keep starting on a database they
 /// do not understand. A database marked with a newer version was upgraded by a newer binary,
@@ -402,6 +407,26 @@ pub(super) async fn init_schema(
             .rows_affected();
         seed_setting(conn, RESTRICT_BACKFILL, "1").await?;
         tracing::info!("backfilled channels.restrict_view on {n} channels with rules");
+    }
+    if stored_setting(conn, CREATOR_CLEANUP).await?.is_none() {
+        let servers = sqlx::query("UPDATE servers SET creator = NULL WHERE creator IS NOT NULL AND NOT EXISTS(SELECT 1 FROM users u WHERE u.username = servers.creator AND u.created_at <= servers.created_at + 600)")
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+        let files = sqlx::query("UPDATE media SET charged_to = NULL WHERE charged_to IS NOT NULL AND NOT EXISTS(SELECT 1 FROM users u WHERE u.username = media.charged_to AND u.created_at <= media.uploaded_at + 600)")
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+        let pings = sqlx::query("DELETE FROM here_pings WHERE NOT EXISTS(SELECT 1 FROM users u JOIN group_pings g ON g.id = here_pings.ping_id WHERE u.username = here_pings.username AND u.created_at <= g.created_at + 600)")
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+        seed_setting(conn, CREATOR_CLEANUP, "1").await?;
+        if servers + files + pings > 0 {
+            tracing::info!(
+                "cleared the creator of {servers} servers, the owner of {files} webhook files and {pings} @here pings left by deleted accounts"
+            );
+        }
     }
     restrict_old_rules(conn).await?;
     if version < 4 {

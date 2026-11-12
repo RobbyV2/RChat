@@ -327,7 +327,8 @@ pub struct ServerSummary {
     /// The name in its original casing.
     #[schema(example = "Rustaceans")]
     pub display_name: String,
-    /// Username of the creator; `null` for the built-in `rchat` server.
+    /// Username of the creator; `null` for the built-in `rchat` server, for a server a site
+    /// admin made for someone, and once the creator's account is deleted.
     pub creator: Option<String>,
     /// Whether the signed-in user is an admin of this server.
     pub is_admin: bool,
@@ -354,7 +355,8 @@ pub struct ServerSummaryLite {
     /// The name in its original casing.
     #[schema(example = "Rustaceans")]
     pub display_name: String,
-    /// Username of the creator; `null` for the built-in `rchat` server.
+    /// Username of the creator; `null` for the built-in `rchat` server, for a server a site
+    /// admin made for someone, and once the creator's account is deleted.
     pub creator: Option<String>,
     /// Whether joining (or viewing as a non-member) needs the server password.
     pub has_password: bool,
@@ -548,7 +550,8 @@ pub struct ServerDetail {
     /// The name in its original casing.
     #[schema(example = "Rustaceans")]
     pub display_name: String,
-    /// Username of the creator; `null` for the built-in `rchat` server.
+    /// Username of the creator; `null` for the built-in `rchat` server, for a server a site
+    /// admin made for someone, and once the creator's account is deleted.
     pub creator: Option<String>,
     /// Whether joining (or viewing as a non-member) needs the server password.
     pub has_password: bool,

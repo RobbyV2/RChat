@@ -784,10 +784,12 @@ pub(crate) async fn hide_user_rows(
         "DELETE FROM interactions WHERE username = $1",
         "DELETE FROM server_bans WHERE username = $1",
         "DELETE FROM member_timeouts WHERE username = $1",
+        "DELETE FROM here_pings WHERE username = $1",
         "DELETE FROM bulk_delete_jobs WHERE username = $1",
         "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",
         "UPDATE webhooks SET creator = NULL, creator_mentions = 0 WHERE creator = $1",
         "UPDATE outgoing_webhooks SET creator = NULL WHERE creator = $1",
+        "UPDATE servers SET creator = NULL WHERE creator = $1",
     ] {
         sqlx::query(sql).bind(key).execute(&mut *tx).await?;
     }
@@ -1067,11 +1069,17 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "DELETE FROM pings WHERE username = $1",
         "DELETE FROM pings WHERE actor = $1",
         "DELETE FROM group_pings_read WHERE username = $1",
+        "DELETE FROM here_pings WHERE username = $1",
         "DELETE FROM reactions WHERE username = $1",
         "UPDATE poll_options SET added_by = NULL WHERE added_by = $1",
         "UPDATE polls SET closed_by = NULL WHERE closed_by = $1",
         "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",
         "UPDATE messages SET pinned_by = NULL WHERE pinned_by = $1",
+        "UPDATE servers SET creator = NULL WHERE creator = $1",
+        "UPDATE server_bans SET banned_by = NULL WHERE banned_by = $1",
+        "UPDATE member_timeouts SET set_by = NULL WHERE set_by = $1",
+        "UPDATE media SET uploader = NULL WHERE uploader = $1",
+        "UPDATE media SET charged_to = NULL WHERE charged_to = $1",
         "DELETE FROM read_state WHERE username = $1",
         "DELETE FROM blocks WHERE blocker = $1",
         "DELETE FROM blocks WHERE blocked = $1",
@@ -1327,6 +1335,270 @@ mod tests {
             .expect("count query")
             .try_get(0)
             .expect("count value")
+    }
+
+    /// The site admin deletes alice, who made `club` (bob is a member), banned carol from it,
+    /// timed bob out, uploaded a file, owned a webhook that posted one and was among the online
+    /// members bob's `@here` pinged. Then someone registers `alice` again and joins `club`.
+    async fn a_newcomer_takes_a_deleted_creators_name(state: AppState) -> AppState {
+        use crate::api::servers::{create_server, get_server, join_server, list_members};
+        use crate::api::test_util::mem_user;
+        use crate::api::{MaybeAuthed, Member};
+        use axum::extract::{Query, RawQuery};
+        use axum::http::HeaderMap;
+        let db = &state.db;
+        let root = || Authed(mem_user("root", true));
+        for name in ["root", "alice", "bob", "dora", "erin"] {
+            let _ = reg(&state, name).await.expect("register");
+        }
+        let user = |name: &'static str| {
+            let db = db.clone();
+            async move { get_user(&db, name).await.expect("user").expect("exists") }
+        };
+        for (maker, server) in [("alice", "Club"), ("dora", "Den"), ("erin", "Eyrie")] {
+            let made = create_server(
+                State(state.clone()),
+                Authed(user(maker).await),
+                Json(serde_json::from_value(json!({ "name": server })).expect("req")),
+            )
+            .await
+            .expect("create")
+            .0;
+            assert_eq!(made.creator.as_deref(), Some(maker));
+        }
+        let _ = join_server(
+            State(state.clone()),
+            Authed(user("bob").await),
+            Path("club".to_string()),
+            None,
+        )
+        .await
+        .expect("bob joins");
+        for sql in [
+            "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('club', 'carol', 'alice', 1)",
+            "INSERT INTO member_timeouts(server, username, until, reason, set_by, created_at) VALUES('club', 'bob', 99999999999, NULL, 'alice', 1)",
+            "INSERT INTO media(id, filename, mime, size, uploader, uploaded_at) VALUES('own', 'a.txt', 'text/plain', 1, 'alice', 99999999999)",
+            "INSERT INTO media(id, filename, mime, size, uploader, uploaded_at, charged_to, charged_server) VALUES('hook', 'h.txt', 'text/plain', 1, '@webhook:1', 99999999999, 'alice', 'club')",
+        ] {
+            sqlx::query(sql).execute(db).await.expect(sql);
+        }
+        let t = now() - 100;
+        for sql in [
+            format!("INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'bob', '@here hi', {t} FROM channels WHERE server = 'club'"),
+            format!("INSERT INTO group_pings(message_id, channel_id, server, kind, actor, created_at) SELECT id, channel_id, 'club', 'here', 'bob', {t} FROM messages WHERE content = '@here hi'"),
+            "INSERT INTO here_pings(ping_id, username) SELECT g.id, u.username FROM group_pings g, users u WHERE u.username IN ('alice', 'dora', 'erin', 'root')".to_string(),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(db)
+                .await
+                .expect(&sql);
+        }
+        let pinged = |name: &'static str| {
+            let db = db.clone();
+            async move {
+                count(
+                    &db,
+                    &format!("SELECT COUNT(*) FROM here_pings WHERE username = '{name}'"),
+                )
+                .await
+            }
+        };
+        let creator = |server: &'static str| {
+            let db = db.clone();
+            async move {
+                sqlx::query("SELECT creator FROM servers WHERE name = $1")
+                    .bind(server)
+                    .fetch_one(&db)
+                    .await
+                    .expect("server")
+                    .try_get::<Option<String>, _>(0)
+                    .expect("creator")
+            }
+        };
+
+        let _ = delete_user(State(state.clone()), root(), Path("alice".to_string()))
+            .await
+            .expect("delete alice");
+        assert_eq!(
+            creator("club").await,
+            None,
+            "the creator goes with the account, before the purge finishes"
+        );
+        assert_eq!(pinged("alice").await, 0, "so do the @here pings to it");
+        settle(db).await;
+        assert!(get_user(db, "alice").await.expect("q").is_none());
+        assert_eq!(pinged("alice").await, 0);
+        let _ = reg(&state, "alice").await.expect("the name is free again");
+        let newcomer = user("alice").await;
+        let joined = join_server(
+            State(state.clone()),
+            Authed(newcomer.clone()),
+            Path("club".to_string()),
+            None,
+        )
+        .await
+        .expect("the newcomer joins")
+        .0;
+        assert_eq!(joined.creator, None, "the joined server names no creator");
+        let detail = get_server(
+            State(state.clone()),
+            MaybeAuthed(Some(user("bob").await)),
+            HeaderMap::new(),
+            Path("club".to_string()),
+        )
+        .await
+        .expect("detail")
+        .0;
+        assert_eq!(detail.creator, None, "the server detail names no creator");
+        let members: Vec<Member> = list_members(
+            State(state.clone()),
+            MaybeAuthed(Some(user("bob").await)),
+            HeaderMap::new(),
+            Path("club".to_string()),
+            RawQuery(None),
+        )
+        .await
+        .expect("members")
+        .0;
+        let listed = members
+            .iter()
+            .find(|m| m.user.username == "alice")
+            .expect("the newcomer is a member");
+        assert!(
+            !listed.is_creator && !listed.is_admin,
+            "no Creator badge in the member list"
+        );
+        let profile = crate::api::users::profile(
+            State(state.clone()),
+            MaybeAuthed(Some(user("bob").await)),
+            HeaderMap::new(),
+            Path("alice".to_string()),
+            Query(serde_json::from_value(json!({ "server": "club" })).expect("query")),
+        )
+        .await
+        .expect("profile")
+        .0;
+        let card = profile.member.expect("the newcomer's membership");
+        assert!(!card.is_creator, "no Creator badge on the profile card");
+        let mine = crate::api::servers::my_servers_page(db, "alice", 0, None, 50)
+            .await
+            .expect("the newcomer's servers");
+        assert!(
+            mine.items.iter().all(|s| s.creator.is_none()),
+            "the newcomer's own server list names no creator"
+        );
+        let made = user_servers(
+            State(state.clone()),
+            root(),
+            Path("alice".to_string()),
+            Query(serde_json::from_value(json!({})).expect("query")),
+        )
+        .await
+        .expect("the site admin's list")
+        .0;
+        assert!(
+            made.is_empty(),
+            "the site admin's list shows no server made by the newcomer"
+        );
+        for (what, sql) in [
+            (
+                "who banned",
+                "SELECT COUNT(*) FROM server_bans WHERE banned_by = 'alice'",
+            ),
+            (
+                "who set a timeout",
+                "SELECT COUNT(*) FROM member_timeouts WHERE set_by = 'alice'",
+            ),
+            (
+                "an upload",
+                "SELECT COUNT(*) FROM media WHERE uploader = 'alice'",
+            ),
+            (
+                "a webhook's upload",
+                "SELECT COUNT(*) FROM media WHERE charged_to = 'alice'",
+            ),
+        ] {
+            assert_eq!(count(db, sql).await, 0, "{what} is not the newcomer's");
+        }
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*) FROM server_bans WHERE server = 'club' AND username = 'carol'"
+            )
+            .await,
+            1,
+            "the ban itself stays"
+        );
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM media WHERE id = 'hook' AND uploader = '@webhook:1' AND charged_server = 'club'").await,
+            1,
+            "the webhook's file stays its webhook's"
+        );
+        sqlx::query(
+            "UPDATE members SET joined_at = 0 WHERE server = 'club' AND username = 'alice'",
+        )
+        .execute(db)
+        .await
+        .expect("joined before the ping");
+        let unseen = crate::api::pings::group_unseen(db, "alice", &[])
+            .await
+            .expect("unseen");
+        assert!(
+            unseen.is_empty(),
+            "no @here ping addressed to the deleted account reaches the newcomer"
+        );
+        assert_eq!(pinged("root").await, 1, "other members' pings stay");
+
+        let _ = ban_user(
+            State(state.clone()),
+            root(),
+            Json(serde_json::from_value(json!({ "username": "dora" })).expect("ban")),
+        )
+        .await
+        .expect("a site-wide ban");
+        assert_eq!(creator("den").await, None, "a site-wide ban clears it too");
+        settle(db).await;
+        assert_eq!(creator("den").await, None);
+        assert_eq!(pinged("dora").await, 0);
+
+        // A delete an older build began: the account is hidden, its purge is still pending and
+        // the server still names it.
+        sqlx::query("UPDATE users SET password_hash = $1 WHERE username = 'erin'")
+            .bind(PURGING_HASH)
+            .execute(db)
+            .await
+            .expect("hidden");
+        sqlx::query("INSERT INTO pending_purges(kind, key, created_at, claimed_at) VALUES('user', 'erin', 1, 0)")
+            .execute(db)
+            .await
+            .expect("pending");
+        assert_eq!(creator("eyrie").await.as_deref(), Some("erin"));
+        assert_eq!(pinged("erin").await, 1);
+        resume_purges(&state)
+            .await
+            .expect("the purge resumed at start");
+        settle(db).await;
+        assert!(get_user(db, "erin").await.expect("q").is_none());
+        assert_eq!(
+            creator("eyrie").await,
+            None,
+            "the resumed purge clears it with the account"
+        );
+        assert_eq!(pinged("erin").await, 0, "and its @here pings");
+        state
+    }
+
+    #[tokio::test]
+    async fn a_deleted_creators_name_gives_a_newcomer_nothing() {
+        let (state, path) = temp_state("creator_cleared").await;
+        done(a_newcomer_takes_a_deleted_creators_name(state).await, path).await;
+        if let Some((state, temp)) = crate::api::test_util::pg_state("creator_cleared").await {
+            crate::api::test_util::pg_done(
+                a_newcomer_takes_a_deleted_creators_name(state).await,
+                temp,
+            )
+            .await;
+        }
     }
 
     #[tokio::test]
