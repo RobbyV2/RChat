@@ -1341,7 +1341,8 @@ async fn forwarded(
         (Some(channel), _) => {
             let server = channel.server();
             let server_name = server.lite().display_name.clone();
-            match (dest == Some(server.name()), server.lite().has_password) {
+            let hidden = server.lite().has_password || !crate::api::access::open_by_name(db).await;
+            match (dest == Some(server.name()), hidden) {
                 (true, _) => match channel.restricted(db).await? {
                     false => Some(Origin::Channel {
                         channel: channel.name().to_string(),
@@ -2494,11 +2495,9 @@ async fn search_sql(
         None => {
             conds.push("c.restrict_view = 0".to_string());
             let granted = granted_servers(db, proof).await?;
+            let public = crate::api::access::public_servers(db).await;
             match granted.is_empty() {
-                true => conds.push(
-                    "c.server IN (SELECT name FROM servers WHERE password_hash IS NULL)"
-                        .to_string(),
-                ),
+                true => conds.push(format!("c.server IN ({public})")),
                 false => {
                     let mut ph = Vec::with_capacity(granted.len());
                     for server in granted {
@@ -2506,7 +2505,7 @@ async fn search_sql(
                         ph.push(format!("${}", binds.len()));
                     }
                     conds.push(format!(
-                        "(c.server IN (SELECT name FROM servers WHERE password_hash IS NULL) OR c.server IN ({}))",
+                        "(c.server IN ({public}) OR c.server IN ({}))",
                         ph.join(", "),
                     ));
                 }
@@ -8069,6 +8068,34 @@ mod tests {
                 .expect("json")
                 .contains("Vault")
         );
+        for joining in ["invites", "nobody", "everyone"] {
+            sqlx::query("INSERT INTO settings(key, value) VALUES('server_joining', $1) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+                .bind(joining)
+                .execute(&state.db)
+                .await
+                .expect("joining");
+            Settings::forget(&state.db);
+            let named = forward(&state, to_dm, "alice", pub_msg.id)
+                .await
+                .expect("a member forwards")
+                .forward
+                .expect("ref")
+                .origin;
+            let outsider = forward(&state, to_dm, "bob", pub_msg.id).await;
+            match joining {
+                "everyone" => {
+                    assert_eq!(named.as_deref(), Some("Pub Hall"));
+                    assert!(outsider.is_ok());
+                }
+                _ => {
+                    assert_eq!(
+                        named, None,
+                        "{joining}: closed to people who aren't members, so not named"
+                    );
+                    assert!(outsider.is_err(), "{joining}: and they can't read it");
+                }
+            }
+        }
         let dm_msg = say(&state, to_dm, "bob", "dm secret").await;
         let from_dm = forward(&state, general, "alice", dm_msg.id)
             .await

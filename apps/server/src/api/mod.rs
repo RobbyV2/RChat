@@ -1223,6 +1223,10 @@ pub struct Settings {
     /// How people get into servers by themselves: `everyone`, `invites` (only with a server
     /// password or a ticket: without one, every name gets the answers of a password-protected
     /// server) or `nobody` (joining and guest access requests answer 404). Members stay.
+    /// Reading follows it: under `invites` and `nobody` a server without a password is closed
+    /// to everyone who is not a member, like a password-protected one, and server search
+    /// leaves it out. Under `nobody` a request without a password is not asked for one: it
+    /// gets the 404 of a wrong password.
     #[serde(default)]
     pub server_joining: ServerJoining,
     /// Server search. Off: `GET /api/v1/server_search` answers 404.
@@ -1444,6 +1448,14 @@ impl Settings {
     pub fn forget(db: &Db) {
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.remove(&pool_key(db));
+        }
+    }
+
+    /// Takes the settings a `settings_changed` event carries as the current ones, so what
+    /// acts on the event doesn't read the values from before it.
+    pub fn keep(db: &Db, settings: Settings) {
+        if let Ok(mut cache) = SETTINGS_CACHE.lock() {
+            cache.insert(pool_key(db), (Instant::now(), settings));
         }
     }
 

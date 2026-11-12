@@ -78,6 +78,14 @@ describe('feature switches', () => {
     ).toBe('open')
   })
 
+  test('joining reads as an older instance when it is missing', () => {
+    expect(siteSettings(older).server_joining).toBe('everyone')
+    const sent = siteSettings({ ...older, server_joining: 'invites' } as SiteSettings)
+    expect(sent.server_joining).toBe('invites')
+    const odd = siteSettings({ ...older, server_joining: 'members' } as unknown as SiteSettings)
+    expect(odd.server_joining).toBe('nobody')
+  })
+
   test('other instances stay allowed unless the instance turns them off', () => {
     expect(siteSettings(older).client_other_instances).toBe(true)
     const off = siteSettings({ ...older, client_other_instances: false } as SiteSettings)

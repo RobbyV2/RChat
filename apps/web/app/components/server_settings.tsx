@@ -31,6 +31,7 @@ import {
   rolePerms,
 } from '../lib/rules'
 import { inviteUrl } from '../lib/invite'
+import { goingPublic, joinableByName, protectedDetail, publicDetail } from '../lib/joining'
 import { enterKey } from '../lib/keys'
 import { allowListTitle, emptyAllowText } from '../lib/channel_access'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
@@ -639,6 +640,8 @@ export function ServerPasswordField({
 }) {
   const askConfirm = useStore(s => s.askConfirm)
   const siteAdmin = useStore(s => s.me?.is_site_admin ?? false)
+  const settings = useStore(s => s.settings)
+  const publicReadable = joinableByName(false, settings)
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
@@ -651,7 +654,14 @@ export function ServerPasswordField({
           const next = password.trim()
           setError(null)
           setDone(null)
-          const prompt = passwordPrompt(hasPassword, next, canRemove, siteAdmin)
+          const prompt = passwordPrompt(
+            hasPassword,
+            next,
+            canRemove,
+            siteAdmin,
+            false,
+            goingPublic(settings, publicReadable)
+          )
           const changed = hasPassword && next !== ''
           askConfirm({
             ...prompt,
@@ -699,9 +709,7 @@ export function ServerPasswordField({
         </p>
       )}
       <p className="pt-1.5 text-xs text-on-surface-variant">
-        {hasPassword
-          ? 'Joining requires the password; guests cannot view this server.'
-          : 'Anyone can join with the server name.'}
+        {hasPassword ? protectedDetail(settings, false) : publicDetail(settings, publicReadable)}
       </p>
     </>
   )

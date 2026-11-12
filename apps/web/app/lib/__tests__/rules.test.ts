@@ -313,6 +313,16 @@ describe('passwordPrompt', () => {
     expect(clear.choices.map(c => c.danger)).toEqual([false, true])
   })
 
+  test('says what the server becomes on this site when the password goes', () => {
+    const line = 'Only members will be able to open it. Nobody new can join.'
+    expect(passwordPrompt(true, '', true, false, false, line).body).toBe(
+      `${line} All other passwords are revoked.`
+    )
+    expect(passwordPrompt(true, 'pw', true, false, false, line).body).toBe(
+      'Joining will require the new password.'
+    )
+  })
+
   test('hides removal without the kick permission', () => {
     expect(values(passwordPrompt(true, 'pw', false, false))).toEqual(['keep'])
   })

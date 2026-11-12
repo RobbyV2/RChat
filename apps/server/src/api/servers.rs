@@ -1547,8 +1547,9 @@ pub(crate) async fn found_for(
 ///
 /// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
 /// password-protected server signed-in callers must be members and guests need a valid
-/// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist.
-/// General rate-limit bucket.
+/// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist. A
+/// server without a password answers the same way while the instance's `server_joining` is
+/// `invites` or `nobody`. General rate-limit bucket.
 #[utoipa::path(
     get,
     path = "/api/v1/servers/{name}",
@@ -1622,7 +1623,9 @@ pub(crate) async fn server_available(
 /// Finds up to 10 servers, ordered by name, whose name or display name matches `q`. Queries of up
 /// to 8 characters match fuzzily (the characters in order, not necessarily adjacent); longer ones
 /// match as a substring. Only servers without a password and servers the caller is a member of
-/// are searched; other password-protected servers never appear. A blank `q` returns an empty
+/// are searched; other password-protected servers never appear. While the instance's
+/// `server_joining` is `invites` or `nobody`, only servers the caller is a member of are
+/// searched. A blank `q` returns an empty
 /// list. Signed-in users may call it, and guests when guest access is on (guests only find
 /// servers without a password). Answers 404 while the instance has server search off
 /// (`server_search` in `GET /api/v1/settings`). General rate-limit bucket.
@@ -1660,13 +1663,15 @@ pub(crate) async fn search_servers(
         return Ok(Json(Vec::new()));
     }
     let fuzzy = is_fuzzy(&q);
-    let rows = sqlx::query(
-        "SELECT name, display_name, password_hash FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' AND (password_hash IS NULL OR name IN (SELECT server FROM members WHERE username = $2)) ORDER BY name LIMIT 50",
-    )
-    .bind(like_pattern(&q, fuzzy))
-    .bind(viewer.as_ref().map(|u| u.username.clone()))
-    .fetch_all(db)
-    .await?;
+    let sql = format!(
+        "SELECT name, display_name, password_hash FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' AND (name IN ({}) OR name IN (SELECT server FROM members WHERE username = $2)) ORDER BY name LIMIT 50",
+        crate::api::access::public_servers(db).await
+    );
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(like_pattern(&q, fuzzy))
+        .bind(viewer.as_ref().map(|u| u.username.clone()))
+        .fetch_all(db)
+        .await?;
     let mut out = Vec::new();
     for r in &rows {
         let name: String = r.try_get(0)?;
@@ -1877,6 +1882,9 @@ async fn invite_preview(
 /// are a member of, or (for guests) a server that a valid `X-Guest-Grant` unlocks. All other names
 /// get the same `401 Password required` without `X-Invite-Password`, also when the server does not
 /// exist. A wrong password or an unknown name gets `404 Server not found or wrong password`.
+/// While the instance's `server_joining` is `invites` or `nobody`, a server without a password
+/// answers like a password-protected one unless you are a member, and under `nobody` a request
+/// without `X-Invite-Password` gets that 404 for every name instead of the 401.
 /// Banned viewers get the card (with counts) only after they prove access, and never a preview.
 /// The preview has the last 3 top-level messages of the first text channel without permission
 /// rules.

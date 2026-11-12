@@ -1,4 +1,4 @@
-import type { Registration, SiteSettings } from './types'
+import type { Registration, ServerJoining, SiteSettings } from './types'
 
 // The site-wide feature switches (`GET /api/settings`), each a plain on or off.
 export const FEATURE_KEYS = [
@@ -48,6 +48,12 @@ const registrationOf = (value: unknown): Registration => {
   return value === 'open' || value === 'sso' || value === 'closed' ? value : 'closed'
 }
 
+// An older instance lets everyone join. A value this app does not know reads as the strictest.
+const joiningOf = (value: unknown): ServerJoining => {
+  if (typeof value !== 'string') return 'everyone'
+  return value === 'everyone' || value === 'invites' || value === 'nobody' ? value : 'nobody'
+}
+
 // The settings as clients use them: missing or malformed switches read as an older instance's.
 // Servers before 0.3.0 send no p2p_attachments: P2P was always on there.
 export const siteSettings = (s: SiteSettings): SiteSettings => {
@@ -63,6 +69,7 @@ export const siteSettings = (s: SiteSettings): SiteSettings => {
     p2p_attachments: s.p2p_attachments !== false,
     ...switches,
     registration: registrationOf(sent.registration),
+    server_joining: joiningOf(sent.server_joining),
     upload_expiry_max_days:
       Number.isInteger(sent.upload_expiry_max_days) && (sent.upload_expiry_max_days as number) >= 0
         ? (sent.upload_expiry_max_days as number)

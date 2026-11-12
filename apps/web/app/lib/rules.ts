@@ -244,7 +244,8 @@ export const passwordPrompt = (
   next: string,
   canRemove: boolean,
   siteAdmin: boolean,
-  staysProtected = false
+  staysProtected = false,
+  goingPublic = 'Anyone will be able to join with the server name.'
 ) => {
   const verb: PasswordVerb = next ? (had ? 'Change' : 'Set') : 'Clear'
   const changed = had && next !== ''
@@ -277,7 +278,7 @@ export const passwordPrompt = (
       ? 'Joining will require the new password.'
       : staysProtected
         ? 'The server stays password protected. New people need one of the other passwords.'
-        : 'Anyone will be able to join with the server name. All other passwords are revoked.',
+        : `${goingPublic} All other passwords are revoked.`,
     confirm: verb,
     choices,
   }

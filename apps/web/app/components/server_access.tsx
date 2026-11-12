@@ -6,6 +6,7 @@ import { api, home, writeLocal } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { inviteUrl } from '../lib/invite'
 import { passwordDone, passwordPrompt } from '../lib/rules'
+import { goingPublic, joinableByName, protectedDetail, publicDetail } from '../lib/joining'
 import {
   ACTIVE_MAX,
   EXPIRY_PRESETS,
@@ -540,6 +541,8 @@ export function ServerAccessSection({
 }) {
   const username = useStore(s => s.me?.username ?? null)
   const askConfirm = useStore(s => s.askConfirm)
+  const settings = useStore(s => s.settings)
+  const publicReadable = joinableByName(false, settings)
   const name = useId()
   const [data, setData] = useState<ServerPasswords | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -596,7 +599,7 @@ export function ServerAccessSection({
           }
         : {
             title: 'Make Server Public',
-            body: 'Anyone will be able to join with the server name. The permanent password is removed and every other password is revoked.',
+            body: `${goingPublic(settings, publicReadable)} The permanent password is removed and every other password is revoked.`,
             confirm: 'Make public',
             action: () =>
               void api
@@ -637,7 +640,7 @@ export function ServerAccessSection({
               checked={!data.protected}
               onChange={() => setProtected(false)}
               title="Public"
-              detail="Anyone can join with the server name."
+              detail={publicDetail(settings, publicReadable)}
               icon={<LockOpen size={14} />}
             />
             <Radio
@@ -645,7 +648,7 @@ export function ServerAccessSection({
               checked={data.protected}
               onChange={() => setProtected(true)}
               title="Password protected"
-              detail="New people need a password. The server stays hidden."
+              detail={protectedDetail(settings, false)}
               icon={<Lock size={14} />}
             />
           </div>

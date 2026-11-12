@@ -33,7 +33,7 @@ use super::{
 };
 
 use crate::api::access::{is_member, presence_mode, ws_banned, ws_live_hosted, ws_member_servers};
-use crate::api::token_row;
+use crate::api::{Settings, token_row};
 use crate::db::{now, setting_on};
 use crate::fanout::Topic;
 use crate::hub::{AddrSlot, Hub};
@@ -250,6 +250,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
         access.take_mode(mode);
     }
     access.since = since;
+    access.joining = Some(Settings::cached(&state.read()).await.server_joining);
     access.token = token.filter(|_| access.user.is_some());
     state.hub.reconcile(conn, &access.topics(), 0);
     let (sink, mut stream) = socket.split();
@@ -329,7 +330,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                     match ev {
                         WsEvent::Banned { username: banned } if Some(banned.as_str()) == access.user.as_deref() => break,
                         WsEvent::TokensRevoked { username: user } if Some(user.as_str()) == access.user.as_deref() && !access.check_token(&state.read()).await => break,
-                        WsEvent::SettingsChanged { settings } if access.user.is_none() && !settings.guests_enabled => break,
+                        WsEvent::SettingsChanged { settings } if !access.settings_changed(&state, conn, settings).await => break,
                         WsEvent::PresenceMode { username: user, appear_offline, seq } if Some(user.as_str()) == access.user.as_deref() => {
                             access.set_hidden(&state.hub, conn, *appear_offline, *seq);
                         }

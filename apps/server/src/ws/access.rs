@@ -18,7 +18,8 @@ use crate::api::access::{
     ViewRules, is_member, presence_mode, ws_channel_now, ws_channel_public, ws_channel_view,
     ws_grant_deadline, ws_member_servers, ws_server_password_hash, ws_view_under,
 };
-use crate::api::token_row;
+use crate::api::policy::ServerJoining;
+use crate::api::{Settings, token_row};
 use crate::db::{Db, now, setting_on};
 use crate::fanout::Topic;
 use crate::hub::{Epoch, Hub, PRESENCE_SERVERS_MAX, Scope};
@@ -330,6 +331,8 @@ pub(super) struct Access {
     pub(super) floors: HashMap<i64, (Instant, Option<Option<i64>>)>,
     pub(super) retry: Retry,
     pub(super) topics_dirty: bool,
+    /// How the instance lets people open servers by name, as this connection last saw it.
+    pub(super) joining: Option<ServerJoining>,
 }
 
 impl Access {
@@ -367,7 +370,32 @@ impl Access {
             floors: HashMap::new(),
             retry: Retry::new(),
             topics_dirty: false,
+            joining: None,
         }
+    }
+
+    /// The instance's settings changed. A guest's connection ends when guest access went off
+    /// (`false`). When the rule for opening servers by name changed, what the connection
+    /// follows without being a member is checked again, so it stops following servers that
+    /// closed to it. `false` also when the connection must close.
+    pub(super) async fn settings_changed(
+        &mut self,
+        state: &AppState,
+        conn: u64,
+        settings: &Settings,
+    ) -> bool {
+        if self.user.is_none() && !settings.guests_enabled {
+            return false;
+        }
+        let joining = Some(settings.server_joining);
+        if std::mem::replace(&mut self.joining, joining) == joining {
+            return true;
+        }
+        if self.subs.is_empty() && self.looking.is_none() {
+            return true;
+        }
+        Settings::keep(&state.db, *settings);
+        self.refresh(state, conn).await
     }
 
     pub(super) fn topics(&self) -> HashSet<Topic> {

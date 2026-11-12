@@ -48,7 +48,8 @@ impl ServerCreation {
 
 /// How people get into servers by themselves: `everyone` may join any server they can open,
 /// `invites` needs a server password or a ticket (a server without a password can't be joined
-/// by its name alone), `nobody` turns joining off. Members stay in their servers either way.
+/// or opened by its name alone), `nobody` turns joining off (only members open servers).
+/// Members stay in their servers either way.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ServerJoining {

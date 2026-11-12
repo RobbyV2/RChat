@@ -565,9 +565,13 @@ export interface SiteSettings {
   registration: Registration
   // Days; 0 or absent: no cap.
   upload_expiry_max_days?: number
+  // How people get into servers by themselves. Absent on older servers: everyone.
+  server_joining?: ServerJoining
 }
 
 export type Registration = 'open' | 'sso' | 'closed'
+
+export type ServerJoining = 'everyone' | 'invites' | 'nobody'
 
 export type SiteSettingsPatch = Partial<Omit<SiteSettings, 'profanity_targets'>> & {
   profanity_targets?: Partial<ProfanityTargets>

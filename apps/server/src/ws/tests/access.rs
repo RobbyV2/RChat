@@ -11,6 +11,7 @@ use crate::hub::Epoch;
 use crate::ws::access::{
     Access, Pace, SUB_FRAME_COST, SubPace, channel_gate, reauthorize, token_live,
 };
+use crate::ws::conn::subscribe;
 use crate::ws::filter::{on_event, wants};
 
 #[tokio::test]
@@ -702,4 +703,89 @@ fn subscribe_checks_are_paced_and_the_last_list_wins() {
         tab.take(|servers, _| servers.len(), now).is_some(),
         "a normal client subscribes at once"
     );
+}
+
+#[tokio::test]
+async fn a_joining_change_drops_subscriptions_to_servers_it_closed() {
+    use crate::api::Settings;
+    use crate::api::policy::ServerJoining;
+    let (state, path) = crate::api::test_util::temp_state("ws_joining_change").await;
+    for name in ["bob", "carol"] {
+        add_user(&state.db, name).await;
+    }
+    exec(
+        &state.db,
+        "INSERT INTO servers(name, display_name, created_at) VALUES('open', 'open', 1)",
+    )
+    .await;
+    exec(
+        &state.db,
+        "INSERT INTO members(server, username, joined_at) VALUES('open', 'bob', 1)",
+    )
+    .await;
+    let mut carol = Access::new(Some("carol".to_string()), false, HashSet::new());
+    let mut guest = Access::new(None, false, HashSet::new());
+    let mut bob = Access::new(Some("bob".to_string()), false, set(&["open"]));
+    for access in [&mut carol, &mut guest] {
+        subscribe(&state, 1, access, vec![s("open")], HashMap::new()).await;
+        assert_eq!(access.subs, set(&["open"]), "open to anyone by name");
+    }
+    carol.peek = Some(s("open"));
+    let same = Settings::cached(&state.db).await;
+    for access in [&mut carol, &mut guest, &mut bob] {
+        access.joining = Some(same.server_joining);
+        access.topics_dirty = false;
+        assert!(access.settings_changed(&state, 1, &same).await);
+        assert!(!access.topics_dirty, "nothing about reading changed");
+    }
+    assert_eq!(carol.subs, set(&["open"]));
+
+    for mode in [ServerJoining::Invites, ServerJoining::Nobody] {
+        for access in [&mut carol, &mut guest] {
+            access.subs = set(&["open"]);
+        }
+        exec(
+            &state.db,
+            "DELETE FROM settings WHERE key = 'server_joining'",
+        )
+        .await;
+        sqlx::query("INSERT INTO settings(key, value) VALUES('server_joining', $1)")
+            .bind(mode.as_str())
+            .execute(&state.db)
+            .await
+            .expect("set");
+        let changed = Settings {
+            server_joining: mode,
+            ..same
+        };
+        for access in [&mut carol, &mut guest, &mut bob] {
+            assert!(
+                access.settings_changed(&state, 1, &changed).await,
+                "the connection stays open"
+            );
+        }
+        assert_eq!(
+            Settings::cached(&state.db).await.server_joining,
+            mode,
+            "the event's settings are the current ones, without waiting for a reload"
+        );
+        assert!(
+            carol.subs.is_empty(),
+            "{mode:?}: a non-member stops following"
+        );
+        assert_eq!(carol.peek, None);
+        assert!(guest.subs.is_empty(), "{mode:?}: a guest stops following");
+        assert_eq!(bob.member_servers, set(&["open"]), "{mode:?}: members stay");
+        for access in [&mut carol, &mut guest] {
+            subscribe(&state, 1, access, vec![s("open")], HashMap::new()).await;
+            assert!(access.subs.is_empty(), "{mode:?}: and can't follow again");
+        }
+    }
+    let off = Settings {
+        guests_enabled: false,
+        ..same
+    };
+    assert!(!guest.settings_changed(&state, 1, &off).await, "guests off");
+    assert!(carol.settings_changed(&state, 1, &off).await);
+    crate::api::test_util::done(state, path).await;
 }
