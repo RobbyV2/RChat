@@ -31,3 +31,6 @@ temp
 # Test vectors, kept byte for byte
 crates/fed/tests/vectors
 crates/pow/tests/vectors.json
+
+# Model vectors, kept byte for byte
+crates/identity/tests/vectors.json

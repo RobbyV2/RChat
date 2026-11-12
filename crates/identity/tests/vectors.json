@@ -1,0 +1,509 @@
+{
+  "hotp": [
+    {
+      "counter": 0,
+      "code": "755224"
+    },
+    {
+      "counter": 1,
+      "code": "287082"
+    },
+    {
+      "counter": 2,
+      "code": "359152"
+    },
+    {
+      "counter": 3,
+      "code": "969429"
+    },
+    {
+      "counter": 4,
+      "code": "338314"
+    },
+    {
+      "counter": 5,
+      "code": "254676"
+    },
+    {
+      "counter": 6,
+      "code": "287922"
+    },
+    {
+      "counter": 7,
+      "code": "162583"
+    },
+    {
+      "counter": 8,
+      "code": "399871"
+    },
+    {
+      "counter": 9,
+      "code": "520489"
+    }
+  ],
+  "totp8": [
+    {
+      "t": 59,
+      "code": "94287082"
+    },
+    {
+      "t": 1111111109,
+      "code": "07081804"
+    },
+    {
+      "t": 1111111111,
+      "code": "14050471"
+    },
+    {
+      "t": 1234567890,
+      "code": "89005924"
+    },
+    {
+      "t": 2000000000,
+      "code": "69279037"
+    },
+    {
+      "t": 20000000000,
+      "code": "65353130"
+    }
+  ],
+  "verify": [
+    {
+      "code": "732303",
+      "t": 1700000015,
+      "last": -1,
+      "ok": true,
+      "step": 56666667,
+      "got": {
+        "ok": true,
+        "step": 56666667
+      }
+    },
+    {
+      "code": "732303",
+      "t": 1700000015,
+      "last": 56666667,
+      "ok": false,
+      "reason": "used",
+      "got": {
+        "ok": false,
+        "reason": "used"
+      }
+    },
+    {
+      "code": "253938",
+      "t": 1700000015,
+      "last": -1,
+      "ok": false,
+      "reason": "wrong",
+      "got": {
+        "ok": false,
+        "reason": "wrong"
+      }
+    },
+    {
+      "code": "921300",
+      "t": 1700000015,
+      "last": -1,
+      "ok": true,
+      "step": 56666666,
+      "got": {
+        "ok": true,
+        "step": 56666666
+      }
+    }
+  ],
+  "base32": {
+    "secret_hex": "3132333435363738393031323334353637383930",
+    "text": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+  },
+  "otpauth": "otpauth://totp/Chat%20(chat.example.com):alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Chat%20(chat.example.com)&algorithm=SHA1&digits=6&period=30",
+  "pkce": {
+    "verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+    "challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+  },
+  "recovery_key": {
+    "pepper_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "uid": 42,
+    "code": "abcdefghjk",
+    "key": "r1:514d104c39f1b9e524e7363e0ac6f7862d1d4e40c26f85dab3d3fb6f8b928bee"
+  },
+  "user_code_key": {
+    "pepper_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "code": "WDJBMJHT",
+    "key": "u1:f9b73cb1156043d33c90be821510e8935ade9c130aa55cfd275227361a81fdd7"
+  },
+  "subject": [
+    {
+      "version": 1,
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "group": "a1b2c3",
+      "uid": 1,
+      "sub": "zhxtler1AtgHOm5T1JNjrT93ZDfctqLfNT1wmoesA-I"
+    },
+    {
+      "version": 1,
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "group": "a1b2c3",
+      "uid": 2,
+      "sub": "JPXEOGQj7lBfX8167L1QaExHwONrJGLZME-D1c2uca8"
+    }
+  ],
+  "header_value": [
+    {
+      "in": "alice",
+      "out": "alice"
+    },
+    {
+      "in": "zoë",
+      "out": "zo%C3%AB"
+    },
+    {
+      "in": "100%",
+      "out": "100%25"
+    },
+    {
+      "in": "a\r\nb",
+      "out": "a%0D%0Ab"
+    }
+  ],
+  "list_value": {
+    "in": [
+      "lobby",
+      "lobby:Staff",
+      "a,b"
+    ],
+    "comma": "lobby,lobby:Staff,a%2Cb",
+    "pipe": "lobby|lobby:Staff|a,b"
+  },
+  "redirects": [
+    {
+      "registered": [
+        "http://127.0.0.1/cb"
+      ],
+      "asked": "http://127.0.0.1:5000/cb",
+      "ok": true,
+      "got": true
+    },
+    {
+      "registered": [
+        "https://a.example/cb"
+      ],
+      "asked": "https://a.example/cb/",
+      "ok": false,
+      "got": false
+    },
+    {
+      "registered": [
+        "https://a.example/cb"
+      ],
+      "asked": "https://A.example/cb",
+      "ok": false,
+      "got": false
+    }
+  ],
+  "redirect_checks": [
+    {
+      "uri": "https://a.example/cb",
+      "public": "web"
+    },
+    {
+      "uri": "http://a.example/cb",
+      "public": "Redirect URIs must use https"
+    },
+    {
+      "uri": "http://localhost/cb",
+      "public": "Use http://127.0.0.1 for local apps"
+    },
+    {
+      "uri": "com.example.app:/cb",
+      "public": "private_scheme"
+    },
+    {
+      "uri": "myapp:/cb",
+      "public": "Use https, http://127.0.0.1, or a reverse domain scheme such as com.example.app"
+    }
+  ],
+  "safe_return": [
+    {
+      "rd": "https://wiki.example.com/x",
+      "out": "https://wiki.example.com/x"
+    },
+    {
+      "rd": "https://evil.example/",
+      "out": "/"
+    },
+    {
+      "rd": "//evil",
+      "out": "/"
+    }
+  ],
+  "amr": [
+    {
+      "proofs": [
+        "pwd"
+      ],
+      "amr": [
+        "pwd"
+      ],
+      "enough_with_codes": false
+    },
+    {
+      "proofs": [
+        "pwd",
+        "totp"
+      ],
+      "amr": [
+        "mfa",
+        "otp",
+        "pwd"
+      ],
+      "enough_with_codes": true
+    },
+    {
+      "proofs": [
+        "pwd",
+        "phrase"
+      ],
+      "amr": [
+        "mfa",
+        "pwd",
+        "swk"
+      ],
+      "enough_with_codes": true
+    },
+    {
+      "proofs": [
+        "pwd",
+        "device"
+      ],
+      "amr": [
+        "pwd"
+      ],
+      "enough_with_codes": true
+    },
+    {
+      "proofs": [
+        "phrase",
+        "recovery_code"
+      ],
+      "amr": [
+        "otp",
+        "swk"
+      ],
+      "enough_with_codes": false
+    },
+    {
+      "proofs": [
+        "phrase",
+        "totp"
+      ],
+      "amr": [
+        "mfa",
+        "otp",
+        "swk"
+      ],
+      "enough_with_codes": true
+    },
+    {
+      "proofs": [
+        "recovery_code",
+        "totp"
+      ],
+      "amr": [
+        "mfa",
+        "otp"
+      ],
+      "enough_with_codes": true
+    }
+  ],
+  "sso": [
+    {
+      "mode": "rchat",
+      "amr": [
+        "pwd",
+        "mfa"
+      ],
+      "alone_with_codes": false,
+      "amr_out": [
+        "pwd"
+      ]
+    },
+    {
+      "mode": "amr",
+      "amr": [
+        "pwd"
+      ],
+      "alone_with_codes": false,
+      "amr_out": [
+        "pwd"
+      ]
+    },
+    {
+      "mode": "amr",
+      "amr": [
+        "pwd",
+        "mfa"
+      ],
+      "alone_with_codes": true,
+      "amr_out": [
+        "mfa",
+        "pwd"
+      ]
+    },
+    {
+      "mode": "provider",
+      "amr": [],
+      "alone_with_codes": true,
+      "amr_out": [
+        "mfa"
+      ]
+    }
+  ],
+  "acr": [
+    {
+      "proofs": [
+        "pwd",
+        "totp"
+      ],
+      "acr": "urn:rchat:acr:2fa"
+    },
+    {
+      "proofs": [
+        "sso"
+      ],
+      "sso": {
+        "mode": "provider",
+        "amr": []
+      },
+      "acr": "urn:rchat:acr:2fa-provider"
+    },
+    {
+      "proofs": [
+        "sso",
+        "totp"
+      ],
+      "sso": {
+        "mode": "provider",
+        "amr": []
+      },
+      "acr": "urn:rchat:acr:2fa"
+    },
+    {
+      "proofs": [
+        "sso"
+      ],
+      "sso": {
+        "mode": "amr",
+        "amr": [
+          "pwd",
+          "mfa"
+        ]
+      },
+      "acr": "urn:rchat:acr:2fa"
+    }
+  ],
+  "strip": [
+    {
+      "header": "X-RChat-User",
+      "stripped": true
+    },
+    {
+      "header": "X_RChat_User",
+      "stripped": true
+    },
+    {
+      "header": "x_rchat_user",
+      "stripped": true
+    },
+    {
+      "header": "Remote_User",
+      "stripped": true
+    },
+    {
+      "header": "X-RChat_User",
+      "stripped": true
+    },
+    {
+      "header": "X_RChat-User",
+      "stripped": true
+    },
+    {
+      "header": "X-Auth_Request-User",
+      "stripped": true
+    },
+    {
+      "header": "X-Forwarded-For",
+      "stripped": false
+    }
+  ],
+  "public_address": [
+    {
+      "ip": "93.184.216.34",
+      "public": true
+    },
+    {
+      "ip": "10.0.0.1",
+      "public": false
+    },
+    {
+      "ip": "198.18.0.1",
+      "public": false
+    },
+    {
+      "ip": "192.0.2.1",
+      "public": false
+    },
+    {
+      "ip": "ff02::1",
+      "public": false
+    },
+    {
+      "ip": "64:ff9b::a00:1",
+      "public": false
+    },
+    {
+      "ip": "64:ff9b::5db8:d822",
+      "public": true
+    },
+    {
+      "ip": "2002:a00:1::1",
+      "public": false
+    },
+    {
+      "ip": "2002:5db8:d822::1",
+      "public": true
+    },
+    {
+      "ip": "::ffff:10.0.0.1",
+      "public": false
+    },
+    {
+      "ip": "2001:db8::1",
+      "public": false
+    },
+    {
+      "ip": "2606:4700::1111",
+      "public": true
+    }
+  ],
+  "cert_bytes": {
+    "v1": "00147263686174206465766963652063657274207631640005616c6963650020303030303030303030303030303030303030303030303030303030303030303011111111111111111111111111111111111111111111111111111111111111112222222222222222222222222222222222222222222222222222222222222222000000006553f10000000003",
+    "v2": "00147263686174206465766963652063657274207632640005616c6963650020303030303030303030303030303030303030303030303030303030303030303011111111111111111111111111111111111111111111111111111111111111112222222222222222222222222222222222222222222222222222222222222222000000006553f1000000000300096170705f706978656c000b506978656c20426f617264"
+  },
+  "chat_list_bytes": "00127263686174206170702063686174732076310005616c6963650020303030303030303030303030303030303030303030303030303030303030303000000002000000006553f10000020007675f6c6f6262790002000000000000000100000000000000020004675f646d0000",
+  "scope_tokens": [
+    {
+      "token": "servers.join",
+      "ok": true
+    },
+    {
+      "token": "zoë",
+      "ok": false
+    },
+    {
+      "token": "a\"b",
+      "ok": false
+    }
+  ]
+}
