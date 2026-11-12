@@ -33,19 +33,7 @@ let requests: { method: string; url: string; body: unknown }[] = []
 let replies: (() => Response)[] = []
 const pending: ((r: Response) => void)[] = []
 
-beforeEach(() => {
-  requests = []
-  replies = []
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
-    requests.push({
-      method: init?.method ?? 'GET',
-      url: String(input),
-      body: init?.body ? JSON.parse(String(init.body)) : null,
-    })
-    const reply = replies.shift()
-    if (reply) return Promise.resolve(reply())
-    return new Promise<Response>(resolve => pending.push(resolve))
-  }) as typeof fetch
+const signedIn = () =>
   useStore.setState({
     me: me('alice', {
       servers: [{ name: 'club', display_name: 'club', creator: 'alice', is_admin: true }],
@@ -61,6 +49,22 @@ beforeEach(() => {
       }),
     },
   })
+
+beforeEach(() => {
+  resetSessionCaches()
+  requests = []
+  replies = []
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    requests.push({
+      method: init?.method ?? 'GET',
+      url: String(input),
+      body: init?.body ? JSON.parse(String(init.body)) : null,
+    })
+    const reply = replies.shift()
+    if (reply) return Promise.resolve(reply())
+    return new Promise<Response>(resolve => pending.push(resolve))
+  }) as typeof fetch
+  signedIn()
 })
 
 afterEach(() => {
@@ -145,6 +149,40 @@ describe('categories in the store', () => {
     expect(requests.map(r => r.method)).toEqual(['PUT', 'GET'])
     expect(st().servers.club.layout_version).toBe(7)
     expect(groups()).toEqual([[1, 2, 3]])
+  })
+
+  test('the moves still waiting end with the session, so the next one sends its own', async () => {
+    st().moveChannel('club', 2, null, 0)
+    st().moveChannel('club', 1, 10, 0)
+    await tick()
+    expect(requests.map(r => r.method)).toEqual(['PUT'])
+    resetSessionCaches()
+    signedIn()
+    st().moveChannel('club', 1, 10, 1)
+    await tick()
+    expect(requests.map(r => r.method)).toEqual(['PUT', 'PUT'])
+    expect(requests[1].body).toEqual({
+      version: 3,
+      uncategorized: [2],
+      categories: [{ id: 10, channels: [3, 1] }],
+    })
+    // The old session's answer arrives late and leaves the new session's move alone.
+    pending.shift()?.(json({ error: 'The channel list changed. Reload it and try again' }, 409)())
+    for (let i = 0; i < 5; i++) await tick()
+    expect(st().error).toBeNull()
+    expect(groups()).toEqual([[2], ['Games', 3, 1]])
+    pending.shift()?.(
+      json({
+        version: 4,
+        uncategorized: [2],
+        categories: [{ id: 10, name: 'Games', channels: [3, 1] }],
+      })()
+    )
+    for (let i = 0; i < 5; i++) await tick()
+    expect(st().servers.club.layout_version).toBe(4)
+    st().moveCategory('club', 10, 0)
+    await tick()
+    expect(requests.map(r => r.method)).toEqual(['PUT', 'PUT', 'PUT'])
   })
 
   test('collapsed categories are kept in the account layout', () => {

@@ -20,6 +20,7 @@ let calls: Call[] = []
 let reply: (url: string) => Response = () => new Response('[]')
 
 beforeEach(() => {
+  resetSessionCaches()
   calls = []
   g.window = {
     location: { pathname: '/', href: 'http://x/', origin: 'http://x', protocol: 'http:' },

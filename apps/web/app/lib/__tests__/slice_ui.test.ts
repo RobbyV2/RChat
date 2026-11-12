@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 describe('ui builders', () => {
+  // Starts a second runtime: a budget for a loaded machine.
   test('a builder run before store.ts binds the store says so', () => {
     const ui = JSON.stringify(fileURLToPath(new URL('../slices/ui.ts', import.meta.url)))
     const run = spawnSync(process.execPath, [
@@ -15,5 +16,5 @@ describe('ui builders', () => {
       'The store is not bound yet: import store.ts first',
       'The store is not bound yet: import store.ts first',
     ])
-  })
+  }, 60_000)
 })

@@ -72,6 +72,20 @@ export const defineAction = <A extends Args = Args>(a: Action<A>): (() => void) 
   }
 }
 
+// Test files share one registry. One that needs it empty takes every action out with this and
+// puts them back with the function it returns. The app never calls it.
+export const isolateActions = (): (() => void) => {
+  const put = (next: Map<string, { action: Action }>) => {
+    entries.clear()
+    failed.clear()
+    for (const [key, entry] of next) entries.set(key, entry)
+    changed()
+  }
+  const kept = new Map(entries)
+  put(new Map())
+  return () => put(kept)
+}
+
 export const actionById = (id: string): Action | undefined => entries.get(qualifiedId(id))?.action
 
 export const allActions = (): readonly Action[] =>

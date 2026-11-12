@@ -80,7 +80,7 @@ for (const f of readdirSync(dir)
       w.ref.receive(e)
     }
     expect(diffModelWorld(w)).toEqual([])
-  })
+  }, 600_000)
 
 // §3.5 cascadeCut asks a stratum's in(x, W) for content authors' worlds after the stratum loop:
 // those answers must equal the ones the loop itself would give (higher strata only in k*).

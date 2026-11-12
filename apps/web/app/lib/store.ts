@@ -79,10 +79,6 @@ export const eventTables = () => routed
 
 let forgetStoreSession = () => {}
 
-// Test files share one store; each one calls this when it ends so no queued read or cached
-// window reaches the next file.
-export const resetSessionCaches = () => forgetStoreSession()
-
 export const useStore = create<RChatState>()((set, get) => {
   const epochs: Record<string, number> = {}
   const loadPage = pageLoader(epochs)
@@ -489,6 +485,16 @@ export const useStore = create<RChatState>()((set, get) => {
 })
 
 bindStore(useStore)
+
+const pristine = { ...useStore.getInitialState() }
+
+// Test files share one store; each one calls this when it ends, so no state, queued read or
+// cached window reaches the next file. The app never calls it.
+export const resetSessionCaches = () => {
+  forgetStoreSession()
+  Object.assign(useStore.getInitialState(), pristine)
+  useStore.setState({ ...pristine }, true)
+}
 
 useStore.subscribe((s, prev) => {
   if (s.settings !== prev.settings) p2pGate.settings(s.settings)

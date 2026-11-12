@@ -24,6 +24,7 @@ const realWarn = console.warn
 
 afterEach(() => {
   console.warn = realWarn
+  Object.assign(globalThis, { localStorage: memoryStorage })
 })
 
 beforeEach(() => {

@@ -100,6 +100,7 @@ const server = { kind: 'server', name: 's' } as const
 const dm = { kind: 'dm', id: 4 } as const
 
 beforeEach(() => {
+  resetSessionCaches()
   ;(globalThis as { window?: unknown }).window = {
     location: { pathname: '/', href: 'http://x/', origin: 'http://x', protocol: 'http:' },
     history: { state: null, pushState: () => {}, replaceState: () => {} },
@@ -296,6 +297,7 @@ describe('desktop notifications', () => {
     st().setDesktopNotify(true)
   })
   afterEach(() => {
+    st().setDesktopNotify(false)
     setNotifier(webNotifier)
     g.document = realDocument
     useStore.setState({ streamer: false })

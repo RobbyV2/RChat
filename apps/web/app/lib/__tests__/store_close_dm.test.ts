@@ -131,4 +131,16 @@ describe('closing dms', () => {
     expect(calls.some(c => c.method === 'POST' && c.url.endsWith('/dms'))).toBe(true)
     expect(dmIds()).toEqual([1, 7, 2, 3])
   })
+
+  test('closed dms end with the session, so the next one reopens nothing', async () => {
+    await st().closeDm(3)
+    resetSessionCaches()
+    useStore.setState({ token: 'tok', me: me('alice'), dms: [dm(1, 'alice', true)] })
+    calls = []
+    await st().openDm(3)
+    await tick()
+    await tick()
+    expect(calls.filter(c => c.method === 'POST')).toEqual([])
+    expect(dmIds()).toEqual([1])
+  })
 })

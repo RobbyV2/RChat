@@ -15,7 +15,7 @@ import {
   type SectionKey,
 } from '../config_transfer'
 import type { DmSummary, ServerSummary } from '../types'
-import { me, user } from './fixtures'
+import { me, memoryStorage, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -87,6 +87,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = realFetch
+  Object.assign(globalThis, { localStorage: memoryStorage })
   ;(globalThis as { window?: unknown }).window = realWindow
   ;(globalThis as { document?: unknown }).document = realDocument
   useStore.setState({ me: null, token: null, guest: false, drafts: {} })

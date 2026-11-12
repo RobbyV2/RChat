@@ -16,7 +16,7 @@ import {
   WIRE_MAX,
 } from '../p2p/frames'
 import { LIMITS, Session, type SessionOpts } from '../p2p/session'
-import { ManualClock, pipePair, settle } from './p2p_net'
+import { ManualClock, pipePair, settle, waitFor } from './p2p_net'
 
 const device = (suffix = 0): Me & { ik: KeyPair } => {
   const ik = newKeyPair()
@@ -390,7 +390,10 @@ describe('session', () => {
       void sa.send({ t: 'text', body: `a${n}` })
       void sb.send({ t: 'text', body: `b${n}` })
     }
-    await settle()
+    await waitFor(
+      () => sa.epoch === 1 && sb.epoch === 1 && got.a.length === 6 && got.b.length === 5,
+      'both sides on the new keys with every message in'
+    )
     expect(sa.epoch).toBe(1)
     expect(sb.epoch).toBe(1)
     expect(got.b).toEqual(['a0', 'a1', 'a2', 'a3', 'a4'])

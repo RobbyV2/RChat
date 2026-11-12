@@ -186,10 +186,10 @@ describe('presence helpers', () => {
 describe('presence events in the store', () => {
   let replies: Member[][] = []
   beforeEach(() => {
+    resetSessionCaches()
     replies = []
     globalThis.fetch = (async () =>
       new Response(JSON.stringify(replies.shift() ?? []), { status: 200 })) as typeof fetch
-    useStore.setState({ servers: {}, members: {}, memberInfo: {}, interacted: {} })
   })
   afterEach(() => {
     globalThis.fetch = realFetch

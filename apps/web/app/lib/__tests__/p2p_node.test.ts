@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { Hub, makeNode, ManualClock, settle, waitFor } from './p2p_net'
+import { Hub, makeNode, ManualClock, settle, waitFor, type PipeEnd } from './p2p_net'
 import {
   P2pNode,
   ELSEWHERE,
@@ -43,6 +43,14 @@ const befriend = async (a: P2pNode, b: P2pNode, clock: ManualClock, intro = 'Hi 
     'mutual presence'
   )
   void clock
+}
+
+// `n` keeps a session with `peer`: both said hello, its pipe is open (a refused one is read to
+// its end after the pipe closed), and no other session of `n` is still starting.
+const kept = (n: P2pNode, peer: P2pNode) => {
+  const starting = (n as unknown as { pending: Set<Session> }).pending
+  const pipeOf = (s: Session) => (s as unknown as { opts: { pipe: PipeEnd } }).opts.pipe
+  return starting.size === 0 && n.readySessions(peer.ik).some(s => pipeOf(s).closed === false)
 }
 
 describe('P2P node', () => {
@@ -206,11 +214,11 @@ describe('P2P node', () => {
     // Bob resets with succession: Alice moves the contact and drops verification.
     const oldIk = b.node.ik
     await b.node.resetIdentity()
-    // The first session after the reset ends early (Alice's hello can't know the new key yet);
-    // Bob dials again, without waiting for the backoff.
+    // The first session after the reset ends early (Alice's hello can't know the new key yet,
+    // so Bob refuses it); Bob dials again, without waiting for the backoff, until both keep one.
     await waitFor(() => {
       b.node.schedule(true)
-      return a.node.presence(b.node.ik) === 'online'
+      return kept(a.node, b.node) && kept(b.node, a.node)
     }, 'presence after the reset')
     expect(a.node.contact(oldIk)).toBeUndefined()
     const moved = a.node.contact(b.node.ik)

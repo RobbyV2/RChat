@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test'
 import { Copy, Trash2 } from 'lucide-react'
 import { ctxFor, currentList, paletteCtx, refreshCtx } from '../actions/ctx'
 import { menuItems, openActionMenu } from '../actions/menu'
@@ -8,6 +8,7 @@ import {
   actionsFor,
   allActions,
   defineAction,
+  isolateActions,
   qualifiedId,
   runAction,
   subscribeActions,
@@ -23,7 +24,15 @@ import type { RChatState } from '../store_types'
 import { me, member, msg, paged, serverDetail, user } from './fixtures'
 import { importsOf, packagesOf } from './import_graph'
 
-afterAll(resetSessionCaches)
+// Other files leave the app's actions registered; these tests take a registry of their own.
+let restoreActions = () => {}
+beforeAll(() => {
+  restoreActions = isolateActions()
+})
+afterAll(() => {
+  restoreActions()
+  resetSessionCaches()
+})
 
 const real = (({ askConfirm, openContextMenu }) => ({ askConfirm, openContextMenu }))(
   useStore.getState()
@@ -89,6 +98,26 @@ test('defineAction keeps registration order, ignores a duplicate id and unregist
   offs.shift()!()
   expect(actionById('t_a')).toBeUndefined()
   expect(allActions().map(a => a.id)).toEqual(['t_b'])
+})
+
+test('isolateActions empties the registry, and its return puts the earlier actions back', () => {
+  def({ id: 't_kept', title: 'Kept', scope: 'global', ...on })
+  const kept = actionById('t_kept')
+  let changes = 0
+  offs.push(subscribeActions(() => (changes += 1)))
+  const restore = isolateActions()
+  expect([allActions(), actionById('t_kept'), changes]).toEqual([[], undefined, 1])
+  const inner = defineAction({ id: 't_inner', title: 'Inner', scope: 'global', ...on })
+  const again = defineAction({ id: 't_kept', title: 'Again', scope: 'global', ...on })
+  expect(allActions().map(a => a.title)).toEqual(['Inner', 'Again'])
+  offs.at(0)!()
+  expect(actionById('t_kept')?.title).toBe('Again')
+  restore()
+  expect(allActions()).toEqual([kept!])
+  expect(changes).toBe(4)
+  inner()
+  again()
+  expect(allActions()).toEqual([kept!])
 })
 
 test('a throwing available hides only that action and logs once', () => {

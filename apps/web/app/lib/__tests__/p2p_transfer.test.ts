@@ -212,6 +212,13 @@ const scene = async (opts: { server?: boolean } = {}) => {
   return { clock, hub, a, b, room, server }
 }
 
+// Bob, back from being away, has what Alice sent meanwhile.
+const caughtUp = (a: Peer, b: Peer) =>
+  eventually(
+    async () => (await bodies(b, a.node.ik)).includes('sent while Bob was away'),
+    'catch up'
+  )
+
 describe('passphrase and section', () => {
   test('passphrase rules and the strength hint', () => {
     expect(passProblem('short', 'short')).toBe('Use at least 10 characters')
@@ -630,9 +637,12 @@ describe('import cases', () => {
     // Alice keeps going on the old browser.
     await b.node.setPaused(false)
     b.node.schedule(true)
-    await eventually(async () => (await bodies(b, a.node.ik)).length === 3, 'catch up')
+    await caughtUp(a, b)
     await b.dms.send(room, { body: 'later from Bob' })
-    await eventually(async () => (await bodies(a, b.node.ik)).length === 4, 'Bob later')
+    await eventually(
+      async () => (await bodies(a, b.node.ik)).includes('later from Bob'),
+      'Bob later'
+    )
     await b.node.rename(a.node.ik, 'Al')
     await a.node.rename(b.node.ik, 'Bobby')
     const second: Dump = await unlockP2p(await exportP2p(a.store.db, PASS, KDF), PASS)
@@ -641,7 +651,8 @@ describe('import cases', () => {
     const res = await applyImport(x.db, second, 'merge')
     expect(res.kind).toBe('merge')
     const after = (await x.db.getAll('events')).map(e => e.id)
-    const theirs = (await a.store.db.getAll('events')).map(e => e.id)
+    // What the file carries: Alice's own store goes on taking events while this runs.
+    const theirs = second.stores.get('events')!.map(r => (r.value as { id: string }).id)
     expect(new Set(after).size).toBe(after.length)
     expect(new Set(after)).toEqual(new Set([...before, ...theirs]))
     expect(res.events).toBe(after.length - before.length)
@@ -937,7 +948,7 @@ describe('moving safely', () => {
     const { a, b, room, clock } = await scene()
     await b.node.setPaused(false)
     b.node.schedule(true)
-    await eventually(async () => (await bodies(b, a.node.ik)).length === 3, 'catch up')
+    await caughtUp(a, b)
     const [first] = (await loadMessages(a.store.db, room, a.node.ik, b.node.ik, { limit: 10 }))
       .messages
     // Another tab made the export: the stored record is what counts.
@@ -967,7 +978,7 @@ describe('moving safely', () => {
     const { a, b, room, clock, hub } = await scene()
     await b.node.setPaused(false)
     b.node.schedule(true)
-    await eventually(async () => (await bodies(b, a.node.ik)).length === 3, 'catch up')
+    await caughtUp(a, b)
     const dump = await unlockP2p(await exportP2p(a.store.db, PASS, KDF), PASS)
     await a.node.markExported(clock.now())
     await b.dms.send(room, { body: 'after the export' })

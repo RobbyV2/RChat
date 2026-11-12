@@ -38,6 +38,7 @@ import { DENIED_DOWNLOAD, PROMPTS, relayBook, type Decision } from '../relays'
 import { webBlobs } from '../platform/web_blobs'
 import { Sha256 } from '../sha256'
 import { NEUTRAL_TYPE } from '../sniff'
+import { drain, memoryStorage } from './fixtures'
 
 const file = (expires_at: number | null): StoredFile => ({
   name: 'a.txt',
@@ -74,10 +75,9 @@ describe('p2p serving', () => {
 
 describe('p2p storage failures', () => {
   const g = globalThis as { localStorage?: unknown }
-  const real = g.localStorage
   const realWarn = console.warn
   afterEach(() => {
-    g.localStorage = real
+    g.localStorage = memoryStorage
     console.warn = realWarn
   })
 
@@ -228,7 +228,6 @@ const SVG = new TextEncoder().encode(
 
 describe('p2p transfer', () => {
   const g = globalThis as { localStorage?: unknown }
-  const real = g.localStorage
   const kept = new Map<string, Blob>()
   let room: number | null = null
   let failWrites = false
@@ -276,11 +275,21 @@ describe('p2p transfer', () => {
     announce: () => void
     wire: (peer: unknown) => void
     heldMs: number
+    tokenUser: (token: unknown, id: string, from: string) => Promise<string | null>
   }
+  // The token checks of every manager a test made. One still running when the test ends would
+  // reach the relay book during the next test, so afterEach waits for them.
+  const checks: Promise<unknown>[] = []
   const manager = (name = 'host') => {
     const m = new P2pManager()
     const x = m as unknown as Wire
     x.announce = () => {}
+    const check = x.tokenUser.bind(m)
+    x.tokenUser = (token, id, from) => {
+      const user = check(token, id, from)
+      checks.push(user.catch(() => null))
+      return user
+    }
     m.setAccount(name)
     m.setServeKey(KEY_HEX, m.peerId(), null)
     return { m, x }
@@ -343,6 +352,9 @@ describe('p2p transfer', () => {
     return { got, m, connects }
   }
 
+  // Whatever prompt was there (the store's, when another file loaded it) comes back after. Until
+  // then every unknown relay is refused, as without a UI.
+  const realPrompt = relayBook.prompt
   beforeEach(() => {
     const local = new Map<string, string>()
     g.localStorage = {
@@ -357,10 +369,19 @@ describe('p2p transfer', () => {
     finishGate = null
     log = []
     setBlobs(store)
+    relayBook.load(null)
+    relayBook.prompt = () => Promise.resolve('deny')
   })
-  afterEach(() => {
-    g.localStorage = real
+  afterEach(async () => {
+    await Promise.all(checks.splice(0))
+    await drain()
+    relayBook.load(null)
+    relayBook.now = () => Date.now()
+    g.localStorage = memoryStorage
     setBlobs(webBlobs)
+  })
+  afterAll(() => {
+    relayBook.prompt = realPrompt
   })
 
   test('large files stream in chunks into the store and are checked against the hash', async () => {
@@ -1023,18 +1044,11 @@ describe('p2p transfer', () => {
     // Relay edits make every manager still hosting announce again; keep that off the socket.
     const ws = home.ws as unknown as { sendVoice: (msg: unknown) => void }
     const realSend = ws.sendVoice
-    // Whatever prompt was there (the store's, when another file loaded it) comes back after.
-    const realPrompt = relayBook.prompt
     beforeEach(() => {
       ws.sendVoice = () => {}
     })
     afterEach(() => {
-      relayBook.load(null)
-      relayBook.prompt = () => Promise.resolve('deny')
       ws.sendVoice = realSend
-    })
-    afterAll(() => {
-      relayBook.prompt = realPrompt
     })
 
     type Msg = { type: string; src?: string; dst?: string; payload: Record<string, unknown> }

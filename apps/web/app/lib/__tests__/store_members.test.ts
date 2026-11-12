@@ -17,6 +17,7 @@ let directory: Record<string, Member> = {}
 const asked = (url: string) => new URL(url).searchParams.getAll('usernames')
 
 beforeEach(() => {
+  resetSessionCaches()
   requests = []
   directory = {
     bob: member('bob', { role_ids: [1] }),
@@ -183,7 +184,6 @@ describe('the online section', () => {
   }
 
   beforeEach(() => {
-    resetSessionCaches()
     for (const n of ['bob', 'carol']) directory[n] = { ...directory[n], online: true }
     useStore.setState({
       members: { s: { ...paged([member('alice', { online: true })]), hasMore: true } },

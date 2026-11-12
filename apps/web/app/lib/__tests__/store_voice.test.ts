@@ -35,6 +35,7 @@ const realDetector = detectors.detector
 const lastTrack = () => tracks[tracks.length - 1]
 
 beforeEach(() => {
+  resetSessionCaches()
   tracks = []
   sent = []
   Object.defineProperty(globalThis, 'navigator', {

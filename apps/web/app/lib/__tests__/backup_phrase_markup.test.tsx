@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { PhraseWords } from '../../components/backup_phrase/phrase_words'
 import { PhraseHints, PhraseInput } from '../../components/backup_phrase/phrase_input'
 import { WordCheck } from '../../components/backup_phrase/word_check'
-import { useStore } from '../store'
+import { resetSessionCaches, useStore } from '../store'
 
 const W =
   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'.split(
@@ -14,16 +14,12 @@ const W =
 
 // Server rendering reads the store's initial state, so the test state goes there.
 const initial = useStore.getInitialState()
-const saved = { ...initial }
 const setState = (patch: Partial<typeof initial>) => {
   useStore.setState(patch)
   Object.assign(initial, useStore.getState())
 }
 
-afterAll(() => {
-  Object.assign(initial, saved)
-  useStore.setState(saved)
-})
+afterAll(resetSessionCaches)
 
 const labelled = (html: string) => [...html.matchAll(/<input[^>]*aria-label="Word (\d+)"[^>]*>/g)]
 const classes = (tag: string) => (/class="([^"]*)"/.exec(tag)?.[1] ?? '').split(' ')

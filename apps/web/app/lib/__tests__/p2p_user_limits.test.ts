@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { ctxFor } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { itemFor } from '../actions/menu'
@@ -19,7 +19,7 @@ import {
   userLimitsKey,
   writeUserLimits,
 } from '../p2p/user_limits'
-import { useStore } from '../store'
+import { resetSessionCaches, useStore } from '../store'
 import { useP2p } from '../p2p/app'
 import { me, memoryStorage } from './fixtures'
 import { Hub, ManualClock } from './p2p_net'
@@ -50,6 +50,8 @@ const MIB = 1024 * 1024
 const GIB = 1024 * MIB
 
 Object.assign(globalThis, { localStorage: memoryStorage })
+
+afterAll(resetSessionCaches)
 
 afterEach(() => {
   stopAll()

@@ -1202,6 +1202,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
   const forget = () => {
     dmPager.reset(null)
+    closedDms.clear()
     historyGen.clear()
     tails.clear()
     views.clear()

@@ -1064,13 +1064,24 @@ const peerWith = async (
   return { ...n, dms }
 }
 
-// The serving gate answers after 15 to 50 ms, like IndexedDB on a busy phone.
-const slowGate = (p: Peer) => {
+// Every file the peer has been sent is decided on (asked about, or waiting to be).
+const decided = async (p: Peer) => {
+  const chain = () => (p.dms as unknown as { autoChain: Promise<unknown> }).autoChain
+  for (let cur = chain(); ; cur = chain()) {
+    await cur
+    if (cur === chain()) return
+  }
+}
+
+// The serving gate answers after 15 to 50 ms, like IndexedDB on a busy phone, and never before
+// the asker has decided on its files, however slow the machine makes the asker.
+const slowGate = (p: Peer, asker: Peer) => {
   const orig = p.dms.entitled.bind(p.dms)
   let calls = 0
   p.dms.entitled = async (ik: string, h: string) => {
     calls += 1
     await new Promise(r => setTimeout(r, 15 + Math.random() * 35))
+    await decided(asker)
     return orig(ik, h)
   }
   return () => calls
@@ -1087,7 +1098,7 @@ describe('many files from one holder, with a slow gate', () => {
       const a = await peer(hub, 'Alice', clock)
       const b = await peer(hub, 'Bob', clock, 10 * 1024 * 1024)
       await dmFriends(a, b)
-      const gateCalls = slowGate(a)
+      const gateCalls = slowGate(a, b)
       const atts: Attachment[] = []
       for (let i = 0; i < n; i += 1) {
         // Mostly one block, every 25th two (a meta request of its own).

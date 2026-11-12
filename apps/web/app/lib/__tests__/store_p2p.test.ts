@@ -335,7 +335,7 @@ describe('P2P call binding', () => {
     }
     p2p.peerId = () => tab
     p2p.mediaActive = () => true
-    useStore.setState({ call: null, error: null })
+    useStore.setState({ call: null, error: null, p2pCallFailed: {} })
   })
   afterEach(() => {
     ws.sendVoice = realSend
@@ -430,7 +430,7 @@ describe('P2P call binding', () => {
   })
 
   test('a later call that binds clears the failed mark', () => {
-    active('bob')
+    active('bob', [peers[0]])
     expect(typeof st().p2pCallFailed[5]).toBe('number')
     active('bob', peers, 'c2')
     expect(st().p2pCallFailed[5]).toBeUndefined()

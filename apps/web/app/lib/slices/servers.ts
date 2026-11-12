@@ -266,7 +266,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
   // Reorders go out one at a time per server, each with the version the previous one returned.
   // While one is pending, live layout events are skipped: the answer (or a reload) settles it.
   // When one fails, the orders queued behind it are dropped (they were built on the failed one)
-  // and new ones are refused until the reload is in.
+  // and new ones are refused until the reload is in. They end with the session: an answer that
+  // comes after it is ignored.
   const layoutSends = new Map<
     string,
     { pending: number; chain: Promise<void>; round: number; reloading: boolean }
@@ -286,13 +287,15 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     slot.pending += 1
     layoutSends.set(server, slot)
     const round = slot.round
+    const live = () => layoutSends.get(server) === slot
     slot.chain = slot.chain.then(async () => {
       try {
-        if (round !== slot.round) return
+        if (round !== slot.round || !live()) return
         const version = get().servers[server]?.layout_version ?? 0
         const layout = await api.reorderLayout(server, { ...order, version })
-        patchServer(server, d => applyLayout(d, layout))
+        if (live()) patchServer(server, d => applyLayout(d, layout))
       } catch (e) {
+        if (!live()) return
         if (e instanceof ApiError && (e.status === 409 || e.status === 400)) {
           fail(new Error('The channel list changed. Try again'))
         } else fail(e)
@@ -302,7 +305,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         slot.reloading = false
       } finally {
         slot.pending -= 1
-        if (slot.pending === 0) layoutSends.delete(server)
+        if (slot.pending === 0 && live()) layoutSends.delete(server)
       }
     })
   }
@@ -709,6 +712,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     bannedHere.clear()
     listSince.clear()
     pastOnline.clear()
+    layoutSends.clear()
   }
 
   const actions: Pick<

@@ -1386,7 +1386,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       armIce(null, false)
       clearProfiles()
       dropStashedInvite()
-      closedDms.clear()
       set({
         token: null,
         me: null,

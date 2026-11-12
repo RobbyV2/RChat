@@ -18,7 +18,7 @@ export const memoryStorage = {
   removeItem: (k: string) => void memory.delete(k),
   clear: () => memory.clear(),
 }
-if (!('localStorage' in globalThis)) Object.assign(globalThis, { localStorage: memoryStorage })
+Object.assign(globalThis, { localStorage: memoryStorage })
 
 // Lets every pending callback and response run, without waiting on any timer.
 export const drain = async () => {
