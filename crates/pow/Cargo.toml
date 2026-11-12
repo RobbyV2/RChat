@@ -14,7 +14,7 @@ cli = ["threads", "dep:clap", "dep:reqwest", "dep:serde_json"]
 [dependencies]
 sha2 = { version = "0.11.1", default-features = false }
 hmac = "0.13"
-base64 = "0.22"
+base64 = "0.23"
 regex = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_norway = { version = "=0.9.42", optional = true }
