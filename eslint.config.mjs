@@ -37,6 +37,15 @@ export default tseslint.config(
     },
   },
   {
+    files: ['scripts/pow/solve.mjs'],
+    languageOptions: {
+      globals: {
+        Buffer: 'readonly',
+        fetch: 'readonly',
+      },
+    },
+  },
+  {
     files: ['apps/desktop/scripts/smoke.js'],
     languageOptions: {
       globals: {

@@ -9,6 +9,7 @@ description = "The proof-of-work puzzle, sealed trust strings and solver shared 
 default = ["threads"]
 threads = []
 policy = ["dep:regex", "dep:serde", "dep:serde_norway"]
+cli = ["threads", "dep:clap", "dep:reqwest", "dep:serde_json"]
 
 [dependencies]
 sha2 = { version = "0.11.1", default-features = false }
@@ -17,11 +18,21 @@ base64 = "0.22"
 regex = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_norway = { version = "=0.9.42", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls",
+  "blocking",
+], optional = true }
+serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
-rchat-pow = { path = ".", features = ["policy"] }
+rchat-pow = { path = ".", features = ["policy", "cli"] }
 serde_json = "1"
 regex = "1"
+
+[[bin]]
+name = "rchat-pow"
+required-features = ["cli"]
 
 [[test]]
 name = "solve"
@@ -34,3 +45,7 @@ required-features = ["policy"]
 [[test]]
 name = "policy"
 required-features = ["policy"]
+
+[[test]]
+name = "cli"
+required-features = ["cli"]
