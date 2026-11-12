@@ -18,16 +18,19 @@ export const withActionElement = <T>(el: Element | null, f: () => T): T => {
 
 export const actionElement = () => element
 
+// A word under a hidden spoiler is not on show: the spoiler is revealed first.
+const onShow = (w: Element) => !w.closest('[data-spoiler="hidden"]')
+
 // The masked words still hidden inside `el`.
 export const hiddenWords = (el: Element | null | undefined): Element[] =>
-  el ? Array.from(el.querySelectorAll('[data-masked-word]')) : []
+  el ? Array.from(el.querySelectorAll('[data-masked-word]')).filter(onShow) : []
 
 // The masked words still hidden on screen, outside the palette.
 export const hiddenOnScreen = (): Element[] =>
   typeof document === 'undefined'
     ? []
     : Array.from(document.querySelectorAll('[data-masked-word]')).filter(
-        w => !w.closest('[data-palette]')
+        w => onShow(w) && !w.closest('[data-palette]')
       )
 
 export const revealWords = (words: Element[]) => {

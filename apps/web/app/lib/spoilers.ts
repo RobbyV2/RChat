@@ -176,7 +176,7 @@ export const replaceSpoilers = (text: string, hide: (inner: string) => string, c
 // For the markdown renderer: the paired markers become `<` OPEN `|` and `<` CLOSE `|`. The pipes
 // and `<` are punctuation like `||`, so emphasis reads the same; `<` ends a bare link
 // (`||https://x||` must not take the marker into the link) and starts no tag before a
-// private-use character. Markers the renderer cannot pair turn back into `||`.
+// private-use character. `hideSpoilers` (`spoiler_tree.ts`) reads them in the parsed tree.
 export const OPEN = '<\uE000|'
 export const CLOSE = '<\uE001|'
 
@@ -195,11 +195,6 @@ export const markSpoilers = (raw: string) => {
   }
   return out + text.slice(at)
 }
-
-export const unmarkSpoilers = (text: string) =>
-  text.includes('') || text.includes('')
-    ? text.replaceAll(OPEN, '||').replaceAll(CLOSE, '||')
-    : text
 
 // Settings > Chat > Show spoilers, per account in this browser
 // (`rchat_spoilers:{username|guest}`). Reveals are per message view and never stored.

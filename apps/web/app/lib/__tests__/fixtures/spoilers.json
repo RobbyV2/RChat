@@ -226,6 +226,111 @@
     {
       "text": "```\ncode\n```\n||https://x.y||",
       "parts": [["```\ncode\n```\n||https://x.y||", false]]
+    },
+    {
+      "text": "**a ||secret** b|| c",
+      "parts": [
+        ["**a ", false],
+        ["secret** b", true],
+        [" c", false]
+      ]
+    },
+    {
+      "text": "a ||secret **b|| c** d",
+      "parts": [
+        ["a ", false],
+        ["secret **b", true],
+        [" c** d", false]
+      ]
+    },
+    {
+      "text": "_a ||secret_ b|| c",
+      "parts": [
+        ["_a ", false],
+        ["secret_ b", true],
+        [" c", false]
+      ]
+    },
+    {
+      "text": "~~a ||secret~~ b|| c",
+      "parts": [
+        ["~~a ", false],
+        ["secret~~ b", true],
+        [" c", false]
+      ]
+    },
+    {
+      "text": "[a ||secret](https://x.example/) b|| c",
+      "parts": [
+        ["[a ", false],
+        ["secret](https://x.example/) b", true],
+        [" c", false]
+      ]
+    },
+    {
+      "text": "a ||secret [b](https://x.example/||c) d",
+      "parts": [
+        ["a ", false],
+        ["secret [b](https://x.example/", true],
+        ["c) d", false]
+      ]
+    },
+    {
+      "text": "a [b](https://x.example/||c) secret|| d",
+      "parts": [
+        ["a [b](https://x.example/", false],
+        ["c) secret", true],
+        [" d", false]
+      ]
+    },
+    {
+      "text": "`a ||secret` b|| c",
+      "parts": [["`a ||secret` b|| c", false]]
+    },
+    {
+      "text": "a ||secret `b|| c` d",
+      "parts": [["a ||secret `b|| c` d", false]]
+    },
+    {
+      "text": "**a ||secret and",
+      "cut": true,
+      "parts": [
+        ["**a ", false],
+        ["secret and", true]
+      ]
+    },
+    {
+      "text": "[a][r] b\n\n[r]: https://x.example/ \"||secret||\"",
+      "parts": [
+        ["[a][r] b\n\n[r]: https://x.example/ \"", false],
+        ["secret", true],
+        ["\"", false]
+      ]
+    },
+    {
+      "text": "[a][r] b\n\n[r]: https://x.example/||secret||",
+      "parts": [
+        ["[a][r] b\n\n[r]: https://x.example/", false],
+        ["secret", true]
+      ]
+    },
+    {
+      "text": "[x][r] y\n\n[r]: https://x.example/ \"||secret\"\nveiled|| c",
+      "parts": [
+        ["[x][r] y\n\n[r]: https://x.example/ \"", false],
+        ["secret\"\nveiled", true],
+        [" c", false]
+      ]
+    },
+    {
+      "text": "a[^||secret||] b\n\n[^||secret||]: note",
+      "parts": [
+        ["a[^", false],
+        ["secret", true],
+        ["] b\n\n[^", false],
+        ["secret", true],
+        ["]: note", false]
+      ]
     }
   ],
   "links": [
@@ -300,6 +405,22 @@
     {
       "text": "```\ncode\n```\n||https://x.y||",
       "urls": []
+    },
+    {
+      "text": "**a ||https://a.example/** b|| https://b.example/",
+      "urls": ["https://b.example/"]
+    },
+    {
+      "text": "[a ||x](https://a.example/) y|| https://b.example/",
+      "urls": ["https://b.example/"]
+    },
+    {
+      "text": "[a][r]\n\n[r]: ||https://a.example/secret||",
+      "urls": []
+    },
+    {
+      "text": "[a][r] https://b.example/\n\n[r]: https://a.example/ \"||https://c.example/||\"",
+      "urls": ["https://b.example/", "https://a.example/"]
     }
   ]
 }

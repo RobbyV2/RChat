@@ -1102,6 +1102,37 @@ mod tests {
         assert_eq!(cut.chars().count(), super::EXCERPT_MAX + 2);
         let plain = format!("||x|| {}", "p".repeat(300));
         assert_eq!(super::excerpt(&plain).chars().count(), super::EXCERPT_MAX);
+        for crossed in [
+            format!("**a ||secret {}** b|| c", "s".repeat(300)),
+            format!("[a ||secret {}](https://x.example/) b|| c", "s".repeat(300)),
+            format!(
+                "a [b](https://x.example/||c) secret {}|| d",
+                "s".repeat(300)
+            ),
+        ] {
+            let cut = super::excerpt(&crossed);
+            assert!(cut.ends_with("s||"), "{cut}");
+            let shown: String = crate::spoilers::parts(&cut, false)
+                .iter()
+                .filter(|(_, spoiler)| !spoiler)
+                .map(|(text, _)| *text)
+                .collect();
+            assert!(!shown.contains("secret"), "{shown}");
+        }
+        for defined in [
+            "[a][r] b\n\n[r]: https://x.example/ \"||secret||\"",
+            "[r]: https://x.example/||secret||\n[a][r] b",
+            "[a](https://x.example/ \"||secret||\") b",
+            "a[^||secret||] b\n\n[^||secret||]: note ||secret||",
+        ] {
+            let cut = super::excerpt(defined);
+            let shown: String = crate::spoilers::parts(&cut, false)
+                .iter()
+                .filter(|(_, spoiler)| !spoiler)
+                .map(|(text, _)| *text)
+                .collect();
+            assert!(!shown.contains("secret"), "{shown}");
+        }
     }
 
     use super::*;

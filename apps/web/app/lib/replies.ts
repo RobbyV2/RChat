@@ -32,6 +32,9 @@ const OPEN = '\uE000'
 const CLOSE = '\uE001'
 const PLAIN = /\\([!-/:-@[-`{-~])|~~|[*`]|[|\\]|\uE000|\uE001/g
 
+// A dropped link target keeps the spoiler marks it held.
+const UNMARKED = new RegExp(`[^${OPEN}${CLOSE}]`, 'g')
+
 const spoilerMarked = (text: string) =>
   replaceSpoilers(typedMarks(text), inner => `${OPEN}${inner}${CLOSE}`)
 
@@ -48,7 +51,10 @@ export function plainLine(content: string): string {
     if (!line || FENCE.test(line)) continue
     while (PREFIX.test(line)) line = line.replace(PREFIX, '').trimStart()
     const text = line
-      .replace(/\[([^\]\n]*)\]\([^)\n]*\)/g, '$1')
+      .replace(
+        /\[([^\]\n]*)\]\(([^)\n]*)\)/g,
+        (_, label: string, target: string) => `${label}${target.replace(UNMARKED, '')}`
+      )
       .replace(/<(https?:\/\/[^>\s]+)>/g, '$1')
       .replace(/(^|[^\p{L}\p{N}_])_+|_+(?![\p{L}\p{N}])/gu, (_, pre?: string) => pre ?? '')
       .replace(PLAIN, (m: string, esc?: string) =>

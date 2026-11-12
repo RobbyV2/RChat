@@ -65,9 +65,11 @@ export function SpoilerLine({ parts, own = false }: { parts: SnippetPart[]; own?
             data-reply-spoiler
             role="img"
             aria-label="Spoiler"
-            className="rounded-sm bg-on-surface-variant/70 text-transparent select-none"
+            className="rounded-sm bg-on-surface-variant/70 select-none"
           >
-            <span aria-hidden>{maskOutsideCode(p.text, mask)}</span>
+            <span className="invisible" aria-hidden>
+              {maskOutsideCode(p.text, mask)}
+            </span>
           </span>
         ) : (
           <span key={i}>

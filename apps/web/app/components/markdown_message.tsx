@@ -75,7 +75,8 @@ import {
 } from '../lib/media_src'
 import { expiryText, sameOriginImage } from '../lib/rules'
 import { remarkMask } from '../lib/profanity'
-import { CLOSE, OPEN, markSpoilers, spoilerParts, unmarkSpoilers } from '../lib/spoilers'
+import { markSpoilers, spoilerParts } from '../lib/spoilers'
+import { hideSpoilers, type MdNode as SpoilerNode } from '../lib/spoiler_tree'
 import { openActionMenu } from '../lib/actions/menu'
 import { groupPills, knownMentions, useMask, userRefFor, useStore } from '../lib/store'
 import { useChatSource } from './chat_source'
@@ -113,79 +114,9 @@ interface MdNode {
   data?: unknown
 }
 
-type SpoilerToken = MdNode | 'open' | 'close'
-
-const MARKS = new RegExp(`(${[OPEN, CLOSE].map(m => m.replace(/[|<]/g, '\\$&')).join('|')})`)
-
-// Pairs the markers `markSpoilers` left in the text (see `lib/spoilers.ts`) among siblings.
-// A marker whose partner ended up in another node (markdown nesting split them) stays `||`, as
-// does every marker in code. Returns whether `node` kept an unpaired marker.
-const splitSpoilers = (node: MdNode): boolean => {
-  const { children } = node
-  if (!children) return false
-  const barrier = new Set(children.filter(splitSpoilers))
-  const tokens: SpoilerToken[] = []
-  for (const child of children) {
-    if (child.type !== 'text' || child.value === undefined || !MARKS.test(child.value)) {
-      tokens.push(child)
-      continue
-    }
-    for (const piece of child.value.split(MARKS)) {
-      if (piece === OPEN) tokens.push('open')
-      else if (piece === CLOSE) tokens.push('close')
-      else if (piece) tokens.push({ type: 'text', value: piece })
-    }
-  }
-  let left = barrier.size > 0
-  const out: MdNode[] = []
-  for (let i = 0; i < tokens.length; i += 1) {
-    const tok = tokens[i]
-    if (typeof tok !== 'string') {
-      out.push(tok)
-      continue
-    }
-    let close = -1
-    if (tok === 'open')
-      for (let j = i + 1; j < tokens.length; j += 1) {
-        const t = tokens[j]
-        if (t === 'close') close = j
-        if (typeof t === 'string' || barrier.has(t)) break
-      }
-    if (close === -1) {
-      left = true
-      out.push({ type: 'text', value: '||' })
-      continue
-    }
-    out.push({
-      type: 'emphasis',
-      data: { hName: 'span', hProperties: { 'data-spoiler': '' } },
-      children: tokens.slice(i + 1, close) as MdNode[],
-    })
-    i = close
-  }
-  node.children = out.reduce<MdNode[]>((acc, n) => {
-    const last = acc[acc.length - 1]
-    if (n.type === 'text' && last?.type === 'text' && !last.data && !n.data)
-      acc[acc.length - 1] = { ...last, value: `${last.value ?? ''}${n.value ?? ''}` }
-    else acc.push(n)
-    return acc
-  }, [])
-  return left
-}
-
-// Markers left anywhere else (code, link targets, alt text) read as typed.
-const unmarkTree = (node: MdNode & { url?: string; alt?: string; title?: string }) => {
-  if (node.value !== undefined) node.value = unmarkSpoilers(node.value)
-  if (typeof node.url === 'string') node.url = unmarkSpoilers(node.url)
-  if (typeof node.alt === 'string') node.alt = unmarkSpoilers(node.alt)
-  if (typeof node.title === 'string') node.title = unmarkSpoilers(node.title)
-  node.children?.forEach(unmarkTree)
-}
-
-const remarkSpoiler = () => (tree: unknown) => {
-  splitSpoilers(tree as MdNode)
-  unmarkTree(tree as MdNode)
-}
+// Spoilers are hidden by `lib/spoiler_tree.ts`, from the markers `markSpoilers` left in the source.
+const remarkSpoiler = () => (tree: unknown, file: { toString(): string }) =>
+  hideSpoilers(tree as SpoilerNode, String(file))
 
 // Group mention pills are looked up as `\n<key>` (a username never holds a line break).
 const markMentions = (
@@ -293,37 +224,67 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   )
 }
 
-// A `||spoiler||`: a dark pill until clicked (or Enter / Space). Each one reveals on its own, for
-// this view only. "Show spoilers: Always" starts them open, except in streamer mode.
+// A `||spoiler||`: a dark pill until clicked (or Enter / Space), for this view only. "Show
+// spoilers: Always" starts them open, except in streamer mode.
 const useSpoilersOpen = () => useStore(s => s.showSpoilers === 'always' && !s.streamer)
 
-function SpoilerText({ children }: { children?: ReactNode }) {
+// Spoilers whose reveal is shared, so the pieces of one that formatting split open together.
+const RevealedSpoilers = createContext<{
+  open: ReadonlySet<string>
+  reveal: (piece: string) => void
+} | null>(null)
+
+function SpoilerPieces({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set())
+  const reveal = useCallback(
+    (piece: string) => setOpen(o => (o.has(piece) ? o : new Set(o).add(piece))),
+    []
+  )
+  const value = useMemo(() => ({ open, reveal }), [open, reveal])
+  return <RevealedSpoilers.Provider value={value}>{children}</RevealedSpoilers.Provider>
+}
+
+// `piece`: the spoiler's number in its message. `block`: it holds blocks (code, raw HTML).
+function SpoilerText({
+  children,
+  piece,
+  block = false,
+}: {
+  children?: ReactNode
+  piece?: string
+  block?: boolean
+}) {
   const always = useSpoilersOpen()
-  const [revealed, setRevealed] = useState(false)
-  const shown = useRef<HTMLSpanElement>(null)
+  const shared = useContext(RevealedSpoilers)
+  const [mine, setMine] = useState(false)
+  const revealed = mine || (piece !== undefined && !!shared && shared.open.has(piece))
+  const shown = useRef<HTMLDivElement & HTMLSpanElement>(null)
   const focused = useRef(false)
   useEffect(() => {
     if (revealed && focused.current) shown.current?.focus()
   }, [revealed])
+  const Tag = block ? 'div' : 'span'
+  const box = block ? 'my-1 w-fit max-w-full rounded' : 'rounded px-0.5'
   if (revealed || always)
     return (
-      <span
+      <Tag
         ref={shown}
         tabIndex={revealed ? -1 : undefined}
         data-spoiler="shown"
-        className="rounded bg-on-surface/10 px-0.5 focus-visible:outline-2 focus-visible:outline-primary"
+        className={`${box} bg-on-surface/10 focus-visible:outline-2 focus-visible:outline-primary`}
       >
         {children}
-      </span>
+      </Tag>
     )
   const reveal = (e: React.SyntheticEvent) => {
     e.preventDefault()
     e.stopPropagation()
     focused.current = document.activeElement === e.currentTarget
-    setRevealed(true)
+    setMine(true)
+    if (piece !== undefined) shared?.reveal(piece)
   }
   return (
-    <span
+    <Tag
       data-spoiler="hidden"
       role="button"
       tabIndex={0}
@@ -333,12 +294,12 @@ function SpoilerText({ children }: { children?: ReactNode }) {
       onKeyDown={e => {
         if (e.key === 'Enter' || e.key === ' ') reveal(e)
       }}
-      className="cursor-pointer rounded bg-spoiler px-0.5 select-none hover:bg-spoiler/85 focus-visible:outline-2 focus-visible:outline-primary"
+      className={`${box} cursor-pointer bg-spoiler select-none hover:bg-spoiler/85 focus-visible:outline-2 focus-visible:outline-primary`}
     >
-      <span className="invisible" aria-hidden>
+      <Tag className="invisible" aria-hidden>
         <MaskControl>{children}</MaskControl>
-      </span>
-    </span>
+      </Tag>
+    </Tag>
   )
 }
 
@@ -463,7 +424,9 @@ const components: Components = {
         {props.children}
       </MaskedWord>
     ) : 'data-spoiler' in props ? (
-      <SpoilerText>{props.children}</SpoilerText>
+      <SpoilerText piece={String((props as Record<string, unknown>)['data-spoiler'])}>
+        {props.children}
+      </SpoilerText>
     ) : 'data-edited' in props ? (
       <EditedMark at={Number((props as Record<string, unknown>)['data-edited'])} />
     ) : 'data-stamp' in props ? (
@@ -481,6 +444,14 @@ const components: Components = {
       />
     ) : (
       <span {...props} />
+    ),
+  div: ({ node, ...props }) =>
+    'data-spoiler' in props ? (
+      <SpoilerText piece={String((props as Record<string, unknown>)['data-spoiler'])} block>
+        {props.children}
+      </SpoilerText>
+    ) : (
+      <div {...props} />
     ),
   img: ({ src, alt }) => (
     <MarkdownImage src={typeof src === 'string' ? src : undefined} alt={alt} />
@@ -1141,9 +1112,11 @@ function useCardText() {
       text: (text: string) => (
         <MaskPlain>
           <MaskedWords>
-            <ReactMarkdown remarkPlugins={plugins} components={components}>
-              {markSpoilers(text)}
-            </ReactMarkdown>
+            <SpoilerPieces>
+              <ReactMarkdown remarkPlugins={plugins} components={components}>
+                {markSpoilers(text)}
+              </ReactMarkdown>
+            </SpoilerPieces>
           </MaskedWords>
         </MaskPlain>
       ),
@@ -1244,9 +1217,11 @@ export const MarkdownMessage = memo(function MarkdownMessage({
         (content.trim() !== '' ? (
           <MaskPlain>
             <MaskedWords>
-              <ReactMarkdown remarkPlugins={plugins} components={components}>
-                {source}
-              </ReactMarkdown>
+              <SpoilerPieces>
+                <ReactMarkdown remarkPlugins={plugins} components={components}>
+                  {source}
+                </ReactMarkdown>
+              </SpoilerPieces>
             </MaskedWords>
           </MaskPlain>
         ) : (

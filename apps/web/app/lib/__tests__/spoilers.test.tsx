@@ -126,15 +126,20 @@ describe('the message view', () => {
     expect(inner).toContain('a||b')
   })
 
-  test('escaped, empty, unmatched and split markers stay text', () => {
+  test('escaped, empty and unmatched markers stay text', () => {
     expect(render('\\||not||')).toContain('||not||')
     expect(hidden(render('\\||not||'))).toBe(0)
     expect(hidden(render('||||'))).toBe(0)
     expect(hidden(render('one || only'))).toBe(0)
     expect(hidden(render('||para\n\nbreak||'))).toBe(0)
+  })
+
+  test('a spoiler that formatting splits is hidden in each piece', () => {
     const split = render('||a **b|| c**')
-    expect(hidden(split)).toBe(0)
-    expect(split).toContain('||a <strong>b|| c</strong>')
+    expect(hidden(split)).toBe(2)
+    expect(split.includes('||')).toBe(false)
+    expect(split).toContain('<span class="invisible" aria-hidden="true">a </span>')
+    expect(split).toContain('<span class="invisible" aria-hidden="true">b</span></span> c</strong>')
   })
 
   test('a link inside a spoiler has no preview, a Spoiler card instead', () => {
@@ -252,7 +257,8 @@ describe('previews keep spoilers hidden', () => {
     )
     expect(html).toContain('data-reply-spoiler')
     expect(html).toContain('role="img" aria-label="Spoiler"')
-    expect(html).toContain('text-transparent')
+    expect(html).toContain('<span class="invisible" aria-hidden="true">the ending</span>')
+    expect(html.includes('text-transparent')).toBe(false)
     const clip = clipOf(msg(4, { content: '||plot twist|| lol', author: user('bob') }))
     expect(snippetParts(clip.snippet)).toEqual([
       { text: 'plot twist', spoiler: true },

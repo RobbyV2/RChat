@@ -492,8 +492,15 @@ pub fn reply_snippet(content: &str) -> String {
                 }
             }
         })
-        .find(|l| !l.is_empty());
-    let Some(line) = line else {
+        .find_map(|line| {
+            let mut plain = String::new();
+            push_plain(&line.chars().collect::<Vec<char>>(), &mut plain);
+            let text = plain
+                .chars()
+                .any(|c| !matches!(c, OPEN | CLOSE) && !c.is_whitespace());
+            text.then_some((line, plain))
+        });
+    let Some((line, plain)) = line else {
         return String::new();
     };
     let before = &marked[..line.as_ptr() as usize - marked.as_ptr() as usize];
@@ -501,8 +508,7 @@ pub fn reply_snippet(content: &str) -> String {
     if before.matches(OPEN).count() > before.matches(CLOSE).count() {
         out.push(OPEN);
     }
-    let chars: Vec<char> = line.chars().collect();
-    push_plain(&chars, &mut out);
+    out.push_str(plain.trim());
     let mut snippet = String::new();
     let mut shown = 0;
     let mut opened: Option<usize> = None;
@@ -549,7 +555,7 @@ pub fn reply_snippet(content: &str) -> String {
 }
 
 /// Appends `chars` as plain text: markdown marks dropped, spoiler marks (`OPEN`, `CLOSE`) kept,
-/// literal pipes and backslashes escaped.
+/// also those inside a link target that is dropped, literal pipes and backslashes escaped.
 fn push_plain(chars: &[char], out: &mut String) {
     let mut i = 0;
     while i < chars.len() {
@@ -594,7 +600,10 @@ fn push_plain(chars: &[char], out: &mut String) {
                 });
                 match end {
                     Some((label_end, link_end)) => {
+                        use crate::spoilers::{CLOSE, OPEN};
                         push_plain(&chars[i + 1..label_end], out);
+                        let target = &chars[label_end + 2..link_end];
+                        out.extend(target.iter().filter(|c| matches!(**c, OPEN | CLOSE)));
                         i = link_end + 1;
                         continue;
                     }
@@ -5248,6 +5257,63 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn reply_snippets_keep_a_crossed_spoiler_hidden() {
+        for (content, want) in [
+            ("**a ||secret** b|| c", "a ||secret b|| c"),
+            ("a ||secret **b|| c** d", "a ||secret b|| c d"),
+            ("_a ||secret_ b|| c", "a ||secret b|| c"),
+            ("~~a ||secret~~ b|| c", "a ||secret b|| c"),
+            ("[a ||secret](https://x.example/) b|| c", "a ||secret b|| c"),
+            (
+                "a ||secret [b|| c](https://x.example/) d",
+                "a ||secret b|| c d",
+            ),
+            (
+                "a ||secret [b](https://x.example/||c) d",
+                "a ||secret b|| d",
+            ),
+            (
+                "a [b](https://x.example/||c) secret|| d",
+                "a b|| secret|| d",
+            ),
+            (
+                "a ![b](https://x.example/||c) secret|| d",
+                "a !b|| secret|| d",
+            ),
+            ("# a ||secret\nhidden|| c", "a ||secret||"),
+            (
+                "[a][r] b\n\n[r]: https://x.example/ \"||secret||\"",
+                "[a][r] b",
+            ),
+            (
+                "[r]: https://x.example/ \"||secret||\"\n\n[a][r] b",
+                "[r]: https://x.example/ \"||secret||\"",
+            ),
+            (
+                "[r]: https://x.example/||secret||\n[a][r] b",
+                "[r]: https://x.example/||secret||",
+            ),
+            (
+                "[a][||secret||] b\n\n[||secret||]: https://x.example/",
+                "[a][||secret||] b",
+            ),
+            ("[a](https://x.example/ \"||secret||\") b", "a b"),
+            (
+                "a[^||secret||] b\n\n[^||secret||]: note",
+                "a[^||secret||] b",
+            ),
+            (
+                "a <https://x.example/||secret||> b",
+                "a https://x.example/||secret|| b",
+            ),
+            ("* * *\n||secret||", "||secret||"),
+            ("> ```\n> ||x||\n> ```\n||secret||", "\\|\\|x\\|\\|"),
+        ] {
+            assert_eq!(reply_snippet(content), want, "{content}");
+        }
     }
 
     #[test]
