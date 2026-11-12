@@ -944,6 +944,9 @@ export interface InstanceLimits {
   media_retention_secs: number
   page_size: number
   assertion_ttl_secs: number
+  // Whether the instance limits how much is kept longer than the default lifetime. Absent before
+  // those limits.
+  upload_kept_limited?: boolean
   // P2P_LIMITS: `local.<section>.<key>` and `agreed.<key>` to a number. Absent before 0.4.0.
   p2p?: Record<string, number>
 }

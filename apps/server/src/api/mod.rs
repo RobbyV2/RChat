@@ -583,7 +583,9 @@ pub struct ServerDetail {
     /// How long files uploaded here stay (`PUT /api/v1/servers/{name}/upload_expiry`).
     pub upload_expiry: upload_expiry::UploadExpiry,
     /// Seconds a new file stays after upload, after the instance cap; `null` when files are kept
-    /// until removed.
+    /// until removed. While `limits.upload_kept_limited` of `GET /api/v1/instance` is true, a
+    /// longer time only holds for a file that fits the kept space; else the file stays for
+    /// `limits.media_retention_secs`.
     pub upload_ttl: Option<i64>,
 }
 

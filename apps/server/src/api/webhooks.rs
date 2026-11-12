@@ -1521,7 +1521,8 @@ async fn post(
 /// once, the body may be at most 2 MiB and 64 KiB and a file part in it is refused. A body that
 /// sends nothing for 30 seconds, or takes over 10 minutes in all, is dropped with 408. Files
 /// count against the upload budget of the webhook's owner, and the webhooks of one server
-/// together get one more budget of the same size. The same rules as a
+/// together get one more budget of the same size, each file for at most 24 hours like any
+/// upload. The same rules as a
 /// user's message apply: length limit, profanity filter, slow mode (per webhook, no exemption),
 /// attachment switches, and reply and thread placement inside its channel. The webhook can
 /// always send in its own channel and nowhere else; timeouts and blocks do not apply to it.

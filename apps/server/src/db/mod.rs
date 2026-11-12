@@ -19,8 +19,8 @@ pub(crate) use pool::pool_key;
 #[cfg(test)]
 pub(crate) use pool::temp_db_path;
 pub use pool::{
-    Db, DbOptions, close, has_accounts, is_sqlite, open, open_with, reader, stored_schema_version,
-    take_config_start, writer_connections,
+    Db, DbOptions, close, has_accounts, is_sqlite, open, open_with, opened_limits, reader,
+    stored_schema_version, take_config_start, writer_connections,
 };
 pub use schema::has_fts;
 #[cfg(test)]

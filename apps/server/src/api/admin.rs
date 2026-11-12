@@ -428,7 +428,8 @@ pub(crate) async fn patch_settings(
     let settings = Settings::load(&state.db).await;
     Policy::load(&state.db).await;
     if let Some(cap) = upload_expiry_max_days {
-        upload_expiry::retime_all(&state.db, cap).await?;
+        upload_expiry::retime_all(&state.db, cap, upload_expiry::KeptLimits::of(&state.limits))
+            .await?;
     }
     state.hub.broadcast(WsEvent::SettingsChanged { settings });
     Ok(Json(settings))
@@ -790,6 +791,7 @@ pub(crate) async fn hide_user_rows(
         "UPDATE webhooks SET creator = NULL, creator_mentions = 0 WHERE creator = $1",
         "UPDATE outgoing_webhooks SET creator = NULL WHERE creator = $1",
         "UPDATE servers SET creator = NULL WHERE creator = $1",
+        "UPDATE servers SET upload_expiry_by = NULL WHERE upload_expiry_by = $1",
     ] {
         sqlx::query(sql).bind(key).execute(&mut *tx).await?;
     }
@@ -1076,6 +1078,7 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",
         "UPDATE messages SET pinned_by = NULL WHERE pinned_by = $1",
         "UPDATE servers SET creator = NULL WHERE creator = $1",
+        "UPDATE servers SET upload_expiry_by = NULL WHERE upload_expiry_by = $1",
         "UPDATE server_bans SET banned_by = NULL WHERE banned_by = $1",
         "UPDATE member_timeouts SET set_by = NULL WHERE set_by = $1",
         "UPDATE media SET uploader = NULL WHERE uploader = $1",

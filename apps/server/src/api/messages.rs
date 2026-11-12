@@ -928,23 +928,28 @@ pub(crate) async fn recent_channel_messages(
     })
 }
 
-/// Attaches upload `id` of `username` to the new message, kept per `ttl` (`media.ttl`: `None`
-/// the instance default, `Some(0)` until removed, else seconds after upload).
+/// Attaches upload `id` of `username` to the new message, kept per `keep`: its `media.ttl`
+/// (`None` the instance default, `Some(0)` until removed, else seconds after upload) and the
+/// server charged for a time longer than the default.
 async fn claim_media(
     tx: &mut sqlx::Transaction<'_, sqlx::Any>,
     id: &str,
     username: &str,
     spoiler: bool,
-    ttl: Option<i64>,
+    keep: &crate::api::upload_expiry::Keep,
 ) -> Result<MediaRef, ApiError> {
-    let claimed =
-        sqlx::query("UPDATE media SET uploader = $1, ttl = $3 WHERE id = $2 AND uploader = $1")
-            .bind(username)
-            .bind(id)
-            .bind(ttl)
-            .execute(&mut **tx)
-            .await?
-            .rows_affected();
+    let crate::api::upload_expiry::Keep { ttl, server } = keep;
+    let ttl = *ttl;
+    let claimed = sqlx::query(
+        "UPDATE media SET uploader = $1, ttl = $3, kept_by = $4 WHERE id = $2 AND uploader = $1",
+    )
+    .bind(username)
+    .bind(id)
+    .bind(ttl)
+    .bind(server.clone())
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
     let row = sqlx::query("SELECT filename, uploaded_at FROM media WHERE id = $1")
         .bind(id)
         .fetch_optional(&mut **tx)
@@ -1180,13 +1185,20 @@ pub(crate) async fn insert_message(
             return Err(bad("Choose server or P2P attachment, not both"));
         }
         (Some(id), None) => {
-            let ttl = match channel_id {
-                Some(channel) => crate::api::upload_expiry::channel_choice(&mut tx, channel)
+            let keep = match channel_id {
+                Some(channel) => {
+                    crate::api::upload_expiry::keep_in(
+                        &mut tx,
+                        channel,
+                        id,
+                        settings.upload_expiry_max_days,
+                        crate::api::upload_expiry::KeptLimits::of(&state.limits),
+                    )
                     .await?
-                    .ttl(settings.upload_expiry_max_days),
-                None => None,
+                }
+                None => crate::api::upload_expiry::Keep::default(),
             };
-            Some(claim_media(&mut tx, id, &user.username, spoiler, ttl).await?)
+            Some(claim_media(&mut tx, id, &user.username, spoiler, &keep).await?)
         }
         (None, Some(p2p)) => Some(p2p_media(&mut tx, p2p, user, spoiler).await?),
         (None, None) => None,

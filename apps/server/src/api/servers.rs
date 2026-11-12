@@ -949,10 +949,8 @@ async fn server_detail(
     let layout_version = layout_version(db, &name).await?;
     let member_count = member_count(db, &name).await?;
     let online_count = hub.online_count(&name);
-    let expiry = crate::api::upload_expiry::UploadExpiryState::of(
-        crate::api::upload_expiry::stored(db, &name).await?,
-        &crate::api::Settings::cached(db).await,
-    );
+    let choice = crate::api::upload_expiry::stored(db, &name).await?;
+    let settings = crate::api::Settings::cached(db).await;
     Ok(ServerDetail {
         name: name.clone(),
         display_name,
@@ -968,8 +966,8 @@ async fn server_detail(
         role_limits: role_limits(db, access).await?,
         member_count,
         online_count,
-        upload_expiry: expiry.upload_expiry,
-        upload_ttl: expiry.upload_ttl,
+        upload_expiry: choice,
+        upload_ttl: choice.lifetime(settings.upload_expiry_max_days),
     })
 }
 
@@ -2391,6 +2389,9 @@ async fn rename_live(
     display: &str,
     password_hash: Option<&Option<String>>,
 ) -> Result<(), ApiError> {
+    if new_key != key {
+        crate::api::upload_expiry::lock_kept(tx, key).await?;
+    }
     let renamed = sqlx::query(
         "UPDATE servers SET name = $1, display_name = $2 WHERE name = $3 AND COALESCE(password_hash, '') <> '!purging'",
     )
@@ -2402,6 +2403,13 @@ async fn rename_live(
     .rows_affected();
     if renamed == 0 {
         return Err(not_found("Server not found"));
+    }
+    if new_key != key {
+        sqlx::query("UPDATE media SET kept_by = $1 WHERE kept_by = $2")
+            .bind(new_key)
+            .bind(key)
+            .execute(&mut **tx)
+            .await?;
     }
     if let Some(hash) = password_hash {
         sqlx::query(

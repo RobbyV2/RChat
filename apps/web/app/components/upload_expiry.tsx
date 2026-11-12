@@ -8,8 +8,17 @@ import { durationText } from '../lib/timeouts'
 import {
   expiryChoice,
   expiryFromChoice,
-  lifetimeText,
+  keptFullText,
+  keptLimited,
+  keptShown,
+  keptSpace,
+  keptText,
+  newFilesText,
+  ownerKept,
+  savedText,
   serverLifetime,
+  serverPatch,
+  uploadHint,
   type ExpiryForm,
   type ExpiryMode,
   type ExpiryUnit,
@@ -24,6 +33,13 @@ export const useUploadLifetime = (server: string | null | undefined) => {
   const choice = useStore(s => (server ? s.servers[server]?.upload_expiry : undefined))
   const ttl = useStore(s => (server ? s.servers[server]?.upload_ttl : undefined))
   return server ? serverLifetime({ upload_expiry: choice, upload_ttl: ttl }, cap, base) : base
+}
+
+// What happens to a file uploaded now in `server`, in words.
+export const useUploadHint = (server: string | null | undefined) => {
+  const base = useStore(s => limitsOf(s.instance).media_retention_secs)
+  const limited = useStore(s => keptLimited(s.instance))
+  return uploadHint(useUploadLifetime(server), base, limited)
 }
 
 const UNITS: { value: ExpiryUnit; label: string }[] = [
@@ -74,7 +90,9 @@ export function ServerUploadExpiry({ server }: { server: string }) {
           setDone(true)
           useStore.setState(st => {
             const detail = st.servers[server]
-            return detail ? { servers: { ...st.servers, [server]: { ...detail, ...s } } } : {}
+            return detail
+              ? { servers: { ...st.servers, [server]: { ...detail, ...serverPatch(s) } } }
+              : {}
           })
         },
         (err: unknown) => {
@@ -96,6 +114,9 @@ export function ServerUploadExpiry({ server }: { server: string }) {
     ...(cap === 0 || form?.mode === 'never' ? [{ value: 'never' as const, label: 'Never' }] : []),
   ]
   const now = saved ? serverLifetime(saved, cap, base) : null
+  const kept = keptSpace(saved?.kept)
+  const owner = ownerKept(saved?.owner_kept)
+  const full = keptFullText(kept, owner, now, base)
   return (
     <>
       <p className={sectionCls}>File expiry</p>
@@ -138,12 +159,22 @@ export function ServerUploadExpiry({ server }: { server: string }) {
             </form>
           )}
           <p data-upload-expiry-now className="text-xs text-on-surface-variant">
-            New files: {lifetimeText(now)}.
+            New files: {newFilesText(kept, owner, now, base)}.
             {cap > 0 && ` This instance removes files after ${durationText(cap * 86400)} at most.`}
           </p>
+          {kept && keptShown(kept, now, base) && (
+            <p data-upload-kept className="text-xs text-on-surface-variant">
+              {keptText(kept, owner)}.
+            </p>
+          )}
+          {full && (
+            <p data-upload-kept-full className="text-xs text-on-surface">
+              {full}
+            </p>
+          )}
           {done && !error && (
             <span role="status" className="text-xs text-on-surface">
-              Saved.
+              {savedText(saved.extended, base)}
             </span>
           )}
           <FieldError message={error} />

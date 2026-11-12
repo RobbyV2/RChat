@@ -20,6 +20,8 @@ static READERS: LazyLock<Mutex<HashMap<String, Db>>> = LazyLock::new(Default::de
 static CONFIG_STARTS: LazyLock<Mutex<HashMap<String, ConfigStart>>> =
     LazyLock::new(Default::default);
 
+static LIMITS: LazyLock<Mutex<HashMap<String, Limits>>> = LazyLock::new(Default::default);
+
 /// What `open_with` reads from the configuration: the limits, `PASSWORD_PEPPER` and the
 /// controls the env sets and pins. `controls` is `Some` only for a server start, which brings
 /// the stored controls in line with its env. `None` (the default, for tools that open the
@@ -49,6 +51,15 @@ pub fn take_config_start(db: &Db) -> ConfigStart {
         .unwrap_or_default()
 }
 
+/// The limits `db` was opened with: the server config's for a server start.
+pub fn opened_limits(db: &Db) -> Limits {
+    LIMITS
+        .lock()
+        .ok()
+        .and_then(|limits| limits.get(&pool_key(db)).cloned())
+        .unwrap_or_default()
+}
+
 pub fn reader(db: &Db) -> Db {
     READERS
         .lock()
@@ -62,6 +73,9 @@ pub async fn close(db: &Db) {
         peppers.remove(&pool_key(db));
     }
     take_config_start(db);
+    if let Ok(mut limits) = LIMITS.lock() {
+        limits.remove(&pool_key(db));
+    }
     let read = READERS
         .lock()
         .ok()
@@ -250,6 +264,9 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
     }
     if let Ok(mut map) = CONFIG_STARTS.lock() {
         map.insert(pool_key(&pool), started);
+    }
+    if let Ok(mut map) = LIMITS.lock() {
+        map.insert(pool_key(&pool), limits.clone());
     }
     match is_sqlite {
         true => {

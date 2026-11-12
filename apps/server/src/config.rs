@@ -366,7 +366,7 @@ impl AppConfig {
         Ok(config)
     }
 
-    /// `UPLOAD_BUDGET_MIB` (most MiB of one account's files kept at once, 0 for no limit) and
+    /// `UPLOAD_BUDGET_MIB` (most MiB of one account's files counted at once, 0 for no limit) and
     /// `UPLOAD_BUFFER_MIB` (most MiB of upload bodies in memory at once).
     pub fn upload_limits(&self) -> crate::api::media::UploadLimits {
         crate::api::media::UploadLimits {
@@ -907,6 +907,34 @@ mod tests {
     }
 
     #[test]
+    fn a_bad_kept_limit_stops_the_start_naming_the_variable() {
+        let load = |pairs: &[(&str, &str)]| AppConfig::load_from(&cli(None, None), env(pairs));
+        let limits = load(&[]).unwrap().limits;
+        assert_eq!(
+            (limits.upload_server_kept_mib, limits.upload_owner_kept_mib),
+            (8192, 16384)
+        );
+        for name in ["UPLOAD_SERVER_KEPT_MIB", "UPLOAD_OWNER_KEPT_MIB"] {
+            let none = load(&[(name, "0")]).unwrap().limits;
+            let set = match name {
+                "UPLOAD_SERVER_KEPT_MIB" => none.upload_server_kept_mib,
+                _ => none.upload_owner_kept_mib,
+            };
+            assert_eq!(set, 0, "{name}=0 means none");
+            for bad in ["1048577", "-1", "lots"] {
+                let err = match load(&[(name, bad)]) {
+                    Err(e) => e.to_string(),
+                    Ok(_) => panic!("{name}={bad} is refused"),
+                };
+                assert!(
+                    err.contains(&format!("{name}: expected 0 to 1048576, got {bad}")),
+                    "{err}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn upload_limits_default_and_parse() {
         let load = |pairs: &[(&str, &str)]| AppConfig::load_from(&cli(None, None), env(pairs));
         let limits = load(&[]).unwrap().upload_limits();
@@ -1374,6 +1402,8 @@ mod tests {
             "E2EE_GUESTS_PER_GROUP",
             "VOICE_ROOM_MAX",
             "UPLOAD_BUDGET_MIB",
+            "UPLOAD_SERVER_KEPT_MIB",
+            "UPLOAD_OWNER_KEPT_MIB",
         ] {
             assert!(load(&[(none, "0")]).is_ok(), "{none}=0 means none");
         }

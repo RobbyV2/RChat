@@ -8,7 +8,7 @@ use crate::relay::{DEFAULT_TOTAL_KIB_PER_SEC, DEFAULT_USER_ALLOCATIONS, DEFAULT_
 const MIB: usize = 1024 * 1024;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 40] = [
+const RANGES: [(&str, i64, i64); 42] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("WS_CONNECTIONS_PER_USER", 1, 10_000),
@@ -25,6 +25,8 @@ const RANGES: [(&str, i64, i64); 40] = [
     ("UPLOAD_MAX_MIB", 1, 512),
     ("UPLOAD_BUDGET_MIB", 0, 1_048_576),
     ("UPLOAD_BUFFER_MIB", 32, 1_048_576),
+    ("UPLOAD_SERVER_KEPT_MIB", 0, 1_048_576),
+    ("UPLOAD_OWNER_KEPT_MIB", 0, 1_048_576),
     ("MESSAGE_MAX_CHARS", 1, 100_000),
     ("GUEST_GRANT_DAYS", 1, 3_650),
     ("EMBED_CACHE_DAYS", 1, 3_650),
@@ -70,6 +72,8 @@ pub struct Limits {
     pub upload_max_mib: u64,
     pub upload_budget_mib: u64,
     pub upload_buffer_mib: u64,
+    pub upload_server_kept_mib: u64,
+    pub upload_owner_kept_mib: u64,
     pub message_max_chars: usize,
     pub guest_grant_days: i64,
     pub embed_cache_days: i64,
@@ -117,6 +121,8 @@ impl Default for Limits {
             upload_max_mib: 25,
             upload_budget_mib: DEFAULT_BUDGET_MIB,
             upload_buffer_mib: DEFAULT_BUFFER_MIB,
+            upload_server_kept_mib: 8192,
+            upload_owner_kept_mib: 16384,
             message_max_chars: 4000,
             guest_grant_days: 30,
             embed_cache_days: 30,
@@ -211,6 +217,8 @@ impl Limits {
             upload_max_mib: e.num("UPLOAD_MAX_MIB", d.upload_max_mib)?,
             upload_budget_mib: e.num("UPLOAD_BUDGET_MIB", d.upload_budget_mib)?,
             upload_buffer_mib: e.num("UPLOAD_BUFFER_MIB", d.upload_buffer_mib)?,
+            upload_server_kept_mib: e.num("UPLOAD_SERVER_KEPT_MIB", d.upload_server_kept_mib)?,
+            upload_owner_kept_mib: e.num("UPLOAD_OWNER_KEPT_MIB", d.upload_owner_kept_mib)?,
             message_max_chars: e.num("MESSAGE_MAX_CHARS", d.message_max_chars)?,
             guest_grant_days: e.num("GUEST_GRANT_DAYS", d.guest_grant_days)?,
             embed_cache_days: e.num("EMBED_CACHE_DAYS", d.embed_cache_days)?,
@@ -265,6 +273,8 @@ impl Limits {
             upload_max_mib,
             upload_budget_mib,
             upload_buffer_mib,
+            upload_server_kept_mib,
+            upload_owner_kept_mib,
             message_max_chars,
             guest_grant_days,
             embed_cache_days,
@@ -318,6 +328,8 @@ impl Limits {
             ("UPLOAD_MAX_MIB", set(upload_max_mib)),
             ("UPLOAD_BUDGET_MIB", set(upload_budget_mib)),
             ("UPLOAD_BUFFER_MIB", set(upload_buffer_mib)),
+            ("UPLOAD_SERVER_KEPT_MIB", set(upload_server_kept_mib)),
+            ("UPLOAD_OWNER_KEPT_MIB", set(upload_owner_kept_mib)),
             ("MESSAGE_MAX_CHARS", set(message_max_chars)),
             ("GUEST_GRANT_DAYS", set(guest_grant_days)),
             ("EMBED_CACHE_DAYS", set(embed_cache_days)),
@@ -401,6 +413,22 @@ impl Limits {
     /// The largest request body that carries an upload: the upload and 1 MiB for the rest.
     pub fn upload_body_bytes(&self) -> usize {
         self.upload_bytes() + MIB
+    }
+
+    /// Most bytes of files one server keeps longer than the instance default
+    /// (`UPLOAD_SERVER_KEPT_MIB`); 0 for no limit.
+    pub fn upload_server_kept_bytes(&self) -> i64 {
+        self.upload_server_kept_mib
+            .saturating_mul(MIB as u64)
+            .min(i64::MAX as u64) as i64
+    }
+
+    /// Most bytes of files kept longer than the instance default across the servers whose file
+    /// expiry one account set (`UPLOAD_OWNER_KEPT_MIB`); 0 for no limit.
+    pub fn upload_owner_kept_bytes(&self) -> i64 {
+        self.upload_owner_kept_mib
+            .saturating_mul(MIB as u64)
+            .min(i64::MAX as u64) as i64
     }
 
     /// Seconds an unused guest grant lives (`GUEST_GRANT_DAYS`, at least one day).
@@ -526,6 +554,42 @@ mod tests {
             assert_eq!(Limits::range(name), Some((lo, hi)), "{name}");
         }
         assert_eq!(Limits::range("SFU_ENABLED"), None);
+    }
+
+    #[test]
+    fn the_server_kept_limit_has_a_default_a_range_and_no_limit_at_0() {
+        let d = load(&[]).expect("defaults");
+        assert_eq!(d.upload_server_kept_mib, 8192);
+        assert_eq!(d.upload_server_kept_bytes(), 8192 * 1024 * 1024);
+        let none = load(&[("UPLOAD_SERVER_KEPT_MIB", "0".to_string())]).expect("0");
+        assert_eq!(none.upload_server_kept_bytes(), 0);
+        let most = load(&[("UPLOAD_SERVER_KEPT_MIB", "1048576".to_string())]).expect("most");
+        assert_eq!(most.upload_server_kept_bytes(), 1 << 40);
+        for bad in ["-1", "1048577", "8 GiB"] {
+            let err = load(&[("UPLOAD_SERVER_KEPT_MIB", bad.to_string())]).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("UPLOAD_SERVER_KEPT_MIB: expected 0 to 1048576, got {bad}")
+            );
+        }
+    }
+
+    #[test]
+    fn the_owner_kept_limit_has_a_default_a_range_and_no_limit_at_0() {
+        let d = load(&[]).expect("defaults");
+        assert_eq!(d.upload_owner_kept_mib, 16384);
+        assert_eq!(d.upload_owner_kept_bytes(), 16384 * 1024 * 1024);
+        let none = load(&[("UPLOAD_OWNER_KEPT_MIB", "0".to_string())]).expect("0");
+        assert_eq!(none.upload_owner_kept_bytes(), 0);
+        let most = load(&[("UPLOAD_OWNER_KEPT_MIB", "1048576".to_string())]).expect("most");
+        assert_eq!(most.upload_owner_kept_bytes(), 1 << 40);
+        for bad in ["-1", "1048577", "16 GiB"] {
+            let err = load(&[("UPLOAD_OWNER_KEPT_MIB", bad.to_string())]).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("UPLOAD_OWNER_KEPT_MIB: expected 0 to 1048576, got {bad}")
+            );
+        }
     }
 
     #[test]

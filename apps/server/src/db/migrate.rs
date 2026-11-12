@@ -109,6 +109,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("users", "recovery_set_at {INT}"),
     ("servers", "upload_expiry {INT}"),
     ("media", "ttl {INT}"),
+    ("media", "kept_by TEXT"),
+    ("servers", "upload_expiry_by TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -136,6 +138,16 @@ const BACKFILLS: &[(&str, &str, &str)] = &[
         "channels",
         "position",
         "UPDATE channels SET position = (SELECT COUNT(*) FROM channels c WHERE c.server = channels.server AND ((c.kind = 'text' AND channels.kind <> 'text') OR (c.kind = channels.kind AND c.id < channels.id)))",
+    ),
+    (
+        "media",
+        "kept_by",
+        "UPDATE media SET kept_by = (SELECT c.server FROM messages m JOIN channels c ON c.id = m.channel_id WHERE m.media_id = media.id AND m.media_kind = 'server' AND m.media_removed = 0 AND m.fwd_created_at IS NULL ORDER BY m.id LIMIT 1) WHERE ttl = 0 OR ttl > 86400",
+    ),
+    (
+        "servers",
+        "upload_expiry_by",
+        "UPDATE servers SET upload_expiry_by = creator WHERE (upload_expiry = 0 OR upload_expiry > 86400) AND EXISTS(SELECT 1 FROM users u WHERE u.username = servers.creator AND u.password_hash <> '!purging' AND u.created_at <= servers.created_at + 600)",
     ),
 ];
 
@@ -175,10 +187,13 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 20: the instance audit log (`instance_audit`).
 /// 21: per-server upload expiry (`servers.upload_expiry`), `media.ttl` with its sweep and cap
 /// indexes, and the `messages_media_release` trigger.
-pub const SCHEMA_VERSION: i64 = 21;
+/// 22: `media.kept_by` (a file kept longer than the default counts against its server),
+/// `servers.upload_expiry_by` (the account charged for a server's longer choice), their indexes
+/// and the indexes of the upload budget sums.
+pub const SCHEMA_VERSION: i64 = 22;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 12] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 17] {
     [
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_revoked ON server_passwords(revoked_at) WHERE revoked_at IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_expires ON server_passwords(expires_at) WHERE expires_at IS NOT NULL",
@@ -199,6 +214,11 @@ pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 12] {
         "CREATE INDEX IF NOT EXISTS idx_media_default_expiry ON media(uploaded_at) WHERE ttl IS NULL",
         "CREATE INDEX IF NOT EXISTS idx_media_timed_expiry ON media((uploaded_at + ttl)) WHERE ttl > 0",
         "CREATE INDEX IF NOT EXISTS idx_media_kept ON media(ttl) WHERE ttl IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_media_kept_by ON media(kept_by, size) WHERE kept_by IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_media_uploader ON media(uploader, uploaded_at)",
+        "CREATE INDEX IF NOT EXISTS idx_media_charged_to ON media(charged_to, uploaded_at) WHERE charged_to IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_media_charged_server ON media(charged_server, uploaded_at) WHERE charged_server IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_servers_upload_expiry_by ON servers(upload_expiry_by) WHERE upload_expiry_by IS NOT NULL",
     ]
 }
 

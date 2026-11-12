@@ -466,6 +466,10 @@ pub struct Limits {
     /// (`upload_expiry` of the server). Files in DMs always use this.
     #[schema(example = 86400)]
     pub media_retention_secs: i64,
+    /// Whether the instance limits how much a server and one account keep longer than
+    /// `media_retention_secs` (`UPLOAD_SERVER_KEPT_MIB`, `UPLOAD_OWNER_KEPT_MIB`). While it
+    /// does, a file that does not fit is still posted and stays for `media_retention_secs`.
+    pub upload_kept_limited: bool,
     /// Default page size of list endpoints.
     #[schema(example = 50)]
     pub page_size: i64,
@@ -481,6 +485,8 @@ impl Limits {
             name_chars: crate::api::NAME_MAX,
             upload_bytes: limits.upload_bytes(),
             media_retention_secs: crate::api::media::MEDIA_TTL_SECS,
+            upload_kept_limited: limits.upload_server_kept_bytes() > 0
+                || limits.upload_owner_kept_bytes() > 0,
             page_size: crate::api::LIST_PAGE,
             assertion_ttl_secs: crate::identity::ASSERTION_TTL_SECS,
         }

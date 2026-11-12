@@ -87,7 +87,8 @@ pub(crate) fn clean_mime(raw: &str) -> String {
 /// The operator's upload limits.
 #[derive(Clone, Copy, Debug)]
 pub struct UploadLimits {
-    /// Most bytes of one account's files kept at once; 0 for no limit.
+    /// Most bytes of one account's files counted at once, each from its upload until it is
+    /// removed, for at most `MEDIA_TTL_SECS`; 0 for no limit.
     pub budget: u64,
     /// Most bytes of upload bodies held in memory at once across all requests.
     pub buffer: u64,
@@ -590,23 +591,30 @@ impl<'a> Charge<'a> {
 }
 
 fn over_budget(budget: u64, charge: Charge<'_>) -> ApiError {
-    let whose = match charge.hooks_of {
-        Some(_) => "files from this webhook's owner (or from all webhooks of its server)",
-        None => "your files",
+    let who = match charge.hooks_of {
+        Some(_) => "this webhook's owner, and all webhooks of its server together,",
+        None => "you",
     };
     ApiError(
         StatusCode::TOO_MANY_REQUESTS,
         format!(
-            "Upload limit reached: up to {} of {whose} are kept at once. Space frees up as they expire or are removed",
+            "Upload limit reached: {who} can upload up to {} a day. Space frees up 1 day after each upload, or sooner when a file is removed. The site admin sets this limit",
             fmt_bytes(budget)
         ),
     )
 }
 
-/// The files counted against an account: its own uploads and those charged to it.
-const ACCOUNT_USED: &str = "SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) FROM media WHERE (uploader = $1 OR charged_to = $1) AND (ttl = 0 OR uploaded_at + COALESCE(ttl, $3) > $2)";
-/// The files of a server's webhooks.
-const HOOKS_USED: &str = "SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) FROM media WHERE charged_server = $1 AND (ttl = 0 OR uploaded_at + COALESCE(ttl, $3) > $2)";
+/// The files counted against an account: its own uploads and those charged to it, each from its
+/// upload (`$2` is now) until it is removed, for at most the instance default (`$3`). Time a
+/// server adds counts against that server (`media.kept_by`). One sum per column, so each walks
+/// its own index (`idx_media_uploader`, `idx_media_charged_to`).
+const ACCOUNT_USED: &str = "SELECT CAST((SELECT COALESCE(SUM(size), 0) FROM media WHERE uploader = $1 AND uploaded_at > $2 - $3 AND (ttl IS NULL OR ttl = 0 OR ttl >= $3 OR uploaded_at + ttl > $2)) + (SELECT COALESCE(SUM(size), 0) FROM media WHERE charged_to = $1 AND (uploader IS NULL OR uploader <> $1) AND uploaded_at > $2 - $3 AND (ttl IS NULL OR ttl = 0 OR ttl >= $3 OR uploaded_at + ttl > $2)) AS BIGINT)";
+/// The files of a server's webhooks, counted for the same time (`idx_media_charged_server`).
+const HOOKS_USED: &str = "SELECT CAST(COALESCE(SUM(size), 0) AS BIGINT) FROM media WHERE charged_server = $1 AND uploaded_at > $2 - $3 AND (ttl IS NULL OR ttl = 0 OR ttl >= $3 OR uploaded_at + ttl > $2)";
+/// Stores a file (`$1` to `$6`, charged to `$9` and `$10`) unless it takes the account `$11`,
+/// or the webhooks of the server `$10`, past the budget `$7` (0 for none) at the time `$8`,
+/// counted like `ACCOUNT_USED` and `HOOKS_USED` with the instance default `$12`.
+const STORE: &str = "INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at, charged_to, charged_server) SELECT $1, $2, $3, $4, NULL, $5, $6, $9, $10 WHERE $7 = 0 OR ((SELECT COALESCE(SUM(size), 0) FROM media WHERE uploader = $11 AND uploaded_at > $8 - $12 AND (ttl IS NULL OR ttl = 0 OR ttl >= $12 OR uploaded_at + ttl > $8)) + (SELECT COALESCE(SUM(size), 0) FROM media WHERE charged_to = $11 AND (uploader IS NULL OR uploader <> $11) AND uploaded_at > $8 - $12 AND (ttl IS NULL OR ttl = 0 OR ttl >= $12 OR uploaded_at + ttl > $8)) + $4 <= $7 AND ($10 IS NULL OR (SELECT COALESCE(SUM(size), 0) FROM media WHERE charged_server = $10 AND uploaded_at > $8 - $12 AND (ttl IS NULL OR ttl = 0 OR ttl >= $12 OR uploaded_at + ttl > $8)) + $4 <= $7))";
 
 /// Refuses an upload of `adding` bytes that would take `charge` past the storage budget.
 pub(crate) async fn check_budget(
@@ -707,7 +715,7 @@ struct NewMedia<'a> {
     uploaded_at: i64,
 }
 
-/// Stores `file` unless it takes `charge` past `budget` bytes of live files (0 for no limit):
+/// Stores `file` unless it takes `charge` past `budget` bytes of counted files (0 for no limit):
 /// the charged account, and for a webhook upload also the webhooks of its server together. The
 /// check and the insert are one statement in one transaction: SQLite takes its write lock
 /// before the statement reads, and on Postgres advisory locks on the account (then the server)
@@ -735,24 +743,22 @@ async fn store_within(
         .hooks_of
         .map(|_| charge.account.to_string())
         .filter(|account| account != file.uploader);
-    let inserted = sqlx::query(
-        "INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at, charged_to, charged_server) SELECT $1, $2, $3, $4, NULL, $5, $6, $9, $10 WHERE $7 = 0 OR ((SELECT COALESCE(SUM(size), 0) FROM media WHERE (uploader = $11 OR charged_to = $11) AND (ttl = 0 OR uploaded_at + COALESCE(ttl, $12) > $8)) + $4 <= $7 AND ($10 IS NULL OR (SELECT COALESCE(SUM(size), 0) FROM media WHERE charged_server = $10 AND (ttl = 0 OR uploaded_at + COALESCE(ttl, $12) > $8)) + $4 <= $7))",
-    )
-    .bind(file.id)
-    .bind(file.filename)
-    .bind(file.mime)
-    .bind(file.size)
-    .bind(file.uploader)
-    .bind(file.uploaded_at)
-    .bind(budget.min(i64::MAX as u64) as i64)
-    .bind(file.uploaded_at)
-    .bind(charged_to)
-    .bind(charge.hooks_of.map(str::to_string))
-    .bind(charge.account)
-    .bind(MEDIA_TTL_SECS)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
+    let inserted = sqlx::query(STORE)
+        .bind(file.id)
+        .bind(file.filename)
+        .bind(file.mime)
+        .bind(file.size)
+        .bind(file.uploader)
+        .bind(file.uploaded_at)
+        .bind(budget.min(i64::MAX as u64) as i64)
+        .bind(file.uploaded_at)
+        .bind(charged_to)
+        .bind(charge.hooks_of.map(str::to_string))
+        .bind(charge.account)
+        .bind(MEDIA_TTL_SECS)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
     if inserted == 0 {
         tx.rollback().await?;
         return Err(over_budget(budget, charge));
@@ -788,7 +794,10 @@ async fn store_within(
 /// it then show it as removed (`media_removed` event). At most `limits.upload_bytes`
 /// of `GET /api/v1/instance` per file, by default 25 MiB (`UPLOAD_MAX_MIB`), and
 /// at most the instance's per-account budget (`UPLOAD_BUDGET_MIB`, 2 GiB unless set) of your
-/// files kept at once, until each expires or is removed (files your webhooks sent count too).
+/// files at once. Each counts from its upload until it is removed, for at most 24 hours (files
+/// your webhooks sent count too). Time a server adds with its `upload_expiry` counts against
+/// that server and its owner instead (`kept` and `owner_kept` of
+/// `GET /api/v1/servers/{name}/upload_expiry`).
 /// At most 3 of your uploads are read at once. Each takes room for its whole declared body in
 /// the instance's upload buffer (`UPLOAD_BUFFER_MIB`) before any of it is read, and together
 /// they hold at most a quarter of it, three uploads (up to half of it) or one upload, whichever
@@ -796,7 +805,7 @@ async fn store_within(
 /// dropped with 408.
 ///
 /// Requires a bearer token and the instance's uploads setting. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/media", tag = "Media", request_body(content = Vec<u8>, content_type = "multipart/form-data", description = "A multipart form whose first part is the file"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef), (status = 400, description = "No file part (JSON `No file provided`) or a malformed multipart body (JSON). A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "File uploads are disabled on this instance", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`): `File exceeds 25MB limit` with the configured number. A request body over that size plus 1 MiB is cut off while the file is read and answers with this status and the JSON error \"Error parsing `multipart/form-data` request\"", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket (shared with register, login, word hints, password change and guest access) or the general bucket (plain text), the per-account budget is used up (JSON `Upload limit reached: ...`; space frees up as your files expire), or 3 of your uploads, or uploads holding your share of the upload buffer, are already being read (JSON `Too many uploads at once: ...`)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`: the instance holds as many upload bodies in memory as it allows (each upload takes room for its whole declared size first)", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/media", tag = "Media", request_body(content = Vec<u8>, content_type = "multipart/form-data", description = "A multipart form whose first part is the file"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef), (status = 400, description = "No file part (JSON `No file provided`) or a malformed multipart body (JSON). A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "File uploads are disabled on this instance", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`): `File exceeds 25MB limit` with the configured number. A request body over that size plus 1 MiB is cut off while the file is read and answers with this status and the JSON error \"Error parsing `multipart/form-data` request\"", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket (shared with register, login, word hints, password change and guest access) or the general bucket (plain text), the per-account budget is used up (JSON `Upload limit reached: you can upload up to 2 GiB a day. ...` with the configured size; space frees up 24 hours after each upload, or sooner when a file is removed, and the site operator sets the limit with `UPLOAD_BUDGET_MIB`), or 3 of your uploads, or uploads holding your share of the upload buffer, are already being read (JSON `Too many uploads at once: ...`)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`: the instance holds as many upload bodies in memory as it allows (each upload takes room for its whole declared size first)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn upload_media(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -857,7 +866,7 @@ pub(crate) async fn save_upload(
     save_within(state, filename, mime, data, uploader, charge, budget()).await
 }
 
-async fn save_within(
+pub(crate) async fn save_within(
     state: &AppState,
     filename: &str,
     mime: &str,
@@ -1583,8 +1592,10 @@ mod tests {
         match refused {
             Err(ApiError(code, msg)) => {
                 assert_eq!(code, StatusCode::TOO_MANY_REQUESTS);
-                assert!(msg.starts_with("Upload limit reached"), "{msg}");
-                assert!(msg.contains("4 MiB"), "{msg}");
+                assert_eq!(
+                    msg,
+                    "Upload limit reached: you can upload up to 4 MiB a day. Space frees up 1 day after each upload, or sooner when a file is removed. The site admin sets this limit"
+                );
                 assert!(msg.is_ascii());
             }
             Ok(()) => panic!("crossing the budget is refused"),
@@ -1606,6 +1617,65 @@ mod tests {
                 .is_ok(),
             "space frees up once files are a day old"
         );
+        done(state, path).await;
+    }
+
+    /// The plan SQLite makes for `sql`, with `binds` text and number parameters.
+    async fn plan(db: &crate::db::Db, sql: &str, texts: &[usize], binds: usize) -> String {
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(format!("EXPLAIN QUERY PLAN {sql}")));
+        for n in 1..=binds {
+            query = match texts.contains(&n) {
+                true => query.bind("alice"),
+                false => query.bind(1_i64),
+            };
+        }
+        let rows = query.fetch_all(db).await.expect("plan");
+        rows.iter()
+            .map(|r| r.get::<String, _>(3))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[tokio::test]
+    async fn the_budget_sums_use_the_indexes_of_who_is_charged() {
+        let (state, path) = temp_state("media_budget_plan").await;
+        let db = &state.db;
+        for (what, sql, texts, binds, indexes) in [
+            (
+                "an account",
+                super::ACCOUNT_USED,
+                &[1][..],
+                3,
+                &["idx_media_uploader", "idx_media_charged_to"][..],
+            ),
+            (
+                "a server's webhooks",
+                super::HOOKS_USED,
+                &[1][..],
+                3,
+                &["idx_media_charged_server"][..],
+            ),
+            (
+                "the insert",
+                super::STORE,
+                &[1, 2, 3, 5, 9, 10, 11][..],
+                12,
+                &[
+                    "idx_media_uploader",
+                    "idx_media_charged_to",
+                    "idx_media_charged_server",
+                ][..],
+            ),
+        ] {
+            let plan = plan(db, sql, texts, binds).await;
+            for index in indexes {
+                assert!(plan.contains(index), "{what}: {index} is used\n{plan}");
+            }
+            assert!(
+                !plan.contains("idx_media_uploaded_at") && !plan.contains("SCAN media"),
+                "{what}: no walk over every recent file\n{plan}"
+            );
+        }
         done(state, path).await;
     }
 
@@ -2198,10 +2268,14 @@ mod tests {
             matches!(r, Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _)))
         };
         assert!(save("@1", hook("alice", "s1")).await.is_ok());
-        assert!(
-            refused(save("@2", hook("alice", "s2")).await),
-            "a second webhook of the same owner"
-        );
+        match save("@2", hook("alice", "s2")).await {
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, msg)) => assert_eq!(
+                msg,
+                "Upload limit reached: this webhook's owner, and all webhooks of its server together, can upload up to 10240 bytes a day. Space frees up 1 day after each upload, or sooner when a file is removed. The site admin sets this limit",
+                "a second webhook of the same owner"
+            ),
+            _ => panic!("a second webhook of the same owner is refused"),
+        }
         assert!(
             refused(save("alice", Charge::own("alice")).await),
             "the owner's own uploads share the budget"

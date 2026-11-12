@@ -44,7 +44,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 | P2P threads, pins and search | Reply in threads, pin up to 100 messages a channel and search the messages stored on your device.                                                                                                                                                |
 | P2P voice                    | Join voice channels in P2P servers, with camera and screen share.                                                                                                                                                                                |
 | Account badge                | Show your instance account name to P2P contacts and server members, if you choose to. They see "Confirmed as name". The instance then learns your P2P key. You can turn it off.                                                                  |
-| Uploads                      | Upload files and images up to 25 MB by default. They are deleted after one day unless the server owner chose another time or to keep them. The site admin can cap that time or turn uploads off.                                                 |
+| Uploads                      | Upload files and images up to 25 MB by default. They are deleted after one day unless the server owner chose another time or to keep them. The site admin can cap that time and how much is kept longer, or turn uploads off.                    |
 | Text only mode               | Turn off uploads and P2P attachments. Then messages can contain only text and emoji.                                                                                                                                                             |
 | Link previews                | Show a card for links in a message. The server gets the preview and its image, not your browser.                                                                                                                                                 |
 | Mentions                     | Type `@name` to ping a person. The app highlights messages that mention you.                                                                                                                                                                     |
@@ -369,29 +369,31 @@ Upgrade all copies together. From 0.3.0 on, an older copy refuses to start once 
 
 Put settings in `.env.local`. Refer to `.env.local.example` for all settings and the range of each limit. A limit outside its range, or a setting with a value it does not take, stops the server at start and names the variable. Settings marked "Admin page" can also be changed in the site admin panel while the server runs. At a start, a value you changed in `.env.local` is applied, and an unchanged one leaves the panel's choice. `SETTINGS_PINNED` lists settings that always follow `.env.local` and are read-only in the panel. Start every copy with the same settings: a start without a value forgets it, and the next start that sets it applies it again. These are the most useful ones:
 
-| Variable            | Default     | What it does                                                                                                                    |
-| ------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `APP_MODE`          | `full`      | `full` serves the API and the app. `api-only` serves only the API.                                                              |
-| `HOST`              | `127.0.0.1` | The address the server listens on. Use `0.0.0.0` for remote access.                                                             |
-| `SERVER_PORT`       | `3000`      | The public port.                                                                                                                |
-| `DATABASE_URL`      | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                                                                          |
-| `PUBLIC_URL`        | none        | The address people open, for example `https://chat.example.com`.                                                                |
-| `PUBLIC_PEERJS_URL` | none        | Where browsers reach PeerJS when it is not `/peerjs` on the public address.                                                     |
-| `PEERJS_BUILTIN`    | `true`      | Serves PeerJS at `/peerjs` on the server's own port. Off needs a separate PeerJS server and a proxy that sends `/peerjs` to it. |
-| `INSTANCE_NAME`     | `RChat`     | The name people see for your instance.                                                                                          |
-| `GUESTS_ENABLED`    | `true`      | Lets people read public servers without an account.                                                                             |
-| `P2P_ATTACHMENTS`   | `true`      | Lets people send P2P attachments.                                                                                               |
-| `AUTH_REGISTRATION` | `open`      | Who can sign up with a password: `open`, `sso` or `closed`. Keep it open until your own account exists.                         |
-| `S3_ENDPOINT`       | none        | Stores uploads in an S3 bucket. Also set the bucket and keys.                                                                   |
-| `RCHAT_ROLES`       | `all`       | The roles this process runs (see Scaling).                                                                                      |
-| `REDIS_URL`         | none        | The shared Redis server for many processes.                                                                                     |
-| `TRUSTED_PROXIES`   | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.                                                    |
-| `PUBLIC_STUN`       | `false`     | Gives calls a list of public STUN servers.                                                                                      |
-| `RELAY_ENABLED`     | `false`     | Optional. Starts the built-in STUN and TURN relay on UDP port 3478 and UDP ports 49160 to 49415.                                |
-| `RELAY_PUBLIC_IP`   | none        | The public IP of the relay. TURN needs it.                                                                                      |
-| `VOICE_ROOM_MAX`    | `25`        | The most people in one voice channel. `0` means no limit.                                                                       |
-| `UPLOAD_MAX_MIB`    | `25`        | The largest upload in MiB. Raise your proxy's body size limit to match.                                                         |
-| `MESSAGE_MAX_CHARS` | `4000`      | The longest message in characters.                                                                                              |
+| Variable                 | Default     | What it does                                                                                                                    |
+| ------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_MODE`               | `full`      | `full` serves the API and the app. `api-only` serves only the API.                                                              |
+| `HOST`                   | `127.0.0.1` | The address the server listens on. Use `0.0.0.0` for remote access.                                                             |
+| `SERVER_PORT`            | `3000`      | The public port.                                                                                                                |
+| `DATABASE_URL`           | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                                                                          |
+| `PUBLIC_URL`             | none        | The address people open, for example `https://chat.example.com`.                                                                |
+| `PUBLIC_PEERJS_URL`      | none        | Where browsers reach PeerJS when it is not `/peerjs` on the public address.                                                     |
+| `PEERJS_BUILTIN`         | `true`      | Serves PeerJS at `/peerjs` on the server's own port. Off needs a separate PeerJS server and a proxy that sends `/peerjs` to it. |
+| `INSTANCE_NAME`          | `RChat`     | The name people see for your instance.                                                                                          |
+| `GUESTS_ENABLED`         | `true`      | Lets people read public servers without an account.                                                                             |
+| `P2P_ATTACHMENTS`        | `true`      | Lets people send P2P attachments.                                                                                               |
+| `AUTH_REGISTRATION`      | `open`      | Who can sign up with a password: `open`, `sso` or `closed`. Keep it open until your own account exists.                         |
+| `S3_ENDPOINT`            | none        | Stores uploads in an S3 bucket. Also set the bucket and keys.                                                                   |
+| `RCHAT_ROLES`            | `all`       | The roles this process runs (see Scaling).                                                                                      |
+| `REDIS_URL`              | none        | The shared Redis server for many processes.                                                                                     |
+| `TRUSTED_PROXIES`        | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.                                                    |
+| `PUBLIC_STUN`            | `false`     | Gives calls a list of public STUN servers.                                                                                      |
+| `RELAY_ENABLED`          | `false`     | Optional. Starts the built-in STUN and TURN relay on UDP port 3478 and UDP ports 49160 to 49415.                                |
+| `RELAY_PUBLIC_IP`        | none        | The public IP of the relay. TURN needs it.                                                                                      |
+| `VOICE_ROOM_MAX`         | `25`        | The most people in one voice channel. `0` means no limit.                                                                       |
+| `UPLOAD_MAX_MIB`         | `25`        | The largest upload in MiB. Raise your proxy's body size limit to match.                                                         |
+| `UPLOAD_SERVER_KEPT_MIB` | `8192`      | The most MiB of files one server keeps longer than a day. `0` means no limit.                                                   |
+| `UPLOAD_OWNER_KEPT_MIB`  | `16384`     | The most MiB of such files across the servers whose file expiry one account set. `0` means no limit.                            |
+| `MESSAGE_MAX_CHARS`      | `4000`      | The longest message in characters.                                                                                              |
 
 A proxy in front of the instance needs only one domain and port 443. It sends every path, `/peerjs` included, to `SERVER_PORT` and passes the WebSocket upgrade for `/api/ws` and `/peerjs`. Calls and P2P files (WebRTC) go between browsers, not through the proxy.
 

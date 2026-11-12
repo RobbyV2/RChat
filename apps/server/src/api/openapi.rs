@@ -186,6 +186,8 @@ impl Modify for Bearer {
         super::upload_expiry::UploadExpiry,
         super::upload_expiry::ExpiryMode,
         super::upload_expiry::UploadExpiryState,
+        super::upload_expiry::KeptSpace,
+        super::upload_expiry::Extended,
         super::pings::Ping,
         super::pings::ThreadPings,
         super::pings::GroupMention,

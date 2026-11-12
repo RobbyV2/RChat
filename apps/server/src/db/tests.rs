@@ -3991,6 +3991,13 @@ async fn old_upload_expiry_db(db: &Db) {
         "DROP INDEX idx_media_default_expiry".to_string(),
         "DROP INDEX idx_media_timed_expiry".to_string(),
         "DROP INDEX idx_media_kept".to_string(),
+        "DROP INDEX idx_media_kept_by".to_string(),
+        "DROP INDEX idx_media_uploader".to_string(),
+        "DROP INDEX idx_media_charged_to".to_string(),
+        "DROP INDEX idx_media_charged_server".to_string(),
+        "DROP INDEX idx_servers_upload_expiry_by".to_string(),
+        "ALTER TABLE media DROP COLUMN kept_by".to_string(),
+        "ALTER TABLE servers DROP COLUMN upload_expiry_by".to_string(),
         "ALTER TABLE media DROP COLUMN ttl".to_string(),
         "ALTER TABLE servers DROP COLUMN upload_expiry".to_string(),
         "UPDATE settings SET value = '20' WHERE key = 'schema_version'".to_string(),
@@ -5199,6 +5206,301 @@ async fn stale_creators_are_cleared_once_on_an_old_database() {
     wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("creator_cleanup").await {
         stale_creators_cleared(&pg.url).await;
+        drop(pg);
+    }
+}
+
+/// The release trigger of schemas 21 and 22, before `media.kept_by`.
+const OLD_RELEASE_BODY: &str = "UPDATE messages SET media_expires_at = (SELECT uploaded_at + 86400 FROM media WHERE id = old.media_id) WHERE media_id = old.media_id AND media_kind = 'server' AND media_removed = 0 AND EXISTS(SELECT 1 FROM media WHERE id = old.media_id AND ttl IS NOT NULL); UPDATE media SET ttl = NULL WHERE id = old.media_id AND ttl IS NOT NULL;";
+
+fn kept_id(c: &str) -> String {
+    c.repeat(32)
+}
+
+/// Whether `table` has `column`.
+async fn has_column(db: &Db, table: &str, column: &str) -> bool {
+    let sql = match is_sqlite(db) {
+        true => {
+            format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}'")
+        }
+        false => format!(
+            "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = '{table}' AND column_name = '{column}'"
+        ),
+    };
+    count(db, &sql).await > 0
+}
+
+/// A schema 22 database (the look-alike keys of usernames, from the lane that takes 22): alice's
+/// `club` keeps files until removed, `den`, whose creator has no account, for a week, with
+/// files kept under that schema (one forwarded to `plain`, one from a webhook), files at the
+/// default and one in a DM. `heir` keeps files too, but its creator's name was registered again
+/// after it was made; `drift` was made on a copy whose clock ran ahead of the one its creator
+/// registered on.
+async fn old_kept_db(db: &Db) {
+    let now = now();
+    let day = 86400;
+    for column in ["username_key", "username_key_alt"] {
+        if !has_column(db, "users", column).await {
+            for stmt in [
+                format!("ALTER TABLE users ADD COLUMN {column} TEXT"),
+                format!("CREATE INDEX idx_users_{column} ON users({column})"),
+            ] {
+                sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+                    .execute(db)
+                    .await
+                    .expect(&stmt);
+            }
+        }
+    }
+    let release: Vec<String> = match is_sqlite(db) {
+        true => vec![
+            "DROP TRIGGER messages_media_release".to_string(),
+            format!(
+                "CREATE TRIGGER messages_media_release AFTER DELETE ON messages WHEN old.media_id IS NOT NULL AND old.media_kind = 'server' AND old.fwd_created_at IS NULL BEGIN {OLD_RELEASE_BODY} END"
+            ),
+        ],
+        false => vec![
+            format!(
+                "CREATE OR REPLACE FUNCTION rchat_media_release() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN {OLD_RELEASE_BODY} RETURN NULL; END $f$"
+            ),
+            "UPDATE settings SET value = 'schema 21' WHERE key = 'trigger_version'".to_string(),
+        ],
+    };
+    let media = |id: &str, size: i64, uploader: &str, age: i64, ttl: &str, charged: &str| {
+        format!(
+            "INSERT INTO media(id, filename, mime, size, data, uploader, uploaded_at, ttl, charged_to, charged_server) VALUES('{}', 'f.txt', 'text/plain', {size}, NULL, '{uploader}', {}, {ttl}, {charged})",
+            kept_id(id),
+            now - age
+        )
+    };
+    let user = |name: &str, at: i64| {
+        format!(
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, username_key, username_key_alt) VALUES('{name}', '{name}', 'x', 'text', 'identicon', {at}, '{name}', '{name}')"
+        )
+    };
+    for stmt in release.into_iter().chain([
+        "DROP INDEX idx_media_kept_by".to_string(),
+        "DROP INDEX idx_media_uploader".to_string(),
+        "DROP INDEX idx_media_charged_to".to_string(),
+        "DROP INDEX idx_media_charged_server".to_string(),
+        "DROP INDEX idx_servers_upload_expiry_by".to_string(),
+        "ALTER TABLE media DROP COLUMN kept_by".to_string(),
+        "ALTER TABLE servers DROP COLUMN upload_expiry_by".to_string(),
+        "UPDATE settings SET value = '21' WHERE key = 'schema_version'".to_string(),
+        user("alice", 1),
+        user("bob", 1),
+        user("late", 608),
+        user("ahead", 607),
+        "INSERT INTO servers(name, display_name, creator, created_at, upload_expiry) VALUES('club', 'Club', 'alice', 7, 0)".to_string(),
+        "INSERT INTO servers(name, display_name, creator, created_at, upload_expiry) VALUES('heir', 'Heir', 'late', 7, 0)".to_string(),
+        "INSERT INTO servers(name, display_name, creator, created_at, upload_expiry) VALUES('drift', 'Drift', 'ahead', 7, 0)".to_string(),
+        "INSERT INTO servers(name, display_name, creator, created_at, upload_expiry) VALUES('den', 'Den', 'ghost', 7, 604800)".to_string(),
+        "INSERT INTO servers(name, display_name, creator, created_at) VALUES('plain', 'Plain', 'alice', 7)".to_string(),
+        "INSERT INTO channels(server, name, created_at) VALUES('club', 'general', 7)".to_string(),
+        "INSERT INTO channels(server, name, created_at) VALUES('den', 'general', 7)".to_string(),
+        "INSERT INTO channels(server, name, created_at) VALUES('plain', 'general', 7)".to_string(),
+        "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')".to_string(),
+        media("a", 5, "alice", 3 * day, "0", "NULL, NULL"),
+        media("b", 7, "bob", 2 * day, "604800", "NULL, NULL"),
+        media("c", 13, "@webhook:1", 2 * day, "0", "'alice', 'club'"),
+        media("d", 2, "alice", 60, "NULL", "NULL, NULL"),
+        media("e", 3, "alice", 60, "NULL", "NULL, NULL"),
+    ]) {
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(db)
+            .await
+            .expect(&stmt);
+    }
+    let post = |id: &str, place: &str, author: &str, expires: Option<i64>, fwd: Option<i64>| {
+        let sql = format!(
+            "INSERT INTO messages(channel_id, dm_id, author, content, media_id, media_filename, media_kind, media_expires_at, fwd_created_at, created_at) SELECT {place}, $1, '', $2, 'f.txt', 'server', $3, $4, $5"
+        );
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(author.to_string())
+            .bind(kept_id(id))
+            .bind(expires)
+            .bind(fwd)
+            .bind(now)
+            .execute(db)
+    };
+    let channel =
+        |server: &str| format!("(SELECT id FROM channels WHERE server = '{server}'), NULL");
+    let dm = "NULL, (SELECT id FROM dms WHERE user_a = 'alice')";
+    for (id, place, author, expires, fwd) in [
+        ("a", channel("club"), "alice", None, None),
+        ("a", channel("plain"), "bob", None, Some(now - 3 * day)),
+        ("b", channel("den"), "bob", Some(now + 5 * day), None),
+        ("c", channel("club"), "@webhook:1", None, None),
+        ("d", channel("plain"), "alice", Some(now - 60 + day), None),
+        ("e", dm.to_string(), "alice", Some(now - 60 + day), None),
+    ] {
+        post(id, &place, author, expires, fwd)
+            .await
+            .expect("message with a file");
+    }
+}
+
+async fn kept_by_of(db: &Db, id: &str) -> Option<String> {
+    sqlx::query("SELECT kept_by FROM media WHERE id = $1")
+        .bind(kept_id(id))
+        .fetch_one(db)
+        .await
+        .expect("media")
+        .try_get(0)
+        .expect("kept_by")
+}
+
+async fn upgraded_kept_db(db: &Db) {
+    use crate::api::media::{Charge, check_budget};
+    assert_eq!(count(db, STORED_SCHEMA).await, SCHEMA_VERSION);
+    for (server, by) in [
+        ("club", Some("alice")),
+        ("den", None),
+        ("plain", None),
+        ("heir", None),
+        ("drift", Some("ahead")),
+    ] {
+        let charged: Option<String> =
+            sqlx::query("SELECT upload_expiry_by FROM servers WHERE name = $1")
+                .bind(server)
+                .fetch_one(db)
+                .await
+                .expect("server")
+                .try_get(0)
+                .expect("upload_expiry_by");
+        assert_eq!(
+            charged.as_deref(),
+            by,
+            "{server}: a longer choice from before is charged to its creator if that account made it"
+        );
+    }
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM users WHERE username_key = username"
+        )
+        .await,
+        4,
+        "the columns of schema 22 are left as they were"
+    );
+    for (id, server) in [
+        ("a", Some("club")),
+        ("b", Some("den")),
+        ("c", Some("club")),
+        ("d", None),
+        ("e", None),
+    ] {
+        assert_eq!(kept_by_of(db, id).await.as_deref(), server, "file {id}");
+    }
+    let mut conn = db.acquire().await.expect("conn");
+    for (server, bytes) in [("club", 18), ("den", 7), ("plain", 0)] {
+        assert_eq!(
+            crate::api::upload_expiry::kept_bytes(&mut conn, server)
+                .await
+                .expect("kept"),
+            bytes,
+            "{server} is charged for the files it kept before"
+        );
+    }
+    drop(conn);
+    let hooks = Charge {
+        account: "alice",
+        hooks_of: Some("club"),
+    };
+    for (charge, used) in [
+        (Charge::own("alice"), 5),
+        (Charge::own("bob"), 0),
+        (hooks, 5),
+    ] {
+        assert!(
+            check_budget(db, charge, 1, used + 1).await.is_ok(),
+            "{charge:?}: files kept past a day no longer count against the uploader"
+        );
+        assert!(
+            check_budget(db, charge, 2, used + 1).await.is_err(),
+            "{charge:?}: files in their first day still count"
+        );
+    }
+    assert_eq!(count(db, "SELECT COUNT(*) FROM media").await, 5);
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM messages WHERE media_id IS NOT NULL"
+        )
+        .await,
+        6
+    );
+    assert_eq!(
+        count(db, "SELECT COUNT(*) FROM media WHERE ttl = 0").await,
+        2,
+        "kept files stay kept"
+    );
+    let names = "('idx_media_kept_by', 'idx_media_uploader', 'idx_media_charged_to', 'idx_media_charged_server', 'idx_servers_upload_expiry_by')";
+    let indexes = match is_sqlite(db) {
+        true => {
+            format!("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN {names}")
+        }
+        false => format!(
+            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname IN {names}"
+        ),
+    };
+    assert_eq!(count(db, &indexes).await, 5);
+}
+
+async fn kept_upgrade(url: &str) {
+    let db = open(Some(url)).await.expect("open");
+    old_kept_db(&db).await;
+    assert_eq!(count(&db, STORED_SCHEMA).await, 21);
+    assert!(
+        count(&db, STORED_SCHEMA).await < SCHEMA_VERSION,
+        "the old database is at 21, per-server upload expiry"
+    );
+    close(&db).await;
+    for _ in 0..2 {
+        let db = open(Some(url)).await.expect("upgrade");
+        upgraded_kept_db(&db).await;
+        close(&db).await;
+    }
+    let db = open(Some(url)).await.expect("open");
+    crate::api::media::sweep(&db, None).await.expect("sweep");
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM media").await, 5);
+    sqlx::query("DELETE FROM messages WHERE media_id = $1 AND fwd_created_at IS NULL")
+        .bind(kept_id("a"))
+        .execute(&db)
+        .await
+        .expect("delete the original");
+    assert_eq!(
+        kept_by_of(&db, "a").await,
+        None,
+        "the new release trigger replaced the old one"
+    );
+    assert_eq!(
+        count(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM media WHERE id = '{}' AND ttl IS NULL",
+                kept_id("a")
+            )
+        )
+        .await,
+        1
+    );
+    close(&db).await;
+}
+
+#[tokio::test]
+async fn kept_files_are_charged_to_their_server_on_an_old_database() {
+    let path = crate::db::temp_db_path("kept_upgrade");
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    kept_upgrade(path.to_str().expect("path")).await;
+    wipe();
+    if let Some(pg) = crate::api::test_util::pg_temp("kept_upgrade").await {
+        kept_upgrade(&pg.url).await;
         drop(pg);
     }
 }
