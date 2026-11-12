@@ -1,0 +1,1144 @@
+[
+  {
+    "id": "classroom",
+    "queries": [
+      "courses",
+      "assignments",
+      "submissions",
+      "my_submission",
+      "announcements",
+      "people"
+    ],
+    "actions": ["enroll", "add_assistant", "add_student", "remove_from_course", "return_all"],
+    "capabilities": ["actions", "files", "signals"],
+    "plugin": false,
+    "pages": [
+      {
+        "route": "/",
+        "view": {
+          "c": "stack",
+          "children": [
+            {
+              "c": "toolbar",
+              "children": [
+                {
+                  "c": "button",
+                  "label": "New course",
+                  "icon": "plus",
+                  "variant": "filled",
+                  "on": {
+                    "op": "open",
+                    "dialog": "new_course"
+                  },
+                  "when": "me.role(\"Teacher\")"
+                },
+                {
+                  "c": "button",
+                  "label": "Join with a code",
+                  "icon": "log-in",
+                  "variant": "tonal",
+                  "on": {
+                    "action": "enroll"
+                  }
+                }
+              ]
+            },
+            {
+              "c": "list",
+              "label": "Courses",
+              "bind": {
+                "query": "courses"
+              },
+              "empty": {
+                "c": "empty",
+                "icon": "book-open",
+                "title": "No courses yet",
+                "text": "Join one with the code your teacher gave you."
+              },
+              "item": {
+                "c": "card",
+                "title": "{title}",
+                "subtitle": "{description}",
+                "on": {
+                  "op": "navigate",
+                  "route": "/course/:course",
+                  "params": {
+                    "course": "record.id"
+                  }
+                },
+                "children": [],
+                "menu": ["add_assistant", "add_student", "remove_from_course"]
+              }
+            },
+            {
+              "c": "dialog",
+              "name": "new_course",
+              "title": "New course",
+              "children": [
+                {
+                  "c": "form",
+                  "collection": "courses",
+                  "fields": ["title", "description", "code"],
+                  "submit": "Create"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "route": "/course/:course",
+        "view": {
+          "c": "scope",
+          "bind": {
+            "record": "route.course"
+          },
+          "children": [
+            {
+              "c": "tabs",
+              "tabs": [
+                {
+                  "label": "Stream",
+                  "icon": "megaphone",
+                  "view": {
+                    "c": "stack",
+                    "children": [
+                      {
+                        "c": "form",
+                        "collection": "announcements",
+                        "fields": ["text"],
+                        "submit": "Post",
+                        "when": "me.can(\"assist\", route.course)"
+                      },
+                      {
+                        "c": "list",
+                        "label": "Announcements",
+                        "bind": {
+                          "query": "announcements"
+                        },
+                        "item": {
+                          "c": "card",
+                          "children": [
+                            {
+                              "c": "member",
+                              "bind": {
+                                "field": "author"
+                              }
+                            },
+                            {
+                              "c": "markdown",
+                              "bind": {
+                                "field": "text"
+                              }
+                            },
+                            {
+                              "c": "thread",
+                              "bind": {
+                                "field": "id"
+                              },
+                              "label": "Comments"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "label": "Classwork",
+                  "icon": "clipboard-list",
+                  "view": {
+                    "c": "stack",
+                    "children": [
+                      {
+                        "c": "button",
+                        "label": "New assignment",
+                        "icon": "plus",
+                        "on": {
+                          "op": "open",
+                          "dialog": "new_assignment"
+                        },
+                        "when": "me.can(\"teach\", route.course)"
+                      },
+                      {
+                        "c": "table",
+                        "label": "Assignments",
+                        "bind": {
+                          "query": "assignments"
+                        },
+                        "columns": [
+                          {
+                            "field": "title",
+                            "phone": "title",
+                            "sort": true
+                          },
+                          {
+                            "field": "due",
+                            "format": "relative",
+                            "phone": "subtitle",
+                            "sort": true
+                          },
+                          {
+                            "field": "points",
+                            "format": "number",
+                            "phone": "meta"
+                          },
+                          {
+                            "field": "published",
+                            "phone": "hide"
+                          }
+                        ],
+                        "on_row": {
+                          "op": "navigate",
+                          "route": "/assignment/:assignment",
+                          "params": {
+                            "assignment": "record.id"
+                          }
+                        }
+                      },
+                      {
+                        "c": "dialog",
+                        "name": "new_assignment",
+                        "title": "New assignment",
+                        "children": [
+                          {
+                            "c": "form",
+                            "collection": "assignments",
+                            "fields": [
+                              "title",
+                              "instructions",
+                              "due",
+                              "late_ok",
+                              "points",
+                              "files",
+                              "published"
+                            ],
+                            "submit": "Save"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                {
+                  "label": "People",
+                  "icon": "users",
+                  "view": {
+                    "c": "list",
+                    "label": "People",
+                    "bind": {
+                      "query": "people"
+                    },
+                    "item": {
+                      "c": "row",
+                      "children": [
+                        {
+                          "c": "member",
+                          "bind": {
+                            "field": "who"
+                          }
+                        },
+                        {
+                          "c": "badge",
+                          "text": "{priv}"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "route": "/assignment/:assignment",
+        "view": {
+          "c": "scope",
+          "bind": {
+            "record": "route.assignment"
+          },
+          "children": [
+            {
+              "c": "split",
+              "a": {
+                "c": "stack",
+                "children": [
+                  {
+                    "c": "text",
+                    "text": "{title}",
+                    "style": "title"
+                  },
+                  {
+                    "c": "timer",
+                    "until": "record.due",
+                    "label": "Due",
+                    "done_text": "Past due"
+                  },
+                  {
+                    "c": "markdown",
+                    "bind": {
+                      "field": "instructions"
+                    }
+                  },
+                  {
+                    "c": "files",
+                    "bind": {
+                      "field": "files"
+                    },
+                    "field": "files",
+                    "label": "Attached files"
+                  }
+                ]
+              },
+              "b": {
+                "c": "stack",
+                "children": [
+                  {
+                    "c": "section",
+                    "title": "Your work",
+                    "when": "!me.can(\"assist\", record.course)",
+                    "children": [
+                      {
+                        "c": "form",
+                        "collection": "submissions",
+                        "bind": {
+                          "query": "my_submission"
+                        },
+                        "fields": ["text", "file"],
+                        "submit": "Turn in"
+                      },
+                      {
+                        "c": "value",
+                        "bind": {
+                          "field": "grade"
+                        },
+                        "format": "number"
+                      },
+                      {
+                        "c": "markdown",
+                        "bind": {
+                          "field": "feedback"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "c": "section",
+                    "title": "Submissions",
+                    "when": "me.can(\"assist\", record.course)",
+                    "children": [
+                      {
+                        "c": "button",
+                        "label": "Return graded work",
+                        "on": {
+                          "action": "return_all"
+                        }
+                      },
+                      {
+                        "c": "table",
+                        "label": "Submissions",
+                        "bind": {
+                          "query": "submissions"
+                        },
+                        "inline_edit": true,
+                        "columns": [
+                          {
+                            "field": "author",
+                            "phone": "title"
+                          },
+                          {
+                            "field": "created",
+                            "format": "relative",
+                            "phone": "subtitle"
+                          },
+                          {
+                            "field": "grade",
+                            "format": "number",
+                            "phone": "meta"
+                          },
+                          {
+                            "field": "returned",
+                            "phone": "meta"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "forms",
+    "queries": ["open_forms", "responses", "mine"],
+    "actions": ["submit", "close"],
+    "capabilities": ["actions"],
+    "plugin": false,
+    "pages": [
+      {
+        "route": "/",
+        "view": {
+          "c": "list",
+          "label": "Forms",
+          "bind": {
+            "query": "open_forms"
+          },
+          "item": {
+            "c": "card",
+            "title": "{title}",
+            "subtitle": "{description}",
+            "on": {
+              "op": "navigate",
+              "route": "/form/:form",
+              "params": {
+                "form": "record.id"
+              }
+            },
+            "children": []
+          }
+        }
+      },
+      {
+        "route": "/form/:form",
+        "view": {
+          "c": "scope",
+          "bind": {
+            "record": "route.form"
+          },
+          "children": [
+            {
+              "c": "text",
+              "text": "{title}",
+              "style": "title"
+            },
+            {
+              "c": "markdown",
+              "bind": {
+                "field": "description"
+              }
+            },
+            {
+              "c": "banner",
+              "text": "Your name is hidden from this form's managers. Staff handling a report can see who wrote an answer.",
+              "tone": "muted",
+              "when": "record.anonymous"
+            },
+            {
+              "c": "form",
+              "collection": "responses",
+              "fields": ["answers"],
+              "steps": [],
+              "submit": "Submit",
+              "on_done": {
+                "op": "navigate",
+                "route": "/thanks"
+              },
+              "when": "!me.can(\"manage\", record.id)"
+            },
+            {
+              "c": "section",
+              "title": "Responses",
+              "when": "me.can(\"manage\", record.id)",
+              "children": [
+                {
+                  "c": "stat",
+                  "label": "Responses",
+                  "bind": {
+                    "query": "responses"
+                  },
+                  "agg": "count"
+                },
+                {
+                  "c": "chart",
+                  "label": "Answers",
+                  "bind": {
+                    "query": "responses"
+                  },
+                  "kind": "bar",
+                  "x": "answers",
+                  "y": ["count"]
+                },
+                {
+                  "c": "table",
+                  "label": "Responses",
+                  "bind": {
+                    "query": "responses"
+                  },
+                  "columns": [
+                    {
+                      "field": "author",
+                      "phone": "title"
+                    },
+                    {
+                      "field": "created",
+                      "format": "relative",
+                      "phone": "subtitle"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "forum",
+    "queries": ["communities", "hot", "top", "new", "removed", "comments", "modlog"],
+    "actions": ["tally", "count_comment", "remove", "add_moderator", "add_member"],
+    "capabilities": ["actions"],
+    "plugin": false,
+    "pages": [
+      {
+        "route": "/",
+        "view": {
+          "c": "list",
+          "label": "Communities",
+          "bind": {
+            "query": "communities"
+          },
+          "item": {
+            "c": "card",
+            "title": "{name}",
+            "subtitle": "{description}",
+            "on": {
+              "op": "navigate",
+              "route": "/c/:community",
+              "params": {
+                "community": "record.id"
+              }
+            },
+            "children": [],
+            "menu": ["add_member", "add_moderator"]
+          }
+        }
+      },
+      {
+        "route": "/c/:community",
+        "view": {
+          "c": "scope",
+          "bind": {
+            "record": "route.community"
+          },
+          "children": [
+            {
+              "c": "tabs",
+              "tabs": [
+                {
+                  "label": "Hot",
+                  "icon": "flame",
+                  "view": {
+                    "c": "list",
+                    "label": "Posts",
+                    "virtual": true,
+                    "bind": {
+                      "query": "hot"
+                    },
+                    "item": {
+                      "c": "row",
+                      "children": [
+                        {
+                          "c": "vote",
+                          "bind": {
+                            "field": "id"
+                          },
+                          "collection": "votes",
+                          "field": "value",
+                          "mode": "updown"
+                        },
+                        {
+                          "c": "card",
+                          "title": "{title}",
+                          "subtitle": "{flair}",
+                          "on": {
+                            "op": "navigate",
+                            "route": "/p/:post",
+                            "params": {
+                              "post": "record.id"
+                            }
+                          },
+                          "children": []
+                        }
+                      ],
+                      "menu": ["remove"]
+                    }
+                  }
+                },
+                {
+                  "label": "New",
+                  "icon": "clock",
+                  "view": {
+                    "c": "list",
+                    "label": "Posts",
+                    "virtual": true,
+                    "bind": {
+                      "query": "new"
+                    },
+                    "item": {
+                      "c": "card",
+                      "title": "{title}",
+                      "children": []
+                    }
+                  }
+                },
+                {
+                  "label": "Top",
+                  "icon": "trending-up",
+                  "view": {
+                    "c": "list",
+                    "label": "Posts",
+                    "virtual": true,
+                    "bind": {
+                      "query": "top"
+                    },
+                    "item": {
+                      "c": "card",
+                      "title": "{title}",
+                      "children": []
+                    }
+                  }
+                },
+                {
+                  "label": "Moderation log",
+                  "icon": "shield",
+                  "view": {
+                    "c": "table",
+                    "label": "Moderation log",
+                    "bind": {
+                      "query": "modlog"
+                    },
+                    "columns": [
+                      {
+                        "field": "author",
+                        "phone": "title"
+                      },
+                      {
+                        "field": "what",
+                        "phone": "subtitle"
+                      },
+                      {
+                        "field": "created",
+                        "format": "relative",
+                        "phone": "meta"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "route": "/p/:post",
+        "view": {
+          "c": "scope",
+          "bind": {
+            "record": "route.post"
+          },
+          "children": [
+            {
+              "c": "text",
+              "text": "{title}",
+              "style": "title"
+            },
+            {
+              "c": "markdown",
+              "bind": {
+                "field": "body"
+              }
+            },
+            {
+              "c": "form",
+              "collection": "comments",
+              "fields": ["body"],
+              "submit": "Comment"
+            },
+            {
+              "c": "tree",
+              "bind": {
+                "query": "comments"
+              },
+              "parent": "parent",
+              "label": "Comments",
+              "item": {
+                "c": "stack",
+                "children": [
+                  {
+                    "c": "member",
+                    "bind": {
+                      "field": "author"
+                    }
+                  },
+                  {
+                    "c": "markdown",
+                    "bind": {
+                      "field": "body"
+                    }
+                  },
+                  {
+                    "c": "vote",
+                    "bind": {
+                      "field": "id"
+                    },
+                    "collection": "votes",
+                    "field": "value",
+                    "mode": "updown"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "office",
+    "queries": ["children", "root", "recent", "trash", "shared_with_me", "comments", "activity"],
+    "actions": ["share", "unshare", "transfer", "notify_mentions", "log_move", "empty_trash"],
+    "capabilities": ["actions", "files", "signals", "p2p_docs"],
+    "plugin": false,
+    "pages": [
+      {
+        "route": "/",
+        "view": {
+          "c": "stack",
+          "children": [
+            {
+              "c": "toolbar",
+              "children": [
+                {
+                  "c": "button",
+                  "label": "New",
+                  "icon": "plus",
+                  "variant": "filled",
+                  "on": {
+                    "op": "open",
+                    "dialog": "new"
+                  }
+                },
+                {
+                  "c": "button",
+                  "label": "Upload",
+                  "icon": "upload",
+                  "variant": "tonal",
+                  "on": {
+                    "op": "create",
+                    "collection": "items",
+                    "values": {
+                      "kind": "\"file\""
+                    }
+                  }
+                },
+                {
+                  "c": "search",
+                  "target": "files",
+                  "label": "Search in drive"
+                }
+              ]
+            },
+            {
+              "c": "table",
+              "key": "files",
+              "label": "Files",
+              "bind": {
+                "query": "root"
+              },
+              "columns": [
+                {
+                  "field": "name",
+                  "phone": "title",
+                  "sort": true
+                },
+                {
+                  "field": "kind",
+                  "phone": "meta"
+                },
+                {
+                  "field": "updated",
+                  "format": "relative",
+                  "phone": "subtitle",
+                  "sort": true
+                },
+                {
+                  "field": "author",
+                  "phone": "hide"
+                }
+              ],
+              "on_row": {
+                "op": "navigate",
+                "route": "/item/:item",
+                "params": {
+                  "item": "record.id"
+                }
+              },
+              "menu": ["share", "unshare", "transfer"]
+            },
+            {
+              "c": "dialog",
+              "name": "new",
+              "title": "New",
+              "children": [
+                {
+                  "c": "form",
+                  "collection": "items",
+                  "fields": ["name", "kind"],
+                  "submit": "Create"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "route": "/shared",
+        "view": {
+          "c": "list",
+          "label": "Shared with me",
+          "bind": {
+            "query": "shared_with_me"
+          },
+          "item": {
+            "c": "row",
+            "children": [
+              {
+                "c": "value",
+                "bind": {
+                  "field": "scope"
+                }
+              },
+              {
+                "c": "badge",
+                "text": "{priv}"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "route": "/recent",
+        "view": {
+          "c": "list",
+          "label": "Recent",
+          "bind": {
+            "query": "recent"
+          },
+          "item": {
+            "c": "card",
+            "title": "{name}",
+            "subtitle": "{updated}",
+            "children": []
+          }
+        }
+      },
+      {
+        "route": "/trash",
+        "view": {
+          "c": "stack",
+          "children": [
+            {
+              "c": "banner",
+              "text": "Items in the trash are deleted for good after the trash period.",
+              "tone": "muted"
+            },
+            {
+              "c": "button",
+              "label": "Empty trash",
+              "variant": "danger",
+              "on": {
+                "action": "empty_trash"
+              }
+            },
+            {
+              "c": "list",
+              "label": "Trash",
+              "bind": {
+                "query": "trash"
+              },
+              "item": {
+                "c": "row",
+                "children": [
+                  {
+                    "c": "text",
+                    "text": "{name}"
+                  },
+                  {
+                    "c": "button",
+                    "label": "Restore",
+                    "on": {
+                      "op": "update",
+                      "values": {
+                        "trashed": "false"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "route": "/item/:item",
+        "view": {
+          "c": "scope",
+          "bind": {
+            "record": "route.item"
+          },
+          "children": [
+            {
+              "c": "split",
+              "ratio": 0.72,
+              "a": {
+                "c": "stack",
+                "children": [
+                  {
+                    "c": "row",
+                    "children": [
+                      {
+                        "c": "text",
+                        "text": "{name}",
+                        "style": "title"
+                      },
+                      {
+                        "c": "presence",
+                        "bind": {
+                          "field": "id"
+                        },
+                        "label": "Here now"
+                      },
+                      {
+                        "c": "button",
+                        "label": "Star",
+                        "icon": "star",
+                        "variant": "text",
+                        "on": {
+                          "op": "mark",
+                          "kind": "star"
+                        }
+                      },
+                      {
+                        "c": "button",
+                        "label": "Share",
+                        "icon": "share-2",
+                        "on": {
+                          "op": "share"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "c": "doc",
+                    "bind": {
+                      "field": "doc"
+                    },
+                    "label": "Document",
+                    "comments": true,
+                    "presence": true,
+                    "when": "record.kind == \"doc\""
+                  },
+                  {
+                    "c": "sheet",
+                    "bind": {
+                      "field": "sheet"
+                    },
+                    "label": "Sheet",
+                    "when": "record.kind == \"sheet\""
+                  },
+                  {
+                    "c": "slides",
+                    "bind": {
+                      "field": "slides"
+                    },
+                    "label": "Slides",
+                    "comments": true,
+                    "presence": true,
+                    "when": "record.kind == \"slides\""
+                  },
+                  {
+                    "c": "files",
+                    "bind": {
+                      "field": "blob"
+                    },
+                    "field": "blob",
+                    "upload": true,
+                    "label": "File",
+                    "when": "record.kind == \"file\""
+                  },
+                  {
+                    "c": "tree",
+                    "bind": {
+                      "query": "children"
+                    },
+                    "parent": "parent",
+                    "label": "Folder",
+                    "drag": true,
+                    "item": {
+                      "c": "text",
+                      "text": "{name}"
+                    },
+                    "when": "record.kind == \"folder\""
+                  }
+                ]
+              },
+              "b": {
+                "c": "tabs",
+                "tabs": [
+                  {
+                    "label": "Comments",
+                    "icon": "message-square",
+                    "view": {
+                      "c": "list",
+                      "label": "Comments",
+                      "bind": {
+                        "query": "comments"
+                      },
+                      "item": {
+                        "c": "card",
+                        "children": [
+                          {
+                            "c": "text",
+                            "text": "{anchor.quote}",
+                            "style": "caption"
+                          },
+                          {
+                            "c": "markdown",
+                            "bind": {
+                              "field": "text"
+                            }
+                          },
+                          {
+                            "c": "thread",
+                            "bind": {
+                              "field": "id"
+                            },
+                            "label": "Replies"
+                          },
+                          {
+                            "c": "button",
+                            "label": "Resolve",
+                            "on": {
+                              "op": "update",
+                              "values": {
+                                "resolved": "true"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "label": "Activity",
+                    "icon": "history",
+                    "view": {
+                      "c": "timeline",
+                      "bind": {
+                        "query": "activity"
+                      },
+                      "at": "created",
+                      "label": "Activity",
+                      "item": {
+                        "c": "text",
+                        "text": "{author} {what}"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "sheet",
+    "queries": ["books", "tabs"],
+    "actions": ["give_edit"],
+    "capabilities": ["signals"],
+    "plugin": false,
+    "pages": [
+      {
+        "route": "/",
+        "view": {
+          "c": "stack",
+          "children": [
+            {
+              "c": "button",
+              "label": "New spreadsheet",
+              "icon": "plus",
+              "variant": "filled",
+              "on": {
+                "op": "create",
+                "collection": "books",
+                "values": {
+                  "title": "\"Untitled\""
+                }
+              }
+            },
+            {
+              "c": "gallery",
+              "label": "Spreadsheets",
+              "bind": {
+                "query": "books"
+              },
+              "image": "none",
+              "title": "title"
+            }
+          ]
+        }
+      },
+      {
+        "route": "/book/:book",
+        "view": {
+          "c": "scope",
+          "bind": {
+            "record": "route.book"
+          },
+          "children": [
+            {
+              "c": "row",
+              "children": [
+                {
+                  "c": "text",
+                  "text": "{title}",
+                  "style": "title"
+                },
+                {
+                  "c": "presence",
+                  "bind": {
+                    "field": "id"
+                  },
+                  "label": "Editing now"
+                },
+                {
+                  "c": "button",
+                  "label": "Share",
+                  "icon": "share-2",
+                  "on": {
+                    "op": "share"
+                  }
+                }
+              ]
+            },
+            {
+              "c": "sheet",
+              "bind": {
+                "query": "tabs"
+              },
+              "label": "Cells"
+            }
+          ]
+        }
+      }
+    ]
+  }
+]
