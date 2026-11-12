@@ -447,6 +447,7 @@ pub(crate) async fn revoke_password(
         return Err(ApiError(
             axum::http::StatusCode::NOT_FOUND,
             "Password not found".to_string(),
+            None,
         ));
     };
     let label: Option<String> = found.try_get(0)?;

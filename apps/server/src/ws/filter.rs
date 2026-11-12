@@ -789,7 +789,10 @@ pub(super) fn wants(
             display_name: _,
             until: _,
         } => me != Some(username.as_str()) && scoped(server, dm_users),
-        WsEvent::Error { message: _ }
+        WsEvent::Error {
+            message: _,
+            reason: _,
+        }
         | WsEvent::TokensRevoked { username: _ }
         | WsEvent::P2pHosted {
             live: _,

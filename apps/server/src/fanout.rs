@@ -422,7 +422,10 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
         WsEvent::Banned { username: _ } | WsEvent::SettingsChanged { settings: _ } => {
             Route::Everyone
         }
-        WsEvent::Error { message: _ }
+        WsEvent::Error {
+            message: _,
+            reason: _,
+        }
         | WsEvent::P2pHosted {
             live: _,
             checked: _,

@@ -237,7 +237,7 @@ async fn answer(e: sqlx::Error) -> (axum::http::StatusCode, Option<String>, Stri
     )
 }
 
-const BUSY_BODY: &str = r#"{"error":"Server busy, try again in a moment"}"#;
+const BUSY_BODY: &str = r#"{"error":"Server busy, try again in a moment","reason":{"kind":"unavailable","retry_after":1}}"#;
 const ERROR_BODY: &str = r#"{"error":"Something went wrong"}"#;
 
 #[tokio::test]
@@ -306,7 +306,7 @@ async fn database_errors_never_reach_the_body() {
         (generic.0, "Something went wrong")
     );
     let other: crate::api::ApiError = anyhow::anyhow!("not the database").into();
-    assert_eq!(other.1, "not the database");
+    assert_eq!(other.1, "Something went wrong");
     close(&db).await;
     wipe();
 }

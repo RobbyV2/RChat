@@ -1268,7 +1268,7 @@ mod tests {
         let _ = admin(serde_json::json!({"upload_expiry_max_days": 7}))
             .await
             .expect("cap again");
-        let refused = |r: Result<UploadExpiryState, ApiError>| matches!(r, Err(ApiError(StatusCode::BAD_REQUEST, m)) if m == "This instance keeps files at most 7 days");
+        let refused = |r: Result<UploadExpiryState, ApiError>| matches!(r, Err(ApiError(StatusCode::BAD_REQUEST, m, _)) if m == "This instance keeps files at most 7 days");
         assert!(refused(set(&state, "alice", "club", NEVER).await));
         assert!(refused(set(&state, "alice", "club", custom(8 * DAY)).await));
         set(&state, "alice", "club", custom(7 * DAY))
@@ -1293,7 +1293,7 @@ mod tests {
     async fn only_managers_change_it_and_others_get_uniform_404s() {
         let (state, path) = temp_state("upload_expiry_gate").await;
         club(&state).await;
-        let code = |r: Result<UploadExpiryState, ApiError>| r.err().map(|ApiError(c, _)| c);
+        let code = |r: Result<UploadExpiryState, ApiError>| r.err().map(|ApiError(c, _, _)| c);
         assert_eq!(
             code(set(&state, "bob", "club", NEVER).await),
             Some(StatusCode::FORBIDDEN)
@@ -1312,7 +1312,7 @@ mod tests {
             Path("club".into()),
         )
         .await;
-        assert!(matches!(get, Err(ApiError(StatusCode::FORBIDDEN, _))));
+        assert!(matches!(get, Err(ApiError(StatusCode::FORBIDDEN, _, _))));
         for bad in [
             custom(3599),
             custom(CUSTOM_MAX + 1),
@@ -1712,7 +1712,7 @@ mod tests {
         assert!(
             matches!(
                 again().await,
-                Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+                Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, _))
             ),
             "the budget is used up on the first day"
         );

@@ -245,7 +245,7 @@ fn parse_scope(scope: &str) -> Result<(&str, i64), ApiError> {
 
 async fn resolve_place(db: &Db, scope: &str, user: &User) -> Result<Place, ApiError> {
     let (kind, id) = parse_scope(scope)?;
-    let hide = |e: ApiError| match e.0.is_server_error() {
+    let hide = |e: ApiError| match e.failed() {
         true => e,
         false => not_found(),
     };
@@ -846,9 +846,10 @@ async fn start_all(
     .await?
     .try_get(0)?;
     if running >= RUNNING_MAX {
-        return Err(ApiError(
+        return Err(ApiError::limit(
             StatusCode::TOO_MANY_REQUESTS,
-            TOO_MANY_JOBS.to_string(),
+            TOO_MANY_JOBS,
+            "bulk_delete_jobs",
         ));
     }
     let t = now();
@@ -1157,7 +1158,7 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
     };
     let place = match resolve_place(db, &scope, &user).await {
         Ok(place) => place,
-        Err(e) if e.0.is_server_error() => return Err(e),
+        Err(e) if e.failed() => return Err(e),
         Err(_) => {
             gone(GONE).await?;
             return Ok(false);

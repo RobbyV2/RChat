@@ -93,6 +93,7 @@ fn wrong_phrase() -> ApiError {
     ApiError(
         StatusCode::UNAUTHORIZED,
         "Wrong username or backup phrase".to_string(),
+        None,
     )
 }
 
@@ -455,7 +456,7 @@ mod tests {
             .expect("100 characters");
         assert_eq!(longest.username.len(), 100);
         for name in ["a".repeat(101), String::new(), "  ".to_string()] {
-            let ApiError(code, _) = challenge_at(&state, req(&name), T)
+            let ApiError(code, _, _) = challenge_at(&state, req(&name), T)
                 .await
                 .err()
                 .expect("refused");
@@ -471,7 +472,7 @@ mod tests {
             .at(1)
             .add_recoverable(&state.db, Some(KEY), None)
             .await;
-        let ApiError(code, msg) = challenge_at(state, req("ali\0ce"), T)
+        let ApiError(code, msg, _) = challenge_at(state, req("ali\0ce"), T)
             .await
             .err()
             .expect("refused");
@@ -503,7 +504,7 @@ mod tests {
             nonce: nul,
             sig: "A".repeat(86),
         };
-        let ApiError(code, msg) = check_at(state, &session, proof, Purpose::RemovePhrase, T)
+        let ApiError(code, msg, _) = check_at(state, &session, proof, Purpose::RemovePhrase, T)
             .await
             .expect_err("refused");
         assert_eq!(
@@ -608,7 +609,7 @@ mod tests {
     }
 
     fn refusal(result: Result<Json<AuthResp>, ApiError>) -> (StatusCode, String) {
-        let ApiError(code, msg) = result.err().expect("refused");
+        let ApiError(code, msg, _) = result.err().expect("refused");
         (code, msg)
     }
 
@@ -777,7 +778,7 @@ mod tests {
         let mut answers = Vec::new();
         for (n, (case, attempt, at, checks)) in (0i64..).zip(tries) {
             let before = phrase_checks();
-            let ApiError(code, msg) = recover_at(state, attempt, at + 3 * n)
+            let ApiError(code, msg, _) = recover_at(state, attempt, at + 3 * n)
                 .await
                 .err()
                 .expect(case);
@@ -994,7 +995,7 @@ mod tests {
             (Err(lost), Ok(Json(won))) => (won, "p2", lost),
             (_, _) => panic!("exactly one recovery wins"),
         };
-        let ApiError(code, msg) = loser;
+        let ApiError(code, msg, _) = loser;
         assert_eq!((code, msg), wrong());
         assert_eq!(
             tokens_of(state, "alice").await,
@@ -1134,7 +1135,7 @@ mod tests {
         for (name, result) in names.iter().zip(results) {
             let Json(AuthResp { token, user }) = match result {
                 Ok(done) => done,
-                Err(ApiError(code, msg)) => panic!("{name}: {code} {msg}"),
+                Err(ApiError(code, msg, _)) => panic!("{name}: {code} {msg}"),
             };
             assert_eq!(&user.username, name);
             assert_eq!(tokens_of(state, name).await, vec![secret_key(&token)]);
@@ -1189,12 +1190,12 @@ mod tests {
     }
 
     fn shown(result: Result<Json<RecoveryStatus>, ApiError>) -> serde_json::Value {
-        let Json(status) = result.unwrap_or_else(|ApiError(code, msg)| panic!("{code} {msg}"));
+        let Json(status) = result.unwrap_or_else(|ApiError(code, msg, _)| panic!("{code} {msg}"));
         serde_json::to_value(status).expect("json")
     }
 
     fn denied(result: Result<Json<RecoveryStatus>, ApiError>) -> (StatusCode, String) {
-        let ApiError(code, msg) = result.err().expect("refused");
+        let ApiError(code, msg, _) = result.err().expect("refused");
         (code, msg)
     }
 
@@ -1499,7 +1500,7 @@ mod tests {
             (Err(lost), Ok(_)) => (NEW_KEY, "tok-b", lost),
             (a, b) => panic!("exactly one set wins: {:?} {:?}", a.is_ok(), b.is_ok()),
         };
-        let ApiError(code, msg) = lost;
+        let ApiError(code, msg, _) = lost;
         assert_eq!(
             (code, msg.as_str()),
             (StatusCode::UNAUTHORIZED, "Unauthorized")

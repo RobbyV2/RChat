@@ -1488,8 +1488,8 @@ mod tests {
 
     fn refusal(forms: &ReportForms, form: &str, list: Value) -> String {
         match validate_answers(forms, form, &answers(list)) {
-            Err(ApiError(StatusCode::BAD_REQUEST, message)) => message,
-            Err(ApiError(status, message)) => panic!("{status} {message}"),
+            Err(ApiError(StatusCode::BAD_REQUEST, message, _)) => message,
+            Err(ApiError(status, message, _)) => panic!("{status} {message}"),
             Ok(kept) => panic!("accepted: {kept:?}"),
         }
     }

@@ -336,11 +336,21 @@ impl Policy {
     }
 }
 
-/// The answer to a request that the control `control` refuses, because it is off or leaves the
-/// caller out. Every refusal by an instance control is built here.
+/// The answer to a request that the control `control` refuses because it is off for the whole
+/// site: `answer` with that reason. Every refusal by an instance control is built here or in
+/// `left_out`.
 pub(crate) fn refused(control: &'static str, answer: ApiError) -> ApiError {
     tracing::debug!("refused by the {control} setting");
-    answer
+    let ApiError(status, error, _) = answer;
+    ApiError::off_site(status, error, control)
+}
+
+/// The answer to a request that the control `control` refuses because it leaves the caller
+/// out while others may: `answer` with that reason.
+pub(crate) fn left_out(control: &'static str, answer: ApiError) -> ApiError {
+    tracing::debug!("left out by the {control} setting");
+    let ApiError(status, error, _) = answer;
+    ApiError::off_account(status, error, control)
 }
 
 /// Whether `entry`, which names a role of `server`, also reads as a role of another server.
@@ -371,6 +381,11 @@ pub async fn effective<'a>(db: &'a Db, user: Option<&'a User>) -> Effective<'a> 
 }
 
 impl Effective<'_> {
+    /// Who may create servers.
+    pub fn server_creation(&self) -> ServerCreation {
+        self.settings.server_creation
+    }
+
     /// How the user may get into servers by themselves.
     pub fn server_joining(&self) -> ServerJoining {
         self.settings.server_joining
@@ -544,7 +559,7 @@ mod tests {
             assert!(!may(&state, who).await, "{who}: nobody");
             let refused = create(&state, who, &format!("closed{n}")).await;
             assert!(
-                matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"),
+                matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m, _)) if m == "Not found"),
                 "{who}: the same 404 as an unknown path, the site admin included"
             );
         }
@@ -562,7 +577,7 @@ mod tests {
             match listed {
                 true => made.expect(who),
                 false => assert!(
-                    matches!(made, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"),
+                    matches!(made, Err(ApiError(StatusCode::NOT_FOUND, ref m, _)) if m == "Not found"),
                     "{who}"
                 ),
             }
@@ -802,6 +817,172 @@ mod tests {
         done(state, path).await;
     }
 
+    /// What an old client reads of `refused`, and its reason as a new one reads it.
+    async fn answered<T>(refused: Result<T, ApiError>) -> (StatusCode, String, serde_json::Value) {
+        use axum::response::IntoResponse;
+        let Err(e) = refused else {
+            panic!("refused");
+        };
+        let res = e.into_response();
+        let status = res.status();
+        let body = axum::body::to_bytes(res.into_body(), 4096)
+            .await
+            .expect("body");
+        let text = String::from_utf8(body.to_vec()).expect("utf8");
+        let json: serde_json::Value = serde_json::from_str(&text).expect("json");
+        let error = json["error"].as_str().expect("error").to_string();
+        let old = serde_json::to_string(&json!({ "error": error })).expect("old body");
+        match json.get("reason") {
+            Some(_) => assert!(
+                text.starts_with(&format!("{},\"reason\":{{", &old[..old.len() - 1])),
+                "the body before the change, with one field after it: {text}"
+            ),
+            None => assert_eq!(text, old),
+        }
+        (status, error, json["reason"].clone())
+    }
+
+    #[tokio::test]
+    async fn each_landed_switch_refuses_with_its_reason() {
+        use axum::extract::{Path, Query};
+
+        use crate::api::MaybeAuthed;
+        use crate::api::dms::open_dm;
+        use crate::api::friends::send_request;
+        use crate::api::servers::{guest_access, join_server, search_servers};
+        let (state, path) = temp_state("switch_reasons").await;
+        people(&state).await;
+        let off = |control: &str| json!({"kind": "off_site", "control": control});
+        let not_found = |text: &str, reason: serde_json::Value| {
+            (StatusCode::NOT_FOUND, text.to_string(), reason)
+        };
+
+        set(&state, json!({"server_creation": "nobody"}))
+            .await
+            .expect("nobody");
+        for who in ["alice", "root"] {
+            assert_eq!(
+                answered(create(&state, who, "made").await).await,
+                not_found("Not found", off("server_creation")),
+                "{who}"
+            );
+        }
+        set(
+            &state,
+            json!({"server_creation": "some", "server_creators": ["bob"]}),
+        )
+        .await
+        .expect("some");
+        assert_eq!(
+            answered(create(&state, "alice", "made").await).await,
+            not_found(
+                "Not found",
+                json!({"kind": "off_account", "control": "server_creation"})
+            ),
+            "left out of the list: off for this account, not for the site"
+        );
+
+        set(&state, json!({"server_joining": "nobody"}))
+            .await
+            .expect("nobody");
+        for name in ["lobby", "no-such-server"] {
+            let joined = join_server(
+                State(state.clone()),
+                Authed(mem_user("alice", false)),
+                Path(name.to_string()),
+                None,
+            )
+            .await;
+            assert_eq!(
+                answered(joined).await,
+                not_found("Server not found or wrong password", off("server_joining")),
+                "{name}"
+            );
+            let guest = guest_access(
+                State(state.clone()),
+                MaybeAuthed(None),
+                Path(name.to_string()),
+                Json(serde_json::from_value(json!({})).expect("req")),
+            )
+            .await;
+            assert_eq!(
+                answered(guest).await,
+                not_found("Server not found or wrong password", off("server_joining")),
+                "{name}"
+            );
+        }
+
+        set(&state, json!({"server_search": false}))
+            .await
+            .expect("search off");
+        for who in [Some(mem_user("alice", false)), None] {
+            let found = search_servers(
+                State(state.clone()),
+                MaybeAuthed(who),
+                Query(serde_json::from_value(json!({"q": "lobby"})).expect("query")),
+            )
+            .await;
+            assert_eq!(
+                answered(found).await,
+                not_found("Not found", off("server_search"))
+            );
+        }
+
+        for mode in ["friends", "nobody"] {
+            set(&state, json!({ "dm_creation": mode }))
+                .await
+                .expect(mode);
+            for name in ["bob", "no-such-user"] {
+                let opened = open_dm(
+                    State(state.clone()),
+                    Authed(mem_user("alice", false)),
+                    Json(serde_json::from_value(json!({ "username": name })).expect("req")),
+                )
+                .await;
+                assert_eq!(
+                    answered(opened).await,
+                    not_found("User not found", off("dm_creation")),
+                    "{mode}: {name}, the same for an account and for a name nobody has"
+                );
+            }
+        }
+        set(&state, json!({"dm_creation": "everyone"}))
+            .await
+            .expect("everyone");
+        let unknown = open_dm(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Json(serde_json::from_value(json!({"username": "no-such-user"})).expect("req")),
+        )
+        .await;
+        assert_eq!(
+            answered(unknown).await,
+            not_found("User not found", serde_json::Value::Null),
+            "no switch refused it, so it has no reason"
+        );
+
+        set(&state, json!({"friend_requests": false}))
+            .await
+            .expect("requests off");
+        for name in ["bob", "no-such-user"] {
+            let asked = send_request(
+                State(state.clone()),
+                Authed(mem_user("alice", false)),
+                Json(serde_json::from_value(json!({ "username": name })).expect("req")),
+            )
+            .await;
+            assert_eq!(
+                answered(asked).await,
+                not_found(
+                    "Could not send a friend request to that user.",
+                    off("friend_requests")
+                ),
+                "{name}"
+            );
+        }
+        done(state, path).await;
+    }
+
     #[tokio::test]
     async fn the_list_is_admin_only_and_checked() {
         use crate::api::admin::{get_config, get_settings};
@@ -848,7 +1029,7 @@ mod tests {
         ] {
             let refused = set(&state, json!({"server_creators": bad})).await;
             assert!(
-                matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "server_creators: expected up to 500 usernames or server:role entries"),
+                matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m, _)) if m == "server_creators: expected up to 500 usernames or server:role entries"),
                 "{why}"
             );
         }

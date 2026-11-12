@@ -2028,7 +2028,7 @@ mod tests {
         )
         .await;
         assert_eq!(
-            refused.err().map(|ApiError(c, m)| (c, m)),
+            refused.err().map(|ApiError(c, m, _)| (c, m)),
             Some((StatusCode::FORBIDDEN, "Missing permission".to_string())),
             "a site admin can't grant themselves admin through instance powers"
         );

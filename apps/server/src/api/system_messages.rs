@@ -91,7 +91,7 @@ pub(crate) async fn announce_system(state: &AppState, server: &str, id: Option<i
             message: Box::new(row),
         }),
         Ok(None) => {}
-        Err(ApiError(_, e)) => tracing::warn!("system message {id} not broadcast: {e}"),
+        Err(ApiError(_, e, _)) => tracing::warn!("system message {id} not broadcast: {e}"),
     }
 }
 
@@ -673,18 +673,18 @@ mod tests {
         crate::api::test_util::restrict_ruled(db).await;
         for id in [voice, other, random, 999_999, hidden] {
             match patch(&state, "dora", json!({ "channel_id": id })).await {
-                Err(ApiError(code, msg)) => {
+                Err(ApiError(code, msg, _)) => {
                     assert_eq!((code, msg.as_str()), (StatusCode::NOT_FOUND, "Not found"))
                 }
                 Ok(_) => panic!("channel {id} accepted"),
             }
         }
         match patch(&state, "bob", json!({ "join_messages": false })).await {
-            Err(ApiError(code, _)) => assert_eq!(code, StatusCode::FORBIDDEN),
+            Err(ApiError(code, _, _)) => assert_eq!(code, StatusCode::FORBIDDEN),
             Ok(_) => panic!("plain member changed settings"),
         }
         match settings(&state, "bob").await {
-            Err(ApiError(code, _)) => assert_eq!(code, StatusCode::FORBIDDEN),
+            Err(ApiError(code, _, _)) => assert_eq!(code, StatusCode::FORBIDDEN),
             Ok(_) => panic!("plain member read settings"),
         }
         let off = patch(
@@ -761,7 +761,7 @@ mod tests {
         );
         assert!(crate::api::access::ws_channel_viewable(db, "club", random, Some("bob")).await);
         match list(&state, "carol", random).await {
-            Err(ApiError(code, _)) => assert_eq!(code, StatusCode::NOT_FOUND),
+            Err(ApiError(code, _, _)) => assert_eq!(code, StatusCode::NOT_FOUND),
             Ok(_) => panic!("carol read the restricted channel"),
         }
         let seen = list(&state, "bob", random).await.expect("bob reads");

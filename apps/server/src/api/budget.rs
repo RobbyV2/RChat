@@ -4,7 +4,6 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use axum::extract::Request;
-use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::Response;
 
@@ -326,7 +325,7 @@ impl Drop for Share {
 pub const SLOW_DOWN: &str = "Too many attempts. Try again later";
 
 pub fn slow_down() -> ApiError {
-    ApiError(StatusCode::TOO_MANY_REQUESTS, SLOW_DOWN.to_string())
+    ApiError::rate(SLOW_DOWN, None)
 }
 
 tokio::task_local! {

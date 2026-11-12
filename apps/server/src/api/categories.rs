@@ -55,7 +55,7 @@ pub struct LayoutReq {
 }
 
 fn conflict() -> ApiError {
-    ApiError(StatusCode::CONFLICT, STALE.to_string())
+    ApiError(StatusCode::CONFLICT, STALE.to_string(), None)
 }
 
 pub(crate) async fn server_categories(db: &Db, server: &str) -> Result<Vec<Category>, ApiError> {

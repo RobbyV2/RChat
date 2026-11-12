@@ -401,6 +401,8 @@ pub enum WsEvent {
     },
     Error {
         message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<crate::api::Reason>,
     },
     DmCreated {
         dm_id: i64,

@@ -249,15 +249,7 @@ pub(crate) async fn open_dm(
 ) -> Result<Json<DmSummary>, ApiError> {
     let OpenDmReq { username } = req;
     let target = username.to_lowercase();
-    match get_user(&state.db, &target).await? {
-        Some(_) => {}
-        None => {
-            return Err(ApiError(
-                StatusCode::NOT_FOUND,
-                "User not found".to_string(),
-            ));
-        }
-    }
+    let unknown = || ApiError(StatusCode::NOT_FOUND, "User not found".to_string(), None);
     let (a, b) = match user.username <= target {
         true => (user.username.clone(), target.clone()),
         false => (target.clone(), user.username.clone()),
@@ -273,7 +265,10 @@ pub(crate) async fn open_dm(
             None => None,
         };
     let (id, created) = match existing {
-        Some(id) => (id, false),
+        Some(id) => match get_user(&state.db, &target).await? {
+            Some(_) => (id, false),
+            None => return Err(unknown()),
+        },
         None => {
             let allowed = a == b
                 || match crate::api::policy::effective(&state.db, Some(&user))
@@ -287,10 +282,10 @@ pub(crate) async fn open_dm(
                     DmCreation::Nobody => false,
                 };
             if !allowed {
-                return Err(crate::api::policy::refused(
-                    DmCreation::KEY,
-                    ApiError(StatusCode::NOT_FOUND, "User not found".to_string()),
-                ));
+                return Err(crate::api::policy::refused(DmCreation::KEY, unknown()));
+            }
+            if get_user(&state.db, &target).await?.is_none() {
+                return Err(unknown());
             }
             check_dm(&state.db, &user.username, &target).await?;
             let id: i64 =
@@ -347,7 +342,7 @@ async fn set_closed(db: &Db, id: i64, username: &str, closed: bool) -> Result<bo
 pub(crate) async fn reopen_for(state: &AppState, id: i64, actor: &str, recipients: &[String]) {
     let recipients = match not_blocking(&state.db, actor, recipients).await {
         Ok(users) => users,
-        Err(ApiError(_, e)) => {
+        Err(ApiError(_, e, _)) => {
             tracing::warn!("dm {id} not reopened: {e}");
             return;
         }
@@ -364,7 +359,7 @@ pub(crate) async fn reopen_for(state: &AppState, id: i64, actor: &str, recipient
                 dm_id: id,
             }),
             Ok(false) => {}
-            Err(ApiError(_, e)) => tracing::warn!("dm {id} not reopened: {e}"),
+            Err(ApiError(_, e, _)) => tracing::warn!("dm {id} not reopened: {e}"),
         }
     }
 }
@@ -661,7 +656,7 @@ mod tests {
         let mut rx = state.hub.subscribe();
         assert!(matches!(
             close("carol", dm.id).await,
-            Err(ApiError(StatusCode::NOT_FOUND, _))
+            Err(ApiError(StatusCode::NOT_FOUND, _, _))
         ));
         close("alice", dm.id).await.expect("close");
         assert!(matches!(

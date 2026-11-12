@@ -185,10 +185,11 @@ pub(crate) async fn assertion(
         return Err(ApiError(
             StatusCode::FORBIDDEN,
             "This username can't be used across instances".to_string(),
+            None,
         ));
     }
     let aud = aud.trim().to_string();
-    let bad = |m: &str| ApiError(StatusCode::BAD_REQUEST, m.to_string());
+    let bad = |m: &str| ApiError(StatusCode::BAD_REQUEST, m.to_string(), None);
     if aud.is_empty() || aud.len() > AUD_MAX {
         return Err(bad("aud must be 1 to 512 bytes"));
     }
@@ -276,9 +277,10 @@ pub(crate) async fn p2p_binding(
         return Err(ApiError(
             StatusCode::FORBIDDEN,
             "The badge isn't available for usernames with @".to_string(),
+            None,
         ));
     }
-    let bad = |m: &str| ApiError(StatusCode::BAD_REQUEST, m.to_string());
+    let bad = |m: &str| ApiError(StatusCode::BAD_REQUEST, m.to_string(), None);
     let key = p2p_key(&ik).ok_or_else(|| bad("ik must be a base64url Ed25519 public key"))?;
     let iat = now();
     if ts.abs_diff(iat) > BINDING_SKEW_SECS {

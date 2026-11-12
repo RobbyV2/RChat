@@ -226,7 +226,11 @@ pub(crate) async fn set_timeout(
     let reason = clean_reason(reason)?;
     let key = access.name().to_string();
     if !is_member(&state.db, &key, &target).await? {
-        return Err(ApiError(StatusCode::NOT_FOUND, "Not a member".to_string()));
+        return Err(ApiError(
+            StatusCode::NOT_FOUND,
+            "Not a member".to_string(),
+            None,
+        ));
     }
     let actor = moderator(&state.db, &access, &target).await?;
     let t = now();
@@ -309,6 +313,7 @@ pub(crate) async fn remove_timeout(
         return Err(ApiError(
             StatusCode::NOT_FOUND,
             "User not found".to_string(),
+            None,
         ));
     }
     let key = access.name().to_string();
@@ -508,7 +513,7 @@ mod tests {
 
     fn status<T>(res: Result<T, ApiError>) -> Result<(), (u16, String)> {
         res.map(|_| ())
-            .map_err(|ApiError(code, msg)| (code.as_u16(), msg))
+            .map_err(|ApiError(code, msg, _)| (code.as_u16(), msg))
     }
 
     fn timed_out_err() -> Result<(), (u16, String)> {

@@ -155,7 +155,7 @@ pub(crate) async fn profile(
     require_guest_ok(&state.db, viewer.as_ref()).await?;
     let user = get_user(&state.db, &username)
         .await?
-        .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "User not found".to_string()))?;
+        .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "User not found".to_string(), None))?;
     let ProfileQuery { server } = q;
     let member = match server {
         Some(server) => {
@@ -333,7 +333,7 @@ mod tests {
 
         assert!(matches!(
             view(&state, None, None, "nobody", Some("vault")).await,
-            Err(ApiError(StatusCode::NOT_FOUND, _))
+            Err(ApiError(StatusCode::NOT_FOUND, _, _))
         ));
         sqlx::query("UPDATE settings SET value = '0' WHERE key = 'guests_enabled'")
             .execute(db)
@@ -342,7 +342,7 @@ mod tests {
         crate::api::Settings::forget(db);
         assert!(matches!(
             view(&state, None, None, "bob", None).await,
-            Err(ApiError(StatusCode::UNAUTHORIZED, _))
+            Err(ApiError(StatusCode::UNAUTHORIZED, _, _))
         ));
         assert!(view(&state, Some("carol"), None, "bob", None).await.is_ok());
         done(state, path).await;
@@ -374,7 +374,7 @@ mod tests {
         ] {
             let res = patch_banner(&state, &format!(r#"{{"banner_color":{bad}}}"#)).await;
             assert!(
-                matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, _))),
+                matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, _, _))),
                 "{bad}"
             );
         }

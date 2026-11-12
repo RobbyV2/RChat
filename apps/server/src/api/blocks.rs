@@ -120,18 +120,31 @@ pub(crate) async fn check_dm(db: &Db, sender: &str, other: &str) -> Result<(), A
         return Ok(());
     }
     if is_blocked(db, other, sender).await? {
-        return Err(ApiError(StatusCode::FORBIDDEN, NOT_ACCEPTING.to_string()));
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            NOT_ACCEPTING.to_string(),
+            None,
+        ));
     }
     if is_blocked(db, sender, other).await? {
-        return Err(ApiError(StatusCode::FORBIDDEN, YOU_BLOCKED.to_string()));
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            YOU_BLOCKED.to_string(),
+            None,
+        ));
     }
     if friends::dm_refused(db, other, sender).await? {
-        return Err(ApiError(StatusCode::FORBIDDEN, NOT_ACCEPTING.to_string()));
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            NOT_ACCEPTING.to_string(),
+            None,
+        ));
     }
     if friends::dm_refused(db, sender, other).await? {
         return Err(ApiError(
             StatusCode::FORBIDDEN,
             YOU_FRIENDS_ONLY.to_string(),
+            None,
         ));
     }
     Ok(())
@@ -194,6 +207,7 @@ pub(crate) async fn block_user(
         return Err(ApiError(
             StatusCode::NOT_FOUND,
             "User not found".to_string(),
+            None,
         ));
     };
     if other.username == user.username {
@@ -466,7 +480,7 @@ mod tests {
     }
 
     fn code(res: Result<impl Sized, ApiError>) -> Option<(StatusCode, String)> {
-        res.err().map(|ApiError(code, text)| (code, text))
+        res.err().map(|ApiError(code, text, _)| (code, text))
     }
 
     fn drain(rx: &mut tokio::sync::broadcast::Receiver<WsEvent>) -> Vec<String> {

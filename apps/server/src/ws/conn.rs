@@ -73,7 +73,7 @@ use crate::state::AppState;
 /// for example `message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`,
 /// `voice_state`, `call_state` (with `kind` and `video`; an active P2P call also carries its id
 /// and the peer id of both tabs), `p2p_hosted` (tells a `p2p_hosting` sender which of its files are still live
-/// attachments, and the key it checks download tokens with), `p2p_peer`, `error` and `resync` (fetch state again after missed events). Frames
+/// attachments, and the key it checks download tokens with), `p2p_peer`, `error` (`{message}`, plus the `reason` object of REST errors when the error has one) and `resync` (fetch state again after missed events). Frames
 /// are at most 64 KiB. The token goes in the `auth` frame, not in the bearer security scheme.
 /// General rate-limit bucket for the upgrade request.
 #[utoipa::path(get, path = "/api/v1/ws", tag = "Realtime", responses((status = 101, description = "WebSocket upgrade"), (status = 429, description = "Too many requests in the general bucket, or too many open connections from this address", content_type = "text/plain", body = String), (status = 503, description = "Realtime bus not ready", content_type = "text/plain", body = String)), security(()))]
@@ -408,8 +408,8 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                                 }
                                 (_, _) => voice_cmd(&state, &access, conn, other).await,
                             };
-                            if let Err(message) = res
-                                && !sent(&mut access, out.event(&WsEvent::Error { message }))
+                            if let Err(refused) = res
+                                && !sent(&mut access, out.event(&refused.frame()))
                             {
                                 break;
                             }
@@ -442,8 +442,8 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                     None => voice.wanted.take(),
                 };
                 if let Some(msg) = ready
-                    && let Err(message) = voice_cmd(&state, &access, conn, msg).await
-                    && !sent(&mut access, out.event(&WsEvent::Error { message }))
+                    && let Err(refused) = voice_cmd(&state, &access, conn, msg).await
+                    && !sent(&mut access, out.event(&refused.frame()))
                 {
                     break;
                 }

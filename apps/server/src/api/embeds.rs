@@ -713,6 +713,7 @@ pub(crate) async fn delete_embed(
         return Err(ApiError(
             StatusCode::NOT_FOUND,
             "Embed not found".to_string(),
+            None,
         ));
     }
     state.hub.broadcast(WsEvent::EmbedsRemoved {
@@ -1086,7 +1087,7 @@ mod tests {
             .await
             {
                 Ok(res) => res.status(),
-                Err(ApiError(code, _)) => code,
+                Err(ApiError(code, _, _)) => code,
             }
         };
         switch("0").await;

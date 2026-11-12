@@ -262,11 +262,11 @@ impl Modify for Bearer {
 
 **Rate limits.** Every `/api` route except `/api/v1/health` and `/api/v1/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, word hints, recovery challenges, recovery sign-in, password change, backup phrase changes, guest access, server name checks, config links, P2P identity bindings and media upload also share a strict per-IP bucket (2 per second, burst 30). Invite previews and joining a server each have their own bucket of the same size. Exceeding a bucket answers 429 with a plain-text body.
 
-**Errors.** Errors raised by the API come as JSON `{\"error\": \"...\"}` (`ApiErrorBody`). When the database does not answer in time, an endpoint answers `503 {\"error\": \"Server busy, try again in a moment\"}` with `Retry-After: 1`: retry the request. Any other server error is `500 {\"error\": \"Something went wrong\"}`. Malformed JSON bodies are rejected by the framework with a plain-text 400, 415 or 422.
+**Errors.** Errors raised by the API come as JSON `{\"error\": \"...\"}` (`ApiErrorBody`). Many also carry `reason`, an object for programs: `kind` says what happened (`off_site`: turned off for this site; `off_account`: turned off for your account; `off_server`: turned off in this server; `off_app` and `app`: an app's setting or rule; `limit`: you reached a limit; `capacity`: the site is full right now; `invalid`: a value is wrong; `rate`: too many requests; `conflict`: someone else changed it or the name is taken; `sign_in`: the session ended; `unavailable`: the server can't do it right now), `control` names the setting or limit, `retry_after` is the wait in seconds (also sent as the `Retry-After` header) and `field` names the wrong value. Status codes and `error` texts are the same with and without it. An error without `reason` is a denial about a server, channel or message you cannot open, or an error that has no kind yet. When the database does not answer in time, an endpoint answers `503 {\"error\": \"Server busy, try again in a moment\", \"reason\": {\"kind\": \"unavailable\", \"retry_after\": 1}}` with `Retry-After: 1`: retry the request. Any other server error is `500 {\"error\": \"Something went wrong\"}`. Malformed JSON bodies are rejected by the framework with a plain-text 400, 415 or 422.
 
 **Private servers stay hidden.** A password-protected server is indistinguishable from one that does not exist to anyone without access (membership, a valid guest grant, or the password where an endpoint takes one). Every endpoint that takes a server name answers both with the same `404 {\"error\": \"Server not found or wrong password\"}`; endpoints that take a password (`join`, `guest_access`, invites) answer a missing password with the same `401 {\"error\": \"Password required\"}` and a wrong one with that 404, and always hash the password, also for names that do not exist. Endpoints that take a channel or message id answer `404 {\"error\": \"Not found\"}` for ids that do not exist, that you cannot see (hidden channels, messages before your join without read history) or that belong to a server you cannot access. Bans are only reported (403) once access was proven. `GET /api/v1/servers/{name}/available` is the one deliberate existence check, because creating a server reveals the same.
 
-**Realtime.** `GET /api/v1/ws` upgrades to a WebSocket. Clients send JSON frames tagged by `type` (`auth` first, with the token or without one for a guest, then `viewing`, `subscribe`, voice, call and `rtc_signal` frames) and receive JSON events tagged by `type` in snake_case (`message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`, `read_updated`, `ping`, `ping_count`, `voice_state`, `call_state` and more; see `WsEvent` in `apps/server/src/ws/event.rs`). `ping` (`{username, ping: Ping}`) reaches only the pinged user's connections when someone mentions them; `ping_count` (`{username, scope, pings, pings_until, thread_pings}`, same fields as a `GET /api/v1/unreads` item) gives a scope's unseen pings after some were removed. `@everyone`, `@here` and role mentions send no per-user event: the `message` event carries `group_mentions`, each client decides whether the message addresses it (member, online, holds the role). `group_pings_seen` (`{username, scope, message_ids}`) tells the user's connections that `POST /api/v1/inbox/read` or `POST /api/v1/inbox/read_all` marked those group mentions seen. A signed-in user is online while any of their connections is open, whatever server or page it shows (unless they appear offline), and goes offline about 10 seconds after the last one closes. Switching to appear offline hides them at once; coming back online is allowed a few times in a row, then about once per 10 seconds, and the last setting wins. An account keeps at most `WS_CONNECTIONS_PER_USER` connections (default 20; opening another closes the oldest with close code 4008), and opening them faster than `WS_CONNECT_BURST` / `WS_CONNECTS_PER_MINUTE` (counted per instance and across the cluster) closes the new one with code 4029. One client address keeps at most `WS_SOCKETS_PER_IP` connections per instance (default 200; past it the upgrade answers 429) and `WS_GUEST_SOCKETS_PER_IP` of them as guests (default 50; past it the guest connection closes with code 4029); an IPv6 /64 counts as one address. All guest connections of one instance together are capped at `WS_GUEST_SOCKETS_MAX` (default 2000, 0 turns guest connections off; past it the guest connection closes with code 4029). A connection that sends no `auth` frame within 10 seconds closes with code 4001. `subscribe` frames are paced per connection by the number of servers they newly check (at most 100 servers per frame, 50 for guests); one past the pace waits and a later one replaces it. `voice_join` and `voice_leave` are paced per account (a few per second; the latest waits and wins), `call_start` and `call_accept` too (each on its own), and `rtc_signal` payloads are at most 20 KiB with a per-account byte budget (enough to negotiate with a full voice room twice at once); past these the server answers an `error` frame. These paces count per server process. `presence_changed` (`{server, username, online, online_count}`) reaches the connections viewing that server when a member's first connection opens or last one closes, and when members join, leave, are kicked or banned, and `GET /api/v1/unreads` lists the unread ones as `group_pings`. `layout_changed` (`{server, layout}`, a `ChannelLayout`) carries the new channel order, with only the channels each connection can see and only the categories holding one of them (all categories for people who manage channels). Every `position` a client gets (channels and categories, in REST answers and events) counts only what that client can see, so it runs 0, 1, 2 and so on without gaps. `read_updated` (`{username, scope, last_read, pings_until}`) tells the reader's other connections that `POST /api/v1/read` (or, once per scope, `POST /api/v1/read/batch`) stored a position or marked pings seen; clients clear only pings with an id up to `pings_until` (0: none), so newer pings keep their badge. The REST operations below name the events they emit."
+**Realtime.** `GET /api/v1/ws` upgrades to a WebSocket. Clients send JSON frames tagged by `type` (`auth` first, with the token or without one for a guest, then `viewing`, `subscribe`, voice, call and `rtc_signal` frames) and receive JSON events tagged by `type` in snake_case (`message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`, `read_updated`, `ping`, `ping_count`, `voice_state`, `call_state` and more; see `WsEvent` in `apps/server/src/ws/event.rs`). `ping` (`{username, ping: Ping}`) reaches only the pinged user's connections when someone mentions them; `ping_count` (`{username, scope, pings, pings_until, thread_pings}`, same fields as a `GET /api/v1/unreads` item) gives a scope's unseen pings after some were removed. `@everyone`, `@here` and role mentions send no per-user event: the `message` event carries `group_mentions`, each client decides whether the message addresses it (member, online, holds the role). `group_pings_seen` (`{username, scope, message_ids}`) tells the user's connections that `POST /api/v1/inbox/read` or `POST /api/v1/inbox/read_all` marked those group mentions seen. A signed-in user is online while any of their connections is open, whatever server or page it shows (unless they appear offline), and goes offline about 10 seconds after the last one closes. Switching to appear offline hides them at once; coming back online is allowed a few times in a row, then about once per 10 seconds, and the last setting wins. An account keeps at most `WS_CONNECTIONS_PER_USER` connections (default 20; opening another closes the oldest with close code 4008), and opening them faster than `WS_CONNECT_BURST` / `WS_CONNECTS_PER_MINUTE` (counted per instance and across the cluster) closes the new one with code 4029. One client address keeps at most `WS_SOCKETS_PER_IP` connections per instance (default 200; past it the upgrade answers 429) and `WS_GUEST_SOCKETS_PER_IP` of them as guests (default 50; past it the guest connection closes with code 4029); an IPv6 /64 counts as one address. All guest connections of one instance together are capped at `WS_GUEST_SOCKETS_MAX` (default 2000, 0 turns guest connections off; past it the guest connection closes with code 4029). A connection that sends no `auth` frame within 10 seconds closes with code 4001. `subscribe` frames are paced per connection by the number of servers they newly check (at most 100 servers per frame, 50 for guests); one past the pace waits and a later one replaces it. `voice_join` and `voice_leave` are paced per account (a few per second; the latest waits and wins), `call_start` and `call_accept` too (each on its own), and `rtc_signal` payloads are at most 20 KiB with a per-account byte budget (enough to negotiate with a full voice room twice at once); past these the server answers an `error` frame (`{message}`, plus the `reason` object of REST errors when the error has one). These paces count per server process. `presence_changed` (`{server, username, online, online_count}`) reaches the connections viewing that server when a member's first connection opens or last one closes, and when members join, leave, are kicked or banned, and `GET /api/v1/unreads` lists the unread ones as `group_pings`. `layout_changed` (`{server, layout}`, a `ChannelLayout`) carries the new channel order, with only the channels each connection can see and only the categories holding one of them (all categories for people who manage channels). Every `position` a client gets (channels and categories, in REST answers and events) counts only what that client can see, so it runs 0, 1, 2 and so on without gaps. `read_updated` (`{username, scope, last_read, pings_until}`) tells the reader's other connections that `POST /api/v1/read` (or, once per scope, `POST /api/v1/read/batch`) stored a position or marked pings seen; clients clear only pings with an id up to `pings_until` (0: none), so newer pings keep their badge. The REST operations below name the events they emit."
     ),
     tags(
         (name = "Auth", description = "Create accounts, sign in and out, recover with a backup phrase, and look up word-password hints."),
@@ -317,7 +317,7 @@ pub fn routes(swagger_ui: Option<&str>) -> Router<AppState> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use serde_json::Value;
     use utoipa::OpenApi;
 
@@ -395,7 +395,7 @@ mod tests {
 
     const METHODS: [&str; 5] = ["get", "post", "put", "patch", "delete"];
 
-    fn registered_routes() -> Vec<(String, String)> {
+    pub(crate) fn registered_routes() -> Vec<(String, String)> {
         let mut out = Vec::new();
         for (prefix, src) in ROUTE_SOURCES {
             let code = src.split("#[cfg(test)]").next().unwrap_or(src);
@@ -865,6 +865,48 @@ mod tests {
         assert!(settings["registration"].is_object());
         let text = serde_json::to_string(&schemas["Settings"]).expect("text");
         assert!(text.is_ascii());
+    }
+
+    #[test]
+    fn the_error_body_documents_its_reason() {
+        let doc = serde_json::to_value(ApiDoc::openapi()).expect("doc");
+        let schemas = &doc["components"]["schemas"];
+        let body = &schemas["ApiErrorBody"];
+        assert_eq!(body["required"], serde_json::json!(["error"]));
+        assert!(body["properties"]["reason"].is_object());
+        let reason = &schemas["Reason"];
+        assert_eq!(reason["required"], serde_json::json!(["kind"]));
+        for field in ["kind", "control", "retry_after", "field"] {
+            assert!(reason["properties"][field].is_object(), "{field}");
+        }
+        let kinds: Vec<&str> = schemas["ReasonKind"]["enum"]
+            .as_array()
+            .expect("kinds")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "off_site",
+                "off_account",
+                "off_server",
+                "off_app",
+                "app",
+                "limit",
+                "capacity",
+                "invalid",
+                "rate",
+                "conflict",
+                "sign_in",
+                "unavailable"
+            ]
+        );
+        let about = doc["info"]["description"].as_str().expect("description");
+        for kind in kinds {
+            assert!(about.contains(&format!("`{kind}`")), "{kind}");
+        }
+        assert!(about.contains("`reason`") && about.contains("`Retry-After`"));
     }
 
     #[test]

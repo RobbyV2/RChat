@@ -231,7 +231,7 @@ async fn ping_author(state: &AppState, target: &Target, actor: &User, emoji: &st
         create_pings(state, &spec, &recipients).await.map(|_| ())
     };
     let res: Result<(), ApiError> = run.await;
-    if let Err(ApiError(_, e)) = res {
+    if let Err(ApiError(_, e, _)) = res {
         tracing::warn!("reaction ping for message {} failed: {e}", message.id);
     }
 }
@@ -539,7 +539,7 @@ mod tests {
     }
 
     fn status(res: Result<(), ApiError>) -> Option<StatusCode> {
-        res.err().map(|ApiError(code, _)| code)
+        res.err().map(|ApiError(code, _, _)| code)
     }
 
     fn events(rx: &mut tokio::sync::broadcast::Receiver<WsEvent>) -> Vec<String> {
@@ -942,7 +942,7 @@ mod tests {
             reactors(&state, Some("bob"), secret, "👍")
                 .await
                 .err()
-                .map(|ApiError(c, _)| c),
+                .map(|ApiError(c, _, _)| c),
             Some(StatusCode::NOT_FOUND)
         );
         react(&state, "alice", secret, "👍")
@@ -981,7 +981,7 @@ mod tests {
                 )
                 .await
                 .map(|Json(d)| d.read_only)
-                .map_err(|ApiError(c, _)| c)
+                .map_err(|ApiError(c, _, _)| c)
             }
         };
         assert_eq!(read_only(Some("bob")).await, Ok(vec![quiet]));
@@ -998,7 +998,7 @@ mod tests {
             reactors(&state, None, id, "👍")
                 .await
                 .err()
-                .map(|ApiError(c, _)| c),
+                .map(|ApiError(c, _, _)| c),
             Some(StatusCode::UNAUTHORIZED)
         );
 

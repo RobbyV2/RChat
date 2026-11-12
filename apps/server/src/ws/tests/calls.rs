@@ -28,7 +28,7 @@ async fn banned_user_cannot_join_voice() {
     let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
     exec(&state.db, "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('rchat', 'bob', 'alice', 0)").await;
     let join = |user| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id: cid });
-    assert_eq!(join("bob").await, Err("Channel not found".to_string()));
+    assert_eq!(join("bob").await, Err("Channel not found".into()));
     join("carol").await.expect("carol joins");
     assert_eq!(
         state.hub.rooms_in("rchat", None),
@@ -64,7 +64,7 @@ async fn timed_out_members_cannot_join_voice() {
     let other = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'den', 'voice', 0) RETURNING id").await;
     time_out(&state.db, "bob", now() + 600).await;
     let join = |user, channel_id| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id });
-    let timed_out = Err(crate::api::access::TIMED_OUT.to_string());
+    let timed_out = Err(crate::api::access::TIMED_OUT.into());
     assert_eq!(join("bob", cid).await, timed_out);
     join("carol", cid).await.expect("carol joins");
     time_out(&state.db, "carol", now() + 600).await;
@@ -120,7 +120,7 @@ async fn timed_out_members_cannot_turn_on_video_in_voice() {
             },
         )
     };
-    let timed_out = Err(crate::api::access::TIMED_OUT.to_string());
+    let timed_out = Err(crate::api::access::TIMED_OUT.into());
     assert_eq!(
         signal("bob", serde_json::json!({"cam": true})).await,
         timed_out
@@ -188,7 +188,7 @@ async fn timed_out_members_cannot_tell_if_hidden_voice_is_in_use() {
             },
         )
     };
-    let none = Err("No shared voice session".to_string());
+    let none = Err("No shared voice session".into());
     assert_eq!(probe(busy).await, none, "a hidden room in use");
     assert_eq!(probe(empty).await, none, "an empty hidden room");
     crate::api::test_util::done(state, path).await;
@@ -231,7 +231,7 @@ async fn locked_server_voice_needs_membership() {
         ("eve", "Channel not found"),
         ("root", "Join this server to use voice"),
     ] {
-        assert_eq!(join(outsider).await, Err(want.to_string()), "{outsider}");
+        assert_eq!(join(outsider).await, Err(want.into()), "{outsider}");
     }
     join("alice").await.expect("alice joins");
     assert_eq!(
@@ -244,7 +244,7 @@ async fn locked_server_voice_needs_membership() {
     )
     .await;
     state.hub.voice_leave("alice").await;
-    assert_eq!(join("alice").await, Err("Channel not found".to_string()));
+    assert_eq!(join("alice").await, Err("Channel not found".into()));
     crate::api::test_util::done(state, path).await;
 }
 
@@ -276,7 +276,7 @@ async fn site_admins_get_member_view_in_voice() {
     let join = |user| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id: cid });
     assert_eq!(
         join("root").await,
-        Err("Channel not found".to_string()),
+        Err("Channel not found".into()),
         "a site admin who is a plain member can not join a hidden voice channel"
     );
     join("alice").await.expect("alice joins");
@@ -373,7 +373,11 @@ async fn blocked_users_cannot_call() {
         relays: Vec::new(),
     };
     assert_eq!(
-        voice_msg(&state, "bob", 1, start()).await.err().as_deref(),
+        voice_msg(&state, "bob", 1, start())
+            .await
+            .err()
+            .map(|e| e.message)
+            .as_deref(),
         Some(crate::api::blocks::NOT_ACCEPTING)
     );
     assert!(voice_msg(&state, "alice", 2, start()).await.is_err());
@@ -415,7 +419,7 @@ async fn calls_answer_alike_for_missing_and_unreachable_dms() {
     for dm in [theirs, purging + 100, purging] {
         assert_eq!(
             voice_msg(&state, "alice", 1, start(dm)).await,
-            Err("DM not found".to_string()),
+            Err("DM not found".into()),
             "dm {dm}"
         );
         let rest = crate::api::access::resolve_dm(db, dm, &alice).await;
@@ -469,7 +473,7 @@ async fn accepts_answer_alike_for_missing_and_unreachable_dms() {
         peer_id: Some(s("peer-x")),
         relays,
     };
-    let none = Err(s("No incoming call"));
+    let none = Err(s("No incoming call").into());
     assert_eq!(
         voice_msg(&state, "alice", 2, accept(theirs, Vec::new())).await,
         none
@@ -491,7 +495,7 @@ async fn accepts_answer_alike_for_missing_and_unreachable_dms() {
     }
     assert_eq!(
         voice_msg(&state, "erin", 4, accept(theirs, vec![s("not a host!")])).await,
-        Err(s("Too many requests, slow down"))
+        Err(s("Too many requests, slow down").into())
     );
     crate::api::test_util::done(state, path).await;
 }
@@ -582,6 +586,7 @@ async fn blocking_ends_calls_and_stops_answers_and_signals() {
         voice_msg(&state, "alice", 2, accept())
             .await
             .err()
+            .map(|e| e.message)
             .as_deref(),
         Some("You blocked this user. Unblock them to send messages.")
     );
@@ -597,7 +602,11 @@ async fn blocking_ends_calls_and_stops_answers_and_signals() {
         .expect("signals flow");
     quiet_block().await;
     assert_eq!(
-        voice_msg(&state, "bob", 1, signal()).await.err().as_deref(),
+        voice_msg(&state, "bob", 1, signal())
+            .await
+            .err()
+            .map(|e| e.message)
+            .as_deref(),
         Some(crate::api::blocks::NOT_ACCEPTING)
     );
     block(false).await;
@@ -949,7 +958,7 @@ async fn refused_call_starts_write_nothing_and_are_paced() {
     }
     assert_eq!(
         voice_msg(&state, "carol", 2, start(ac)).await,
-        Err(s("alice is already in a call"))
+        Err(s("alice is already in a call").into())
     );
     assert_eq!(
         message_seq(db).await,
@@ -957,10 +966,15 @@ async fn refused_call_starts_write_nothing_and_are_paced() {
         "refused calls write no log row"
     );
     assert!(
-        errs[..3].iter().all(|e| e == "You are already in a call"),
+        errs[..3]
+            .iter()
+            .all(|e| e.message == "You are already in a call"),
         "{errs:?}"
     );
-    assert!(errs[3..].iter().all(|e| e == CALLING_TOO_OFTEN), "{errs:?}");
+    assert!(
+        errs[3..].iter().all(|e| e.message == CALLING_TOO_OFTEN),
+        "{errs:?}"
+    );
     for _ in 0..crate::hub::DM_CALL_BURST {
         voice_msg(&state, "dave", 3, start(de)).await.expect("call");
         voice_msg(&state, "dave", 3, ClientMsg::CallLeave { dm_id: de })
@@ -969,7 +983,7 @@ async fn refused_call_starts_write_nothing_and_are_paced() {
     }
     assert_eq!(
         voice_msg(&state, "dave", 3, start(de)).await,
-        Err(s(CALLING_TOO_OFTEN)),
+        Err(s(CALLING_TOO_OFTEN).into()),
         "ringing the same DM over and over is paced"
     );
     crate::api::test_util::done(state, path).await;
@@ -996,7 +1010,7 @@ async fn signals_are_capped_in_size_and_bytes_per_account() {
     };
     assert_eq!(
         voice_msg(&state, "alice", 1, signal("bob", 24 * 1024)).await,
-        Err(s("Signal too large"))
+        Err(s("Signal too large").into())
     );
     let mut sent = 0;
     for _ in 0..100 {
@@ -1167,9 +1181,11 @@ async fn call_errors_never_carry_database_text() {
     };
     let join = ClientMsg::VoiceJoin { channel_id: cid };
     for msg in [start, join] {
+        let refused = voice_msg(&busy, "alice", 1, msg).await.expect_err("busy");
+        assert_eq!(refused.message, crate::api::SERVER_BUSY);
         assert_eq!(
-            voice_msg(&busy, "alice", 1, msg).await,
-            Err(crate::api::SERVER_BUSY.to_string())
+            refused.reason.map(|r| r.kind),
+            Some(crate::api::ReasonKind::Unavailable)
         );
     }
     drop(held);

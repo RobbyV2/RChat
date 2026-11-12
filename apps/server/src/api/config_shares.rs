@@ -316,7 +316,7 @@ mod tests {
     fn status(r: Result<impl Sized, ApiError>) -> StatusCode {
         match r {
             Ok(_) => StatusCode::OK,
-            Err(ApiError(code, _)) => code,
+            Err(ApiError(code, _, _)) => code,
         }
     }
 
@@ -346,7 +346,7 @@ mod tests {
         assert!(check_blob(&blob(10)).is_ok());
         assert!(check_blob("rc1.ab-_09").is_ok());
         assert!(check_blob(&blob(BLOB_MAX - BLOB_PREFIX.len())).is_ok());
-        let ApiError(_, too_big) =
+        let ApiError(_, too_big, _) =
             check_blob(&blob(BLOB_MAX - BLOB_PREFIX.len() + 1)).expect_err("cap");
         assert!(too_big.contains("16 KiB"), "{too_big}");
         for bad_blob in [
@@ -435,7 +435,7 @@ mod tests {
                     .id,
             );
         }
-        let Err(ApiError(code, msg)) = share(&state, "alice", blob(4), 600).await else {
+        let Err(ApiError(code, msg, _)) = share(&state, "alice", blob(4), 600).await else {
             panic!("21st link accepted");
         };
         assert_eq!(code, StatusCode::BAD_REQUEST);

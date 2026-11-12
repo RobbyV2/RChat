@@ -591,7 +591,7 @@ async fn count_rows(db: &Db, sql: &'static str, key: &str) -> Result<i64, ApiErr
 }
 
 fn not_found(msg: &str) -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, msg.to_string())
+    ApiError(StatusCode::NOT_FOUND, msg.to_string(), None)
 }
 
 pub(crate) async fn check_name(
@@ -1406,15 +1406,15 @@ pub(crate) async fn create_server(
     Authed(user): Authed,
     Json(req): Json<CreateServerReq>,
 ) -> Result<Json<ServerDetail>, ApiError> {
-    let allowed = crate::api::policy::effective(&state.db, Some(&user))
-        .await
-        .can_create_servers()
-        .await?;
-    if !allowed {
-        return Err(crate::api::policy::refused(
-            ServerCreation::KEY,
-            crate::api::access::not_found(),
-        ));
+    let allowed = crate::api::policy::effective(&state.db, Some(&user)).await;
+    if !allowed.can_create_servers().await? {
+        let answer = crate::api::access::not_found();
+        return Err(match allowed.server_creation() {
+            ServerCreation::Some => crate::api::policy::left_out(ServerCreation::KEY, answer),
+            ServerCreation::Everyone | ServerCreation::Nobody => {
+                crate::api::policy::refused(ServerCreation::KEY, answer)
+            }
+        });
     }
     let CreateServerReq { name, password } = req;
     let founder = Founder::Creator(&user.username);
@@ -1611,7 +1611,7 @@ pub(crate) async fn server_available(
     check_server_name(&state.db, &display).await?;
     let available = match name_free(&state.read(), &display.to_lowercase()).await {
         Ok(()) => true,
-        Err(ApiError(StatusCode::BAD_REQUEST | StatusCode::CONFLICT, _)) => false,
+        Err(ApiError(StatusCode::BAD_REQUEST | StatusCode::CONFLICT, _, _)) => false,
         Err(e) => return Err(e),
     };
     Ok(Json(ServerAvailable { available }))
@@ -1758,9 +1758,11 @@ pub(crate) async fn guest_access(
         .await?
         .rows_affected();
     if made == 0 {
-        return Err(ApiError(
+        return Err(ApiError::capacity(
             StatusCode::TOO_MANY_REQUESTS,
-            TOO_MANY_GUESTS.to_string(),
+            TOO_MANY_GUESTS,
+            "guest_grants",
+            None,
         ));
     }
     access.spend_ticket(&mut tx).await?;
@@ -1809,8 +1811,13 @@ async fn grant_network(db: &Db) -> Result<String, ApiError> {
         }
     }
     let pepper = crate::db::pepper(db).await?;
-    let mut mac = <Hmac<sha2::Sha256> as KeyInit>::new_from_slice(&pepper)
-        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "pepper".to_string()))?;
+    let mut mac = <Hmac<sha2::Sha256> as KeyInit>::new_from_slice(&pepper).map_err(|_| {
+        ApiError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "pepper".to_string(),
+            None,
+        )
+    })?;
     mac.update(b"guest network\n");
     mac.update(wide.as_bytes());
     Ok(format!("n:{}", hex::encode(mac.finalize().into_bytes())))
@@ -2434,6 +2441,7 @@ async fn name_free(db: &Db, key: &str) -> Result<(), ApiError> {
             Some(crate::db::PURGING_HASH) => Err(ApiError(
                 StatusCode::CONFLICT,
                 "That name is not available yet".to_string(),
+                None,
             )),
             _ => Err(bad("Server name is taken")),
         },
@@ -4785,7 +4793,10 @@ mod tests {
             Path(cid),
         )
         .await;
-        assert!(matches!(blocked, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        assert!(matches!(
+            blocked,
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
+        ));
         let extra: i64 = sqlx::query(
             "INSERT INTO channels(server, name, created_at) VALUES('rchat', 'second', $1) RETURNING id",
         )
@@ -4824,13 +4835,13 @@ mod tests {
         .await;
         assert!(matches!(
             sole_text,
-            Err(ApiError(StatusCode::BAD_REQUEST, _))
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
         done(state, path).await;
     }
 
     fn rejected<T>(res: Result<T, ApiError>) -> bool {
-        matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, _)))
+        matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, _, _)))
     }
 
     async fn make_server(state: &AppState, name: &str) -> Result<Json<ServerDetail>, ApiError> {
@@ -4892,7 +4903,7 @@ mod tests {
             .await
             .expect("hide");
         let conflict = |res: Result<(), ApiError>| match res {
-            Err(ApiError(StatusCode::CONFLICT, msg)) => msg == "That name is not available yet",
+            Err(ApiError(StatusCode::CONFLICT, msg, _)) => msg == "That name is not available yet",
             _ => false,
         };
         assert!(conflict(make_server(&state, "Gone").await.map(|_| ())));
@@ -4911,11 +4922,11 @@ mod tests {
             .expect("hide");
         assert!(matches!(
             rename(&state, "gone", "fresh").await,
-            Err(ApiError(StatusCode::NOT_FOUND, _))
+            Err(ApiError(StatusCode::NOT_FOUND, _, _))
         ));
         let mut tx = state.db.begin().await.expect("tx");
         let raced = rename_live(&mut tx, "gone", "fresh", "Fresh", Some(&None)).await;
-        assert!(matches!(raced, Err(ApiError(StatusCode::NOT_FOUND, _))));
+        assert!(matches!(raced, Err(ApiError(StatusCode::NOT_FOUND, _, _))));
         drop(tx);
         let row =
             sqlx::query("SELECT name, password_hash FROM servers WHERE name IN ('gone', 'fresh')")
@@ -5176,7 +5187,7 @@ mod tests {
 
     async fn all_ok<T>(jobs: Vec<tokio::task::JoinHandle<Result<T, ApiError>>>) {
         for job in jobs {
-            if let Err(ApiError(code, msg)) = job.await.expect("task") {
+            if let Err(ApiError(code, msg, _)) = job.await.expect("task") {
                 panic!("{code}: {msg}");
             }
         }
@@ -5268,7 +5279,7 @@ mod tests {
             let (state, name) = (state.clone(), name.clone());
             racers.push(tokio::spawn(async move {
                 match leave(&state, &name).await {
-                    Err(ApiError(StatusCode::BAD_REQUEST, _)) => Ok(()),
+                    Err(ApiError(StatusCode::BAD_REQUEST, _, _)) => Ok(()),
                     other => other,
                 }
             }));
@@ -5434,7 +5445,7 @@ mod tests {
     }
 
     fn status<T>(res: Result<T, ApiError>) -> Option<StatusCode> {
-        res.err().map(|ApiError(code, _)| code)
+        res.err().map(|ApiError(code, _, _)| code)
     }
 
     fn kicks(rx: &mut tokio::sync::broadcast::Receiver<WsEvent>) -> Vec<(String, String, bool)> {
@@ -5493,7 +5504,7 @@ mod tests {
         );
         assert!(state.hub.rooms_in("club", None).is_empty());
         match join(&state, "bob", "club").await {
-            Err(ApiError(StatusCode::FORBIDDEN, msg)) => {
+            Err(ApiError(StatusCode::FORBIDDEN, msg, _)) => {
                 assert_eq!(msg, "You are banned from this server")
             }
             _ => panic!("expected banned join rejection"),
@@ -5623,7 +5634,7 @@ mod tests {
             false => kick_member(State(state.clone()), Authed(actor), path, body).await,
         };
         res.map(|Json(ok)| serde_json::to_string(&ok).expect("json"))
-            .map_err(|ApiError(code, msg)| (code, msg))
+            .map_err(|ApiError(code, msg, _)| (code, msg))
     }
 
     async fn set_admin_row(db: &Db, username: &str, perms: i64) {
@@ -5758,7 +5769,7 @@ mod tests {
             .await
             .expect("club");
         match insert_member(db, &club, "bob").await {
-            Err(ApiError(StatusCode::FORBIDDEN, msg)) => {
+            Err(ApiError(StatusCode::FORBIDDEN, msg, _)) => {
                 assert_eq!(msg, "You are banned from this server")
             }
             _ => panic!("expected banned insert rejection"),
@@ -5913,7 +5924,7 @@ mod tests {
             .expect("lock server");
         assert!(matches!(
             fetch("usernames=bob").await,
-            Err(ApiError(StatusCode::NOT_FOUND, m)) if m == DENIED
+            Err(ApiError(StatusCode::NOT_FOUND, m, _)) if m == DENIED
         ));
         done(state, path).await;
     }
@@ -6019,7 +6030,7 @@ mod tests {
         };
         assert!(matches!(
             view("carol").await,
-            Err(ApiError(StatusCode::FORBIDDEN, m)) if m == "You are banned from this server"
+            Err(ApiError(StatusCode::FORBIDDEN, m, _)) if m == "You are banned from this server"
         ));
         assert!(view("dave").await.is_ok());
         let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'club'")
@@ -6031,7 +6042,7 @@ mod tests {
         let carol = mem_user("carol", false);
         assert!(matches!(
             resolve_channel(db, cid, Some(&carol), &Proof::none()).await,
-            Err(ApiError(StatusCode::NOT_FOUND, m)) if m == "Not found"
+            Err(ApiError(StatusCode::NOT_FOUND, m, _)) if m == "Not found"
         ));
         assert!(crate::api::access::ws_channel_viewable(db, "club", cid, Some("dave")).await);
         done(state, path).await;
@@ -6083,7 +6094,7 @@ mod tests {
                     invite_as(&state, viewer, server, password, None)
                         .await
                         .map(|i| i.status)
-                        .map_err(|ApiError(code, m)| (code, m))
+                        .map_err(|ApiError(code, m, _)| (code, m))
                 }
             };
         let required = Err((StatusCode::UNAUTHORIZED, PASSWORD_REQUIRED.to_string()));
@@ -6119,7 +6130,7 @@ mod tests {
         assert_eq!(guest.status, InviteStatus::Joinable);
         let ignored = invite_as(&state, user("dave"), "club", None, Some(&grant))
             .await
-            .map_err(|ApiError(code, m)| (code, m))
+            .map_err(|ApiError(code, m, _)| (code, m))
             .map(|i| i.status);
         assert_eq!(ignored, required);
         assert_eq!(outcome(user("dave"), "nowhere", None).await, required);
@@ -6179,7 +6190,7 @@ mod tests {
                     assert_eq!(invite.server.display_name, "Club", "case {n}");
                     assert_eq!(counts(&invite), (2, 0), "case {n}");
                 }
-                (Err(ApiError(code, _)), Some(want)) => assert_eq!(code, want, "case {n}"),
+                (Err(ApiError(code, _, _)), Some(want)) => assert_eq!(code, want, "case {n}"),
                 (_, _) => panic!("case {n}"),
             }
         }
@@ -6216,11 +6227,11 @@ mod tests {
         let dave = || Some(mem_user("dave", false));
         assert!(matches!(
             invite_as(&state, dave(), "club", None, None).await,
-            Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == PASSWORD_REQUIRED
+            Err(ApiError(StatusCode::UNAUTHORIZED, m, _)) if m == PASSWORD_REQUIRED
         ));
         assert!(matches!(
             invite_as(&state, dave(), "club", Some("nope"), None).await,
-            Err(ApiError(StatusCode::NOT_FOUND, m)) if m == DENIED
+            Err(ApiError(StatusCode::NOT_FOUND, m, _)) if m == DENIED
         ));
         let unlocked = invite_as(&state, dave(), "club", Some("secret-pw"), None)
             .await
@@ -6283,7 +6294,7 @@ mod tests {
         assert!(banned.preview.is_empty());
         assert!(matches!(
             invite_as(&state, Some(mem_user("carol", false)), "club", None, None).await,
-            Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == PASSWORD_REQUIRED
+            Err(ApiError(StatusCode::UNAUTHORIZED, m, _)) if m == PASSWORD_REQUIRED
         ));
         set_password(&state, "").await;
         let banned = invite_as(&state, Some(mem_user("carol", false)), "club", None, None)
@@ -7116,7 +7127,7 @@ mod tests {
             RawQuery(Some(long)),
         )
         .await;
-        assert!(matches!(long, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        assert!(matches!(long, Err(ApiError(StatusCode::BAD_REQUEST, _, _))));
         let _ = make_server(&state, "club").await.expect("club");
         sqlx::query("UPDATE servers SET password_hash = '!none' WHERE name = 'club'")
             .execute(db)
@@ -7124,11 +7135,11 @@ mod tests {
             .expect("protect");
         assert!(matches!(
             fetch(Some("bob"), "club", "q=al&suggest=1").await,
-            Err(ApiError(StatusCode::NOT_FOUND, _))
+            Err(ApiError(StatusCode::NOT_FOUND, _, _))
         ));
         assert!(matches!(
             fetch(None, "club", "q=al&suggest=1").await,
-            Err(ApiError(StatusCode::NOT_FOUND, _))
+            Err(ApiError(StatusCode::NOT_FOUND, _, _))
         ));
         assert_eq!(
             fetch(Some("alice"), "club", "q=al&suggest=1")
@@ -7329,7 +7340,8 @@ mod tests {
     }
 
     fn code<T>(res: Result<T, ApiError>) -> Result<(), (StatusCode, String)> {
-        res.map(|_| ()).map_err(|ApiError(code, msg)| (code, msg))
+        res.map(|_| ())
+            .map_err(|ApiError(code, msg, _)| (code, msg))
     }
 
     async fn member_row(db: &Db, username: &str) -> (i64, i64) {
@@ -8427,7 +8439,7 @@ mod tests {
                 )
                 .await
                 .map(|Json(c)| c.topic)
-                .map_err(|ApiError(code, msg)| (code, msg))
+                .map_err(|ApiError(code, msg, _)| (code, msg))
             }
         };
         let body = |topic: serde_json::Value| serde_json::json!({ "topic": topic }).to_string();
@@ -8682,7 +8694,7 @@ mod tests {
                 )
                 .await
                 .map(|Json(c)| (c.restrict_view, c.restrict_send))
-                .map_err(|ApiError(code, msg)| (code, msg))
+                .map_err(|ApiError(code, msg, _)| (code, msg))
             }
         };
         assert_eq!(
@@ -9075,7 +9087,7 @@ mod tests {
                 )
                 .await
                 .map(|Json(made)| made.grant.is_some())
-                .map_err(|ApiError(status, body)| (status.as_u16(), body))
+                .map_err(|ApiError(status, body, _)| (status.as_u16(), body))
             })
         };
         let in_network = |n: u16| {
@@ -9160,7 +9172,7 @@ mod tests {
                 )
                 .await
                 .map(|Json(made)| made.grant.expect("grant"))
-                .map_err(|ApiError(status, body)| (status.as_u16(), body))
+                .map_err(|ApiError(status, body, _)| (status.as_u16(), body))
             })
         };
         let live = "SELECT COUNT(*) FROM guest_grants WHERE server = 'club'";
@@ -9381,7 +9393,7 @@ mod tests {
         let _ = make("other", "text", Some(i64::MAX))
             .await
             .map(|_| ())
-            .map_err(|ApiError(c, _)| assert_eq!(c, StatusCode::NOT_FOUND));
+            .map_err(|ApiError(c, _, _)| assert_eq!(c, StatusCode::NOT_FOUND));
         let seen = |d: &ServerDetail| {
             d.categories
                 .iter()
@@ -9745,7 +9757,7 @@ mod tests {
                 make(&name, false, Some(doomed.id)),
                 delete_category(State(state.clone()), alice(), Path(doomed.id)),
             );
-            if let Err(ApiError(status, _)) = &made {
+            if let Err(ApiError(status, _, _)) = &made {
                 assert_eq!(*status, StatusCode::NOT_FOUND);
             }
             let dangling: i64 = sqlx::query("SELECT COUNT(*) FROM channels WHERE category_id IS NOT NULL AND category_id NOT IN (SELECT id FROM channel_categories)")

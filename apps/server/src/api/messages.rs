@@ -973,6 +973,7 @@ async fn claim_media(
         return Err(ApiError(
             StatusCode::FORBIDDEN,
             "You can only attach files you uploaded".to_string(),
+            None,
         ));
     }
     let attached =
@@ -1000,6 +1001,7 @@ fn attachments_off(what: &str) -> ApiError {
     ApiError(
         StatusCode::FORBIDDEN,
         format!("{what} are turned off on this server"),
+        None,
     )
 }
 
@@ -1783,7 +1785,7 @@ pub(crate) async fn message_locations(
         }
         match locate_message(db, id, user.as_ref(), &proof).await {
             Ok(location) => found.push(location),
-            Err(ApiError(code, _)) if code.is_client_error() => {}
+            Err(ApiError(code, _, _)) if code.is_client_error() => {}
             Err(e) => return Err(e),
         }
     }
@@ -3037,7 +3039,7 @@ pub(crate) async fn mark_read_batch(
     for (scope, target) in targets {
         match read_scope(&state, &user, &scope, target, ReadUpTo::Latest).await {
             Ok(_) => {}
-            Err(ApiError(code, _)) if code.is_client_error() => {}
+            Err(ApiError(code, _, _)) if code.is_client_error() => {}
             Err(e) => return Err(e),
         }
     }
@@ -3106,7 +3108,7 @@ mod tests {
                 )
                 .await
                 .map(|Json(r)| r.last_read)
-                .map_err(|ApiError(code, _)| code)
+                .map_err(|ApiError(code, _, _)| code)
             }
         };
         assert_eq!(
@@ -3247,7 +3249,7 @@ mod tests {
             None,
         )
         .await;
-        assert!(matches!(long, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        assert!(matches!(long, Err(ApiError(StatusCode::BAD_REQUEST, _, _))));
         let dm: i64 =
             sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'alice') RETURNING id")
                 .fetch_one(&state.db)
@@ -3271,7 +3273,10 @@ mod tests {
             }),
         )
         .await;
-        assert!(matches!(dm_long, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        assert!(matches!(
+            dm_long,
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
+        ));
         done(state, path).await;
     }
 
@@ -3287,7 +3292,7 @@ mod tests {
         add_member(&state.db, "rchat", "alice", 0, 0, now()).await;
         let long = send_with(&state, cid, "alice", "a".repeat(11), None).await;
         assert!(
-            matches!(&long, Err(ApiError(StatusCode::BAD_REQUEST, m)) if m == "Message must be at most 10 characters"),
+            matches!(&long, Err(ApiError(StatusCode::BAD_REQUEST, m, _)) if m == "Message must be at most 10 characters"),
             "{:?}",
             long.err()
         );
@@ -3297,7 +3302,7 @@ mod tests {
             .0;
         assert!(matches!(
             edit(&state, note.id, "alice", &"b".repeat(11)).await,
-            Err(ApiError(StatusCode::BAD_REQUEST, _))
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
         edit(&state, note.id, "alice", &"b".repeat(10))
             .await
@@ -3318,25 +3323,31 @@ mod tests {
         let owned = "aa".repeat(16);
         add_media(&state.db, &owned, Some("alice")).await;
         let stolen = send_with(&state, cid, "bob", String::new(), Some(&owned)).await;
-        assert!(matches!(stolen, Err(ApiError(StatusCode::FORBIDDEN, _))));
+        assert!(matches!(stolen, Err(ApiError(StatusCode::FORBIDDEN, _, _))));
         let first = send_with(&state, cid, "alice", String::new(), Some(&owned))
             .await
             .expect("owner attaches")
             .0;
         assert_eq!(first.media.map(|m| m.id), Some(owned.clone()));
         let reuse = send_with(&state, cid, "alice", String::new(), Some(&owned)).await;
-        assert!(matches!(reuse, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        assert!(matches!(
+            reuse,
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
+        ));
         let legacy = "bb".repeat(16);
         add_media(&state.db, &legacy, None).await;
         for who in ["bob", "alice"] {
             let claimed = send_with(&state, cid, who, String::new(), Some(&legacy)).await;
             assert!(
-                matches!(claimed, Err(ApiError(StatusCode::FORBIDDEN, _))),
+                matches!(claimed, Err(ApiError(StatusCode::FORBIDDEN, _, _))),
                 "uploads without an uploader belong to nobody"
             );
         }
         let unknown = send_with(&state, cid, "bob", String::new(), Some(&"cc".repeat(16))).await;
-        assert!(matches!(unknown, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        assert!(matches!(
+            unknown,
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
+        ));
         let count: i64 = sqlx::query("SELECT COUNT(*) FROM messages WHERE media_id IS NOT NULL")
             .fetch_one(&state.db)
             .await
@@ -3389,7 +3400,7 @@ mod tests {
     }
 
     fn refused(res: Result<Message, ApiError>, text: &str) -> bool {
-        matches!(res, Err(ApiError(StatusCode::FORBIDDEN, ref m)) if m == text)
+        matches!(res, Err(ApiError(StatusCode::FORBIDDEN, ref m, _)) if m == text)
     }
 
     // P2P files are never checked by the instance filter; uploads to the instance are.
@@ -3421,7 +3432,7 @@ mod tests {
         };
         assert!(matches!(
             send_req(&state, cid, upload).await,
-            Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "Content blocked by profanity filter"
+            Err(ApiError(StatusCode::BAD_REQUEST, ref m, _)) if m == "Content blocked by profanity filter"
         ));
         done(state, path).await;
     }
@@ -3472,7 +3483,7 @@ mod tests {
             assert!(
                 matches!(
                     as_mallory(reuse).await,
-                    Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "Invalid p2p_id"
+                    Err(ApiError(StatusCode::BAD_REQUEST, ref m, _)) if m == "Invalid p2p_id"
                 ),
                 "another hoster's id is refused"
             );
@@ -3528,7 +3539,7 @@ mod tests {
             assert!(
                 matches!(
                     send_req(&state, cid, p2p_req(&id, size, sha.as_deref())).await,
-                    Err(ApiError(StatusCode::BAD_REQUEST, _))
+                    Err(ApiError(StatusCode::BAD_REQUEST, _, _))
                 ),
                 "{size} {sha:?}"
             );
@@ -3542,7 +3553,7 @@ mod tests {
         assert!(
             matches!(
                 send_req(&state, cid, p2p_req(&"5A".repeat(16), 1, None)).await,
-                Err(ApiError(StatusCode::BAD_REQUEST, _))
+                Err(ApiError(StatusCode::BAD_REQUEST, _, _))
             ),
             "a P2P id can't name a stored server file"
         );
@@ -3592,7 +3603,7 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(in_dm, Err(ApiError(StatusCode::FORBIDDEN, _))),
+            matches!(in_dm, Err(ApiError(StatusCode::FORBIDDEN, _, _))),
             "DMs too"
         );
         let text = send_with(&state, cid, "alice", "just text 😀".to_string(), None).await;
@@ -3639,11 +3650,20 @@ mod tests {
         let _ = send(&state, cid, "alice").await.expect("first send");
         let second = send(&state, cid, "alice").await;
         match second {
-            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, msg)) => {
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, msg, reason)) => {
                 assert!(
                     msg == "Slow mode: wait 60s" || msg == "Slow mode: wait 59s",
                     "{msg}"
-                )
+                );
+                let reason = reason.expect("a reason");
+                assert_eq!(reason.kind, crate::api::ReasonKind::Rate);
+                assert_eq!(
+                    reason
+                        .retry_after
+                        .map(|wait| format!("Slow mode: wait {wait}s")),
+                    Some(msg),
+                    "the wait as a number"
+                );
             }
             _ => panic!("expected slow mode rejection"),
         }
@@ -3689,7 +3709,7 @@ mod tests {
         let _ = send(&state, cid, "kicker").await.expect("kicker 1");
         assert!(matches!(
             send(&state, cid, "kicker").await,
-            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, _))
         ));
         sqlx::query("UPDATE channels SET restrict_send = 1 WHERE id = $1")
             .bind(cid)
@@ -3700,13 +3720,13 @@ mod tests {
         for who in ["msgmod", "kicker", "alice"] {
             assert!(matches!(
                 send(&state, cid, who).await,
-                Err(ApiError(StatusCode::FORBIDDEN, _))
+                Err(ApiError(StatusCode::FORBIDDEN, _, _))
             ));
         }
         let _ = send(&state, cid, "writer").await.expect("allowed sender");
         assert!(matches!(
             send(&state, cid, "writer").await,
-            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, _))
         ));
         done(state, path).await;
     }
@@ -3740,9 +3760,9 @@ mod tests {
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].content, "after");
         let bob = list(&state, cid, Some("bob")).await;
-        assert!(matches!(bob, Err(ApiError(StatusCode::NOT_FOUND, _))));
+        assert!(matches!(bob, Err(ApiError(StatusCode::NOT_FOUND, _, _))));
         let guest = list(&state, cid, None).await;
-        assert!(matches!(guest, Err(ApiError(StatusCode::NOT_FOUND, _))));
+        assert!(matches!(guest, Err(ApiError(StatusCode::NOT_FOUND, _, _))));
         let found = search_with(
             &state,
             Some(&mem_user("alice", false)),
@@ -3794,7 +3814,7 @@ mod tests {
                 crate::api::access::resolve_message(db, id, Some(&alice), &Proof::none())
                     .await
                     .map(|_| ())
-                    .map_err(|ApiError(code, _)| code)
+                    .map_err(|ApiError(code, _, _)| code)
             }
         };
         assert_eq!(read(hidden_reply).await, Err(StatusCode::NOT_FOUND));
@@ -3807,7 +3827,10 @@ mod tests {
             Path(hidden_reply),
         )
         .await;
-        assert!(matches!(located, Err(ApiError(StatusCode::NOT_FOUND, _))));
+        assert!(matches!(
+            located,
+            Err(ApiError(StatusCode::NOT_FOUND, _, _))
+        ));
         done(state, path).await;
     }
 
@@ -4409,7 +4432,7 @@ mod tests {
                 query(Some("hel\0lo")),
             )
             .await;
-            assert!(matches!(nul, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+            assert!(matches!(nul, Err(ApiError(StatusCode::BAD_REQUEST, _, _))));
             if fts {
                 drop_fts(db).await;
             }
@@ -5015,7 +5038,7 @@ mod tests {
         assert!(SearchQuery::parse("").expect("empty").servers.is_none());
         assert!(matches!(
             SearchQuery::parse("before=x"),
-            Err(ApiError(StatusCode::BAD_REQUEST, _))
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
         let (state, path) = temp_state("search_parse").await;
         add_member(&state.db, "rchat", "alice", 0, 0, 0).await;
@@ -5028,7 +5051,7 @@ mod tests {
             )
             .await;
             assert!(
-                matches!(got, Err(ApiError(StatusCode::BAD_REQUEST, _))),
+                matches!(got, Err(ApiError(StatusCode::BAD_REQUEST, _, _))),
                 "{raw}"
             );
         }
@@ -5147,7 +5170,7 @@ mod tests {
         bad.cursor = Some("nothex".to_string());
         assert!(matches!(
             search_paged(&state, alice.as_ref(), &HeaderMap::new(), bad).await,
-            Err(ApiError(StatusCode::BAD_REQUEST, _))
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
         done(state, path).await;
     }
@@ -5184,11 +5207,11 @@ mod tests {
         assert!(send("alice", cid).await.is_ok());
         assert!(matches!(
             send("mallory", cid).await,
-            Err(ApiError(StatusCode::FORBIDDEN, _))
+            Err(ApiError(StatusCode::FORBIDDEN, _, _))
         ));
         assert!(matches!(
             send("alice", 9999).await,
-            Err(ApiError(StatusCode::NOT_FOUND, _))
+            Err(ApiError(StatusCode::NOT_FOUND, _, _))
         ));
         sqlx::query("UPDATE channels SET slowmode_seconds = 60 WHERE id = $1")
             .bind(cid)
@@ -5197,12 +5220,12 @@ mod tests {
             .expect("slowmode");
         assert!(matches!(
             send("alice", cid).await,
-            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, _))
         ));
         let voice = add_channel(db, "talk", "voice").await;
         assert!(matches!(
             send("alice", voice).await,
-            Err(ApiError(StatusCode::BAD_REQUEST, _))
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
         done(state, path).await;
     }
@@ -5510,7 +5533,7 @@ mod tests {
         ];
         for (to, target) in refused {
             match say_to(&state, to, "bob", "nope", Some(target), true).await {
-                Err(ApiError(StatusCode::BAD_REQUEST, msg)) => {
+                Err(ApiError(StatusCode::BAD_REQUEST, msg, _)) => {
                     assert_eq!(msg, "Cannot reply to that message", "{target}")
                 }
                 _ => panic!("reply to {target} was not refused"),
@@ -5532,7 +5555,7 @@ mod tests {
                 true
             )
             .await,
-            Err(ApiError(StatusCode::BAD_REQUEST, _))
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
 
         let gone = say(&state, general, "carol", "to be deleted").await;
@@ -5559,7 +5582,7 @@ mod tests {
         assert!(quote.mention);
         assert!(matches!(
             say_to(&state, general, "bob", "x", Some(gone.id), true).await,
-            Err(ApiError(StatusCode::BAD_REQUEST, _))
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
         done(state, path).await;
     }
@@ -5639,7 +5662,7 @@ mod tests {
                 true
             )
             .await,
-            Err(ApiError(StatusCode::BAD_REQUEST, _))
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
         let full = list(&state, cid, Some("bob")).await.expect("list");
         let quote = full
@@ -6089,7 +6112,7 @@ mod tests {
         )
         .await
         .map(|_| StatusCode::OK)
-        .map_err(|ApiError(code, _)| code)
+        .map_err(|ApiError(code, _, _)| code)
     }
 
     async fn stored_read(db: &Db, who: &str, scope: &str) -> Option<i64> {
@@ -6306,11 +6329,11 @@ mod tests {
         let hidden = locate(&state, Some("bob"), old)
             .await
             .err()
-            .map(|ApiError(c, m)| (c, m));
+            .map(|ApiError(c, m, _)| (c, m));
         let missing = locate(&state, Some("bob"), 999_999)
             .await
             .err()
-            .map(|ApiError(c, m)| (c, m));
+            .map(|ApiError(c, m, _)| (c, m));
         assert_eq!(
             hidden,
             Some((StatusCode::NOT_FOUND, "Not found".to_string()))
@@ -6423,7 +6446,7 @@ mod tests {
                 locate(&state, Some("bob"), refused)
                     .await
                     .err()
-                    .map(|ApiError(c, m)| (c, m)),
+                    .map(|ApiError(c, m, _)| (c, m)),
                 Some((StatusCode::NOT_FOUND, "Not found".to_string())),
                 "{refused}"
             );
@@ -6436,7 +6459,7 @@ mod tests {
             locate_batch(&state, Some("bob"), &too_many)
                 .await
                 .err()
-                .map(|ApiError(c, _)| c),
+                .map(|ApiError(c, _, _)| c),
             Some(StatusCode::BAD_REQUEST)
         );
         assert_eq!(
@@ -6459,7 +6482,7 @@ mod tests {
             locate_batch(&state, Some("erin"), &[1])
                 .await
                 .err()
-                .map(|ApiError(c, m)| (c, m)),
+                .map(|ApiError(c, m, _)| (c, m)),
             Some((
                 StatusCode::TOO_MANY_REQUESTS,
                 crate::api::budget::SLOW_DOWN.to_string()
@@ -6469,7 +6492,7 @@ mod tests {
         assert!(
             locate(&state, Some("erin"), 1)
                 .await
-                .is_err_and(|ApiError(c, _)| c == StatusCode::NOT_FOUND)
+                .is_err_and(|ApiError(c, _, _)| c == StatusCode::NOT_FOUND)
         );
         done(state, path).await;
     }
@@ -6570,7 +6593,7 @@ mod tests {
             locate(&state, Some("bob"), purging)
                 .await
                 .err()
-                .map(|ApiError(c, m)| (c, m)),
+                .map(|ApiError(c, m, _)| (c, m)),
             Some((StatusCode::NOT_FOUND, "Not found".to_string()))
         );
         done(state, path).await;
@@ -7127,7 +7150,7 @@ mod tests {
         perm(db, hidden, "u:alice", 1).await;
         let note = say(&state, (Some(cid), None, None), "alice", "hello").await;
         let secret = say(&state, (Some(hidden), None, None), "alice", "psst").await;
-        let status = |r: Result<Message, ApiError>| r.err().map(|ApiError(code, _)| code);
+        let status = |r: Result<Message, ApiError>| r.err().map(|ApiError(code, _, _)| code);
         assert_eq!(
             status(edit(&state, note.id, "bob", "hijack").await),
             Some(StatusCode::FORBIDDEN)
@@ -7203,7 +7226,7 @@ mod tests {
         add_user(db, "alice", "alice").await;
         add_member(db, "rchat", "alice", 0, 0, 1).await;
         let note = say(&state, (Some(cid), None, None), "alice", "hello").await;
-        let error = |r: Result<Message, ApiError>| r.err().map(|ApiError(code, e)| (code, e));
+        let error = |r: Result<Message, ApiError>| r.err().map(|ApiError(code, e, _)| (code, e));
         assert_eq!(
             error(edit(&state, note.id, "alice", "  \n ").await),
             Some((StatusCode::BAD_REQUEST, "Message is empty".to_string()))
@@ -7485,7 +7508,7 @@ mod tests {
             Query(page(early_reply.id)),
         )
         .await;
-        assert!(matches!(thread, Err(ApiError(StatusCode::NOT_FOUND, _))));
+        assert!(matches!(thread, Err(ApiError(StatusCode::NOT_FOUND, _, _))));
         let shown = reread("bob", early.id).await.expect("bob").0;
         assert_eq!(shown.len(), 1);
         assert_eq!(shown[0].id, early.id);
@@ -7868,7 +7891,7 @@ mod tests {
 
         let refused = |r: Result<Message, ApiError>| match r {
             Ok(_) => panic!("forwarded"),
-            Err(ApiError(code, msg)) => (code, msg),
+            Err(ApiError(code, msg, _)) => (code, msg),
         };
         let cannot = (
             StatusCode::BAD_REQUEST,
@@ -7961,7 +7984,7 @@ mod tests {
         )
         .await;
         assert_eq!(
-            edit.err().map(|ApiError(c, m)| (c, m)),
+            edit.err().map(|ApiError(c, m, _)| (c, m)),
             Some((
                 StatusCode::BAD_REQUEST,
                 "Cannot edit this message".to_string()
@@ -8119,7 +8142,7 @@ mod tests {
         )
         .await;
         assert_eq!(
-            outsider.err().map(|ApiError(c, _)| c),
+            outsider.err().map(|ApiError(c, _, _)| c),
             Some(StatusCode::FORBIDDEN),
             "sending still needs membership"
         );
@@ -8127,15 +8150,15 @@ mod tests {
         let hidden_where = locate(&state, Some("bob"), hidden)
             .await
             .err()
-            .map(|ApiError(c, m)| (c, m));
+            .map(|ApiError(c, m, _)| (c, m));
         let missing_where = locate(&state, Some("bob"), 999_999)
             .await
             .err()
-            .map(|ApiError(c, m)| (c, m));
+            .map(|ApiError(c, m, _)| (c, m));
         let vault_where = locate(&state, Some("bob"), vault_msg.id)
             .await
             .err()
-            .map(|ApiError(c, m)| (c, m));
+            .map(|ApiError(c, m, _)| (c, m));
         assert_eq!(
             hidden_where,
             Some((StatusCode::NOT_FOUND, "Not found".to_string()))

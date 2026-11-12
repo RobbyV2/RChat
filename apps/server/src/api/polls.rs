@@ -74,6 +74,7 @@ impl PollKind {
             other => Err(ApiError(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("invalid poll kind: {other}"),
+                None,
             )),
         }
     }
@@ -117,6 +118,7 @@ impl ShowResults {
             other => Err(ApiError(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("invalid poll results setting: {other}"),
+                None,
             )),
         }
     }
@@ -1201,9 +1203,9 @@ pub(crate) async fn snapshot_of(db: &Db, source: i64) -> Result<Option<String>, 
     if let Some(mut poll) = views.remove(&source) {
         poll.snapshot = true;
         poll.mine = None;
-        return Ok(Some(serde_json::to_string(&poll).map_err(|e| {
-            ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-        })?));
+        return Ok(Some(
+            serde_json::to_string(&poll).map_err(ApiError::internal)?,
+        ));
     }
     Ok(
         sqlx::query("SELECT data FROM poll_snapshots WHERE message_id = $1")
@@ -1218,8 +1220,7 @@ pub(crate) async fn snapshot_of(db: &Db, source: i64) -> Result<Option<String>, 
 /// Runs the profanity filter on the question and every option of a stored snapshot, for a
 /// forward into a server channel (DM polls are never filtered).
 pub(crate) fn check_snapshot(settings: &Settings, data: &str) -> Result<(), ApiError> {
-    let poll: Poll = serde_json::from_str(data)
-        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let poll: Poll = serde_json::from_str(data).map_err(ApiError::internal)?;
     settings.check_profanity(ProfanityTarget::Messages, &poll.question)?;
     for option in &poll.options {
         settings.check_profanity(ProfanityTarget::Messages, &option.text)?;
@@ -1740,12 +1741,14 @@ pub(crate) async fn list_voters(
         return Err(ApiError(
             StatusCode::FORBIDDEN,
             "Votes in this poll are anonymous".to_string(),
+            None,
         ));
     }
     if poll.results.is_none() {
         return Err(ApiError(
             StatusCode::FORBIDDEN,
             "Results are hidden".to_string(),
+            None,
         ));
     }
     let limit = limit.unwrap_or(VOTERS_PAGE).clamp(1, VOTERS_PAGE);
@@ -1870,7 +1873,7 @@ fn schedule(state: &AppState, id: i64, wait: Duration) {
         match update_event(&state.db, id).await {
             Ok(Some(ev)) => state.hub.broadcast(ev),
             Ok(None) => {}
-            Err(ApiError(_, e)) => tracing::warn!("poll update failed: {e}"),
+            Err(ApiError(_, e, _)) => tracing::warn!("poll update failed: {e}"),
         }
     });
 }
@@ -2035,7 +2038,7 @@ mod tests {
     }
 
     fn code<T>(res: Result<T, ApiError>) -> Option<(StatusCode, String)> {
-        res.err().map(|ApiError(c, m)| (c, m))
+        res.err().map(|ApiError(c, m, _)| (c, m))
     }
 
     fn req(poll: Value) -> SendReq {
@@ -4009,10 +4012,10 @@ mod tests {
         for t in tasks {
             match t.await.expect("join") {
                 Ok(()) => ok += 1,
-                Err(ApiError(StatusCode::BAD_REQUEST, msg)) => {
+                Err(ApiError(StatusCode::BAD_REQUEST, msg, _)) => {
                     assert_eq!(msg, "This poll is closed")
                 }
-                Err(ApiError(code, msg)) => panic!("{code} {msg}"),
+                Err(ApiError(code, msg, _)) => panic!("{code} {msg}"),
             }
         }
         let stored = int(

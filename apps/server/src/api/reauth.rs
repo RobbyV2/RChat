@@ -161,7 +161,7 @@ impl Purpose {
 }
 
 fn refused(msg: &str) -> ApiError {
-    ApiError(StatusCode::UNAUTHORIZED, msg.to_string())
+    ApiError(StatusCode::UNAUTHORIZED, msg.to_string(), None)
 }
 
 async fn counted(state: &AppState, pace: &str, msg: &str) -> Result<(), ApiError> {
@@ -365,7 +365,7 @@ mod tests {
     }
 
     fn denied(result: Result<(), ApiError>) -> (StatusCode, String) {
-        let ApiError(code, msg) = result.expect_err("denied");
+        let ApiError(code, msg, _) = result.expect_err("denied");
         (code, msg)
     }
 
@@ -727,7 +727,7 @@ mod tests {
             json!({"fresh_session": false}),
         ] {
             match body(value.clone()) {
-                Err(ApiError(code, msg)) => assert_eq!((code, msg), one, "{value}"),
+                Err(ApiError(code, msg, _)) => assert_eq!((code, msg), one, "{value}"),
                 Ok(_) => panic!("{value} was taken"),
             }
         }
@@ -801,7 +801,7 @@ mod tests {
         assert_eq!(session.user.username, "alice");
         assert_eq!(session.user.recovery_pub, None);
         for auth in [None, Some("Bearer nope"), Some(token.as_str())] {
-            let ApiError(code, msg) = extract(&state, auth).await.err().expect("refused");
+            let ApiError(code, msg, _) = extract(&state, auth).await.err().expect("refused");
             assert_eq!(
                 (code, msg.as_str()),
                 (StatusCode::UNAUTHORIZED, "Unauthorized"),
@@ -817,7 +817,7 @@ mod tests {
             .expect("starved pool");
         let held = starved.acquire().await.expect("the only connection");
         let stalled = state.clone().with_reader(starved.clone());
-        let ApiError(code, msg) = extract(&stalled, Some(&format!("Bearer {token}")))
+        let ApiError(code, msg, _) = extract(&stalled, Some(&format!("Bearer {token}")))
             .await
             .err()
             .expect("lookup fails");

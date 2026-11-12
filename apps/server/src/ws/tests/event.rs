@@ -159,3 +159,34 @@ async fn user_updates_reach_only_people_who_share_something() {
     assert!(!reached(&dave));
     crate::api::test_util::done(state, path).await;
 }
+
+#[test]
+fn error_frames_carry_the_reason_of_rest_errors() {
+    use axum::http::StatusCode;
+
+    use crate::api::ApiError;
+    use crate::ws::protocol::Refused;
+    let wire = |refused: Refused| serde_json::to_string(&refused.frame()).expect("json");
+    assert_eq!(
+        wire("Not a voice channel".into()),
+        r#"{"type":"error","message":"Not a voice channel"}"#,
+        "an error without a reason reads as before"
+    );
+    let off = ApiError::off_site(StatusCode::NOT_FOUND, "Calls are off", "calls");
+    assert_eq!(
+        wire(off.into()),
+        r#"{"type":"error","message":"Calls are off","reason":{"kind":"off_site","control":"calls"}}"#
+    );
+    let failed = wire(sqlx::Error::Protocol("relation secret_table".to_string()).into());
+    assert_eq!(
+        failed, r#"{"type":"error","message":"Something went wrong"}"#,
+        "no database text in a frame"
+    );
+    assert_eq!(
+        wire(sqlx::Error::PoolTimedOut.into()),
+        r#"{"type":"error","message":"Server busy, try again in a moment","reason":{"kind":"unavailable","retry_after":1}}"#
+    );
+    let back: WsEvent =
+        serde_json::from_str(r#"{"type":"error","message":"old"}"#).expect("an older copy");
+    assert!(matches!(back, WsEvent::Error { message, reason: None } if message == "old"));
+}

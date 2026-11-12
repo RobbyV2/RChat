@@ -228,9 +228,10 @@ pub(crate) fn reading_slot(db: &Db, account: &str) -> Result<crate::api::budget:
     READING
         .enter(format!("{}\n{account}", crate::db::pool_key(db)))
         .ok_or_else(|| {
-            ApiError(
+            ApiError::limit(
                 StatusCode::TOO_MANY_REQUESTS,
                 format!("Too many uploads at once: up to {UPLOADS_PER_ACCOUNT} per account"),
+                "uploads_per_account",
             )
         })
 }
@@ -244,17 +245,19 @@ pub(crate) fn declared_length(headers: &axum::http::HeaderMap) -> Option<u64> {
 }
 
 fn too_large(max: usize) -> ApiError {
-    ApiError(
+    ApiError::limit(
         StatusCode::PAYLOAD_TOO_LARGE,
         format!("File exceeds {}MB limit", max / (1024 * 1024)),
+        "upload_max_mib",
     )
 }
 
 /// 413 for JSON over `max` bytes.
 pub(crate) fn json_over(max: usize) -> ApiError {
-    ApiError(
+    ApiError::limit(
         StatusCode::PAYLOAD_TOO_LARGE,
         format!("JSON exceeds {}MB limit", max / (1024 * 1024)),
+        "json_max_mib",
     )
 }
 
@@ -305,12 +308,13 @@ async fn take_room(
     let share = SHARES
         .take(slot.key(), kib.into(), room.share.into())
         .ok_or_else(|| {
-            ApiError(
+            ApiError::limit(
                 StatusCode::TOO_MANY_REQUESTS,
                 format!(
                     "Too many uploads at once: up to {} per account",
                     fmt_bytes(u64::from(room.share) * 1024)
                 ),
+                "upload_buffer_share",
             )
         })?;
     let held = match wait.is_zero() {
@@ -321,9 +325,11 @@ async fn take_room(
             .and_then(Result::ok),
     }
     .ok_or_else(|| {
-        ApiError(
+        ApiError::capacity(
             StatusCode::SERVICE_UNAVAILABLE,
-            "Too many uploads right now, try again in a moment".to_string(),
+            "Too many uploads right now, try again in a moment",
+            "upload_buffer_mib",
+            None,
         )
     })?;
     Ok(Held {
@@ -368,7 +374,7 @@ where
             Stop::Over => too_large(max),
             Stop::Failed(e) => watch.error(
                 || too_large(max),
-                ApiError(StatusCode::PAYLOAD_TOO_LARGE, e),
+                ApiError(StatusCode::PAYLOAD_TOO_LARGE, e, None),
             ),
         })?;
     Ok(Buffered { data, _held: held })
@@ -427,6 +433,7 @@ fn stalled() -> ApiError {
     ApiError(
         StatusCode::REQUEST_TIMEOUT,
         "The upload stopped sending data".to_string(),
+        None,
     )
 }
 
@@ -595,12 +602,13 @@ fn over_budget(budget: u64, charge: Charge<'_>) -> ApiError {
         Some(_) => "this webhook's owner, and all webhooks of its server together,",
         None => "you",
     };
-    ApiError(
+    ApiError::limit(
         StatusCode::TOO_MANY_REQUESTS,
         format!(
             "Upload limit reached: {who} can upload up to {} a day. Space frees up 1 day after each upload, or sooner when a file is removed. The site admin sets this limit",
             fmt_bytes(budget)
         ),
+        "upload_budget_mib",
     )
 }
 
@@ -816,6 +824,7 @@ pub(crate) async fn upload_media(
         return Err(ApiError(
             StatusCode::FORBIDDEN,
             "File uploads are disabled".to_string(),
+            None,
         ));
     }
     check_budget(&state.db, Charge::own(&user.username), 1, budget()).await?;
@@ -829,7 +838,7 @@ pub(crate) async fn upload_media(
         .map_err(|e| {
             watch.error(
                 || too_large(max),
-                ApiError(StatusCode::BAD_REQUEST, e.to_string()),
+                ApiError(StatusCode::BAD_REQUEST, e.to_string(), None),
             )
         })?
         .ok_or_else(|| bad("No file provided"))?;
@@ -890,7 +899,7 @@ pub(crate) async fn save_within(
             bucket
                 .put_object_with_content_type(s3_key(&id), data, mime)
                 .await
-                .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                .map_err(ApiError::internal)?;
             None
         }
         None => Some(data),
@@ -946,7 +955,11 @@ pub(crate) async fn delete_media(
     let media_id = match media_id {
         Some(media_id) => media_id,
         None => {
-            return Err(ApiError(StatusCode::NOT_FOUND, "No attachment".to_string()));
+            return Err(ApiError(
+                StatusCode::NOT_FOUND,
+                "No attachment".to_string(),
+                None,
+            ));
         }
     };
     let entry = audit.map(|(server, actor, channel)| {
@@ -1021,7 +1034,7 @@ pub(crate) async fn delete_media(
 }
 
 fn media_hidden() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, "Media not found".to_string())
+    ApiError(StatusCode::NOT_FOUND, "Media not found".to_string(), None)
 }
 
 /// Most messages that may carry one uploaded file. Forwards past this carry the file name
@@ -1170,6 +1183,7 @@ pub(crate) async fn download_media(
         return Err(ApiError(
             StatusCode::FORBIDDEN,
             "Attachments are turned off on this server".to_string(),
+            None,
         ));
     }
     let row = sqlx::query(
@@ -1201,7 +1215,7 @@ pub(crate) async fn download_media(
             .header(header::CACHE_CONTROL, cache)
             .header(header::VARY, "X-Guest-Grant")
             .body(Body::empty())
-            .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+            .map_err(ApiError::internal);
     }
     let body = match (inline != 0, chunks > 0, &state.s3) {
         (true, _, _) => {
@@ -1220,13 +1234,14 @@ pub(crate) async fn download_media(
             let stream = bucket
                 .get_object_stream(s3_key(&id))
                 .await
-                .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                .map_err(ApiError::internal)?;
             Body::from_stream(stream.bytes)
         }
         (false, false, None) => {
             return Err(ApiError(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Media stored in S3 but S3 is not configured".to_string(),
+                None,
             ));
         }
     };
@@ -1244,8 +1259,7 @@ pub(crate) async fn download_media(
     if chunks > 0 || (inline == 0 && size == 0) {
         res = res.header(header::CONTENT_LENGTH, size);
     }
-    res.body(body)
-        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+    res.body(body).map_err(ApiError::internal)
 }
 
 pub(crate) fn content_disposition(filename: &str) -> String {
@@ -1537,7 +1551,10 @@ mod tests {
             }));
         let (status, text) = post_file(&small, 1536).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{text}");
-        assert!(text.contains("File exceeds 1MB limit"), "{text}");
+        assert_eq!(
+            text,
+            r#"{"error":"File exceeds 1MB limit","reason":{"kind":"limit","control":"upload_max_mib"}}"#
+        );
         let (status, text) = post_file(&small, 2560).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{text}");
         let (status, text) = post_file(&small, 1000).await;
@@ -1587,7 +1604,7 @@ mod tests {
         );
         let refused = check_budget(db, Charge::own("alice"), mib as u64 + 1, budget).await;
         match refused {
-            Err(ApiError(code, msg)) => {
+            Err(ApiError(code, msg, _)) => {
                 assert_eq!(code, StatusCode::TOO_MANY_REQUESTS);
                 assert_eq!(
                     msg,
@@ -1696,7 +1713,7 @@ mod tests {
         let results = futures_util::future::join_all(uploads).await;
         let stored = results.iter().filter(|r| r.is_ok()).count();
         for r in &results {
-            if let Err(ApiError(code, msg)) = r {
+            if let Err(ApiError(code, msg, _)) = r {
                 assert_eq!(*code, StatusCode::TOO_MANY_REQUESTS, "{msg}");
             }
         }
@@ -1814,7 +1831,7 @@ mod tests {
         )
         .await;
         assert_eq!(
-            busy.err().map(|ApiError(c, _)| c),
+            busy.err().map(|ApiError(c, _, _)| c),
             Some(StatusCode::SERVICE_UNAVAILABLE),
             "no room for the declared length: refused before reading"
         );
@@ -1835,7 +1852,7 @@ mod tests {
         )
         .await;
         assert_eq!(
-            lying.err().map(|ApiError(c, _)| c),
+            lying.err().map(|ApiError(c, _, _)| c),
             Some(StatusCode::PAYLOAD_TOO_LARGE),
             "never more than the room taken"
         );
@@ -1851,7 +1868,7 @@ mod tests {
         )
         .await;
         assert_eq!(
-            big.err().map(|ApiError(c, _)| c),
+            big.err().map(|ApiError(c, _, _)| c),
             Some(StatusCode::PAYLOAD_TOO_LARGE)
         );
         assert_eq!(room.available_permits(), 64);
@@ -1888,7 +1905,7 @@ mod tests {
         assert!(
             matches!(
                 reading_slot(&db, "mallory"),
-                Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+                Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, _))
             ),
             "one account reads at most {UPLOADS_PER_ACCOUNT} bodies at once"
         );
@@ -1919,7 +1936,7 @@ mod tests {
         for upload in stuck {
             let res = upload.await.expect("task");
             assert_eq!(
-                res.err().map(|ApiError(c, _)| c),
+                res.err().map(|ApiError(c, _, _)| c),
                 Some(StatusCode::REQUEST_TIMEOUT)
             );
         }
@@ -2018,7 +2035,7 @@ mod tests {
         )
         .await;
         match more {
-            Err(ApiError(code, msg)) => {
+            Err(ApiError(code, msg, _)) => {
                 assert_eq!(code, StatusCode::TOO_MANY_REQUESTS);
                 assert!(msg.starts_with("Too many uploads at once: up to "), "{msg}");
                 assert!(msg.ends_with(" per account") && msg.is_ascii(), "{msg}");
@@ -2042,7 +2059,7 @@ mod tests {
             assert_eq!(body.data.len(), 24 * 1024);
         }
         assert_eq!(
-            stuck.await.expect("task").err().map(|ApiError(c, _)| c),
+            stuck.await.expect("task").err().map(|ApiError(c, _, _)| c),
             Some(StatusCode::REQUEST_TIMEOUT)
         );
         let again = read(
@@ -2070,7 +2087,7 @@ mod tests {
         assert_eq!(small.len(), 16 * 1024);
         for (body, declared) in [(pieces(3, 1024), None), (pieces(3, 1024), Some(1024))] {
             match read_small(body, declared, two, waits).await {
-                Err(ApiError(code, msg)) => {
+                Err(ApiError(code, msg, _)) => {
                     assert_eq!(code, StatusCode::PAYLOAD_TOO_LARGE);
                     assert_eq!(msg, "JSON exceeds 2MB limit");
                 }
@@ -2086,14 +2103,14 @@ mod tests {
         )
         .await;
         assert_eq!(
-            declared.err().map(|ApiError(c, _)| c),
+            declared.err().map(|ApiError(c, _, _)| c),
             Some(StatusCode::PAYLOAD_TOO_LARGE),
             "refused on its declared length before reading"
         );
         assert!(started.elapsed() < std::time::Duration::from_millis(250));
         let stuck = read_small(stalled(1), None, two, waits).await;
         assert_eq!(
-            stuck.err().map(|ApiError(c, _)| c),
+            stuck.err().map(|ApiError(c, _, _)| c),
             Some(StatusCode::REQUEST_TIMEOUT)
         );
     }
@@ -2122,9 +2139,9 @@ mod tests {
             body: std::time::Duration::from_millis(1500),
         };
         let failed = |watch: &Watch, e: axum::extract::multipart::MultipartError| {
-            let over = || ApiError(StatusCode::PAYLOAD_TOO_LARGE, String::new());
+            let over = || ApiError(StatusCode::PAYLOAD_TOO_LARGE, String::new(), None);
             watch
-                .error(over, ApiError(StatusCode::BAD_REQUEST, e.to_string()))
+                .error(over, ApiError(StatusCode::BAD_REQUEST, e.to_string(), None))
                 .0
         };
         let first = |stream| async move {
@@ -2182,7 +2199,7 @@ mod tests {
                 };
                 match read_json_part(field, 1024, &watch).await {
                     Ok(_) => read += 1,
-                    Err(ApiError(code, _)) => return (read, Some(code)),
+                    Err(ApiError(code, _, _)) => return (read, Some(code)),
                 }
             }
         };
@@ -2262,11 +2279,11 @@ mod tests {
             }
         };
         let refused = |r: Result<(String, i64), ApiError>| {
-            matches!(r, Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _)))
+            matches!(r, Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, _)))
         };
         assert!(save("@1", hook("alice", "s1")).await.is_ok());
         match save("@2", hook("alice", "s2")).await {
-            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, msg)) => assert_eq!(
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, msg, _)) => assert_eq!(
                 msg,
                 "Upload limit reached: this webhook's owner, and all webhooks of its server together, can upload up to 10240 bytes a day. Space frees up 1 day after each upload, or sooner when a file is removed. The site admin sets this limit",
                 "a second webhook of the same owner"
@@ -2585,7 +2602,7 @@ mod tests {
             crate::api::Settings::forget(db);
             match get().await {
                 Ok(res) => assert!(ok && res.status() == axum::http::StatusCode::OK),
-                Err(ApiError(status, msg)) => {
+                Err(ApiError(status, msg, _)) => {
                     assert!(!ok);
                     assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
                     assert_eq!(msg, "Attachments are turned off on this server");
@@ -2824,7 +2841,7 @@ mod tests {
         );
         let cached = download_media(State(state.clone()), headers, Path(fresh.clone())).await;
         assert_eq!(
-            cached.err().map(|ApiError(c, m)| (c, m)),
+            cached.err().map(|ApiError(c, m, _)| (c, m)),
             Some((
                 axum::http::StatusCode::NOT_FOUND,
                 "Media not found".to_string()
@@ -2882,7 +2899,7 @@ mod tests {
         let hidden =
             download_media(State(state.clone()), axum::http::HeaderMap::new(), Path(id)).await;
         assert_eq!(
-            hidden.err().map(|ApiError(c, m)| (c, m)),
+            hidden.err().map(|ApiError(c, m, _)| (c, m)),
             Some((
                 axum::http::StatusCode::NOT_FOUND,
                 "Media not found".to_string()

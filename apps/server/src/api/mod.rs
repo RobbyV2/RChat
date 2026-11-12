@@ -10,6 +10,7 @@ pub mod config_shares;
 pub mod controls;
 pub mod dms;
 pub mod embeds;
+pub mod error;
 pub mod features;
 pub mod friends;
 pub mod health;
@@ -57,22 +58,15 @@ use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use utoipa::ToSchema;
 
 use crate::api::controls::Control;
+pub use crate::api::error::{
+    ApiError, ApiErrorBody, Reason, ReasonKind, SERVER_BUSY, SERVER_ERROR,
+};
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{DmCreation, ServerCreation, ServerJoining};
 use crate::config::Roles;
 use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, pool_key};
 use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
-
-#[derive(Debug)]
-pub struct ApiError(pub StatusCode, pub String);
-
-/// The JSON body of every error the API itself returns.
-#[derive(Serialize, ToSchema)]
-pub struct ApiErrorBody {
-    /// A short, human-readable reason, e.g. `Server not found` or `Unauthorized`.
-    pub error: String,
-}
 
 /// Generic success response.
 #[derive(Serialize, ToSchema)]
@@ -87,7 +81,7 @@ pub(crate) fn ok() -> axum::Json<OkResp> {
 }
 
 pub(crate) fn bad(msg: &str) -> ApiError {
-    ApiError(StatusCode::BAD_REQUEST, msg.to_string())
+    ApiError(StatusCode::BAD_REQUEST, msg.to_string(), None)
 }
 
 /// A gate result with denials as `None`, so callers can answer them their own way. Server
@@ -95,7 +89,7 @@ pub(crate) fn bad(msg: &str) -> ApiError {
 pub(crate) fn allowed<T>(res: Result<T, ApiError>) -> Result<Option<T>, ApiError> {
     match res {
         Ok(v) => Ok(Some(v)),
-        Err(e) if e.0.is_server_error() => Err(e),
+        Err(e) if e.failed() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -105,56 +99,6 @@ pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
-}
-
-/// The 503 answer to a request that waited too long for the database: no free connection
-/// within `DATABASE_ACQUIRE_TIMEOUT_SECS`, or a statement over `DATABASE_STATEMENT_TIMEOUT_SECS`.
-pub const SERVER_BUSY: &str = "Server busy, try again in a moment";
-
-/// The 500 answer to any other database error. The detail goes to the server log only.
-pub const SERVER_ERROR: &str = "Something went wrong";
-
-/// SQLSTATE `query_canceled`: Postgres stopped a statement at `statement_timeout`.
-const QUERY_CANCELED: &str = "57014";
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        let ApiError(status, error) = self;
-        let busy = status == StatusCode::SERVICE_UNAVAILABLE && error == SERVER_BUSY;
-        let body = axum::Json(ApiErrorBody { error });
-        match busy {
-            true => (status, [(axum::http::header::RETRY_AFTER, "1")], body).into_response(),
-            false => (status, body).into_response(),
-        }
-    }
-}
-
-impl From<anyhow::Error> for ApiError {
-    fn from(e: anyhow::Error) -> ApiError {
-        match e.downcast::<sqlx::Error>() {
-            Ok(e) => e.into(),
-            Err(e) => ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-        }
-    }
-}
-
-impl From<sqlx::Error> for ApiError {
-    fn from(e: sqlx::Error) -> ApiError {
-        let canceled = e
-            .as_database_error()
-            .and_then(|d| d.code())
-            .is_some_and(|code| code == QUERY_CANCELED);
-        match canceled || matches!(e, sqlx::Error::PoolTimedOut) {
-            true => {
-                tracing::warn!("database busy: {e}");
-                ApiError(StatusCode::SERVICE_UNAVAILABLE, SERVER_BUSY.to_string())
-            }
-            false => {
-                tracing::error!("database error: {e}");
-                ApiError(StatusCode::INTERNAL_SERVER_ERROR, SERVER_ERROR.to_string())
-            }
-        }
-    }
 }
 
 /// A user as shown next to messages and in lists. A deleted account still appears, as its
@@ -1180,7 +1124,10 @@ impl ProfanityTargets {
 /// Instance-wide feature switches. Changes reach clients through the `settings_changed`
 /// WebSocket event. A switched-off feature's endpoints answer 404, except that uploads, P2P
 /// attachments and outgoing webhooks answer 403, guests get 401 while guest access is off, and
-/// `client_other_instances` gates no endpoint.
+/// `client_other_instances` gates no endpoint. What `server_creation`, `server_joining` (under
+/// `nobody`), `server_search`, `dm_creation` and `friend_requests` refuse carries `reason` with
+/// kind `off_site` and the setting's key as `control`; an account that `server_creation: some`
+/// leaves out gets `off_account`.
 #[derive(Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub struct Settings {
     /// Master switch of the profanity filter. Off by default (`PROFANITY_FILTER`).
@@ -1522,6 +1469,7 @@ pub async fn require_guest_ok(db: &Db, user: Option<&User>) -> Result<(), ApiErr
             false => Err(ApiError(
                 StatusCode::UNAUTHORIZED,
                 "Guest access is disabled".to_string(),
+                None,
             )),
         },
     }
@@ -1564,6 +1512,7 @@ pub fn check_len(text: &str, max: usize, what: &str) -> Result<(), ApiError> {
         true => Err(ApiError(
             StatusCode::BAD_REQUEST,
             format!("{what} must be at most {max} characters"),
+            None,
         )),
         false => Ok(()),
     }
@@ -1609,10 +1558,7 @@ pub const AUTH_UNAVAILABLE: &str = "Cannot check your session right now. Try aga
 
 fn auth_unavailable(e: sqlx::Error) -> ApiError {
     tracing::warn!("session lookup failed: {e}");
-    ApiError(
-        StatusCode::SERVICE_UNAVAILABLE,
-        AUTH_UNAVAILABLE.to_string(),
-    )
+    ApiError::unavailable(AUTH_UNAVAILABLE, None)
 }
 
 /// The account row (`users.*`, plus the session's `session_created_at`) holding session
@@ -1660,7 +1606,7 @@ pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 pub(crate) fn unauthorized() -> ApiError {
-    ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
+    ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string(), None)
 }
 
 async fn bearer_user(parts: &Parts, state: &AppState) -> Result<Option<User>, ApiError> {
@@ -2619,7 +2565,7 @@ mod tests {
             Json(serde_json::from_value(v).expect("request"))
         }
         fn blocked<T>(res: Result<T, ApiError>) -> bool {
-            matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m.contains("profanity"))
+            matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, ref m, _)) if m.contains("profanity"))
         }
         let (state, path) = temp_state("profanity_paths").await;
         profanity_on(&state.db).await;
@@ -3011,7 +2957,8 @@ mod tests {
             StatusCode::UNAUTHORIZED
         );
         assert!(AUTH_UNAVAILABLE.is_ascii());
-        let unavailable = serde_json::json!({ "error": AUTH_UNAVAILABLE }).to_string();
+        let unavailable =
+            format!(r#"{{"error":"{AUTH_UNAVAILABLE}","reason":{{"kind":"unavailable"}}}}"#);
         let url = format!("sqlite://{}?mode=rwc", path.display());
         let starved = sqlx::any::AnyPoolOptions::new()
             .max_connections(1)
@@ -3022,7 +2969,7 @@ mod tests {
         let held = starved.acquire().await.expect("the only connection");
         let stalled = state.clone().with_reader(starved.clone());
         for token in ["tok-bob", "tok-nobody"] {
-            let ApiError(code, msg) = user_for_token(&stalled, token)
+            let ApiError(code, msg, _) = user_for_token(&stalled, token)
                 .await
                 .err()
                 .expect("lookup fails");

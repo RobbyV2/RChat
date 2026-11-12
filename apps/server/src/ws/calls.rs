@@ -6,7 +6,7 @@ use super::conn::{Out, sent};
 use super::event::{Updated, WsEvent};
 use super::filter::event_channel;
 use super::p2p::{CALLING_TOO_OFTEN, RECONNECTING, TOO_FAST};
-use super::protocol::ClientMsg;
+use super::protocol::{ClientMsg, Refused};
 use super::{CallKind, SIGNAL_MAX};
 
 use crate::api::access::{ws_dm_users, ws_voice_channel};
@@ -125,26 +125,20 @@ pub(super) async fn voice_msg(
     user: &str,
     conn: u64,
     msg: ClientMsg,
-) -> Result<(), String> {
-    let db_err = |e: sqlx::Error| crate::api::ApiError::from(e).1;
+) -> Result<(), Refused> {
     match msg {
         ClientMsg::VoiceJoin { channel_id } => {
             let channel = ws_voice_channel(&state.read(), user, channel_id).await?;
             if channel.kind() != ChannelKind::Voice {
-                return Err("Not a voice channel".to_string());
+                return Err("Not a voice channel".into());
             }
             if channel.server().via() == crate::api::access::Via::Staff {
-                return Err("Join this server to use voice".to_string());
+                return Err("Join this server to use voice".into());
             }
-            if !channel
-                .member_rights(&state.read())
-                .await
-                .map_err(|e| e.1)?
-                .view
-            {
-                return Err("Channel not found".to_string());
+            if !channel.member_rights(&state.read()).await?.view {
+                return Err("Channel not found".into());
             }
-            channel.timeout_gate(&state.db).await.map_err(|e| e.1)?;
+            channel.timeout_gate(&state.db).await?;
             let server = channel.server().name().to_string();
             let ends = state
                 .hub
@@ -154,8 +148,7 @@ pub(super) async fn voice_msg(
                 finalize_call_log(state, end, false).await;
             }
             if crate::api::access::timed_out(&state.db, &server, user)
-                .await
-                .map_err(|e| e.1)?
+                .await?
                 .is_some()
             {
                 state.hub.broadcast(WsEvent::VoiceMuted {
@@ -165,9 +158,7 @@ pub(super) async fn voice_msg(
                     muted: true,
                 });
             }
-            touch_interaction(&state.db, &server, user)
-                .await
-                .map_err(db_err)
+            Ok(touch_interaction(&state.db, &server, user).await?)
         }
         ClientMsg::VoiceLeave => {
             state.hub.voice_leave(user).await;
@@ -186,33 +177,28 @@ pub(super) async fn voice_msg(
                 false => Vec::new(),
             };
             if !state.hub.call_ok(user, dm_id) {
-                return Err(CALLING_TOO_OFTEN.to_string());
+                return Err(CALLING_TOO_OFTEN.into());
             }
             let (a, b) = ws_dm_users(&state.read(), dm_id, user)
-                .await
-                .map_err(db_err)?
+                .await?
                 .ok_or_else(|| "DM not found".to_string())?;
             if a == b {
-                return Err("Cannot call yourself".to_string());
+                return Err("Cannot call yourself".into());
             }
             let other = match a == user {
                 true => &b,
                 false => &a,
             };
-            crate::api::blocks::check_dm(&state.db, user, other)
-                .await
-                .map_err(|crate::api::ApiError(_, e)| e)?;
+            crate::api::blocks::check_dm(&state.db, user, other).await?;
             let kind = match p2p {
                 true => CallKind::P2p,
                 false => CallKind::Rtc,
             };
             if let Some(busy) = state.hub.call_busy(user, other) {
-                return Err(busy);
+                return Err(busy.into());
             }
             let dm_users = vec![a, b];
-            let log_id = insert_call_log(state, dm_id, user, (kind, video))
-                .await
-                .map_err(db_err)?;
+            let log_id = insert_call_log(state, dm_id, user, (kind, video)).await?;
             match state
                 .hub
                 .call_start_from(
@@ -235,7 +221,7 @@ pub(super) async fn voice_msg(
                         .bind(log_id)
                         .execute(&state.db)
                         .await;
-                    Err(e)
+                    Err(e.into())
                 }
             }
         }
@@ -246,19 +232,16 @@ pub(super) async fn voice_msg(
         } => {
             let peer_id = call_peer_id(peer_id)?;
             if !state.hub.accept_ok(user) {
-                return Err(TOO_FAST.to_string());
+                return Err(TOO_FAST.into());
             }
             let (a, b) = ws_dm_users(&state.read(), dm_id, user)
-                .await
-                .map_err(db_err)?
+                .await?
                 .ok_or_else(|| "No incoming call".to_string())?;
             let relays = match state.hub.call_kind(dm_id) {
                 Some(CallKind::P2p) => crate::p2p::relay_hosts(relays)?,
                 Some(CallKind::Rtc) | None => Vec::new(),
             };
-            crate::api::blocks::check_dm_write(&state.db, user, &[a, b])
-                .await
-                .map_err(|crate::api::ApiError(_, e)| e)?;
+            crate::api::blocks::check_dm_write(&state.db, user, &[a, b]).await?;
             let (log_id, dm_users) = state
                 .hub
                 .call_accept_from(user, conn, dm_id, (peer_id, relays))
@@ -285,28 +268,25 @@ pub(super) async fn voice_msg(
             let to = to.to_lowercase();
             let size = serde_json::to_string(&payload).map_or(usize::MAX, |p| p.len());
             if size > SIGNAL_MAX {
-                return Err("Signal too large".to_string());
+                return Err("Signal too large".into());
             }
             if !state.hub.signal_ok(user, size) {
-                return Err(TOO_FAST.to_string());
+                return Err(TOO_FAST.into());
             }
             if !state.hub.rtc_shared(user, &to, channel_id, dm_id) {
-                return Err("No shared voice session".to_string());
+                return Err("No shared voice session".into());
             }
             if let Some(cid) = channel_id
                 && shows_video(&payload)
                 && let Some(server) = state.hub.room_server(cid)
                 && crate::api::access::timed_out(&state.db, &server, user)
-                    .await
-                    .map_err(|e| e.1)?
+                    .await?
                     .is_some()
             {
-                return Err(crate::api::access::TIMED_OUT.to_string());
+                return Err(crate::api::access::TIMED_OUT.into());
             }
             if dm_id.is_some() {
-                crate::api::blocks::check_dm(&state.db, user, &to)
-                    .await
-                    .map_err(|crate::api::ApiError(_, e)| e)?;
+                crate::api::blocks::check_dm(&state.db, user, &to).await?;
             }
             state.hub.broadcast(WsEvent::RtcSignal {
                 to,
@@ -403,7 +383,7 @@ pub(super) async fn voice_cmd(
     access: &Access,
     conn: u64,
     msg: ClientMsg,
-) -> Result<(), String> {
+) -> Result<(), Refused> {
     let leaving = matches!(
         msg,
         ClientMsg::VoiceLeave
@@ -411,9 +391,9 @@ pub(super) async fn voice_cmd(
             | ClientMsg::CallDecline { dm_id: _ }
     );
     match (&access.user, access.retry.pending() && !leaving) {
-        (Some(_), true) => Err(RECONNECTING.to_string()),
+        (Some(_), true) => Err(RECONNECTING.into()),
         (Some(user), false) => voice_msg(state, user, conn, msg).await,
-        (None, _) => Err("Create an account to join voice".to_string()),
+        (None, _) => Err("Create an account to join voice".into()),
     }
 }
 

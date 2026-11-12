@@ -556,6 +556,7 @@ pub(crate) async fn put_report_forms(
         ApiError(
             StatusCode::CONFLICT,
             "The forms changed. Load them again".to_string(),
+            None,
         )
     };
     if rev.is_some_and(|rev| rev != before.rev) {
@@ -742,6 +743,7 @@ pub(crate) async fn delete_server(
         false => Err(ApiError(
             StatusCode::NOT_FOUND,
             "Server not found".to_string(),
+            None,
         )),
     }
 }
@@ -862,6 +864,7 @@ pub(crate) async fn hide_user_rows(
             return Err(ApiError(
                 StatusCode::NOT_FOUND,
                 "User not found".to_string(),
+                None,
             ));
         }
         if kind == PurgeKind::Ban {
@@ -1857,7 +1860,7 @@ mod tests {
         );
         let again = reg(&state, "bob").await;
         match again {
-            Err(ApiError(StatusCode::BAD_REQUEST, msg)) => assert_eq!(msg, "Username is banned"),
+            Err(ApiError(StatusCode::BAD_REQUEST, msg, _)) => assert_eq!(msg, "Username is banned"),
             _ => panic!("expected banned re-register rejection"),
         }
         done(state, path).await;
@@ -1898,7 +1901,7 @@ mod tests {
         tx.commit().await.expect("commit");
         match delete.await.expect("task") {
             Ok(removed) => assert!(removed),
-            Err(ApiError(code, msg)) => panic!("{code}: {msg}"),
+            Err(ApiError(code, msg, _)) => panic!("{code}: {msg}"),
         }
         for table in ["members", "user_roles", "interactions", "server_bans"] {
             assert_eq!(
@@ -1975,7 +1978,7 @@ mod tests {
                 &crate::api::access::Proof::none()
             )
             .await,
-            Err(ApiError(StatusCode::NOT_FOUND, _))
+            Err(ApiError(StatusCode::NOT_FOUND, _, _))
         ));
         assert_eq!(
             count(db, "SELECT COUNT(*) FROM messages WHERE channel_id IN (SELECT id FROM channels WHERE server = 'club')").await,
@@ -2009,7 +2012,7 @@ mod tests {
                 &crate::api::access::Proof::none()
             )
             .await,
-            Err(ApiError(StatusCode::NOT_FOUND, _))
+            Err(ApiError(StatusCode::NOT_FOUND, _, _))
         ));
         assert!(!remove_server(&state, "club2").await.expect("gone"));
         assert!(!remove_server(&state, "nope").await.expect("missing"));
@@ -2119,7 +2122,7 @@ mod tests {
             serde_json::from_value(json!({"username": "bob", "password": "a"})).expect("login");
         assert!(matches!(
             login(State(state.clone()), Json(login_req)).await,
-            Err(ApiError(StatusCode::UNAUTHORIZED, _))
+            Err(ApiError(StatusCode::UNAUTHORIZED, _, _))
         ));
         let card = profile(
             State(state.clone()),
@@ -2129,14 +2132,14 @@ mod tests {
             Query(serde_json::from_value(json!({"server": "rchat"})).expect("pq")),
         )
         .await;
-        assert!(matches!(card, Err(ApiError(StatusCode::NOT_FOUND, _))));
+        assert!(matches!(card, Err(ApiError(StatusCode::NOT_FOUND, _, _))));
         let opened = open_dm(
             State(state.clone()),
             Authed(alice.clone()),
             Json(serde_json::from_value(json!({"username": "bob"})).expect("open")),
         )
         .await;
-        assert!(matches!(opened, Err(ApiError(StatusCode::NOT_FOUND, _))));
+        assert!(matches!(opened, Err(ApiError(StatusCode::NOT_FOUND, _, _))));
         let listed = dm_page(db, "alice", 0, None, 50).await.expect("dms").items;
         assert!(listed.iter().all(|d| d.other.username != "bob"));
         assert!(
@@ -2177,7 +2180,7 @@ mod tests {
                 bob_msg
             )
             .await,
-            Err(ApiError(StatusCode::NOT_FOUND, _))
+            Err(ApiError(StatusCode::NOT_FOUND, _, _))
         ));
         let carol = get_user(db, "carol").await.expect("q").expect("carol");
         let carol_unread = unreads(
@@ -2226,7 +2229,7 @@ mod tests {
             .0;
         assert_eq!(after.user_count, before.user_count - 1);
         match reg(&state, "bob").await {
-            Err(ApiError(StatusCode::BAD_REQUEST, msg)) => assert_eq!(msg, "Username is taken"),
+            Err(ApiError(StatusCode::BAD_REQUEST, msg, _)) => assert_eq!(msg, "Username is taken"),
             _ => panic!("expected the name to stay taken"),
         }
         sqlx::query("UPDATE pending_purges SET claimed_at = 0")
@@ -2419,7 +2422,7 @@ mod tests {
         .await
         .expect("delete stays idempotent");
         match reg(&state, "bob").await {
-            Err(ApiError(StatusCode::BAD_REQUEST, msg)) => assert_eq!(msg, "Username is banned"),
+            Err(ApiError(StatusCode::BAD_REQUEST, msg, _)) => assert_eq!(msg, "Username is banned"),
             _ => panic!("expected banned"),
         }
         let missing = ban_user(
@@ -2430,14 +2433,17 @@ mod tests {
             }),
         )
         .await;
-        assert!(matches!(missing, Err(ApiError(StatusCode::NOT_FOUND, _))));
+        assert!(matches!(
+            missing,
+            Err(ApiError(StatusCode::NOT_FOUND, _, _))
+        ));
         finish_purge(&state, PurgeKind::User, "bob")
             .await
             .expect("the in-flight delete finishes");
         assert_eq!(count(db, "SELECT COUNT(*) FROM pending_purges").await, 0);
         assert!(user_row(db, "bob").await.expect("q").is_none());
         match reg(&state, "bob").await {
-            Err(ApiError(StatusCode::BAD_REQUEST, msg)) => assert_eq!(msg, "Username is banned"),
+            Err(ApiError(StatusCode::BAD_REQUEST, msg, _)) => assert_eq!(msg, "Username is banned"),
             _ => panic!("expected banned after the purge"),
         }
         done(state, path).await;
@@ -2616,7 +2622,9 @@ mod tests {
             Json(patch(flipped.clone())),
         )
         .await;
-        assert!(matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"));
+        assert!(
+            matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m, _)) if m == "Not found")
+        );
         assert!(rx.try_recv().is_err(), "a refused patch sends nothing");
         let got = patch_settings(State(state.clone()), root(), Json(patch(flipped)))
             .await
@@ -2869,7 +2877,7 @@ mod tests {
             .map(|_| ()),
         ] {
             assert!(
-                matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"),
+                matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m, _)) if m == "Not found"),
                 "the same answer as any unknown path"
             );
         }
@@ -2930,7 +2938,7 @@ mod tests {
 
         let stale = put_report_forms(State(state.clone()), root(), body(&doc)).await;
         assert!(
-            matches!(stale, Err(ApiError(StatusCode::CONFLICT, ref m)) if m == "The forms changed. Load them again"),
+            matches!(stale, Err(ApiError(StatusCode::CONFLICT, ref m, _)) if m == "The forms changed. Load them again"),
             "an editor that loaded rev 1: {stale:?}"
         );
         assert_eq!(audit().await.len(), 1);
@@ -2939,7 +2947,7 @@ mod tests {
         doc["forms"][5]["fields"][0]["max"] = json!(2001);
         let refused = put_report_forms(State(state.clone()), root(), body(&doc)).await;
         assert!(
-            matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "appeal.why: max must be 1 to 2000"),
+            matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m, _)) if m == "appeal.why: max must be 1 to 2000"),
             "{refused:?}"
         );
         assert_eq!(audit().await.len(), 1);
@@ -2961,7 +2969,7 @@ mod tests {
         doc["forms"][5]["fields"][0]["max"] = json!(400);
         let refused = put_report_forms(State(state.clone()), root(), body(&doc)).await;
         assert!(
-            matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "Set in the server config: REPORT_FORMS_FILE"),
+            matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m, _)) if m == "Set in the server config: REPORT_FORMS_FILE"),
             "{refused:?}"
         );
         done(state, path).await;
@@ -2992,7 +3000,7 @@ mod tests {
             let refused = patch_settings(State(state.clone()), root(), patch(body.clone())).await;
             let want = format!("Set in the server config: {env}");
             assert!(
-                matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if *m == want),
+                matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m, _)) if *m == want),
                 "{body}"
             );
         }
@@ -3023,7 +3031,7 @@ mod tests {
         let refused =
             patch_settings(State(state.clone()), root(), patch(json!({"e2ee": true}))).await;
         assert!(
-            matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "Set in the server config: E2EE"),
+            matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m, _)) if m == "Set in the server config: E2EE"),
             "every copy reads the stored pins"
         );
         done(state, path).await;
@@ -3052,7 +3060,7 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "Set in the server config: UPLOAD_EXPIRY_MAX_DAYS")
+            matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m, _)) if m == "Set in the server config: UPLOAD_EXPIRY_MAX_DAYS")
         );
         Settings::forget(&state.db);
         assert_eq!(Settings::load(&state.db).await.upload_expiry_max_days, 30);
@@ -3132,7 +3140,7 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"),
+            matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m, _)) if m == "Not found"),
             "the same answer as any unknown path"
         );
         let patch: SettingsPatch =
@@ -3350,7 +3358,9 @@ mod tests {
         assert!(!may("bob").await, "the newcomer got nothing from the name");
         let req: CreateServerReq = serde_json::from_value(json!({"name": "Mine"})).expect("req");
         let refused = create_server(State(state.clone()), authed(db, "bob").await, Json(req)).await;
-        assert!(matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"));
+        assert!(
+            matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m, _)) if m == "Not found")
+        );
         assert!(may("carol").await && may("dave").await, "the others stay");
 
         let _ = ban_user(
@@ -3591,7 +3601,7 @@ mod tests {
         )
         .await;
         assert!(
-            matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"),
+            matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m, _)) if m == "Not found"),
             "only the site admin, and the same 404 as an unknown path"
         );
         assert_eq!(
@@ -3695,9 +3705,9 @@ mod tests {
         ] {
             let refused = create_server_for(State(state.clone()), root(), req(body.clone())).await;
             assert!(
-                matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == error),
+                matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m, _)) if m == error),
                 "{body}: {:?}",
-                refused.err().map(|ApiError(_, m)| m)
+                refused.err().map(|ApiError(_, m, _)| m)
             );
         }
         assert_eq!(
@@ -3728,7 +3738,9 @@ mod tests {
             patch(false),
         )
         .await;
-        assert!(matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"));
+        assert!(
+            matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m, _)) if m == "Not found")
+        );
         assert!(rx.try_recv().is_err(), "a refused patch sends nothing");
         Settings::forget(&state.db);
         assert_eq!(
@@ -3870,11 +3882,11 @@ mod tests {
         let remove = |who: Authed, name: &str| {
             remove_phrase(State(state.clone()), who, Path(name.to_string()))
         };
-        let ApiError(code, msg) = remove(authed(db, "carol").await, "bob")
+        let ApiError(code, msg, _) = remove(authed(db, "carol").await, "bob")
             .await
             .err()
             .expect("not an admin");
-        let ApiError(delete_code, delete_msg) = delete_user(
+        let ApiError(delete_code, delete_msg, _) = delete_user(
             State(state.clone()),
             authed(db, "carol").await,
             Path("bob".to_string()),
@@ -3884,7 +3896,7 @@ mod tests {
         .expect("not an admin");
         assert_eq!((code, msg.as_str()), (StatusCode::NOT_FOUND, "Not found"));
         assert_eq!((code, msg), (delete_code, delete_msg));
-        let ApiError(code, msg) = remove(authed(db, "carol").await, "nobody")
+        let ApiError(code, msg, _) = remove(authed(db, "carol").await, "nobody")
             .await
             .err()
             .expect("not an admin");
@@ -3939,7 +3951,7 @@ mod tests {
             .expect("nul");
         assert!(!removed);
         for own in ["root", "ROOT"] {
-            let ApiError(code, msg) = remove(authed(db, "root").await, own)
+            let ApiError(code, msg, _) = remove(authed(db, "root").await, own)
                 .await
                 .err()
                 .expect("own");
@@ -3977,7 +3989,7 @@ mod tests {
         let set = |how: serde_json::Value| -> RecoverySet {
             serde_json::from_value(json!({"key": PHRASE_KEY, "reauth": how})).expect("set")
         };
-        let ApiError(code, msg) =
+        let ApiError(code, msg, _) =
             set_phrase_at(&state, fresh(), set(json!({"fresh_session": true})), now())
                 .await
                 .err()
@@ -4028,7 +4040,7 @@ mod tests {
         let query = |cursor: Option<String>| -> AuditQuery {
             serde_json::from_value(json!({ "cursor": cursor })).expect("query")
         };
-        let ApiError(code, msg) = list(
+        let ApiError(code, msg, _) = list(
             State(state.clone()),
             authed(db, "carol").await,
             Query(query(None)),
@@ -4071,7 +4083,7 @@ mod tests {
         assert!(end.is_none());
         let ids: Vec<i64> = first.iter().chain(rest.iter()).map(|e| e.id).collect();
         assert!(ids.windows(2).all(|w| w[0] > w[1]));
-        let ApiError(code, _) = list(
+        let ApiError(code, _, _) = list(
             State(state.clone()),
             authed(db, "root").await,
             Query(query(Some("zz".to_string()))),

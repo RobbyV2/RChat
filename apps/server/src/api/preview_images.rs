@@ -58,13 +58,15 @@ static REQUESTS: LazyLock<Budget> =
     LazyLock::new(|| Budget::new(REQUESTS_PER_MINUTE, Duration::from_secs(60), 100_000));
 
 fn not_found() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, "Image not found".to_string())
+    ApiError(StatusCode::NOT_FOUND, "Image not found".to_string(), None)
 }
 
 fn busy() -> ApiError {
-    ApiError(
+    ApiError::capacity(
         StatusCode::SERVICE_UNAVAILABLE,
-        "Too many preview images right now, try again in a moment".to_string(),
+        "Too many preview images right now, try again in a moment",
+        "preview_images",
+        None,
     )
 }
 
@@ -456,7 +458,7 @@ pub(crate) async fn serve(
     let proof = Proof::headers(headers, &state.limits);
     resolve_message(db, message_id, user.as_ref(), &proof)
         .await
-        .map_err(|e| match e.0.is_server_error() {
+        .map_err(|e| match e.failed() {
             true => e,
             false => not_found(),
         })?;
@@ -484,7 +486,7 @@ pub(crate) async fn serve(
         return res
             .status(StatusCode::NOT_MODIFIED)
             .body(Body::empty())
-            .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+            .map_err(ApiError::internal);
     }
     let kib = u32::try_from((size.max(0) as u64).div_ceil(1024))
         .unwrap_or(u32::MAX)
@@ -511,7 +513,7 @@ pub(crate) async fn serve(
     res.header(header::CONTENT_TYPE, mime)
         .header(header::CONTENT_LENGTH, len)
         .body(Body::from_stream(body))
-        .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+        .map_err(ApiError::internal)
 }
 
 /// The size of the pieces a preview image is sent in.
@@ -756,7 +758,7 @@ mod tests {
         let (state, path) = temp_state("preview_image_rate").await;
         let status = |r: Result<Response, ApiError>| match r {
             Ok(res) => res.status(),
-            Err(ApiError(code, _)) => code,
+            Err(ApiError(code, _, _)) => code,
         };
         let ask = |ip: &str| {
             let (state, ip) = (state.clone(), ip.parse().expect("ip"));
@@ -968,7 +970,7 @@ mod tests {
         let policy = up.policy();
         let status = |r: &Result<Response, ApiError>| match r {
             Ok(res) => res.status(),
-            Err(ApiError(code, _)) => *code,
+            Err(ApiError(code, _, _)) => *code,
         };
         for headers in [bearer(&carol), HeaderMap::new()] {
             let denied = serve(&state, &headers, mid, 0, &policy).await;

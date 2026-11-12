@@ -6,7 +6,51 @@ use tokio::time::Instant;
 use tracing::{debug, warn};
 
 use super::access::AUTH_FAILED;
+use super::event::WsEvent;
 use super::p2p::RelaySet;
+use crate::api::{ApiError, Reason};
+
+/// What an `error` frame tells a client: the text and, when the error has one, its reason.
+#[derive(Debug, PartialEq)]
+pub(super) struct Refused {
+    pub(super) message: String,
+    pub(super) reason: Option<Reason>,
+}
+
+impl Refused {
+    pub(super) fn frame(self) -> WsEvent {
+        let Refused { message, reason } = self;
+        WsEvent::Error { message, reason }
+    }
+}
+
+impl From<String> for Refused {
+    fn from(message: String) -> Refused {
+        Refused {
+            message,
+            reason: None,
+        }
+    }
+}
+
+impl From<&str> for Refused {
+    fn from(message: &str) -> Refused {
+        message.to_string().into()
+    }
+}
+
+impl From<ApiError> for Refused {
+    fn from(e: ApiError) -> Refused {
+        let ApiError(_, message, reason) = e;
+        Refused { message, reason }
+    }
+}
+
+impl From<sqlx::Error> for Refused {
+    fn from(e: sqlx::Error) -> Refused {
+        ApiError::from(e).into()
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

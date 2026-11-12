@@ -358,10 +358,7 @@ pub(crate) fn new_token() -> String {
 }
 
 fn wait_between() -> ApiError {
-    ApiError(
-        StatusCode::TOO_MANY_REQUESTS,
-        "Wait 3 seconds between attempts".to_string(),
-    )
+    ApiError::rate("Wait 3 seconds between attempts", Some(3))
 }
 
 fn check_avatar(
@@ -590,6 +587,7 @@ pub(crate) async fn throttle_attempt(db: &Db, key: &str, t: i64) -> Result<(), A
         (true, _) => Err(ApiError(
             StatusCode::LOCKED,
             "Account locked for the day".to_string(),
+            None,
         )),
         (false, true) => Ok(()),
         (false, false) => Err(wait_between()),
@@ -620,6 +618,7 @@ pub(crate) async fn throttle_change(db: &Db, key: &str, t: i64) -> Result<(), Ap
         Some(row) if row.try_get::<i64, _>(0)? >= PASSWORD_FAILURES_MAX => Err(ApiError(
             StatusCode::LOCKED,
             "Too many wrong passwords today".to_string(),
+            None,
         )),
         Some(_) => Ok(()),
     }
@@ -634,7 +633,11 @@ pub(crate) async fn note_change_failure(db: &Db, key: &str) -> Result<(), ApiErr
 }
 
 fn invalid_credentials() -> ApiError {
-    ApiError(StatusCode::UNAUTHORIZED, "Invalid credentials".to_string())
+    ApiError(
+        StatusCode::UNAUTHORIZED,
+        "Invalid credentials".to_string(),
+        None,
+    )
 }
 
 async fn issue_token(db: &Db, user: &User, t: i64) -> Result<String, ApiError> {
@@ -662,7 +665,7 @@ async fn issue_token(db: &Db, user: &User, t: i64) -> Result<String, ApiError> {
 }
 
 fn wrong_password() -> ApiError {
-    ApiError(StatusCode::UNAUTHORIZED, "Wrong password".to_string())
+    ApiError(StatusCode::UNAUTHORIZED, "Wrong password".to_string(), None)
 }
 
 /// Log in
@@ -1034,7 +1037,7 @@ pub(crate) async fn patch_me(
     tx.commit().await?;
     let stored = get_user(&state.db, &user.username)
         .await?
-        .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string()))?;
+        .ok_or_else(|| ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string(), None))?;
     let user_ref = UserRef::from_user(&stored);
     let renamed = display_name
         .as_ref()
@@ -1216,7 +1219,7 @@ mod tests {
         .await;
         assert!(matches!(
             bad_words,
-            Err(ApiError(StatusCode::BAD_REQUEST, _))
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
         let shouted: Vec<String> = picked.iter().map(|w| w.to_uppercase()).collect();
         let ok = login(
@@ -1250,7 +1253,7 @@ mod tests {
                 .expect("patch");
             }
         };
-        let not_found = |res: Result<Json<AuthResp>, ApiError>| matches!(res, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found");
+        let not_found = |res: Result<Json<AuthResp>, ApiError>| matches!(res, Err(ApiError(StatusCode::NOT_FOUND, ref m, _)) if m == "Not found");
         let _ = register_text(&state, "alice")
             .await
             .expect("open by default");
@@ -1268,7 +1271,10 @@ mod tests {
             let made = register_text(&state, &format!("u{}", body.to_string().len())).await;
             match open {
                 true => {
-                    assert!(matches!(blank, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+                    assert!(matches!(
+                        blank,
+                        Err(ApiError(StatusCode::BAD_REQUEST, _, _))
+                    ));
                     assert!(made.is_ok(), "{body}");
                 }
                 false => {
@@ -1306,7 +1312,10 @@ mod tests {
             }),
         )
         .await;
-        assert!(matches!(empty, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+        assert!(matches!(
+            empty,
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
+        ));
         assert!(get_user(&state.db, "erin").await.expect("lookup").is_none());
         let _ = register_text(&state, "erin").await.expect("non-empty ok");
         done(state, path).await;
@@ -1318,7 +1327,7 @@ mod tests {
         for name in ["admin@localhost", "bob@other.example", "@", "a@"] {
             let res = register_text(&state, name).await;
             assert!(
-                matches!(&res, Err(ApiError(StatusCode::BAD_REQUEST, m)) if m.contains('@')),
+                matches!(&res, Err(ApiError(StatusCode::BAD_REQUEST, m, _)) if m.contains('@')),
                 "{name}"
             );
         }
@@ -1344,7 +1353,7 @@ mod tests {
         for len in [NAME_MAX + 1, 1001, 5001] {
             let long = register_text(&state, &"a".repeat(len)).await;
             assert!(
-                matches!(long, Err(ApiError(StatusCode::BAD_REQUEST, _))),
+                matches!(long, Err(ApiError(StatusCode::BAD_REQUEST, _, _))),
                 "{len}"
             );
         }
@@ -1382,17 +1391,20 @@ mod tests {
         let fast = attempt("a", CLOCK + 2).await;
         assert!(matches!(
             fast,
-            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, _))
         ));
         assert_eq!(attempts(&state, "tom").await, 1);
         let wrong = attempt("b", CLOCK + 3).await;
-        assert!(matches!(wrong, Err(ApiError(StatusCode::UNAUTHORIZED, _))));
+        assert!(matches!(
+            wrong,
+            Err(ApiError(StatusCode::UNAUTHORIZED, _, _))
+        ));
         sqlx::query("UPDATE login_attempts SET count = 1000 WHERE username = 'tom'")
             .execute(&state.db)
             .await
             .expect("prime attempts");
         let locked = attempt("a", CLOCK + 6).await;
-        assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _))));
+        assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _, _))));
         done(state, path).await;
     }
 
@@ -1422,7 +1434,7 @@ mod tests {
 
     async fn nul_names_are_refused(state: &AppState) {
         let users = count(state, "SELECT COUNT(*) FROM users").await;
-        let ApiError(code, msg) = register_text(state, "ali\0ce")
+        let ApiError(code, msg, _) = register_text(state, "ali\0ce")
             .await
             .err()
             .expect("register refused");
@@ -1431,7 +1443,7 @@ mod tests {
             (StatusCode::BAD_REQUEST, "Username required")
         );
         assert_eq!(count(state, "SELECT COUNT(*) FROM users").await, users);
-        let ApiError(code, msg) = nul_login(state).await;
+        let ApiError(code, msg, _) = nul_login(state).await;
         assert_eq!(
             (code, msg.as_str()),
             (StatusCode::UNAUTHORIZED, "Invalid credentials")
@@ -1449,7 +1461,7 @@ mod tests {
             .at(1)
             .add(&state.db)
             .await;
-        let ApiError(code, msg) = nul_login(&state).await;
+        let ApiError(code, msg, _) = nul_login(&state).await;
         assert_eq!(
             (code, msg.as_str()),
             (StatusCode::UNAUTHORIZED, "Invalid credentials")
@@ -1652,7 +1664,7 @@ mod tests {
             .await
             .expect("true keeps");
         assert_eq!(phrase().await, (Some(key.to_string()), Some(7)));
-        let ApiError(code, _) = change_with("wrong", "d", Some(false), t + 6)
+        let ApiError(code, _, _) = change_with("wrong", "d", Some(false), t + 6)
             .await
             .err()
             .expect("wrong password");
@@ -1764,19 +1776,19 @@ mod tests {
         let words = word_set("uma");
         let wrong = change_at(&state, &mine, text("nope"), text("b"), CLOCK).await;
         assert!(
-            matches!(&wrong, Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == "Wrong password")
+            matches!(&wrong, Err(ApiError(StatusCode::UNAUTHORIZED, m, _)) if m == "Wrong password")
         );
         assert_eq!(failures(&state, &mine).await, 1);
         let fast = change_at(&state, &mine, text("a"), text("b"), CLOCK + 2).await;
         assert!(matches!(
             fast,
-            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, _))
         ));
         assert_eq!(failures(&state, &mine).await, 1);
         let wrong_words = change_at(&state, &mine, picked(&words[..7]), text("b"), CLOCK + 3).await;
         assert!(matches!(
             wrong_words,
-            Err(ApiError(StatusCode::UNAUTHORIZED, _))
+            Err(ApiError(StatusCode::UNAUTHORIZED, _, _))
         ));
         assert_eq!(failures(&state, &mine).await, 2);
         let invalid = [
@@ -1800,7 +1812,7 @@ mod tests {
         ];
         for new in invalid {
             let res = change_at(&state, &mine, text("a"), new, CLOCK + 6).await;
-            assert!(matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, _))));
+            assert!(matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, _, _))));
         }
         let no_current = change_at(
             &state,
@@ -1815,7 +1827,7 @@ mod tests {
         .await;
         assert!(matches!(
             no_current,
-            Err(ApiError(StatusCode::BAD_REQUEST, _))
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
         assert_eq!(failures(&state, &mine).await, 2);
         assert_eq!(attempts(&state, "uma").await, 0);
@@ -1832,7 +1844,7 @@ mod tests {
             .await
             .expect("prime failures");
         let locked = change_at(&state, &mine, text("a"), text("b"), CLOCK + 6).await;
-        assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _))));
+        assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _, _))));
         assert_eq!(failures(&state, "other").await, 0);
         let owner = change_at(&state, "other", text("a"), text("b"), CLOCK).await;
         assert!(owner.is_ok());
@@ -1884,7 +1896,7 @@ mod tests {
         rewind(&state).await;
         let late = change_as(&state, stale, "second", text(winner.1), text("p4")).await;
         assert!(
-            matches!(&late, Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == "Wrong password")
+            matches!(&late, Err(ApiError(StatusCode::UNAUTHORIZED, m, _)) if m == "Wrong password")
         );
         assert_eq!(tokens_of(&state, "vic").await, vec![secret_key("first")]);
         let user = get_user(&state.db, "vic")
@@ -1912,7 +1924,7 @@ mod tests {
             .expect("change");
         let late = issue_token(&state.db, &stale, now()).await;
         assert!(
-            matches!(&late, Err(ApiError(StatusCode::UNAUTHORIZED, m)) if m == "Invalid credentials")
+            matches!(&late, Err(ApiError(StatusCode::UNAUTHORIZED, m, _)) if m == "Invalid credentials")
         );
         assert_eq!(tokens_of(&state, "lou").await, vec![secret_key(&mine)]);
         let fresh = get_user(&state.db, "lou")
@@ -1940,7 +1952,7 @@ mod tests {
         for task in tries {
             match task.await.expect("join") {
                 Ok(()) => admitted += 1,
-                Err(ApiError(status, _)) => assert_eq!(status, StatusCode::TOO_MANY_REQUESTS),
+                Err(ApiError(status, _, _)) => assert_eq!(status, StatusCode::TOO_MANY_REQUESTS),
             }
         }
         assert_eq!(admitted, 1);
@@ -1976,7 +1988,7 @@ mod tests {
             CLOCK + 3 * 1001,
         )
         .await;
-        assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _))));
+        assert!(matches!(locked, Err(ApiError(StatusCode::LOCKED, _, _))));
         let _ = change(&state, "ann", &mine, text("a"), text("b"))
             .await
             .expect("change despite login lockout");
@@ -1992,7 +2004,7 @@ mod tests {
         for _ in 0..50 {
             assert!(matches!(
                 throttle_attempt(&state.db, "gus", t).await,
-                Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _))
+                Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, _))
             ));
         }
         assert_eq!(attempts(&state, "gus").await, 1);
@@ -2178,7 +2190,7 @@ mod tests {
         for color in [
             "red", "#12345", "#1234567", "abcdef", "#gggggg", "", "#abcde ",
         ] {
-            let ApiError(status, message) = patch(AvatarKind::Identicon, Some(color))
+            let ApiError(status, message, _) = patch(AvatarKind::Identicon, Some(color))
                 .await
                 .err()
                 .unwrap_or_else(|| panic!("{color:?} accepted"));
@@ -2220,7 +2232,7 @@ mod tests {
         .await;
         assert!(matches!(
             refused,
-            Err(ApiError(StatusCode::BAD_REQUEST, message)) if message == "Invalid avatar color"
+            Err(ApiError(StatusCode::BAD_REQUEST, message, _)) if message == "Invalid avatar color"
         ));
         assert!(get_user(&state.db, "kit").await.expect("lookup").is_none());
         done(state, path).await;
@@ -2250,7 +2262,7 @@ mod tests {
         );
         assert!(matches!(
             clean_bio(&format!("{max}x")),
-            Err(ApiError(StatusCode::BAD_REQUEST, _))
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
         assert_eq!(
             clean_bio(&format!("{}\n\n\n\n{}", "a".repeat(94), "b".repeat(94)))
@@ -2275,7 +2287,7 @@ mod tests {
         for over in [format!("\u{feff}{edged}"), format!("{edged}\u{2060}")] {
             assert!(matches!(
                 clean_bio(&over),
-                Err(ApiError(StatusCode::BAD_REQUEST, _))
+                Err(ApiError(StatusCode::BAD_REQUEST, _, _))
             ));
         }
     }
@@ -2357,11 +2369,11 @@ mod tests {
         let long = format!(r#"{{"bio":"{}"}}"#, "x".repeat(BIO_MAX + 1));
         assert!(matches!(
             patch(&long).await,
-            Err(ApiError(StatusCode::BAD_REQUEST, _))
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
         assert!(matches!(
             patch(r#"{"bio":"what the fuck"}"#).await,
-            Err(ApiError(StatusCode::BAD_REQUEST, e)) if e.contains("profanity")
+            Err(ApiError(StatusCode::BAD_REQUEST, e, _)) if e.contains("profanity")
         ));
         assert_eq!(
             shown(state.clone()).await.as_deref(),
@@ -2498,7 +2510,7 @@ mod tests {
         let max = "\u{1f600}".repeat(DISPLAY_NAME_MAX);
         assert_eq!(patch("bob", named(&max)).await.expect("32 characters"), max);
         let bad = |code: StatusCode, msg: &str| Err::<String, _>((code, msg.to_string()));
-        let refused = |r: Result<String, ApiError>| r.map_err(|ApiError(c, m)| (c, m));
+        let refused = |r: Result<String, ApiError>| r.map_err(|ApiError(c, m, _)| (c, m));
         for (body, want) in [
             (named(""), "Display name required"),
             (named("   "), "Display name required"),
@@ -2592,7 +2604,7 @@ mod tests {
         patch_me(State(state.clone()), Authed(user), Json(req))
             .await
             .map(|Json(updated)| updated)
-            .map_err(|ApiError(code, msg)| (code, msg))
+            .map_err(|ApiError(code, msg, _)| (code, msg))
     }
 
     async fn display_names_keep_off_other_usernames(state: &AppState) {

@@ -131,7 +131,7 @@ pub(crate) async fn pin_message(
         tx.rollback().await?;
         return match already {
             true => Ok(ok()),
-            false => Err(ApiError(StatusCode::CONFLICT, full.to_string())),
+            false => Err(ApiError(StatusCode::CONFLICT, full.to_string(), None)),
         };
     }
     let t = now();
@@ -395,7 +395,7 @@ mod tests {
     }
 
     fn code(res: Result<(), ApiError>) -> Option<(StatusCode, String)> {
-        res.err().map(|ApiError(code, e)| (code, e))
+        res.err().map(|ApiError(code, e, _)| (code, e))
     }
 
     fn events(rx: &mut tokio::sync::broadcast::Receiver<WsEvent>) -> Vec<String> {
@@ -786,7 +786,10 @@ mod tests {
             )
         };
         let bad = StatusCode::BAD_REQUEST;
-        assert_eq!(reply(notice).await.err().map(|ApiError(c, _)| c), Some(bad));
+        assert_eq!(
+            reply(notice).await.err().map(|ApiError(c, _, _)| c),
+            Some(bad)
+        );
         let listed = thread_messages(
             State(state.clone()),
             MaybeAuthed(Some(mem_user("bob", false))),
@@ -795,7 +798,7 @@ mod tests {
             Query::try_from_uri(&"/thread".parse().expect("uri")).expect("query"),
         )
         .await;
-        assert_eq!(listed.err().map(|ApiError(c, _)| c), Some(bad));
+        assert_eq!(listed.err().map(|ApiError(c, _, _)| c), Some(bad));
         assert!(reply(msg).await.is_ok());
         assert_eq!(
             count(

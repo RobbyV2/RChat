@@ -98,7 +98,7 @@ async fn call(state: &AppState, user: &str, body: Value) -> Result<BulkDeleteRes
     )
     .await
     .map(|Json(r)| r)
-    .map_err(|ApiError(code, msg)| (code.as_u16(), msg))
+    .map_err(|ApiError(code, msg, _)| (code.as_u16(), msg))
 }
 
 async fn exists(db: &Db, id: i64) -> bool {
@@ -141,10 +141,10 @@ async fn audits(db: &Db) -> Vec<(Option<String>, i64, Value)> {
 async fn single(db: &Db, user: &str, id: i64) -> u16 {
     let Authed(u) = who(user);
     match resolve_message(db, id, Some(&u), &Proof::none()).await {
-        Err(ApiError(code, _)) => code.as_u16(),
+        Err(ApiError(code, _, _)) => code.as_u16(),
         Ok(m) => match m.require_can_delete(db).await {
             Ok(()) => 0,
-            Err(ApiError(code, _)) => code.as_u16(),
+            Err(ApiError(code, _, _)) => code.as_u16(),
         },
     }
 }
@@ -546,7 +546,7 @@ async fn jobs_cancel_resume_and_fail_cleanly() {
         cancel_job(State(state.clone()), who("bob"), Path(id))
             .await
             .err()
-            .map(|ApiError(code, _)| code.as_u16()),
+            .map(|ApiError(code, _, _)| code.as_u16()),
         Some(404),
         "not his job"
     );

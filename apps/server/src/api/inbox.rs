@@ -1391,11 +1391,11 @@ mod tests {
         assert_eq!(only(json!({"server": "elsewhere"})).await.len(), 0);
         assert!(matches!(
             page(&state, "alice", json!({"server": "rchat", "dms": true})).await,
-            Err(ApiError(axum::http::StatusCode::BAD_REQUEST, _))
+            Err(ApiError(axum::http::StatusCode::BAD_REQUEST, _, _))
         ));
         assert!(matches!(
             page(&state, "alice", json!({"cursor": "zz"})).await,
-            Err(ApiError(axum::http::StatusCode::BAD_REQUEST, _))
+            Err(ApiError(axum::http::StatusCode::BAD_REQUEST, _, _))
         ));
         assert!(
             all(&state, "bob", json!({}))

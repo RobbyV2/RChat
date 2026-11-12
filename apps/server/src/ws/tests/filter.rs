@@ -639,7 +639,10 @@ fn every_event() -> Vec<WsEvent> {
                 ..Settings::DENY
             },
         },
-        WsEvent::Error { message: s("e") },
+        WsEvent::Error {
+            message: s("e"),
+            reason: None,
+        },
         WsEvent::P2pHosted {
             live: Vec::new(),
             checked: Vec::new(),

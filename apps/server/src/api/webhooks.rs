@@ -372,11 +372,11 @@ pub fn signature(secret: &str, timestamp: i64, body: &[u8]) -> String {
 }
 
 fn unknown() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, UNKNOWN.to_string())
+    ApiError(StatusCode::NOT_FOUND, UNKNOWN.to_string(), None)
 }
 
 fn unknown_message() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, UNKNOWN_MESSAGE.to_string())
+    ApiError(StatusCode::NOT_FOUND, UNKNOWN_MESSAGE.to_string(), None)
 }
 
 /// An incoming webhook as stored.
@@ -1206,7 +1206,7 @@ async fn read_execute(
     while let Some(field) = form
         .next_field()
         .await
-        .map_err(|e| watch.error(over, ApiError(StatusCode::BAD_REQUEST, e.to_string())))?
+        .map_err(|e| watch.error(over, ApiError(StatusCode::BAD_REQUEST, e.to_string(), None)))?
     {
         match field.name() {
             Some("payload_json") => {
@@ -2300,6 +2300,7 @@ pub(crate) async fn update_outgoing(
         return Err(ApiError(
             StatusCode::CONFLICT,
             "This webhook was just changed, try again".to_string(),
+            None,
         ));
     }
     if details.has_changes() {
@@ -2371,6 +2372,7 @@ pub(crate) async fn reset_secret(
         return Err(ApiError(
             StatusCode::CONFLICT,
             "This webhook was just changed, try again".to_string(),
+            None,
         ));
     }
     let details = match takes {
@@ -2575,7 +2577,7 @@ pub fn spawn(state: &AppState, deliver: bool) -> Vec<tokio::task::JoinHandle<()>
     let events = state.clone();
     let mut tasks = vec![tokio::spawn(async move {
         while let Some(ev) = rx.recv().await {
-            if let Err(ApiError(_, e)) = enqueue(&events, ev).await {
+            if let Err(ApiError(_, e, _)) = enqueue(&events, ev).await {
                 tracing::warn!("outgoing webhook event not queued: {e}");
             }
         }
@@ -2587,7 +2589,7 @@ pub fn spawn(state: &AppState, deliver: bool) -> Vec<tokio::task::JoinHandle<()>
             loop {
                 let _ = tokio::time::timeout(Duration::from_secs(2), WAKE.notified()).await;
                 let policy = outbound_policy();
-                if let Err(ApiError(_, e)) = dispatch(&worker, &policy, now(), &pool).await {
+                if let Err(ApiError(_, e, _)) = dispatch(&worker, &policy, now(), &pool).await {
                     tracing::warn!("outgoing webhook deliveries failed: {e}");
                 }
             }
@@ -3320,7 +3322,7 @@ async fn dispatch(
         started.push(tokio::spawn(async move {
             let sent = match deliver(&state, &policy, id, at).await {
                 Ok(sent) => sent,
-                Err(ApiError(_, e)) => {
+                Err(ApiError(_, e, _)) => {
                     tracing::warn!("outgoing webhook delivery {id} failed: {e}");
                     false
                 }
@@ -3653,7 +3655,7 @@ mod tests {
     fn code(r: Result<impl Sized, ApiError>) -> (StatusCode, String) {
         match r {
             Ok(_) => (StatusCode::OK, String::new()),
-            Err(ApiError(s, m)) => (s, m),
+            Err(ApiError(s, m, _)) => (s, m),
         }
     }
 
@@ -3996,7 +3998,7 @@ mod tests {
         };
         let status = |r: Result<Response, ApiError>| match r {
             Ok(r) => (r.status(), String::new()),
-            Err(ApiError(s, m)) => (s, m),
+            Err(ApiError(s, m, _)) => (s, m),
         };
         let length = |file: bool| Some(form(file).len());
         let posted = (StatusCode::NO_CONTENT, String::new());
@@ -4276,7 +4278,7 @@ mod tests {
         let id = made.webhook.id.to_string();
         let mut limited = false;
         for i in 0..(HOOK_BURST + 1) {
-            if let Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _)) = run(
+            if let Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, _)) = run(
                 &state,
                 &id,
                 &made.token,

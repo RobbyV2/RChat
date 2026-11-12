@@ -36,15 +36,19 @@ pub const BANNED: &str = "You are banned from this server";
 pub const TIMED_OUT: &str = "You are timed out in this server";
 
 pub fn denied() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, DENIED.to_string())
+    ApiError(StatusCode::NOT_FOUND, DENIED.to_string(), None)
 }
 
 pub fn password_required() -> ApiError {
-    ApiError(StatusCode::UNAUTHORIZED, PASSWORD_REQUIRED.to_string())
+    ApiError(
+        StatusCode::UNAUTHORIZED,
+        PASSWORD_REQUIRED.to_string(),
+        None,
+    )
 }
 
 pub fn not_found() -> ApiError {
-    ApiError(StatusCode::NOT_FOUND, NOT_FOUND.to_string())
+    ApiError(StatusCode::NOT_FOUND, NOT_FOUND.to_string(), None)
 }
 
 /// The permissions a timed-out member keeps: only those that read.
@@ -81,15 +85,15 @@ pub async fn timed_out(db: &Db, server: &str, username: &str) -> Result<Option<i
 }
 
 fn banned() -> ApiError {
-    ApiError(StatusCode::FORBIDDEN, BANNED.to_string())
+    ApiError(StatusCode::FORBIDDEN, BANNED.to_string(), None)
 }
 
 pub(crate) fn forbidden(msg: &str) -> ApiError {
-    ApiError(StatusCode::FORBIDDEN, msg.to_string())
+    ApiError(StatusCode::FORBIDDEN, msg.to_string(), None)
 }
 
 fn hidden(e: ApiError) -> ApiError {
-    match e.0.is_server_error() {
+    match e.failed() {
         true => e,
         false => not_found(),
     }
@@ -1013,7 +1017,7 @@ impl ResolvedChannel {
         let readable = match root {
             Some(id) => match message_row(db, id).await {
                 Ok((scope, created_at)) if scope.channel_id == Some(self.id) => Some(created_at),
-                Ok(_) | Err(ApiError(StatusCode::NOT_FOUND, _)) => return Ok(Vec::new()),
+                Ok(_) | Err(ApiError(StatusCode::NOT_FOUND, _, _)) => return Ok(Vec::new()),
                 Err(e) => return Err(e),
             },
             None => None,
@@ -1071,6 +1075,7 @@ impl ResolvedChannel {
             return Err(ApiError(
                 StatusCode::BAD_REQUEST,
                 "Voice channels cannot receive messages".to_string(),
+                None,
             ));
         }
         if !self.member_rights(db).await?.send {
@@ -1108,10 +1113,10 @@ impl ResolvedChannel {
         .await?
         .map(|r| r.try_get(0))
         .transpose()?;
-        match last {
-            Some(t) if now() - t < self.slowmode => Err(ApiError(
-                StatusCode::TOO_MANY_REQUESTS,
-                format!("Slow mode: wait {}s", self.slowmode - (now() - t)),
+        match last.map(|t| self.slowmode - (now() - t)) {
+            Some(wait) if wait > 0 => Err(ApiError::rate(
+                format!("Slow mode: wait {wait}s"),
+                Some(wait.unsigned_abs()),
             )),
             _ => Ok(()),
         }
@@ -1308,6 +1313,7 @@ impl ResolvedMessage {
             (_, _) => Err(ApiError(
                 StatusCode::BAD_REQUEST,
                 "Threads only start on channel messages".to_string(),
+                None,
             )),
         }
     }
@@ -1730,7 +1736,7 @@ pub(crate) async fn reference_channel_access(
 fn ws_result(res: Result<bool, ApiError>) -> sqlx::Result<bool> {
     match res {
         Ok(open) => Ok(open),
-        Err(ApiError(status, e)) if status.is_server_error() => Err(sqlx::Error::Protocol(e)),
+        Err(e) if e.failed() => Err(sqlx::Error::Protocol(e.1)),
         Err(_) => Ok(false),
     }
 }
@@ -1791,15 +1797,13 @@ pub(crate) async fn ws_voice_channel(
     db: &Db,
     username: &str,
     id: i64,
-) -> Result<ResolvedChannel, String> {
-    let user = crate::db::get_user(db, username)
-        .await
-        .map_err(|e| ApiError::from(e).1)?
-        .ok_or_else(|| "Channel not found".to_string())?;
+) -> Result<ResolvedChannel, ApiError> {
+    let gone = || ApiError(StatusCode::NOT_FOUND, "Channel not found".to_string(), None);
+    let user = crate::db::get_user(db, username).await?.ok_or_else(gone)?;
     match resolve_channel(db, id, Some(&user), &Proof::none()).await {
         Ok(channel) => Ok(channel),
-        Err(ApiError(status, e)) if status.is_server_error() => Err(e),
-        Err(_) => Err("Channel not found".to_string()),
+        Err(e) if e.failed() => Err(e),
+        Err(_) => Err(gone()),
     }
 }
 
@@ -2795,6 +2799,133 @@ mod tests {
         done(state, path).await;
     }
 
+    /// The reason in an error body, if it has one.
+    fn reason_of(reply: &Reply) -> Option<serde_json::Value> {
+        let json: serde_json::Value = serde_json::from_slice(&reply.2).ok()?;
+        json.get("reason").cloned()
+    }
+
+    /// Whether `reply` is an answer of the access gate to someone it does not let in.
+    fn denial(reply: &Reply) -> bool {
+        let gate: [&[u8]; 3] = [
+            NO_ENTRY,
+            br#"{"error":"Password required"}"#,
+            br#"{"error":"Not found"}"#,
+        ];
+        gate.contains(&reply.2.as_slice())
+    }
+
+    #[tokio::test]
+    async fn access_denials_carry_no_reason() {
+        let (state, path) = temp_state("access_no_reason").await;
+        let f = fixture(&state).await;
+        let category = id_of(
+            &state.db,
+            "INSERT INTO channel_categories(server, name, position, created_at) VALUES('vault', 'Cat', 0, 0) RETURNING id",
+        )
+        .await;
+        let (client, server) = serve(&state).await;
+        let viewers: [Option<&str>; 2] = [Some("bob"), None];
+        const GUARDED: [&str; 6] = [
+            "/servers/{name}",
+            "/invites/{name}",
+            "/channels/{id}",
+            "/categories/{id}",
+            "/messages/{id}",
+            "/polls/{id}",
+        ];
+        let routes: Vec<(String, String)> = crate::api::openapi::tests::registered_routes()
+            .into_iter()
+            .filter_map(|(m, p)| Some((m, p.strip_prefix("/api/v1")?.to_string())))
+            .filter(|(_, p)| GUARDED.iter().any(|g| p.starts_with(g)))
+            .collect();
+        assert!(routes.len() > 60, "{} guarded routes", routes.len());
+        let (mut asked, mut denied) = (0, 0);
+        for (method, route) in &routes {
+            let targets: Vec<String> = match route.split('/').nth(1) {
+                Some("servers" | "invites") => vec!["vault".into(), "ghost".into()],
+                Some("channels") => vec![f.vault_channel.to_string(), f.hidden_channel.to_string()],
+                Some("categories") => vec![category.to_string(), "999999".into()],
+                Some("messages" | "polls") => {
+                    vec![f.vault_message.to_string(), f.hidden_message.to_string()]
+                }
+                other => panic!("{other:?} is not guarded"),
+            };
+            for target in targets {
+                let filled = route
+                    .replacen("{name}", &target, 1)
+                    .replacen("{id}", &target, 1)
+                    .replace("{id}", "1")
+                    .replace("{username}", "alice")
+                    .replace("{emoji}", "x")
+                    .replace("{ord}", "0")
+                    .replace("{subject}", "u:alice");
+                assert!(!filled.contains('{'), "{route}: an unfilled part");
+                let body = matches!(method.as_str(), "post" | "put" | "patch").then_some("{}");
+                for token in viewers {
+                    let reply = client
+                        .call(&method.to_uppercase(), &filled, token, body, &[])
+                        .await;
+                    asked += 1;
+                    denied += usize::from(denial(&reply));
+                    assert!(
+                        (400..500).contains(&reply.0) || filled.ends_with("/available"),
+                        "{method} {filled} as {token:?}: {}",
+                        reply.0
+                    );
+                    assert_eq!(
+                        reason_of(&reply),
+                        None,
+                        "{method} {filled} as {token:?}: {}",
+                        String::from_utf8_lossy(&reply.2)
+                    );
+                }
+            }
+        }
+        assert!(
+            denied > 100,
+            "{denied} of {asked} were answered by the gate"
+        );
+        for &(method, route, body, headers) in SERVER_ROUTES {
+            for token in viewers {
+                for name in ["vault", "ghost", "closed"] {
+                    let path = route.replace("{s}", name);
+                    let reply = client.call(method, &path, token, body, headers).await;
+                    assert_eq!(reason_of(&reply), None, "{method} {path} as {token:?}");
+                }
+            }
+        }
+        for &(method, route, body) in ID_ROUTES {
+            for token in viewers {
+                for (c, m) in [
+                    (f.vault_channel, f.vault_message),
+                    (f.hidden_channel, f.hidden_message),
+                    (999_999, 999_998),
+                ] {
+                    let path = route
+                        .replace("{c}", &c.to_string())
+                        .replace("{m}", &m.to_string());
+                    let body = body.map(|b| b.replace("{c}", &c.to_string()));
+                    let reply = client
+                        .call(method, &path, token, body.as_deref(), &[])
+                        .await;
+                    assert_eq!(reason_of(&reply), None, "{method} {path} as {token:?}");
+                }
+            }
+        }
+        set_control(&state.db, "server_joining", "nobody").await;
+        let off = client
+            .call("POST", "/servers/vault/join", Some("bob"), None, &[])
+            .await;
+        assert_eq!(
+            reason_of(&off),
+            Some(serde_json::json!({"kind": "off_site", "control": "server_joining"})),
+            "a switch that refuses every name says so"
+        );
+        server.abort();
+        done(state, path).await;
+    }
+
     #[tokio::test]
     async fn the_password_step_is_driven_by_the_api() {
         let (state, path) = temp_state("access_password").await;
@@ -2904,7 +3035,7 @@ mod tests {
         let db = &state.db;
         exec(db, "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('vault', 'bob', 'alice', 0)").await;
         let bob = mem_user("bob", false);
-        let code = |r: Result<ServerAccess, ApiError>| r.err().map(|ApiError(c, m)| (c, m));
+        let code = |r: Result<ServerAccess, ApiError>| r.err().map(|ApiError(c, m, _)| (c, m));
         let none = resolve_server(db, "vault", Some(&bob), &Proof::none()).await;
         assert_eq!(
             code(none),
@@ -2965,7 +3096,7 @@ mod tests {
         let staff_join = resolve_server(db, "vault", Some(&root), &Proof::password(None)).await;
         assert!(matches!(
             staff_join,
-            Err(ApiError(StatusCode::UNAUTHORIZED, _))
+            Err(ApiError(StatusCode::UNAUTHORIZED, _, _))
         ));
         done(state, path).await;
     }
@@ -3017,7 +3148,7 @@ mod tests {
             async move {
                 let before = argon2_runs();
                 let res = resolve_server(db, name, Some(bob), &Proof::password(Some("p"))).await;
-                let res = res.err().map(|ApiError(c, m)| (c, m));
+                let res = res.err().map(|ApiError(c, m, _)| (c, m));
                 (res, diff(argon2_runs(), before))
             }
         };
@@ -3199,7 +3330,7 @@ mod tests {
             assert_eq!(diff(argon2_runs(), before), (1, 1), "{name} {given}");
             assert_eq!(res.is_ok(), opens, "{name} {given}");
             if !opens {
-                let err = res.err().map(|ApiError(c, m)| (c, m));
+                let err = res.err().map(|ApiError(c, m, _)| (c, m));
                 assert_eq!(err, Some((StatusCode::NOT_FOUND, DENIED.to_string())));
             }
         }
@@ -3247,6 +3378,8 @@ mod tests {
 
     const NEEDS_PASSWORD: &[u8] = br#"{"error":"Password required"}"#;
     const NO_ENTRY: &[u8] = br#"{"error":"Server not found or wrong password"}"#;
+    /// The answer to every self-service join while the instance lets nobody join.
+    const JOINING_OFF: &[u8] = br#"{"error":"Server not found or wrong password","reason":{"kind":"off_site","control":"server_joining"}}"#;
 
     fn answer(reply: &Reply) -> (u16, &[u8]) {
         (reply.0, reply.2.as_slice())
@@ -3387,7 +3520,7 @@ mod tests {
         joining_fixture(&state).await;
         let db = &state.db;
         let carol = mem_user("carol", false);
-        let code = |r: Result<ServerAccess, ApiError>| r.err().map(|ApiError(c, m)| (c, m));
+        let code = |r: Result<ServerAccess, ApiError>| r.err().map(|ApiError(c, m, _)| (c, m));
         let names = ["open", "vault", "closed", "nope"];
         for round in 0..10 {
             for name in names {
@@ -3469,7 +3602,7 @@ mod tests {
                         .await;
                     assert_eq!(
                         answer(&refused),
-                        (404, NO_ENTRY),
+                        (404, JOINING_OFF),
                         "{who} joins {name} with {body:?}"
                     );
                 }
@@ -3488,7 +3621,7 @@ mod tests {
                     .await;
                 assert_eq!(
                     answer(&refused),
-                    (404, NO_ENTRY),
+                    (404, JOINING_OFF),
                     "a guest asks for {name} with {body}"
                 );
             }
@@ -3609,7 +3742,11 @@ mod tests {
             for q in ["ope", "", "vault", "zzz"] {
                 assert_eq!(
                     answer(&search(who, q).await),
-                    (404, br#"{"error":"Not found"}"#.as_slice()),
+                    (
+                        404,
+                        br#"{"error":"Not found","reason":{"kind":"off_site","control":"server_search"}}"#
+                            .as_slice()
+                    ),
                     "{who:?} searches {q}"
                 );
             }
@@ -3660,7 +3797,7 @@ mod tests {
             .spend_ticket(&mut tb)
             .await
             .err()
-            .map(|ApiError(c, m)| (c, m));
+            .map(|ApiError(c, m, _)| (c, m));
         assert_eq!(lost, Some((StatusCode::NOT_FOUND, DENIED.to_string())));
         drop(tb);
         exec(
@@ -4302,7 +4439,7 @@ mod tests {
             budget::as_client(from, async move {
                 match resolve_server(db, name, None, &Proof::password(Some(password))).await {
                     Ok(_) => (200, String::new()),
-                    Err(ApiError(status, body)) => (status.as_u16(), body),
+                    Err(ApiError(status, body, _)) => (status.as_u16(), body),
                 }
             })
         };
@@ -4433,7 +4570,7 @@ mod tests {
                 resolve_server(db, "vault", None, &Proof::password(Some("wrong")))
                     .await
                     .map(|_| ())
-                    .map_err(|ApiError(status, _)| status.as_u16())
+                    .map_err(|ApiError(status, _, _)| status.as_u16())
             })
         };
         let in_network = |n: u16| {
@@ -4480,7 +4617,7 @@ mod tests {
                 resolve_server(db, name, None, &Proof::password(Some("wrong")))
                     .await
                     .map(|_| ())
-                    .map_err(|ApiError(status, _)| status.as_u16())
+                    .map_err(|ApiError(status, _, _)| status.as_u16())
             })
         };
         let before = argon2_runs();
