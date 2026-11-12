@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { useShallow } from 'zustand/react/shallow'
 import { Check, Copy, Eye, QrCode as QrIcon, Share2, Trash2 } from 'lucide-react'
@@ -38,8 +38,15 @@ import {
 import { FieldError, LinkPage, fieldCls, filledBtn, sectionCls, textBtn, useCopied } from './ui'
 import { fmtSize } from '../lib/bytes'
 import { p2pTransfer, useP2p, type FilesPart } from '../lib/p2p/app'
-import { filesHead, passProblem, type FilesKey } from '../lib/p2p/transfer'
-import { P2pExportOption, P2pImport, type PassState } from './p2p/p2p_transfer'
+import {
+  Cancelled,
+  filesHead,
+  passProblem,
+  percent,
+  whileSlow,
+  type FilesKey,
+} from '../lib/p2p/transfer'
+import { P2pExportOption, P2pImport, SlowNote, type PassState } from './p2p/p2p_transfer'
 
 const iconBtn =
   'rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface disabled:pointer-events-none disabled:opacity-40'
@@ -363,6 +370,10 @@ function ExportBlock({
   // Set when the P2P files go too: then the export is a file only.
   const [filesKey, setFilesKey] = useState<FilesKey | null>(null)
   const [writing, setWriting] = useState<number | null>(null)
+  // The part of the key derivation done, where it is slow enough to show and to stop.
+  const [part, setPart] = useState<number | null>(null)
+  const [late, setLate] = useState(false)
+  const stop = useRef<AbortController | null>(null)
   useEffect(() => {
     let live = true
     setText('')
@@ -371,13 +382,22 @@ function ExportBlock({
     if (p2p === false) void encodeConfig(doc).then(t => live && setText(t))
     return () => {
       live = false
+      stop.current?.abort()
     }
   }, [doc, p2p, files])
   const create = async (pass: string) => {
+    const ctl = new AbortController()
+    stop.current = ctl
     setBusy(true)
     setError(null)
+    setPart(null)
     try {
-      const made = await p2pTransfer.exportSection(pass, undefined, files)
+      const watch = { progress: setPart, signal: ctl.signal }
+      const made = await whileSlow(
+        p2pTransfer.exportSection(pass, undefined, files, watch),
+        on => stop.current === ctl && setLate(on)
+      )
+      if (ctl.signal.aborted) return
       const t = await encodeConfig({ ...doc, p2p: made.section })
       if (t.length > FILE_MAX) setError(`Too large to export (over ${fmtSize(FILE_MAX)})`)
       else {
@@ -385,9 +405,12 @@ function ExportBlock({
         setFilesKey(made.files)
       }
     } catch (e) {
-      setError(errorText(e))
+      if (!(e instanceof Cancelled)) setError(errorText(e))
     } finally {
-      setBusy(false)
+      if (stop.current === ctl) {
+        setBusy(false)
+        setPart(null)
+      }
     }
   }
   const fileOnly = text.length > TEXT_MAX || filesKey !== null
@@ -406,15 +429,29 @@ function ExportBlock({
   return (
     <div className="flex flex-col gap-2">
       {p2p !== false && !text && (
-        <div>
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
             disabled={p2p === null || busy}
             onClick={() => p2p && void create(p2p)}
             className={filledBtn}
           >
-            {busy ? 'Encrypting…' : 'Create export'}
+            {!busy
+              ? 'Create export'
+              : part === null
+                ? 'Encrypting…'
+                : `Encrypting ${percent(part)}`}
           </button>
+          {busy && part !== null && part < 1 && (
+            <button type="button" onClick={() => stop.current?.abort()} className={textBtn}>
+              Cancel
+            </button>
+          )}
+          {busy && part !== null && late && (
+            <div className="w-full">
+              <SlowNote />
+            </div>
+          )}
         </div>
       )}
       {filesKey && text ? (

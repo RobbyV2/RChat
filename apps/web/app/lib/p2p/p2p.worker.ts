@@ -1,5 +1,6 @@
 import type { AclRoom } from './acl_room'
 import { hashBlob } from './hashing'
+import { runKdfJob, type KdfJob } from './kdf_job'
 import { serveAcl, type HostRequest } from './resolve_host'
 
 // The P2P worker, off the main thread. One script for every job, so the bundler gives every
@@ -9,6 +10,7 @@ import { serveAcl, type HostRequest } from './resolve_host'
 //   `{id, progress: [done, total]}`, then `{id, ok: Hashed}` or `{id, err}`.
 // - The ACL evaluator of P2P servers (resolve_host.ts): an AclRoom per room, kept between
 //   requests. In: `{id, op, room, ...}`.
+// - The passphrase key where WebAssembly can't make it (kdf_job.ts). In: `{id, kdf}`.
 
 interface HashJob {
   id: number
@@ -34,8 +36,9 @@ const hash = ({ id, file }: HashJob) => {
   )
 }
 
-self.onmessage = (e: MessageEvent<HashJob | HostRequest>) => {
+self.onmessage = (e: MessageEvent<HashJob | HostRequest | KdfJob>) => {
   const m = e.data
   if ('op' in m) serveAcl(rooms, m, post)
+  else if ('kdf' in m) runKdfJob(m, post)
   else hash(m)
 }

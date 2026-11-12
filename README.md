@@ -245,6 +245,8 @@ The content security policy only runs the app's own scripts. The app may connect
 just src desktop-build --config /path/to/csp.json
 ```
 
+If you set `script-src`, keep `'wasm-unsafe-eval'` in it. Without it the profanity filter is turned off, the P2P passphrase export is slower, and the policy reports one violation per page load.
+
 Updates come from GitHub Releases. The app checks when you ask in Settings, or at start if you turn that on. Builds with `RCHAT_CHANNEL=weekly` follow the weekly channel by default. Update files must be signed:
 
 1. Make a key pair once with `cargo tauri signer generate -w ~/.tauri/rchat.key`. Never commit the private key.

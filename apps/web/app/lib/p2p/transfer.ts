@@ -1,4 +1,7 @@
 import { isRecord } from '../bytes'
+import { capabilities } from '../platform'
+import { eachPercent, type KdfJob, type KdfReply } from './kdf_job'
+import { argon2idAsync } from '@noble/hashes/argon2.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { hkdf } from '@noble/hashes/hkdf.js'
 import {
@@ -120,6 +123,10 @@ export const PASS_MIN = TR.passMin
 // What a dump may inflate to.
 export const DUMP_MAX = TR.dumpMax
 
+// Shown while the key is made in JavaScript, once that has run `SLOW_AFTER` ms.
+export const SLOW_KDF = 'This can take a minute or two on this device.'
+export const SLOW_AFTER = 2000
+
 export const WRONG_PASS = 'Wrong passphrase, or the file was changed'
 export const WEAK_KDF = "This file's encryption settings are too weak. Export it again."
 export const HEAVY_KDF = 'This file needs more memory to unlock than this device allows.'
@@ -134,6 +141,36 @@ export const IMPORTED_HERE =
   'This file was already imported in this browser. Export again from the device you use now.'
 
 export class TransferError extends Error {}
+
+export const percent = (part: number) => `${Math.floor(part * 100)}%`
+
+// The user stopped the key derivation.
+export class Cancelled extends TransferError {
+  constructor() {
+    super('Cancelled')
+  }
+}
+
+// `work`, with `late(true)` once it has run `after` ms and `late(false)` when it ends.
+export const whileSlow = async <T>(
+  work: Promise<T>,
+  late: (on: boolean) => void,
+  after = SLOW_AFTER
+): Promise<T> => {
+  const timer = setTimeout(() => late(true), after)
+  try {
+    return await work
+  } finally {
+    clearTimeout(timer)
+    late(false)
+  }
+}
+
+// `progress` gets the part done (0 to 1) while the key is made in JavaScript; `signal` stops it.
+export interface KdfWatch {
+  progress?: (part: number) => void
+  signal?: AbortSignal
+}
 
 const AAD_TAG = 'rchat-p2p-transfer1\0'
 
@@ -176,17 +213,127 @@ export const passStrength = (p: string): { score: 0 | 1 | 2 | 3; label: string }
 
 const aad = (kdf: Kdf, salt: string) => utf8(`${AAD_TAG}${canonical({ v: 1, kdf, salt })}`)
 
-const deriveRaw = async (pass: string, salt: Uint8Array, kdf: Kdf) => {
-  const { argon2id } = await import('hash-wasm')
-  return argon2id({
-    password: utf8(nfc(pass)),
-    salt,
-    parallelism: kdf.p,
-    iterations: kdf.t,
-    memorySize: kdf.m,
-    hashLength: 32,
-    outputType: 'binary',
+type Argon = (password: Uint8Array, salt: Uint8Array, kdf: Kdf) => Promise<Uint8Array>
+
+// The passphrase key is argon2id. It is made in WebAssembly, and where the page can't run that
+// or the module doesn't load, in JavaScript: the same parameters and the same key, only slower.
+// Null: this page makes it in JavaScript.
+export const fastKdf = (
+  wasm = capabilities().wasm,
+  load = () => import('hash-wasm')
+): Promise<Argon | null> =>
+  wasm
+    ? load().then(
+        ({ argon2id }) =>
+          (password, salt, kdf) =>
+            argon2id({
+              password,
+              salt,
+              parallelism: kdf.p,
+              iterations: kdf.t,
+              memorySize: kdf.m,
+              hashLength: 32,
+              outputType: 'binary',
+            }),
+        () => null
+      )
+    : Promise.resolve(null)
+
+// The worker could not be started; the page does the work itself.
+class NoWorker extends Error {}
+
+export type KdfSpawn = () => Worker
+
+const kdfWorker: KdfSpawn = () =>
+  new Worker(new URL('./p2p.worker.ts', import.meta.url), { type: 'module' })
+
+const inWorker = (
+  spawn: KdfSpawn,
+  password: Uint8Array,
+  salt: Uint8Array,
+  kdf: Kdf,
+  { progress, signal }: KdfWatch
+) =>
+  new Promise<Uint8Array>((done, fail) => {
+    if (signal?.aborted) return fail(new Cancelled())
+    let w: Worker
+    try {
+      w = spawn()
+    } catch {
+      return fail(new NoWorker())
+    }
+    const end = () => {
+      w.terminate()
+      signal?.removeEventListener('abort', stop)
+    }
+    const stop = () => {
+      end()
+      fail(new Cancelled())
+    }
+    signal?.addEventListener('abort', stop)
+    w.onmessage = (e: MessageEvent<KdfReply>) => {
+      const m = e.data
+      if ('part' in m) return progress?.(m.part)
+      end()
+      if ('key' in m) done(m.key)
+      else fail(new Error(m.err))
+    }
+    w.onerror = () => {
+      end()
+      fail(new NoWorker())
+    }
+    const job: KdfJob = {
+      id: 1,
+      kdf: { password, salt, m: kdf.m, t: kdf.t, p: kdf.p, maxmem: KDF_MAX.m * 1024 },
+    }
+    w.postMessage(job)
   })
+
+// Gives the page a turn every few milliseconds.
+const onPage = (
+  password: Uint8Array,
+  salt: Uint8Array,
+  kdf: Kdf,
+  { progress, signal }: KdfWatch
+) => {
+  const report = eachPercent(part => progress?.(part))
+  return argon2idAsync(password, salt, {
+    m: kdf.m,
+    t: kdf.t,
+    p: kdf.p,
+    dkLen: 32,
+    maxmem: KDF_MAX.m * 1024,
+    asyncTick: 8,
+    onProgress: part => {
+      if (signal?.aborted) throw new Cancelled()
+      report(part)
+    },
+  })
+}
+
+// The key in JavaScript: in a worker, so the page stays usable and the work can be stopped at
+// once; on the page itself where there is no worker.
+export const slowKdf = (
+  password: Uint8Array,
+  salt: Uint8Array,
+  kdf: Kdf,
+  watch: KdfWatch = {},
+  spawn: KdfSpawn | null = typeof window === 'undefined' || typeof Worker === 'undefined'
+    ? null
+    : kdfWorker
+) =>
+  spawn
+    ? inWorker(spawn, password, salt, kdf, watch).catch((e: unknown) => {
+        if (e instanceof NoWorker) return onPage(password, salt, kdf, watch)
+        throw e
+      })
+    : onPage(password, salt, kdf, watch)
+
+const deriveRaw = async (pass: string, salt: Uint8Array, kdf: Kdf, watch?: KdfWatch) => {
+  const password = utf8(nfc(pass))
+  const fast = await fastKdf()
+  if (watch?.signal?.aborted) throw new Cancelled()
+  return fast ? fast(password, salt, kdf) : slowKdf(password, salt, kdf, watch)
 }
 
 const aesKey = (raw: Uint8Array) =>
@@ -201,10 +348,16 @@ const filesKeyOf = (raw: Uint8Array, salt: Uint8Array) => {
 }
 
 // Seals the dump; with `filesSalt`, also gives the key for the files that follow it.
-const sealWith = async (plain: Uint8Array, pass: string, kdf: Kdf, filesSalt?: Uint8Array) => {
+const sealWith = async (
+  plain: Uint8Array,
+  pass: string,
+  kdf: Kdf,
+  filesSalt?: Uint8Array,
+  watch?: KdfWatch
+) => {
   const salt = b64u(randomBytes(SALT_BYTES))
   const iv = randomBytes(IV_BYTES)
-  const raw = await deriveRaw(pass, fromB64u(salt), kdf)
+  const raw = await deriveRaw(pass, fromB64u(salt), kdf, watch)
   const key = await aesKey(raw)
   const files = filesSalt ? await filesKeyOf(raw, filesSalt) : null
   raw.fill(0)
@@ -223,8 +376,12 @@ const sealWith = async (plain: Uint8Array, pass: string, kdf: Kdf, filesSalt?: U
   return { section, files }
 }
 
-export const seal = async (plain: Uint8Array, pass: string, kdf: Kdf): Promise<P2pSection> =>
-  (await sealWith(plain, pass, kdf)).section
+export const seal = async (
+  plain: Uint8Array,
+  pass: string,
+  kdf: Kdf,
+  watch?: KdfWatch
+): Promise<P2pSection> => (await sealWith(plain, pass, kdf, undefined, watch)).section
 
 export interface KdfBounds {
   min: { m: number; t: number; p: number }
@@ -237,14 +394,15 @@ export const checkKdf = (kdf: Kdf, bounds: KdfBounds = { min: KDF_MIN, max: KDF_
   if (kdf.m > max.m || kdf.t > max.t || kdf.p > max.p) throw new TransferError(HEAVY_KDF)
 }
 
-export const open = async (sec: P2pSection, pass: string, bounds?: KdfBounds) =>
-  (await openWith(sec, pass, bounds)).plain
+export const open = async (sec: P2pSection, pass: string, bounds?: KdfBounds, watch?: KdfWatch) =>
+  (await openWith(sec, pass, bounds, undefined, watch)).plain
 
 const openWith = async (
   sec: P2pSection,
   pass: string,
   bounds?: KdfBounds,
-  filesSalt?: Uint8Array
+  filesSalt?: Uint8Array,
+  watch?: KdfWatch
 ) => {
   checkKdf(sec.kdf, bounds)
   let iv: Uint8Array
@@ -258,13 +416,13 @@ const openWith = async (
   let key: CryptoKey
   let files: CryptoKey | null = null
   try {
-    const raw = await deriveRaw(pass, fromB64u(sec.salt), sec.kdf)
+    const raw = await deriveRaw(pass, fromB64u(sec.salt), sec.kdf, watch)
     key = await aesKey(raw)
     if (filesSalt) files = await filesKeyOf(raw, filesSalt)
     raw.fill(0)
-  } catch {
+  } catch (e) {
     // Mostly Argon2 failing to get its memory on a small device.
-    throw new TransferError(HEAVY_KDF)
+    throw e instanceof TransferError ? e : new TransferError(HEAVY_KDF)
   }
   try {
     const plain = new Uint8Array(
@@ -686,35 +844,48 @@ export const exportP2p = async (
   db: P2pDatabase,
   pass: string,
   kdf: Kdf = defaultKdf(),
-  now = Date.now()
-) => seal(await dumpBytes(db, now), pass, kdf)
+  now = Date.now(),
+  watch?: KdfWatch
+) => seal(await dumpBytes(db, now), pass, kdf, watch)
 
 // The same, plus the key for writing the files after it into the `.rchat` file.
 export const exportP2pWithFiles = async (
   db: P2pDatabase,
   pass: string,
   kdf: Kdf = defaultKdf(),
-  now = Date.now()
+  now = Date.now(),
+  watch?: KdfWatch
 ): Promise<{ section: P2pSection; files: FilesKey }> => {
   const id = b64u(randomBytes(16))
   const salt = randomBytes(SALT_BYTES)
-  const { section, files } = await sealWith(await dumpBytes(db, now, { id }), pass, kdf, salt)
+  const { section, files } = await sealWith(
+    await dumpBytes(db, now, { id }),
+    pass,
+    kdf,
+    salt,
+    watch
+  )
   return { section, files: { id, salt: b64u(salt), key: files as CryptoKey } }
 }
 
-export const unlockP2p = async (sec: P2pSection, pass: string, bounds?: KdfBounds) =>
-  parseDump(await open(sec, pass, bounds))
+export const unlockP2p = async (
+  sec: P2pSection,
+  pass: string,
+  bounds?: KdfBounds,
+  watch?: KdfWatch
+) => parseDump(await open(sec, pass, bounds, watch))
 
 // The same, with the key for the files that follow it (from their header's salt).
 export const unlockP2pWithFiles = async (
   sec: P2pSection,
   pass: string,
   head: FilesHead,
-  bounds?: KdfBounds
+  bounds?: KdfBounds,
+  watch?: KdfWatch
 ): Promise<{ dump: Dump; files: FilesKey }> => {
   const salt = bytesOf(head.salt, SALT_BYTES)
   if (!salt) throw new TransferError(DAMAGED_DUMP)
-  const { plain, files } = await openWith(sec, pass, bounds, salt)
+  const { plain, files } = await openWith(sec, pass, bounds, salt, watch)
   const dump = await parseDump(plain)
   if (dump.id !== head.id) throw new TransferError(DAMAGED_DUMP)
   return { dump, files: { id: head.id, salt: head.salt, key: files as CryptoKey } }

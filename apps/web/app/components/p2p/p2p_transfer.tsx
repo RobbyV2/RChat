@@ -1,9 +1,19 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../../lib/store'
 import { p2p, p2pTransfer, useP2p, type FilesPart, type Unlocked } from '../../lib/p2p/app'
-import { passProblem, passStrength, summaryText, type P2pSection } from '../../lib/p2p/transfer'
+import {
+  Cancelled,
+  fastKdf,
+  passProblem,
+  passStrength,
+  percent,
+  SLOW_KDF,
+  summaryText,
+  whileSlow,
+  type P2pSection,
+} from '../../lib/p2p/transfer'
 import { fmtSize } from '../../lib/bytes'
 import { dangerBtn, FieldError, fieldCls, filledBtn, textBtn } from '../ui'
 
@@ -51,6 +61,19 @@ function FilesOption({ value, onChange }: { value: boolean; onChange: (on: boole
   )
 }
 
+// Loads the WebAssembly key module once the user gets to the passphrase (`wanted`).
+const usePreloadKdf = (wanted: boolean) =>
+  useEffect(() => {
+    if (wanted) void fastKdf()
+  }, [wanted])
+
+// Next to the progress of a key made in JavaScript, once it has run for `SLOW_AFTER` ms.
+export const SlowNote = () => (
+  <p role="status" data-slow-kdf className="text-xs text-on-surface">
+    {SLOW_KDF}
+  </p>
+)
+
 const strengthCls = ['text-error', 'text-error', 'text-tertiary', 'text-primary']
 
 export function P2pExportOption({
@@ -66,14 +89,15 @@ export function P2pExportOption({
 }) {
   const strength = passStrength(value.pass)
   const problem = value.again ? passProblem(value.pass, value.again) : null
+  usePreloadKdf(on)
   return (
     <div className="flex flex-col gap-2">
-      <label className="flex items-center gap-2 text-sm">
+      <label className="flex cursor-pointer items-center gap-2 text-sm">
         <input
           type="checkbox"
           checked={on}
           onChange={e => onToggle(e.target.checked)}
-          className="accent-primary"
+          className="cursor-pointer accent-primary"
         />
         Include P2P identity and history
       </label>
@@ -140,17 +164,27 @@ export function P2pImport({
   const [unlocked, setUnlocked] = useState<Unlocked | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [read, setRead] = useState(0)
+  const [part, setPart] = useState<number | null>(null)
+  const stop = useRef<AbortController | null>(null)
+  const [late, setLate] = useState(false)
+  usePreloadKdf(signedIn)
+  useEffect(() => () => stop.current?.abort(), [])
 
   const unlock = async () => {
+    const ctl = new AbortController()
+    stop.current = ctl
     setBusy('unlock')
     setError(null)
+    setPart(null)
     try {
-      setUnlocked(await p2pTransfer.unlock(section, pass, files))
+      const watch = { progress: setPart, signal: ctl.signal }
+      setUnlocked(await whileSlow(p2pTransfer.unlock(section, pass, files, watch), setLate))
       setPass('')
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (!(e instanceof Cancelled)) setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(null)
+      setPart(null)
     }
   }
 
@@ -227,8 +261,22 @@ export function P2pImport({
             className={`${fieldCls} min-w-48 flex-1`}
           />
           <button type="submit" disabled={!pass || busy !== null} className={filledBtn}>
-            {busy === 'unlock' ? 'Unlocking…' : 'Unlock'}
+            {busy !== 'unlock'
+              ? 'Unlock'
+              : part === null
+                ? 'Unlocking…'
+                : `Unlocking ${percent(part)}`}
           </button>
+          {busy === 'unlock' && part !== null && part < 1 && (
+            <button type="button" onClick={() => stop.current?.abort()} className={textBtn}>
+              Cancel
+            </button>
+          )}
+          {busy === 'unlock' && part !== null && late && (
+            <div className="w-full">
+              <SlowNote />
+            </div>
+          )}
         </form>
       ) : (
         <div className="flex flex-col gap-2">

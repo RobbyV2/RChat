@@ -4,6 +4,8 @@
 // (`rchat_profanity:{username|guest}`), on unless the account turned it off. The matcher is the
 // server's own (`crates/profanity`, compiled into `crates/wasm`), loaded only once it is on.
 import { getBasePath } from './basePath'
+import { unavailable } from './capabilities'
+import { capabilities } from './platform'
 
 export const profanityKey = (username: string | null) => `rchat_profanity:${username ?? 'guest'}`
 
@@ -94,11 +96,12 @@ export const wasmMatcher = async (): Promise<Matcher> => {
   return mod.mask_profanity
 }
 
-// Turns masking on or off. Resolves true once masking works, false when off or the matcher
-// couldn't load (a later call tries again).
+// Turns masking on or off. Resolves true once masking works, false when off, when the page
+// can't run WebAssembly (nothing is loaded then) or when the matcher couldn't load (a later call
+// tries again).
 export const setMasking = (on: boolean, load: () => Promise<Matcher> = wasmMatcher) => {
-  active = on
-  if (!on) return Promise.resolve(false)
+  active = on && capabilities().wasm
+  if (!active) return Promise.resolve(false)
   if (matcher !== null) return Promise.resolve(true)
   loading ??= load().then(
     m => {
@@ -112,6 +115,19 @@ export const setMasking = (on: boolean, load: () => Promise<Matcher> = wasmMatch
   )
   return loading.then(ok => ok && active)
 }
+
+const NO_WASM = unavailable("The filter needs WebAssembly, which this browser can't run here.")
+const NOT_LOADED =
+  'The filter could not be loaded. Check your connection, then turn it on again or reload.'
+
+// What the filter's switch shows: on only while words can be masked, and why not otherwise.
+// `wasm`: the page can run WebAssembly; `failed`: the matcher did not load.
+export const filterSwitch = (wasm: boolean, on: boolean, failed: boolean) =>
+  !wasm
+    ? { on: false, usable: false, note: NO_WASM }
+    : on && failed
+      ? { on: false, usable: true, note: NOT_LOADED }
+      : { on, usable: true, note: null }
 
 export const resetMasking = () => {
   matcher = null

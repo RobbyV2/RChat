@@ -1,3 +1,4 @@
+import { probe, type Capabilities } from '../capabilities'
 import type { BlobStore } from './blobs'
 import { webBlobs } from './web_blobs'
 import type { DeviceStore } from './device_store'
@@ -84,4 +85,13 @@ export const scanner = () => qrScanner
 
 export const setScanner = (next: QrScanner) => {
   qrScanner = next
+}
+
+// Probed on first use and kept for the page; null probes again.
+let caps: Capabilities | null = null
+
+export const capabilities = (): Capabilities => (caps ??= probe())
+
+export const setCapabilities = (next: Capabilities | null) => {
+  caps = next
 }

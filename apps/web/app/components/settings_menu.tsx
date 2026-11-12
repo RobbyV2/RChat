@@ -13,6 +13,8 @@ import { useP2p } from '../lib/p2p/app'
 import { avatarColorFor, avatarDraft } from '../lib/identicon'
 import { defaultBanner } from '../lib/profile'
 import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
+import { capabilities } from '../lib/platform'
+import { filterSwitch } from '../lib/profanity'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio, siteFilterOn } from '../lib/rules'
 import { SHORTCUTS, shortcutLabel, type Shortcut } from '../lib/shortcuts'
 import type { AvatarKind } from '../lib/types'
@@ -516,14 +518,25 @@ function SpoilersChoice() {
   )
 }
 
-function ProfanitySwitch() {
+export function ProfanitySwitch() {
   const on = useStore(s => s.profanityOn)
   const setOn = useStore(s => s.setProfanityOn)
   const failed = useStore(s => s.profanityFailed)
   const site = useStore(s => siteFilterOn(s.settings))
+  const shown = filterSwitch(capabilities().wasm, on, failed)
   return (
     <div className="mt-4">
-      <SettingSwitch label="Filter profanity" value={on} onChange={setOn} />
+      <SettingSwitch
+        label="Filter profanity"
+        value={shown.on}
+        onChange={setOn}
+        disabled={!shown.usable}
+      />
+      {shown.note && (
+        <p role="status" className="mt-2 px-2 text-xs text-on-surface">
+          {shown.note}
+        </p>
+      )}
       <p className="mt-2 px-2 text-xs text-on-surface-variant">
         Masks profanity in messages and names you see, including P2P chats. Click or tap a masked
         word to show it. Your own messages, names and servers are never masked for you. P2P content
@@ -532,11 +545,6 @@ function ProfanitySwitch() {
       {site && (
         <p className="mt-1 px-2 text-xs text-on-surface-variant">
           This instance also blocks profanity in server content before it is posted.
-        </p>
-      )}
-      {on && failed && (
-        <p role="alert" className="mt-1 px-2 text-xs text-error">
-          Couldn&apos;t load the filter. Turn it off and on to try again.
         </p>
       )}
     </div>

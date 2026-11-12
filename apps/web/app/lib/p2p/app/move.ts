@@ -3,6 +3,7 @@ import { webLeaderDeps } from '../leader'
 import {
   alreadyImported,
   applyImport,
+  Cancelled,
   exportP2p,
   exportP2pWithFiles,
   filesSize,
@@ -20,6 +21,7 @@ import {
   type ImportKind,
   type Imported,
   type Kdf,
+  type KdfWatch,
   type P2pSection,
   type Summary,
 } from '../transfer'
@@ -112,13 +114,15 @@ export const p2pTransfer = {
   async exportSection(
     pass: string,
     kdf?: Kdf,
-    files = false
+    files = false,
+    watch?: KdfWatch
   ): Promise<{ section: P2pSection; files: FilesKey | null }> {
     const out = await withDb(async s =>
       files
-        ? exportP2pWithFiles(s.db, pass, kdf, Date.now())
-        : { section: await exportP2p(s.db, pass, kdf, Date.now()), files: null }
+        ? exportP2pWithFiles(s.db, pass, kdf, Date.now(), watch)
+        : { section: await exportP2p(s.db, pass, kdf, Date.now(), watch), files: null }
     )
+    if (watch?.signal?.aborted) throw new Cancelled()
     const at = Date.now()
     const n = node
     if (n && !n.moved) await n.markExported(at)
@@ -140,16 +144,21 @@ export const p2pTransfer = {
   },
 
   // Decrypts and reads the file's P2P data; nothing is written.
-  async unlock(section: P2pSection, pass: string, part?: FilesPart | null): Promise<Unlocked> {
+  async unlock(
+    section: P2pSection,
+    pass: string,
+    part?: FilesPart | null,
+    watch?: KdfWatch
+  ): Promise<Unlocked> {
     const username = useP2p.getState().account
     if (!username) throw new Error('Sign in first')
     let dump: Dump
     let files: Unlocked['files'] = null
     if (part) {
-      const got = await unlockP2pWithFiles(section, pass, part.head)
+      const got = await unlockP2pWithFiles(section, pass, part.head, undefined, watch)
       dump = got.dump
       files = { blob: part.blob, key: got.files }
-    } else dump = await unlockP2p(section, pass)
+    } else dump = await unlockP2p(section, pass, undefined, watch)
     const st = useP2p.getState()
     let kind: ImportKind = 'new'
     let already = false

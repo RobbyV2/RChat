@@ -12,6 +12,9 @@ import {
   UserPen,
   type LucideIcon,
 } from 'lucide-react'
+import { UNAVAILABLE } from '../capabilities'
+import { capabilities } from '../platform'
+import { filterSwitch } from '../profanity'
 import { useStore } from '../store'
 import type { RChatState } from '../store_types'
 import { canEditDisplayName } from '../display_name'
@@ -26,6 +29,9 @@ const get = () => useStore.getState()
 
 // Settings that guests keep on this device too.
 const local = (s: RChatState) => s.me !== null || s.guest
+
+const filterNow = (s: RChatState) =>
+  filterSwitch(capabilities().wasm, s.profanityOn, s.profanityFailed)
 
 const section = (
   id: SettingsSection,
@@ -91,13 +97,18 @@ export const settingsActions: Action[] = [
     id: 'profanity',
     title: 'Profanity filter',
     label: ({ s }) =>
-      s.profanityOn ? 'Turn off the profanity filter' : 'Turn on the profanity filter',
+      filterNow(s).on ? 'Turn off the profanity filter' : 'Turn on the profanity filter',
+    subtitle: ({ s }) => (filterNow(s).note ? UNAVAILABLE : undefined),
     scope: 'global',
     group: 'settings',
     icon: EyeOff,
     keywords: ['filter', 'mask'],
     available: ({ s }) => local(s),
-    run: () => get().setProfanityOn(!get().profanityOn),
+    run: () => {
+      const { usable, on, note } = filterNow(get())
+      if (usable) get().setProfanityOn(!on)
+      else get().setError(note)
+    },
   },
   {
     id: 'spoilers',
