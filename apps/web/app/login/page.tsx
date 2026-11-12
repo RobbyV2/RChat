@@ -15,12 +15,13 @@ import type { PassKind } from '../lib/password'
 import { AvatarPicker } from '../components/avatar_picker'
 import { PassSwitch, WordGrid } from '../components/word_grid'
 import StatusClock, { ThemeToggle } from '../components/status_clock'
+import { FieldError } from '../components/ui'
 import { InstallButton, IosInstallHint } from '../components/pwa_register'
 
 type Mode = 'login' | 'register'
 
-const inputCls =
-  'rounded-lg border border-outline bg-transparent px-3 py-2 outline-none focus:border-primary'
+const inputBase = 'rounded-lg border bg-transparent px-3 py-2 outline-none'
+const inputCls = `${inputBase} border-outline focus:border-primary`
 
 const signedIn = () =>
   localStorage.getItem(home.scoped('rchat_token')) !== null ||
@@ -220,6 +221,8 @@ export default function LoginPage() {
   const [avatarKind, setAvatarKind] = useState<AvatarKind>('identicon')
   const [avatarColor, setAvatarColor] = useState('#6750a4')
   const [busy, setBusy] = useState(false)
+  const [nameError, setNameError] = useState<string | null>(null)
+  const nameId = useId()
 
   useEffect(() => {
     useStore.getState().setStreamer(localStorage.getItem('rchat_streamer') === '1')
@@ -257,17 +260,19 @@ export default function LoginPage() {
       setError('Connect to an RChat instance first')
       return
     }
+    setError(null)
+    setNameError(null)
     const name = username.trim()
     if (!name) {
-      setError('Enter a username')
+      setNameError('Enter a username')
       return
     }
     if (mode === 'register' && charCount(name) > NAME_MAX) {
-      setError(`Usernames can be at most ${NAME_MAX} characters`)
+      setNameError(`Usernames can be at most ${NAME_MAX} characters`)
       return
     }
     if (mode === 'register' && name.includes('@')) {
-      setError("Usernames can't contain @")
+      setNameError("Usernames can't contain @")
       return
     }
     if (passKind === 'words' && selected.length !== 7) {
@@ -283,12 +288,14 @@ export default function LoginPage() {
     if (mode === 'login') {
       await login({ username: name, ...cred })
     } else {
-      await register({
+      const failed = await register({
         username: name,
         ...cred,
         avatar_kind: avatarKind,
         ...(avatarKind === 'color' ? { avatar_color: avatarColor } : {}),
       })
+      if (failed?.field === 'username') setNameError(failed.message)
+      else if (failed) setError(failed.message)
     }
     setBusy(false)
   }
@@ -299,6 +306,7 @@ export default function LoginPage() {
       onClick={() => {
         setMode(value)
         setError(null)
+        setNameError(null)
       }}
       className={`flex-1 rounded-full py-2 text-sm font-medium transition-colors ${
         mode === value
@@ -333,16 +341,24 @@ export default function LoginPage() {
           </div>
         )}
         <form onSubmit={submit} className="flex flex-col gap-4">
-          <label className="flex flex-col gap-1">
-            <span className="text-sm text-on-surface-variant">Username</span>
-            <input
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              autoFocus
-              autoComplete="username"
-              className={inputCls}
-            />
-          </label>
+          <div className="flex flex-col">
+            <label className="flex flex-col gap-1">
+              <span className="text-sm text-on-surface-variant">Username</span>
+              <input
+                value={username}
+                onChange={e => {
+                  setUsername(e.target.value)
+                  setNameError(null)
+                }}
+                autoFocus
+                autoComplete="username"
+                aria-invalid={nameError !== null}
+                aria-describedby={nameError ? nameId : undefined}
+                className={nameError ? `${inputBase} border-error` : inputCls}
+              />
+            </label>
+            <FieldError id={nameId} message={nameError} />
+          </div>
           <PassSwitch value={passKind} onChange={setPassKind} />
           {passKind === 'text' ? (
             <label className="flex flex-col gap-1">

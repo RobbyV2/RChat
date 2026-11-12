@@ -60,6 +60,7 @@ import { displayNameError } from '../display_name'
 import { selectionInitial, type selectionSlice } from '../selection_store'
 import { serverNames } from '../selectors'
 import { endsSession, meRetryIn } from '../session'
+import { signupFailure } from '../signup'
 import type { RChatState } from '../store_types'
 import type {
   AuthResponse,
@@ -1348,7 +1349,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     syncFromUrl: nav => resolveUrl(nav),
 
-    register: body => act(async () => enter(await authRequest('/auth/register', body))),
+    register: async body => {
+      try {
+        enter(await authRequest('/auth/register', body))
+        return null
+      } catch (e) {
+        return signupFailure(e)
+      }
+    },
     login: body => act(async () => enter(await authRequest('/auth/login', body))),
 
     logout: () => {

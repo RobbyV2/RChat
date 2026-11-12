@@ -26,6 +26,7 @@ import type { Replying } from './replies'
 import type { SearchArgs } from './search'
 import type { Sed } from './sed'
 import type { ShowSpoilers } from './spoilers'
+import type { SignupFailure } from './signup'
 import type {
   AdminOverview,
   AvatarKind,
@@ -359,7 +360,7 @@ export interface RChatState {
   changePassword: (current: Secret, next: Secret, kind: PassKind) => Promise<string | null>
   refreshAccount: () => Promise<void>
   syncFromUrl: (nav: 'replace' | 'none') => Promise<void>
-  register: (body: RegisterRequest) => Promise<void>
+  register: (body: RegisterRequest) => Promise<SignupFailure | null>
   login: (body: LoginRequest) => Promise<void>
   logout: () => void
   enterGuest: () => Promise<void>
