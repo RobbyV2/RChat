@@ -1,0 +1,696 @@
+{
+  "checks": [
+    {
+      "name": "fade and rise",
+      "animation": {
+        "keyframes": [
+          { "opacity": 0, "transform": "translateY(8px) scale(0.98)" },
+          { "opacity": 1, "transform": "translateY(0) scale(1)" }
+        ],
+        "timing": { "duration": 200, "easing": "cubic-bezier(0.2, 0, 0, 1)" }
+      },
+      "errors": []
+    },
+    {
+      "name": "jiggle twice",
+      "animation": {
+        "keyframes": [
+          { "transform": "rotate(-3deg)" },
+          { "transform": "rotate(3deg)" },
+          { "transform": "rotate(0deg)" }
+        ],
+        "timing": { "duration": 240, "iterations": 2 }
+      },
+      "errors": []
+    },
+    {
+      "name": "offsets",
+      "animation": {
+        "keyframes": [
+          { "offset": 0, "opacity": 0 },
+          { "offset": 0.3, "opacity": 1 },
+          { "offset": 1, "opacity": 0.5 }
+        ],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "height",
+      "animation": { "keyframes": [{ "height": "0px" }], "timing": { "duration": 200 } },
+      "errors": ["property height"]
+    },
+    {
+      "name": "two layout properties",
+      "animation": {
+        "keyframes": [{ "width": "1px", "top": "2px", "opacity": 1 }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["property width", "property top"]
+    },
+    {
+      "name": "no keyframes",
+      "animation": { "keyframes": [], "timing": { "duration": 200 } },
+      "errors": ["keyframes"]
+    },
+    {
+      "name": "twelve keyframes",
+      "animation": {
+        "keyframes": [
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 }
+        ],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "thirteen keyframes",
+      "animation": {
+        "keyframes": [
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 },
+          { "opacity": 1 }
+        ],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["keyframes"]
+    },
+    {
+      "name": "opacity below 0",
+      "animation": { "keyframes": [{ "opacity": -0.1 }], "timing": { "duration": 200 } },
+      "errors": ["opacity"]
+    },
+    {
+      "name": "opacity above 1",
+      "animation": { "keyframes": [{ "opacity": 1.1 }], "timing": { "duration": 200 } },
+      "errors": ["opacity"]
+    },
+    {
+      "name": "opacity 0 and 1",
+      "animation": {
+        "keyframes": [{ "opacity": 0 }, { "opacity": 1 }],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "translateX 64px",
+      "animation": {
+        "keyframes": [{ "transform": "translateX(64px)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "translateX -64px",
+      "animation": {
+        "keyframes": [{ "transform": "translateX(-64px)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "translateX 64.5px",
+      "animation": {
+        "keyframes": [{ "transform": "translateX(64.5px)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform translateX(64.5px)"]
+    },
+    {
+      "name": "translateX 400px",
+      "animation": {
+        "keyframes": [{ "transform": "translateX(400px)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform translateX(400px)"]
+    },
+    {
+      "name": "translateY 100%",
+      "animation": {
+        "keyframes": [{ "transform": "translateY(100%)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "translateY -100%",
+      "animation": {
+        "keyframes": [{ "transform": "translateY(-100%)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "translateY 101%",
+      "animation": {
+        "keyframes": [{ "transform": "translateY(101%)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform translateY(101%)"]
+    },
+    {
+      "name": "translate two values",
+      "animation": {
+        "keyframes": [{ "transform": "translate(10px, -20%)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "translate zero",
+      "animation": {
+        "keyframes": [{ "transform": "translate(0, 0)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "translate three values",
+      "animation": {
+        "keyframes": [{ "transform": "translate(1px, 2px, 3px)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "translate em",
+      "animation": {
+        "keyframes": [{ "transform": "translateX(2em)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform translateX(2em)"]
+    },
+    {
+      "name": "translate calc",
+      "animation": {
+        "keyframes": [{ "transform": "translateX(calc(1px + 2px))" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform translateX(calc(1px + 2px))"]
+    },
+    {
+      "name": "translate3d",
+      "animation": {
+        "keyframes": [{ "transform": "translate3d(1px, 1px, 1px)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform translate3d(1px, 1px, 1px)"]
+    },
+    {
+      "name": "translateZ",
+      "animation": {
+        "keyframes": [{ "transform": "translateZ(10px)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform translateZ(10px)"]
+    },
+    {
+      "name": "scale 0.5",
+      "animation": { "keyframes": [{ "transform": "scale(0.5)" }], "timing": { "duration": 200 } },
+      "errors": []
+    },
+    {
+      "name": "scale 1.5",
+      "animation": { "keyframes": [{ "transform": "scale(1.5)" }], "timing": { "duration": 200 } },
+      "errors": []
+    },
+    {
+      "name": "scale 0.49",
+      "animation": { "keyframes": [{ "transform": "scale(0.49)" }], "timing": { "duration": 200 } },
+      "errors": ["transform scale(0.49)"]
+    },
+    {
+      "name": "scale 1.51",
+      "animation": { "keyframes": [{ "transform": "scale(1.51)" }], "timing": { "duration": 200 } },
+      "errors": ["transform scale(1.51)"]
+    },
+    {
+      "name": "scale two values",
+      "animation": {
+        "keyframes": [{ "transform": "scale(1.1, 0.9)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "scaleX",
+      "animation": { "keyframes": [{ "transform": "scaleX(1.2)" }], "timing": { "duration": 200 } },
+      "errors": []
+    },
+    {
+      "name": "scale negative",
+      "animation": { "keyframes": [{ "transform": "scale(-1)" }], "timing": { "duration": 200 } },
+      "errors": ["transform scale(-1)"]
+    },
+    {
+      "name": "scale percent",
+      "animation": { "keyframes": [{ "transform": "scale(90%)" }], "timing": { "duration": 200 } },
+      "errors": ["transform scale(90%)"]
+    },
+    {
+      "name": "rotate 30deg",
+      "animation": {
+        "keyframes": [{ "transform": "rotate(30deg)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "rotate -30deg",
+      "animation": {
+        "keyframes": [{ "transform": "rotate(-30deg)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "rotate 31deg",
+      "animation": {
+        "keyframes": [{ "transform": "rotate(31deg)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform rotate(31deg)"]
+    },
+    {
+      "name": "rotate turn",
+      "animation": {
+        "keyframes": [{ "transform": "rotate(0.1turn)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform rotate(0.1turn)"]
+    },
+    {
+      "name": "rotate two values",
+      "animation": {
+        "keyframes": [{ "transform": "rotate(3deg, 3deg)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform rotate(3deg, 3deg)"]
+    },
+    {
+      "name": "rotateX",
+      "animation": {
+        "keyframes": [{ "transform": "rotateX(10deg)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform rotateX(10deg)"]
+    },
+    {
+      "name": "skewX",
+      "animation": {
+        "keyframes": [{ "transform": "skewX(10deg)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform skewX(10deg)"]
+    },
+    {
+      "name": "matrix",
+      "animation": {
+        "keyframes": [{ "transform": "matrix(1, 0, 0, 1, 0, 0)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform matrix(1, 0, 0, 1, 0, 0)"]
+    },
+    {
+      "name": "perspective",
+      "animation": {
+        "keyframes": [{ "transform": "perspective(100px)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform perspective(100px)"]
+    },
+    {
+      "name": "none",
+      "animation": { "keyframes": [{ "transform": "none" }], "timing": { "duration": 200 } },
+      "errors": ["transform none"]
+    },
+    {
+      "name": "empty",
+      "animation": { "keyframes": [{ "transform": "" }], "timing": { "duration": 200 } },
+      "errors": ["transform "]
+    },
+    {
+      "name": "three functions",
+      "animation": {
+        "keyframes": [{ "transform": "translateX(8px) scale(1.1) rotate(5deg)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": []
+    },
+    {
+      "name": "a bad function among good ones",
+      "animation": {
+        "keyframes": [{ "transform": "translateX(8px) skewY(3deg)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform translateX(8px) skewY(3deg)"]
+    },
+    {
+      "name": "uppercase function",
+      "animation": {
+        "keyframes": [{ "transform": "TranslateX(8px)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform TranslateX(8px)"]
+    },
+    {
+      "name": "url in transform",
+      "animation": {
+        "keyframes": [{ "transform": "translateX(8px) url(https://example.com)" }],
+        "timing": { "duration": 200 }
+      },
+      "errors": ["transform translateX(8px) url(https://example.com)"]
+    },
+    {
+      "name": "duration 1",
+      "animation": { "keyframes": [{ "opacity": 1 }], "timing": { "duration": 1 } },
+      "errors": []
+    },
+    {
+      "name": "duration 1000",
+      "animation": { "keyframes": [{ "opacity": 1 }], "timing": { "duration": 1000 } },
+      "errors": []
+    },
+    {
+      "name": "duration 1001",
+      "animation": { "keyframes": [{ "opacity": 1 }], "timing": { "duration": 1001 } },
+      "errors": ["duration"]
+    },
+    {
+      "name": "duration 0",
+      "animation": { "keyframes": [{ "opacity": 1 }], "timing": { "duration": 0 } },
+      "errors": ["duration"]
+    },
+    {
+      "name": "duration negative",
+      "animation": { "keyframes": [{ "opacity": 1 }], "timing": { "duration": -5 } },
+      "errors": ["duration"]
+    },
+    {
+      "name": "duration 5000",
+      "animation": { "keyframes": [{ "opacity": 1 }], "timing": { "duration": 5000 } },
+      "errors": ["duration"]
+    },
+    {
+      "name": "delay 500",
+      "animation": { "keyframes": [{ "opacity": 1 }], "timing": { "duration": 200, "delay": 500 } },
+      "errors": []
+    },
+    {
+      "name": "delay 501",
+      "animation": { "keyframes": [{ "opacity": 1 }], "timing": { "duration": 200, "delay": 501 } },
+      "errors": ["delay"]
+    },
+    {
+      "name": "delay negative",
+      "animation": { "keyframes": [{ "opacity": 1 }], "timing": { "duration": 200, "delay": -1 } },
+      "errors": ["delay"]
+    },
+    {
+      "name": "iterations 3",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "iterations": 3 }
+      },
+      "errors": []
+    },
+    {
+      "name": "iterations 4",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "iterations": 4 }
+      },
+      "errors": ["iterations"]
+    },
+    {
+      "name": "iterations 0",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "iterations": 0 }
+      },
+      "errors": ["iterations"]
+    },
+    {
+      "name": "iterations 1.5",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "iterations": 1.5 }
+      },
+      "errors": ["iterations"]
+    },
+    {
+      "name": "easing linear",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "linear" }
+      },
+      "errors": []
+    },
+    {
+      "name": "easing ease",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "ease" }
+      },
+      "errors": []
+    },
+    {
+      "name": "easing ease-in",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "ease-in" }
+      },
+      "errors": []
+    },
+    {
+      "name": "easing ease-out",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "ease-out" }
+      },
+      "errors": []
+    },
+    {
+      "name": "easing ease-in-out",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "ease-in-out" }
+      },
+      "errors": []
+    },
+    {
+      "name": "easing cubic-bezier",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "cubic-bezier(0.2, 0, 0, 1)" }
+      },
+      "errors": []
+    },
+    {
+      "name": "easing cubic-bezier overshoot",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "cubic-bezier(0.3, -0.5, 0.7, 1.5)" }
+      },
+      "errors": []
+    },
+    {
+      "name": "easing cubic-bezier three numbers",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "cubic-bezier(0.2, 0, 0)" }
+      },
+      "errors": ["easing"]
+    },
+    {
+      "name": "easing linear()",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "linear(0, 0.5 20%, 1.1, 1)" }
+      },
+      "errors": []
+    },
+    {
+      "name": "easing linear() with a name",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "linear(0, var(--x), 1)" }
+      },
+      "errors": ["easing"]
+    },
+    {
+      "name": "easing steps",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "steps(4)" }
+      },
+      "errors": ["easing"]
+    },
+    {
+      "name": "easing steps and url",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "steps(4) url(x)" }
+      },
+      "errors": ["easing"]
+    },
+    {
+      "name": "easing step-end",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "step-end" }
+      },
+      "errors": ["easing"]
+    },
+    {
+      "name": "easing with a trailing declaration",
+      "animation": {
+        "keyframes": [{ "opacity": 1 }],
+        "timing": { "duration": 200, "easing": "ease; color: red" }
+      },
+      "errors": ["easing"]
+    },
+    {
+      "name": "everything wrong",
+      "animation": {
+        "keyframes": [{ "left": "1px", "opacity": 2, "transform": "skew(1deg)" }],
+        "timing": { "duration": 0, "delay": 900, "iterations": 9, "easing": "bounce" }
+      },
+      "errors": [
+        "property left",
+        "opacity",
+        "transform skew(1deg)",
+        "duration",
+        "delay",
+        "iterations",
+        "easing"
+      ]
+    }
+  ],
+  "springs": [
+    {
+      "stiffness": 300,
+      "damping": 30,
+      "points": null,
+      "easing": "linear(0, 0.054, 0.1752, 0.3201, 0.4636, 0.5923, 0.7005, 0.7872, 0.8541, 0.9039, 0.9397, 0.9647, 0.9814, 0.9921, 0.9985, 1.0021, 1.0038, 1.0043, 1.0042, 1.0037, 1.0031, 1.0024, 1.0019, 1.0014, 1)",
+      "duration": 506
+    },
+    {
+      "stiffness": 300,
+      "damping": 15,
+      "points": null,
+      "easing": "linear(0, 0.1658, 0.5143, 0.862, 1.1037, 1.2112, 1.2089, 1.1442, 1.0632, 0.9975, 0.9605, 0.9512, 0.9607, 0.978, 0.9947, 1.0059, 1.0105, 1.01, 1.0067, 1.0027, 0.9996, 0.998, 0.9976, 0.9982, 1)",
+      "duration": 886
+    },
+    {
+      "stiffness": 300,
+      "damping": 20,
+      "points": null,
+      "easing": "linear(0, 0.1071, 0.3402, 0.5975, 0.8181, 0.9754, 1.0671, 1.1047, 1.1051, 1.0848, 1.0571, 1.0306, 1.0101, 0.9967, 0.99, 0.9882, 0.9896, 0.9923, 0.9953, 0.9979, 0.9997, 1.0008, 1.0012, 1.0012, 1)",
+      "duration": 712
+    },
+    {
+      "stiffness": 100,
+      "damping": 10,
+      "points": null,
+      "easing": "linear(0, 0.0748, 0.2537, 0.476, 0.6959, 0.8834, 1.0234, 1.1123, 1.1553, 1.1619, 1.1435, 1.1114, 1.0746, 1.0399, 1.0114, 0.9911, 0.9789, 0.9738, 0.9742, 0.978, 0.9836, 0.9896, 0.995, 0.9993, 1)",
+      "duration": 1000
+    },
+    {
+      "stiffness": 600,
+      "damping": 50,
+      "points": null,
+      "easing": "linear(0, 0.0575, 0.1803, 0.3208, 0.4552, 0.573, 0.6711, 0.7501, 0.8122, 0.8601, 0.8966, 0.924, 0.9445, 0.9596, 0.9708, 0.9789, 0.9848, 0.9891, 0.9922, 0.9944, 0.996, 0.9972, 0.998, 0.9986, 1)",
+      "duration": 377
+    },
+    {
+      "stiffness": 50,
+      "damping": 2,
+      "points": null,
+      "easing": "linear(0, 0.0419, 0.1597, 0.3376, 0.556, 0.7936, 1.0293, 1.2438, 1.4209, 1.5491, 1.6216, 1.637, 1.5984, 1.5134, 1.3928, 1.2493, 1.0967, 0.9483, 0.8161, 0.7096, 0.6356, 0.5977, 0.5961, 0.628, 1)",
+      "duration": 1000
+    },
+    {
+      "stiffness": 300,
+      "damping": 40,
+      "points": null,
+      "easing": "linear(0, 0.0577, 0.1807, 0.3215, 0.456, 0.5738, 0.672, 0.7509, 0.8129, 0.8607, 0.8971, 0.9245, 0.9448, 0.9599, 0.971, 0.9791, 0.985, 0.9892, 0.9923, 0.9945, 0.9961, 0.9972, 0.998, 0.9986, 1)",
+      "duration": 534
+    },
+    {
+      "stiffness": 300,
+      "damping": 20,
+      "points": 8,
+      "easing": "linear(0, 0.5975, 1.0671, 1.0848, 1.0101, 0.9882, 0.9953, 1.0008, 1)",
+      "duration": 712
+    },
+    {
+      "stiffness": 1000,
+      "damping": 10,
+      "points": 40,
+      "easing": "linear(0, 0.2736, 0.8679, 1.4001, 1.6046, 1.4466, 1.0891, 0.764, 0.6346, 0.7256, 0.9405, 1.1391, 1.2207, 1.1685, 1.0394, 0.9182, 0.8667, 0.8966, 0.9741, 1.0481, 1.0805, 1.0634, 1.0169, 0.9718, 0.9515, 0.9611, 0.989, 1.0165, 1.0293, 1.0238, 1.0071, 0.9903, 0.9823, 0.9854, 0.9954, 1.0057, 1.0106, 1.0089, 1.0029, 0.9967, 1)",
+      "duration": 1000
+    }
+  ],
+  "reduced": [
+    {
+      "animation": {
+        "keyframes": [
+          { "opacity": 0, "transform": "translateY(8px)" },
+          { "opacity": 1, "transform": "translateY(0)" }
+        ],
+        "timing": { "duration": 300 }
+      },
+      "reduced": {
+        "keyframes": [{ "opacity": 0 }, { "opacity": 1 }],
+        "timing": { "duration": 150, "easing": "linear" }
+      }
+    },
+    {
+      "animation": {
+        "keyframes": [
+          { "transform": "scale(0.8)" },
+          { "offset": 0.6, "transform": "scale(1.05)" },
+          { "transform": "scale(1)" }
+        ],
+        "timing": { "duration": 120, "delay": 300, "easing": "ease-out", "iterations": 2 }
+      },
+      "reduced": {
+        "keyframes": [{ "opacity": 1 }, { "offset": 0.6, "opacity": 1 }, { "opacity": 1 }],
+        "timing": { "duration": 120, "easing": "linear" }
+      }
+    },
+    {
+      "animation": {
+        "keyframes": [{ "opacity": 0.6 }, { "opacity": 1 }],
+        "timing": { "duration": 100 }
+      },
+      "reduced": {
+        "keyframes": [{ "opacity": 0.6 }, { "opacity": 1 }],
+        "timing": { "duration": 100, "easing": "linear" }
+      }
+    }
+  ]
+}
