@@ -3,6 +3,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Download } from 'lucide-react'
 import { shellInfo } from '../lib/platform'
+import { trackUpdates } from '../lib/pwa_update'
 
 interface InstallPromptEvent extends Event {
   prompt: () => Promise<void>
@@ -25,19 +26,12 @@ const isStandalone = () =>
   window.matchMedia('(display-mode: standalone)').matches ||
   (navigator as { standalone?: boolean }).standalone === true
 
-let reloading = false
-const trackUpdate = (reg: ServiceWorkerRegistration) => {
-  reg.addEventListener('updatefound', () => {
-    const next = reg.installing
-    if (!next) return
-    next.addEventListener('statechange', () => {
-      if (next.state === 'activated' && navigator.serviceWorker.controller && !reloading) {
-        reloading = true
-        window.location.reload()
-      }
-    })
-  })
-}
+const trackUpdate = (reg: ServiceWorkerRegistration) =>
+  trackUpdates(
+    reg,
+    () => navigator.serviceWorker.controller !== null,
+    () => window.location.reload()
+  )
 
 export function InstallButton({ compact = false }: { compact?: boolean }) {
   const prompt = useSyncExternalStore(
