@@ -524,7 +524,7 @@ async fn suggested_members(db: &Db, server: &str, q: &str) -> Result<Vec<MemberR
     Ok(rows)
 }
 
-fn prefix_end(prefix: &str) -> Option<String> {
+pub(crate) fn prefix_end(prefix: &str) -> Option<String> {
     let mut chars: Vec<char> = prefix.chars().collect();
     while let Some(last) = chars.pop() {
         let next = (u32::from(last) + 1..=u32::from(char::MAX)).find_map(char::from_u32);

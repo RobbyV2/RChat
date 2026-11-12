@@ -29,6 +29,7 @@ use rules::{
     channel_access, channel_viewable, channel_viewers, effective_perms, grants_open, is_banned,
     live_grant_servers, member_perms, view_rules, view_under,
 };
+pub use subjects::{Caller, Level, Seen, SeenUser, candidates, level_of, resolve_user, seen_among};
 
 pub const DENIED: &str = "Server not found or wrong password";
 pub const PASSWORD_REQUIRED: &str = "Password required";
@@ -441,6 +442,20 @@ impl Reading {
             && server
                 .public_read
                 .unwrap_or(self.joins_by_name(server.has_password))
+    }
+
+    /// The SQL condition on a `servers` row `s` that anyone may read it by name: the rule of
+    /// `servers_sql`, for a join.
+    pub(crate) fn readable_sql(self) -> &'static str {
+        match (self.public, self.joining) {
+            (false, _) => "1 = 0",
+            (true, ServerJoining::Everyone) => {
+                "(s.public_read = 1 OR (s.public_read IS NULL AND s.password_hash IS NULL)) AND COALESCE(s.password_hash, '') <> '!purging'"
+            }
+            (true, ServerJoining::Invites | ServerJoining::Nobody) => {
+                "s.public_read = 1 AND COALESCE(s.password_hash, '') <> '!purging'"
+            }
+        }
     }
 
     /// SQL for the keys of the servers that anyone may read by name.

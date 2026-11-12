@@ -14,7 +14,7 @@ use super::{ApiError, ApiErrorBody, Authed, Settings};
 use crate::db::now;
 use crate::identity::{
     ASSERTION_TTL_SECS, BINDING_AUD, BINDING_SKEW_SECS, BINDING_TTL_SECS, BindingClaims, Claims,
-    binding_proof_ok, p2p_key, random_id,
+    binding_proof_ok, p2p_key, random_id, split_qualified,
 };
 use crate::instance::{Features, InstanceInfo};
 use crate::relay::IceServer;
@@ -325,6 +325,24 @@ pub(crate) async fn p2p_binding(
         ik,
         expires_at: claims.exp,
     }))
+}
+
+/// The account and host of a P2P binding this instance signed, while it lasts: the `sub` of a
+/// token from `POST /api/v1/identity/p2p_binding` as `(username, host)`.
+pub(crate) fn verify_binding(state: &AppState, token: &str) -> Option<(String, String)> {
+    let BindingClaims {
+        iss,
+        sub,
+        aud,
+        ik: _,
+        iat,
+        exp,
+    } = state.instance.keys.signed(token)?;
+    let lasts = exp > now() && iat <= exp && exp - iat <= BINDING_TTL_SECS;
+    let (name, host) = split_qualified(&sub)?;
+    let here = state.instance.host(&iss).eq_ignore_ascii_case(host);
+    (aud == BINDING_AUD && lasts && here && !name.contains('@'))
+        .then(|| (name.to_string(), host.to_string()))
 }
 
 /// ICE servers with short-lived TURN credentials.

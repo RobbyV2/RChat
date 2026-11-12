@@ -197,6 +197,24 @@ impl Keyring {
         }
     }
 
+    /// The claims of `token` when one of these keys signed it.
+    pub fn signed<T: serde::de::DeserializeOwned>(&self, token: &str) -> Option<T> {
+        let Parts {
+            input,
+            header,
+            payload,
+            signature,
+        } = split_token(token).ok()?;
+        let kid = parse_header(header).ok()?;
+        let key = self.keys.iter().find(|k| k.kid == kid)?;
+        let signature: [u8; 64] = decode_part(signature).ok()?.try_into().ok()?;
+        key.signing
+            .verifying_key()
+            .verify_strict(input.as_bytes(), &Signature::from_bytes(&signature))
+            .ok()?;
+        serde_json::from_slice(&decode_part(payload).ok()?).ok()
+    }
+
     pub fn sign<T: Serialize>(&self, claims: &T) -> anyhow::Result<String> {
         let key = self.active();
         let header = Header {

@@ -6588,3 +6588,59 @@ async fn the_profile_visibility_control_reaches_an_old_database() {
     )
     .await;
 }
+
+async fn index_count(db: &Db, name: &str) -> i64 {
+    let sql = match is_sqlite(db) {
+        true => {
+            format!("SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = '{name}'")
+        }
+        false => format!(
+            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = '{name}'"
+        ),
+    };
+    count(db, &sql).await
+}
+
+#[tokio::test]
+async fn the_dm_author_index_is_added_to_an_old_database() {
+    on_each_database("dm_author_index", |url| async move {
+        let db = open(Some(&url)).await.expect("open");
+        for stmt in [
+            "DROP INDEX idx_messages_dm_author",
+            "DROP INDEX idx_users_display_lower",
+            "UPDATE settings SET value = '28' WHERE key = 'schema_version'",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'old-hash', 'text', 'identicon', 7)",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('bob', 'Bob', 'old-hash', 'text', 'identicon', 8)",
+            "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')",
+            "INSERT INTO messages(dm_id, author, content, created_at) SELECT id, 'bob', 'old dm', 9 FROM dms",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', 'old', 9)")
+            .bind(general_id(&db).await)
+            .execute(&db)
+            .await
+            .expect("channel message");
+        close(&db).await;
+        for _ in 0..2 {
+            let db = open(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(index_count(&db, "idx_messages_dm_author").await, 1);
+            assert_eq!(index_count(&db, "idx_users_display_lower").await, 1);
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM messages m JOIN dms d ON d.id = m.dm_id WHERE m.author = 'bob' AND m.content = 'old dm' AND d.user_a = 'alice' AND d.user_b = 'bob'"
+                )
+                .await,
+                1
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM messages WHERE content = 'old'").await,
+                1
+            );
+            close(&db).await;
+        }
+    })
+    .await;
+}

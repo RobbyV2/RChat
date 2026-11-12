@@ -692,6 +692,53 @@ async fn an_invalid_concurrent_index_is_rebuilt() {
     drop(pg);
 }
 
+const DM_AUTHOR: &str = "SELECT 1 FROM dms d WHERE d.user_a = 'alice' AND d.user_b = 'bob' AND EXISTS(SELECT 1 FROM messages m WHERE m.dm_id = d.id AND m.author = 'bob')";
+
+#[tokio::test]
+async fn the_dm_author_index_is_built_online_on_a_big_table() {
+    let Some(pg) = pg_temp("online_dm_author").await else {
+        return;
+    };
+    let db = open_started(Some(&pg.url)).await.expect("open");
+    assert_eq!(state(&db, "idx_messages_dm_author").await, Some(true));
+    for stmt in [
+        "DROP INDEX idx_messages_dm_author".to_string(),
+        "UPDATE settings SET value = '28' WHERE key = 'schema_version'".to_string(),
+        "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')".to_string(),
+        format!("INSERT INTO messages(channel_id, author, content, created_at) SELECT c.id, 'bob', 'message ' || g, 1 FROM channels c, generate_series(1, {ONLINE_ROWS}) g WHERE c.server = 'rchat'"),
+        "INSERT INTO messages(dm_id, author, content, created_at) SELECT id, 'alice', 'direct', 2 FROM dms".to_string(),
+        "INSERT INTO messages(dm_id, author, content, created_at) SELECT id, 'bob', 'direct', 3 FROM dms".to_string(),
+        "ANALYZE messages".to_string(),
+    ] {
+        run(&db, &stmt).await;
+    }
+    close(&db).await;
+    let db = open_started(Some(&pg.url)).await.expect("start");
+    assert_eq!(
+        rows(&db, STORED_SCHEMA).await[0].get::<i64, _>(0),
+        super::super::migrate::SCHEMA_VERSION
+    );
+    assert_eq!(
+        state(&db, "idx_messages_dm_author").await,
+        None,
+        "the start leaves the index of a big table to the online build"
+    );
+    assert_eq!(
+        build_online(&db, &Limits::default()).await.expect("build"),
+        built(&["idx_messages_dm_author"], &[])
+    );
+    assert_eq!(state(&db, "idx_messages_dm_author").await, Some(true));
+    let plan = plan(&db, DM_AUTHOR).await;
+    assert!(plan.contains("idx_messages_dm_author"), "{plan}");
+    assert_eq!(
+        rows(&db, "SELECT COUNT(*) FROM messages WHERE dm_id IS NOT NULL").await[0]
+            .get::<i64, _>(0),
+        2
+    );
+    close(&db).await;
+    drop(pg);
+}
+
 /// One index of a table: its columns in order (`None` for an expression), whether it is unique
 /// and its `WHERE`.
 struct Listed {
