@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Solver bench</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+        margin: 0 auto;
+        max-width: 40rem;
+        padding: 1rem;
+      }
+      table {
+        border-collapse: collapse;
+        margin: 1rem 0;
+        width: 100%;
+      }
+      th,
+      td {
+        border-bottom: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+        padding: 0.4rem 0.5rem;
+        text-align: right;
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+      button {
+        cursor: pointer;
+        font: inherit;
+        padding: 0.5rem 1rem;
+      }
+      button:disabled {
+        cursor: default;
+      }
+      pre {
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Solver bench</h1>
+    <p>
+      Puzzle tries a second on this device: the wasm solver and the JavaScript solver, in workers
+      and on the main thread. Serve the repository over HTTP and open this page from it.
+    </p>
+    <p>
+      Options in the address: <code>?ms=1000</code> (time per measurement),
+      <code>&amp;workers=1,2,4,8</code>, <code>&amp;wasm=/pow/rchat_pow.wasm</code> (another copy of
+      the module).
+    </p>
+    <p>
+      <button id="again" type="button" disabled>Run again</button> <span id="status">Running</span>
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Solver</th>
+          <th>wasm</th>
+          <th>JavaScript</th>
+          <th>wasm / JavaScript</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <pre id="result"></pre>
+    <script type="module">
+      const params = new URLSearchParams(location.search)
+      const within = (name, fallback, min, max) => {
+        const n = Number(params.get(name))
+        return params.has(name) && Number.isFinite(n) && n >= min && n <= max ? n : fallback
+      }
+      const MS = within('ms', 1000, 20, 60000)
+      const WASM = params.get('wasm') || '../../apps/web/public/pow/rchat_pow.wasm'
+      const COUNTS = (params.get('workers') || '1,2,4,8')
+        .split(',')
+        .map(Number)
+        .filter(n => Number.isInteger(n) && n >= 1 && n <= 64)
+
+      // crates/pow/tests/vectors.json: the seed, the target and the smallest winners of its
+      // 4 sub-puzzles.
+      const VECTOR = {
+        seed: '28cc57bf7416808e462723478b182693d9756b87fe2e4a4d45161a60700385dc',
+        target: '18014398509481984',
+        nonces: ['2403', '3043', '932', '775'],
+      }
+
+      // The solvers, written as one function with no outside names: the page calls it, and each
+      // worker gets its source.
+      function kit() {
+        const K = new Int32Array([
+          0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+          0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+          0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+          0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+          0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+          0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+          0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+          0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+          0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+          0xc67178f2,
+        ])
+        const INIT = new Int32Array([
+          0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+          0x5be0cd19,
+        ])
+        const DOMAIN = [0x72, 0x63, 0x68, 0x61, 0x74, 0x2d, 0x70, 0x6f, 0x77, 0x31]
+
+        const compress = (w, h) => {
+          for (let i = 16; i < 64; i += 1) {
+            const x = w[i - 15]
+            const y = w[i - 2]
+            const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3)
+            const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10)
+            w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0
+          }
+          let a = h[0]
+          let b = h[1]
+          let c = h[2]
+          let d = h[3]
+          let e = h[4]
+          let f = h[5]
+          let g = h[6]
+          let k = h[7]
+          for (let i = 0; i < 64; i += 1) {
+            const s1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7))
+            const t1 = (k + s1 + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0
+            const s0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10))
+            const t2 = (s0 + ((a & b) ^ (a & c) ^ (b & c))) | 0
+            k = g
+            g = f
+            f = e
+            e = (d + t1) | 0
+            d = c
+            c = b
+            b = a
+            a = (t1 + t2) | 0
+          }
+          h[0] = (h[0] + a) | 0
+          h[1] = (h[1] + b) | 0
+        }
+
+        // A try is SHA-256("rchat-pow1" || seed || sub || nonce as 8 bytes little endian), one
+        // block. It wins when the first 8 bytes of the hash, big endian, are below the target.
+        // Tries `count` nonces from `start`: the winning nonce plus one, or 0.
+        const jsChunk = (seed, sub, start, count, target) => {
+          const block = new Uint8Array(44)
+          block.set(DOMAIN)
+          block.set(seed, 10)
+          block[42] = sub
+          const fixed = new Int32Array(11)
+          for (let i = 0; i < 11; i += 1)
+            fixed[i] =
+              (block[i * 4] << 24) |
+              (block[i * 4 + 1] << 16) |
+              (block[i * 4 + 2] << 8) |
+              block[i * 4 + 3]
+          const w = new Int32Array(64)
+          const h = new Int32Array(8)
+          const targetHigh = Number(target >> 32n)
+          const targetLow = Number(target & 0xffffffffn)
+          let low = Number(start & 0xffffffffn)
+          let high = Number(start >> 32n)
+          for (let n = 0; n < count; n += 1) {
+            for (let i = 0; i < 10; i += 1) w[i] = fixed[i]
+            w[10] = fixed[10] | (low & 255)
+            w[11] =
+              (((low >>> 8) & 255) << 24) |
+              (((low >>> 16) & 255) << 16) |
+              ((low >>> 24) << 8) |
+              (high & 255)
+            w[12] =
+              (((high >>> 8) & 255) << 24) |
+              (((high >>> 16) & 255) << 16) |
+              ((high >>> 24) << 8) |
+              0x80
+            w[13] = 0
+            w[14] = 0
+            w[15] = 408
+            h.set(INIT)
+            compress(w, h)
+            const top = h[0] >>> 0
+            if (top < targetHigh || (top === targetHigh && h[1] >>> 0 < targetLow))
+              return ((BigInt(high) << 32n) | BigInt(low)) + 1n
+            low = (low + 1) >>> 0
+            if (low === 0) high = (high + 1) >>> 0
+          }
+          return 0n
+        }
+
+        // The committed module, with the contract of jsChunk.
+        const wasmChunk = async bytes => {
+          const { instance } = await WebAssembly.instantiate(bytes)
+          const { memory, seed_ptr: seedPtr, pow_chunk: powChunk } = instance.exports
+          return (seed, sub, start, count, target) => {
+            new Uint8Array(memory.buffer, seedPtr(), 32).set(seed)
+            // A wasm i64 comes back signed: a winner from 2^63 up would read as negative.
+            return BigInt.asUintN(64, powChunk(sub, start, count, target))
+          }
+        }
+
+        // The smallest winner of each of `k` sub-puzzles.
+        const winners = (chunk, seed, k, target) => {
+          const found = []
+          for (let sub = 0; sub < k; sub += 1) {
+            let start = 0n
+            let hit = 0n
+            while (hit === 0n) {
+              hit = chunk(seed, sub, start, 1024, target)
+              start += 1024n
+            }
+            found.push(String(hit - 1n))
+          }
+          return found
+        }
+
+        // Tries for about `ms` against a target nothing meets.
+        const spin = (chunk, seed, ms) => {
+          const began = performance.now()
+          let tries = 0
+          let at = 0n
+          do {
+            chunk(seed, 0, at, 16384, 0n)
+            at += 16384n
+            tries += 16384
+          } while (performance.now() - began < ms)
+          return { tries, ms: performance.now() - began }
+        }
+
+        return { jsChunk, wasmChunk, winners, spin }
+      }
+
+      // What a worker runs: one measurement, in wasm when it is given the module.
+      function measure(tools) {
+        self.onmessage = async ({ data }) => {
+          try {
+            const chunk = data.bytes ? await tools.wasmChunk(data.bytes) : tools.jsChunk
+            self.postMessage({ ok: true, ...tools.spin(chunk, data.seed, data.ms) })
+          } catch (e) {
+            self.postMessage({ ok: false, error: String(e) })
+          }
+        }
+      }
+
+      const { jsChunk, wasmChunk, winners, spin } = kit()
+      const perSecond = ({ tries, ms }) => Math.round((tries / ms) * 1000)
+      const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i])
+      const bytesOf = hex => Uint8Array.from(hex.match(/../g), pair => parseInt(pair, 16))
+
+      // The summed rate of `count` workers that each run for MS.
+      const workers = async (source, count, bytes, seed) => {
+        const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }))
+        const started = Array.from({ length: count }, () => new Worker(url))
+        try {
+          const rates = await Promise.all(
+            started.map(
+              w =>
+                new Promise((resolve, reject) => {
+                  w.onmessage = ({ data }) =>
+                    data.ok ? resolve(perSecond(data)) : reject(new Error(data.error))
+                  w.onerror = e => reject(new Error(e.message || 'The worker failed'))
+                  w.postMessage({ bytes, seed, ms: MS })
+                })
+            )
+          )
+          return rates.reduce((sum, rate) => sum + rate, 0)
+        } finally {
+          for (const w of started) w.terminate()
+          URL.revokeObjectURL(url)
+        }
+      }
+
+      const millions = rate => (rate === null ? 'none' : `${(rate / 1e6).toFixed(2)} M/s`)
+      const times = (wasm, js) => (wasm === null || !js ? '' : `${(wasm / js).toFixed(2)} x`)
+      const show = out => {
+        const rows = [
+          ['One thread, in a worker', out.wasm, out.js],
+          ...out.workers.map(r => [
+            `${r.workers} worker${r.workers === 1 ? '' : 's'}`,
+            r.wasm,
+            r.js,
+          ]),
+          ['Main thread', null, out.main],
+        ]
+        const body = document.getElementById('rows')
+        body.textContent = ''
+        for (const [name, wasm, js] of rows) {
+          const tr = body.insertRow()
+          for (const text of [name, millions(wasm), millions(js), times(wasm, js)])
+            tr.insertCell().textContent = text
+        }
+        document.getElementById('result').textContent = JSON.stringify(out, null, 2)
+      }
+
+      const run = async () => {
+        const again = document.getElementById('again')
+        const status = document.getElementById('status')
+        again.disabled = true
+        status.textContent = 'Running'
+        const out = {
+          done: false,
+          check: { wasm: null, js: false, high: null },
+          wasm: null,
+          js: 0,
+          ratio: null,
+          main: 0,
+          workers: [],
+          cores: navigator.hardwareConcurrency || 1,
+          ms: MS,
+          agent: navigator.userAgent,
+          error: null,
+        }
+        window.__bench = out
+        const seed = bytesOf(VECTOR.seed)
+        const target = BigInt(VECTOR.target)
+        out.check.js = same(winners(jsChunk, seed, VECTOR.nonces.length, target), VECTOR.nonces)
+        let bytes = null
+        try {
+          const answer = await fetch(WASM)
+          if (!answer.ok) throw new Error(`The module answered ${answer.status}`)
+          const loaded = new Uint8Array(await answer.arrayBuffer())
+          const chunk = await wasmChunk(loaded)
+          out.check.wasm = same(winners(chunk, seed, VECTOR.nonces.length, target), VECTOR.nonces)
+          // A winner from 2^63 up: both solvers give the same nonce plus one.
+          const high = (1n << 63n) + 5n
+          const all = (1n << 64n) - 1n
+          out.check.high =
+            chunk(seed, 0, high, 1, all) === high + 1n &&
+            jsChunk(seed, 0, high, 1, all) === high + 1n
+          bytes = loaded
+        } catch {
+          bytes = null
+        }
+        out.main = perSecond(spin(jsChunk, seed, Math.min(MS, 250)))
+        out.js = out.main
+        if (typeof Worker === 'function') {
+          const source = `(${measure})((${kit})())`
+          try {
+            out.js = await workers(source, 1, null, seed)
+            if (bytes) out.wasm = await workers(source, 1, bytes, seed)
+            for (const count of COUNTS) {
+              const one = count === 1
+              out.workers.push({
+                workers: count,
+                wasm: !bytes ? null : one ? out.wasm : await workers(source, count, bytes, seed),
+                js: one ? out.js : await workers(source, count, null, seed),
+              })
+              show(out)
+            }
+          } catch (e) {
+            out.error = String(e)
+          }
+        }
+        out.ratio = out.wasm === null ? null : Math.round((out.wasm / out.js) * 100) / 100
+        out.done = true
+        show(out)
+        status.textContent = out.error
+          ? out.error
+          : out.ratio === null
+            ? 'Done. No wasm on this device: JavaScript only.'
+            : `Done. wasm is ${out.ratio} times as fast as JavaScript on one thread.`
+        again.disabled = false
+      }
+
+      document.getElementById('again').addEventListener('click', run)
+      run()
+    </script>
+  </body>
+</html>
