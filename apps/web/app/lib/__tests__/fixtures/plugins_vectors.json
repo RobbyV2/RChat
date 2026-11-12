@@ -1,0 +1,1065 @@
+{
+  "cover": [
+    {
+      "granted": ["net:*"],
+      "requested": ["net:api.example.com", "net:*.x.org"],
+      "want": true,
+      "got": true
+    },
+    {
+      "granted": ["net:*.example.com"],
+      "requested": ["net:example.com", "net:a.b.example.com", "net:*.b.example.com"],
+      "want": true,
+      "got": true
+    },
+    {
+      "granted": ["net:*.example.com"],
+      "requested": ["net:example.org"],
+      "want": false,
+      "got": false
+    },
+    {
+      "granted": ["net:*.example.com"],
+      "requested": ["net:*"],
+      "want": false,
+      "got": false
+    },
+    {
+      "granted": ["net:api.example.com"],
+      "requested": ["net:*.example.com"],
+      "want": false,
+      "got": false
+    },
+    {
+      "granted": ["net:a.example.com"],
+      "requested": ["net:b.example.com"],
+      "want": false,
+      "got": false
+    },
+    {
+      "granted": ["read:messages"],
+      "requested": ["read:messages", "hook:render"],
+      "want": false,
+      "got": false
+    },
+    {
+      "granted": ["hook:internal"],
+      "requested": ["hook:api"],
+      "want": false,
+      "got": false
+    },
+    {
+      "granted": [],
+      "requested": [],
+      "want": true,
+      "got": true
+    },
+    {
+      "granted": ["page:code"],
+      "requested": ["read:messages"],
+      "want": false,
+      "got": false
+    },
+    {
+      "granted": ["page:code"],
+      "requested": ["page:code"],
+      "want": true,
+      "got": true
+    },
+    {
+      "granted": ["net:*", "hook:internal"],
+      "requested": ["page:code"],
+      "want": false,
+      "got": false
+    }
+  ],
+  "net_patterns": [
+    {
+      "p": "net:*",
+      "want": "*",
+      "got": "*"
+    },
+    {
+      "p": "net:*.example.com",
+      "want": "*.example.com",
+      "got": "*.example.com"
+    },
+    {
+      "p": "net:localhost",
+      "want": "localhost",
+      "got": "localhost"
+    },
+    {
+      "p": "net:127.0.0.1",
+      "want": "127.0.0.1",
+      "got": "127.0.0.1"
+    },
+    {
+      "p": "net:com",
+      "want": null,
+      "got": null
+    },
+    {
+      "p": "net:Example.com",
+      "want": null,
+      "got": null
+    },
+    {
+      "p": "net:example.com:443",
+      "want": null,
+      "got": null
+    },
+    {
+      "p": "net:https://example.com",
+      "want": null,
+      "got": null
+    },
+    {
+      "p": "net:*.*.example.com",
+      "want": null,
+      "got": null
+    },
+    {
+      "p": "net:-a.example.com",
+      "want": null,
+      "got": null
+    },
+    {
+      "p": "net:",
+      "want": null,
+      "got": null
+    }
+  ],
+  "sets": [
+    {
+      "required": ["read:messages", "read:encrypted"],
+      "optional": [],
+      "want": [],
+      "got": []
+    },
+    {
+      "required": ["read:encrypted"],
+      "optional": [],
+      "want": [
+        {
+          "kind": "needs",
+          "perm": "read:encrypted",
+          "needs": "read:messages"
+        }
+      ],
+      "got": [
+        {
+          "kind": "needs",
+          "perm": "read:encrypted",
+          "needs": "read:messages"
+        }
+      ]
+    },
+    {
+      "required": ["read:messages"],
+      "optional": ["read:encrypted"],
+      "want": [],
+      "got": []
+    },
+    {
+      "required": [],
+      "optional": ["read:encrypted", "read:messages"],
+      "want": [],
+      "got": []
+    },
+    {
+      "required": ["media:effects"],
+      "optional": ["act:calls"],
+      "want": [
+        {
+          "kind": "needs",
+          "perm": "media:effects",
+          "needs": "act:calls"
+        }
+      ],
+      "got": [
+        {
+          "kind": "needs",
+          "perm": "media:effects",
+          "needs": "act:calls"
+        }
+      ]
+    },
+    {
+      "required": ["read:everything"],
+      "optional": [],
+      "want": [
+        {
+          "kind": "unknown",
+          "perm": "read:everything"
+        }
+      ],
+      "got": [
+        {
+          "kind": "unknown",
+          "perm": "read:everything"
+        }
+      ]
+    },
+    {
+      "required": ["ui:slots"],
+      "optional": ["ui:slots"],
+      "want": [
+        {
+          "kind": "dup",
+          "perm": "ui:slots"
+        }
+      ],
+      "got": [
+        {
+          "kind": "dup",
+          "perm": "ui:slots"
+        }
+      ]
+    },
+    {
+      "required": ["page:code"],
+      "optional": [],
+      "want": [],
+      "got": []
+    },
+    {
+      "required": [],
+      "optional": ["page:code"],
+      "want": [
+        {
+          "kind": "full-optional"
+        }
+      ],
+      "got": [
+        {
+          "kind": "full-optional"
+        }
+      ]
+    },
+    {
+      "required": ["ui:frame"],
+      "optional": [],
+      "want": [
+        {
+          "kind": "unknown",
+          "perm": "ui:frame"
+        }
+      ],
+      "got": [
+        {
+          "kind": "unknown",
+          "perm": "ui:frame"
+        }
+      ]
+    }
+  ],
+  "updates": [
+    {
+      "granted": ["read:messages", "ui:slots"],
+      "required": ["read:messages", "ui:slots"],
+      "optional": ["act:send"],
+      "want": {
+        "held": false,
+        "added": [],
+        "dropped": []
+      },
+      "got": {
+        "held": false,
+        "added": [],
+        "dropped": []
+      }
+    },
+    {
+      "granted": ["read:messages"],
+      "required": ["read:messages", "net:*"],
+      "optional": [],
+      "want": {
+        "held": true,
+        "added": ["net:*"],
+        "dropped": []
+      },
+      "got": {
+        "held": true,
+        "added": ["net:*"],
+        "dropped": []
+      }
+    },
+    {
+      "granted": ["net:*.example.com"],
+      "required": ["net:api.example.com"],
+      "optional": [],
+      "want": {
+        "held": false,
+        "added": [],
+        "dropped": ["net:*.example.com"]
+      },
+      "got": {
+        "held": false,
+        "added": [],
+        "dropped": ["net:*.example.com"]
+      }
+    },
+    {
+      "granted": ["read:messages", "hook:render"],
+      "required": ["hook:render"],
+      "optional": [],
+      "want": {
+        "held": false,
+        "added": [],
+        "dropped": ["read:messages"]
+      },
+      "got": {
+        "held": false,
+        "added": [],
+        "dropped": ["read:messages"]
+      }
+    },
+    {
+      "granted": ["act:send"],
+      "required": [],
+      "optional": ["act:send"],
+      "want": {
+        "held": false,
+        "added": [],
+        "dropped": []
+      },
+      "got": {
+        "held": false,
+        "added": [],
+        "dropped": []
+      }
+    },
+    {
+      "granted": ["page:code"],
+      "required": ["page:code"],
+      "optional": [],
+      "want": {
+        "held": true,
+        "added": [],
+        "dropped": []
+      },
+      "got": {
+        "held": true,
+        "added": [],
+        "dropped": []
+      }
+    },
+    {
+      "granted": ["ui:slots"],
+      "required": ["page:code"],
+      "optional": [],
+      "want": {
+        "held": true,
+        "added": ["page:code"],
+        "dropped": ["ui:slots"]
+      },
+      "got": {
+        "held": true,
+        "added": ["page:code"],
+        "dropped": ["ui:slots"]
+      }
+    },
+    {
+      "granted": ["page:code"],
+      "required": ["ui:slots"],
+      "optional": [],
+      "want": {
+        "held": true,
+        "added": ["ui:slots"],
+        "dropped": ["page:code"]
+      },
+      "got": {
+        "held": true,
+        "added": ["ui:slots"],
+        "dropped": ["page:code"]
+      }
+    }
+  ],
+  "summaries": [
+    {
+      "perms": ["read:messages", "hook:render", "ui:slots"],
+      "want": {
+        "passesOn": false
+      },
+      "got": {
+        "passesOn": false
+      }
+    },
+    {
+      "perms": ["read:messages", "net:api.example.com"],
+      "want": {
+        "passesOn": true
+      },
+      "got": {
+        "passesOn": true
+      }
+    },
+    {
+      "perms": ["read:messages", "signals"],
+      "want": {
+        "passesOn": true
+      },
+      "got": {
+        "passesOn": true
+      }
+    },
+    {
+      "perms": ["hook:render", "ui:open"],
+      "want": {
+        "passesOn": true
+      },
+      "got": {
+        "passesOn": true
+      }
+    },
+    {
+      "perms": ["read:people", "act:send"],
+      "want": {
+        "passesOn": true
+      },
+      "got": {
+        "passesOn": true
+      }
+    },
+    {
+      "perms": ["ui:theme", "ui:css", "net:*"],
+      "want": {
+        "passesOn": false
+      },
+      "got": {
+        "passesOn": false
+      }
+    },
+    {
+      "perms": ["storage:sync", "read:settings"],
+      "want": {
+        "passesOn": true
+      },
+      "got": {
+        "passesOn": true
+      }
+    },
+    {
+      "perms": ["page:code"],
+      "want": {
+        "passesOn": true
+      },
+      "got": {
+        "passesOn": true
+      }
+    },
+    {
+      "perms": ["clipboard:write", "read:messages"],
+      "want": {
+        "passesOn": false
+      },
+      "got": {
+        "passesOn": false
+      }
+    },
+    {
+      "perms": ["hook:store"],
+      "want": {
+        "passesOn": true
+      },
+      "got": {
+        "passesOn": true
+      }
+    },
+    {
+      "perms": ["media:effects", "act:calls"],
+      "want": {
+        "passesOn": true
+      },
+      "got": {
+        "passesOn": true
+      }
+    }
+  ],
+  "ranges": [
+    {
+      "v": "1.4.2",
+      "r": "^1.2.0",
+      "want": true,
+      "got": true
+    },
+    {
+      "v": "2.0.0",
+      "r": "^1.2.0",
+      "want": false,
+      "got": false
+    },
+    {
+      "v": "0.2.5",
+      "r": "^0.2.1",
+      "want": true,
+      "got": true
+    },
+    {
+      "v": "0.3.0",
+      "r": "^0.2.1",
+      "want": false,
+      "got": false
+    },
+    {
+      "v": "0.0.3",
+      "r": "^0.0.2",
+      "want": false,
+      "got": false
+    },
+    {
+      "v": "1.2.9",
+      "r": "~1.2.3",
+      "want": true,
+      "got": true
+    },
+    {
+      "v": "1.3.0",
+      "r": "~1.2.3",
+      "want": false,
+      "got": false
+    },
+    {
+      "v": "0.7.5",
+      "r": ">=0.6.0, <0.8.0",
+      "want": true,
+      "got": true
+    },
+    {
+      "v": "0.8.0",
+      "r": ">=0.6.0, <0.8.0",
+      "want": false,
+      "got": false
+    },
+    {
+      "v": "1.3.0-beta.1",
+      "r": "^1.2.0",
+      "want": false,
+      "got": false
+    },
+    {
+      "v": "1.3.0-beta.2",
+      "r": ">=1.3.0-beta.1",
+      "want": true,
+      "got": true
+    },
+    {
+      "v": "1.3.0",
+      "r": "1.3.0",
+      "want": true,
+      "got": true
+    },
+    {
+      "v": "1.3.0",
+      "r": "latest",
+      "want": false,
+      "got": false
+    }
+  ],
+  "versions": [
+    {
+      "version": "1.3.0-beta.1",
+      "min_app": "0.6.0",
+      "api": 1
+    },
+    {
+      "version": "1.2.1",
+      "min_app": "0.7.0",
+      "api": 1
+    },
+    {
+      "version": "1.2.0",
+      "min_app": "0.6.0",
+      "api": 1,
+      "hooks": ["message.render.text@1"]
+    },
+    {
+      "version": "1.1.0",
+      "min_app": "0.6.0",
+      "api": 1,
+      "yanked": true
+    },
+    {
+      "version": "1.0.0",
+      "min_app": "0.6.0",
+      "api": 1
+    },
+    {
+      "version": "2.0.0",
+      "min_app": "0.6.0",
+      "api": 2
+    }
+  ],
+  "picks": [
+    {
+      "app": "0.6.0",
+      "beta": false,
+      "hooks": ["message.render.text@1"],
+      "failed": [],
+      "want": "1.2.0",
+      "got": "1.2.0"
+    },
+    {
+      "app": "0.6.0",
+      "beta": true,
+      "hooks": ["message.render.text@1"],
+      "failed": [],
+      "want": "1.3.0-beta.1",
+      "got": "1.3.0-beta.1"
+    },
+    {
+      "app": "0.6.0",
+      "beta": false,
+      "hooks": [],
+      "failed": [],
+      "want": "1.0.0",
+      "got": "1.0.0"
+    },
+    {
+      "app": "0.6.0",
+      "beta": false,
+      "hooks": ["message.render.text@1"],
+      "failed": ["1.2.0"],
+      "want": "1.0.0",
+      "got": "1.0.0"
+    },
+    {
+      "app": "0.7.0",
+      "beta": false,
+      "hooks": ["message.render.text@1"],
+      "failed": [],
+      "want": "1.2.1",
+      "got": "1.2.1"
+    },
+    {
+      "app": "0.6.0-beta.3",
+      "beta": false,
+      "hooks": ["message.render.text@1"],
+      "failed": [],
+      "want": "1.2.0",
+      "got": "1.2.0"
+    },
+    {
+      "app": "0.5.9",
+      "beta": false,
+      "hooks": ["message.render.text@1"],
+      "failed": [],
+      "want": null,
+      "got": null
+    }
+  ],
+  "keys": [
+    {
+      "pinned": "A",
+      "signer": "A",
+      "rotations": [],
+      "revoked": [],
+      "want": {
+        "kind": "ok"
+      },
+      "got": {
+        "kind": "ok"
+      }
+    },
+    {
+      "pinned": "A",
+      "signer": "C",
+      "rotations": [
+        {
+          "from": "A",
+          "to": "B"
+        },
+        {
+          "from": "B",
+          "to": "C"
+        }
+      ],
+      "revoked": [],
+      "want": {
+        "kind": "rotated",
+        "pin": "C"
+      },
+      "got": {
+        "kind": "rotated",
+        "pin": "C"
+      }
+    },
+    {
+      "pinned": "A",
+      "signer": "B",
+      "rotations": [
+        {
+          "from": "A",
+          "to": "B"
+        },
+        {
+          "from": "A",
+          "to": "X"
+        }
+      ],
+      "revoked": [],
+      "want": {
+        "kind": "held",
+        "why": "fork"
+      },
+      "got": {
+        "kind": "held",
+        "why": "fork"
+      }
+    },
+    {
+      "pinned": "A",
+      "signer": "B",
+      "rotations": [
+        {
+          "from": "A",
+          "to": "B"
+        }
+      ],
+      "revoked": ["B"],
+      "want": {
+        "kind": "held",
+        "why": "revoked"
+      },
+      "got": {
+        "kind": "held",
+        "why": "revoked"
+      }
+    },
+    {
+      "pinned": "A",
+      "signer": "C",
+      "rotations": [
+        {
+          "from": "A",
+          "to": "B"
+        },
+        {
+          "from": "B",
+          "to": "C"
+        }
+      ],
+      "revoked": ["B"],
+      "want": {
+        "kind": "held",
+        "why": "revoked"
+      },
+      "got": {
+        "kind": "held",
+        "why": "revoked"
+      }
+    },
+    {
+      "pinned": "A",
+      "signer": "Z",
+      "rotations": [],
+      "revoked": [],
+      "want": {
+        "kind": "refused",
+        "why": "other-key"
+      },
+      "got": {
+        "kind": "refused",
+        "why": "other-key"
+      }
+    },
+    {
+      "pinned": "A",
+      "signer": "Z",
+      "rotations": [
+        {
+          "from": "A",
+          "to": "B"
+        },
+        {
+          "from": "B",
+          "to": "A"
+        }
+      ],
+      "revoked": [],
+      "want": {
+        "kind": "refused",
+        "why": "other-key"
+      },
+      "got": {
+        "kind": "refused",
+        "why": "other-key"
+      }
+    },
+    {
+      "pinned": "A",
+      "signer": null,
+      "rotations": [],
+      "revoked": [],
+      "want": {
+        "kind": "refused",
+        "why": "unsigned"
+      },
+      "got": {
+        "kind": "refused",
+        "why": "unsigned"
+      }
+    }
+  ],
+  "compares": [
+    {
+      "local": {
+        "toolchain": "rchat-rust-1.99.0-r1",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "release": {
+        "toolchain": "rchat-rust-1.99.0-r1",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "want": {
+        "kind": "matches"
+      },
+      "got": {
+        "kind": "matches"
+      }
+    },
+    {
+      "local": {
+        "toolchain": "rchat-rust-1.99.0-r1",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w2",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "release": {
+        "toolchain": "rchat-rust-1.99.0-r1",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "want": {
+        "kind": "differs",
+        "files": ["plugin.wasm"]
+      },
+      "got": {
+        "kind": "differs",
+        "files": ["plugin.wasm"]
+      }
+    },
+    {
+      "local": {
+        "toolchain": "rchat-rust-1.99.0-r1",
+        "esbuild": "0.25.9",
+        "manifest": "m2",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "release": {
+        "toolchain": "rchat-rust-1.99.0-r1",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "want": {
+        "kind": "differs",
+        "files": ["manifest.json"]
+      },
+      "got": {
+        "kind": "differs",
+        "files": ["manifest.json"]
+      }
+    },
+    {
+      "local": {
+        "toolchain": "wasm-idle-1.99.0-dev",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "release": {
+        "toolchain": "wasm-idle-1.99.0-dev",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "want": {
+        "kind": "cant-compare",
+        "why": "not-reproducible"
+      },
+      "got": {
+        "kind": "cant-compare",
+        "why": "not-reproducible"
+      }
+    },
+    {
+      "local": {
+        "toolchain": "rchat-rust-1.99.0-r2",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "release": {
+        "toolchain": "rchat-rust-1.99.0-r1",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "want": {
+        "kind": "cant-compare",
+        "why": "builder"
+      },
+      "got": {
+        "kind": "cant-compare",
+        "why": "builder"
+      }
+    },
+    {
+      "local": {
+        "toolchain": "rchat-rust-1.99.0-r1",
+        "esbuild": "0.26.0",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "release": {
+        "toolchain": "rchat-rust-1.99.0-r1",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "want": {
+        "kind": "cant-compare",
+        "why": "builder"
+      },
+      "got": {
+        "kind": "cant-compare",
+        "why": "builder"
+      }
+    },
+    {
+      "local": {
+        "toolchain": "rchat-rust-1.99.0-r1",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s2"
+      },
+      "release": {
+        "toolchain": "rchat-rust-1.99.0-r1",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "want": {
+        "kind": "cant-compare",
+        "why": "source"
+      },
+      "got": {
+        "kind": "cant-compare",
+        "why": "source"
+      }
+    },
+    {
+      "local": {
+        "toolchain": null,
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "release": {
+        "toolchain": null,
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "want": {
+        "kind": "matches"
+      },
+      "got": {
+        "kind": "matches"
+      }
+    },
+    {
+      "local": {
+        "toolchain": "rchat-rust-1.99.0-r1",
+        "esbuild": "0.25.9",
+        "manifest": "m1",
+        "files": {
+          "plugin.wasm": "w1",
+          "worker.js": "j1"
+        },
+        "sourceHash": "s1"
+      },
+      "release": null,
+      "want": {
+        "kind": "cant-compare",
+        "why": "no-release"
+      },
+      "got": {
+        "kind": "cant-compare",
+        "why": "no-release"
+      }
+    }
+  ],
+  "reproducible": ["rchat-rust-1.99.0-r1"]
+}

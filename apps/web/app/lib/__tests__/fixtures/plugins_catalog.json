@@ -1,0 +1,114 @@
+{
+  "catalog": {
+    "read:profile": { "risk": "L", "reads": true },
+    "read:settings": { "risk": "L", "reads": true },
+    "read:places": { "risk": "M", "reads": true },
+    "read:people": { "risk": "M", "reads": true },
+    "read:calls": { "risk": "M", "reads": true },
+    "read:command_log": { "risk": "M", "reads": true },
+    "read:accessibility": { "risk": "M", "reads": true },
+    "read:messages": { "risk": "H", "reads": true },
+    "read:p2p": { "risk": "H", "reads": true },
+    "read:encrypted": { "risk": "C", "reads": true },
+    "act:navigate": { "risk": "L" },
+    "act:settings": { "risk": "M" },
+    "act:account": { "risk": "M", "egress": true },
+    "act:calls": { "risk": "M" },
+    "act:report": { "risk": "M", "egress": true },
+    "act:send": { "risk": "H", "egress": true },
+    "act:social": { "risk": "H", "egress": true },
+    "act:manage": { "risk": "H", "egress": true },
+    "act:p2p": { "risk": "H", "egress": true },
+    "act:credentials": { "risk": "C", "reads": true, "egress": true },
+    "hook:render": { "risk": "M", "reads": true },
+    "hook:wasm": { "risk": "M", "reads": true },
+    "hook:send": { "risk": "H", "reads": true, "egress": true },
+    "hook:incoming": { "risk": "H", "reads": true },
+    "hook:store": { "risk": "H", "reads": true, "egress": true },
+    "hook:p2p": { "risk": "H", "reads": true },
+    "hook:api": { "risk": "C", "reads": true, "egress": true },
+    "hook:internal": { "risk": "C", "reads": true, "egress": true },
+    "ui:slots": { "risk": "L" },
+    "ui:theme": { "risk": "L" },
+    "ui:motion": { "risk": "L" },
+    "ui:sounds": { "risk": "L" },
+    "ui:speech": { "risk": "L" },
+    "ui:notify": { "risk": "L" },
+    "ui:components": { "risk": "M", "reads": true },
+    "ui:css": { "risk": "M" },
+    "ui:open": { "risk": "M", "egress": true },
+    "media:screen": { "risk": "H", "reads": true },
+    "media:camera": { "risk": "H", "reads": true },
+    "media:mic": { "risk": "H", "reads": true },
+    "media:effects": { "risk": "H", "reads": true, "egress": true },
+    "media:remote": { "risk": "C", "reads": true },
+    "signals": { "risk": "M", "egress": true },
+    "storage:sync": { "risk": "L", "egress": true },
+    "clipboard:write": { "risk": "L" },
+    "clipboard:read": { "risk": "H", "reads": true },
+    "files:save": { "risk": "L" },
+    "files:open": { "risk": "L", "reads": true }
+  },
+  "full": "page:code",
+  "reserved": {
+    "app:frame": {
+      "since": "0.9.5",
+      "risk": "H",
+      "reads": true,
+      "egress": true,
+      "line": "Show this app's own page in a box. It can read this app's data and pass it on."
+    }
+  },
+  "reserved_groups": ["scope:"],
+  "risks": [
+    ["net:*", "C"],
+    ["net:a.example.com", "H"],
+    ["net:*.example.com", "H"],
+    ["ui:slots", "L"],
+    ["ui:open", "M"],
+    ["page:code", "F"],
+    ["read:accessibility", "M"],
+    ["ui:sounds", "L"],
+    ["ui:speech", "L"]
+  ],
+  "summaries": [
+    {
+      "perms": ["read:accessibility", "net:a.example.com"],
+      "got": {
+        "full": false,
+        "reads": ["read:accessibility"],
+        "egress": ["net:a.example.com"],
+        "passesOn": true
+      }
+    },
+    {
+      "perms": ["read:accessibility", "ui:slots"],
+      "got": { "full": false, "reads": ["read:accessibility"], "egress": [], "passesOn": false }
+    },
+    {
+      "perms": ["hook:render", "signals"],
+      "got": { "full": false, "reads": ["hook:render"], "egress": ["signals"], "passesOn": true }
+    },
+    {
+      "perms": ["ui:theme", "ui:css"],
+      "got": { "full": false, "reads": [], "egress": [], "passesOn": false }
+    },
+    {
+      "perms": ["read:messages"],
+      "got": { "full": false, "reads": ["read:messages"], "egress": [], "passesOn": false }
+    },
+    { "perms": [], "got": { "full": false, "reads": [], "egress": [], "passesOn": false } },
+    {
+      "perms": ["page:code", "ui:slots"],
+      "got": { "full": true, "reads": [], "egress": [], "passesOn": true }
+    },
+    {
+      "perms": ["made:up", "net:*"],
+      "got": { "full": false, "reads": [], "egress": ["net:*"], "passesOn": false }
+    },
+    {
+      "perms": ["read:messages", "net:Example.com"],
+      "got": { "full": false, "reads": ["read:messages"], "egress": [], "passesOn": false }
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "source": "https://publicsuffix.org/list/public_suffix_list.dat",
+  "version": "2026-11-11_13-52-29_UTC",
+  "commit": "7786aac8931b7069d6fe2174a7471a54d273d3e6",
+  "license": "MPL-2.0",
+  "rules": [
+    "com",
+    "org",
+    "net",
+    "io",
+    "uk",
+    "co.uk",
+    "jp",
+    "*.kobe.jp",
+    "!city.kobe.jp",
+    "*.ck",
+    "!www.ck",
+    "github.io",
+    "blogspot.com",
+    "s3.amazonaws.com"
+  ]
+}
