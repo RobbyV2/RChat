@@ -25,6 +25,7 @@ import {
 } from '../lib/store'
 import { openActionMenu } from '../lib/actions/menu'
 import { useChannelEdit, type Editing } from '../lib/channel_edit'
+import { isGuestName, voiceSelf } from '../lib/guest_voice'
 import { dmSections } from '../lib/nav_layout'
 import { enterKey } from '../lib/keys'
 import { rtc } from '../lib/rtc'
@@ -176,11 +177,11 @@ function VoiceMemberRow({
   server: string
   inRoom: boolean
 }) {
-  const me = useStore(s => s.me)
+  const mine = useStore(voiceSelf)
   const selfAudio = useStore(s => s.selfAudio)
   useStore(s => s.rtcTick)
   const user = userRefFor(useStore.getState(), username)
-  const self = me?.username === username
+  const self = mine === username
   const silenced = useStore(s => Object.values(s.voiceMuted).some(l => l.includes(username)))
   const speaking = inRoom && rtc.isSpeaking(username) && !silenced
   const muted =
@@ -189,8 +190,12 @@ function VoiceMemberRow({
   const live = inRoom && (self ? rtc.sharing : shownMedia(rtc.peer(username), silenced).screen)
   return (
     <div
-      {...profileTrigger(user, server)}
-      className="mr-2 ml-7 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm text-on-surface-variant outline-offset-[-2px] hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary active:bg-surface-container-high"
+      {...(isGuestName(username) ? {} : profileTrigger(user, server))}
+      className={`mr-2 ml-7 flex items-center gap-2 rounded-md px-2 py-1 text-sm text-on-surface-variant outline-offset-[-2px] ${
+        isGuestName(username)
+          ? ''
+          : 'cursor-pointer hover:bg-surface-container hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary active:bg-surface-container-high'
+      }`}
     >
       <span
         className={`flex shrink-0 rounded-full transition-shadow ${
@@ -269,7 +274,9 @@ export function ChannelSidebar() {
   const voiceKey = useStore(s => {
     const channels = voiceServer ? s.servers[voiceServer]?.channels : undefined
     if (!channels) return ''
-    const names = channels.flatMap(c => (c.kind === 'voice' ? (s.voiceUsers[c.id] ?? []) : []))
+    const names = channels
+      .flatMap(c => (c.kind === 'voice' ? (s.voiceUsers[c.id] ?? []) : []))
+      .filter(u => !isGuestName(u))
     return [...new Set(names)].sort().join('\n')
   })
   useAuthorMembers(voiceServer, voiceKey)

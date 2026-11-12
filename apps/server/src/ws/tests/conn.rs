@@ -412,6 +412,38 @@ async fn normal_tabs_keep_working_under_the_limits() {
 }
 
 #[tokio::test]
+async fn guests_are_named_and_leave_voice_when_they_close() {
+    use tokio_tungstenite::tungstenite::Message as T;
+    let (state, path, addr) = live("ws_guest_voice").await;
+    let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+    let mut names = Vec::new();
+    for from in ["203.0.113.7", "203.0.113.8"] {
+        let mut ws = dial(addr, from).await.expect("guest");
+        send_auth(&mut ws, None).await;
+        let named = next_of_type(&mut ws, "guest_name", Duration::from_secs(30))
+            .await
+            .expect("a guest learns its voice name first");
+        let name = named["name"].as_str().expect("name").to_string();
+        assert!(name.starts_with("@guest:") && name.len() == 23, "{name}");
+        for frame in [
+            serde_json::json!({ "type": "subscribe", "servers": ["rchat"] }),
+            serde_json::json!({ "type": "voice_join", "channel_id": cid }),
+        ] {
+            ws.send(T::text(frame.to_string())).await.expect("send");
+        }
+        let listed = next_of_type(&mut ws, "voice_state", Duration::from_secs(30))
+            .await
+            .expect("voice state");
+        assert_eq!(listed["users"], serde_json::json!([name]));
+        ws.close(None).await.expect("close");
+        until(|| state.hub.rooms_in("rchat", None).is_empty()).await;
+        names.push(name);
+    }
+    assert_ne!(names[0], names[1], "each connection has its own name");
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
 async fn subscribe_checks_only_servers_not_held() {
     let (state, path) = crate::api::test_util::temp_state("ws_sub_held").await;
     let conn = state.hub.next_conn();

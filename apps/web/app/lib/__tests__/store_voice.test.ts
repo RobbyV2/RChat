@@ -339,6 +339,28 @@ describe('timeouts in voice', () => {
       reason: null,
     })
 
+  test('a guest joins voice under the name its connection got', async () => {
+    const name = '@guest:00000000000000aa'
+    useStore.setState({ me: null, guest: true, guestVoiceName: null })
+    await st().joinVoice('lounge', 3)
+    expect(st().error).toBe('Create an account to join voice')
+    expect(sent.some(m => m.type === 'voice_join')).toBe(false)
+    useStore.setState({ error: null })
+    st().applyWsEvent({ type: 'guest_name', name })
+    expect(st().guestVoiceName).toBe(name)
+    await st().joinVoice('lounge', 3)
+    expect(st().error).toBeNull()
+    expect(sent.some(m => m.type === 'voice_join' && m.channel_id === 3)).toBe(true)
+    const roomState = (users: string[]) =>
+      st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 3, users })
+    roomState([name])
+    expect(rtc.active()).toBe(true)
+    roomState([])
+    expect(rtc.active()).toBe(false)
+    expect(st().voice).toBeNull()
+    useStore.setState({ guest: false, guestVoiceName: null })
+  })
+
   test('a timed out member cannot join voice in that server', async () => {
     useStore.setState({ me: me('alice', { servers: [summary()] }) })
     timeoutEvent(Math.floor(Date.now() / 1000) + 600)

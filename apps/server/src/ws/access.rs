@@ -7,6 +7,7 @@ use tracing::{debug, warn};
 
 use super::event::WsEvent;
 use super::filter::wants;
+use super::guests::leave_closed_voice;
 use super::p2p::{Hosting, P2pScope, Who, announce_hosting, p2p_scope};
 use super::{
     GUEST_SUB_CHECKS_BURST, GUEST_SUB_CHECKS_RATE, GUEST_SUBSCRIBE_CAP, LOG_EVERY,
@@ -304,6 +305,8 @@ pub(super) async fn catch_up(
 
 pub(super) struct Access {
     pub(super) user: Option<String>,
+    /// The name a guest connection has in voice rooms (`guests::guest_name`).
+    pub(super) guest: Option<String>,
     /// When the account was created (it keys anonymous poll votes).
     pub(super) since: Option<i64>,
     pub(super) token: Option<String>,
@@ -331,8 +334,9 @@ pub(super) struct Access {
     pub(super) floors: HashMap<i64, (Instant, Option<Option<i64>>)>,
     pub(super) retry: Retry,
     pub(super) topics_dirty: bool,
-    /// How the instance lets people open servers by name, as this connection last saw it.
-    pub(super) joining: Option<ServerJoining>,
+    /// How the instance opens servers to people who aren't members (its joining rule and
+    /// whether it allows public reading), as this connection last saw it.
+    pub(super) reading: Option<(ServerJoining, bool)>,
 }
 
 impl Access {
@@ -344,6 +348,7 @@ impl Access {
         let sub = SubPace::new(user.is_some());
         Access {
             user,
+            guest: None,
             since: None,
             token: None,
             site_admin,
@@ -370,12 +375,12 @@ impl Access {
             floors: HashMap::new(),
             retry: Retry::new(),
             topics_dirty: false,
-            joining: None,
+            reading: None,
         }
     }
 
     /// The instance's settings changed. A guest's connection ends when guest access went off
-    /// (`false`). When the rule for opening servers by name changed, what the connection
+    /// (`false`). When the rules for reading servers by name changed, what the connection
     /// follows without being a member is checked again, so it stops following servers that
     /// closed to it. `false` also when the connection must close.
     pub(super) async fn settings_changed(
@@ -387,8 +392,8 @@ impl Access {
         if self.user.is_none() && !settings.guests_enabled {
             return false;
         }
-        let joining = Some(settings.server_joining);
-        if std::mem::replace(&mut self.joining, joining) == joining {
+        let reading = Some((settings.server_joining, settings.public_reading));
+        if std::mem::replace(&mut self.reading, reading) == reading {
             return true;
         }
         if self.subs.is_empty() && self.looking.is_none() {
@@ -403,8 +408,8 @@ impl Access {
         if self.site_admin {
             topics.insert(Topic::Admin);
         }
-        if let Some(user) = &self.user {
-            topics.insert(Topic::User(user.clone()));
+        if let Some(name) = self.user.as_ref().or(self.guest.as_ref()) {
+            topics.insert(Topic::User(name.clone()));
         }
         for server in self.member_servers.iter().chain(self.subs.iter()) {
             topics.insert(Topic::Server(server.clone()));
@@ -590,8 +595,40 @@ impl Access {
     pub(super) fn wants(&self, ev: &WsEvent) -> bool {
         let me = self.user.as_deref();
         match self.retry.pending() {
-            false => wants(ev, me, self.site_admin, &self.member_servers, &self.subs),
+            false => {
+                wants(ev, me, self.site_admin, &self.member_servers, &self.subs)
+                    || self.guest_voice_wants(ev)
+            }
             true => wants(ev, None, false, &HashSet::new(), &HashSet::new()),
+        }
+    }
+
+    /// The name this connection has in voice rooms: its user's, or a guest's own.
+    pub(super) fn voice_name(&self) -> Option<&str> {
+        self.user.as_deref().or(self.guest.as_deref())
+    }
+
+    // What a guest gets as itself in voice: signals to it and the end of its voice.
+    fn guest_voice_wants(&self, ev: &WsEvent) -> bool {
+        let Some(name) = &self.guest else {
+            return false;
+        };
+        match ev {
+            WsEvent::RtcSignal {
+                to,
+                from: _,
+                channel_id: _,
+                dm_id: _,
+                payload: _,
+            } => to == name,
+            WsEvent::VoiceEnded {
+                server: None,
+                channel_id: _,
+                dm_id: _,
+                dm_users: Some(users),
+                reason: _,
+            } => users.contains(name),
+            _ => false,
         }
     }
 
@@ -725,6 +762,7 @@ pub(super) async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::
     access.grants.retain(|server, _| kept.contains(server));
     access.deadlines = grant_deadlines(db, &access.grants).await?;
     access.subs = kept;
+    leave_closed_voice(&state.hub, access);
     access.tidy_peek();
     if let (Some(user), Some(server), None) = (&access.user, &access.looking, &access.peek)
         && !access.member_servers.contains(server)

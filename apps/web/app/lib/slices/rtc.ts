@@ -2,6 +2,7 @@
 
 import type { CallRoute } from '../call_choice'
 import { accountPrompt } from '../features'
+import { voiceSelf } from '../guest_voice'
 import { home } from '../instances'
 import { JoinTracker } from '../negotiation'
 import { p2p } from '../p2p'
@@ -228,8 +229,9 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   > = {
     joinVoice: (server, channelId) =>
       act(async () => {
-        const { me, guest, voice, settings } = get()
-        if (guest || !me) throw new Error(`${accountPrompt(settings)} to join voice`)
+        const { voice, settings } = get()
+        const self = voiceSelf(get())
+        if (self === null) throw new Error(`${accountPrompt(settings)} to join voice`)
         const ends = myTimeoutEnds(get(), server)
         if (ends !== null) throw new Error(timedOutLine(ends))
         home.ws.ensureConnected()
@@ -239,7 +241,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
           p2pCall.hangup()
           p2pVoice.leave()
           p2p.endMedia()
-          await rtc.join(me.username, { channelId }, get().selfAudio.muted)
+          await rtc.join(self, { channelId }, get().selfAudio.muted)
           applyMic()
         } catch (e) {
           if (e instanceof JoinAborted) return
@@ -247,7 +249,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
           throw e
         }
         sendOrAbandon({ type: 'voice_join', channel_id: channelId })
-        joins.joined(channelId, (get().voiceUsers[channelId] ?? []).includes(me.username))
+        joins.joined(channelId, (get().voiceUsers[channelId] ?? []).includes(self))
         voiceListed = false
         set({ voice: { server, channelId }, call: null })
       }),
@@ -391,9 +393,10 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   const handlers = {
     voice_state: ev => {
       set(s => applyVoiceState(s, ev))
-      const { me, voice } = get()
-      if (!me) return
-      const listing = joins.state(ev.channel_id, ev.users.includes(me.username))
+      const { voice } = get()
+      const self = voiceSelf(get())
+      if (self === null) return
+      const listing = joins.state(ev.channel_id, ev.users.includes(self))
       if (voice?.channelId === ev.channel_id) {
         if (listing === 'listed') {
           voiceListed = true
@@ -442,27 +445,31 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     },
 
     rtc_signal: ev => {
-      if (get().me?.username === ev.to)
+      if (voiceSelf(get()) === ev.to)
         rtc
           .onSignal(ev.from, ev.payload, { channelId: ev.channel_id, dmId: ev.dm_id })
           .catch((e: unknown) => console.error('rtc signal', e))
     },
 
     voice_ended: ev => {
-      const { me, voice } = get()
-      const mine = me !== null && (ev.dm_users?.includes(me.username) ?? false)
+      const { voice } = get()
+      const self = voiceSelf(get())
+      const mine = self !== null && (ev.dm_users?.includes(self) ?? false)
       if (mine && ev.channel_id !== null && voice?.channelId === ev.channel_id) endVoiceMedia()
       const endedChannel = ev.channel_id !== null && ev.channel_id === endedVoice
       if (endedChannel) endedVoice = null
       if (endedChannel || mine) fail(new Error(ev.reason))
     },
 
+    guest_name: ev => set({ guestVoiceName: ev.name }),
+
     error: ev => {
       fail(new Error(ev.message))
-      const { me, voice, call, voiceUsers } = get()
+      const { voice, call, voiceUsers } = get()
+      const self = voiceSelf(get())
       const confirmed =
         call !== null ||
-        (voice !== null && me !== null && (voiceUsers[voice.channelId] ?? []).includes(me.username))
+        (voice !== null && self !== null && (voiceUsers[voice.channelId] ?? []).includes(self))
       if (confirmed) return
       if (voice) joins.refused()
       if (rtc.active() || voice) endVoiceMedia()

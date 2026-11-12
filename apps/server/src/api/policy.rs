@@ -119,6 +119,9 @@ impl DmCreation {
 /// The switch for new friend requests.
 pub const FRIEND_REQUESTS: &str = "friend_requests";
 
+/// The switch that lets server owners make servers readable by people who aren't members.
+pub const PUBLIC_READING: &str = "public_reading";
+
 /// The switch for `GET /api/v1/server_search`.
 pub const SERVER_SEARCH: &str = "server_search";
 
@@ -390,6 +393,11 @@ impl Effective<'_> {
     /// How the user may get into servers by themselves.
     pub fn server_joining(&self) -> ServerJoining {
         self.settings.server_joining
+    }
+
+    /// Whether servers may be readable by people who aren't members.
+    pub fn public_reading(&self) -> bool {
+        self.settings.public_reading
     }
 
     /// Whether the user may search servers.
@@ -736,6 +744,37 @@ mod tests {
         .expect("a copy from before the switches");
         assert_eq!(older.server_joining, ServerJoining::Everyone);
         assert!(older.server_search);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn public_reading_is_public_and_changes_live() {
+        use crate::api::admin::get_settings;
+        let (state, path) = temp_state("reading_setting").await;
+        let wire = || async {
+            serde_json::to_value(get_settings(State(state.clone())).await.0).expect("json")
+        };
+        assert_eq!(wire().await["public_reading"], json!(true));
+        let mut rx = state.hub.subscribe();
+        set(&state, json!({"public_reading": false}))
+            .await
+            .expect("patch");
+        let event = serde_json::to_value(rx.try_recv().expect("settings_changed")).expect("json");
+        assert_eq!(event["settings"]["public_reading"], json!(false));
+        assert_eq!(wire().await["public_reading"], json!(false));
+        assert!(
+            !effective(&state.db, None).await.public_reading(),
+            "the gate reads it through the same place"
+        );
+        const { assert!(!Settings::DENY.public_reading) };
+        let older: Settings = serde_json::from_value(json!({
+            "profanity_filter": true,
+            "asset_previews": true,
+            "asset_uploads": true,
+            "guests_enabled": true,
+        }))
+        .expect("a copy from before the switch");
+        assert!(older.public_reading);
         done(state, path).await;
     }
 

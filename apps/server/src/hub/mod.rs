@@ -936,6 +936,28 @@ impl Hub {
         self.replica(|r| r.calls.get(&dm_id).map(|c| c.relays.clone()))
     }
 
+    /// The servers with a voice room in use.
+    pub fn room_servers(&self) -> Vec<String> {
+        self.replica(|r| {
+            r.index
+                .server_rooms
+                .iter()
+                .filter(|(_, rooms)| !rooms.is_empty())
+                .map(|(server, _)| server.clone())
+                .collect()
+        })
+    }
+
+    /// The voice rooms `user` is in, with their servers.
+    pub fn rooms_of(&self, user: &str) -> Vec<(i64, String)> {
+        self.replica(|r| {
+            r.rooms_of(user)
+                .into_iter()
+                .filter_map(|cid| r.rooms.get(&cid).map(|room| (cid, room.server.clone())))
+                .collect()
+        })
+    }
+
     /// Whether `user` is in the voice room `channel_id` of `server` now.
     pub fn in_room(&self, server: &str, channel_id: i64, user: &str) -> bool {
         self.replica(|r| r.in_room(server, channel_id, user))

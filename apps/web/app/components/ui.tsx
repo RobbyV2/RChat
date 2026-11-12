@@ -42,11 +42,13 @@ export function Chips<T extends string | number>({
   value,
   options,
   onChange,
+  disabled,
 }: {
   label: string
   value: T
   options: readonly { value: T; label: string }[]
   onChange: (v: T) => void
+  disabled?: boolean
 }) {
   return (
     <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
@@ -56,8 +58,9 @@ export function Chips<T extends string | number>({
           type="button"
           role="radio"
           aria-checked={value === o.value}
+          disabled={disabled}
           onClick={() => onChange(o.value)}
-          className={`cursor-pointer rounded-full border px-3 py-1.5 text-sm ${
+          className={`cursor-pointer rounded-full border px-3 py-1.5 text-sm disabled:cursor-default disabled:opacity-50 ${
             value === o.value
               ? 'border-transparent bg-secondary-container text-on-secondary-container'
               : 'border-outline text-on-surface-variant hover:bg-surface-container-highest'

@@ -688,7 +688,7 @@ impl Replica {
         self.index = index;
     }
 
-    fn rooms_of(&self, user: &str) -> Vec<i64> {
+    pub(super) fn rooms_of(&self, user: &str) -> Vec<i64> {
         self.index
             .user_rooms
             .get(user)

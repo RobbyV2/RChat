@@ -535,6 +535,7 @@ export const endpoints = (c: ApiClient) => ({
       keep_guests?: boolean
       banner_color?: string | null
       name_color?: string | null
+      public_read?: boolean | null
     }
   ) => c.req<ServerUpdated>('PATCH', `/servers/${seg(name)}`, patch),
   deleteServer: (name: string) => c.req<unknown>('DELETE', `/servers/${seg(name)}`),

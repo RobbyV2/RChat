@@ -1341,7 +1341,9 @@ async fn forwarded(
         (Some(channel), _) => {
             let server = channel.server();
             let server_name = server.lite().display_name.clone();
-            let hidden = server.lite().has_password || !crate::api::access::open_by_name(db).await;
+            let hidden = !crate::api::access::Reading::now(db)
+                .await
+                .reads(server.lite());
             match (dest == Some(server.name()), hidden) {
                 (true, _) => match channel.restricted(db).await? {
                     false => Some(Origin::Channel {
@@ -2495,7 +2497,7 @@ async fn search_sql(
         None => {
             conds.push("c.restrict_view = 0".to_string());
             let granted = granted_servers(db, proof).await?;
-            let public = crate::api::access::public_servers(db).await;
+            let public = crate::api::access::Reading::now(db).await.servers_sql();
             match granted.is_empty() {
                 true => conds.push(format!("c.server IN ({public})")),
                 false => {

@@ -101,11 +101,15 @@ fn hidden(e: ApiError) -> ApiError {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Via {
+    /// Anyone may read the server by its name.
     Public,
     Member,
     Password,
     Grant,
     Staff,
+    /// An account at the join step of a server anyone may join by its name but only members
+    /// read: it may join, and sees nothing of the server before it has.
+    Joinable,
 }
 
 #[derive(Clone, Copy)]
@@ -405,33 +409,64 @@ fn attempt_failed(attempt: Option<Attempt>) -> ApiError {
     }
 }
 
-/// Whether a name alone opens a server without a password: only while the instance lets
-/// everyone join. Otherwise such a server answers people who aren't members like a
-/// password-protected one, for reading as for joining.
-pub(crate) async fn open_by_name(db: &Db) -> bool {
-    joining(db).await == ServerJoining::Everyone
+/// How the instance opens servers to people who aren't members: its joining rule, and whether
+/// it lets servers be readable by them at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Reading {
+    joining: ServerJoining,
+    public: bool,
 }
 
-async fn joining(db: &Db) -> ServerJoining {
-    crate::api::policy::effective(db, None)
-        .await
-        .server_joining()
-}
-
-/// SQL for the keys of the servers that anyone may open by name right now.
-pub(crate) async fn public_servers(db: &Db) -> &'static str {
-    match open_by_name(db).await {
-        true => "SELECT name FROM servers WHERE password_hash IS NULL",
-        false => "SELECT name FROM servers WHERE 1 = 0",
+impl Reading {
+    pub(crate) async fn now(db: &Db) -> Reading {
+        let allowed = crate::api::policy::effective(db, None).await;
+        Reading {
+            joining: allowed.server_joining(),
+            public: allowed.public_reading(),
+        }
     }
+
+    /// Whether a name alone lets an account join the server: it has no password and the
+    /// instance lets everyone join.
+    fn joins_by_name(self, has_password: bool) -> bool {
+        !has_password && self.joining == ServerJoining::Everyone
+    }
+
+    /// Whether people who aren't members may read `server` by its name: its own option, or,
+    /// while that follows the instance, whether a name alone joins it. Never while the instance
+    /// has public reading off.
+    pub(crate) fn reads(self, server: &ServerSummaryLite) -> bool {
+        self.public
+            && server
+                .public_read
+                .unwrap_or(self.joins_by_name(server.has_password))
+    }
+
+    /// SQL for the keys of the servers that anyone may read by name.
+    pub(crate) fn servers_sql(self) -> &'static str {
+        match (self.public, self.joining) {
+            (false, _) => "SELECT name FROM servers WHERE 1 = 0",
+            (true, ServerJoining::Everyone) => {
+                "SELECT name FROM servers WHERE (public_read = 1 OR (public_read IS NULL AND password_hash IS NULL)) AND COALESCE(password_hash, '') <> '!purging'"
+            }
+            (true, ServerJoining::Invites | ServerJoining::Nobody) => {
+                "SELECT name FROM servers WHERE public_read = 1 AND COALESCE(password_hash, '') <> '!purging'"
+            }
+        }
+    }
+}
+
+/// A server's `public_read` column at `idx` of `row`: on, off, or not set.
+pub(crate) fn public_read(row: &AnyRow, idx: usize) -> sqlx::Result<Option<bool>> {
+    Ok(row.try_get::<Option<i64>, _>(idx)?.map(|on| on != 0))
 }
 
 async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Gate, ApiError> {
     let key = name.to_lowercase();
-    let joining = joining(db).await;
+    let reading = Reading::now(db).await;
     // What someone who shows no password gets where one could let them in: asked for it, or,
     // while nobody may join, the uniform denial.
-    let ask = || match joining {
+    let ask = || match reading.joining {
         ServerJoining::Everyone | ServerJoining::Invites => password_required(),
         ServerJoining::Nobody => denied(),
     };
@@ -440,7 +475,7 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
         Slot::Open(None) | Slot::Closed => None,
     };
     let row = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
     )
     .bind(&key)
     .fetch_optional(db)
@@ -499,13 +534,22 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
         has_password: hash.is_some(),
         banner_color: row.try_get(4)?,
         name_color: row.try_get(5)?,
+        public_read: public_read(&row, 6)?,
     };
     let mut ticket = None;
-    let closed = hash.is_some() || joining != ServerJoining::Everyone;
-    let via = match (closed, member) {
-        (_, true) => Via::Member,
-        (false, false) => Via::Public,
-        (true, false) => match (granted, who.site_admin, proof.password, checked) {
+    let readable = reading.reads(&lite);
+    // What lets someone in who is no member and shows nothing: a server anyone may read by its
+    // name, or, at the join step, one anyone may join by its name. Reading never joins, and
+    // joining by name never reads.
+    let open = match (proof.password, reading.joins_by_name(lite.has_password)) {
+        (Slot::Closed, _) | (Slot::Open(_), true) if readable => Some(Via::Public),
+        (Slot::Open(_), true) if who.username.is_some() => Some(Via::Joinable),
+        (Slot::Closed | Slot::Open(_), _) => None,
+    };
+    let via = match (member, open) {
+        (true, _) => Via::Member,
+        (false, Some(via)) => via,
+        (false, None) => match (granted, who.site_admin, proof.password, checked) {
             (true, _, _, _) => Via::Grant,
             (false, true, Slot::Closed, _) => Via::Staff,
             (false, _, Slot::Open(Some(_)), Some((true, _))) => Via::Password,
@@ -596,6 +640,35 @@ pub async fn resolve_invite(
             user: viewer.cloned(),
             ticket,
         }))),
+    }
+}
+
+/// The server `name` as `viewer` reads it without joining: only while people who aren't
+/// members may read it by its name. `None` otherwise, also for a name that doesn't exist.
+pub async fn resolve_reading(
+    db: &Db,
+    name: &str,
+    viewer: Option<&User>,
+) -> Result<Option<InviteView>, ApiError> {
+    let Gate {
+        lite,
+        via,
+        banned,
+        ticket,
+    } = match gate(db, name, Who::of(viewer), &Proof::none()).await {
+        Ok(gate) => gate,
+        Err(e) if e.failed() => return Err(e),
+        Err(_) => return Ok(None),
+    };
+    match (via, banned) {
+        (Via::Public, true) => Ok(Some(InviteView::Banned(lite))),
+        (Via::Public, false) => Ok(Some(InviteView::Open(Box::new(ServerAccess {
+            lite,
+            via,
+            user: viewer.cloned(),
+            ticket,
+        })))),
+        (Via::Member | Via::Password | Via::Grant | Via::Staff | Via::Joinable, _) => Ok(None),
     }
 }
 
@@ -864,6 +937,9 @@ impl ServerAccess {
     }
 
     pub async fn channel(self, db: &Db, id: i64) -> Result<ResolvedChannel, ApiError> {
+        if self.via == Via::Joinable {
+            return Err(not_found());
+        }
         let row = sqlx::query(
             "SELECT server, kind, name, slowmode_seconds FROM channels WHERE id = $1 AND server = $2",
         )
@@ -920,7 +996,7 @@ pub async fn resolve_channel(
 /// channels and servers being deleted get `not_found`.
 pub(crate) async fn webhook_channel(db: &Db, id: i64) -> Result<ResolvedChannel, ApiError> {
     let r = sqlx::query(
-        "SELECT c.server, c.kind, c.name, c.slowmode_seconds, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
+        "SELECT c.server, c.kind, c.name, c.slowmode_seconds, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
     )
     .bind(id)
     .fetch_optional(db)
@@ -935,6 +1011,7 @@ pub(crate) async fn webhook_channel(db: &Db, id: i64) -> Result<ResolvedChannel,
                 has_password: r.try_get::<Option<String>, _>(6)?.is_some(),
                 banner_color: r.try_get(7)?,
                 name_color: r.try_get(8)?,
+                public_read: public_read(&r, 9)?,
             },
             via: Via::Public,
             user: None,
@@ -1825,6 +1902,25 @@ pub(crate) async fn ws_voice_channel(
     }
 }
 
+/// The voice channel `id` as a guest holding `grant` (if any) sees it.
+pub(crate) async fn ws_guest_voice_channel(
+    db: &Db,
+    id: i64,
+    grant: Option<&str>,
+    limits: &Limits,
+) -> Result<ResolvedChannel, ApiError> {
+    let proof = Proof::grants(grant.map(str::to_string).into_iter().collect(), limits);
+    match resolve_channel(db, id, None, &proof).await {
+        Ok(channel) => Ok(channel),
+        Err(e) if e.failed() => Err(e),
+        Err(_) => Err(ApiError(
+            StatusCode::NOT_FOUND,
+            "Channel not found".to_string(),
+            None,
+        )),
+    }
+}
+
 /// Whether `username` is a member of `server`. Never answers a client.
 pub(crate) async fn is_member<'e, E>(ex: E, server: &str, username: &str) -> sqlx::Result<bool>
 where
@@ -1922,7 +2018,7 @@ pub(crate) async fn ws_server_password_hash(
 /// Never answers a client.
 pub(crate) async fn ws_server_lite(db: &Db, name: &str) -> sqlx::Result<Option<ServerSummaryLite>> {
     let row = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
     )
     .bind(name)
     .fetch_optional(db)
@@ -1935,6 +2031,7 @@ pub(crate) async fn ws_server_lite(db: &Db, name: &str) -> sqlx::Result<Option<S
             has_password: r.try_get::<Option<String>, _>(3)?.is_some(),
             banner_color: r.try_get(4)?,
             name_color: r.try_get(5)?,
+            public_read: public_read(&r, 6)?,
         })),
         None => Ok(None),
     }
@@ -3972,6 +4069,390 @@ mod tests {
         done(state, path).await;
     }
 
+    /// Sets a server's public reading option the way its owner's PATCH stores it.
+    async fn set_reading(db: &Db, server: &str, option: Option<bool>) {
+        let value = match option {
+            None => "NULL",
+            Some(true) => "1",
+            Some(false) => "0",
+        };
+        exec(
+            db,
+            &format!("UPDATE servers SET public_read = {value} WHERE name = '{server}'"),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn the_public_reading_option_decides_who_reads() {
+        let (state, path) = temp_state("public_reading").await;
+        joining_fixture(&state).await;
+        let f = fixture_ids(&state.db).await;
+        let db = &state.db;
+        let open_channel = scalar(db, "SELECT id FROM channels WHERE server = 'open'")
+            .await
+            .expect("channel");
+        let open_message = id_of(db, &format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({open_channel}, 'alice', 'hello there', 1) RETURNING id")).await;
+        exec(
+            db,
+            &format!(
+                "UPDATE messages SET content = 'hello there' WHERE id = {}",
+                f.vault_message
+            ),
+        )
+        .await;
+        let (client, server) = serve(&state).await;
+        let get =
+            async |path: &str, who: Option<&str>| client.call("GET", path, who, None, &[]).await;
+        let said = |reply: &Reply| {
+            json(reply)
+                .as_array()
+                .is_some_and(|all| all.iter().any(|m| m["content"] == "hello there"))
+        };
+        let servers = [
+            ("open", false, open_channel, open_message, "ope", "bob"),
+            (
+                "vault",
+                true,
+                f.vault_channel,
+                f.vault_message,
+                "vau",
+                "alice",
+            ),
+        ];
+        for joining in ["everyone", "invites", "nobody"] {
+            set_control(db, "server_joining", joining).await;
+            for site in [true, false] {
+                set_control(db, "public_reading", if site { "1" } else { "0" }).await;
+                for option in [None, Some(true), Some(false)] {
+                    for (name, has_password, channel, _, q, member) in servers {
+                        set_reading(db, name, option).await;
+                        let by_name = !has_password && joining == "everyone";
+                        let readable = site && option.unwrap_or(by_name);
+                        let at = format!("{joining}, site {site}, option {option:?}, {name}");
+                        for who in [Some("carol"), None] {
+                            let detail = get(&format!("/servers/{name}"), who).await;
+                            let messages = get(&format!("/channels/{channel}/messages"), who).await;
+                            let members = get(&format!("/servers/{name}/members"), who).await;
+                            let found = get(&format!("/server_search?q={q}"), who).await;
+                            match readable {
+                                true => {
+                                    assert_eq!(detail.0, 200, "{at}: {who:?} opens it");
+                                    assert_eq!(
+                                        json(&detail)["public_read"],
+                                        serde_json::json!(option),
+                                        "{at}"
+                                    );
+                                    assert!(said(&messages), "{at}: {who:?} reads it");
+                                    assert_eq!(members.0, 200, "{at}: {who:?}");
+                                    assert_eq!(json(&found)[0]["name"], name, "{at}: {who:?}");
+                                }
+                                false => {
+                                    let ghost = get("/servers/ghost", who).await;
+                                    assert_eq!(detail, ghost, "{at}: {who:?} can't tell it exists");
+                                    assert_eq!(answer(&detail), (404, NO_ENTRY), "{at}");
+                                    let nowhere = get("/channels/999999/messages", who).await;
+                                    assert_eq!(messages, nowhere, "{at}: {who:?}");
+                                    assert_eq!(
+                                        members,
+                                        get("/servers/ghost/members", who).await,
+                                        "{at}: {who:?}"
+                                    );
+                                    assert_eq!(answer(&found), (200, b"[]".as_slice()), "{at}");
+                                }
+                            }
+                            assert_eq!(
+                                ws_server_open(db, name, who, false, &Proof::none())
+                                    .await
+                                    .expect("gate"),
+                                readable,
+                                "{at}: {who:?} follows it live"
+                            );
+                            let posted = client
+                                .call(
+                                    "POST",
+                                    &format!("/channels/{channel}/messages"),
+                                    who,
+                                    Some(r#"{"content":"let me in"}"#),
+                                    &[],
+                                )
+                                .await;
+                            assert!(
+                                (400..500).contains(&posted.0),
+                                "{at}: {who:?} never posts ({})",
+                                posted.0
+                            );
+                            let hits = get(&format!("/search?q=hello&servers={name}"), None).await;
+                            assert_eq!(
+                                json(&hits).as_array().map(Vec::len),
+                                Some(usize::from(readable)),
+                                "{at}: a guest's message search"
+                            );
+                        }
+                        let asked: (u16, &[u8]) = match joining {
+                            "nobody" => (404, NO_ENTRY),
+                            _ => (401, NEEDS_PASSWORD),
+                        };
+                        let card = get(&format!("/invites/{name}"), Some("carol")).await;
+                        let guest_card = get(&format!("/invites/{name}"), None).await;
+                        match (by_name, readable) {
+                            (true, true) => {
+                                for card in [&card, &guest_card] {
+                                    assert_eq!(json(card)["status"], "joinable", "{at}");
+                                    assert_eq!(
+                                        json(card)["preview"].as_array().map(Vec::len),
+                                        Some(1),
+                                        "{at}: the card shows what anyone can read"
+                                    );
+                                }
+                            }
+                            (true, false) => {
+                                assert_eq!(json(&card)["status"], "joinable", "{at}");
+                                assert_eq!(
+                                    (
+                                        json(&card)["preview"].as_array().map(Vec::len),
+                                        json(&card)["preview_channel"].is_null()
+                                    ),
+                                    (Some(0), true),
+                                    "{at}: an account may join by name and sees nothing before"
+                                );
+                                assert_eq!(answer(&guest_card), asked, "{at}: a guest can't join");
+                            }
+                            (false, true) => {
+                                for card in [&card, &guest_card] {
+                                    assert_eq!(
+                                        json(card)["status"],
+                                        "readable",
+                                        "{at}: reading opens the card, not joining"
+                                    );
+                                    assert_eq!(
+                                        json(card)["preview"].as_array().map(Vec::len),
+                                        Some(1),
+                                        "{at}"
+                                    );
+                                }
+                            }
+                            (false, false) => {
+                                assert_eq!(answer(&card), asked, "{at}: reading is not joining");
+                                assert_eq!(answer(&guest_card), asked, "{at}");
+                            }
+                        }
+                        let guest_access = client
+                            .call(
+                                "POST",
+                                &format!("/servers/{name}/guest_access"),
+                                None,
+                                Some("{}"),
+                                &[],
+                            )
+                            .await;
+                        match (readable, joining) {
+                            (true, _) => assert_eq!(
+                                answer(&guest_access),
+                                (200, br#"{"grant":null}"#.as_slice()),
+                                "{at}: a guest reads without a grant"
+                            ),
+                            (false, "nobody") => {
+                                assert_eq!(answer(&guest_access), (404, JOINING_OFF), "{at}")
+                            }
+                            (false, _) => assert_eq!(
+                                answer(&guest_access),
+                                (401, NEEDS_PASSWORD),
+                                "{at}: asked like a password server"
+                            ),
+                        }
+                        let join = client
+                            .call(
+                                "POST",
+                                &format!("/servers/{name}/join"),
+                                Some("dave"),
+                                None,
+                                &[],
+                            )
+                            .await;
+                        match (by_name, joining) {
+                            (true, _) => {
+                                assert_eq!(join.0, 200, "{at}: a name still joins it");
+                                let left = client
+                                    .call(
+                                        "POST",
+                                        &format!("/servers/{name}/leave"),
+                                        Some("dave"),
+                                        None,
+                                        &[],
+                                    )
+                                    .await;
+                                assert_eq!(left.0, 200, "{at}");
+                            }
+                            (false, "nobody") => {
+                                assert_eq!(answer(&join), (404, JOINING_OFF), "{at}")
+                            }
+                            (false, _) => assert_eq!(answer(&join), (401, NEEDS_PASSWORD), "{at}"),
+                        }
+                        for who in [member, "root"] {
+                            assert_eq!(
+                                get(&format!("/servers/{name}"), Some(who)).await.0,
+                                200,
+                                "{at}: {who} always opens it"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        set_control(db, "server_joining", "invites").await;
+        set_control(db, "public_reading", "0").await;
+        for name in ["open", "vault"] {
+            set_reading(db, name, Some(true)).await;
+        }
+        for &(method, route, body, headers) in SERVER_ROUTES {
+            for token in [Some("carol"), None] {
+                let mut replies = Vec::new();
+                for name in ["open", "vault", "ghost"] {
+                    let path = route.replace("{s}", name);
+                    replies.push(client.call(method, &path, token, body, headers).await);
+                }
+                assert_eq!(replies[0], replies[2], "{method} {route} as {token:?}");
+                assert_eq!(replies[1], replies[2], "{method} {route} as {token:?}");
+            }
+        }
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn owners_set_who_can_read_their_server() {
+        let (state, path) = temp_state("public_read_patch").await;
+        joining_fixture(&state).await;
+        let db = &state.db;
+        let (client, server) = serve(&state).await;
+        let patch = async |who: &str, name: &str, body: &str| {
+            client
+                .call(
+                    "PATCH",
+                    &format!("/servers/{name}"),
+                    Some(who),
+                    Some(body),
+                    &[],
+                )
+                .await
+        };
+        let stored = async |name: &str| {
+            scalar(
+                db,
+                &format!("SELECT public_read FROM servers WHERE name = '{name}'"),
+            )
+            .await
+        };
+        let mut rx = state.hub.subscribe();
+        for (body, option) in [
+            (r#"{"public_read":true}"#, Some(true)),
+            (r#"{}"#, Some(true)),
+            (r##"{"banner_color":"#111111"}"##, Some(true)),
+            (r#"{"public_read":false}"#, Some(false)),
+            (r#"{"public_read":null}"#, None),
+        ] {
+            let reply = patch("alice", "open", body).await;
+            assert_eq!(reply.0, 200, "{body}");
+            assert_eq!(
+                json(&reply)["public_read"],
+                serde_json::json!(option),
+                "{body}"
+            );
+            assert_eq!(stored("open").await, option.map(i64::from), "{body}");
+            let detail = client
+                .call("GET", "/servers/open", Some("alice"), None, &[])
+                .await;
+            assert_eq!(
+                json(&detail)["public_read"],
+                serde_json::json!(option),
+                "{body}"
+            );
+            let mut heard = None;
+            while let Ok(ev) = rx.try_recv() {
+                if let crate::ws::WsEvent::ServerUpdated { server } = ev {
+                    heard = Some(server.public_read);
+                }
+            }
+            assert_eq!(heard, Some(option), "{body}: members hear it");
+        }
+        let on = patch("alice", "vault", r#"{"public_read":true}"#).await;
+        assert_eq!(
+            (on.0, json(&on)["has_password"].clone()),
+            (200, serde_json::json!(true)),
+            "a password server may be readable too, and keeps its password"
+        );
+        assert_eq!(
+            patch("root", "rchat", r#"{"public_read":false}"#).await.0,
+            200,
+            "the built-in server too"
+        );
+        let words: Vec<String> = sqlx::query(
+            "SELECT details FROM audit_log WHERE server = 'open' AND details LIKE '%public_read%' ORDER BY id",
+        )
+        .fetch_all(db)
+        .await
+        .expect("audit")
+        .iter()
+        .map(|r| r.try_get::<String, _>(0).expect("details"))
+        .collect();
+        assert_eq!(
+            words.len(),
+            3,
+            "each change is in the server's audit log: {words:?}"
+        );
+        assert!(
+            words[0].contains("default") && words[0].contains("on"),
+            "{words:?}"
+        );
+
+        assert_eq!(
+            answer(&patch("bob", "open", r#"{"public_read":true}"#).await),
+            (403, br#"{"error":"Missing permission"}"#.as_slice()),
+            "a member without the access permission"
+        );
+        assert_eq!(
+            answer(&patch("carol", "closed", r#"{"public_read":true}"#).await),
+            (404, NO_ENTRY),
+            "someone who can't open the server"
+        );
+        assert_eq!(
+            patch("alice", "open", r#"{"public_read":"yes"}"#).await.0,
+            422
+        );
+        assert_eq!(stored("open").await, None);
+
+        set_control(db, "public_reading", "0").await;
+        let refused = patch("alice", "open", r#"{"public_read":true}"#).await;
+        assert_eq!(
+            answer(&refused),
+            (
+                403,
+                br#"{"error":"Public reading is turned off on this site","reason":{"kind":"off_site","control":"public_reading"}}"#
+                    .as_slice()
+            )
+        );
+        assert_eq!(stored("open").await, None, "nothing was stored");
+        for (body, option) in [
+            (r#"{"public_read":false}"#, Some(0)),
+            (r#"{"public_read":null}"#, None),
+        ] {
+            assert_eq!(patch("alice", "open", body).await.0, 200, "{body}");
+            assert_eq!(
+                stored("open").await,
+                option,
+                "{body}: off and default still work"
+            );
+        }
+        assert_eq!(
+            stored("vault").await,
+            Some(1),
+            "turning the site's switch off changes no server's own option"
+        );
+        server.abort();
+        done(state, path).await;
+    }
+
     #[tokio::test]
     async fn server_search_answers_404_when_off() {
         let (state, path) = temp_state("search_switch").await;
@@ -4400,6 +4881,84 @@ mod tests {
                 .iter()
                 .all(|m| m.get("joined_via").is_none())
         );
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn guests_spend_limited_passwords_like_everyone() {
+        let (state, path) = temp_state("access_guest_tickets").await;
+        fixture(&state).await;
+        let db = &state.db;
+        for name in ["carol", "dave"] {
+            user(db, name).await;
+        }
+        let (client, server) = serve(&state).await;
+        let created = json(
+            &client
+                .call(
+                    "POST",
+                    "/servers/vault/passwords",
+                    Some("alice"),
+                    Some(r#"{"label":"Two","max_uses":2}"#),
+                    &[],
+                )
+                .await,
+        );
+        let id = created["id"].as_i64().expect("id");
+        let body = format!(
+            r#"{{"password":"{}"}}"#,
+            created["password"].as_str().expect("password")
+        );
+        let ask = |viewer: Option<&'static str>, route: &'static str| {
+            let (client, body) = (&client, body.clone());
+            async move { client.call("POST", route, viewer, Some(&body), &[]).await }
+        };
+        let first = ask(None, "/servers/vault/guest_access").await;
+        assert_eq!(first.0, 200, "{}", String::from_utf8_lossy(&first.2));
+        let first = json(&first)["grant"].as_str().expect("grant").to_string();
+        let uses = format!("SELECT uses FROM server_passwords WHERE id = {id}");
+        assert_eq!(scalar(db, &uses).await, Some(1), "a guest's use counts");
+        let joined = ask(Some("carol"), "/servers/vault/join").await;
+        assert_eq!(joined.0, 200, "a member's use counts the same way");
+        assert_eq!(scalar(db, &uses).await, Some(2));
+        let refused = ask(None, "/servers/vault/guest_access").await;
+        assert_eq!(refused.0, 404, "used up, it lets no new guest in");
+        assert_eq!(
+            refused.2,
+            ask(Some("dave"), "/servers/vault/join").await.2,
+            "nor anyone else, with the same answer"
+        );
+        assert_eq!(scalar(db, &uses).await, Some(2));
+        let view = |grant: String| {
+            let client = &client;
+            async move {
+                client
+                    .call(
+                        "GET",
+                        "/servers/vault",
+                        None,
+                        None,
+                        &[("x-guest-grant", &grant)],
+                    )
+                    .await
+                    .0
+            }
+        };
+        assert_eq!(
+            view(first.clone()).await,
+            200,
+            "the guest who got in keeps reading"
+        );
+        exec(
+            db,
+            &format!(
+                "UPDATE server_passwords SET expires_at = {} WHERE id = {id}",
+                now() - 1
+            ),
+        )
+        .await;
+        assert_eq!(view(first).await, 404, "until the password ends");
         server.abort();
         done(state, path).await;
     }

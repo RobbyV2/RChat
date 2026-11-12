@@ -404,6 +404,10 @@ pub enum WsEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<crate::api::Reason>,
     },
+    /// The name a guest connection has in voice rooms, sent to it first.
+    GuestName {
+        name: String,
+    },
     DmCreated {
         dm_id: i64,
         dm_users: Vec<String>,

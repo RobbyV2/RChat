@@ -675,6 +675,7 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
             server={name}
             hasPassword={detail.has_password}
             canRemove
+            publicRead={detail.public_read ?? null}
             refresh={() => {
               void refresh()
               reloadMembers()

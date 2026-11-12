@@ -5,6 +5,7 @@ use super::access::{Access, channel_gate};
 use super::conn::{Out, sent};
 use super::event::{Updated, WsEvent};
 use super::filter::event_channel;
+use super::guests::{ACCOUNT_FOR_VOICE, guest_voice};
 use super::p2p::{CALLING_TOO_OFTEN, RECONNECTING, TOO_FAST};
 use super::protocol::{ClientMsg, Refused};
 use super::{CallKind, SIGNAL_MAX};
@@ -264,39 +265,7 @@ pub(super) async fn voice_msg(
             channel_id,
             dm_id,
             payload,
-        } => {
-            let to = to.to_lowercase();
-            let size = serde_json::to_string(&payload).map_or(usize::MAX, |p| p.len());
-            if size > SIGNAL_MAX {
-                return Err("Signal too large".into());
-            }
-            if !state.hub.signal_ok(user, size) {
-                return Err(TOO_FAST.into());
-            }
-            if !state.hub.rtc_shared(user, &to, channel_id, dm_id) {
-                return Err("No shared voice session".into());
-            }
-            if let Some(cid) = channel_id
-                && shows_video(&payload)
-                && let Some(server) = state.hub.room_server(cid)
-                && crate::api::access::timed_out(&state.db, &server, user)
-                    .await?
-                    .is_some()
-            {
-                return Err(crate::api::access::TIMED_OUT.into());
-            }
-            if dm_id.is_some() {
-                crate::api::blocks::check_dm(&state.db, user, &to).await?;
-            }
-            state.hub.broadcast(WsEvent::RtcSignal {
-                to,
-                from: user.to_string(),
-                channel_id,
-                dm_id,
-                payload,
-            });
-            Ok(())
-        }
+        } => relay_signal(state, user, to, channel_id, dm_id, payload).await,
         ClientMsg::Auth { token: _ }
         | ClientMsg::Viewing { server: _ }
         | ClientMsg::Subscribe {
@@ -317,6 +286,48 @@ pub(super) async fn voice_msg(
         | ClientMsg::Typing { scope: _ }
         | ClientMsg::TypingStop { scope: _ } => Ok(()),
     }
+}
+
+/// Passes an RTC signal from `user` to `to` when they share the voice room or the call.
+pub(super) async fn relay_signal(
+    state: &AppState,
+    user: &str,
+    to: String,
+    channel_id: Option<i64>,
+    dm_id: Option<i64>,
+    payload: serde_json::Value,
+) -> Result<(), Refused> {
+    let to = to.to_lowercase();
+    let size = serde_json::to_string(&payload).map_or(usize::MAX, |p| p.len());
+    if size > SIGNAL_MAX {
+        return Err("Signal too large".into());
+    }
+    if !state.hub.signal_ok(user, size) {
+        return Err(TOO_FAST.into());
+    }
+    if !state.hub.rtc_shared(user, &to, channel_id, dm_id) {
+        return Err("No shared voice session".into());
+    }
+    if let Some(cid) = channel_id
+        && shows_video(&payload)
+        && let Some(server) = state.hub.room_server(cid)
+        && crate::api::access::timed_out(&state.db, &server, user)
+            .await?
+            .is_some()
+    {
+        return Err(crate::api::access::TIMED_OUT.into());
+    }
+    if dm_id.is_some() {
+        crate::api::blocks::check_dm(&state.db, user, &to).await?;
+    }
+    state.hub.broadcast(WsEvent::RtcSignal {
+        to,
+        from: user.to_string(),
+        channel_id,
+        dm_id,
+        payload,
+    });
+    Ok(())
 }
 
 /// Whether an RTC signal turns on (or announces) a camera or a screen share.
@@ -390,10 +401,15 @@ pub(super) async fn voice_cmd(
             | ClientMsg::CallLeave { dm_id: _ }
             | ClientMsg::CallDecline { dm_id: _ }
     );
-    match (&access.user, access.retry.pending() && !leaving) {
-        (Some(_), true) => Err(RECONNECTING.into()),
-        (Some(user), false) => voice_msg(state, user, conn, msg).await,
-        (None, _) => Err("Create an account to join voice".into()),
+    match (
+        &access.user,
+        &access.guest,
+        access.retry.pending() && !leaving,
+    ) {
+        (Some(_), _, true) | (None, Some(_), true) => Err(RECONNECTING.into()),
+        (Some(user), _, false) => voice_msg(state, user, conn, msg).await,
+        (None, Some(name), false) => guest_voice(state, access, name, conn, msg).await,
+        (None, None, _) => Err(ACCOUNT_FOR_VOICE.into()),
     }
 }
 

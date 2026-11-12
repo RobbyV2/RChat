@@ -1,5 +1,6 @@
 import { shareOrigin } from './instances'
 import { replaceSpoilers } from './spoilers'
+import type { InviteStatus } from './types'
 
 export interface InviteTarget {
   server: string
@@ -32,6 +33,14 @@ const hex = (c: string) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
 const strictEncode = (s: string) => encodeURIComponent(s).replace(/[!'()*~]/g, hex)
 
 const queryEncode = (s: string) => encodeURIComponent(s).replace(/[^%A-Za-z0-9]/g, hex)
+
+// What an invite card does by itself after a sign-in that started on it. An account that may
+// only read the server is not asked for a password it may not have.
+export const autoStep = (status: InviteStatus, guest: boolean): 'open' | 'stop' | 'join' => {
+  if (status === 'member') return 'open'
+  if (status === 'banned' || (status === 'readable' && !guest)) return 'stop'
+  return 'join'
+}
 
 export const invitePath = (server: string) => `/invite/${strictEncode(server)}/`
 

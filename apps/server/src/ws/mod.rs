@@ -13,6 +13,7 @@ pub mod calls;
 mod conn;
 mod event;
 mod filter;
+mod guests;
 mod p2p;
 mod protocol;
 mod repost;
@@ -23,6 +24,7 @@ pub(crate) use access::LogGate;
 pub(crate) use calls::end_dm_call;
 pub use conn::{__path_handler, handler};
 pub use event::{CallPeer, CallRelays, EditStub, Updated, UserScope, WsEvent, to_bus_json};
+pub(crate) use guests::is_guest;
 pub use protocol::{
     CLOSE_NO_AUTH, CLOSE_TOO_MANY, CLOSE_TOO_MANY_ADDR, CLOSE_TOO_MANY_GUESTS, CLOSE_TOO_OFTEN,
 };
@@ -88,13 +90,23 @@ pub(crate) async fn evict_unviewable(state: &AppState, server: &str, channel_id:
             continue;
         }
         for user in users {
-            let open = ws_server_open(&state.read(), server, Some(&user), false, &Proof::none())
-                .await
-                .unwrap_or(false);
+            // A guest's own connection takes it out when it stops following the server.
+            let open = is_guest(&user)
+                || ws_server_open(&state.read(), server, Some(&user), false, &Proof::none())
+                    .await
+                    .unwrap_or(false);
             if !open || !ws_voice_viewable(&state.read(), server, cid, &user).await {
                 state.hub.evict_voice(&user, cid);
             }
         }
+    }
+}
+
+/// Takes out of voice everyone who can no longer open the server of their room, after the
+/// instance's rules for reading servers changed.
+pub(crate) async fn evict_closed_voice(state: &AppState) {
+    for server in state.hub.room_servers() {
+        evict_unviewable(state, &server, None).await;
     }
 }
 

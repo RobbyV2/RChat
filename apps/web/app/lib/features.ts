@@ -70,6 +70,7 @@ export const siteSettings = (s: SiteSettings): SiteSettings => {
     ...switches,
     registration: registrationOf(sent.registration),
     server_joining: joiningOf(sent.server_joining),
+    public_reading: sent.public_reading !== false,
     upload_expiry_max_days:
       Number.isInteger(sent.upload_expiry_max_days) && (sent.upload_expiry_max_days as number) >= 0
         ? (sent.upload_expiry_max_days as number)

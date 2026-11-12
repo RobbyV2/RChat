@@ -46,7 +46,15 @@ describe('servers reducers', () => {
       has_password: true,
       banner_color: '#222222',
       name_color: '#333333',
+      public_read: null,
     })
+    for (const public_read of [true, false, null]) {
+      const read = applyServerChange(s, {
+        type: 'server_updated',
+        server: { ...lite(), public_read },
+      })
+      expect(read.servers!.s.public_read).toBe(public_read)
+    }
     expect(out.servers!.t).toBe(s.servers.t)
     expect(out.me!.servers).toEqual([
       {

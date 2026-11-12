@@ -42,6 +42,7 @@ import type { CallView } from '../lib/p2p/calls'
 import { P2pBadge } from './p2p/p2p_badge'
 import { useMask, userRefFor, useStore, voiceMutedIn } from '../lib/store'
 import { accountPrompt } from '../lib/features'
+import { isGuestName, voiceSelf } from '../lib/guest_voice'
 import { bannerColor, cachedProfile, profileKey } from '../lib/profile'
 import {
   autoFocus,
@@ -61,7 +62,7 @@ import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, useMedia } from './context_menu'
 import { Masked, useEscape, useOwn } from './ui'
 import { NameWithUsername } from './display_name'
-import { nameWithUsername } from '../lib/display_name'
+import { maskedName } from '../lib/display_name'
 import { ownsP2pServer } from '../lib/p2p/server/types'
 import { ChannelTopic } from './channel_topic'
 import { useMyTimeoutEnds } from './timeout_dialog'
@@ -349,7 +350,7 @@ export function Tile({
   const box = height ?? (compact ? 72 : 240)
   const avatar = compact ? 32 : Math.round(Math.max(40, Math.min(96, box * 0.3)))
   const mask = useMask(useOwn(user.username))
-  const name = mask(nameWithUsername(user))
+  const name = maskedName(user, mask)
   const label = screen ? `${name}'s screen` : name
   return (
     <div
@@ -425,9 +426,11 @@ export function Tile({
         className="absolute inset-0 rounded-xl outline-offset-[-3px] transition-colors hover:bg-on-surface/5 focus-visible:outline-2 focus-visible:outline-primary"
       />
       <span
-        {...(tile.local ? {} : profileTrigger(user, server))}
-        title={tile.local ? undefined : 'View profile'}
-        className={`absolute bottom-1.5 left-1.5 flex max-w-[calc(100%-0.75rem)] cursor-pointer items-center gap-1 rounded-md bg-scrim/70 font-medium text-white outline-offset-2 hover:bg-scrim/85 focus-visible:outline-2 focus-visible:outline-primary ${
+        {...(tile.local || isGuestName(user.username) ? {} : profileTrigger(user, server))}
+        title={tile.local || isGuestName(user.username) ? undefined : 'View profile'}
+        className={`absolute bottom-1.5 left-1.5 flex max-w-[calc(100%-0.75rem)] ${
+          isGuestName(user.username) ? '' : 'cursor-pointer'
+        } items-center gap-1 rounded-md bg-scrim/70 font-medium text-white outline-offset-2 hover:bg-scrim/85 focus-visible:outline-2 focus-visible:outline-primary ${
           compact ? 'px-1.5 py-0.5 text-[11px]' : 'px-2 py-1 text-xs'
         }`}
       >
@@ -838,7 +841,7 @@ export function VoiceGrid({
   useStore(s => s.memberInfo)
   useStore(s => s.dms)
   const me = useStore(s => s.me)
-  const guest = useStore(s => s.guest)
+  const mine = useStore(voiceSelf)
   const ask = useStore(s => accountPrompt(s.settings))
   const voice = useStore(s => s.voice)
   const call = useStore(s => s.call)
@@ -876,7 +879,7 @@ export function VoiceGrid({
   const forDm = dmId !== undefined && call?.dmId === dmId ? call : null
   const p2pKind = forDm?.kind === 'p2p'
   const mgr = forRoom || forVoice ? callRtc : rtc
-  const self = forRoom || forVoice ? (myIk ?? '') : me?.username
+  const self = forRoom || forVoice ? (myIk ?? '') : (mine ?? undefined)
   const joined =
     channelId !== undefined
       ? voice?.channelId === channelId
@@ -1158,7 +1161,7 @@ export function VoiceGrid({
           <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
             <p className="text-lg font-semibold text-on-surface">No one is here yet</p>
             <p className="text-sm text-on-surface-variant">
-              {guest && !forVoice
+              {mine === null && !forVoice
                 ? `${ask} to join voice.`
                 : forVoice && p2pElsewhere
                   ? 'P2P is open in another tab.'
@@ -1188,7 +1191,7 @@ export function VoiceGrid({
             )
           ) : (
             channelId !== undefined &&
-            !guest && (
+            mine !== null && (
               <button
                 onClick={() => {
                   if (view?.kind === 'channel') void joinVoice(view.server, channelId)

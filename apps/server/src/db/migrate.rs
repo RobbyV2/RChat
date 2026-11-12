@@ -114,6 +114,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "upload_expiry_by TEXT"),
     ("users", "username_key TEXT"),
     ("users", "username_key_alt TEXT"),
+    ("servers", "public_read {INT}"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -200,7 +201,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// (`idx_messages_dm`, `idx_messages_thread`).
 /// 26: reports (`reports`, `report_events`, `report_mutes`, `instance_report_mutes`,
 /// `report_pace`).
-pub const SCHEMA_VERSION: i64 = 26;
+/// 27: `servers.public_read`, the per-server "anyone can read this server" option.
+pub const SCHEMA_VERSION: i64 = 27;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 14] {

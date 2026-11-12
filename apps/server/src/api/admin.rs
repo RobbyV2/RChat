@@ -11,8 +11,8 @@ use crate::api::access::{MsgScope, not_found, staff_message};
 use crate::api::controls::{ConfigRecords, Control, ROWS_SQL};
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
-    DmCreation, FRIEND_REQUESTS, Policy, SERVER_CREATORS, SERVER_SEARCH, ServerCreation,
-    ServerJoining,
+    DmCreation, FRIEND_REQUESTS, PUBLIC_READING, Policy, SERVER_CREATORS, SERVER_SEARCH,
+    ServerCreation, ServerJoining,
 };
 use crate::api::reports::forms::{self, Form, ReportForms};
 use crate::api::{
@@ -255,6 +255,7 @@ pub struct SettingsPatch {
     server_search: Option<bool>,
     dm_creation: Option<DmCreation>,
     friend_requests: Option<bool>,
+    public_reading: Option<bool>,
 }
 
 pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
@@ -271,13 +272,14 @@ pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
 /// reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding,
 /// password sign-in and sign-up, the media server, P2P, whether the web app this instance
 /// serves offers other instances, who may create servers, how people join them, whether
-/// they can be searched, who may start direct conversations and whether friend requests are
-/// on. A switched-off feature's endpoints answer 404, except that
+/// they can be searched, who may start direct conversations, whether friend requests are
+/// on and whether servers can be readable by people who aren't members. A switched-off
+/// feature's endpoints answer 404, except that
 /// uploads, P2P attachments and outgoing webhooks answer 403, guests get 401 while guest
 /// access is off, and `client_other_instances` gates no endpoint. No authentication. Values
 /// may lag a change by up to 5 seconds per server process; live changes also arrive as the
 /// `settings_changed` WebSocket event. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/settings", tag = "Instance", responses((status = 200, description = "Site-wide switches: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, guest access, outgoing webhooks, reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding, password sign-in, the media server, P2P, other instances in this instance's web app, `registration`, `server_creation`, `server_joining`, `server_search`, `dm_creation` and `friend_requests`", body = Settings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(get, path = "/api/v1/settings", tag = "Instance", responses((status = 200, description = "Site-wide switches: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, guest access, outgoing webhooks, reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding, password sign-in, the media server, P2P, other instances in this instance's web app, `registration`, `server_creation`, `server_joining`, `server_search`, `dm_creation`, `friend_requests` and `public_reading`", body = Settings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
     Json(Settings::cached(&state.db).await)
 }
@@ -320,6 +322,7 @@ pub(crate) async fn patch_settings(
         server_search,
         dm_creation,
         friend_requests,
+        public_reading,
     } = req;
     if upload_expiry_max_days.is_some_and(|d| !(0..=upload_expiry::CAP_DAYS_MAX).contains(&d)) {
         return Err(bad("The longest file expiry must be 0 to 365 days"));
@@ -369,6 +372,7 @@ pub(crate) async fn patch_settings(
         ("outgoing_webhooks", outgoing_webhooks),
         (SERVER_SEARCH, server_search),
         (FRIEND_REQUESTS, friend_requests),
+        (PUBLIC_READING, public_reading),
     ]
     .into_iter()
     .chain(
@@ -704,7 +708,7 @@ pub(crate) async fn list_servers(
     let fuzzy = is_fuzzy(&q);
     let (rows, next) = name_page(
         &state.read(),
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging'",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging'",
         "name",
         &page,
     )
@@ -723,6 +727,7 @@ pub(crate) async fn list_servers(
             has_password: r.try_get::<Option<String>, _>(3)?.is_some(),
             banner_color: r.try_get(4)?,
             name_color: r.try_get(5)?,
+            public_read: crate::api::access::public_read(r, 6)?,
         });
     }
     Ok(Paged(servers, next))
@@ -1321,7 +1326,7 @@ pub(crate) async fn user_servers(
     require_site_admin(&user)?;
     let page = query.page()?;
     let rows = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color FROM servers WHERE creator = $1 AND name > $2 AND COALESCE(password_hash, '') <> '!purging' ORDER BY name LIMIT $3 OFFSET $4",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read FROM servers WHERE creator = $1 AND name > $2 AND COALESCE(password_hash, '') <> '!purging' ORDER BY name LIMIT $3 OFFSET $4",
     )
     .bind(username.to_lowercase())
     .bind(page.after.clone().unwrap_or_default())
@@ -1342,6 +1347,7 @@ pub(crate) async fn user_servers(
             has_password: r.try_get::<Option<String>, _>(3)?.is_some(),
             banner_color: r.try_get(4)?,
             name_color: r.try_get(5)?,
+            public_read: crate::api::access::public_read(r, 6)?,
         });
     }
     servers.truncate(page.limit as usize);

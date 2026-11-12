@@ -745,6 +745,7 @@ fn indexes_follow_every_op() {
                     has_password: false,
                     banner_color: None,
                     name_color: None,
+                    public_read: None,
                 },
             },
         },

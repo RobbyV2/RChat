@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react'
 import { displayNameError, showsUsername } from '../lib/display_name'
+import { isGuestName } from '../lib/guest_voice'
 import { useStore } from '../lib/store'
 import type { UserRef } from '../lib/types'
 import { FieldError, Masked, fieldCls, filledBtn } from './ui'
@@ -18,6 +19,7 @@ export function NameWithUsername({
   own?: boolean
 }) {
   const by = own === undefined ? user.username : null
+  if (isGuestName(user.username)) return <span>{user.display_name}</span>
   if (!showsUsername(user)) return <Masked text={user.display_name} by={by} own={own} />
   return (
     <span className="inline-flex max-w-full min-w-0 items-baseline">

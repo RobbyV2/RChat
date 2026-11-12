@@ -46,6 +46,8 @@ export interface ServerSummaryLite {
   has_password: boolean
   banner_color?: string | null
   name_color?: string | null
+  // "Anyone can read this server": on, off, or null or absent to follow the site.
+  public_read?: boolean | null
 }
 
 export type PasswordMembers = 'keep' | 'remove'
@@ -206,6 +208,8 @@ export interface ServerDetail {
   has_password: boolean
   banner_color: string | null
   name_color: string | null
+  // "Anyone can read this server": on, off, or null or absent to follow the site.
+  public_read?: boolean | null
   channels: Channel[]
   categories?: Category[]
   layout_version?: number
@@ -225,7 +229,9 @@ export interface RoleLimits {
   channel_denies: number[]
 }
 
-export type InviteStatus = 'member' | 'banned' | 'joinable'
+// readable: anyone may read the server, but joining it needs a password or invite (or nobody
+// new may join).
+export type InviteStatus = 'member' | 'banned' | 'joinable' | 'readable'
 
 export interface Invite {
   server: ServerSummaryLite
@@ -567,6 +573,8 @@ export interface SiteSettings {
   upload_expiry_max_days?: number
   // How people get into servers by themselves. Absent on older servers: everyone.
   server_joining?: ServerJoining
+  // Whether server owners can make servers publicly readable. Absent on older servers: on.
+  public_reading?: boolean
 }
 
 export type Registration = 'open' | 'sso' | 'closed'
@@ -894,6 +902,7 @@ export type WsEvent =
     }
   | ({ type: 'voice_ended'; reason: string } & Scoped)
   | { type: 'error'; message: string }
+  | { type: 'guest_name'; name: string }
   | { type: 'dm_created'; dm_id: number; dm_users: string[] }
   | { type: 'dm_closed'; username: string; dm_id: number }
   | { type: 'dm_reopened'; username: string; dm_id: number }

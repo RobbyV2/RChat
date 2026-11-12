@@ -841,6 +841,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     home.ws.onStatus = wsStatus => {
       set({ wsStatus })
       if (wsStatus !== 'green') {
+        if (get().guestVoiceName !== null) set({ guestVoiceName: null })
         forgetTyping(false)
         if (downSince === null) downSince = Date.now()
         if (get().voice || get().call) endRtc()
@@ -1400,6 +1401,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         guest: false,
         guestGrants: {},
         guestNames: {},
+        guestVoiceName: null,
         voice: null,
         call: null,
         selfAudio: SELF_AUDIO_IDLE,

@@ -13,7 +13,7 @@ use crate::api::access::perms::{
 };
 use crate::api::access::{
     BANNED, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, forbidden, is_member,
-    member_role, resolve_channel, resolve_invite, resolve_join, resolve_server,
+    member_role, resolve_channel, resolve_invite, resolve_join, resolve_reading, resolve_server,
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
@@ -129,6 +129,15 @@ pub struct ServerPatch {
     #[serde(default, deserialize_with = "crate::api::auth::present")]
     #[schema(value_type = Option<String>, example = "#f8fafc")]
     name_color: Option<Option<String>>,
+    /// "Anyone can read this server": `true` lets people who aren't members read the server by
+    /// its name without joining (guests too, while guest access is on), `false` never does,
+    /// `null` follows the instance again (readable while the server has no password and
+    /// `server_joining` is `everyone`). It lets nobody join or post; readers may use its voice
+    /// channels. Omit to leave it unchanged. `true` is refused while the instance's
+    /// `public_reading` is off.
+    #[serde(default, deserialize_with = "crate::api::auth::present")]
+    #[schema(value_type = Option<bool>)]
+    public_read: Option<Option<bool>>,
 }
 
 /// The server after an update, plus how many members a password change removed.
@@ -294,14 +303,17 @@ pub struct ServerBan {
 }
 
 /// The viewer's relation to an invited server: `member` (already a member), `banned` (banned
-/// from the server) or `joinable` (may join now: no password, or the invite password or a guest
-/// grant was accepted). Guests never get `member` or `banned`.
+/// from the server), `joinable` (may join now: no password, or the invite password or a guest
+/// grant was accepted) or `readable` (may read it, as anyone may, but what was shown doesn't
+/// join it: joining needs a password or invite, or nobody new may join). Guests never get
+/// `member` or `banned`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InviteStatus {
     Member,
     Banned,
     Joinable,
+    Readable,
 }
 
 /// An invite card for a server.
@@ -915,6 +927,7 @@ async fn server_detail(
         has_password,
         banner_color,
         name_color,
+        public_read,
     } = access.lite().clone();
     let rows = sqlx::query(
         "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position FROM channels WHERE server = $1 ORDER BY position, id",
@@ -958,6 +971,7 @@ async fn server_detail(
         has_password,
         banner_color,
         name_color,
+        public_read,
         channels,
         categories,
         layout_version,
@@ -1501,6 +1515,7 @@ async fn found_server(
             has_password: password_hash.is_some(),
             banner_color: None,
             name_color: None,
+            public_read: None,
         },
     });
     Ok(key)
@@ -1665,7 +1680,7 @@ pub(crate) async fn search_servers(
     let fuzzy = is_fuzzy(&q);
     let sql = format!(
         "SELECT name, display_name, password_hash FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' AND (name IN ({}) OR name IN (SELECT server FROM members WHERE username = $2)) ORDER BY name LIMIT 50",
-        crate::api::access::public_servers(db).await
+        crate::api::access::Reading::now(db).await.servers_sql()
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(like_pattern(&q, fuzzy))
@@ -1703,7 +1718,9 @@ pub(crate) async fn search_servers(
 /// name that is not a server without a password gets the same `401 Password required`, and a
 /// wrong password or a name that does not exist gets the same `404 Server not found or wrong
 /// password` (the password is always hashed, also for names that do not exist). Anyone may call
-/// it, guests only when guest access is on. The instance's `server_joining` applies as for
+/// it, guests only when guest access is on. A server that people who aren't members may read
+/// by its name answers `grant: null` under every joining rule, and any `password` is ignored.
+/// For every other name the instance's `server_joining` applies as for
 /// `POST /api/v1/servers/{name}/join`: under `invites` a server without a password answers
 /// like a password-protected one, and under `nobody` every call gets the 404. Strict and
 /// general rate-limit buckets.
@@ -1714,7 +1731,7 @@ pub(crate) async fn search_servers(
     params(("name" = String, Path, description = "Server name, case-insensitive")),
     request_body = GuestAccessReq,
     responses(
-        (status = 200, description = "Password accepted; returns a guest grant for viewing the server without an account. For a server without a password `grant` is `null` and any `password` is ignored", body = GuestGrant),
+        (status = 200, description = "Password accepted; returns a guest grant for viewing the server without an account. For a server that people who aren't members may read by its name `grant` is `null` and any `password` is ignored", body = GuestGrant),
         (status = 400, description = "Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", content_type = "text/plain", body = String),
         (status = 401, description = "`Password required`: no `password` was given and the name is not a server without a password (password-protected and nonexistent names answer identically). Also `Guest access is disabled` for guests without a valid token when guest access is off", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: the same body for a wrong password and for a name that does not exist", body = ApiErrorBody),
@@ -1730,6 +1747,9 @@ pub(crate) async fn guest_access(
     Json(req): Json<GuestAccessReq>,
 ) -> Result<Json<GuestGrant>, ApiError> {
     require_guest_ok(&state.db, viewer.as_ref()).await?;
+    if resolve_reading(&state.db, &name, None).await?.is_some() {
+        return Ok(Json(GuestGrant { grant: None }));
+    }
     let joining = crate::api::policy::effective(&state.db, viewer.as_ref())
         .await
         .server_joining();
@@ -1884,7 +1904,9 @@ async fn invite_preview(
 /// exist. A wrong password or an unknown name gets `404 Server not found or wrong password`.
 /// While the instance's `server_joining` is `invites` or `nobody`, a server without a password
 /// answers like a password-protected one unless you are a member, and under `nobody` a request
-/// without `X-Invite-Password` gets that 404 for every name instead of the 401.
+/// without `X-Invite-Password` gets that 404 for every name instead of the 401. A server that
+/// people who aren't members may read by its name always gets its card: with status `readable`
+/// when what you sent doesn't join it.
 /// Banned viewers get the card (with counts) only after they prove access, and never a preview.
 /// The preview has the last 3 top-level messages of the first text channel without permission
 /// rules.
@@ -1922,22 +1944,30 @@ pub(crate) async fn get_invite(
         Some(_) => Vec::new(),
         None => header_grants(&headers),
     };
-    let view = resolve_invite(
-        db,
-        &name,
-        viewer.as_ref(),
-        &Proof::password(given.as_deref()).and_grants(grants, &state.limits),
-    )
-    .await?;
+    let proof = Proof::password(given.as_deref()).and_grants(grants, &state.limits);
+    let (view, joins) = match resolve_invite(db, &name, viewer.as_ref(), &proof).await {
+        Ok(view) => (view, true),
+        Err(e) if e.failed() => return Err(e),
+        Err(e) => match resolve_reading(db, &name, viewer.as_ref()).await? {
+            Some(view) => (view, false),
+            None => return Err(e),
+        },
+    };
     let (server, status, (preview_channel, preview), ticket) = match view {
         InviteView::Banned(lite) => (lite, InviteStatus::Banned, (None, Vec::new()), None),
         InviteView::Open(access) => {
-            let status = match access.is_member() {
-                true => InviteStatus::Member,
-                false => InviteStatus::Joinable,
+            let status = match (access.is_member(), joins) {
+                (true, _) => InviteStatus::Member,
+                (false, true) => InviteStatus::Joinable,
+                (false, false) => InviteStatus::Readable,
             };
             let (lite, ticket) = (access.lite().clone(), access.ticket());
-            let preview = invite_preview(db, *access).await?;
+            let preview = match access.via() {
+                Via::Joinable => (None, Vec::new()),
+                Via::Public | Via::Member | Via::Password | Via::Grant | Via::Staff => {
+                    invite_preview(db, *access).await?
+                }
+            };
             (lite, status, preview, ticket)
         }
     };
@@ -2147,10 +2177,11 @@ pub(crate) async fn leave_server(
 /// Update a server
 ///
 /// Renames the server, switches it between public and password protected, sets, changes or
-/// clears its permanent password, and changes its header colors; every field is optional.
+/// clears its permanent password, changes its header colors, and sets whether people who
+/// aren't members can read it (`public_read`); every field is optional.
 /// Requires the Delete server permission; `members: remove` together with `password` also
-/// requires Kick. The rchat server can't be renamed or given a password, but its colors may
-/// change.
+/// requires Kick. The rchat server can't be renamed or given a password, but its colors and
+/// `public_read` may change.
 ///
 /// When `password` is present, `members: remove` removes every other member whose server
 /// permissions are a strict subset of yours (their roles are dropped, as if kicked) and existing
@@ -2173,7 +2204,7 @@ pub(crate) async fn leave_server(
         (status = 200, description = "The updated server, with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated),
         (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, a new password shorter than 8 characters, or a new password that is already a live extra password of the server. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, or a rename or password change on the protected rchat server", body = ApiErrorBody),
+        (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, a rename or password change on the protected rchat server, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 409, description = "The new name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
@@ -2196,12 +2227,23 @@ pub(crate) async fn update_server(
         keep_guests,
         banner_color,
         name_color,
+        public_read,
     } = req;
     if name.is_some() || password.is_some() || protected.is_some() {
         guard_rchat(&key)?;
     }
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::DeleteServer).await?;
+    if public_read == Some(Some(true))
+        && !crate::api::policy::effective(&state.db, Some(&user))
+            .await
+            .public_reading()
+    {
+        return Err(crate::api::policy::refused(
+            crate::api::policy::PUBLIC_READING,
+            forbidden(PUBLIC_READING_OFF),
+        ));
+    }
     let key = access.name().to_string();
     let lite = access.lite().clone();
     let banner_color = server_color(banner_color, "banner")?;
@@ -2255,6 +2297,13 @@ pub(crate) async fn update_server(
         name_color.as_ref(),
     )
     .await?;
+    if let Some(option) = public_read {
+        sqlx::query("UPDATE servers SET public_read = $1 WHERE name = $2")
+            .bind(option.map(i64::from))
+            .bind(&new_key)
+            .execute(&mut *tx)
+            .await?;
+    }
     let (removed, kept, bypassed) = match purge {
         true => purge_members(&mut tx, &new_key, &user, mine, own).await?,
         false => (
@@ -2287,6 +2336,11 @@ pub(crate) async fn update_server(
             "name_color",
             lite.name_color.clone(),
             name_color.clone().unwrap_or(lite.name_color.clone()),
+        )
+        .change(
+            "public_read",
+            reading_word(lite.public_read),
+            reading_word(public_read.unwrap_or(lite.public_read)),
         );
     if changed.has_changes() {
         let changed = match passwords_revoked && password_hash.is_none() {
@@ -2340,6 +2394,7 @@ pub(crate) async fn update_server(
         },
         banner_color: banner_color.unwrap_or(lite.banner_color),
         name_color: name_color.unwrap_or(lite.name_color),
+        public_read: public_read.unwrap_or(lite.public_read),
     };
     state.hub.broadcast(match renamed {
         true => WsEvent::ServerRenamed {
@@ -2351,7 +2406,7 @@ pub(crate) async fn update_server(
         },
     });
     crate::ws::announce_purge(&state.hub, &server.name, &removed);
-    if password_hash.is_some() {
+    if password_hash.is_some() || public_read.is_some() {
         evict_unviewable(&state, &server.name, None).await;
     }
     Ok(Json(ServerUpdated {
@@ -2359,6 +2414,18 @@ pub(crate) async fn update_server(
         removed: removed.len() as i64,
         kept,
     }))
+}
+
+/// The refusal of `public_read: true` while the instance has public reading off.
+pub const PUBLIC_READING_OFF: &str = "Public reading is turned off on this site";
+
+/// A server's `public_read` option as the audit log words it.
+fn reading_word(option: Option<bool>) -> &'static str {
+    match option {
+        None => "default",
+        Some(true) => "on",
+        Some(false) => "off",
+    }
 }
 
 fn server_color(
@@ -4877,6 +4944,7 @@ mod tests {
                 keep_guests: false,
                 banner_color: None,
                 name_color: None,
+                public_read: None,
             }),
         )
         .await
@@ -5991,6 +6059,7 @@ mod tests {
                 keep_guests: false,
                 banner_color: None,
                 name_color: None,
+                public_read: None,
             }),
         )
         .await
@@ -6382,6 +6451,7 @@ mod tests {
                 keep_guests,
                 banner_color: None,
                 name_color: None,
+                public_read: None,
             }),
         )
         .await
@@ -9078,6 +9148,7 @@ mod tests {
                 keep_guests: false,
                 banner_color: None,
                 name_color: None,
+                public_read: None,
             }),
         )
         .await

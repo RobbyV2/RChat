@@ -6,7 +6,18 @@ import { api, home, writeLocal } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { inviteUrl } from '../lib/invite'
 import { passwordDone, passwordPrompt } from '../lib/rules'
-import { goingPublic, joinableByName, protectedDetail, publicDetail } from '../lib/joining'
+import { goingPublic, protectedDetail, publicDetail } from '../lib/joining'
+import {
+  choiceOf,
+  optionOf,
+  publicReadingAllowed,
+  readableNow,
+  readingChoices,
+  readingLine,
+  shownChoice,
+  type PublicRead,
+  type ReadingChoice,
+} from '../lib/public_reading'
 import {
   ACTIVE_MAX,
   EXPIRY_PRESETS,
@@ -41,6 +52,7 @@ import type {
 } from '../lib/types'
 import { WITH_OPTION, keepGuestsChoices } from './server_settings'
 import {
+  Chips,
   Dialog,
   FieldError,
   dangerBtn,
@@ -530,19 +542,59 @@ function NewPasswordDialog({
   )
 }
 
+// "Anyone can read this server": follows the site, on, or off, with what it means right now.
+function PublicReading({
+  server,
+  hasPassword,
+  option,
+}: {
+  server: string
+  hasPassword: boolean
+  option: PublicRead
+}) {
+  const settings = useStore(s => s.settings)
+  const [error, setError] = useState<string | null>(null)
+  const label = 'Anyone can read this server'
+  const pick = (choice: ReadingChoice) => {
+    if (choice === choiceOf(option)) return
+    void api.updateServer(server, { public_read: optionOf(choice) }).then(
+      () => setError(null),
+      (err: unknown) => setError(errorText(err))
+    )
+  }
+  return (
+    <div className="pt-4">
+      <p className="pb-1.5 text-sm font-medium text-on-surface">{label}</p>
+      <Chips
+        label={label}
+        value={shownChoice(option, settings)}
+        options={readingChoices(hasPassword, settings)}
+        onChange={pick}
+        disabled={!publicReadingAllowed(settings)}
+      />
+      <p className="pt-1.5 text-xs text-on-surface-variant">
+        {readingLine(option, hasPassword, settings)}
+      </p>
+      <FieldError message={error} />
+    </div>
+  )
+}
+
 export function ServerAccessSection({
   server,
   hasPassword,
   canRemove,
+  publicRead,
 }: {
   server: string
   hasPassword: boolean
   canRemove: boolean
+  publicRead: PublicRead
 }) {
   const username = useStore(s => s.me?.username ?? null)
   const askConfirm = useStore(s => s.askConfirm)
   const settings = useStore(s => s.settings)
-  const publicReadable = joinableByName(false, settings)
+  const publicReadable = readableNow(publicRead, false, settings)
   const name = useId()
   const [data, setData] = useState<ServerPasswords | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -648,7 +700,7 @@ export function ServerAccessSection({
               checked={data.protected}
               onChange={() => setProtected(true)}
               title="Password protected"
-              detail={protectedDetail(settings, false)}
+              detail={protectedDetail(settings, readableNow(publicRead, true, settings))}
               icon={<Lock size={14} />}
             />
           </div>
@@ -709,6 +761,7 @@ export function ServerAccessSection({
               </p>
             </>
           )}
+          <PublicReading server={server} hasPassword={data.protected} option={publicRead} />
           <FieldError message={error} />
         </>
       )}

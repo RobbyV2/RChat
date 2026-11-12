@@ -1,6 +1,7 @@
 import { charCount } from './rules'
 import type { RChatState } from './store_types'
 import type { UserRef } from './types'
+import { isGuestName } from './guest_voice'
 import { isWebhookAuthor } from './webhooks'
 
 export const DISPLAY_NAME_MAX = 32
@@ -17,13 +18,19 @@ export const displayNameError = (text: string) => {
 type Named = Pick<UserRef, 'username' | 'display_name'>
 
 // A display name that is more than the username's case shows the username next to it. Webhooks
-// keep their own name.
+// and guests keep their own name.
 export const showsUsername = (u: Named) =>
-  !isWebhookAuthor(u.username) && u.display_name.toLowerCase() !== u.username
+  !isWebhookAuthor(u.username) &&
+  !isGuestName(u.username) &&
+  u.display_name.toLowerCase() !== u.username
 
 // "Display (username)" as plain text: titles, notifications, the typing line.
 export const nameWithUsername = (u: Named) =>
   showsUsername(u) ? `${u.display_name} (${u.username})` : u.display_name
+
+// A name as the viewer's filter shows it. A guest's label is the app's own text and never masked.
+export const maskedName = (u: Named, mask: (text: string) => string) =>
+  isGuestName(u.username) ? u.display_name : mask(nameWithUsername(u))
 
 // What a mention pill shows: the handle that resolves.
 export const mentionHandle = (u: Named) => (showsUsername(u) ? u.username : u.display_name)

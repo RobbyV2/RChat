@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::extract::State;
 use tokio::time::Instant;
 
@@ -246,6 +248,434 @@ async fn locked_server_voice_needs_membership() {
     state.hub.voice_leave("alice").await;
     assert_eq!(join("alice").await, Err("Channel not found".into()));
     crate::api::test_util::done(state, path).await;
+}
+
+/// Sets the instance's joining rule as the admin page stores it, and drops the cached settings.
+async fn set_joining(db: &Db, mode: &str) {
+    exec(db, "DELETE FROM settings WHERE key = 'server_joining'").await;
+    sqlx::query("INSERT INTO settings(key, value) VALUES('server_joining', $1)")
+        .bind(mode)
+        .execute(db)
+        .await
+        .expect("joining");
+    crate::api::Settings::forget(db);
+}
+
+async fn site_sets(state: &AppState, body: serde_json::Value) {
+    let patch = serde_json::from_value(body).expect("patch");
+    let _ = crate::api::admin::patch_settings(
+        State(state.clone()),
+        crate::api::Authed(crate::api::test_util::mem_user("root", true)),
+        axum::Json(patch),
+    )
+    .await
+    .expect("settings");
+}
+
+async fn within_5s(what: &str, mut done: impl FnMut() -> bool) {
+    let until = Instant::now() + std::time::Duration::from_secs(5);
+    while !done() {
+        assert!(Instant::now() < until, "{what} within 5 seconds");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// The four kinds of server people who aren't members meet, each with a voice channel and
+/// `alice` as their admin: `vault` (password, reading on), `locked` (password), `open` (no
+/// password, reading on) and `lobby` (no password, following the site).
+async fn reading_world(db: &Db) -> Vec<(&'static str, i64)> {
+    for name in ["alice", "eve"] {
+        add_user_row(db, name).await;
+    }
+    exec(db, "INSERT INTO servers(name, display_name, creator, password_hash, public_read, created_at) VALUES('vault', 'Vault', 'alice', 'hash', 1, 0)").await;
+    exec(db, "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('locked', 'Locked', 'alice', 'hash', 0)").await;
+    exec(db, "INSERT INTO servers(name, display_name, creator, public_read, created_at) VALUES('open', 'Open', 'alice', 1, 0)").await;
+    exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('lobby', 'Lobby', 'alice', 0)").await;
+    let mut rooms = Vec::new();
+    for server in ["vault", "locked", "open", "lobby"] {
+        let cid: i64 = sqlx::query("INSERT INTO channels(server, name, kind, created_at) VALUES($1, 'talk', 'voice', 0) RETURNING id")
+            .bind(server)
+            .fetch_one(db)
+            .await
+            .expect("channel")
+            .try_get(0)
+            .expect("id");
+        crate::api::test_util::add_member(db, server, "alice", 1, 0, 0).await;
+        rooms.push((server, cid));
+    }
+    rooms
+}
+
+async fn set_control(db: &Db, key: &str, value: &str) {
+    sqlx::query("INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .bind(key)
+        .bind(value)
+        .execute(db)
+        .await
+        .expect("control");
+    crate::api::Settings::forget(db);
+}
+
+#[tokio::test]
+async fn voice_follows_who_can_open_the_server() {
+    let (state, path) = crate::api::test_util::temp_state("reader_voice").await;
+    let db = &state.db;
+    let rooms = reading_world(db).await;
+    let hidden = insert_id(db, "INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES('open', 'staff', 'voice', 0, 1) RETURNING id").await;
+    let join = |user, channel_id| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id });
+    let gone = Err("Channel not found".into());
+    for (mode, reading, opens) in [
+        ("everyone", "1", ["vault", "open", "lobby"].as_slice()),
+        ("invites", "1", &["vault", "open"]),
+        ("nobody", "1", &["vault", "open"]),
+        ("everyone", "0", &[]),
+        ("invites", "0", &[]),
+    ] {
+        set_joining(db, mode).await;
+        set_control(db, "public_reading", reading).await;
+        for (server, cid) in &rooms {
+            let got = join("eve", *cid).await;
+            match opens.contains(server) {
+                true => {
+                    got.unwrap_or_else(|e| panic!("{mode} {reading} {server}: {e:?}"));
+                    assert_eq!(
+                        state.hub.rooms_in(server, None),
+                        vec![(*cid, vec![s("eve")])],
+                        "{mode} {reading} {server}: open to a guest, so to eve"
+                    );
+                    state.hub.voice_leave("eve").await;
+                }
+                false => assert_eq!(
+                    got, gone,
+                    "{mode} {reading} {server}: a guest can't open it, so eve can't talk"
+                ),
+            }
+            join("alice", *cid).await.expect("members always talk");
+            state.hub.voice_leave("alice").await;
+        }
+        assert_eq!(
+            join("eve", hidden).await,
+            gone,
+            "{mode} {reading}: channel permissions still apply"
+        );
+    }
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn readers_leave_voice_when_the_server_closes_to_them() {
+    let (state, path) = crate::api::test_util::temp_state("reader_voice_close").await;
+    let db = &state.db;
+    let rooms = reading_world(db).await;
+    let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
+    let follow = crate::api::Settings::follow(&state);
+    let join = |user, channel_id| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id });
+    join("eve", room("lobby")).await.expect("eve reads lobby");
+    site_sets(&state, serde_json::json!({"server_joining": "invites"})).await;
+    within_5s("eve leaves a server only members open now", || {
+        state.hub.rooms_in("lobby", None).is_empty()
+    })
+    .await;
+    join("eve", room("open"))
+        .await
+        .expect("the owner made open readable");
+    join("alice", room("lobby")).await.expect("a member stays");
+    site_sets(&state, serde_json::json!({"server_joining": "nobody"})).await;
+    site_sets(&state, serde_json::json!({"server_joining": "invites"})).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(
+        state.hub.rooms_in("open", None),
+        vec![(room("open"), vec![s("eve")])],
+        "still readable, so still in voice"
+    );
+    assert_eq!(state.hub.rooms_in("lobby", None).len(), 1, "members stay");
+    let patch = serde_json::from_value(serde_json::json!({"public_read": null})).expect("patch");
+    let _ = crate::api::servers::update_server(
+        State(state.clone()),
+        crate::api::Authed(crate::api::test_util::mem_user("alice", false)),
+        axum::extract::Path(s("open")),
+        axum::Json(patch),
+    )
+    .await
+    .expect("the owner turns reading back to the site's rule");
+    within_5s("eve leaves when the owner closes it", || {
+        state.hub.rooms_in("open", None).is_empty()
+    })
+    .await;
+    follow.abort();
+    crate::api::test_util::done(state, path).await;
+}
+
+const GUEST: &str = "@guest:00000000000000aa";
+
+/// A guest connection named `GUEST`, following `subs` with `grants`.
+fn guest_at(subs: &[&str], grants: &[(&str, &str)]) -> Access {
+    let mut access = Access::new(None, false, set(&[]));
+    access.guest = Some(s(GUEST));
+    access.subs = set(subs);
+    access.grants = grants.iter().map(|(k, v)| (s(k), s(v))).collect();
+    access
+}
+
+/// A live guest grant on `server` from the password `password_id` (`None`: the permanent one).
+async fn grant_on(db: &Db, server: &str, password_id: Option<i64>, tag: &str) -> String {
+    let grant = crate::api::test_util::test_grant(tag);
+    sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at, password_id) VALUES($1, $2, 0, 4000000000, $3)")
+        .bind(crate::db::secret_key(&grant))
+        .bind(server)
+        .bind(password_id)
+        .execute(db)
+        .await
+        .expect("grant");
+    grant
+}
+
+async fn as_guest(
+    state: &AppState,
+    access: &Access,
+    msg: ClientMsg,
+) -> Result<(), crate::ws::protocol::Refused> {
+    crate::ws::calls::voice_cmd(state, access, 9, msg).await
+}
+
+#[tokio::test]
+async fn guests_use_voice_where_they_can_open_the_server() {
+    let (state, path) = crate::api::test_util::temp_state("guest_voice").await;
+    let db = &state.db;
+    let rooms = reading_world(db).await;
+    let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
+    let grant = grant_on(db, "locked", None, "locked-guest").await;
+    let hidden = insert_id(db, "INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES('lobby', 'staff', 'voice', 0, 1) RETURNING id").await;
+    let text = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('lobby', 'chat', 'text', 0) RETURNING id").await;
+    let all = guest_at(&["vault", "locked", "open", "lobby"], &[("locked", &grant)]);
+    let join = |channel_id| ClientMsg::VoiceJoin { channel_id };
+    let gone = Err("Channel not found".into());
+    for (mode, opens) in [
+        ("everyone", ["vault", "locked", "open", "lobby"].as_slice()),
+        ("invites", &["vault", "locked", "open"]),
+    ] {
+        set_joining(db, mode).await;
+        for (server, cid) in &rooms {
+            let grant = all.grants.get(*server).map(String::as_str);
+            let follows = crate::ws::guest_sub_ok(db, server, grant, &state.limits)
+                .await
+                .expect("sub");
+            assert_eq!(follows, opens.contains(server), "{mode} {server}");
+            let got = as_guest(&state, &all, join(*cid)).await;
+            match follows {
+                true => {
+                    got.unwrap_or_else(|e| panic!("{mode} {server}: {e:?}"));
+                    assert_eq!(
+                        state.hub.rooms_in(server, None),
+                        vec![(*cid, vec![s(GUEST)])],
+                        "{mode} {server}: a guest who can open it talks"
+                    );
+                    as_guest(&state, &all, ClientMsg::VoiceLeave)
+                        .await
+                        .expect("leave");
+                }
+                false => assert_eq!(got, gone, "{mode} {server}"),
+            }
+        }
+    }
+    set_joining(db, "everyone").await;
+    for (why, access) in [
+        ("not following it", guest_at(&["vault"], &[])),
+        ("without the password", guest_at(&["locked"], &[])),
+    ] {
+        let server = match why {
+            "not following it" => "lobby",
+            _ => "locked",
+        };
+        assert_eq!(
+            as_guest(&state, &access, join(room(server))).await,
+            gone,
+            "{why}"
+        );
+    }
+    assert_eq!(
+        as_guest(&state, &all, join(hidden)).await,
+        gone,
+        "channel permissions apply"
+    );
+    assert_eq!(
+        as_guest(&state, &all, join(text)).await,
+        Err("Not a voice channel".into())
+    );
+    assert_eq!(
+        as_guest(
+            &state,
+            &all,
+            ClientMsg::CallStart {
+                dm_id: 1,
+                p2p: false,
+                video: false,
+                peer_id: None,
+                relays: Vec::new(),
+            }
+        )
+        .await,
+        Err("Create an account to join voice".into()),
+        "calls need an account"
+    );
+    assert_eq!(
+        as_guest(
+            &state,
+            &Access::new(None, false, set(&["lobby"])),
+            join(room("lobby"))
+        )
+        .await,
+        Err("Create an account to join voice".into()),
+        "a connection without a voice name"
+    );
+
+    as_guest(&state, &all, join(room("lobby")))
+        .await
+        .expect("guest joins");
+    voice_msg(&state, "alice", 1, join(room("lobby")))
+        .await
+        .expect("alice joins");
+    let mut rx = state.hub.subscribe();
+    let signal = |to: &str, channel_id, dm_id| ClientMsg::RtcSignal {
+        to: s(to),
+        channel_id,
+        dm_id,
+        payload: serde_json::json!({"sdp": "x"}),
+    };
+    as_guest(&state, &all, signal("alice", Some(room("lobby")), None))
+        .await
+        .expect("a guest signals alice");
+    voice_msg(&state, "alice", 1, signal(GUEST, Some(room("lobby")), None))
+        .await
+        .expect("alice signals the guest, by its name as it is");
+    let mut seen = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        if let WsEvent::RtcSignal {
+            to,
+            from,
+            channel_id: _,
+            dm_id: _,
+            payload: _,
+        } = ev
+        {
+            seen.push(format!("{from} -> {to}"));
+        }
+    }
+    assert_eq!(
+        seen,
+        [format!("{GUEST} -> alice"), format!("alice -> {GUEST}")]
+    );
+    let none = Err("No shared voice session".into());
+    assert_eq!(
+        as_guest(&state, &all, signal("eve", Some(room("lobby")), None)).await,
+        none
+    );
+    assert_eq!(
+        as_guest(&state, &all, signal("alice", None, Some(1))).await,
+        none
+    );
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn a_guest_leaves_voice_when_its_server_closes_to_it() {
+    let (state, path) = crate::api::test_util::temp_state("guest_voice_close").await;
+    let db = &state.db;
+    let rooms = reading_world(db).await;
+    let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
+    let conn = state.hub.next_conn();
+    let ticket = insert_id(db, "INSERT INTO server_passwords(server, label, hash, lookup, created_at, expires_at) VALUES('locked', 'Friends', 'h', 'l', 0, 4000000000) RETURNING id").await;
+    let grant = grant_on(db, "locked", Some(ticket), "ticket-guest").await;
+    let mut guest = guest_at(&[], &[]);
+    let follow = |servers: &[&str]| servers.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    crate::ws::conn::subscribe(
+        &state,
+        conn,
+        &mut guest,
+        follow(&["locked", "lobby"]),
+        HashMap::from([(s("locked"), grant.clone())]),
+    )
+    .await;
+    assert_eq!(guest.subs, set(&["locked", "lobby"]));
+    let join = |channel_id| ClientMsg::VoiceJoin { channel_id };
+    as_guest(&state, &guest, join(room("locked")))
+        .await
+        .expect("in with the password");
+
+    exec(db, "UPDATE server_passwords SET expires_at = 1").await;
+    assert!(guest.refresh(&state, conn).await);
+    assert_eq!(guest.subs, set(&["lobby"]));
+    within_5s("the guest leaves voice when its password ends", || {
+        state.hub.rooms_in("locked", None).is_empty()
+    })
+    .await;
+    assert_eq!(
+        as_guest(&state, &guest, join(room("locked"))).await,
+        Err("Channel not found".into())
+    );
+
+    as_guest(&state, &guest, join(room("lobby")))
+        .await
+        .expect("lobby is public");
+    set_joining(db, "invites").await;
+    assert!(guest.refresh(&state, conn).await);
+    within_5s(
+        "the guest leaves voice when only members open the server",
+        || state.hub.rooms_in("lobby", None).is_empty(),
+    )
+    .await;
+
+    crate::ws::conn::subscribe(&state, conn, &mut guest, follow(&["vault"]), HashMap::new()).await;
+    as_guest(&state, &guest, join(room("vault")))
+        .await
+        .expect("vault is readable");
+    crate::ws::conn::subscribe(&state, conn, &mut guest, Vec::new(), HashMap::new()).await;
+    within_5s(
+        "the guest leaves voice when it stops following the server",
+        || state.hub.rooms_in("vault", None).is_empty(),
+    )
+    .await;
+    crate::api::test_util::done(state, path).await;
+}
+
+#[test]
+fn guests_get_only_their_own_voice_events() {
+    let guest = guest_at(&["rchat"], &[]);
+    assert!(
+        guest
+            .topics()
+            .contains(&crate::fanout::Topic::User(s(GUEST)))
+    );
+    let signal = |to: &str| WsEvent::RtcSignal {
+        to: s(to),
+        from: s("alice"),
+        channel_id: Some(1),
+        dm_id: None,
+        payload: serde_json::json!({}),
+    };
+    let ended = |user: &str| WsEvent::VoiceEnded {
+        server: None,
+        channel_id: Some(1),
+        dm_id: None,
+        dm_users: Some(vec![s(user)]),
+        reason: s("You no longer have access to this voice channel"),
+    };
+    assert!(guest.wants(&signal(GUEST)));
+    assert!(guest.wants(&ended(GUEST)));
+    assert!(!guest.wants(&signal("@guest:00000000000000bb")));
+    assert!(!guest.wants(&ended("alice")));
+    assert!(
+        !guest.wants(&WsEvent::MemberTimeout {
+            server: s("rchat"),
+            username: s("bob"),
+            until: Some(9),
+            remaining: 9,
+            reason: None,
+        }),
+        "nothing else meant for accounts"
+    );
+    let plain = Access::new(None, false, set(&[]));
+    assert!(!plain.wants(&signal(GUEST)));
 }
 
 #[tokio::test]

@@ -230,6 +230,7 @@ fn self_grants_are_recognized() {
             has_password: true,
             banner_color: None,
             name_color: None,
+            public_read: None,
         },
     };
     assert_eq!(

@@ -18,6 +18,7 @@ import { ApiError } from '../lib/api'
 import { InstanceError, api } from '../lib/instances'
 import { errorText, useStore, type Nav } from '../lib/store'
 import {
+  autoStep,
   hostParts,
   invitePath,
   inviteVersion,
@@ -41,6 +42,7 @@ import { deniedAccess, needsPassword } from '../lib/join_flow'
 import { absoluteTime, countdown, tickMs, useNow, usesLeftText } from '../lib/passwords'
 import { plainStamps } from '../lib/timestamps'
 import { serverInitial } from '../lib/rules'
+import { joinNeeds } from '../lib/joining'
 import type { InstanceInfo, Invite, InviteStatus, Message } from '../lib/types'
 import { ServerGlyph } from './server_rail'
 import { Dialog, fieldCls, FieldError, filledBtn, LinkPage, Masked, textBtn } from './ui'
@@ -549,6 +551,7 @@ export function InviteCard({
   const guest = useStore(s => s.guest)
   const hasGrant = useStore(s => s.guestGrants[server] !== undefined)
   const guestsEnabled = useStore(s => s.settings.guests_enabled)
+  const joining = useStore(s => s.settings.server_joining)
   const consume = useStore(s => s.consumeInviteJoin)
   const joined = useStore(s =>
     s.me ? s.me.servers.some(x => x.name === server) : s.guest && s.guestServers.includes(server)
@@ -647,8 +650,9 @@ export function InviteCard({
 
   useEffect(() => {
     if (!autoJoin || !authed || !status || busy) return
-    if (status === 'member') go()
-    else if (status === 'banned') consume()
+    const step = autoStep(status, guest)
+    if (step === 'open') go()
+    else if (step === 'stop') consume()
     else void join(guest)
   })
 
@@ -748,6 +752,7 @@ export function InviteCard({
       }
     if (!data || !status) return null
     const { name, display_name, has_password } = data.server
+    const needs = status === 'readable' ? joinNeeds(has_password, { server_joining: joining }) : ''
     return {
       icon: <ServerTile name={name} displayName={display_name} big={big} />,
       title: (
@@ -795,6 +800,10 @@ export function InviteCard({
         >
           Banned
         </button>
+      ) : status === 'readable' && !guest ? (
+        <button onClick={go} className={`${filledBtn} ${btn}`}>
+          Open
+        </button>
       ) : (
         <button disabled={busy} onClick={() => void join(guest)} className={`${filledBtn} ${btn}`}>
           {busy ? 'Joining…' : 'Join'}
@@ -805,6 +814,11 @@ export function InviteCard({
           {status === 'banned' && (
             <p role="status" className="mt-3 text-sm text-error">
               You are banned from this server
+            </p>
+          )}
+          {needs && (
+            <p className={`mt-3 text-xs text-on-surface-variant ${big ? 'text-center' : ''}`}>
+              {needs}
             </p>
           )}
           {note && (

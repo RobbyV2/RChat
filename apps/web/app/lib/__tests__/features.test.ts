@@ -86,6 +86,14 @@ describe('feature switches', () => {
     expect(odd.server_joining).toBe('nobody')
   })
 
+  test('public reading reads as on when it is missing', () => {
+    expect(siteSettings(older).public_reading).toBe(true)
+    const off = siteSettings({ ...older, public_reading: false } as SiteSettings)
+    expect(off.public_reading).toBe(false)
+    const odd = siteSettings({ ...older, public_reading: 'no' } as unknown as SiteSettings)
+    expect(odd.public_reading).toBe(true)
+  })
+
   test('other instances stay allowed unless the instance turns them off', () => {
     expect(siteSettings(older).client_other_instances).toBe(true)
     const off = siteSettings({ ...older, client_other_instances: false } as SiteSettings)

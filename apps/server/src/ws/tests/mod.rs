@@ -100,6 +100,7 @@ fn lite(name: &str) -> ServerSummaryLite {
         has_password: false,
         banner_color: None,
         name_color: None,
+        public_read: None,
     }
 }
 

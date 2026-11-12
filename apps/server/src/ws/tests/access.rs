@@ -733,7 +733,7 @@ async fn a_joining_change_drops_subscriptions_to_servers_it_closed() {
     carol.peek = Some(s("open"));
     let same = Settings::cached(&state.db).await;
     for access in [&mut carol, &mut guest, &mut bob] {
-        access.joining = Some(same.server_joining);
+        access.reading = Some((same.server_joining, same.public_reading));
         access.topics_dirty = false;
         assert!(access.settings_changed(&state, 1, &same).await);
         assert!(!access.topics_dirty, "nothing about reading changed");
@@ -787,5 +787,53 @@ async fn a_joining_change_drops_subscriptions_to_servers_it_closed() {
     };
     assert!(!guest.settings_changed(&state, 1, &off).await, "guests off");
     assert!(carol.settings_changed(&state, 1, &off).await);
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn a_server_that_stops_being_readable_drops_its_followers() {
+    let (state, path) = crate::api::test_util::temp_state("ws_public_read").await;
+    for name in ["bob", "carol"] {
+        add_user(&state.db, name).await;
+    }
+    exec(
+        &state.db,
+        "INSERT INTO servers(name, display_name, password_hash, public_read, created_at) VALUES('vault', 'vault', 'hash', 1, 1)",
+    )
+    .await;
+    exec(
+        &state.db,
+        "INSERT INTO members(server, username, joined_at) VALUES('vault', 'bob', 1)",
+    )
+    .await;
+    let mut carol = Access::new(Some("carol".to_string()), false, HashSet::new());
+    let mut guest = Access::new(None, false, HashSet::new());
+    let mut bob = Access::new(Some("bob".to_string()), false, set(&["vault"]));
+    for access in [&mut carol, &mut guest] {
+        subscribe(&state, 1, access, vec![s("vault")], HashMap::new()).await;
+        assert_eq!(
+            access.subs,
+            set(&["vault"]),
+            "its owner made it readable, password or not"
+        );
+    }
+    exec(
+        &state.db,
+        "UPDATE servers SET public_read = 0 WHERE name = 'vault'",
+    )
+    .await;
+    let updated = WsEvent::ServerUpdated {
+        server: ServerSummaryLite {
+            has_password: true,
+            public_read: Some(false),
+            ..lite("vault")
+        },
+    };
+    for access in [&mut carol, &mut guest, &mut bob] {
+        assert!(on_event(&state, 1, access, &updated).await.is_some());
+    }
+    assert!(carol.subs.is_empty(), "a non-member stops following");
+    assert!(guest.subs.is_empty(), "a guest stops following");
+    assert_eq!(bob.member_servers, set(&["vault"]), "members stay");
     crate::api::test_util::done(state, path).await;
 }

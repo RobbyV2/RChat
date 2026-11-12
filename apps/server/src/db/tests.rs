@@ -6115,3 +6115,146 @@ async fn report_tables_are_added_to_an_old_database() {
     })
     .await;
 }
+
+/// A database as schema 26 left it: no `servers.public_read`, with a server without a password,
+/// one with a password, their members and a message.
+async fn old_public_read_db(db: &Db) {
+    for stmt in [
+        "ALTER TABLE servers DROP COLUMN public_read",
+        "UPDATE settings SET value = '26' WHERE key = 'schema_version'",
+        "DELETE FROM settings WHERE key IN ('public_reading', 'env:public_reading', 'env_at:public_reading')",
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 5)",
+        "INSERT INTO servers(name, display_name, creator, member_count, created_at) VALUES('club', 'Club', 'alice', 1, 7)",
+        "INSERT INTO servers(name, display_name, creator, password_hash, member_count, upload_expiry, created_at) VALUES('vault', 'Vault', 'alice', 'hash', 1, 3600, 8)",
+        "INSERT INTO members(server, username, is_admin, joined_at) VALUES('club', 'alice', 1, 7), ('vault', 'alice', 1, 8)",
+        "INSERT INTO channels(server, name, created_at) VALUES('club', 'general', 7)",
+        "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'kept', 9 FROM channels WHERE server = 'club'",
+    ] {
+        sqlx::query(stmt).execute(db).await.expect(stmt);
+    }
+}
+
+/// A server row as the schema before `public_read` kept it.
+type OldServer = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    Option<i64>,
+);
+
+async fn public_read_upgrade(url: &str) {
+    let db = open_started(Some(url)).await.expect("open");
+    old_public_read_db(&db).await;
+    assert_eq!(count(&db, STORED_SCHEMA).await, 26);
+    let before: Vec<OldServer> =
+        sqlx::query("SELECT name, display_name, creator, password_hash, member_count, upload_expiry FROM servers ORDER BY name")
+            .fetch_all(&db)
+            .await
+            .expect("servers")
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get(0).expect("name"),
+                    r.try_get(1).expect("display"),
+                    r.try_get(2).expect("creator"),
+                    r.try_get(3).expect("hash"),
+                    r.try_get(4).expect("count"),
+                    r.try_get(5).expect("expiry"),
+                )
+            })
+            .collect();
+    assert_eq!(before.len(), 3, "the built-in server and the two old ones");
+    close(&db).await;
+    for round in 0..2 {
+        let db = open_started(Some(url)).await.expect("upgrade");
+        assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+        assert_eq!(SCHEMA_VERSION, 27);
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM servers WHERE public_read IS NULL"
+            )
+            .await,
+            3,
+            "start {round}: every old server follows the instance"
+        );
+        let after: Vec<OldServer> =
+            sqlx::query("SELECT name, display_name, creator, password_hash, member_count, upload_expiry FROM servers ORDER BY name")
+                .fetch_all(&db)
+                .await
+                .expect("servers")
+                .iter()
+                .map(|r| {
+                    (
+                        r.try_get(0).expect("name"),
+                        r.try_get(1).expect("display"),
+                        r.try_get(2).expect("creator"),
+                        r.try_get(3).expect("hash"),
+                        r.try_get(4).expect("count"),
+                        r.try_get(5).expect("expiry"),
+                    )
+                })
+                .collect();
+        assert_eq!(
+            after, before,
+            "start {round}: the old rows are as they were"
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM messages WHERE content = 'kept' AND author = 'alice'"
+            )
+            .await,
+            1
+        );
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM members").await, 2);
+        assert_eq!(
+            stored(&db, "public_reading").await.as_deref(),
+            Some("1"),
+            "start {round}: the operator control starts on"
+        );
+        close(&db).await;
+    }
+    let db = open_started(Some(url)).await.expect("open");
+    sqlx::query("UPDATE servers SET public_read = 1 WHERE name = 'vault'")
+        .execute(&db)
+        .await
+        .expect("an owner turns it on");
+    sqlx::query("UPDATE servers SET public_read = 0 WHERE name = 'club'")
+        .execute(&db)
+        .await
+        .expect("an owner turns it off");
+    close(&db).await;
+    let db = open_started(Some(url)).await.expect("restart");
+    assert_eq!(
+        count(&db, "SELECT public_read FROM servers WHERE name = 'vault'").await,
+        1,
+        "a set option survives a restart"
+    );
+    assert_eq!(
+        count(&db, "SELECT public_read FROM servers WHERE name = 'club'").await,
+        0
+    );
+    close(&db).await;
+}
+
+#[tokio::test]
+async fn public_read_is_added_to_an_old_database() {
+    on_each_database("public_read_upgrade", |url| async move {
+        public_read_upgrade(&url).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn the_public_reading_control_is_added_to_an_old_database() {
+    controls_reach_an_old_database(
+        "reading_control",
+        &["public_reading"],
+        &["1"],
+        &[("PUBLIC_READING", "off", "0")],
+    )
+    .await;
+}

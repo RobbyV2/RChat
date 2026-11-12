@@ -228,6 +228,8 @@ export interface RChatState {
   guestServers: string[]
   guestGrants: Record<string, string>
   guestNames: Record<string, string>
+  // The name this guest tab's connection has in voice rooms, from the server.
+  guestVoiceName: string | null
   servers: Record<string, ServerDetail>
   members: Record<string, Paged<Member>>
   memberInfo: Record<string, Record<string, Member | null>>

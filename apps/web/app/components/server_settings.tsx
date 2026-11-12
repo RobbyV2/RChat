@@ -31,7 +31,8 @@ import {
   rolePerms,
 } from '../lib/rules'
 import { inviteUrl } from '../lib/invite'
-import { goingPublic, joinableByName, protectedDetail, publicDetail } from '../lib/joining'
+import { goingPublic, protectedDetail, publicDetail } from '../lib/joining'
+import { readableNow, type PublicRead } from '../lib/public_reading'
 import { enterKey } from '../lib/keys'
 import { allowListTitle, emptyAllowText } from '../lib/channel_access'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
@@ -631,17 +632,19 @@ export function ServerPasswordField({
   server,
   hasPassword,
   canRemove,
+  publicRead,
   refresh,
 }: {
   server: string
   hasPassword: boolean
   canRemove: boolean
+  publicRead: PublicRead
   refresh?: () => void
 }) {
   const askConfirm = useStore(s => s.askConfirm)
   const siteAdmin = useStore(s => s.me?.is_site_admin ?? false)
   const settings = useStore(s => s.settings)
-  const publicReadable = joinableByName(false, settings)
+  const publicReadable = readableNow(publicRead, false, settings)
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
@@ -709,7 +712,9 @@ export function ServerPasswordField({
         </p>
       )}
       <p className="pt-1.5 text-xs text-on-surface-variant">
-        {hasPassword ? protectedDetail(settings, false) : publicDetail(settings, publicReadable)}
+        {hasPassword
+          ? protectedDetail(settings, readableNow(publicRead, true, settings))
+          : publicDetail(settings, publicReadable)}
       </p>
     </>
   )
@@ -1203,6 +1208,7 @@ function Settings({ server }: { server: string }) {
             server={server}
             hasPassword={detail.has_password}
             canRemove={hasPerm(perms, Perm.Kick)}
+            publicRead={detail.public_read ?? null}
           />
           <p className={sectionCls}>Delete Server</p>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

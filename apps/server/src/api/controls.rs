@@ -5,8 +5,8 @@ use sqlx::Row;
 
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
-    Creator, DmCreation, FRIEND_REQUESTS, SERVER_CREATORS, SERVER_SEARCH, ServerCreation,
-    ServerJoining,
+    Creator, DmCreation, FRIEND_REQUESTS, PUBLIC_READING, SERVER_CREATORS, SERVER_SEARCH,
+    ServerCreation, ServerJoining,
 };
 use crate::api::reports::forms::{self, ReportForms};
 use crate::api::{ProfanitySwitch, ProfanityTargets, Settings, upload_expiry};
@@ -132,6 +132,7 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
         public: true,
     });
     all.push(switch(FRIEND_REQUESTS, "FEATURE_FRIEND_REQUESTS", true));
+    all.push(switch(PUBLIC_READING, "PUBLIC_READING", true));
     all.push(Control {
         key: forms::KEY,
         env: forms::ENV,
@@ -595,7 +596,7 @@ mod tests {
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
         assert_eq!(
-            table[table.len() - 8..table.len() - 1],
+            table[table.len() - 9..table.len() - 1],
             [
                 ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
                 ("server_creation", "SERVER_CREATION", "everyone"),
@@ -604,8 +605,10 @@ mod tests {
                 ("server_search", "SERVER_SEARCH", "1"),
                 ("dm_creation", "DM_CREATION", "everyone"),
                 ("friend_requests", "FEATURE_FRIEND_REQUESTS", "1"),
+                ("public_reading", "PUBLIC_READING", "1"),
             ]
         );
+        assert_eq!(control("public_reading").kind, Kind::Switch);
         assert_eq!(
             control("upload_expiry_max_days").kind,
             Kind::Number { min: 0, max: 365 }

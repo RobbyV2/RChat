@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
+  autoStep,
   findInvites,
   findRemoteInvites,
   entryState,
@@ -418,4 +419,19 @@ test('a failed refresh keeps the last preview unless the invite is gone', () => 
   expect(keepsPreview(503)).toBe(true)
   expect(keepsPreview(404)).toBe(false)
   expect(keepsPreview(403)).toBe(false)
+})
+
+describe('autoStep', () => {
+  test('opens a server you are in, stops when banned, and joins the rest', () => {
+    for (const guest of [false, true]) {
+      expect(autoStep('member', guest)).toBe('open')
+      expect(autoStep('banned', guest)).toBe('stop')
+      expect(autoStep('joinable', guest)).toBe('join')
+    }
+  })
+
+  test('never joins a server an account may only read', () => {
+    expect(autoStep('readable', false)).toBe('stop')
+    expect(autoStep('readable', true)).toBe('join')
+  })
 })

@@ -16,6 +16,7 @@ use super::access::{ADDR_FULL, Access, Pace, catch_up, grant_deadlines, reauthor
 use super::calls::{VoiceWait, finalize_call_log, send_voice_snapshot, voice_cmd};
 use super::event::WsEvent;
 use super::filter::on_event;
+use super::guests::{guest_name, leave_closed_voice};
 use super::p2p::{
     RECONNECTING, announce_drop, answer_who, hosting_ids, hosting_relays, p2p_refused, p2p_release,
 };
@@ -69,7 +70,10 @@ use crate::state::AppState;
 /// (others are ignored silently); the client repeats `typing` every few seconds while typing.
 /// Others there get `typing` (`{scope, username, display_name, until}`, `until` in unix
 /// seconds, 0 when stopped), routed like messages and never to the typer's own connections.
-/// Guests are read-only: no presence, typing, voice or calls. The server sends the events in `WsEvent` (`apps/server/src/ws/event.rs`),
+/// Guests are read-only: no presence, typing or calls. A guest connection first gets
+/// `guest_name` (`{name}`): its name in voice rooms, `@guest:` and 16 hex digits, new for each
+/// connection. A guest may join the voice channels it can view in the servers it follows
+/// (`subscribe`) and send `rtc_signal` to the others in its room. The server sends the events in `WsEvent` (`apps/server/src/ws/event.rs`),
 /// for example `message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`,
 /// `voice_state`, `call_state` (with `kind` and `video`; an active P2P call also carries its id
 /// and the peer id of both tabs), `p2p_hosted` (tells a `p2p_hosting` sender which of its files are still live
@@ -246,11 +250,15 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
         }
     }
     let mut access = Access::new(username, is_site_admin, member_servers);
+    if access.user.is_none() {
+        access.guest = Some(guest_name());
+    }
     if let Some(mode) = mode {
         access.take_mode(mode);
     }
     access.since = since;
-    access.joining = Some(Settings::cached(&state.read()).await.server_joining);
+    let settings = Settings::cached(&state.read()).await;
+    access.reading = Some((settings.server_joining, settings.public_reading));
     access.token = token.filter(|_| access.user.is_some());
     state.hub.reconcile(conn, &access.topics(), 0);
     let (sink, mut stream) = socket.split();
@@ -262,6 +270,11 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
     let mut ping = tokio::time::interval_at(Instant::now() + PING_EVERY, PING_EVERY);
     let mut heard = Instant::now();
     let mut lag = Pace::new(LAG_REAUTH_EVERY);
+    if let Some(name) = access.guest.clone()
+        && !sent(&mut access, out.event(&WsEvent::GuestName { name }))
+    {
+        return;
+    }
     if !send_voice_snapshot(&state, &out, &mut access).await {
         return;
     }
@@ -400,9 +413,9 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                         Ok(ClientMsg::Auth { token: _ }) | Err(_) => {}
                         Ok(other) => {
                             let now = Instant::now();
-                            let res = match (&access.user, &other) {
-                                (Some(user), ClientMsg::VoiceJoin { channel_id: _ } | ClientMsg::VoiceLeave) => {
-                                    match voice.offer(other, || state.hub.voice_ok(user), now) {
+                            let res = match (access.voice_name(), &other) {
+                                (Some(me), ClientMsg::VoiceJoin { channel_id: _ } | ClientMsg::VoiceLeave) => {
+                                    match voice.offer(other, || state.hub.voice_ok(me), now) {
                                         Some(msg) => voice_cmd(&state, &access, conn, msg).await,
                                         None => Ok(()),
                                     }
@@ -438,8 +451,8 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                 }
             }
             _ = tokio::time::sleep_until(voice.due.unwrap_or_else(Instant::now)), if voice.due.is_some() => {
-                let ready = match &access.user {
-                    Some(user) => voice.fire(|| state.hub.voice_ok(user), Instant::now()),
+                let ready = match access.voice_name() {
+                    Some(me) => voice.fire(|| state.hub.voice_ok(me), Instant::now()),
                     None => voice.wanted.take(),
                 };
                 if let Some(msg) = ready
@@ -508,6 +521,11 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
         }
         let cached = access.hosted_scope.take().map(|(_, scope)| scope);
         announce_drop(&state, user, drop, cached).await;
+    }
+    if let Some(name) = &access.guest
+        && !state.hub.rooms_of(name).is_empty()
+    {
+        state.hub.voice_leave(name).await;
     }
 }
 
@@ -599,6 +617,7 @@ pub(super) async fn subscribe(
     }
     access.deadlines = deadlines;
     access.set_peek(peek);
+    leave_closed_voice(&state.hub, access);
 }
 
 pub(super) async fn look(

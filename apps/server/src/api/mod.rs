@@ -346,6 +346,12 @@ pub struct ServerSummaryLite {
     /// Color of the server name in that header as `#rrggbb`; `null` uses the theme color.
     #[serde(default)]
     pub name_color: Option<String>,
+    /// "Anyone can read this server": `true` lets people who aren't members read it by its
+    /// name, `false` never does, `null` follows the instance (readable while the server has no
+    /// password and `server_joining` is `everyone`). Nobody reads it while the instance's
+    /// `public_reading` is off.
+    #[serde(default)]
+    pub public_read: Option<bool>,
 }
 
 /// A channel in a server.
@@ -539,6 +545,11 @@ pub struct ServerDetail {
     pub banner_color: Option<String>,
     /// Color of the server name in that header as `#rrggbb`; `null` uses the theme color.
     pub name_color: Option<String>,
+    /// "Anyone can read this server": `true` lets people who aren't members read it by its
+    /// name, `false` never does, `null` follows the instance (readable while the server has no
+    /// password and `server_joining` is `everyone`). Nobody reads it while the instance's
+    /// `public_reading` is off. Set with `PATCH /api/v1/servers/{name}`.
+    pub public_read: Option<bool>,
     /// Channels the caller can see, in list order (see `category_id` and `position`). Channels
     /// with permission rules that do not grant the caller `can_view` are left out.
     pub channels: Vec<Channel>,
@@ -1242,6 +1253,12 @@ pub struct Settings {
     /// denied, and friends stay.
     #[serde(default = "yes")]
     pub friend_requests: bool,
+    /// Whether servers can be read by people who aren't members: a server is readable by its
+    /// name when its own `public_read` is `true`, or `null` while the server has no password
+    /// and `server_joining` is `everyone`. Off: no server is, whatever its option says, and
+    /// `PATCH /api/v1/servers/{name}` refuses `public_read: true` with reason `off_site`.
+    #[serde(default = "yes")]
+    pub public_reading: bool,
 }
 
 pub(crate) fn yes() -> bool {
@@ -1285,6 +1302,7 @@ impl Settings {
         server_search: false,
         dm_creation: DmCreation::Nobody,
         friend_requests: false,
+        public_reading: false,
     };
 
     pub async fn load(db: &Db) -> Settings {
@@ -1361,6 +1379,7 @@ impl Settings {
             server_search: on(policy::SERVER_SEARCH),
             dm_creation: DmCreation::parse(&stored(DmCreation::KEY)).unwrap_or(DmCreation::Nobody),
             friend_requests: on(policy::FRIEND_REQUESTS),
+            public_reading: on(policy::PUBLIC_READING),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1419,6 +1438,7 @@ impl Settings {
             server_search: _,
             dm_creation: _,
             friend_requests: _,
+            public_reading: _,
         } = *self;
         match feature {
             Feature::ServerReports => server_reports,
@@ -1460,14 +1480,16 @@ impl Settings {
     }
 
     /// Keeps this process's cached settings and lists current: reloads them whenever
-    /// `settings_changed` arrives, from this process or from another one over the bus.
+    /// `settings_changed` arrives, from this process or from another one over the bus, and
+    /// takes out of voice who can no longer open a server.
     pub fn follow(state: &AppState) -> tokio::task::JoinHandle<()> {
         let mut changes = state.hub.settings_changes();
-        let db = state.db.clone();
+        let state = state.clone();
         tokio::spawn(async move {
             while changes.changed().await.is_ok() {
-                Settings::load(&db).await;
-                policy::Policy::load(&db).await;
+                Settings::load(&state.db).await;
+                policy::Policy::load(&state.db).await;
+                crate::ws::evict_closed_voice(&state).await;
             }
         })
     }

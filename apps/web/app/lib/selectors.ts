@@ -1,5 +1,6 @@
 // Pure reads of the store state, used in component selectors and by the store itself.
 
+import { guestRef, isGuestName } from './guest_voice'
 import { anyDmUnread, unreadServers } from './lists'
 import { dmSections, folderChildren, folderTitle, railNames, type Folder } from './nav_layout'
 import {
@@ -323,6 +324,15 @@ const fallbackRefs = new Map<string, UserRef>()
 
 export const userRefFor = (s: RChatState, username: string): UserRef => {
   if (s.me?.username === username) return s.me
+  if (isGuestName(username)) {
+    let ref = fallbackRefs.get(username)
+    if (!ref) {
+      if (fallbackRefs.size > 1000) fallbackRefs.clear()
+      ref = guestRef(username)
+      fallbackRefs.set(username, ref)
+    }
+    return ref
+  }
   const dm = s.dms.find(d => d.other.username === username)
   if (dm) return dm.other
   for (const cache of Object.values(s.members)) {

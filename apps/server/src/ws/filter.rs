@@ -813,6 +813,7 @@ pub(super) fn wants(
             username: _,
             online: _,
         }
+        | WsEvent::GuestName { name: _ }
         | WsEvent::Resync => false,
     }
 }

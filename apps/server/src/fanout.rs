@@ -445,6 +445,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             username: _,
             online: _,
         }
+        | WsEvent::GuestName { name: _ }
         | WsEvent::Resync => to(Vec::new()),
     }
 }
@@ -924,6 +925,7 @@ mod tests {
                 has_password: false,
                 banner_color: None,
                 name_color: None,
+                public_read: None,
             },
         });
         router.deliver(WsEvent::PresenceChanged {
@@ -961,6 +963,7 @@ mod tests {
                 has_password: true,
                 banner_color: None,
                 name_color: None,
+                public_read: None,
             },
         });
         router.deliver(WsEvent::ChannelUpdated {
