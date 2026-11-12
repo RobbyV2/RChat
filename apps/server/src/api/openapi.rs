@@ -103,6 +103,7 @@ impl Modify for Bearer {
         super::config_shares::get_share,
         super::config_shares::delete_share,
         super::users::profile,
+        super::users::card,
         super::servers::list_my_servers,
         super::servers::create_server,
         super::servers::get_server,

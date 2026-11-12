@@ -43,6 +43,7 @@ import {
   useStore,
 } from '../lib/store'
 import {
+  HIDDEN_PROFILE,
   SHEET_QUERY,
   bannerColor,
   cachedProfile,
@@ -217,7 +218,7 @@ function Card({ target }: { target: ProfileTarget }) {
   const [profile, setProfile] = useState<Profile | null>(() =>
     cachedProfile(profileKey(username, server))
   )
-  const [missing, setMissing] = useState(false)
+  const [hidden, setHidden] = useState(false)
   const [failed, setFailed] = useState(false)
   const [text, setText] = useState('')
   const [adding, setAdding] = useState(false)
@@ -236,6 +237,7 @@ function Card({ target }: { target: ProfileTarget }) {
         rememberProfile(key, p, at)
         if (!current) return
         setProfile(p)
+        setHidden(false)
         setFailed(false)
         const s = useStore.getState()
         if (server && s.servers[server]) s.rememberMember(server, username, asMember(p))
@@ -251,7 +253,9 @@ function Card({ target }: { target: ProfileTarget }) {
           return
         }
         forgetProfile(key)
-        if (current) setMissing(true)
+        if (!current) return
+        setProfile(null)
+        setHidden(true)
       })
     return () => {
       current = false
@@ -344,12 +348,12 @@ function Card({ target }: { target: ProfileTarget }) {
   const mask = useMask(ownServer)
   const nameMask = useMask(self)
   const fetched = profile?.member ?? null
-  const known = server === null || live !== undefined || profile !== null || missing
+  const known = server === null || live !== undefined || profile !== null || hidden
   const member = server === null ? null : live !== undefined ? live : fetched
   const join = serverJoinLine(
     server,
     serverName === null ? null : mask(serverName),
-    joinedServer(member !== null, profile, missing || failed),
+    joinedServer(member !== null, profile, hidden || failed),
     fetched?.joined_at
   )
   const roles: Role[] = member
@@ -371,8 +375,8 @@ function Card({ target }: { target: ProfileTarget }) {
     myRolePerms: mine,
     timedOut: timeout !== null,
   }
-  const actions = known && !missing ? profileActions(input) : []
-  const editRoles = known && !missing && canEditRoles(input) && serverRoles !== undefined
+  const actions = known ? profileActions(input) : []
+  const editRoles = known && canEditRoles(input) && serverRoles !== undefined
   const addable =
     editRoles && serverRoles && member
       ? freeRoles(serverRoles, member.role_ids).filter(r => roleEditable(input, r, false))
@@ -494,7 +498,7 @@ function Card({ target }: { target: ProfileTarget }) {
             @{remote ? formatQualified(user.username, remote) : user.username}
           </p>
           {remote && <InstanceChip host={remote} className="mt-1" />}
-          {bio && !missing && (
+          {bio && !hidden && (
             <p className="streamer mt-2 text-sm break-words whitespace-pre-wrap text-on-surface">
               <Masked text={bio} own={self} />
             </p>
@@ -511,46 +515,51 @@ function Card({ target }: { target: ProfileTarget }) {
             </button>
           )}
         </div>
-        {missing ? (
+        {hidden && member === null ? (
           <p className="mt-3 rounded-xl bg-surface-container-low p-3 text-sm text-on-surface-variant">
-            This account no longer exists.
+            {HIDDEN_PROFILE}
           </p>
         ) : (
           <div className="mt-3 flex flex-col gap-3 rounded-xl bg-surface-container-low p-3">
-            <dl className="flex flex-col gap-0.5 text-sm">
-              <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-on-surface-variant">Member since</dt>
-                <dd className="shrink-0 text-on-surface">
-                  {profile ? fmtDate(profile.created_at) : '…'}
-                </dd>
-              </div>
-              {timeout && (
-                <div className="flex items-center justify-between gap-3">
-                  <dt className="min-w-0 truncate text-on-surface-variant">
-                    Timed out{timeout.reason ? `: ${timeout.reason}` : ''}
-                  </dt>
-                  <dd className="shrink-0">
-                    <TimeoutBadge t={timeout} />
-                  </dd>
-                </div>
-              )}
-              {join && (
-                <div className="flex items-baseline justify-between gap-3">
-                  <dt className="flex min-w-0 text-on-surface-variant">
-                    <span className="shrink-0">Joined&nbsp;</span>
-                    <span
-                      className="streamer min-w-0 truncate"
-                      title={streamer ? undefined : join.label}
-                    >
-                      <Masked text={serverName ?? join.name} own={ownServer} />
-                    </span>
-                  </dt>
-                  <dd className="shrink-0 text-on-surface">
-                    {join.joinedAt === null ? '…' : fmtDate(join.joinedAt)}
-                  </dd>
-                </div>
-              )}
-            </dl>
+            {hidden && <p className="text-sm text-on-surface-variant">{HIDDEN_PROFILE}</p>}
+            {(!hidden || timeout || join) && (
+              <dl className="flex flex-col gap-0.5 text-sm">
+                {!hidden && (
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-on-surface-variant">Member since</dt>
+                    <dd className="shrink-0 text-on-surface">
+                      {profile ? fmtDate(profile.created_at) : '…'}
+                    </dd>
+                  </div>
+                )}
+                {timeout && (
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="min-w-0 truncate text-on-surface-variant">
+                      Timed out{timeout.reason ? `: ${timeout.reason}` : ''}
+                    </dt>
+                    <dd className="shrink-0">
+                      <TimeoutBadge t={timeout} />
+                    </dd>
+                  </div>
+                )}
+                {join && (
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="flex min-w-0 text-on-surface-variant">
+                      <span className="shrink-0">Joined&nbsp;</span>
+                      <span
+                        className="streamer min-w-0 truncate"
+                        title={streamer ? undefined : join.label}
+                      >
+                        <Masked text={serverName ?? join.name} own={ownServer} />
+                      </span>
+                    </dt>
+                    <dd className="shrink-0 text-on-surface">
+                      {join.joinedAt === null ? '…' : fmtDate(join.joinedAt)}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            )}
             {showRoles && (
               <div>
                 <p className={labelCls}>{roles.length === 1 ? 'Role' : 'Roles'}</p>
@@ -637,10 +646,10 @@ function Card({ target }: { target: ProfileTarget }) {
             <span className="shrink-0">{copied ? <Check size={16} /> : <Copy size={16} />}</span>
             {copied ? 'Copied' : 'Copy User ID'}
           </button>
-          {me && !guest && !self && !missing && !remote && !isBlocked && (
+          {me && !guest && !self && !remote && !isBlocked && (
             <ProfileFriendButton user={user} className={rowCls(sheet)} onDone={close} />
           )}
-          {me && !guest && !self && !missing && !remote && (
+          {me && !guest && !self && !remote && (
             <button
               onClick={() => {
                 const s = useStore.getState()
@@ -659,7 +668,7 @@ function Card({ target }: { target: ProfileTarget }) {
             </button>
           )}
         </div>
-        {me && !guest && !missing && (
+        {me && !guest && (
           <div className="mt-2">
             {self ? (
               <button

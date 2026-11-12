@@ -4,10 +4,12 @@ import { home } from '../instances'
 import {
   addRequest,
   friendOrder,
+  HIDDEN_PREVIEW,
   parseAddCommand,
   parseNames,
   parsePrivacy,
   placeFriend,
+  sendable,
   setOnline,
 } from '../friends'
 import { mergePings, pingCount } from '../pings'
@@ -15,7 +17,7 @@ import { dmPingCount } from '../selectors'
 import { ctxFor } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { itemFor } from '../actions/menu'
-import type { Friend, FriendRequest, Ping, UserRef, WsEvent } from '../types'
+import type { Friend, FriendRequest, Ping, Profile, UserRef, WsEvent } from '../types'
 import { me, memoryStorage, msg, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
@@ -141,6 +143,24 @@ describe('friend helpers', () => {
     expect(
       addRequest([request('b'), request('c')], request('c', true, 5)).map(r => r.user.username)
     ).toEqual(['c', 'b'])
+  })
+
+  test('a request can go to a name whose profile is hidden', () => {
+    const profile: Profile = {
+      user: user('bob'),
+      banner_color: null,
+      bio: null,
+      created_at: 1,
+      member: null,
+    }
+    expect(sendable({ profile, hidden: false, relation: 'none' })).toBe(true)
+    expect(sendable({ profile: null, hidden: true, relation: 'none' })).toBe(true)
+    expect(sendable({ profile: null, hidden: true, relation: 'incoming' })).toBe(true)
+    expect(sendable({ profile: null, hidden: true, relation: 'outgoing' })).toBe(false)
+    expect(sendable({ profile, hidden: false, relation: 'friend' })).toBe(false)
+    expect(sendable({ profile: null, hidden: false, relation: 'none' })).toBe(false)
+    expect(sendable(undefined)).toBe(false)
+    expect(HIDDEN_PREVIEW).toBe("You'll see their profile once you're friends or share a server.")
   })
 })
 

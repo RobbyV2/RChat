@@ -2,7 +2,7 @@
 // palette and the add box share. The server owns everything; these helpers only keep the
 // loaded pages in order as events arrive.
 
-import type { Friend, FriendRequest, UserRef } from './types'
+import type { Friend, FriendRequest, Profile, UserRef } from './types'
 
 export const FRIENDS_SCOPE = 'friends'
 
@@ -123,6 +123,22 @@ export const sendLabel = (status: RequestStatus) =>
     : status === 'friends'
       ? 'Already friends with'
       : 'Friend request sent to'
+
+// The add box's preview of a name: its profile, or `hidden` when the server shows it no profile
+// (a name without an account answers the same, and the send says so).
+export interface FriendPreviewState {
+  profile: Profile | null
+  hidden: boolean
+  relation: Relation
+}
+
+export const HIDDEN_PREVIEW = "You'll see their profile once you're friends or share a server."
+
+// A request can go to a name whose profile is hidden too, unless one is already between you.
+export const sendable = (p: FriendPreviewState | undefined) =>
+  p !== undefined &&
+  (p.profile !== null || p.hidden) &&
+  (p.relation === 'none' || p.relation === 'incoming')
 
 export const relationLabel = (r: Relation) =>
   r === 'friend'

@@ -2363,7 +2363,7 @@ mod tests {
             let me = me_payload(&state.db, &user).await.expect("me").bio;
             let profile = crate::api::users::profile(
                 State(state.clone()),
-                crate::api::MaybeAuthed(None),
+                crate::api::MaybeAuthed(Some(user.clone())),
                 HeaderMap::new(),
                 axum::extract::Path("bea".to_string()),
                 axum::extract::Query(serde_json::from_str("{}").expect("empty profile query")),

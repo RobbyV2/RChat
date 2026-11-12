@@ -1,14 +1,15 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, header};
+use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::perms::Perm;
-use crate::api::access::{Proof, resolve_server};
-use crate::api::{ApiError, ApiErrorBody, MaybeAuthed, Role, UserRef, allowed, require_guest_ok};
-use crate::db::{Db, User, get_user};
+use crate::api::access::{Caller, Proof, ServerAccess, UserView, not_found, view_user};
+use crate::api::{ApiError, ApiErrorBody, MaybeAuthed, Role, UserRef, require_guest_ok};
+use crate::db::{Db, User};
 use crate::state::AppState;
 
 /// Optional profile context.
@@ -61,6 +62,90 @@ pub struct Profile {
     pub member: Option<ProfileMember>,
 }
 
+/// The part of a card that an account shows only to people it has a relationship with.
+#[derive(Serialize, ToSchema)]
+pub struct ProfileFacts {
+    /// Profile description, at most 190 characters, may contain newlines; null when unset.
+    pub bio: Option<String>,
+    /// Lowercase `#rrggbb` banner color; null means the default derived from the avatar.
+    pub banner_color: Option<String>,
+    /// When the account was created, Unix seconds.
+    pub created_at: i64,
+}
+
+/// A user's membership in the server asked for with `server`.
+#[derive(Serialize, ToSchema)]
+pub struct MemberFacts {
+    /// Whether the user is a server admin.
+    pub is_admin: bool,
+    /// Whether the user created the server.
+    pub is_creator: bool,
+    /// Admin permission bits granted to the user as a server admin; 0 for non-admins. Role
+    /// permissions are in `roles`.
+    pub perms: i64,
+    /// Ids of the roles assigned to the user, ascending.
+    pub role_ids: Vec<i64>,
+    /// The roles assigned to the user, by id ascending.
+    pub roles: Vec<Role>,
+    /// When the user joined the server, Unix seconds.
+    pub joined_at: i64,
+    /// Whether the user currently shows as online in the server (false while they appear
+    /// offline).
+    pub online: bool,
+    /// The user's running timeout in the server. Only for viewers with the Timeout members
+    /// permission (kept while they are timed out themselves); absent otherwise and when none is
+    /// running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<crate::api::timeouts::MemberTimeout>,
+}
+
+impl From<MemberFacts> for ProfileMember {
+    fn from(facts: MemberFacts) -> ProfileMember {
+        let MemberFacts {
+            is_admin,
+            is_creator,
+            perms,
+            role_ids,
+            roles,
+            joined_at,
+            online,
+            timeout,
+        } = facts;
+        ProfileMember {
+            is_admin,
+            is_creator,
+            perms,
+            role_ids,
+            roles,
+            joined_at,
+            online,
+            timeout,
+        }
+    }
+}
+
+/// An account's card: its name, and the parts the caller may see.
+#[derive(Serialize, ToSchema)]
+pub struct UserCard {
+    /// The user's public identity and avatar.
+    pub user: UserRef,
+    /// The profile; null when the account does not show it to the caller.
+    pub profile: Option<ProfileFacts>,
+    /// Membership in the server given by `server`; null when `server` was omitted, the caller
+    /// may not view it, or the user is not a member.
+    pub member: Option<MemberFacts>,
+}
+
+/// A card as it is sent: the client may keep it, and asks again before each use.
+pub struct Card(pub UserCard);
+
+impl IntoResponse for Card {
+    fn into_response(self) -> Response {
+        let Card(card) = self;
+        ([(header::CACHE_CONTROL, "private, no-cache")], Json(card)).into_response()
+    }
+}
+
 async fn member_roles(db: &Db, server: &str, username: &str) -> Result<Vec<Role>, ApiError> {
     let rows = sqlx::query(
         "SELECT r.id, r.name, r.color, r.perms, r.mentionable FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2 ORDER BY r.id",
@@ -82,47 +167,33 @@ async fn member_roles(db: &Db, server: &str, username: &str) -> Result<Vec<Role>
     Ok(roles)
 }
 
-async fn profile_member(
+/// The membership of `username` in the server `access` opens, as its viewer may see it.
+async fn member_facts(
     state: &AppState,
-    headers: &HeaderMap,
-    viewer: Option<&User>,
-    server: &str,
+    access: &ServerAccess,
     username: &str,
-) -> Result<Option<ProfileMember>, ApiError> {
-    let Some(access) = allowed(
-        resolve_server(
-            &state.db,
-            server,
-            viewer,
-            &Proof::headers(headers, &state.limits),
-        )
-        .await,
-    )?
-    else {
-        return Ok(None);
-    };
+) -> Result<Option<MemberFacts>, ApiError> {
+    let db = &state.read();
     let lite = access.lite();
     let row = sqlx::query(
         "SELECT is_admin, perms, joined_at FROM members WHERE server = $1 AND username = $2",
     )
     .bind(&lite.name)
     .bind(username)
-    .fetch_optional(&state.db)
+    .fetch_optional(db)
     .await?;
     match row {
         Some(r) => {
-            let roles = member_roles(&state.db, &lite.name, username).await?;
-            let timeout = match access.can_view(&state.db, Perm::TimeoutMembers).await {
-                true => crate::api::timeouts::running_timeouts(
-                    &state.db,
-                    &lite.name,
-                    &[username.to_string()],
-                )
-                .await?
-                .remove(username),
+            let roles = member_roles(db, &lite.name, username).await?;
+            let timeout = match access.can_view(db, Perm::TimeoutMembers).await {
+                true => {
+                    crate::api::timeouts::running_timeouts(db, &lite.name, &[username.to_string()])
+                        .await?
+                        .remove(username)
+                }
                 false => None,
             };
-            Ok(Some(ProfileMember {
+            Ok(Some(MemberFacts {
                 is_admin: r.try_get::<i64, _>(0)? != 0,
                 is_creator: lite.creator.as_deref() == Some(username),
                 perms: r.try_get(1)?,
@@ -137,14 +208,94 @@ async fn profile_member(
     }
 }
 
+/// The card of `username` for `viewer`: the profile when the lookup rule
+/// (`access::subjects`) finds a relationship that shows it, the membership when the viewer
+/// named a server it can open where the account is a member, and the uniform 404 when neither.
+async fn card_of(
+    state: &AppState,
+    headers: &HeaderMap,
+    viewer: Option<&User>,
+    username: &str,
+    server: Option<&str>,
+) -> Result<UserCard, ApiError> {
+    let proof = Proof::headers(headers, &state.limits);
+    let caller = Caller {
+        user: viewer,
+        proof: &proof,
+        server,
+        badge: headers
+            .get("x-subject-binding")
+            .and_then(|v| v.to_str().ok()),
+    };
+    let UserView { user, seen, member } = view_user(state, &caller, username).await?;
+    let member = match member {
+        Some(access) => member_facts(state, &access, &user.username).await?,
+        None => None,
+    };
+    let profile = seen.map(|_| ProfileFacts {
+        bio: user.bio.clone(),
+        banner_color: user.banner_color.clone(),
+        created_at: user.created_at,
+    });
+    match profile.is_some() || member.is_some() {
+        true => Ok(UserCard {
+            user: UserRef::from_user(&user),
+            profile,
+            member,
+        }),
+        false => Err(not_found()),
+    }
+}
+
+/// Get an account's card
+///
+/// Returns what the caller may see of an account. `profile` (description, banner color and account
+/// creation time) is set when the caller proves a relationship with the account: it is the caller's
+/// own, they are friends, the account sent the caller a friend request, the account wrote in a
+/// direct conversation with the caller, both are members of one server, the account is a member of
+/// the server named with `server` and the caller may view that server (a member, anyone for a
+/// server anyone can read (`public_read` in `PATCH /api/v1/servers/{name}`, `public_reading` in
+/// `GET /api/v1/settings`), a guest with a valid `X-Guest-Grant`), or the caller sends a P2P
+/// binding of the account in `X-Subject-Binding`. A guest that names no server is also shown
+/// members of the servers its grants open. The instance's `profile_visibility` in `GET
+/// /api/v1/settings` widens this to members of servers anyone can read (`public_servers`) or to
+/// every account (`everyone`), and an account may narrow it to friends (`profile` in `PATCH
+/// /api/v1/me/privacy`).
+///
+/// `member` is the account's membership in `server`, set when the caller may view that server
+/// and the account is a member, whoever may see the profile. An account with neither part
+/// answers the same 404 as a name with no account, after the same checks. Works without a
+/// token for guests when guest access is on. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/users/{username}/card", tag = "Users", params(("username" = String, Path, description = "Username, case-insensitive"), ProfileQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests"), ("X-Subject-Binding" = Option<String>, Header, description = "A P2P binding of the account: the `token` of `POST /api/v1/identity/p2p_binding` as the account showed it in its P2P badge. It shows that account's profile until the binding expires")), responses((status = 200, description = "The account's name with the parts the caller may see: `profile` (null when the account does not show it to the caller) and `member` (null when `server` was omitted, the caller may not view it, or the account is not a member). Never both null", body = UserCard, headers(("cache-control" = String, description = "`private, no-cache`"))), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such account, or one the caller may see nothing of (identical responses)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+pub(crate) async fn card(
+    State(state): State<AppState>,
+    MaybeAuthed(viewer): MaybeAuthed,
+    headers: HeaderMap,
+    Path(username): Path<String>,
+    Query(q): Query<ProfileQuery>,
+) -> Result<Card, ApiError> {
+    require_guest_ok(&state.db, viewer.as_ref()).await?;
+    let ProfileQuery { server } = q;
+    let card = card_of(
+        &state,
+        &headers,
+        viewer.as_ref(),
+        &username,
+        server.as_deref(),
+    )
+    .await?;
+    Ok(Card(card))
+}
+
 /// Get a user's profile
 ///
-/// Returns a user's public mini profile: identity, banner color, description and account
-/// creation time, plus their membership in `server` when asked. Works without a token for
-/// guests when guest access is on. Membership is only shown when the viewer may view the server
-/// (not banned from it; for password-protected servers a member, or a guest with a valid
-/// `X-Guest-Grant`). General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/users/{username}/profile", tag = "Users", params(("username" = String, Path, description = "Username, case-insensitive"), ProfileQuery), responses((status = 200, description = "A user's mini profile: public info, banner color (null means the default derived from the avatar) and account creation time. With `server`, `member` holds their membership in it (admin, creator, permissions, role ids, join time, presence); it is null when the server does not exist, the viewer may not view it (same rules as the member list, guests included) or the user is not a member", body = Profile), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "User not found", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+/// The older form of `GET /api/v1/users/{username}/card`, with the same rule: it answers only
+/// when the caller may see the account's profile (see there), with identity, banner color,
+/// description and account creation time, plus the membership in `server` when asked. An
+/// account whose profile the caller may not see answers the same 404 as a name with no
+/// account, also when the caller could see its membership. Works without a token for guests
+/// when guest access is on. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/users/{username}/profile", tag = "Users", params(("username" = String, Path, description = "Username, case-insensitive"), ProfileQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests"), ("X-Subject-Binding" = Option<String>, Header, description = "A P2P binding of the account, as for `GET /api/v1/users/{username}/card`")), responses((status = 200, description = "A user's mini profile: public info, banner color (null means the default derived from the avatar) and account creation time. With `server`, `member` holds their membership in it (admin, creator, permissions, role ids, join time, presence); it is null when the server does not exist, the viewer may not view it (same rules as the member list, guests included) or the user is not a member", body = Profile), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such account, or one whose profile the caller may not see (identical responses)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn profile(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -153,70 +304,153 @@ pub(crate) async fn profile(
     Query(q): Query<ProfileQuery>,
 ) -> Result<Json<Profile>, ApiError> {
     require_guest_ok(&state.db, viewer.as_ref()).await?;
-    let user = get_user(&state.db, &username)
-        .await?
-        .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "User not found".to_string(), None))?;
     let ProfileQuery { server } = q;
-    let member = match server {
-        Some(server) => {
-            profile_member(
-                &state,
-                &headers,
-                viewer.as_ref(),
-                &server.to_lowercase(),
-                &user.username,
-            )
-            .await?
-        }
-        None => None,
-    };
-    Ok(Json(Profile {
-        user: UserRef::from_user(&user),
-        banner_color: user.banner_color.clone(),
-        bio: user.bio.clone(),
-        created_at: user.created_at,
+    let UserCard {
+        user,
+        profile,
         member,
+    } = card_of(
+        &state,
+        &headers,
+        viewer.as_ref(),
+        &username,
+        server.as_deref(),
+    )
+    .await?;
+    let ProfileFacts {
+        bio,
+        banner_color,
+        created_at,
+    } = profile.ok_or_else(not_found)?;
+    Ok(Json(Profile {
+        user,
+        banner_color,
+        bio,
+        created_at,
+        member: member.map(ProfileMember::from),
     }))
 }
 
 #[cfg(test)]
 mod tests {
+    use axum::http::{StatusCode, header};
+    use axum::response::IntoResponse;
+    use serde_json::json;
+
     use super::*;
+    use crate::api::access::NOT_FOUND;
     use crate::api::auth::{MePatch, patch_me};
-    use crate::api::test_util::{add_member, done, mem_user, temp_state};
-    use crate::api::{Authed, MaybeAuthed};
+    use crate::api::test_util::{add_member, done, mem_user, temp_state, test_grant};
+    use crate::api::{Authed, MaybeAuthed, Reason};
+    use crate::db::get_user;
 
     async fn insert_user(db: &Db, name: &str, created_at: i64) {
         crate::db::NewUser::plain(name).at(created_at).add(db).await;
     }
 
-    async fn view(
-        state: &AppState,
-        viewer: Option<&str>,
-        grant: Option<&str>,
-        username: &str,
-        server: Option<&str>,
-    ) -> Result<Profile, ApiError> {
+    async fn exec(db: &Db, sql: &str) {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .execute(db)
+            .await
+            .expect(sql);
+    }
+
+    /// Who asks, and what they send along.
+    #[derive(Clone, Copy, Debug, Default)]
+    struct Ask<'a> {
+        viewer: Option<&'a str>,
+        admin: bool,
+        grant: Option<&'a str>,
+        badge: Option<&'a str>,
+        server: Option<&'a str>,
+    }
+
+    fn by(viewer: &str) -> Ask<'_> {
+        Ask {
+            viewer: Some(viewer),
+            ..Ask::default()
+        }
+    }
+
+    fn in_server<'a>(ask: Ask<'a>, server: &'a str) -> Ask<'a> {
+        Ask {
+            server: Some(server),
+            ..ask
+        }
+    }
+
+    fn headers_of(ask: Ask<'_>) -> HeaderMap {
         let mut headers = HeaderMap::new();
-        if let Some(grant) = grant {
+        if let Some(grant) = ask.grant {
             headers.insert(
                 "x-guest-grant",
-                crate::api::test_util::test_grant(grant)
-                    .parse()
-                    .expect("grant header"),
+                test_grant(grant).parse().expect("grant header"),
             );
         }
-        profile(
+        if let Some(badge) = ask.badge {
+            headers.insert("x-subject-binding", badge.parse().expect("badge header"));
+        }
+        headers
+    }
+
+    async fn card_for(
+        state: &AppState,
+        ask: Ask<'_>,
+        username: &str,
+    ) -> Result<UserCard, ApiError> {
+        card(
             State(state.clone()),
-            MaybeAuthed(viewer.map(|name| mem_user(name, false))),
-            headers,
+            MaybeAuthed(ask.viewer.map(|name| mem_user(name, ask.admin))),
+            headers_of(ask),
             Path(username.to_string()),
             Query(ProfileQuery {
-                server: server.map(str::to_string),
+                server: ask.server.map(str::to_string),
+            }),
+        )
+        .await
+        .map(|Card(card)| card)
+    }
+
+    async fn view(state: &AppState, ask: Ask<'_>, username: &str) -> Result<Profile, ApiError> {
+        profile(
+            State(state.clone()),
+            MaybeAuthed(ask.viewer.map(|name| mem_user(name, ask.admin))),
+            headers_of(ask),
+            Path(username.to_string()),
+            Query(ProfileQuery {
+                server: ask.server.map(str::to_string),
             }),
         )
         .await
         .map(|p| p.0)
+    }
+
+    fn refusal<T>(res: Result<T, ApiError>) -> Option<(StatusCode, String, Option<Reason>)> {
+        res.err()
+            .map(|ApiError(code, text, reason)| (code, text, reason))
+    }
+
+    /// The uniform 404, without a reason.
+    fn hidden() -> Option<(StatusCode, String, Option<Reason>)> {
+        Some((StatusCode::NOT_FOUND, NOT_FOUND.to_string(), None))
+    }
+
+    /// What a card shows: (the profile part, the membership part), or `None` for the 404.
+    async fn parts(state: &AppState, ask: Ask<'_>, username: &str) -> Option<(bool, bool)> {
+        match card_for(state, ask, username).await {
+            Ok(card) => {
+                assert!(card.profile.is_some() || card.member.is_some());
+                Some((card.profile.is_some(), card.member.is_some()))
+            }
+            Err(ApiError(code, text, reason)) => {
+                assert_eq!(
+                    (code, text.as_str(), reason),
+                    (StatusCode::NOT_FOUND, NOT_FOUND, None),
+                    "{ask:?} {username}"
+                );
+                None
+            }
+        }
     }
 
     async fn patch_banner(state: &AppState, body: &str) -> Result<Option<String>, ApiError> {
@@ -230,13 +464,35 @@ mod tests {
             .map(|r| r.0.banner_color)
     }
 
-    #[tokio::test]
-    async fn profile_member_visibility_and_fields() {
-        let (state, path) = temp_state("profile_visibility").await;
+    fn badge_for(state: &AppState, name: &str) -> String {
+        let iat = crate::db::now();
+        state
+            .instance
+            .keys
+            .sign(&crate::identity::BindingClaims {
+                iss: "http://localhost".to_string(),
+                sub: format!("{name}@localhost"),
+                aud: crate::identity::BINDING_AUD.to_string(),
+                ik: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo".to_string(),
+                iat,
+                exp: iat + crate::identity::BINDING_TTL_SECS,
+            })
+            .expect("sign")
+    }
+
+    /// alice created the password server vault, where bob is a member with the role mods. bob
+    /// is also in the public server rchat. carol and dave are in no server, root is the site
+    /// admin, and the grant `g1` opens vault.
+    async fn world(state: &AppState) -> i64 {
         let db = &state.db;
-        for (name, created) in [("alice", 11), ("bob", 22), ("carol", 33)] {
+        for (name, created) in [("alice", 11), ("bob", 22), ("carol", 33), ("dave", 44)] {
             insert_user(db, name, created).await;
         }
+        exec(
+            db,
+            "UPDATE users SET bio = 'about bob', banner_color = '#102030' WHERE username = 'bob'",
+        )
+        .await;
         sqlx::query("INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('vault', 'Vault', 'alice', 'hash', 0)")
             .execute(db)
             .await
@@ -258,20 +514,32 @@ mod tests {
         sqlx::query(
             "INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'vault', 0, 4000000000)",
         )
-        .bind(crate::db::secret_key(&crate::api::test_util::test_grant("g1")))
+        .bind(crate::db::secret_key(&test_grant("g1")))
         .execute(db)
         .await
         .expect("grant");
+        role
+    }
 
-        let plain = view(&state, Some("carol"), None, "Bob", None)
-            .await
-            .expect("plain profile");
-        assert_eq!(plain.user.username, "bob");
-        assert_eq!(plain.created_at, 22);
-        assert_eq!(plain.banner_color, None);
-        assert!(plain.member.is_none());
+    #[tokio::test]
+    async fn profile_member_visibility_and_fields() {
+        let (state, path) = temp_state("profile_visibility").await;
+        let db = &state.db;
+        let role = world(&state).await;
 
-        let bob = view(&state, Some("alice"), None, "bob", Some("Vault"))
+        assert_eq!(
+            refusal(view(&state, by("carol"), "Bob").await),
+            hidden(),
+            "carol shares nothing with bob"
+        );
+        let own = view(&state, by("bob"), "Bob").await.expect("own profile");
+        assert_eq!(own.user.username, "bob");
+        assert_eq!(own.created_at, 22);
+        assert_eq!(own.banner_color.as_deref(), Some("#102030"));
+        assert_eq!(own.bio.as_deref(), Some("about bob"));
+        assert!(own.member.is_none());
+
+        let bob = view(&state, in_server(by("alice"), "Vault"), "bob")
             .await
             .expect("member view")
             .member
@@ -290,7 +558,7 @@ mod tests {
             named,
             vec![(role, "mods".to_string(), "#ff0000".to_string())]
         );
-        let alice = view(&state, Some("bob"), None, "alice", Some("vault"))
+        let alice = view(&state, in_server(by("bob"), "vault"), "alice")
             .await
             .expect("creator view")
             .member
@@ -299,52 +567,302 @@ mod tests {
         assert_eq!((alice.role_ids, alice.joined_at), (vec![], 100));
         assert!(alice.roles.is_empty());
 
+        let guest = Ask::default();
+        let granted = Ask {
+            grant: Some("g1"),
+            ..guest
+        };
+        let root = Ask {
+            admin: true,
+            ..by("root")
+        };
         let cases = [
-            (Some("carol"), None, "bob", Some("vault"), false),
-            (None, None, "bob", Some("vault"), false),
-            (None, Some("bad"), "bob", Some("vault"), false),
-            (None, Some("g1"), "bob", Some("vault"), true),
-            (Some("bob"), None, "carol", Some("vault"), false),
-            (None, None, "bob", Some("rchat"), true),
-            (None, None, "alice", Some("rchat"), false),
-            (Some("bob"), None, "bob", Some("nowhere"), false),
+            (
+                "a server carol can't open",
+                in_server(by("carol"), "vault"),
+                "bob",
+                None,
+            ),
+            (
+                "a public server, named",
+                in_server(by("carol"), "rchat"),
+                "bob",
+                Some((true, true)),
+            ),
+            ("no grant", in_server(guest, "vault"), "bob", None),
+            (
+                "an unknown grant",
+                in_server(
+                    Ask {
+                        grant: Some("bad"),
+                        ..guest
+                    },
+                    "vault",
+                ),
+                "bob",
+                None,
+            ),
+            (
+                "a grant",
+                in_server(granted, "vault"),
+                "bob",
+                Some((true, true)),
+            ),
+            (
+                "a grant, no server named",
+                granted,
+                "bob",
+                Some((true, false)),
+            ),
+            (
+                "a grant, someone outside",
+                in_server(granted, "vault"),
+                "carol",
+                None,
+            ),
+            (
+                "not a member there",
+                in_server(by("bob"), "vault"),
+                "carol",
+                None,
+            ),
+            (
+                "a guest, a public server",
+                in_server(guest, "rchat"),
+                "bob",
+                Some((true, true)),
+            ),
+            ("a guest, nothing named", guest, "bob", None),
+            (
+                "a guest, not a member there",
+                in_server(guest, "rchat"),
+                "alice",
+                None,
+            ),
+            (
+                "yourself, no such server",
+                in_server(by("bob"), "nowhere"),
+                "bob",
+                Some((true, false)),
+            ),
+            ("a common server", by("alice"), "bob", Some((true, false))),
+            ("the site admin", root, "bob", None),
+            (
+                "the site admin, the server named",
+                in_server(root, "vault"),
+                "bob",
+                Some((true, true)),
+            ),
+            ("no account", in_server(guest, "vault"), "nobody", None),
+            ("no account, signed in", by("alice"), "nobody", None),
         ];
-        for (viewer, grant, target, server, member) in cases {
-            let got = view(&state, viewer, grant, target, server)
-                .await
-                .expect("profile ok")
-                .member
-                .is_some();
-            assert_eq!(got, member, "{viewer:?} {grant:?} {target} {server:?}");
+        for (what, ask, target, want) in cases {
+            assert_eq!(parts(&state, ask, target).await, want, "{what}");
+            let old = view(&state, ask, target).await;
+            match want {
+                Some((true, member)) => {
+                    assert_eq!(old.expect(what).member.is_some(), member, "{what}")
+                }
+                Some((false, _)) | None => assert_eq!(refusal(old), hidden(), "{what}"),
+            }
         }
-        let site = profile(
-            State(state.clone()),
-            MaybeAuthed(Some(mem_user("root", true))),
-            HeaderMap::new(),
-            Path("bob".to_string()),
-            Query(ProfileQuery {
-                server: Some("vault".to_string()),
-            }),
-        )
-        .await
-        .expect("site admin view")
-        .0;
-        assert!(site.member.is_some());
 
-        assert!(matches!(
-            view(&state, None, None, "nobody", Some("vault")).await,
-            Err(ApiError(StatusCode::NOT_FOUND, _, _))
-        ));
+        exec(db, "INSERT INTO friends(username, friend, created_at) VALUES('carol', 'bob', 1), ('bob', 'carol', 1)").await;
+        assert_eq!(parts(&state, by("carol"), "bob").await, Some((true, false)));
+        exec(db, "DELETE FROM friends").await;
+        assert_eq!(parts(&state, by("carol"), "bob").await, None);
+        add_member(db, "vault", "carol", 0, 0, 400).await;
+        assert_eq!(
+            parts(&state, by("carol"), "bob").await,
+            Some((true, false)),
+            "a common server, at the next request"
+        );
+        let badge = badge_for(&state, "bob");
+        let shows = Ask {
+            badge: Some(&badge),
+            ..by("dave")
+        };
+        assert_eq!(parts(&state, by("dave"), "bob").await, None);
+        assert_eq!(parts(&state, shows, "bob").await, Some((true, false)));
+        assert_eq!(
+            parts(&state, shows, "alice").await,
+            None,
+            "bob's badge only"
+        );
+        assert_eq!(
+            parts(
+                &state,
+                Ask {
+                    viewer: None,
+                    ..shows
+                },
+                "bob"
+            )
+            .await,
+            Some((true, false)),
+            "a badge needs no token"
+        );
+
         sqlx::query("UPDATE settings SET value = '0' WHERE key = 'guests_enabled'")
             .execute(db)
             .await
             .expect("disable guests");
         crate::api::Settings::forget(db);
-        assert!(matches!(
-            view(&state, None, None, "bob", None).await,
-            Err(ApiError(StatusCode::UNAUTHORIZED, _, _))
+        let off = Some((
+            StatusCode::UNAUTHORIZED,
+            "Guest access is disabled".to_string(),
+            None,
         ));
-        assert!(view(&state, Some("carol"), None, "bob", None).await.is_ok());
+        for target in ["bob", "nobody"] {
+            for ask in [
+                guest,
+                in_server(granted, "vault"),
+                in_server(guest, "rchat"),
+            ] {
+                assert_eq!(refusal(view(&state, ask, target).await), off, "{target}");
+                assert_eq!(
+                    refusal(card_for(&state, ask, target).await),
+                    off,
+                    "{target}"
+                );
+            }
+        }
+        assert!(view(&state, by("alice"), "bob").await.is_ok());
+        assert!(card_for(&state, by("alice"), "bob").await.is_ok());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn card_parts() {
+        let (state, path) = temp_state("card_parts").await;
+        let db = &state.db;
+        let role = world(&state).await;
+        let alice = by("alice");
+        let both = card_for(&state, in_server(alice, "vault"), "bob")
+            .await
+            .expect("both");
+        assert_eq!(
+            serde_json::to_value(&both).expect("json"),
+            json!({
+                "user": {
+                    "username": "bob",
+                    "display_name": "bob",
+                    "avatar_kind": "identicon",
+                    "avatar_color": null,
+                },
+                "profile": {"bio": "about bob", "banner_color": "#102030", "created_at": 22},
+                "member": {
+                    "is_admin": false,
+                    "is_creator": false,
+                    "perms": 0,
+                    "role_ids": [role],
+                    "roles": [{"id": role, "name": "mods", "color": "#ff0000", "perms": 4, "mentionable": false}],
+                    "joined_at": 200,
+                    "online": false,
+                },
+            })
+        );
+        let profile_only = card_for(&state, alice, "bob").await.expect("profile only");
+        assert!(profile_only.profile.is_some() && profile_only.member.is_none());
+        assert_eq!(
+            serde_json::to_value(&profile_only).expect("json")["member"],
+            json!(null)
+        );
+
+        exec(
+            db,
+            "INSERT INTO privacy(username, profile) VALUES('bob', 'friends')",
+        )
+        .await;
+        let member_only = card_for(&state, in_server(alice, "vault"), "bob")
+            .await
+            .expect("member only");
+        let wire = serde_json::to_value(&member_only).expect("json");
+        assert_eq!(wire["profile"], json!(null));
+        assert_eq!(wire["member"]["joined_at"], json!(200));
+        assert_eq!(wire["user"]["username"], json!("bob"));
+        assert!(!wire.to_string().contains("about bob"));
+        assert!(!wire.to_string().contains("#102030"));
+        assert_eq!(
+            refusal(card_for(&state, alice, "bob").await),
+            hidden(),
+            "neither part without the server"
+        );
+        assert_eq!(
+            refusal(card_for(&state, in_server(alice, "rchat"), "bob").await),
+            None,
+            "membership in a public server shows too"
+        );
+        let unknown = refusal(card_for(&state, in_server(alice, "vault"), "ghost").await);
+        assert_eq!(unknown, hidden());
+        assert_eq!(
+            refusal(card_for(&state, in_server(by("carol"), "vault"), "bob").await),
+            unknown,
+            "hidden and missing accounts answer the same"
+        );
+        assert_eq!(
+            card_for(&state, in_server(by("bob"), "vault"), "bob")
+                .await
+                .expect("own card")
+                .profile
+                .map(|facts| (facts.bio, facts.banner_color, facts.created_at)),
+            Some((
+                Some("about bob".to_string()),
+                Some("#102030".to_string()),
+                22
+            ))
+        );
+        let sent = Card(both).into_response();
+        assert_eq!(sent.status(), StatusCode::OK);
+        assert_eq!(sent.headers()[header::CACHE_CONTROL], "private, no-cache");
+        assert!(crate::api::CORS_REQUEST_HEADERS.contains(&"x-subject-binding"));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn old_profile_shape_follows_the_rule() {
+        let (state, path) = temp_state("old_profile").await;
+        let db = &state.db;
+        world(&state).await;
+        let alice = by("alice");
+        let seen = view(&state, in_server(alice, "vault"), "bob")
+            .await
+            .expect("a common server");
+        let wire = serde_json::to_value(&seen).expect("json");
+        assert_eq!(wire["user"]["username"], json!("bob"));
+        assert_eq!(wire["bio"], json!("about bob"));
+        assert_eq!(wire["banner_color"], json!("#102030"));
+        assert_eq!(wire["created_at"], json!(22));
+        assert_eq!(wire["member"]["joined_at"], json!(200));
+        assert!(wire.get("profile").is_none(), "the old shape is flat");
+        assert_eq!(
+            serde_json::to_value(view(&state, alice, "bob").await.expect("no server"))
+                .expect("json")["member"],
+            json!(null)
+        );
+        for (ask, target) in [
+            (by("carol"), "bob"),
+            (by("carol"), "ghost"),
+            (Ask::default(), "bob"),
+            (Ask::default(), "ghost"),
+        ] {
+            assert_eq!(
+                refusal(view(&state, ask, target).await),
+                hidden(),
+                "{target}"
+            );
+        }
+        exec(
+            db,
+            "INSERT INTO privacy(username, profile) VALUES('bob', 'friends')",
+        )
+        .await;
+        assert_eq!(
+            refusal(view(&state, in_server(alice, "vault"), "bob").await),
+            hidden(),
+            "membership alone does not open the old shape"
+        );
+        assert!(view(&state, by("bob"), "bob").await.is_ok(), "yourself");
         done(state, path).await;
     }
 
@@ -353,7 +871,7 @@ mod tests {
         let (state, path) = temp_state("profile_banner").await;
         insert_user(&state.db, "bob", 0).await;
         let stored = |state: AppState| async move {
-            view(&state, None, None, "bob", None)
+            view(&state, by("bob"), "bob")
                 .await
                 .expect("profile")
                 .banner_color

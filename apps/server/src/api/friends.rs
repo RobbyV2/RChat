@@ -796,8 +796,7 @@ fn unfriend_events(state: &AppState, a: &str, b: &str) {
 
 /// Send a friend request
 ///
-/// Sends `username` a friend request from the signed-in user, after a check of their mini
-/// profile (`GET /api/v1/users/{username}/profile`) on the client. When they had already sent you a
+/// Sends `username` a friend request from the signed-in user. When they had already sent you a
 /// request, this accepts it (`status` `accepted`); when you are friends already it changes
 /// nothing (`friends`); sending a pending request again changes nothing (`sent`). A new request
 /// emits `friend_request_added` to both users and a `ping` of kind `friend_request` (scope

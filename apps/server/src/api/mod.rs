@@ -230,7 +230,7 @@ pub(crate) fn split_list(raw: &str) -> Vec<String> {
 
 pub const NEXT_CURSOR: &str = "x-next-cursor";
 
-pub const CORS_REQUEST_HEADERS: [&str; 13] = [
+pub const CORS_REQUEST_HEADERS: [&str; 14] = [
     "content-type",
     "authorization",
     "accept",
@@ -241,6 +241,7 @@ pub const CORS_REQUEST_HEADERS: [&str; 13] = [
     "sec-websocket-protocol",
     "x-guest-grant",
     "x-invite-password",
+    "x-subject-binding",
     "x-trust-token",
     "x-trust-client",
     "if-none-match",
@@ -1945,6 +1946,7 @@ fn api_routes(
         .route("/auth/logout", post(auth::logout))
         .route("/me/servers", get(servers::list_my_servers))
         .route("/users/{username}/profile", get(users::profile))
+        .route("/users/{username}/card", get(users::card))
         .route(
             "/servers/{name}",
             get(servers::get_server).delete(servers::delete_server),

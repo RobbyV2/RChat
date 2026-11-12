@@ -29,7 +29,10 @@ use rules::{
     channel_access, channel_viewable, channel_viewers, effective_perms, grants_open, is_banned,
     live_grant_servers, member_perms, view_rules, view_under,
 };
-pub use subjects::{Caller, Level, Seen, SeenUser, candidates, level_of, resolve_user, seen_among};
+pub use subjects::{
+    Caller, Level, Seen, SeenUser, UserView, candidates, level_of, resolve_user, seen_among,
+    view_user,
+};
 
 pub const DENIED: &str = "Server not found or wrong password";
 pub const PASSWORD_REQUIRED: &str = "Password required";
@@ -2852,7 +2855,9 @@ mod tests {
                 let (status, _, body) = &replies[0];
                 let body = String::from_utf8_lossy(body);
                 let want = match (route.starts_with("/users/"), token, body.as_ref()) {
-                    (true, _, _) => *status == 200 && body.contains(r#""member":null"#),
+                    (true, Some(_), _) => *status == 200 && body.contains(r#""member":null"#),
+                    (true, None, r#"{"error":"Not found"}"#) => *status == 404,
+                    (true, None, _) => false,
                     (false, Some(_), r#"{"error":"Server not found or wrong password"}"#) => {
                         *status == 404
                     }

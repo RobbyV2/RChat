@@ -115,6 +115,10 @@ export const joinedServer = (
   failed: boolean
 ) => (profile ? profile.member !== null : liveMember && !failed)
 
+// A card's line for a profile the server doesn't show the viewer. The 404 behind it says
+// nothing about whether the account exists.
+export const HIDDEN_PROFILE = "This profile isn't available."
+
 export const heldRoles = (roles: Role[], roleIds: number[]) =>
   roles.filter(r => roleIds.includes(r.id))
 

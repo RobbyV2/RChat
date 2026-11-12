@@ -316,6 +316,28 @@ async fn find(state: &AppState, caller: &Caller<'_>, username: &str) -> Result<F
     })
 }
 
+/// What `caller` may see of the account `username`: its profile when a relationship shows it
+/// (`seen`), and its membership in the server the caller named and can open (`member`), which
+/// shows whatever the account's level. `not_found()` when neither, as for a name without an
+/// account.
+pub struct UserView {
+    pub user: User,
+    pub seen: Option<Seen>,
+    pub member: Option<ServerAccess>,
+}
+
+pub async fn view_user(
+    state: &AppState,
+    caller: &Caller<'_>,
+    username: &str,
+) -> Result<UserView, ApiError> {
+    let Found { user, seen, member } = find(state, caller, username).await?;
+    match user {
+        Some(user) if seen.is_some() || member.is_some() => Ok(UserView { user, seen, member }),
+        Some(_) | None => Err(not_found()),
+    }
+}
+
 /// The account `username` when `caller` proves a relationship that shows it: itself, the
 /// account's level `everyone`, a friendship, a pending request from the account, a direct
 /// conversation the account wrote in, a common server, a server the caller names and can open

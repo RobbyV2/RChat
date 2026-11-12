@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   CARD_GAP,
   CARD_MARGIN,
+  HIDDEN_PROFILE,
   bannerColor,
   canEditRoles,
   defaultBanner,
@@ -309,5 +310,11 @@ describe('server join line', () => {
     expect(joinedServer(false, joined, false)).toBe(true)
     expect(joinedServer(true, null, true)).toBe(false)
     expect(joinedServer(true, joined, true)).toBe(true)
+  })
+})
+
+describe('a profile the viewer may not see', () => {
+  test('says so without claiming the account is gone', () => {
+    expect(HIDDEN_PROFILE).toBe("This profile isn't available.")
   })
 })

@@ -15,15 +15,18 @@ import {
   DM_POLICIES,
   FRIENDS_SCOPE,
   FRIEND_TABS,
+  HIDDEN_PREVIEW,
   REQUEST_POLICIES,
   parseNames,
   relationLabel,
   sendLabel,
+  sendable,
+  type FriendPreviewState,
   type FriendsTab,
   type Relation,
   type SendResult,
 } from '../lib/friends'
-import type { Friend, FriendRequest, Profile, UserRef } from '../lib/types'
+import type { Friend, FriendRequest, UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { profileTrigger } from './profile_card'
@@ -445,25 +448,19 @@ export function FriendsSection({ max = 5 }: { max?: number }) {
   )
 }
 
-interface Preview {
-  profile: Profile | null
-  relation: Relation
-  missing: boolean
-}
-
 // Mini profiles and relations of `names`, loaded once per name list.
 export function useFriendPreviews(names: string[]) {
   const key = names.join(' ')
-  const [previews, setPreviews] = useState<Record<string, Preview>>({})
+  const [previews, setPreviews] = useState<Record<string, FriendPreviewState>>({})
   useEffect(() => {
     let live = true
     for (const name of key.split(' ').filter(Boolean)) {
       void Promise.all([
         api.userProfile(name, null).then(
-          p => ({ profile: p, missing: false }),
+          p => ({ profile: p, hidden: false }),
           (e: unknown) => ({
             profile: null,
-            missing: e instanceof ApiError && e.status === 404,
+            hidden: e instanceof ApiError && e.status === 404,
           })
         ),
         api.friendship(name).then(
@@ -487,7 +484,7 @@ export function FriendPreview({
   result,
 }: {
   name: string
-  preview: Preview | undefined
+  preview: FriendPreviewState | undefined
   result?: SendResult
 }) {
   if (!preview)
@@ -496,18 +493,34 @@ export function FriendPreview({
         Loading <span className="streamer ml-1">@{name}</span>
       </div>
     )
-  const { profile, relation, missing } = preview
+  const { profile, relation, hidden } = preview
+  const status = result
+    ? result.ok
+      ? `${sendLabel(result.status)} ${profile?.user.display_name ?? result.user.display_name}`
+      : result.error
+    : relationLabel(relation)
+  const statusLine = status && (
+    <p
+      role={result && !result.ok ? 'alert' : undefined}
+      className={`mt-1 text-xs ${result && !result.ok ? 'text-error' : 'text-primary'}`}
+    >
+      <span className="streamer">{status}</span>
+    </p>
+  )
+  if (!profile && hidden)
+    return (
+      <div data-preview={name} className="rounded-2xl bg-surface-container px-4 py-3">
+        <p className="streamer truncate text-sm font-medium text-on-surface">@{name}</p>
+        <p className="mt-1 text-xs text-on-surface-variant">{HIDDEN_PREVIEW}</p>
+        {statusLine}
+      </div>
+    )
   if (!profile)
     return (
       <div className="flex items-center rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant">
-        {missing ? 'No user named' : "Couldn't load"} <span className="streamer ml-1">@{name}</span>
+        Couldn&apos;t load <span className="streamer ml-1">@{name}</span>
       </div>
     )
-  const status = result
-    ? result.ok
-      ? `${sendLabel(result.status)} ${profile.user.display_name}`
-      : result.error
-    : relationLabel(relation)
   return (
     <div data-preview={name} className="overflow-hidden rounded-2xl bg-surface-container">
       <div
@@ -525,14 +538,7 @@ export function FriendPreview({
               {profile.bio}
             </p>
           )}
-          {status && (
-            <p
-              role={result && !result.ok ? 'alert' : undefined}
-              className={`mt-1 text-xs ${result && !result.ok ? 'text-error' : 'text-primary'}`}
-            >
-              <span className="streamer">{status}</span>
-            </p>
-          )}
+          {statusLine}
         </div>
       </div>
     </div>
@@ -555,10 +561,7 @@ function AddFriends({ names }: { names: string[] }) {
   const [results, setResults] = useState<Record<string, SendResult> | null>(null)
   const [busy, setBusy] = useState(false)
   const ready = names.every(n => previews[n])
-  const targets = names.filter(n => {
-    const p = previews[n]
-    return p?.profile && (p.relation === 'none' || p.relation === 'incoming')
-  })
+  const targets = names.filter(n => sendable(previews[n]))
   const single = names.length === 1
   const send = async () => {
     if (!targets.length || busy) return
