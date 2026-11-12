@@ -6482,3 +6482,109 @@ async fn the_incoming_webhooks_control_is_added_to_an_old_database() {
     )
     .await;
 }
+
+async fn old_privacy_db(db: &Db) {
+    for stmt in [
+        "ALTER TABLE privacy DROP COLUMN profile",
+        "DELETE FROM settings WHERE key = 'profile_visibility' OR key LIKE 'env%'",
+        "UPDATE settings SET value = '28' WHERE key = 'schema_version'",
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, bio, created_at) VALUES('alice', 'Alice', 'old-hash', 'text', 'identicon', 'old bio', 7)",
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('bob', 'Bob', 'old-hash', 'text', 'identicon', 8)",
+        "INSERT INTO privacy(username, dms, friend_requests) VALUES('bob', 'friends', 'servers')",
+    ] {
+        sqlx::query(stmt).execute(db).await.expect(stmt);
+    }
+}
+
+async fn upgraded_privacy_db(db: &Db, choice: Option<&str>) {
+    assert_eq!(count(db, STORED_SCHEMA).await, SCHEMA_VERSION);
+    let row =
+        sqlx::query("SELECT dms, friend_requests, profile FROM privacy WHERE username = 'bob'")
+            .fetch_one(db)
+            .await
+            .expect("bob's privacy");
+    let kept: (String, String, Option<String>) = (
+        row.try_get(0).expect("dms"),
+        row.try_get(1).expect("friend_requests"),
+        row.try_get(2).expect("profile"),
+    );
+    assert_eq!(
+        kept,
+        (
+            "friends".to_string(),
+            "servers".to_string(),
+            choice.map(str::to_string)
+        )
+    );
+    assert_eq!(count(db, "SELECT COUNT(*) FROM privacy").await, 1);
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM users WHERE username = 'alice' AND bio = 'old bio' AND created_at = 7"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        stored(db, "profile_visibility").await.as_deref(),
+        Some("shared")
+    );
+    assert_eq!(
+        crate::api::Settings::load(db).await.profile_visibility,
+        crate::api::access::subjects::Level::Shared
+    );
+    let privacy = crate::api::friends::privacy_of(db, "bob")
+        .await
+        .expect("privacy");
+    assert_eq!(
+        serde_json::to_value(privacy).expect("json"),
+        serde_json::json!({
+            "dms": "friends",
+            "friend_requests": "servers",
+            "profile": choice.unwrap_or("default"),
+        })
+    );
+}
+
+async fn privacy_upgrade(url: &str) {
+    let db = open(Some(url)).await.expect("open");
+    old_privacy_db(&db).await;
+    assert!(
+        count(&db, STORED_SCHEMA).await < SCHEMA_VERSION,
+        "the old database is at 28, P2P backups"
+    );
+    close(&db).await;
+    for _ in 0..2 {
+        let db = open(Some(url)).await.expect("upgrade");
+        upgraded_privacy_db(&db, None).await;
+        close(&db).await;
+    }
+    let db = open(Some(url)).await.expect("open");
+    sqlx::query("UPDATE privacy SET profile = 'friends' WHERE username = 'bob'")
+        .execute(&db)
+        .await
+        .expect("choose");
+    close(&db).await;
+    let db = open(Some(url)).await.expect("restart");
+    upgraded_privacy_db(&db, Some("friends")).await;
+    close(&db).await;
+}
+
+#[tokio::test]
+async fn profile_choice_is_added_to_an_old_database() {
+    on_each_database("privacy_upgrade", |url| async move {
+        privacy_upgrade(&url).await;
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn the_profile_visibility_control_reaches_an_old_database() {
+    controls_reach_an_old_database(
+        "visibility_control",
+        &["profile_visibility"],
+        &["shared"],
+        &[("PROFILE_VISIBILITY", " Everyone ", "everyone")],
+    )
+    .await;
+}

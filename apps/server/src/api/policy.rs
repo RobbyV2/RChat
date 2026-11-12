@@ -1435,6 +1435,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn profile_visibility_is_public_and_changes_live() {
+        use crate::api::access::subjects::Level;
+        use crate::api::admin::get_settings;
+        use crate::api::test_util::temp_state_env;
+        let (state, path) = temp_state("visibility_setting").await;
+        let wire = || async {
+            serde_json::to_value(get_settings(State(state.clone())).await.0).expect("json")
+        };
+        assert_eq!(wire().await["profile_visibility"], json!("shared"));
+        assert_eq!(
+            Settings::cached(&state.db).await.profile_visibility,
+            Level::Shared
+        );
+        let mut rx = state.hub.subscribe();
+        set(&state, json!({"profile_visibility": "public_servers"}))
+            .await
+            .expect("patch");
+        let event = serde_json::to_value(rx.try_recv().expect("settings_changed")).expect("json");
+        assert_eq!(
+            event["settings"]["profile_visibility"],
+            json!("public_servers")
+        );
+        assert_eq!(
+            Settings::cached(&state.db).await.profile_visibility,
+            Level::PublicServers
+        );
+        set(&state, json!({"profile_visibility": "everyone"}))
+            .await
+            .expect("everyone");
+        assert_eq!(wire().await["profile_visibility"], json!("everyone"));
+        assert!(rx.try_recv().is_ok(), "the second change is told too");
+        let ApiError(code, text, _) = set(&state, json!({"profile_visibility": "friends"}))
+            .await
+            .expect_err("only an account chooses friends");
+        assert_eq!(
+            (code, text.as_str()),
+            (
+                StatusCode::BAD_REQUEST,
+                "profile_visibility: expected everyone, public_servers or shared"
+            )
+        );
+        assert!(rx.try_recv().is_err(), "a refused change tells nobody");
+        assert_eq!(wire().await["profile_visibility"], json!("everyone"));
+        assert!(
+            serde_json::from_value::<SettingsPatch>(json!({"profile_visibility": "public"}))
+                .is_err()
+        );
+        assert_eq!(Settings::DENY.profile_visibility, Level::Shared);
+        let older: Settings = serde_json::from_value(json!({
+            "profanity_filter": true,
+            "asset_previews": true,
+            "asset_uploads": true,
+            "guests_enabled": true,
+        }))
+        .expect("a copy from before the setting");
+        assert_eq!(older.profile_visibility, Level::Everyone);
+        assert!(Level::Friends < Level::Shared);
+        assert!(Level::Shared < Level::PublicServers);
+        assert!(Level::PublicServers < Level::Everyone);
+        done(state, path).await;
+
+        let (state, path) =
+            temp_state_env("visibility_env", &[("PROFILE_VISIBILITY", " Everyone ")]).await;
+        assert_eq!(
+            Settings::cached(&state.db).await.profile_visibility,
+            Level::Everyone
+        );
+        done(state, path).await;
+        let stopped = crate::config::AppConfig::from_map(&[("PROFILE_VISIBILITY", "friends")])
+            .expect_err("a bad value stops the start")
+            .to_string();
+        assert_eq!(
+            stopped,
+            "PROFILE_VISIBILITY: expected everyone, public_servers or shared, got friends"
+        );
+    }
+
+    #[tokio::test]
     async fn switching_creation_off_keeps_existing_servers_working() {
         use crate::api::access::{Proof, resolve_server};
         let (state, path) = temp_state("server_creation_off").await;

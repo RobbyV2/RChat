@@ -19,6 +19,7 @@ use crate::ws::UserScope;
 
 pub mod perms;
 mod rules;
+pub mod subjects;
 
 use perms::{
     ChannelAccess, Perm, PermRow, Restrict, can_grant, can_moderate, fold_access, perm_row,

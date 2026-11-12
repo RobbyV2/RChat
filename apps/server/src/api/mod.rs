@@ -58,6 +58,7 @@ use tower_governor::key_extractor::KeyExtractor;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use utoipa::ToSchema;
 
+use crate::api::access::subjects::Level;
 use crate::api::controls::Control;
 pub use crate::api::error::{
     ApiError, ApiErrorBody, Reason, ReasonKind, SERVER_BUSY, SERVER_ERROR,
@@ -1280,6 +1281,14 @@ pub struct Settings {
     /// and work again when it is back on.
     #[serde(default = "yes")]
     pub incoming_webhooks: bool,
+    /// Who may see an account's profile (its description, banner color and creation time):
+    /// `everyone`, `public_servers` (everyone, for an account in a server anyone can read;
+    /// others as `shared`) or `shared` (people who share a server, a direct conversation the
+    /// account wrote in or a friendship with it). `shared` by default (`PROFILE_VISIBILITY`).
+    /// Never `friends`, which only an account chooses for itself (`profile` in
+    /// `GET /api/v1/me/privacy`).
+    #[serde(default = "everyone")]
+    pub profile_visibility: Level,
 }
 
 /// The public settings as `GET /api/v1/settings` and the `settings_changed` WebSocket event
@@ -1327,6 +1336,11 @@ pub(crate) fn yes() -> bool {
     true
 }
 
+/// What an instance from before `profile_visibility` does.
+fn everyone() -> Level {
+    Level::Everyone
+}
+
 pub(crate) const SETTINGS_TTL: Duration = Duration::from_secs(5);
 
 static SETTINGS_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Settings)>>> =
@@ -1368,6 +1382,7 @@ impl Settings {
         builtin_server: Builtin::Kept,
         calls: false,
         incoming_webhooks: false,
+        profile_visibility: Level::Shared,
     };
 
     pub async fn load(db: &Db) -> Settings {
@@ -1451,6 +1466,7 @@ impl Settings {
             },
             calls: on(policy::CALLS),
             incoming_webhooks: on(policy::INCOMING_WEBHOOKS),
+            profile_visibility: Level::parse(&stored(Level::KEY)).unwrap_or(Level::Shared),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1513,6 +1529,7 @@ impl Settings {
             builtin_server: _,
             calls: _,
             incoming_webhooks: _,
+            profile_visibility: _,
         } = *self;
         match feature {
             Feature::ServerReports => server_reports,

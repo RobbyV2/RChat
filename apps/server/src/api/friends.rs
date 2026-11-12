@@ -109,6 +109,49 @@ impl RequestPolicy {
     }
 }
 
+/// Who can see your profile: your description, banner color and when you joined. Never more
+/// people than the instance's `profile_visibility` allows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ProfilePolicy {
+    /// Whoever the instance's `profile_visibility` allows.
+    #[default]
+    Default,
+    /// People who share a server, a direct conversation you wrote in or a friendship with you.
+    Shared,
+    /// Only your friends, and people whose friend request to you is pending.
+    Friends,
+}
+
+impl ProfilePolicy {
+    /// The stored form: `None` for the instance's level.
+    fn stored(self) -> Option<&'static str> {
+        match self {
+            ProfilePolicy::Default => None,
+            ProfilePolicy::Shared => Some("shared"),
+            ProfilePolicy::Friends => Some("friends"),
+        }
+    }
+
+    /// The choice a patch names.
+    fn named(value: &str) -> Option<ProfilePolicy> {
+        match value {
+            "default" => Some(ProfilePolicy::Default),
+            "shared" => Some(ProfilePolicy::Shared),
+            "friends" => Some(ProfilePolicy::Friends),
+            _ => None,
+        }
+    }
+
+    fn parse(stored: Option<&str>) -> ProfilePolicy {
+        match stored {
+            Some("shared") => ProfilePolicy::Shared,
+            Some("friends") => ProfilePolicy::Friends,
+            _ => ProfilePolicy::Default,
+        }
+    }
+}
+
 /// Your privacy settings.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Privacy {
@@ -116,6 +159,9 @@ pub struct Privacy {
     pub dms: DmPolicy,
     /// Who can send you friend requests.
     pub friend_requests: RequestPolicy,
+    /// Who can see your profile.
+    #[serde(default)]
+    pub profile: ProfilePolicy,
 }
 
 /// Privacy settings to change; missing fields stay as they are.
@@ -125,6 +171,9 @@ pub struct PrivacyPatch {
     dms: Option<DmPolicy>,
     /// Who can send you friend requests.
     friend_requests: Option<RequestPolicy>,
+    /// Who can see your profile: `default`, `shared` or `friends`.
+    #[schema(value_type = Option<ProfilePolicy>)]
+    profile: Option<String>,
 }
 
 /// One of your friends.
@@ -256,7 +305,7 @@ fn target_name(raw: &str) -> String {
 
 /// `user`'s privacy settings (the defaults when never set).
 pub(crate) async fn privacy_of(db: &Db, user: &str) -> Result<Privacy, ApiError> {
-    let row = sqlx::query("SELECT dms, friend_requests FROM privacy WHERE username = $1")
+    let row = sqlx::query("SELECT dms, friend_requests, profile FROM privacy WHERE username = $1")
         .bind(user)
         .fetch_optional(db)
         .await?;
@@ -264,6 +313,7 @@ pub(crate) async fn privacy_of(db: &Db, user: &str) -> Result<Privacy, ApiError>
         Some(r) => Privacy {
             dms: DmPolicy::parse(&r.try_get::<String, _>(0)?),
             friend_requests: RequestPolicy::parse(&r.try_get::<String, _>(1)?),
+            profile: ProfilePolicy::parse(r.try_get::<Option<String>, _>(2)?.as_deref()),
         },
         None => Privacy::default(),
     })
@@ -1250,8 +1300,8 @@ pub(crate) async fn mark_seen(
 
 /// Get privacy settings
 ///
-/// Who can DM the signed-in user and who can send them friend requests. Requires a bearer token.
-/// General rate-limit bucket.
+/// Who can DM the signed-in user, who can send them friend requests and who can see their
+/// profile. Requires a bearer token. General rate-limit bucket.
 #[utoipa::path(get, path = "/api/v1/me/privacy", tag = "Friends", responses((status = 200, description = "The settings", body = Privacy), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn get_privacy(
     State(state): State<AppState>,
@@ -1266,9 +1316,12 @@ pub(crate) async fn get_privacy(
 /// react, pin, call or type in one (others get `403` `This user is not accepting messages from
 /// you.`, the same as a block), and it works both ways: you can only do those with friends too
 /// (`403` `You only accept DMs from friends. Change this in Settings > Privacy.`). `friend_requests`: `everyone`, `servers` (people who share a
-/// server with you) or `nobody`. Emits `privacy_changed` to your connections. Requires a bearer
-/// token. General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/v1/me/privacy", tag = "Friends", request_body = PrivacyPatch, responses((status = 200, description = "The stored settings", body = Privacy), (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework errors)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "An unknown value (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// server with you) or `nobody`. `profile`: `default` (whoever the instance's
+/// `profile_visibility` in `GET /api/v1/settings` allows), `shared` (people who share a server,
+/// a direct conversation you wrote in or a friendship with you) or `friends`. A choice never
+/// shows your profile to more people than the instance allows. Emits `privacy_changed` to your
+/// connections. Requires a bearer token. General rate-limit bucket.
+#[utoipa::path(patch, path = "/api/v1/me/privacy", tag = "Friends", request_body = PrivacyPatch, responses((status = 200, description = "The stored settings", body = Privacy), (status = 400, description = "`Unknown profile choice`: `profile` is not `default`, `shared` or `friends`. Also malformed JSON or a missing `Content-Type` (plain-text framework errors)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "An unknown value of `dms` or `friend_requests` (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn patch_privacy(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1277,21 +1330,30 @@ pub(crate) async fn patch_privacy(
     let PrivacyPatch {
         dms,
         friend_requests,
+        profile,
     } = patch;
+    let profile = match profile {
+        Some(choice) => {
+            Some(ProfilePolicy::named(&choice).ok_or_else(|| bad("Unknown profile choice"))?)
+        }
+        None => None,
+    };
     let cur = privacy_of(&state.db, &user.username).await?;
     let next = Privacy {
         dms: dms.unwrap_or(cur.dms),
         friend_requests: friend_requests.unwrap_or(cur.friend_requests),
+        profile: profile.unwrap_or(cur.profile),
     };
     if next == cur {
         return Ok(Json(cur));
     }
     sqlx::query(
-        "INSERT INTO privacy(username, dms, friend_requests) VALUES($1, $2, $3) ON CONFLICT(username) DO UPDATE SET dms = excluded.dms, friend_requests = excluded.friend_requests",
+        "INSERT INTO privacy(username, dms, friend_requests, profile) VALUES($1, $2, $3, $4) ON CONFLICT(username) DO UPDATE SET dms = excluded.dms, friend_requests = excluded.friend_requests, profile = excluded.profile",
     )
     .bind(&user.username)
     .bind(next.dms.as_str())
     .bind(next.friend_requests.as_str())
+    .bind(next.profile.stored())
     .execute(&state.db)
     .await?;
     state.hub.broadcast(WsEvent::PrivacyChanged {
@@ -1445,6 +1507,82 @@ mod tests {
         .await
         .expect("privacy")
         .0
+    }
+
+    #[tokio::test]
+    async fn the_profile_choice_is_stored_and_checked() {
+        let (state, path) = temp_state("privacy_profile").await;
+        add_user(&state.db, "bob", "Bob").await;
+        let stored = || async {
+            sqlx::query("SELECT profile FROM privacy WHERE username = 'bob'")
+                .fetch_optional(&state.db)
+                .await
+                .expect("row")
+                .map(|r| r.try_get::<Option<String>, _>(0).expect("profile"))
+        };
+        let read = || async {
+            get_privacy(State(state.clone()), me("bob"))
+                .await
+                .expect("privacy")
+                .0
+        };
+        assert_eq!(read().await.profile, ProfilePolicy::Default);
+        assert_eq!(stored().await, None, "no row until a choice is made");
+        let mut rx = state.hub.subscribe();
+        let set = set_privacy(&state, "bob", json!({ "profile": "friends" })).await;
+        assert_eq!(
+            set,
+            Privacy {
+                dms: DmPolicy::Everyone,
+                friend_requests: RequestPolicy::Everyone,
+                profile: ProfilePolicy::Friends,
+            }
+        );
+        assert_eq!(stored().await, Some(Some("friends".to_string())));
+        assert_eq!(read().await, set);
+        assert_eq!(drain(&mut rx), ["privacy bob everyone everyone"]);
+        assert_eq!(
+            serde_json::to_value(set).expect("json"),
+            json!({"dms": "everyone", "friend_requests": "everyone", "profile": "friends"})
+        );
+        let kept = set_privacy(&state, "bob", json!({ "dms": "friends" })).await;
+        assert_eq!(
+            kept.profile,
+            ProfilePolicy::Friends,
+            "a patch without it leaves it"
+        );
+        assert_eq!(stored().await, Some(Some("friends".to_string())));
+        let shared = set_privacy(&state, "bob", json!({ "profile": "shared" })).await;
+        assert_eq!(shared.profile, ProfilePolicy::Shared);
+        assert_eq!(stored().await, Some(Some("shared".to_string())));
+        let back = set_privacy(&state, "bob", json!({ "profile": "default" })).await;
+        assert_eq!(back.profile, ProfilePolicy::Default);
+        assert_eq!(stored().await, Some(None), "default is stored as NULL");
+        assert_eq!(back.dms, DmPolicy::Friends);
+        drain(&mut rx);
+        for unknown in ["public", "everyone", "public_servers", "Friends", ""] {
+            let refused = patch_privacy(
+                State(state.clone()),
+                me("bob"),
+                Json(serde_json::from_value(json!({ "profile": unknown })).expect("patch")),
+            )
+            .await;
+            assert_eq!(
+                code(refused),
+                Some((
+                    StatusCode::BAD_REQUEST,
+                    "Unknown profile choice".to_string()
+                )),
+                "{unknown}"
+            );
+        }
+        assert!(drain(&mut rx).is_empty(), "a refused choice tells nobody");
+        assert_eq!(stored().await, Some(None));
+        let older: Privacy =
+            serde_json::from_value(json!({"dms": "friends", "friend_requests": "nobody"}))
+                .expect("a copy from before the choice");
+        assert_eq!(older.profile, ProfilePolicy::Default);
+        done(state, path).await;
     }
 
     #[tokio::test]
@@ -1697,7 +1835,8 @@ mod tests {
             set_privacy(&state, "bob", json!({ "friend_requests": "nobody" })).await,
             Privacy {
                 dms: DmPolicy::Everyone,
-                friend_requests: RequestPolicy::Nobody
+                friend_requests: RequestPolicy::Nobody,
+                profile: ProfilePolicy::Default,
             }
         );
         assert_eq!(drain(&mut rx), ["privacy bob everyone nobody"]);

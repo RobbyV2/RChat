@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 
 use sqlx::Row;
 
+use crate::api::access::subjects::Level;
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
     CALLS, Creator, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, INCOMING_WEBHOOKS,
@@ -144,6 +145,13 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
     });
     all.push(switch(CALLS, "FEATURE_CALLS", true));
     all.push(switch(INCOMING_WEBHOOKS, "FEATURE_INCOMING_WEBHOOKS", true));
+    all.push(Control {
+        key: Level::KEY,
+        env: Level::ENV,
+        kind: Kind::Choice(&Level::WORDS),
+        default: "shared",
+        public: true,
+    });
     all.push(Control {
         key: forms::KEY,
         env: forms::ENV,
@@ -646,7 +654,7 @@ mod tests {
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
         assert_eq!(
-            table[table.len() - 12..table.len() - 1],
+            table[table.len() - 13..table.len() - 1],
             [
                 ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
                 ("server_creation", "SERVER_CREATION", "everyone"),
@@ -659,11 +667,18 @@ mod tests {
                 ("default_servers", "DEFAULT_SERVERS", "rchat"),
                 ("calls", "FEATURE_CALLS", "1"),
                 ("incoming_webhooks", "FEATURE_INCOMING_WEBHOOKS", "1"),
+                ("profile_visibility", "PROFILE_VISIBILITY", "shared"),
             ]
         );
         assert_eq!(control("public_reading").kind, Kind::Switch);
         assert_eq!(control("default_servers").kind, Kind::Servers);
         assert!(!control("default_servers").public);
+        assert_eq!(
+            control("profile_visibility").kind,
+            Kind::Choice(&["everyone", "public_servers", "shared"])
+        );
+        assert!(control("profile_visibility").public);
+        assert!(control("profile_visibility").parse("friends").is_err());
         assert_eq!(
             control("upload_expiry_max_days").kind,
             Kind::Number { min: 0, max: 365 }
@@ -862,6 +877,9 @@ mod tests {
                     }
                     ["everyone", "friends", "nobody"] => {
                         "expected everyone, friends or nobody".to_string()
+                    }
+                    ["everyone", "public_servers", "shared"] => {
+                        "expected everyone, public_servers or shared".to_string()
                     }
                     other => panic!("{other:?} has no expected text"),
                 },

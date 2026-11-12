@@ -115,6 +115,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("users", "username_key TEXT"),
     ("users", "username_key_alt TEXT"),
     ("servers", "public_read {INT}"),
+    ("privacy", "profile TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -203,7 +204,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// `report_pace`).
 /// 27: `servers.public_read`, the per-server "anyone can read this server" option.
 /// 28: P2P backup versions (`p2p_backups`, `p2p_backup_seq`).
-pub const SCHEMA_VERSION: i64 = 28;
+/// 29: the profile visibility choice (`privacy.profile`).
+pub const SCHEMA_VERSION: i64 = 29;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 14] {

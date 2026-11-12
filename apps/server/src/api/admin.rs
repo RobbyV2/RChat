@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
+use crate::api::access::subjects::Level;
 use crate::api::access::{MsgScope, not_found, staff_message};
 use crate::api::controls::{ConfigRecords, Control, ROWS_SQL};
 use crate::api::features::{Feature, Registration};
@@ -259,6 +260,7 @@ pub struct SettingsPatch {
     default_servers: Option<Vec<String>>,
     calls: Option<bool>,
     incoming_webhooks: Option<bool>,
+    profile_visibility: Option<Level>,
 }
 
 pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
@@ -277,13 +279,13 @@ pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
 /// serves offers other instances, who may create servers, how people join them, whether
 /// they can be searched, who may start direct conversations, whether friend requests are
 /// on, whether servers can be readable by people who aren't members, the servers a guest
-/// starts in (`guest_servers`) and whether the built-in server is kept. A switched-off
-/// feature's endpoints answer 404, except that
+/// starts in (`guest_servers`), whether the built-in server is kept and who may see profiles.
+/// A switched-off feature's endpoints answer 404, except that
 /// uploads, P2P attachments and outgoing webhooks answer 403, guests get 401 while guest
 /// access is off, and `client_other_instances` gates no endpoint. No authentication. Values
 /// may lag a change by up to 5 seconds per server process; live changes also arrive as the
 /// `settings_changed` WebSocket event. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/settings", tag = "Instance", responses((status = 200, description = "Site-wide switches: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, guest access, outgoing webhooks, reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding, password sign-in, the media server, P2P, other instances in this instance's web app, `registration`, `server_creation`, `server_joining`, `server_search`, `dm_creation`, `friend_requests`, `public_reading`, `guest_servers` and `builtin_server`", body = PublicSettings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(get, path = "/api/v1/settings", tag = "Instance", responses((status = 200, description = "Site-wide switches: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, guest access, outgoing webhooks, reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding, password sign-in, the media server, P2P, other instances in this instance's web app, `registration`, `server_creation`, `server_joining`, `server_search`, `dm_creation`, `friend_requests`, `public_reading`, `guest_servers`, `builtin_server` and `profile_visibility`", body = PublicSettings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn get_settings(State(state): State<AppState>) -> Json<PublicSettings> {
     Json(PublicSettings::cached(&state.db).await)
 }
@@ -330,6 +332,7 @@ pub(crate) async fn patch_settings(
         default_servers,
         calls,
         incoming_webhooks,
+        profile_visibility,
     } = req;
     if upload_expiry_max_days.is_some_and(|d| !(0..=upload_expiry::CAP_DAYS_MAX).contains(&d)) {
         return Err(bad("The longest file expiry must be 0 to 365 days"));
@@ -368,6 +371,15 @@ pub(crate) async fn patch_settings(
                 ))
             })?)
         }
+        None => None,
+    };
+    let visibility = match profile_visibility {
+        Some(level) => Some(
+            Control::find(Level::KEY)
+                .ok_or_else(not_found)?
+                .parse(level.as_str())
+                .map_err(|expected| bad(&format!("{}: {expected}", Level::KEY)))?,
+        ),
         None => None,
     };
     let feature = |f: Feature| match f {
@@ -417,6 +429,7 @@ pub(crate) async fn patch_settings(
         .chain(defaults.map(|list| (DEFAULT_SERVERS, list)))
         .chain(server_joining.map(|j| (ServerJoining::KEY, j.as_str().to_string())))
         .chain(dm_creation.map(|d| (DmCreation::KEY, d.as_str().to_string())))
+        .chain(visibility.map(|level| (Level::KEY, level)))
         .collect();
     let records = ConfigRecords::load(&state.db).await?;
     let touched: Vec<&Control> = Control::all()

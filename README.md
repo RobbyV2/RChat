@@ -386,6 +386,7 @@ Put settings in `.env.local`. Refer to `.env.local.example` for all settings and
 | `GUESTS_ENABLED`         | `true`      | Lets people read public servers without an account.                                                                             |
 | `P2P_ATTACHMENTS`        | `true`      | Lets people send P2P attachments.                                                                                               |
 | `AUTH_REGISTRATION`      | `open`      | Who can sign up with a password: `open`, `sso` or `closed`. Keep it open until your own account exists.                         |
+| `PROFILE_VISIBILITY`     | `shared`    | Who can see profiles: `everyone`, `public_servers` or `shared` (people who share a server, a DM or a friendship).               |
 | `S3_ENDPOINT`            | none        | Stores uploads in an S3 bucket. Also set the bucket and keys.                                                                   |
 | `RCHAT_ROLES`            | `all`       | The roles this process runs (see Scaling).                                                                                      |
 | `REDIS_URL`              | none        | The shared Redis server for many processes.                                                                                     |
