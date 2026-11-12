@@ -4,6 +4,8 @@ pub mod codes;
 pub mod device;
 pub mod events;
 pub mod forward;
+#[cfg(feature = "jose")]
+pub mod jose;
 pub mod limits;
 pub mod owners;
 pub mod pkce;
