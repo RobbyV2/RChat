@@ -69,6 +69,30 @@ Run `mem.ts` against a freshly started server. `PHASES` with `presence` or `send
 | `VIEW`                     | `mem.ts`                       | Server the sockets view. Default none.                                                                                                                                       |
 | `HOLD`                     | `mem.ts`                       | Seconds to keep the sockets open after measuring. Default 0.                                                                                                                 |
 | `PLAYWRIGHT_BROWSERS_PATH` | `client.ts`                    | Where Chromium is. Default `~/.cache/ms-playwright`.                                                                                                                         |
+| `FED_KEYS_PORT`            | `fed.ts`                       | Port its key server listens on. Required there.                                                                                                                              |
+| `FED_KEYS_HOST`            | `fed.ts`                       | Address its key server listens on. Default `127.0.0.1`.                                                                                                                      |
+| `FED_AUD`                  | `fed.ts`                       | The target's own origin, as its `PUBLIC_URL` says. Default: `BASE`.                                                                                                          |
+| `FED_SUFFIX`               | `fed.ts`                       | Domain of the simulated hosts, ending in `.test`, `.example`, `.invalid` or `.localhost`. Default `load.test`.                                                               |
+| `FED_ALLOW_REMOTE`         | `fed.ts`                       | Set to `1` to allow a `BASE` that is not a loopback or private address.                                                                                                      |
+| `FED_HOSTS`                | `fed.ts`                       | Honest hosts. Default 10.                                                                                                                                                    |
+| `FED_RATE`                 | `fed.ts`                       | Honest calls a second. Default 500.                                                                                                                                          |
+| `FED_SECONDS`              | `fed.ts`                       | Length of the run. Default 60.                                                                                                                                               |
+| `FED_MINTED`               | `fed.ts`                       | Minted hosts saying Hello, a minute. Default 600.                                                                                                                            |
+| `FED_NETWORKS`             | `fed.ts`                       | Source networks of the minted hosts. Default 120.                                                                                                                            |
+| `FED_STAMPED`              | `fed.ts`                       | Minted Hellos with a stamp, a minute. Default 10.                                                                                                                            |
+| `FED_NEIGHBOUR`            | `fed.ts`                       | Calls a second from a host on the `pressed` host's network. Default 50.                                                                                                      |
+| `FED_STAMP_WORK`           | `fed.ts`                       | Work of a stamp the target did not size. Default 2000000.                                                                                                                    |
+
+## Instance protocol
+
+`fed.ts` signs calls as simulated instances `h0` to `h9`, `pressed`, `neighbour`, `new` and minted
+hosts under `FED_SUFFIX`, and serves their keys at `/.well-known/jwks.json` on `FED_KEYS_PORT`. The
+target must resolve those hosts to that port, trust `X-Forwarded-For`, and have `BASE` reach its
+`/fed/` routes. It exits 1 when an honest call is refused or a forged or stale one is taken.
+
+```sh
+FED_KEYS_PORT=3480 FED_AUD=https://target.example bun scripts/load/fed.ts
+```
 
 ## Upgrade check
 

@@ -32,6 +32,7 @@ describe('load harness files', () => {
         'README.md',
         'client.ts',
         'count.ts',
+        'fed.ts',
         'join.ts',
         'lib.ts',
         'mem.ts',
