@@ -1,0 +1,908 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "case": "toggle on gives",
+   "mode": {
+    "kind": "toggle"
+   },
+   "want": "on",
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": []
+   }
+  },
+  {
+   "case": "toggle on when held changes nothing",
+   "mode": {
+    "kind": "toggle"
+   },
+   "want": "on",
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": []
+   }
+  },
+  {
+   "case": "toggle off takes",
+   "mode": {
+    "kind": "toggle"
+   },
+   "want": "off",
+   "held": [
+    2,
+    9
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": [
+     2
+    ]
+   }
+  },
+  {
+   "case": "toggle off when not held changes nothing",
+   "mode": {
+    "kind": "toggle"
+   },
+   "want": "off",
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": []
+   }
+  },
+  {
+   "case": "a role outside the panel",
+   "mode": {
+    "kind": "toggle"
+   },
+   "want": "on",
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 9,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "not_in_panel"
+   }
+  },
+  {
+   "case": "a menu sets the panel roles exactly",
+   "mode": {
+    "kind": "toggle"
+   },
+   "want": [
+    2,
+    3
+   ],
+   "held": [
+    1,
+    9
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [
+     2,
+     3
+    ],
+    "remove": [
+     1
+    ]
+   }
+  },
+  {
+   "case": "a menu never gives a role outside the panel, and once",
+   "mode": {
+    "kind": "toggle"
+   },
+   "want": [
+    2,
+    7,
+    2
+   ],
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": []
+   }
+  },
+  {
+   "case": "a menu of every role",
+   "mode": {
+    "kind": "toggle"
+   },
+   "want": [
+    1,
+    2,
+    3
+   ],
+   "held": [
+    9
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [
+     1,
+     2,
+     3
+    ],
+    "remove": []
+   }
+  },
+  {
+   "case": "an empty menu takes every panel role",
+   "mode": {
+    "kind": "toggle"
+   },
+   "want": [],
+   "held": [
+    1,
+    2,
+    9
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [],
+    "remove": [
+     1,
+     2
+    ]
+   }
+  },
+  {
+   "case": "reversed menu",
+   "mode": {
+    "kind": "reversed"
+   },
+   "want": [
+    1,
+    2,
+    3
+   ],
+   "held": [
+    9
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [
+     1,
+     2,
+     3
+    ],
+    "remove": []
+   }
+  },
+  {
+   "case": "reversed off",
+   "mode": {
+    "kind": "reversed"
+   },
+   "want": "off",
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": [
+     2
+    ]
+   }
+  },
+  {
+   "case": "reversed on",
+   "mode": {
+    "kind": "reversed"
+   },
+   "want": "on",
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": []
+   }
+  },
+  {
+   "case": "unique refuses a menu of two",
+   "mode": {
+    "kind": "unique"
+   },
+   "want": [
+    1,
+    2,
+    3
+   ],
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "too_many"
+   }
+  },
+  {
+   "case": "unique menu swaps",
+   "mode": {
+    "kind": "unique"
+   },
+   "want": [
+    2
+   ],
+   "held": [
+    1,
+    9
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": [
+     1
+    ]
+   }
+  },
+  {
+   "case": "unique menu with a role outside the panel",
+   "mode": {
+    "kind": "unique"
+   },
+   "want": [
+    2,
+    7
+   ],
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": [
+     1
+    ]
+   }
+  },
+  {
+   "case": "unique on swaps",
+   "mode": {
+    "kind": "unique"
+   },
+   "want": "on",
+   "held": [
+    1,
+    9
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": [
+     1
+    ]
+   }
+  },
+  {
+   "case": "unique off takes",
+   "mode": {
+    "kind": "unique"
+   },
+   "want": "off",
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": [
+     2
+    ]
+   }
+  },
+  {
+   "case": "unique empty menu takes",
+   "mode": {
+    "kind": "unique"
+   },
+   "want": [],
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [],
+    "remove": [
+     1
+    ]
+   }
+  },
+  {
+   "case": "unique on when held changes nothing",
+   "mode": {
+    "kind": "unique"
+   },
+   "want": "on",
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": []
+   }
+  },
+  {
+   "case": "limit 1 refuses a menu of two",
+   "mode": {
+    "kind": "limit",
+    "n": 1
+   },
+   "want": [
+    1,
+    2
+   ],
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "limit"
+   }
+  },
+  {
+   "case": "limit 1 refuses a second on",
+   "mode": {
+    "kind": "limit",
+    "n": 1
+   },
+   "want": "on",
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "limit"
+   }
+  },
+  {
+   "case": "limit 1 on when held changes nothing",
+   "mode": {
+    "kind": "limit",
+    "n": 1
+   },
+   "want": "on",
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": []
+   }
+  },
+  {
+   "case": "limit 2 gives a second",
+   "mode": {
+    "kind": "limit",
+    "n": 2
+   },
+   "want": "on",
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": []
+   }
+  },
+  {
+   "case": "limit 2 menu within the limit",
+   "mode": {
+    "kind": "limit",
+    "n": 2
+   },
+   "want": [
+    1,
+    3
+   ],
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [
+     1,
+     3
+    ],
+    "remove": [
+     2
+    ]
+   }
+  },
+  {
+   "case": "limit 1 off takes",
+   "mode": {
+    "kind": "limit",
+    "n": 1
+   },
+   "want": "off",
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": [
+     2
+    ]
+   }
+  },
+  {
+   "case": "verify never takes on off",
+   "mode": {
+    "kind": "verify"
+   },
+   "want": "off",
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": []
+   }
+  },
+  {
+   "case": "verify menu only gives",
+   "mode": {
+    "kind": "verify"
+   },
+   "want": [
+    3
+   ],
+   "held": [
+    1,
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [
+     3
+    ],
+    "remove": []
+   }
+  },
+  {
+   "case": "verify on gives",
+   "mode": {
+    "kind": "verify"
+   },
+   "want": "on",
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": []
+   }
+  },
+  {
+   "case": "binding never takes",
+   "mode": {
+    "kind": "binding"
+   },
+   "want": "off",
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": []
+   }
+  },
+  {
+   "case": "binding refuses a second pick",
+   "mode": {
+    "kind": "binding"
+   },
+   "want": "on",
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "binding"
+   }
+  },
+  {
+   "case": "binding first pick",
+   "mode": {
+    "kind": "binding"
+   },
+   "want": "on",
+   "held": [
+    9
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": []
+   }
+  },
+  {
+   "case": "binding on when held changes nothing",
+   "mode": {
+    "kind": "binding"
+   },
+   "want": "on",
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": []
+   }
+  },
+  {
+   "case": "binding menu refuses a second pick",
+   "mode": {
+    "kind": "binding"
+   },
+   "want": [
+    3
+   ],
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "binding"
+   }
+  },
+  {
+   "case": "binding menu that adds nothing",
+   "mode": {
+    "kind": "binding"
+   },
+   "want": [],
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [],
+    "remove": []
+   }
+  },
+  {
+   "case": "binding menu first pick",
+   "mode": {
+    "kind": "binding"
+   },
+   "want": [
+    3
+   ],
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [
+     3
+    ],
+    "remove": []
+   }
+  },
+  {
+   "case": "binding menu keeping the pick",
+   "mode": {
+    "kind": "binding"
+   },
+   "want": [
+    1
+   ],
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [],
+    "remove": []
+   }
+  },
+  {
+   "case": "drop on never gives",
+   "mode": {
+    "kind": "drop"
+   },
+   "want": "on",
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": []
+   }
+  },
+  {
+   "case": "drop off takes",
+   "mode": {
+    "kind": "drop"
+   },
+   "want": "off",
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "out": {
+    "add": [],
+    "remove": [
+     2
+    ]
+   }
+  },
+  {
+   "case": "drop menu takes what is not wanted",
+   "mode": {
+    "kind": "drop"
+   },
+   "want": [
+    3
+   ],
+   "held": [
+    1,
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 0,
+   "out": {
+    "add": [],
+    "remove": [
+     1,
+     2
+    ]
+   }
+  },
+  {
+   "case": "drop on a role outside the panel",
+   "mode": {
+    "kind": "drop"
+   },
+   "want": "on",
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 9,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "not_in_panel"
+   }
+  }
+ ]
+}

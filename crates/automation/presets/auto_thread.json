@@ -1,0 +1,29 @@
+{
+  "id": "auto_thread",
+  "name": "Auto-thread",
+  "summary": "Start a thread on every post in a channel",
+  "needs": [],
+  "automations": [
+    {
+      "name": "Auto-thread",
+      "enabled": false,
+      "trigger": {
+        "type": "message_sent",
+        "channels": {
+          "only": [
+            {
+              "channel": 0
+            }
+          ]
+        }
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "start_thread",
+          "name": "Thread"
+        }
+      ]
+    }
+  ]
+}

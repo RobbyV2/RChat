@@ -1,0 +1,510 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "level": 0,
+   "total": 0,
+   "cost": 100
+  },
+  {
+   "level": 1,
+   "total": 100,
+   "cost": 155
+  },
+  {
+   "level": 2,
+   "total": 255,
+   "cost": 220
+  },
+  {
+   "level": 3,
+   "total": 475,
+   "cost": 295
+  },
+  {
+   "level": 4,
+   "total": 770,
+   "cost": 380
+  },
+  {
+   "level": 5,
+   "total": 1150,
+   "cost": 475
+  },
+  {
+   "level": 6,
+   "total": 1625,
+   "cost": 580
+  },
+  {
+   "level": 7,
+   "total": 2205,
+   "cost": 695
+  },
+  {
+   "level": 8,
+   "total": 2900,
+   "cost": 820
+  },
+  {
+   "level": 9,
+   "total": 3720,
+   "cost": 955
+  },
+  {
+   "level": 10,
+   "total": 4675,
+   "cost": 1100
+  },
+  {
+   "level": 11,
+   "total": 5775,
+   "cost": 1255
+  },
+  {
+   "level": 12,
+   "total": 7030,
+   "cost": 1420
+  },
+  {
+   "level": 13,
+   "total": 8450,
+   "cost": 1595
+  },
+  {
+   "level": 14,
+   "total": 10045,
+   "cost": 1780
+  },
+  {
+   "level": 15,
+   "total": 11825,
+   "cost": 1975
+  },
+  {
+   "level": 16,
+   "total": 13800,
+   "cost": 2180
+  },
+  {
+   "level": 17,
+   "total": 15980,
+   "cost": 2395
+  },
+  {
+   "level": 18,
+   "total": 18375,
+   "cost": 2620
+  },
+  {
+   "level": 19,
+   "total": 20995,
+   "cost": 2855
+  },
+  {
+   "level": 20,
+   "total": 23850,
+   "cost": 3100
+  },
+  {
+   "level": 21,
+   "total": 26950,
+   "cost": 3355
+  },
+  {
+   "level": 22,
+   "total": 30305,
+   "cost": 3620
+  },
+  {
+   "level": 23,
+   "total": 33925,
+   "cost": 3895
+  },
+  {
+   "level": 24,
+   "total": 37820,
+   "cost": 4180
+  },
+  {
+   "level": 25,
+   "total": 42000,
+   "cost": 4475
+  },
+  {
+   "level": 26,
+   "total": 46475,
+   "cost": 4780
+  },
+  {
+   "level": 27,
+   "total": 51255,
+   "cost": 5095
+  },
+  {
+   "level": 28,
+   "total": 56350,
+   "cost": 5420
+  },
+  {
+   "level": 29,
+   "total": 61770,
+   "cost": 5755
+  },
+  {
+   "level": 30,
+   "total": 67525,
+   "cost": 6100
+  },
+  {
+   "level": 31,
+   "total": 73625,
+   "cost": 6455
+  },
+  {
+   "level": 32,
+   "total": 80080,
+   "cost": 6820
+  },
+  {
+   "level": 33,
+   "total": 86900,
+   "cost": 7195
+  },
+  {
+   "level": 34,
+   "total": 94095,
+   "cost": 7580
+  },
+  {
+   "level": 35,
+   "total": 101675,
+   "cost": 7975
+  },
+  {
+   "level": 36,
+   "total": 109650,
+   "cost": 8380
+  },
+  {
+   "level": 37,
+   "total": 118030,
+   "cost": 8795
+  },
+  {
+   "level": 38,
+   "total": 126825,
+   "cost": 9220
+  },
+  {
+   "level": 39,
+   "total": 136045,
+   "cost": 9655
+  },
+  {
+   "level": 40,
+   "total": 145700,
+   "cost": 10100
+  },
+  {
+   "level": 41,
+   "total": 155800,
+   "cost": 10555
+  },
+  {
+   "level": 42,
+   "total": 166355,
+   "cost": 11020
+  },
+  {
+   "level": 43,
+   "total": 177375,
+   "cost": 11495
+  },
+  {
+   "level": 44,
+   "total": 188870,
+   "cost": 11980
+  },
+  {
+   "level": 45,
+   "total": 200850,
+   "cost": 12475
+  },
+  {
+   "level": 46,
+   "total": 213325,
+   "cost": 12980
+  },
+  {
+   "level": 47,
+   "total": 226305,
+   "cost": 13495
+  },
+  {
+   "level": 48,
+   "total": 239800,
+   "cost": 14020
+  },
+  {
+   "level": 49,
+   "total": 253820,
+   "cost": 14555
+  },
+  {
+   "level": 50,
+   "total": 268375,
+   "cost": 15100
+  },
+  {
+   "level": 51,
+   "total": 283475,
+   "cost": 15655
+  },
+  {
+   "level": 52,
+   "total": 299130,
+   "cost": 16220
+  },
+  {
+   "level": 53,
+   "total": 315350,
+   "cost": 16795
+  },
+  {
+   "level": 54,
+   "total": 332145,
+   "cost": 17380
+  },
+  {
+   "level": 55,
+   "total": 349525,
+   "cost": 17975
+  },
+  {
+   "level": 56,
+   "total": 367500,
+   "cost": 18580
+  },
+  {
+   "level": 57,
+   "total": 386080,
+   "cost": 19195
+  },
+  {
+   "level": 58,
+   "total": 405275,
+   "cost": 19820
+  },
+  {
+   "level": 59,
+   "total": 425095,
+   "cost": 20455
+  },
+  {
+   "level": 60,
+   "total": 445550,
+   "cost": 21100
+  },
+  {
+   "level": 61,
+   "total": 466650,
+   "cost": 21755
+  },
+  {
+   "level": 62,
+   "total": 488405,
+   "cost": 22420
+  },
+  {
+   "level": 63,
+   "total": 510825,
+   "cost": 23095
+  },
+  {
+   "level": 64,
+   "total": 533920,
+   "cost": 23780
+  },
+  {
+   "level": 65,
+   "total": 557700,
+   "cost": 24475
+  },
+  {
+   "level": 66,
+   "total": 582175,
+   "cost": 25180
+  },
+  {
+   "level": 67,
+   "total": 607355,
+   "cost": 25895
+  },
+  {
+   "level": 68,
+   "total": 633250,
+   "cost": 26620
+  },
+  {
+   "level": 69,
+   "total": 659870,
+   "cost": 27355
+  },
+  {
+   "level": 70,
+   "total": 687225,
+   "cost": 28100
+  },
+  {
+   "level": 71,
+   "total": 715325,
+   "cost": 28855
+  },
+  {
+   "level": 72,
+   "total": 744180,
+   "cost": 29620
+  },
+  {
+   "level": 73,
+   "total": 773800,
+   "cost": 30395
+  },
+  {
+   "level": 74,
+   "total": 804195,
+   "cost": 31180
+  },
+  {
+   "level": 75,
+   "total": 835375,
+   "cost": 31975
+  },
+  {
+   "level": 76,
+   "total": 867350,
+   "cost": 32780
+  },
+  {
+   "level": 77,
+   "total": 900130,
+   "cost": 33595
+  },
+  {
+   "level": 78,
+   "total": 933725,
+   "cost": 34420
+  },
+  {
+   "level": 79,
+   "total": 968145,
+   "cost": 35255
+  },
+  {
+   "level": 80,
+   "total": 1003400,
+   "cost": 36100
+  },
+  {
+   "level": 81,
+   "total": 1039500,
+   "cost": 36955
+  },
+  {
+   "level": 82,
+   "total": 1076455,
+   "cost": 37820
+  },
+  {
+   "level": 83,
+   "total": 1114275,
+   "cost": 38695
+  },
+  {
+   "level": 84,
+   "total": 1152970,
+   "cost": 39580
+  },
+  {
+   "level": 85,
+   "total": 1192550,
+   "cost": 40475
+  },
+  {
+   "level": 86,
+   "total": 1233025,
+   "cost": 41380
+  },
+  {
+   "level": 87,
+   "total": 1274405,
+   "cost": 42295
+  },
+  {
+   "level": 88,
+   "total": 1316700,
+   "cost": 43220
+  },
+  {
+   "level": 89,
+   "total": 1359920,
+   "cost": 44155
+  },
+  {
+   "level": 90,
+   "total": 1404075,
+   "cost": 45100
+  },
+  {
+   "level": 91,
+   "total": 1449175,
+   "cost": 46055
+  },
+  {
+   "level": 92,
+   "total": 1495230,
+   "cost": 47020
+  },
+  {
+   "level": 93,
+   "total": 1542250,
+   "cost": 47995
+  },
+  {
+   "level": 94,
+   "total": 1590245,
+   "cost": 48980
+  },
+  {
+   "level": 95,
+   "total": 1639225,
+   "cost": 49975
+  },
+  {
+   "level": 96,
+   "total": 1689200,
+   "cost": 50980
+  },
+  {
+   "level": 97,
+   "total": 1740180,
+   "cost": 51995
+  },
+  {
+   "level": 98,
+   "total": 1792175,
+   "cost": 53020
+  },
+  {
+   "level": 99,
+   "total": 1845195,
+   "cost": 54055
+  },
+  {
+   "level": 100,
+   "total": 1899250,
+   "cost": 55100
+  }
+ ]
+}

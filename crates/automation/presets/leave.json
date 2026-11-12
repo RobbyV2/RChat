@@ -1,0 +1,25 @@
+{
+  "id": "leave",
+  "name": "Leave message",
+  "summary": "Say when a member leaves",
+  "needs": [],
+  "automations": [
+    {
+      "name": "Leave",
+      "enabled": false,
+      "trigger": {
+        "type": "member_left"
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "send_message",
+          "channel": {
+            "channel": 0
+          },
+          "text": "{member} left."
+        }
+      ]
+    }
+  ]
+}

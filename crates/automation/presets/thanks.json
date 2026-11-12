@@ -1,0 +1,49 @@
+{
+  "id": "thanks",
+  "name": "Thanks",
+  "summary": "Let members thank each other with a command",
+  "needs": ["Manage automations"],
+  "automations": [
+    {
+      "name": "Thanks",
+      "enabled": false,
+      "trigger": {
+        "type": "command",
+        "name": "thanks",
+        "description": "Thank someone for helping",
+        "args": [
+          {
+            "name": "who",
+            "required": true,
+            "type": "member"
+          }
+        ]
+      },
+      "conditions": [
+        {
+          "type": "cooldown",
+          "seconds": 3600,
+          "per": "member"
+        }
+      ],
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "counter_add",
+          "name": "rep",
+          "amount": {
+            "fixed": 1
+          },
+          "target": {
+            "arg": "who"
+          }
+        },
+        {
+          "aid": "a2",
+          "type": "notify",
+          "text": "Thanks sent"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "id": "welcome",
+  "name": "Welcome message",
+  "summary": "Greet new members when they are let in",
+  "needs": [],
+  "automations": [
+    {
+      "name": "Welcome",
+      "enabled": false,
+      "trigger": {
+        "type": "member_admitted"
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "send_message",
+          "channel": {
+            "channel": 0
+          },
+          "text": "Welcome, {member.mention}!",
+          "ping": true,
+          "embed": {
+            "title": "Welcome to {server}",
+            "description": "You are member {count}."
+          }
+        }
+      ]
+    }
+  ]
+}

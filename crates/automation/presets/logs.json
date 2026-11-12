@@ -1,0 +1,95 @@
+{
+  "id": "logs",
+  "name": "Logs",
+  "summary": "Post what happens in the server to a log channel",
+  "needs": [],
+  "automations": [
+    {
+      "name": "Log moderation",
+      "enabled": false,
+      "trigger": {
+        "type": "audit_entry",
+        "actions": []
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "log",
+          "channel": 0
+        }
+      ]
+    },
+    {
+      "name": "Log joins",
+      "enabled": false,
+      "trigger": {
+        "type": "member_joined"
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "log",
+          "channel": 0
+        }
+      ]
+    },
+    {
+      "name": "Log leaves",
+      "enabled": false,
+      "trigger": {
+        "type": "member_left"
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "log",
+          "channel": 0
+        }
+      ]
+    },
+    {
+      "name": "Log deleted messages",
+      "enabled": false,
+      "trigger": {
+        "type": "message_deleted",
+        "channels": "all"
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "log",
+          "channel": 0
+        }
+      ]
+    },
+    {
+      "name": "Log edited messages",
+      "enabled": false,
+      "trigger": {
+        "type": "message_edited",
+        "channels": "all"
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "log",
+          "channel": 0
+        }
+      ]
+    },
+    {
+      "name": "Log reports",
+      "enabled": false,
+      "trigger": {
+        "type": "report_filed"
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "log",
+          "channel": 0
+        }
+      ]
+    }
+  ]
+}

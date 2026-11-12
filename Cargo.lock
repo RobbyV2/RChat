@@ -2955,6 +2955,7 @@ dependencies = [
  "defmt",
  "jiff-core",
  "jiff-static",
+ "jiff-tzdb",
  "jiff-tzdb-platform",
  "log",
  "portable-atomic",
@@ -4825,6 +4826,21 @@ dependencies = [
  "quick-xml 0.42.0",
  "serde_json",
  "zip",
+]
+
+[[package]]
+name = "rchat-automation"
+version = "0.3.0"
+dependencies = [
+ "aho-corasick",
+ "jiff",
+ "rand_chacha 0.10.0",
+ "regex",
+ "serde",
+ "serde_json",
+ "unicode-normalization",
+ "unicode-security",
+ "url",
 ]
 
 [[package]]

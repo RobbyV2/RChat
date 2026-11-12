@@ -1,0 +1,30 @@
+{
+  "id": "new_account_gate",
+  "name": "New-account gate",
+  "summary": "Hold members whose account is less than a day old",
+  "needs": ["Kick", "Manage admins"],
+  "automations": [
+    {
+      "name": "New-account gate",
+      "enabled": false,
+      "trigger": {
+        "type": "member_joined"
+      },
+      "conditions": [
+        {
+          "type": "account_age",
+          "minutes": {
+            "under": 1440
+          }
+        }
+      ],
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "hold",
+          "reason": "New account"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "case": "author lacks ban",
+   "author": {
+    "bits": 8,
+    "rank": 5
+   },
+   "runner": {
+    "bits": 56,
+    "rank": 9
+   },
+   "needs": 32,
+   "target": {
+    "rank": 1
+   },
+   "allowed": false
+  },
+  {
+   "case": "exhaustive",
+   "checked": 138240,
+   "allowed": 5166
+  },
+  {
+   "event": "ev1",
+   "candidates": [
+    "ik-a",
+    "ik-b",
+    "ik-c",
+    "ik-d"
+   ],
+   "order": [
+    "ik-a",
+    "ik-c",
+    "ik-b",
+    "ik-d"
+   ]
+  },
+  {
+   "event": "ev2",
+   "candidates": [
+    "ik-a",
+    "ik-b",
+    "ik-c",
+    "ik-d"
+   ],
+   "order": [
+    "ik-d",
+    "ik-b",
+    "ik-a",
+    "ik-c"
+   ]
+  },
+  {
+   "case": "forged slot",
+   "posts": [
+    {
+     "id": "real",
+     "author": "alice",
+     "pos": 12,
+     "slot": "honeypot:ev9",
+     "via": "honeypot"
+    },
+    {
+     "id": "forged",
+     "author": "bob",
+     "pos": 11,
+     "slot": "honeypot:ev9",
+     "via": "honeypot"
+    }
+   ],
+   "shown": [
+    "real",
+    "forged"
+   ],
+   "labelled": [
+    "real"
+   ]
+  },
+  {
+   "case": "topo",
+   "events": [
+    {
+     "id": "c",
+     "deps": [
+      "a"
+     ]
+    },
+    {
+     "id": "b",
+     "deps": []
+    },
+    {
+     "id": "a",
+     "deps": []
+    },
+    {
+     "id": "d",
+     "deps": [
+      "c",
+      "b"
+     ]
+    },
+    {
+     "id": "e",
+     "deps": [
+      "missing"
+     ]
+    }
+   ],
+   "order": [
+    "a",
+    "b",
+    "c",
+    "d",
+    "e"
+   ]
+  }
+ ]
+}

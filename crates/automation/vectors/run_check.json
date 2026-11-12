@@ -1,0 +1,5831 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "op": "actor",
+   "fired": "member",
+   "acted": 4,
+   "caused": [],
+   "out": 4
+  },
+  {
+   "op": "actor",
+   "fired": "owner",
+   "acted": 4,
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "actor",
+   "fired": "owner",
+   "acted": null,
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": 4,
+   "caused": [],
+   "out": 4
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": null,
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "actor",
+   "fired": "owner",
+   "acted": 4,
+   "caused": [
+    9
+   ],
+   "out": 9
+  },
+  {
+   "op": "actor",
+   "fired": "owner",
+   "acted": 4,
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "actor",
+   "fired": "member",
+   "acted": 4,
+   "caused": [
+    9
+   ],
+   "out": 9
+  },
+  {
+   "op": "actor",
+   "fired": "member",
+   "acted": 4,
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": 4,
+   "caused": [
+    9
+   ],
+   "out": 9
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": 4,
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 4,
+    "rank": 4
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 128,
+    "rank": 128
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 128,
+    "rank": 128
+   },
+   "target": [
+    2,
+    128
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": [
+    2,
+    166
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 182,
+    "rank": 182
+   },
+   "target": [
+    2,
+    166
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    166
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4,
+   "actor": null,
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 0,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 0,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 20,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 20,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 20,
+   "owner": 0,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 20,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 20,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 0,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 2,
+    "rank": 2
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 2,
+    "rank": 2
+   },
+   "target": [
+    2,
+    2
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 2,
+    "rank": 2
+   },
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": {
+    "member": 4
+   },
+   "caused": [],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": {
+    "member": 4
+   },
+   "caused": [
+    9
+   ],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": "automation",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": "automation",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": "automation",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": "webhook",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": "webhook",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": "webhook",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": {
+    "member": 4
+   },
+   "caused": [],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": {
+    "member": 4
+   },
+   "caused": [
+    9
+   ],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "automation",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "automation",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "automation",
+   "caused": [
+    9
+   ],
+   "out": 9
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "webhook",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "webhook",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "webhook",
+   "caused": [
+    9
+   ],
+   "out": 9
+  },
+  {
+   "op": "author",
+   "reach": "pin",
+   "poster": {
+    "member": 4
+   },
+   "caused": [],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "pin",
+   "poster": {
+    "member": 4
+   },
+   "caused": [
+    9
+   ],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "pin",
+   "poster": "automation",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "pin",
+   "poster": "automation",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "pin",
+   "poster": "automation",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "pin",
+   "poster": "webhook",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "pin",
+   "poster": "webhook",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "pin",
+   "poster": "webhook",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "revoke",
+   "poster": {
+    "member": 4
+   },
+   "caused": [],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "revoke",
+   "poster": {
+    "member": 4
+   },
+   "caused": [
+    9
+   ],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "revoke",
+   "poster": "automation",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "revoke",
+   "poster": "automation",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "revoke",
+   "poster": "automation",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "revoke",
+   "poster": "webhook",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "revoke",
+   "poster": "webhook",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "revoke",
+   "poster": "webhook",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "self_revoke",
+   "poster": {
+    "member": 4
+   },
+   "caused": [],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "self_revoke",
+   "poster": {
+    "member": 4
+   },
+   "caused": [
+    9
+   ],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "self_revoke",
+   "poster": "automation",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "self_revoke",
+   "poster": "automation",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "self_revoke",
+   "poster": "automation",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "self_revoke",
+   "poster": "webhook",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "self_revoke",
+   "poster": "webhook",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "self_revoke",
+   "poster": "webhook",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "grant",
+   "poster": {
+    "member": 4
+   },
+   "caused": [],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "grant",
+   "poster": {
+    "member": 4
+   },
+   "caused": [
+    9
+   ],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "grant",
+   "poster": "automation",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "grant",
+   "poster": "automation",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "grant",
+   "poster": "automation",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "grant",
+   "poster": "webhook",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "grant",
+   "poster": "webhook",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "grant",
+   "poster": "webhook",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "self_grant",
+   "poster": {
+    "member": 4
+   },
+   "caused": [],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "self_grant",
+   "poster": {
+    "member": 4
+   },
+   "caused": [
+    9
+   ],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "self_grant",
+   "poster": "automation",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "self_grant",
+   "poster": "automation",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "self_grant",
+   "poster": "automation",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "self_grant",
+   "poster": "webhook",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "self_grant",
+   "poster": "webhook",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "self_grant",
+   "poster": "webhook",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "place",
+   "poster": {
+    "member": 4
+   },
+   "caused": [],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "place",
+   "poster": {
+    "member": 4
+   },
+   "caused": [
+    9
+   ],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "place",
+   "poster": "automation",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "place",
+   "poster": "automation",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "place",
+   "poster": "automation",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "place",
+   "poster": "webhook",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "place",
+   "poster": "webhook",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "place",
+   "poster": "webhook",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "own",
+   "poster": {
+    "member": 4
+   },
+   "caused": [],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "own",
+   "poster": {
+    "member": 4
+   },
+   "caused": [
+    9
+   ],
+   "out": 4
+  },
+  {
+   "op": "author",
+   "reach": "own",
+   "poster": "automation",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "own",
+   "poster": "automation",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "own",
+   "poster": "automation",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "own",
+   "poster": "webhook",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "own",
+   "poster": "webhook",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "own",
+   "poster": "webhook",
+   "caused": [
+    9
+   ],
+   "out": null
+  },
+  {
+   "op": "actor",
+   "fired": "member",
+   "acted": null,
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "automation",
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "automation",
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 150,
+   "actor": {
+    "id": 1,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    1,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "automation",
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": [
+    1,
+    166
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor",
+   "fired": "member",
+   "acted": null,
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "automation",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "webhook",
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "webhook",
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 150,
+   "actor": {
+    "id": 1,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    1,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": "webhook",
+   "caused": [
+    1
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "webhook",
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "webhook",
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "actor",
+   "fired": "member",
+   "acted": null,
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": "automation",
+   "caused": [
+    1
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4095,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4095,
+   "actor": null,
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": "automation",
+   "caused": [
+    1
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4095,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4095,
+   "actor": null,
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "author",
+   "reach": "revoke",
+   "poster": "automation",
+   "caused": [
+    1
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": null,
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "author",
+   "reach": "self_revoke",
+   "poster": "automation",
+   "caused": [
+    1
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": null,
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "author",
+   "reach": "grant",
+   "poster": "automation",
+   "caused": [
+    1
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": null,
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "author",
+   "reach": "self_grant",
+   "poster": "automation",
+   "caused": [
+    1
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": null,
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": null,
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "automation",
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor",
+   "fired": "member",
+   "acted": null,
+   "caused": [
+    3
+   ],
+   "out": 3
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": "automation",
+   "caused": [
+    3
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 3,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "author",
+   "reach": "member",
+   "poster": "automation",
+   "caused": [
+    3
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 4,
+   "owner": 4087,
+   "actor": {
+    "id": 3,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "author",
+   "reach": "revoke",
+   "poster": "automation",
+   "caused": [
+    3
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 3,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "author",
+   "reach": "self_revoke",
+   "poster": "automation",
+   "caused": [
+    3
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 3,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "author",
+   "reach": "grant",
+   "poster": "automation",
+   "caused": [
+    3
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 3,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "author",
+   "reach": "self_grant",
+   "poster": "automation",
+   "caused": [
+    3
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 3,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "author",
+   "reach": "message",
+   "poster": "automation",
+   "caused": [
+    3
+   ],
+   "out": 3
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 3,
+    "acting": 166,
+    "rank": 166
+   },
+   "target": [
+    3,
+    166
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 2,
+    "rank": 2
+   },
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "case": "the undo that ends a timed role answers to the member whose run gave it",
+   "op": "actor",
+   "fired": "member",
+   "acted": 1,
+   "caused": [],
+   "out": 1
+  },
+  {
+   "case": "the undo that ends a timed role answers to the member whose run gave it",
+   "op": "grant_of",
+   "bits": 32,
+   "may_give": false,
+   "owner": 4087,
+   "out": "self_grant"
+  },
+  {
+   "case": "the undo that ends a timed role answers to the member whose run gave it",
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": true,
+   "out": true
+  },
+  {
+   "case": "the undo that ends a timed role answers to the member whose run gave it",
+   "op": "actor",
+   "fired": "owner",
+   "acted": null,
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "case": "the undo that ends a timed role answers to the member whose run gave it",
+   "op": "grant_of",
+   "bits": 6,
+   "may_give": false,
+   "owner": 4087,
+   "out": "grant"
+  },
+  {
+   "case": "the undo that ends a timed role answers to the member whose run gave it",
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "case": "the undo that ends a timed role answers to the member whose run gave it",
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "case": "an action delayed with after answers to the member whose run it is",
+   "op": "actor",
+   "fired": "member",
+   "acted": 1,
+   "caused": [],
+   "out": 1
+  },
+  {
+   "case": "an action delayed with after answers to the member whose run it is",
+   "op": "grant_of",
+   "bits": 36,
+   "may_give": false,
+   "owner": 4087,
+   "out": "grant"
+  },
+  {
+   "case": "an action delayed with after answers to the member whose run it is",
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "case": "a joiner picking Ping through onboarding gets no Helper with Kick",
+   "op": "actor",
+   "fired": "owner",
+   "acted": null,
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "case": "a joiner picking Ping through onboarding gets no Helper with Kick",
+   "op": "grant_of",
+   "bits": 6,
+   "may_give": false,
+   "owner": 4087,
+   "out": "grant"
+  },
+  {
+   "case": "a joiner picking Ping through onboarding gets no Helper with Kick",
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "case": "a joiner picking Ping through onboarding gets no Helper with Kick",
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "case": "a joiner picking Ping through onboarding gets no Helper with Kick",
+   "op": "grant_of",
+   "bits": 0,
+   "may_give": false,
+   "owner": 4087,
+   "out": "self_grant"
+  },
+  {
+   "case": "a joiner picking Ping through onboarding gets no Helper with Kick",
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "case": "a member whose Ping comes back on rejoin gets no Helper with Kick",
+   "op": "actor",
+   "fired": "owner",
+   "acted": null,
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "case": "a member whose Ping comes back on rejoin gets no Helper with Kick",
+   "op": "grant_of",
+   "bits": 6,
+   "may_give": false,
+   "owner": 4087,
+   "out": "grant"
+  },
+  {
+   "case": "a member whose Ping comes back on rejoin gets no Helper with Kick",
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "case": "a member whose Ping comes back on rejoin gets no Helper with Kick",
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "case": "a member whose Ping comes back on rejoin gets no Helper with Kick",
+   "op": "grant_of",
+   "bits": 0,
+   "may_give": false,
+   "owner": 4087,
+   "out": "self_grant"
+  },
+  {
+   "case": "a member whose Ping comes back on rejoin gets no Helper with Kick",
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 4,
+    "rank": 4
+   },
+   "target": [
+    1,
+    4
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 2,
+    "rank": 2
+   },
+   "target": [
+    1,
+    2
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 2,
+    "rank": 2
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 2,
+    "rank": 2
+   },
+   "target": [
+    2,
+    2
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 4,
+   "actor": {
+    "id": 1,
+    "acting": 2,
+    "rank": 2
+   },
+   "target": [
+    1,
+    2
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "revoke_of",
+   "bits": 0,
+   "owner": 4087,
+   "widens": false,
+   "out": "self_revoke"
+  },
+  {
+   "op": "revoke_of",
+   "bits": 32,
+   "owner": 4087,
+   "widens": false,
+   "out": "self_revoke"
+  },
+  {
+   "op": "revoke_of",
+   "bits": 0,
+   "owner": 4087,
+   "widens": true,
+   "out": "revoke"
+  },
+  {
+   "op": "revoke_of",
+   "bits": 4,
+   "owner": 4087,
+   "widens": false,
+   "out": "revoke"
+  },
+  {
+   "op": "revoke_of",
+   "bits": 32,
+   "owner": 4,
+   "widens": false,
+   "out": "revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    1,
+    16
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 4,
+    "rank": 4
+   },
+   "target": [
+    1,
+    4
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    2,
+    16
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    166
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 16,
+   "actor": null,
+   "target": [
+    2,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 16,
+   "actor": {
+    "id": 1,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    1,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    2,
+    16
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    166
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 16,
+   "actor": null,
+   "target": [
+    2,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 16,
+   "actor": {
+    "id": 1,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    1,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "revoke_of",
+   "bits": 0,
+   "owner": 4087,
+   "widens": false,
+   "out": "self_revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "revoke_of",
+   "bits": 0,
+   "owner": 4087,
+   "widens": true,
+   "out": "revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "revoke_of",
+   "bits": 4,
+   "owner": 4087,
+   "widens": false,
+   "out": "revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "revoke_of",
+   "bits": 32,
+   "owner": 4087,
+   "widens": false,
+   "out": "self_revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "revoke_of",
+   "bits": 0,
+   "owner": 4087,
+   "widens": false,
+   "out": "self_revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    1,
+    16
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "revoke_of",
+   "bits": 0,
+   "owner": 4087,
+   "widens": true,
+   "out": "revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    1,
+    16
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "revoke_of",
+   "bits": 4,
+   "owner": 4087,
+   "widens": false,
+   "out": "revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    1,
+    16
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "revoke_of",
+   "bits": 32,
+   "owner": 4087,
+   "widens": false,
+   "out": "self_revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    1,
+    16
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "revoke_of",
+   "bits": 0,
+   "owner": 4087,
+   "widens": false,
+   "out": "self_revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "revoke_of",
+   "bits": 0,
+   "owner": 4087,
+   "widens": true,
+   "out": "revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "revoke_of",
+   "bits": 4,
+   "owner": 4087,
+   "widens": false,
+   "out": "revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "revoke_of",
+   "bits": 32,
+   "owner": 4087,
+   "widens": false,
+   "out": "self_revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "revoke_of",
+   "bits": 0,
+   "owner": 4087,
+   "widens": false,
+   "out": "self_revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "revoke_of",
+   "bits": 0,
+   "owner": 4087,
+   "widens": true,
+   "out": "revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "revoke_of",
+   "bits": 4,
+   "owner": 4087,
+   "widens": false,
+   "out": "revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "revoke_of",
+   "bits": 32,
+   "owner": 4087,
+   "widens": false,
+   "out": "self_revoke"
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 4,
+    "rank": 4
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    2,
+    16
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    166
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 20,
+   "actor": null,
+   "target": [
+    2,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4,
+   "actor": null,
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 16,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    2,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "grant_of",
+   "bits": 0,
+   "may_give": false,
+   "owner": 4087,
+   "out": "self_grant"
+  },
+  {
+   "op": "grant_of",
+   "bits": 32,
+   "may_give": false,
+   "owner": 4087,
+   "out": "self_grant"
+  },
+  {
+   "op": "grant_of",
+   "bits": 6,
+   "may_give": false,
+   "owner": 4087,
+   "out": "grant"
+  },
+  {
+   "op": "grant_of",
+   "bits": 32,
+   "may_give": false,
+   "owner": 4,
+   "out": "grant"
+  },
+  {
+   "op": "grant_of",
+   "bits": 4,
+   "may_give": true,
+   "owner": 4087,
+   "out": "self_grant"
+  },
+  {
+   "op": "grant_of",
+   "bits": 4,
+   "may_give": true,
+   "owner": 16,
+   "out": "grant"
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": [
+    1,
+    4095
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    166
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    166
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": [
+    1,
+    4095
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    166
+   ],
+   "picked": true,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    4087
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    166
+   ],
+   "picked": true,
+   "out": true
+  },
+  {
+   "op": "grant_of",
+   "bits": 32,
+   "may_give": false,
+   "owner": 4087,
+   "out": "self_grant"
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": true,
+   "out": true
+  },
+  {
+   "op": "grant_of",
+   "bits": 6,
+   "may_give": false,
+   "owner": 4087,
+   "out": "grant"
+  },
+  {
+   "op": "actor",
+   "fired": "owner",
+   "acted": null,
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor",
+   "fired": "owner",
+   "acted": 1,
+   "caused": [],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": true,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 150,
+   "actor": null,
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": true,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 150,
+   "actor": null,
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 16,
+   "owner": 4095,
+   "actor": {
+    "id": 1,
+    "acting": 4095,
+    "rank": 4095
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 16,
+   "owner": 150,
+   "actor": {
+    "id": 3,
+    "acting": 4087,
+    "rank": 4087
+   },
+   "target": [
+    3,
+    4087
+   ],
+   "picked": true,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "place",
+   "needs": 1,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "place",
+   "needs": 4,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 1,
+    "rank": 1
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "place",
+   "needs": 1,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 1,
+    "rank": 1
+   },
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "place",
+   "needs": 1,
+   "owner": 4087,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "place",
+   "needs": 1,
+   "owner": 4,
+   "actor": {
+    "id": 1,
+    "acting": 1,
+    "rank": 1
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 0,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 2048,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 2048,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    4087
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 16,
+   "owner": 4,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 256,
+   "owner": 4,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 134,
+    "rank": 134
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 32,
+   "owner": 4087,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 32,
+   "owner": 32,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 32,
+   "owner": 4,
+   "actor": null,
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 32,
+   "owner": 4,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 48,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 48,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 16,
+    "rank": 16
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 48,
+   "owner": 32,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "revoke",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_revoke",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "grant",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "place",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "place",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    1,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": [
+    1,
+    32
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": null,
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": null,
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 182,
+    "rank": 182
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": null,
+   "caused": [
+    2
+   ],
+   "out": 2
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 2,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": null,
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": 1,
+   "caused": [],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 2048,
+    "rank": 2048
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": 1,
+   "caused": [],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 128,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 182,
+    "rank": 182
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": null,
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": null,
+   "caused": [
+    1
+   ],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 182,
+    "rank": 182
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": null,
+   "caused": [
+    2
+   ],
+   "out": 2
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 2,
+    "acting": 0,
+    "rank": 0
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": null,
+   "caused": [
+    null
+   ],
+   "out": null
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": null,
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": 1,
+   "caused": [],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 2048,
+    "rank": 2048
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "actor",
+   "fired": "mover",
+   "acted": 1,
+   "caused": [],
+   "out": 1
+  },
+  {
+   "op": "may_run",
+   "reach": "self_grant",
+   "needs": 16,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 182,
+    "rank": 182
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 194,
+    "gate": 2
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 0,
+    "rank": 194
+   }
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 194,
+    "gate": 2
+   },
+   "switch_on": false,
+   "out": {
+    "id": 1,
+    "acting": 0,
+    "rank": 194
+   }
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 194,
+    "gate": 1
+   },
+   "switch_on": false,
+   "out": {
+    "id": 1,
+    "acting": 194,
+    "rank": 194
+   }
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 194,
+    "gate": 0
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 194,
+    "rank": 194
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 194,
+    "rank": 194
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 194,
+    "gate": 2
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 0,
+    "rank": 194
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 194
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 194,
+    "gate": 1
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 0,
+    "rank": 194
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 194
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 194,
+    "gate": 3
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 64,
+    "rank": 194
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 64,
+    "rank": 194
+   },
+   "target": [
+    2,
+    0
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 194,
+    "gate": 2
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 0,
+    "rank": 194
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "message",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 194
+   },
+   "target": [
+    1,
+    194
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 194,
+    "gate": 0
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 194,
+    "rank": 194
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 194,
+    "rank": 194
+   },
+   "target": [
+    1,
+    194
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 194,
+    "gate": 2
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 0,
+    "rank": 194
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "pin",
+   "needs": 2,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 194
+   },
+   "target": [
+    1,
+    194
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 194,
+    "gate": 3
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 64,
+    "rank": 194
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 64,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 64,
+    "rank": 194
+   },
+   "target": [
+    2,
+    64
+   ],
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "may_run",
+   "reach": "member",
+   "needs": 64,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 64,
+    "rank": 194
+   },
+   "target": [
+    2,
+    194
+   ],
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 32,
+    "gate": 0
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 32,
+    "rank": 32
+   },
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 32,
+    "gate": 2
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 0,
+    "rank": 32
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 32
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 32,
+    "gate": 3
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 0,
+    "rank": 32
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "own",
+   "needs": 32,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 32
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 71,
+    "gate": 0
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 71,
+    "rank": 71
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "place",
+   "needs": 1,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 71,
+    "rank": 71
+   },
+   "target": null,
+   "picked": false,
+   "out": true
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 71,
+    "gate": 2
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 0,
+    "rank": 71
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "place",
+   "needs": 1,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 0,
+    "rank": 71
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  },
+  {
+   "op": "actor_of",
+   "id": 1,
+   "member": {
+    "is_admin": false,
+    "perms": 71,
+    "gate": 3
+   },
+   "switch_on": true,
+   "out": {
+    "id": 1,
+    "acting": 64,
+    "rank": 71
+   }
+  },
+  {
+   "op": "may_run",
+   "reach": "place",
+   "needs": 1,
+   "owner": 4087,
+   "actor": {
+    "id": 1,
+    "acting": 64,
+    "rank": 71
+   },
+   "target": null,
+   "picked": false,
+   "out": false
+  }
+ ]
+}

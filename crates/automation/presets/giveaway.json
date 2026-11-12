@@ -1,0 +1,31 @@
+{
+  "id": "giveaway",
+  "name": "Giveaway",
+  "summary": "Let members enter a draw with a button",
+  "gated": true,
+  "needs": [],
+  "automations": [
+    {
+      "name": "Giveaway",
+      "enabled": false,
+      "trigger": {
+        "type": "component",
+        "panel": "giveaway"
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "post_giveaway"
+        }
+      ],
+      "kit": {
+        "kit": "giveaway",
+        "prize": "A prize",
+        "winners": 1,
+        "ends_at": 0,
+        "requirements": [],
+        "channel": 0
+      }
+    }
+  ]
+}

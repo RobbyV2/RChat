@@ -1,0 +1,60 @@
+{
+  "id": "name_filter",
+  "name": "Name filter",
+  "summary": "Hold members whose name matches your list",
+  "needs": ["Kick", "Manage admins"],
+  "automations": [
+    {
+      "name": "Name filter on join",
+      "enabled": false,
+      "trigger": {
+        "type": "member_joined"
+      },
+      "conditions": [
+        {
+          "type": "name",
+          "list": ["*admin*", "*moderator*", "*support*"]
+        }
+      ],
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "hold",
+          "reason": "Name"
+        },
+        {
+          "aid": "a2",
+          "type": "alert",
+          "channel": 0,
+          "text": "{member}'s name matches the name filter."
+        }
+      ]
+    },
+    {
+      "name": "Name filter on rename",
+      "enabled": false,
+      "trigger": {
+        "type": "profile_updated"
+      },
+      "conditions": [
+        {
+          "type": "name",
+          "list": ["*admin*", "*moderator*", "*support*"]
+        }
+      ],
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "hold",
+          "reason": "Name"
+        },
+        {
+          "aid": "a2",
+          "type": "alert",
+          "channel": 0,
+          "text": "{member}'s name matches the name filter."
+        }
+      ]
+    }
+  ]
+}

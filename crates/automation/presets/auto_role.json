@@ -1,0 +1,22 @@
+{
+  "id": "auto_role",
+  "name": "Auto-role",
+  "summary": "Give new members a role when they are let in",
+  "needs": ["Manage admins"],
+  "automations": [
+    {
+      "name": "Auto-role",
+      "enabled": false,
+      "trigger": {
+        "type": "member_admitted"
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "add_role",
+          "role": 0
+        }
+      ]
+    }
+  ]
+}

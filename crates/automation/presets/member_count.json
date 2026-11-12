@@ -1,0 +1,27 @@
+{
+  "id": "member_count",
+  "name": "Member count",
+  "summary": "Show the number of members in a channel name",
+  "needs": ["Manage channels"],
+  "automations": [
+    {
+      "name": "Member count",
+      "enabled": false,
+      "trigger": {
+        "type": "schedule",
+        "schedule": {
+          "kind": "every",
+          "minutes": 10
+        }
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "rename_channel",
+          "channel": 0,
+          "text": "Members: {count}"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "strikes",
+  "name": "Strikes",
+  "summary": "Time a member out after 3 strikes",
+  "needs": ["Timeout members"],
+  "automations": [
+    {
+      "name": "Strikes",
+      "enabled": false,
+      "trigger": {
+        "type": "counter_reached",
+        "counter": "strikes",
+        "value": 3
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "timeout",
+          "seconds": 86400
+        }
+      ]
+    }
+  ]
+}

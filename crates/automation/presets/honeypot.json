@@ -1,0 +1,51 @@
+{
+  "id": "honeypot",
+  "name": "Honeypot channel",
+  "summary": "Ban anyone who posts in a trap channel",
+  "offer_locked": true,
+  "needs": ["Manage messages", "Kick"],
+  "automations": [
+    {
+      "name": "Honeypot",
+      "enabled": false,
+      "trigger": {
+        "type": "message_sent",
+        "channels": {
+          "only": [
+            {
+              "channel": 0
+            }
+          ]
+        },
+        "edits": true,
+        "guard": true
+      },
+      "conditions": [
+        {
+          "type": "not",
+          "of": {
+            "type": "is_staff"
+          }
+        }
+      ],
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "block",
+          "message": "Don't post here. Posting here bans you."
+        },
+        {
+          "aid": "a2",
+          "type": "ban",
+          "purge_hours": 24
+        },
+        {
+          "aid": "a3",
+          "type": "alert",
+          "channel": 0,
+          "text": "{member} posted in the trap channel and was banned."
+        }
+      ]
+    }
+  ]
+}

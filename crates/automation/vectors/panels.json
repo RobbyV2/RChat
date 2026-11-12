@@ -1,0 +1,596 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "op": "press",
+   "mode": {
+    "kind": "toggle"
+   },
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 1,
+   "picked": false,
+   "out": {
+    "add": [
+     1
+    ],
+    "remove": []
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "toggle"
+   },
+   "held": [
+    1,
+    9
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 1,
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": [
+     1
+    ]
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "unique"
+   },
+   "held": [
+    1,
+    9
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "picked": false,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": [
+     1
+    ]
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "unique"
+   },
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": [
+     2
+    ]
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "verify"
+   },
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 1,
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": []
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "verify"
+   },
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 1,
+   "picked": false,
+   "out": {
+    "add": [
+     1
+    ],
+    "remove": []
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "drop"
+   },
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 1,
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": []
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "drop"
+   },
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 1,
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": [
+     1
+    ]
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "reversed"
+   },
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 1,
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": [
+     1
+    ]
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "binding"
+   },
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "picked": false,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": [],
+    "record": true
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "binding"
+   },
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 1,
+   "picked": true,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "binding"
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "limit",
+    "n": 2
+   },
+   "held": [
+    1,
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 3,
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "limit"
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "limit",
+    "n": 2
+   },
+   "held": [
+    1,
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": [
+     2
+    ]
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "limit",
+    "n": 2
+   },
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 3,
+   "picked": false,
+   "out": {
+    "add": [
+     3
+    ],
+    "remove": []
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "toggle"
+   },
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 9,
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "not_in_panel"
+   }
+  },
+  {
+   "op": "select",
+   "mode": {
+    "kind": "toggle"
+   },
+   "held": [
+    1,
+    9
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "values": [
+    2,
+    3
+   ],
+   "picked": false,
+   "out": {
+    "add": [
+     2,
+     3
+    ],
+    "remove": [
+     1
+    ]
+   }
+  },
+  {
+   "op": "select",
+   "mode": {
+    "kind": "unique"
+   },
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "values": [
+    1,
+    2
+   ],
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "too_many"
+   }
+  },
+  {
+   "op": "select",
+   "mode": {
+    "kind": "limit",
+    "n": 1
+   },
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "values": [
+    1,
+    2
+   ],
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "limit"
+   }
+  },
+  {
+   "op": "select",
+   "mode": {
+    "kind": "verify"
+   },
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "values": [
+    2
+   ],
+   "picked": false,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": []
+   }
+  },
+  {
+   "op": "select",
+   "mode": {
+    "kind": "drop"
+   },
+   "held": [
+    1,
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "values": [
+    2,
+    3
+   ],
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": [
+     2
+    ]
+   }
+  },
+  {
+   "op": "select",
+   "mode": {
+    "kind": "binding"
+   },
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "values": [
+    1
+   ],
+   "picked": false,
+   "out": {
+    "add": [
+     1
+    ],
+    "remove": [],
+    "record": true
+   }
+  },
+  {
+   "op": "select",
+   "mode": {
+    "kind": "binding"
+   },
+   "held": [
+    1
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "values": [
+    2
+   ],
+   "picked": true,
+   "out": {
+    "add": [],
+    "remove": [],
+    "refused": "binding"
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "toggle"
+   },
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "picked": false,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": []
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "toggle"
+   },
+   "held": [
+    2
+   ],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "picked": false,
+   "out": {
+    "add": [],
+    "remove": [
+     2
+    ]
+   }
+  },
+  {
+   "op": "press",
+   "mode": {
+    "kind": "toggle"
+   },
+   "held": [],
+   "panel": [
+    1,
+    2,
+    3
+   ],
+   "role": 2,
+   "picked": false,
+   "out": {
+    "add": [
+     2
+    ],
+    "remove": []
+   }
+  },
+  {
+   "op": "latest",
+   "presses": [
+    {
+     "id": "ev-phone-40",
+     "deps": [],
+     "want": "on"
+    },
+    {
+     "id": "ev-desk-12",
+     "deps": [
+      "ev-phone-40"
+     ],
+     "want": "off"
+    }
+   ],
+   "latest": "ev-desk-12"
+  },
+  {
+   "op": "latest",
+   "presses": [
+    {
+     "id": "ev-desk-12",
+     "deps": [
+      "ev-phone-40"
+     ],
+     "want": "off"
+    },
+    {
+     "id": "ev-phone-40",
+     "deps": [],
+     "want": "on"
+    }
+   ],
+   "latest": "ev-desk-12"
+  }
+ ]
+}

@@ -1,0 +1,194 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "text": "the cat sat",
+   "list": [
+    "cat"
+   ],
+   "allow": [],
+   "hit": "cat"
+  },
+  {
+   "text": "cat!",
+   "list": [
+    "cat"
+   ],
+   "allow": [],
+   "hit": "cat"
+  },
+  {
+   "text": "catch",
+   "list": [
+    "cat"
+   ],
+   "allow": [],
+   "hit": null
+  },
+  {
+   "text": "wildcat",
+   "list": [
+    "cat"
+   ],
+   "allow": [],
+   "hit": null
+  },
+  {
+   "text": "a cat",
+   "list": [
+    "cat"
+   ],
+   "allow": [],
+   "hit": "cat"
+  },
+  {
+   "text": "xcat",
+   "list": [
+    "cat"
+   ],
+   "allow": [],
+   "hit": null
+  },
+  {
+   "text": "Catapult",
+   "list": [
+    "cat*"
+   ],
+   "allow": [],
+   "hit": "cat*"
+  },
+  {
+   "text": "wildcat",
+   "list": [
+    "cat*"
+   ],
+   "allow": [],
+   "hit": null
+  },
+  {
+   "text": "wildcat",
+   "list": [
+    "*cat"
+   ],
+   "allow": [],
+   "hit": "*cat"
+  },
+  {
+   "text": "catch",
+   "list": [
+    "*cat"
+   ],
+   "allow": [],
+   "hit": null
+  },
+  {
+   "text": "location",
+   "list": [
+    "*cat*"
+   ],
+   "allow": [],
+   "hit": "*cat*"
+  },
+  {
+   "text": "get  free\tnitro now",
+   "list": [
+    "free nitro"
+   ],
+   "allow": [],
+   "hit": "free nitro"
+  },
+  {
+   "text": "ＦＲＥＥ stuff",
+   "list": [
+    "free"
+   ],
+   "allow": [],
+   "hit": "free"
+  },
+  {
+   "text": "fr​ee stuff",
+   "list": [
+    "free"
+   ],
+   "allow": [],
+   "hit": "free"
+  },
+  {
+   "text": "frее stuff",
+   "list": [
+    "free"
+   ],
+   "allow": [],
+   "hit": "free"
+  },
+  {
+   "text": "scunthorpe united",
+   "list": [
+    "*cunt*"
+   ],
+   "allow": [
+    "scunthorpe"
+   ],
+   "hit": null
+  },
+  {
+   "text": "scunthorpe and cunt",
+   "list": [
+    "*cunt*"
+   ],
+   "allow": [
+    "scunthorpe"
+   ],
+   "hit": "*cunt*"
+  },
+  {
+   "text": "anything",
+   "list": [
+    "",
+    "*"
+   ],
+   "allow": [],
+   "hit": null
+  },
+  {
+   "text": "I got burned, burn it",
+   "list": [
+    "bum"
+   ],
+   "allow": [],
+   "hit": null
+  },
+  {
+   "text": "a field of corn",
+   "list": [
+    "com"
+   ],
+   "allow": [],
+   "hit": null
+  },
+  {
+   "text": "l0l that was funny",
+   "list": [
+    "lol"
+   ],
+   "allow": [],
+   "hit": null
+  },
+  {
+   "text": "documents",
+   "list": [
+    "*curn*"
+   ],
+   "allow": [],
+   "hit": null
+  },
+  {
+   "text": "he is a bum",
+   "list": [
+    "bum"
+   ],
+   "allow": [],
+   "hit": "bum"
+  }
+ ]
+}

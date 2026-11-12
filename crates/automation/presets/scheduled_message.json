@@ -1,0 +1,30 @@
+{
+  "id": "scheduled_message",
+  "name": "Scheduled message",
+  "summary": "Post a message on a schedule",
+  "needs": [],
+  "automations": [
+    {
+      "name": "Scheduled message",
+      "enabled": false,
+      "trigger": {
+        "type": "schedule",
+        "schedule": {
+          "kind": "daily",
+          "every": 1,
+          "at": "09:00"
+        }
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "send_message",
+          "channel": {
+            "channel": 0
+          },
+          "text": "Good morning!"
+        }
+      ]
+    }
+  ]
+}

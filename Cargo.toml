@@ -7,6 +7,7 @@ members = [
   "apps/desktop/plugins/share",
   "crates/app-docs",
   "crates/app-sheet",
+  "crates/automation",
   "crates/fed",
   "crates/identity",
   "crates/pow",

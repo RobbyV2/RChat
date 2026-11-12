@@ -1,0 +1,54 @@
+{
+  "id": "levels",
+  "name": "Levels",
+  "summary": "Give XP for messages and announce new levels",
+  "needs": ["Manage automations"],
+  "automations": [
+    {
+      "name": "Levels",
+      "enabled": false,
+      "trigger": {
+        "type": "message_sent",
+        "channels": "all"
+      },
+      "conditions": [
+        {
+          "type": "cooldown",
+          "seconds": 60,
+          "per": "member"
+        }
+      ],
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "counter_add",
+          "name": "xp",
+          "amount": {
+            "random": {
+              "min": 15,
+              "max": 25
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Level up",
+      "enabled": false,
+      "trigger": {
+        "type": "counter_reached",
+        "counter": "xp",
+        "value": 100
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "send_message",
+          "channel": "here",
+          "text": "{member.mention} reached level {level}",
+          "ping": true
+        }
+      ]
+    }
+  ]
+}

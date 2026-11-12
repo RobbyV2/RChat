@@ -1,0 +1,39 @@
+{
+  "id": "invite_filter",
+  "name": "Invite filter",
+  "summary": "Block invites to other servers",
+  "needs": ["Manage messages"],
+  "automations": [
+    {
+      "name": "Invite filter",
+      "enabled": false,
+      "trigger": {
+        "type": "message_sent",
+        "channels": "all",
+        "edits": true,
+        "guard": true
+      },
+      "conditions": [
+        {
+          "type": "not",
+          "of": {
+            "type": "is_staff"
+          }
+        },
+        {
+          "type": "links",
+          "mode": "invites",
+          "allow": [],
+          "deny": []
+        }
+      ],
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "block",
+          "message": "Invites aren't allowed here"
+        }
+      ]
+    }
+  ]
+}

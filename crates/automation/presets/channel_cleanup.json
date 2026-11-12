@@ -1,0 +1,28 @@
+{
+  "id": "channel_cleanup",
+  "name": "Channel cleanup",
+  "summary": "Delete messages older than 7 days in a channel",
+  "needs": ["Manage channels", "Manage messages"],
+  "automations": [
+    {
+      "name": "Channel cleanup",
+      "enabled": false,
+      "trigger": {
+        "type": "schedule",
+        "schedule": {
+          "kind": "hourly",
+          "every": 1,
+          "minute": 0
+        }
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "delete_older",
+          "channel": 0,
+          "age_seconds": 604800
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "member": {
+    "is_admin": false,
+    "perms": 71,
+    "gate": 2
+   },
+   "acting": 0,
+   "seeing": 0,
+   "rank": 71
+  },
+  {
+   "member": {
+    "is_admin": false,
+    "perms": 71,
+    "gate": 3
+   },
+   "acting": 64,
+   "seeing": 71,
+   "rank": 71
+  }
+ ]
+}

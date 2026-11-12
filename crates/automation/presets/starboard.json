@@ -1,0 +1,31 @@
+{
+  "id": "starboard",
+  "name": "Starboard",
+  "summary": "Repost messages that get enough stars",
+  "gated": true,
+  "needs": [],
+  "automations": [
+    {
+      "name": "Starboard",
+      "enabled": false,
+      "trigger": {
+        "type": "reaction_added",
+        "emojis": ["⭐"],
+        "channels": { "only": [{ "channel": 0 }] }
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "repost"
+        }
+      ],
+      "kit": {
+        "kit": "starboard",
+        "emoji": "⭐",
+        "threshold": 3,
+        "channel": 0,
+        "self_star": false
+      }
+    }
+  ]
+}

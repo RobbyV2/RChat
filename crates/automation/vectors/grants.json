@@ -1,0 +1,83 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "bits": 0,
+   "mayGive": false,
+   "ownerBits": 4095,
+   "out": null
+  },
+  {
+   "bits": 32,
+   "mayGive": false,
+   "ownerBits": 4095,
+   "out": null
+  },
+  {
+   "bits": 6,
+   "mayGive": false,
+   "ownerBits": 4095,
+   "out": "gives_permissions"
+  },
+  {
+   "bits": 1,
+   "mayGive": false,
+   "ownerBits": 4095,
+   "out": "gives_permissions"
+  },
+  {
+   "bits": 128,
+   "mayGive": false,
+   "ownerBits": 4095,
+   "out": "gives_permissions"
+  },
+  {
+   "bits": 256,
+   "mayGive": false,
+   "ownerBits": 4095,
+   "out": "gives_permissions"
+  },
+  {
+   "bits": 64,
+   "mayGive": false,
+   "ownerBits": 4095,
+   "out": "gives_permissions"
+  },
+  {
+   "bits": 16,
+   "mayGive": false,
+   "ownerBits": 4095,
+   "out": "gives_permissions"
+  },
+  {
+   "bits": 8,
+   "mayGive": false,
+   "ownerBits": 4095,
+   "out": "gives_permissions"
+  },
+  {
+   "bits": 2048,
+   "mayGive": false,
+   "ownerBits": 4095,
+   "out": "gives_permissions"
+  },
+  {
+   "bits": 4,
+   "mayGive": true,
+   "ownerBits": 4095,
+   "out": null
+  },
+  {
+   "bits": 4,
+   "mayGive": true,
+   "ownerBits": 16,
+   "out": "owner_cant_grant"
+  },
+  {
+   "bits": 0,
+   "mayGive": false,
+   "ownerBits": 4095,
+   "out": null
+  }
+ ]
+}

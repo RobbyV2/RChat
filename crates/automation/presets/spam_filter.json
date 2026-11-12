@@ -1,0 +1,63 @@
+{
+  "id": "spam_filter",
+  "name": "Spam filter",
+  "summary": "Block fast or repeated messages and time the sender out",
+  "needs": ["Manage messages", "Timeout members", "Manage automations"],
+  "automations": [
+    {
+      "name": "Spam filter",
+      "enabled": false,
+      "trigger": {
+        "type": "message_sent",
+        "channels": "all",
+        "edits": true,
+        "guard": true
+      },
+      "conditions": [
+        {
+          "type": "not",
+          "of": {
+            "type": "is_staff"
+          }
+        },
+        {
+          "type": "any",
+          "of": [
+            {
+              "type": "rate",
+              "count": 5,
+              "seconds": 5,
+              "per": "channel"
+            },
+            {
+              "type": "duplicates",
+              "count": 3,
+              "seconds": 30
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "block",
+          "message": "Slow down."
+        },
+        {
+          "aid": "a2",
+          "type": "timeout",
+          "seconds": 600
+        },
+        {
+          "aid": "a3",
+          "type": "counter_add",
+          "name": "strikes",
+          "amount": {
+            "fixed": 1
+          },
+          "after_post": true
+        }
+      ]
+    }
+  ]
+}

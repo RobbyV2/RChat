@@ -1,0 +1,39 @@
+{
+  "id": "word_filter",
+  "name": "Word filter",
+  "summary": "Block messages with words from your list",
+  "needs": ["Manage messages"],
+  "automations": [
+    {
+      "name": "Word filter",
+      "enabled": false,
+      "trigger": {
+        "type": "message_sent",
+        "channels": "all",
+        "edits": true,
+        "guard": true
+      },
+      "conditions": [
+        {
+          "type": "not",
+          "of": {
+            "type": "is_staff"
+          }
+        },
+        {
+          "type": "keywords",
+          "list": [],
+          "allow": [],
+          "profanity_preset": true
+        }
+      ],
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "block",
+          "message": "Watch your language"
+        }
+      ]
+    }
+  ]
+}

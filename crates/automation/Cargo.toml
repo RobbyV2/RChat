@@ -1,0 +1,32 @@
+[package]
+name = "rchat-automation"
+version = "0.3.0"
+edition = "2024"
+license = "MIT"
+description = "The pure rules of server onboarding and automations, shared by the server and the web client"
+
+[features]
+default = ["tz"]
+tz = ["dep:jiff"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+aho-corasick = "=1.1.5"
+unicode-normalization = "=0.1.26"
+unicode-security = "=0.1.2"
+rand_chacha = "0.10.0"
+url = "2.5.8"
+jiff = { version = "=0.2.38", optional = true }
+
+[dev-dependencies]
+jiff = { version = "=0.2.38", features = ["tzdb-bundle-always"] }
+
+[[example]]
+name = "gen_fold"
+path = "tools/gen_fold.rs"
+
+[[example]]
+name = "gen_entities"
+path = "tools/gen_entities.rs"

@@ -1,0 +1,17 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "set": 1000,
+   "reference": 20,
+   "ok": false,
+   "calibrated": 836.6666666666667
+  },
+  {
+   "set": 900,
+   "reference": 100,
+   "ok": true,
+   "calibrated": 173.84615384615384
+  }
+ ]
+}

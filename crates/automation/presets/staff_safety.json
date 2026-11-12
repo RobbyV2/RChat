@@ -1,0 +1,33 @@
+{
+  "id": "staff_safety",
+  "name": "Staff safety",
+  "summary": "Stop a moderator who bans or kicks many members in a short time",
+  "offer_locked": true,
+  "gated": true,
+  "needs": ["Kick", "Manage admins"],
+  "automations": [
+    {
+      "name": "Staff safety",
+      "enabled": false,
+      "trigger": {
+        "type": "staff_action_rate",
+        "actions": ["ban", "kick"],
+        "count": 5,
+        "minutes": 2
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "quarantine",
+          "reason": "Too many bans or kicks"
+        },
+        {
+          "aid": "a2",
+          "type": "alert",
+          "channel": 0,
+          "text": "{member} was stopped after many bans or kicks."
+        }
+      ]
+    }
+  ]
+}

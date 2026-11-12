@@ -1,0 +1,42 @@
+{
+  "id": "mention_spam",
+  "name": "Mention spam",
+  "summary": "Block messages that mention too many people",
+  "needs": ["Manage messages", "Timeout members"],
+  "automations": [
+    {
+      "name": "Mention spam",
+      "enabled": false,
+      "trigger": {
+        "type": "message_sent",
+        "channels": "all",
+        "edits": true,
+        "guard": true
+      },
+      "conditions": [
+        {
+          "type": "not",
+          "of": {
+            "type": "is_staff"
+          }
+        },
+        {
+          "type": "mentions",
+          "over": 10
+        }
+      ],
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "block",
+          "message": "Too many mentions."
+        },
+        {
+          "aid": "a2",
+          "type": "timeout",
+          "seconds": 3600
+        }
+      ]
+    }
+  ]
+}

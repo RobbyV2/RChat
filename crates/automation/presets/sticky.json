@@ -1,0 +1,36 @@
+{
+  "id": "sticky",
+  "name": "Sticky message",
+  "summary": "Keep a message at the bottom of a channel",
+  "gated": true,
+  "needs": [],
+  "automations": [
+    {
+      "name": "Sticky message",
+      "enabled": false,
+      "trigger": {
+        "type": "message_sent",
+        "channels": {
+          "only": [
+            {
+              "channel": 0
+            }
+          ]
+        }
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "sticky"
+        }
+      ],
+      "kit": {
+        "kit": "sticky",
+        "channel": 0,
+        "text": "Read the rules before you post.",
+        "every": 5,
+        "min_seconds": 30
+      }
+    }
+  ]
+}

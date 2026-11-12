@@ -1,0 +1,39 @@
+{
+  "id": "self_roles",
+  "name": "Self roles command",
+  "summary": "Let members pick a role from a list with a command",
+  "needs": ["Manage admins"],
+  "automations": [
+    {
+      "name": "Self roles",
+      "enabled": false,
+      "trigger": {
+        "type": "command",
+        "name": "role",
+        "description": "Pick a role",
+        "args": [
+          {
+            "name": "role",
+            "required": true,
+            "type": "choice",
+            "options": [
+              {
+                "label": "Role",
+                "role": 0
+              }
+            ]
+          }
+        ]
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "toggle_role",
+          "role": {
+            "arg": "role"
+          }
+        }
+      ]
+    }
+  ]
+}

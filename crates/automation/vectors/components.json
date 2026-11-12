@@ -1,0 +1,840 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "note": "a role panel with buttons and a menu",
+   "components": [
+    [
+     {
+      "type": "button",
+      "cid": "mc",
+      "label": "Minecraft",
+      "style": "plain",
+      "do": "role",
+      "role": 11,
+      "emoji": "⛏"
+     },
+     {
+      "type": "button",
+      "cid": "val",
+      "label": "Valorant",
+      "style": "plain",
+      "do": "role",
+      "role": 12
+     },
+     {
+      "type": "button",
+      "cid": "chess",
+      "label": "Chess",
+      "style": "plain",
+      "do": "role",
+      "role": 13
+     }
+    ],
+    [
+     {
+      "type": "select",
+      "cid": "more",
+      "placeholder": "Pick more...",
+      "min": 0,
+      "max": 3,
+      "options": [
+       {
+        "value": "go",
+        "label": "Go",
+        "role": 14,
+        "emoji": "⚫",
+        "description": "The board game"
+       },
+       {
+        "value": "osu",
+        "label": "osu!",
+        "role": 15
+       },
+       {
+        "value": "tetris",
+        "label": "Tetris",
+        "role": 16
+       }
+      ]
+     }
+    ]
+   ],
+   "problems": []
+  },
+  {
+   "note": "every kind of button",
+   "components": [
+    [
+     {
+      "type": "button",
+      "cid": "enter",
+      "label": "Enter",
+      "style": "primary",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "rules",
+      "label": "Read the rules",
+      "style": "plain",
+      "do": "jump",
+      "channel": 3
+     },
+     {
+      "type": "button",
+      "cid": "site",
+      "label": "Website",
+      "style": "plain",
+      "do": "link",
+      "url": "https://example.com/"
+     },
+     {
+      "type": "button",
+      "cid": "leave",
+      "label": "Leave",
+      "style": "danger",
+      "do": "run"
+     }
+    ]
+   ],
+   "problems": []
+  },
+  {
+   "note": "5 rows of 5",
+   "components": [
+    [
+     {
+      "type": "button",
+      "cid": "b0_0",
+      "label": "Button 0.0",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b0_1",
+      "label": "Button 0.1",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b0_2",
+      "label": "Button 0.2",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b0_3",
+      "label": "Button 0.3",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b0_4",
+      "label": "Button 0.4",
+      "style": "plain",
+      "do": "run"
+     }
+    ],
+    [
+     {
+      "type": "button",
+      "cid": "b1_0",
+      "label": "Button 1.0",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b1_1",
+      "label": "Button 1.1",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b1_2",
+      "label": "Button 1.2",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b1_3",
+      "label": "Button 1.3",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b1_4",
+      "label": "Button 1.4",
+      "style": "plain",
+      "do": "run"
+     }
+    ],
+    [
+     {
+      "type": "button",
+      "cid": "b2_0",
+      "label": "Button 2.0",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b2_1",
+      "label": "Button 2.1",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b2_2",
+      "label": "Button 2.2",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b2_3",
+      "label": "Button 2.3",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b2_4",
+      "label": "Button 2.4",
+      "style": "plain",
+      "do": "run"
+     }
+    ],
+    [
+     {
+      "type": "button",
+      "cid": "b3_0",
+      "label": "Button 3.0",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b3_1",
+      "label": "Button 3.1",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b3_2",
+      "label": "Button 3.2",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b3_3",
+      "label": "Button 3.3",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b3_4",
+      "label": "Button 3.4",
+      "style": "plain",
+      "do": "run"
+     }
+    ],
+    [
+     {
+      "type": "button",
+      "cid": "b4_0",
+      "label": "Button 4.0",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b4_1",
+      "label": "Button 4.1",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b4_2",
+      "label": "Button 4.2",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b4_3",
+      "label": "Button 4.3",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b4_4",
+      "label": "Button 4.4",
+      "style": "plain",
+      "do": "run"
+     }
+    ]
+   ],
+   "problems": []
+  },
+  {
+   "note": "a menu of 25",
+   "components": [
+    [
+     {
+      "type": "select",
+      "cid": "all",
+      "placeholder": "Pick more",
+      "min": 1,
+      "max": 25,
+      "options": [
+       {
+        "value": "v0",
+        "label": "Game 0",
+        "role": 100
+       },
+       {
+        "value": "v1",
+        "label": "Game 1",
+        "role": 101
+       },
+       {
+        "value": "v2",
+        "label": "Game 2",
+        "role": 102
+       },
+       {
+        "value": "v3",
+        "label": "Game 3",
+        "role": 103
+       },
+       {
+        "value": "v4",
+        "label": "Game 4",
+        "role": 104
+       },
+       {
+        "value": "v5",
+        "label": "Game 5",
+        "role": 105
+       },
+       {
+        "value": "v6",
+        "label": "Game 6",
+        "role": 106
+       },
+       {
+        "value": "v7",
+        "label": "Game 7",
+        "role": 107
+       },
+       {
+        "value": "v8",
+        "label": "Game 8",
+        "role": 108
+       },
+       {
+        "value": "v9",
+        "label": "Game 9",
+        "role": 109
+       },
+       {
+        "value": "v10",
+        "label": "Game 10",
+        "role": 110
+       },
+       {
+        "value": "v11",
+        "label": "Game 11",
+        "role": 111
+       },
+       {
+        "value": "v12",
+        "label": "Game 12",
+        "role": 112
+       },
+       {
+        "value": "v13",
+        "label": "Game 13",
+        "role": 113
+       },
+       {
+        "value": "v14",
+        "label": "Game 14",
+        "role": 114
+       },
+       {
+        "value": "v15",
+        "label": "Game 15",
+        "role": 115
+       },
+       {
+        "value": "v16",
+        "label": "Game 16",
+        "role": 116
+       },
+       {
+        "value": "v17",
+        "label": "Game 17",
+        "role": 117
+       },
+       {
+        "value": "v18",
+        "label": "Game 18",
+        "role": 118
+       },
+       {
+        "value": "v19",
+        "label": "Game 19",
+        "role": 119
+       },
+       {
+        "value": "v20",
+        "label": "Game 20",
+        "role": 120
+       },
+       {
+        "value": "v21",
+        "label": "Game 21",
+        "role": 121
+       },
+       {
+        "value": "v22",
+        "label": "Game 22",
+        "role": 122
+       },
+       {
+        "value": "v23",
+        "label": "Game 23",
+        "role": 123
+       },
+       {
+        "value": "v24",
+        "label": "Game 24",
+        "role": 124
+       }
+      ]
+     }
+    ]
+   ],
+   "problems": []
+  },
+  {
+   "note": "six rows",
+   "components": [
+    [
+     {
+      "type": "button",
+      "cid": "b0",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     }
+    ],
+    [
+     {
+      "type": "button",
+      "cid": "b1",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     }
+    ],
+    [
+     {
+      "type": "button",
+      "cid": "b2",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     }
+    ],
+    [
+     {
+      "type": "button",
+      "cid": "b3",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     }
+    ],
+    [
+     {
+      "type": "button",
+      "cid": "b4",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     }
+    ],
+    [
+     {
+      "type": "button",
+      "cid": "b5",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     }
+    ]
+   ],
+   "problems": [
+    "components"
+   ]
+  },
+  {
+   "note": "six buttons in a row",
+   "components": [
+    [
+     {
+      "type": "button",
+      "cid": "b0",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b1",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b2",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b3",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b4",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     },
+     {
+      "type": "button",
+      "cid": "b5",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     }
+    ]
+   ],
+   "problems": [
+    "components.0"
+   ]
+  },
+  {
+   "note": "an empty row",
+   "components": [
+    []
+   ],
+   "problems": [
+    "components.0"
+   ]
+  },
+  {
+   "note": "a menu shares its row",
+   "components": [
+    [
+     {
+      "type": "select",
+      "cid": "s",
+      "placeholder": "Pick more",
+      "min": 0,
+      "max": 1,
+      "options": [
+       {
+        "value": "v0",
+        "label": "Game 0",
+        "role": 100
+       },
+       {
+        "value": "v1",
+        "label": "Game 1",
+        "role": 101
+       }
+      ]
+     },
+     {
+      "type": "button",
+      "cid": "b",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     }
+    ]
+   ],
+   "problems": [
+    "components.0"
+   ]
+  },
+  {
+   "note": "a menu of 26",
+   "components": [
+    [
+     {
+      "type": "select",
+      "cid": "s",
+      "placeholder": "Pick more",
+      "min": 0,
+      "max": 1,
+      "options": [
+       {
+        "value": "v0",
+        "label": "Game 0",
+        "role": 100
+       },
+       {
+        "value": "v1",
+        "label": "Game 1",
+        "role": 101
+       },
+       {
+        "value": "v2",
+        "label": "Game 2",
+        "role": 102
+       },
+       {
+        "value": "v3",
+        "label": "Game 3",
+        "role": 103
+       },
+       {
+        "value": "v4",
+        "label": "Game 4",
+        "role": 104
+       },
+       {
+        "value": "v5",
+        "label": "Game 5",
+        "role": 105
+       },
+       {
+        "value": "v6",
+        "label": "Game 6",
+        "role": 106
+       },
+       {
+        "value": "v7",
+        "label": "Game 7",
+        "role": 107
+       },
+       {
+        "value": "v8",
+        "label": "Game 8",
+        "role": 108
+       },
+       {
+        "value": "v9",
+        "label": "Game 9",
+        "role": 109
+       },
+       {
+        "value": "v10",
+        "label": "Game 10",
+        "role": 110
+       },
+       {
+        "value": "v11",
+        "label": "Game 11",
+        "role": 111
+       },
+       {
+        "value": "v12",
+        "label": "Game 12",
+        "role": 112
+       },
+       {
+        "value": "v13",
+        "label": "Game 13",
+        "role": 113
+       },
+       {
+        "value": "v14",
+        "label": "Game 14",
+        "role": 114
+       },
+       {
+        "value": "v15",
+        "label": "Game 15",
+        "role": 115
+       },
+       {
+        "value": "v16",
+        "label": "Game 16",
+        "role": 116
+       },
+       {
+        "value": "v17",
+        "label": "Game 17",
+        "role": 117
+       },
+       {
+        "value": "v18",
+        "label": "Game 18",
+        "role": 118
+       },
+       {
+        "value": "v19",
+        "label": "Game 19",
+        "role": 119
+       },
+       {
+        "value": "v20",
+        "label": "Game 20",
+        "role": 120
+       },
+       {
+        "value": "v21",
+        "label": "Game 21",
+        "role": 121
+       },
+       {
+        "value": "v22",
+        "label": "Game 22",
+        "role": 122
+       },
+       {
+        "value": "v23",
+        "label": "Game 23",
+        "role": 123
+       },
+       {
+        "value": "v24",
+        "label": "Game 24",
+        "role": 124
+       },
+       {
+        "value": "v25",
+        "label": "Game 25",
+        "role": 125
+       }
+      ]
+     }
+    ]
+   ],
+   "problems": [
+    "components.0.0.options"
+   ]
+  },
+  {
+   "note": "a menu that asks for more picks than it has",
+   "components": [
+    [
+     {
+      "type": "select",
+      "cid": "s",
+      "placeholder": "Pick more",
+      "min": 0,
+      "max": 4,
+      "options": [
+       {
+        "value": "v0",
+        "label": "Game 0",
+        "role": 100
+       },
+       {
+        "value": "v1",
+        "label": "Game 1",
+        "role": 101
+       },
+       {
+        "value": "v2",
+        "label": "Game 2",
+        "role": 102
+       }
+      ]
+     }
+    ]
+   ],
+   "problems": [
+    "components.0.0.max"
+   ]
+  },
+  {
+   "note": "the same id twice",
+   "components": [
+    [
+     {
+      "type": "button",
+      "cid": "same",
+      "label": "A",
+      "style": "plain",
+      "do": "run"
+     }
+    ],
+    [
+     {
+      "type": "button",
+      "cid": "same",
+      "label": "B",
+      "style": "plain",
+      "do": "run"
+     }
+    ]
+   ],
+   "problems": [
+    "components.1.0.cid"
+   ]
+  },
+  {
+   "note": "a link that is no web address",
+   "components": [
+    [
+     {
+      "type": "button",
+      "cid": "x",
+      "label": "Go",
+      "style": "plain",
+      "do": "link",
+      "url": "javascript:alert(1)"
+     }
+    ]
+   ],
+   "problems": [
+    "components.0.0.url"
+   ]
+  },
+  {
+   "note": "a button without a label",
+   "components": [
+    [
+     {
+      "type": "button",
+      "cid": "x",
+      "label": " ",
+      "style": "plain",
+      "do": "run"
+     }
+    ]
+   ],
+   "problems": [
+    "components.0.0.label"
+   ]
+  }
+ ]
+}

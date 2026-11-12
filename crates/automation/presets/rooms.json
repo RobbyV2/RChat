@@ -1,0 +1,38 @@
+{
+  "id": "rooms",
+  "name": "Rooms",
+  "summary": "Give members their own voice room when they join a channel",
+  "gated": true,
+  "needs": ["Manage channels"],
+  "automations": [
+    {
+      "name": "Rooms",
+      "enabled": false,
+      "trigger": {
+        "type": "voice_joined",
+        "channels": {
+          "only": [
+            {
+              "channel": 0
+            }
+          ]
+        }
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "create_room"
+        }
+      ],
+      "kit": {
+        "kit": "rooms",
+        "hub_channel": 0,
+        "category": 0,
+        "name": "{member}'s room",
+        "limit": 0,
+        "delete_after_empty_seconds": 60,
+        "max_rooms": 50
+      }
+    }
+  ]
+}

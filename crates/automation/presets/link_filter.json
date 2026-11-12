@@ -1,0 +1,39 @@
+{
+  "id": "link_filter",
+  "name": "Link filter",
+  "summary": "Block links, except to the sites you allow",
+  "needs": ["Manage messages"],
+  "automations": [
+    {
+      "name": "Link filter",
+      "enabled": false,
+      "trigger": {
+        "type": "message_sent",
+        "channels": "all",
+        "edits": true,
+        "guard": true
+      },
+      "conditions": [
+        {
+          "type": "not",
+          "of": {
+            "type": "is_staff"
+          }
+        },
+        {
+          "type": "links",
+          "mode": "not_allowed",
+          "allow": [],
+          "deny": []
+        }
+      ],
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "block",
+          "message": "Links aren't allowed here"
+        }
+      ]
+    }
+  ]
+}

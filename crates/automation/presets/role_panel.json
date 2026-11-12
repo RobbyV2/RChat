@@ -1,0 +1,37 @@
+{
+  "id": "role_panel",
+  "name": "Role panel",
+  "summary": "Post buttons that give and take roles",
+  "needs": ["Manage admins"],
+  "automations": [
+    {
+      "name": "Role panel",
+      "enabled": false,
+      "trigger": {
+        "type": "component",
+        "panel": "roles"
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "post_panel",
+          "channel": 0,
+          "text": "Pick your roles."
+        }
+      ],
+      "kit": {
+        "kit": "role_panel",
+        "mode": {
+          "kind": "toggle"
+        },
+        "roles": [
+          {
+            "role": 0,
+            "label": "Role"
+          }
+        ],
+        "style": "buttons"
+      }
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "id": "raid_protection",
+  "name": "Raid protection",
+  "summary": "Pause joins and ask for approval when many people join at once",
+  "offer_locked": true,
+  "needs": ["Kick"],
+  "automations": [
+    {
+      "name": "Raid protection",
+      "enabled": false,
+      "trigger": {
+        "type": "join_rate",
+        "joins": 10,
+        "seconds": 30
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "pause_joins",
+          "minutes": 15
+        },
+        {
+          "aid": "a2",
+          "type": "require_approval",
+          "minutes": 60
+        },
+        {
+          "aid": "a3",
+          "type": "alert",
+          "channel": 0,
+          "text": "Many people joined at once. Joins are paused for 15 minutes."
+        }
+      ]
+    }
+  ]
+}

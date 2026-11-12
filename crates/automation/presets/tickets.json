@@ -1,0 +1,31 @@
+{
+  "id": "tickets",
+  "name": "Tickets",
+  "summary": "Let members open a private channel with your staff",
+  "needs": ["Manage channels"],
+  "automations": [
+    {
+      "name": "Tickets",
+      "enabled": false,
+      "trigger": {
+        "type": "component",
+        "panel": "tickets"
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "open_ticket"
+        }
+      ],
+      "kit": {
+        "kit": "tickets",
+        "category": 0,
+        "staff_roles": [],
+        "name": "ticket-{count}",
+        "max_open_per_member": 3,
+        "intro": "A moderator will be with you soon.",
+        "close_after_days": 30
+      }
+    }
+  ]
+}

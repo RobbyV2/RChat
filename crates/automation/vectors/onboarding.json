@@ -1,0 +1,1207 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 0,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": false,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": true,
+     "sso": false,
+     "pow_work": 0,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 1440,
+     "member_minutes": 10,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 0,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 996400,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [
+    {
+     "kind": "account_age",
+     "ready_at": 1082800
+    },
+    {
+     "kind": "member_time",
+     "ready_at": 1000600
+    }
+   ],
+   "recompute": 1
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 1440,
+     "member_minutes": 10,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 0,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1082800,
+    "gate": 1,
+    "account_created_at": 996400,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": true,
+     "sso": false,
+     "pow_work": 0,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [
+    {
+     "kind": "backup_phrase"
+    }
+   ],
+   "recompute": 1
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": true,
+     "pow_work": 0,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": true,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 1048576,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [
+    {
+     "kind": "pow",
+     "work": 1048576
+    }
+   ],
+   "recompute": 1
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 1048576,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": 5,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 1048576,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": false,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 1048576,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": true,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 0,
+     "approval": false
+    },
+    "rules": {
+     "version": 3,
+     "items": [
+      {
+       "id": "a",
+       "text": "Be kind"
+      }
+     ]
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": 2,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [
+    {
+     "kind": "rules",
+     "version": 3
+    }
+   ],
+   "recompute": 1
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 0,
+     "approval": false
+    },
+    "rules": {
+     "version": 3,
+     "items": [
+      {
+       "id": "a",
+       "text": "Be kind"
+      }
+     ]
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": 3,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 0,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [
+     {
+      "id": "q1",
+      "required": true,
+      "when": "before"
+     },
+     {
+      "id": "q2",
+      "required": true,
+      "when": "after"
+     },
+     {
+      "id": "q3",
+      "required": false,
+      "when": "before"
+     }
+    ],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [
+    {
+     "kind": "questions",
+     "ids": [
+      "q1"
+     ]
+    }
+   ],
+   "recompute": 1
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 0,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [
+     {
+      "id": "q1",
+      "required": true,
+      "when": "before"
+     },
+     {
+      "id": "q2",
+      "required": true,
+      "when": "after"
+     },
+     {
+      "id": "q3",
+      "required": false,
+      "when": "before"
+     }
+    ],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [
+     "q1"
+    ],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 0,
+     "approval": true
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": [
+     {
+      "id": "a1",
+      "required": true
+     }
+    ]
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [
+    {
+     "kind": "application",
+     "ids": [
+      "a1"
+     ]
+    },
+    {
+     "kind": "approval"
+    }
+   ],
+   "recompute": 1
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 0,
+     "approval": true
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": [
+     {
+      "id": "a1",
+      "required": true
+     }
+    ]
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [
+    {
+     "kind": "application",
+     "ids": [
+      "a1"
+     ]
+    },
+    {
+     "kind": "approval"
+    }
+   ],
+   "recompute": 1
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 0,
+     "approval": true
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": [
+     {
+      "id": "a1",
+      "required": true
+     }
+    ]
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [
+     "a1"
+    ],
+    "approved": true,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": true,
+     "sso": true,
+     "pow_work": 1048576,
+     "approval": true
+    },
+    "rules": {
+     "version": 3,
+     "items": [
+      {
+       "id": "a",
+       "text": "Be kind"
+      }
+     ]
+    },
+    "questions": [],
+    "application": [
+     {
+      "id": "a1",
+      "required": true
+     }
+    ]
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": true,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": true,
+     "sso": true,
+     "pow_work": 1048576,
+     "approval": true
+    },
+    "rules": {
+     "version": 3,
+     "items": [
+      {
+       "id": "a",
+       "text": "Be kind"
+      }
+     ]
+    },
+    "questions": [],
+    "application": [
+     {
+      "id": "a1",
+      "required": true
+     }
+    ]
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": true,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": true,
+     "sso": true,
+     "pow_work": 1048576,
+     "approval": true
+    },
+    "rules": {
+     "version": 3,
+     "items": [
+      {
+       "id": "a",
+       "text": "Be kind"
+      }
+     ]
+    },
+    "questions": [],
+    "application": [
+     {
+      "id": "a1",
+      "required": true
+     }
+    ]
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 2,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": true,
+    "hold": {
+     "kind": "moderator",
+     "by": "carol",
+     "at": 5
+    }
+   },
+   "missing": [
+    {
+     "kind": "held",
+     "hold": "moderator",
+     "by": "carol",
+     "at": 5
+    }
+   ],
+   "recompute": 2
+  },
+  {
+   "config": {
+    "enabled": false,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 0,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 2,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": false,
+    "hold": {
+     "kind": "automation",
+     "by": null,
+     "at": 1
+    }
+   },
+   "missing": [
+    {
+     "kind": "held",
+     "hold": "automation",
+     "by": null,
+     "at": 1
+    }
+   ],
+   "recompute": 2
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": false,
+     "sso": false,
+     "pow_work": 0,
+     "approval": false
+    },
+    "rules": {
+     "version": 0,
+     "items": []
+    },
+    "questions": [],
+    "application": []
+   },
+   "facts": {
+    "now": 10000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": true,
+    "managed": false,
+    "grandfathered": false,
+    "hold": null
+   },
+   "missing": [
+    {
+     "kind": "approval"
+    }
+   ],
+   "recompute": 1
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": true,
+     "sso": true,
+     "pow_work": 1048576,
+     "approval": true
+    },
+    "rules": {
+     "version": 3,
+     "items": [
+      {
+       "id": "a",
+       "text": "Be kind"
+      }
+     ]
+    },
+    "questions": [],
+    "application": [
+     {
+      "id": "a1",
+      "required": true
+     }
+    ]
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 3,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": 2,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": true,
+    "hold": null
+   },
+   "missing": [
+    {
+     "kind": "rules",
+     "version": 3
+    }
+   ],
+   "recompute": 3
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": true,
+     "sso": true,
+     "pow_work": 1048576,
+     "approval": true
+    },
+    "rules": {
+     "version": 3,
+     "items": [
+      {
+       "id": "a",
+       "text": "Be kind"
+      }
+     ]
+    },
+    "questions": [],
+    "application": [
+     {
+      "id": "a1",
+      "required": true
+     }
+    ]
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 3,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": 3,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": true,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  },
+  {
+   "config": {
+    "enabled": true,
+    "requirements": {
+     "account_age_minutes": 0,
+     "member_minutes": 0,
+     "backup_phrase": true,
+     "sso": true,
+     "pow_work": 1048576,
+     "approval": true
+    },
+    "rules": {
+     "version": 3,
+     "items": [
+      {
+       "id": "a",
+       "text": "Be kind"
+      }
+     ]
+    },
+    "questions": [],
+    "application": [
+     {
+      "id": "a1",
+      "required": true
+     }
+    ]
+   },
+   "facts": {
+    "now": 1000000,
+    "gate": 1,
+    "account_created_at": 0,
+    "joined_at": 1000000,
+    "has_phrase": false,
+    "has_sso": false,
+    "pow_at": null,
+    "pow_enabled": true,
+    "pow_exempt": false,
+    "rules_version": null,
+    "answered": [],
+    "application_filled": [],
+    "approved": false,
+    "approval_required": false,
+    "managed": false,
+    "grandfathered": true,
+    "hold": null
+   },
+   "missing": [],
+   "recompute": 0
+  }
+ ]
+}

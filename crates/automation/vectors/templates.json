@@ -1,0 +1,394 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "text": "Welcome {member}!",
+   "display": "@everyone",
+   "values": {},
+   "ping": true,
+   "out": "Welcome ⁠@⁠everyone⁠!",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Thanks sent: {args.note}",
+   "display": "Bob",
+   "values": {
+    "args.note": "@here free nitro https://phish.example [x](http://a.b)"
+   },
+   "ping": false,
+   "out": "Thanks sent: ⁠@⁠here free nitro https:⁠//phish.example [x]⁠(http:⁠//a.b)⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "{args.a}",
+   "display": "Bob",
+   "values": {
+    "args.a": "see www.evil.example\n# Heading"
+   },
+   "ping": false,
+   "out": "⁠see www⁠.evil.example # Heading⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Hi {member.mention}",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "Hi @bob⁠",
+   "pings": [
+    "bob"
+   ],
+   "links": false
+  },
+  {
+   "text": "Hi {member.mention}",
+   "display": "Bob",
+   "values": {},
+   "ping": false,
+   "out": "Hi ⁠Bob⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "@everyone a new member: {member}",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "@everyone a new member: ⁠Bob⁠",
+   "pings": [
+    "everyone"
+   ],
+   "links": false
+  },
+  {
+   "text": "{{literal}} {unknown}",
+   "display": "Bob",
+   "values": {},
+   "ping": false,
+   "out": "{literal} {unknown}",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Thanks @{args.who}",
+   "display": "Bob",
+   "values": {
+    "args.who": "everyone"
+   },
+   "ping": true,
+   "out": "Thanks @⁠everyone⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Welcome @{member}!",
+   "display": "here",
+   "values": {},
+   "ping": true,
+   "out": "Welcome @⁠here⁠!",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "{args.a}{args.b}",
+   "display": "Bob",
+   "values": {
+    "args.a": "https:",
+    "args.b": "//evil.example/x"
+   },
+   "ping": false,
+   "out": "⁠https:⁠⁠//evil.example/x⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Thanks sent: {args.note}",
+   "display": "Bob",
+   "values": {
+    "args.note": "www\\.phish.example"
+   },
+   "ping": false,
+   "out": "Thanks sent: ⁠www\\⁠.phish.example⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Thanks sent: {args.note}",
+   "display": "Bob",
+   "values": {
+    "args.note": "https:\\/\\/phish.example/x"
+   },
+   "ping": false,
+   "out": "Thanks sent: ⁠https:\\⁠/\\⁠/phish.example/x⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Thanks sent: {args.note}",
+   "display": "Bob",
+   "values": {
+    "args.note": "https&#58;//phish.example/x"
+   },
+   "ping": false,
+   "out": "Thanks sent: ⁠https&⁠#58;//phish.example/x⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "see https://{args.d}",
+   "display": "Bob",
+   "values": {
+    "args.d": "evil.example"
+   },
+   "ping": false,
+   "out": "see https⁠://⁠evil.example⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "spans": true,
+   "text": "Linked with ⁠@⁠X7Q-993-ALPHA https:⁠//a.b zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz…⁠. Done.",
+   "span": {
+    "start": 12,
+    "end": 114,
+    "arg": "args.code"
+   }
+  },
+  {
+   "text": "Welcome {member}!",
+   "display": "<http:evil.example>",
+   "values": {},
+   "ping": true,
+   "out": "Welcome ⁠<⁠http:evil.example>⁠!",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "{args.x}",
+   "display": "Bob",
+   "values": {
+    "args.x": "<HTTP:evil.example>"
+   },
+   "ping": false,
+   "out": "⁠<⁠HTTP:evil.example>⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Note: {args.x}",
+   "display": "Bob",
+   "values": {
+    "args.x": "<https:evil.example/x>"
+   },
+   "ping": false,
+   "out": "Note: ⁠<⁠https:evil.example/x>⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "{args.x}",
+   "display": "Bob",
+   "values": {
+    "args.x": "see <http:evil.example/a> now"
+   },
+   "ping": false,
+   "out": "⁠see <⁠http:evil.example/a> now⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "{args.x}",
+   "display": "Bob",
+   "values": {
+    "args.x": "_www.evil.example"
+   },
+   "ping": false,
+   "out": "⁠_www⁠.evil.example⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "{member} left.",
+   "display": "x_www.evil.example",
+   "values": {},
+   "ping": false,
+   "out": "⁠x_www⁠.evil.example⁠ left.",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "{args.x}",
+   "display": "Bob",
+   "values": {
+    "args.x": "<mailto:a@evil.example>"
+   },
+   "ping": false,
+   "out": "⁠<⁠mailto:a@⁠evil.example>⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "{args.x}",
+   "display": "Bob",
+   "values": {
+    "args.x": "[1]: //evil.example"
+   },
+   "ping": false,
+   "out": "⁠[1]⁠: //evil.example⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "see _www.{args.x}",
+   "display": "Bob",
+   "values": {
+    "args.x": "evil.example"
+   },
+   "ping": false,
+   "out": "see _www⁠.⁠evil.example⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Welcome, {member.mention}!",
+   "name": "here",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "Welcome, ⁠Bob⁠!",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Welcome, {member.mention}!",
+   "name": "everyone",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "Welcome, ⁠Bob⁠!",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Welcome, {member.mention}!",
+   "name": "Everyone",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "Welcome, ⁠Bob⁠!",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Welcome, {member.mention}!",
+   "name": "https://evil.example/x",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "Welcome, ⁠Bob⁠!",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Welcome, {member.mention}!",
+   "name": "bob_smith",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "Welcome, @bob_smith⁠!",
+   "pings": [
+    "bob_smith"
+   ],
+   "links": false
+  },
+  {
+   "text": "[x]({args.x})",
+   "display": "Bob",
+   "values": {
+    "args.x": "../../invite/lobby"
+   },
+   "ping": false,
+   "out": "[x](⁠.⁠./.⁠./invite/lobby⁠)",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Sale: {args.x}",
+   "display": "Bob",
+   "values": {
+    "args.x": "%2e%2e 50% off"
+   },
+   "ping": false,
+   "out": "Sale: ⁠%⁠2e%⁠2e 50%⁠ off⁠",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Welcome, {member.mention}!",
+   "name": "here-x",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "Welcome, ⁠Bob⁠!",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Welcome, {member.mention}!",
+   "name": "Everyone.",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "Welcome, ⁠Bob⁠!",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Welcome, {member.mention}!",
+   "name": "here we go",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "Welcome, ⁠Bob⁠!",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "Welcome, {member.mention}!",
+   "name": "alice x",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "Welcome, ⁠Bob⁠!",
+   "pings": [],
+   "links": false
+  },
+  {
+   "text": "{member.mention}one",
+   "name": "every",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "@every⁠one",
+   "pings": [
+    "every"
+   ],
+   "links": false
+  },
+  {
+   "text": "Welcome, {member.mention}!",
+   "name": "zoë",
+   "display": "Bob",
+   "values": {},
+   "ping": true,
+   "out": "Welcome, @zoë⁠!",
+   "pings": [
+    "zoë"
+   ],
+   "links": false
+  }
+ ]
+}

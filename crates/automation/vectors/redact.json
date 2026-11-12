@@ -1,0 +1,138 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "text": "Copied https://chat.example.com/api/v1/webhooks/12/abcDEF123secret",
+   "out": "Copied https://chat.example.com/api/v1/webhooks/12/[hidden]"
+  },
+  {
+   "text": "GET /api/v1/x?token=abc&limit=50",
+   "out": "GET /api/v1/x?token=[hidden]&limit=50"
+  },
+  {
+   "text": "https://a.b/join?invite_code=xyz#k=1",
+   "out": "https://a.b/join?invite_code=[hidden]#[hidden]"
+  },
+  {
+   "text": "https://a.b/c?page=2",
+   "out": "https://a.b/c?page=2"
+  },
+  {
+   "text": "rchat-backup:1:abandon ability able about above absent absorb abstract absurd abuse access accident",
+   "out": "[hidden]"
+  },
+  {
+   "text": "phrase: abandon ability able about above absent absorb abstract absurd abuse access accident",
+   "out": "phrase: [hidden]"
+  },
+  {
+   "text": "aban abil able abou abov abse",
+   "out": "[hidden]"
+  },
+  {
+   "text": "1. abandon 2. ability 3. able 4. about 5. above 6. absent",
+   "out": "1. [hidden]"
+  },
+  {
+   "text": "Time out carol for 1 hour",
+   "out": "Time out carol for 1 hour"
+  },
+  {
+   "text": "Authorization: Bearer abc.def",
+   "out": "Authorization: [hidden]"
+  },
+  {
+   "text": "Bearer 0123",
+   "out": "Bearer [hidden]"
+  },
+  {
+   "text": "key 9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+   "out": "key [hidden]"
+  },
+  {
+   "text": "internationalization_and_localization_rules",
+   "out": "[hidden]"
+  },
+  {
+   "text": "Open #general-announcements-archive",
+   "out": "Open #general-announcements-archive"
+  },
+  {
+   "text": "a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a ",
+   "out": "a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a…"
+  },
+  {
+   "text": "abandon-ability-able-about-above-absent",
+   "out": "[hidden]"
+  },
+  {
+   "text": "abandon/ability/able/about/above/absent",
+   "out": "[hidden]"
+  },
+  {
+   "text": "abandon.ability.able about_above absent",
+   "out": "[hidden]"
+  },
+  {
+   "text": "well-known re-run",
+   "out": "well-known re-run"
+  },
+  {
+   "text": "https://user:hunter2@a.b/x",
+   "out": "https://[hidden]@a.b/x"
+  },
+  {
+   "text": "/api/v1/x?otp=abc123&page=2",
+   "out": "/api/v1/x?otp=[hidden]&page=2"
+  },
+  {
+   "text": "/api/v1/x?auth=abc123&page=2",
+   "out": "/api/v1/x?auth=[hidden]&page=2"
+  },
+  {
+   "text": "/api/v1/x?session=abc123&page=2",
+   "out": "/api/v1/x?session=[hidden]&page=2"
+  },
+  {
+   "text": "/api/v1/x?sid=abc123&page=2",
+   "out": "/api/v1/x?sid=[hidden]&page=2"
+  },
+  {
+   "text": "/api/v1/x?jwt=abc123&page=2",
+   "out": "/api/v1/x?jwt=[hidden]&page=2"
+  },
+  {
+   "text": "/api/v1/x?state=abc123&page=2",
+   "out": "/api/v1/x?state=[hidden]&page=2"
+  },
+  {
+   "text": "/api/v1/x?nonce=abc123&page=2",
+   "out": "/api/v1/x?nonce=[hidden]&page=2"
+  },
+  {
+   "text": "dG9rZW4gaGVyZQ==",
+   "out": "[hidden]"
+  },
+  {
+   "text": "key ab12/CD34+ef56/gh78ij90kl",
+   "out": "key [hidden]"
+  },
+  {
+   "text": "/api/v1/servers/pixel/automations/123/runs",
+   "out": "/api/v1/servers/pixel/automations/123/runs"
+  },
+  {
+   "text": "https://chat.example.com/api/v1/servers/pixel/automations/123/runs",
+   "out": "https://chat.example.com/api/v1/servers/pixel/automations/123/runs"
+  },
+  {
+   "echo": "Linked with code X7Q-993-ALPHA. Done.",
+   "out": "Linked with code [hidden]. Done."
+  },
+  {
+   "spans": true,
+   "text": "Linked with @⁠X7Q-993. Done.",
+   "out": "Linked with [hidden]. Done."
+  }
+ ]
+}

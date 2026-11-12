@@ -1,0 +1,34 @@
+{
+  "id": "suggestions",
+  "name": "Suggestions",
+  "summary": "Add votes and a thread to every post in a channel",
+  "needs": [],
+  "automations": [
+    {
+      "name": "Suggestions",
+      "enabled": false,
+      "trigger": {
+        "type": "message_sent",
+        "channels": {
+          "only": [
+            {
+              "channel": 0
+            }
+          ]
+        }
+      },
+      "actions": [
+        {
+          "aid": "a1",
+          "type": "react",
+          "emojis": ["👍", "👎"]
+        },
+        {
+          "aid": "a2",
+          "type": "start_thread",
+          "name": "Discussion"
+        }
+      ]
+    }
+  ]
+}
