@@ -30,6 +30,9 @@ const OUT_BYTES_MAX: usize = 256 * 1024;
 const OUT_BYTES_ADDR_MAX: usize = 2 * 1024 * 1024;
 /// Most bytes queued for all connections.
 const OUT_BYTES_TOTAL_MAX: usize = 64 * 1024 * 1024;
+/// Bytes queued for one connection that fit whatever its client address and all connections
+/// hold, so a connection that reads promptly always gets small frames.
+const OUT_BYTES_FLOOR: usize = 16 * 1024;
 /// Longest id or token, in bytes.
 const ID_MAX: usize = 128;
 /// Most messages kept for one peer that is not connected.
@@ -131,11 +134,14 @@ struct Backlog {
 
 impl Backlog {
     /// Counts `bytes` more, unless this connection, its client address or all connections
-    /// hold too much. Called with the realm locked.
+    /// hold too much. Up to `OUT_BYTES_FLOOR` held by this connection always fits. Called with
+    /// the realm locked.
     fn take(&self, bytes: usize) -> bool {
-        let fits = self.own.load(Ordering::Relaxed) + bytes <= OUT_BYTES_MAX
-            && self.addr.load(Ordering::Relaxed) + bytes <= OUT_BYTES_ADDR_MAX
-            && self.all.load(Ordering::Relaxed) + bytes <= OUT_BYTES_TOTAL_MAX;
+        let own = self.own.load(Ordering::Relaxed) + bytes;
+        let fits = own <= OUT_BYTES_FLOOR
+            || (own <= OUT_BYTES_MAX
+                && self.addr.load(Ordering::Relaxed) + bytes <= OUT_BYTES_ADDR_MAX
+                && self.all.load(Ordering::Relaxed) + bytes <= OUT_BYTES_TOTAL_MAX);
         if fits {
             for counted in [&self.own, &*self.addr, &*self.all] {
                 counted.fetch_add(bytes, Ordering::Relaxed);
@@ -741,12 +747,13 @@ pub(crate) struct Hello {
 /// no room is left for it: 64 frames or 256 KiB wait for one absent peer, 512 KiB from one
 /// client address, 8 MiB in all; 256 frames or 256 KiB are queued for one connection that reads
 /// slowly, 2 MiB for the connections of one client address, 64 MiB in all; or the sender passes
-/// its pace (1000 frames at once, then 100 per second). A client address is the one the rate
-/// limits use (an IPv6 /64 counts as one; forwarded headers count only from trusted proxies).
-/// A connection that does not take a queued frame within 15 seconds is closed, and its id
-/// stays with its token for a minute. A sender whose peer's connection just ended gets `LEAVE`
-/// from it. Frames are at most 64 KiB. Peers of one process see each other; run one process,
-/// or keep the separate PeerJS server.
+/// its pace (1000 frames at once, then 100 per second). The first 16 KiB queued for a connection
+/// always fit, so one that reads promptly keeps getting small frames. A client address is the
+/// one the rate limits use (an IPv6 /64 counts as one; forwarded headers count only from trusted
+/// proxies). A connection that does not take a queued frame within 15 seconds is closed, and its
+/// id stays with its token for a minute. A sender whose peer's connection just ended gets
+/// `LEAVE` from it. Frames are at most 64 KiB. Peers of one process see each other; run one
+/// process, or keep the separate PeerJS server.
 #[utoipa::path(get, path = "/peerjs/peerjs", tag = "Realtime", params(("key" = String, Query, description = "The PeerJS key: `peerjs`"), ("id" = String, Query, description = "The peer id to register, at most 128 bytes"), ("token" = String, Query, description = "A random value that lets the same client take its id back after a reconnect, at most 128 bytes")), responses((status = 101, description = "WebSocket upgrade"), (status = 404, description = "The instance does not serve PeerJS signaling itself, or `P2P is turned off on this instance`: the `p2p` and `p2p_attachments` switches of `GET /api/v1/settings` are both off", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket, or `PEERJS_PEERS_PER_IP` connections open from this address", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn socket(
     State(peers): State<Peers>,
@@ -1637,6 +1644,134 @@ mod tests {
     }
 
     #[test]
+    fn a_connection_always_has_room_for_a_few_small_frames() {
+        let addr = Arc::new(AtomicUsize::new(OUT_BYTES_ADDR_MAX));
+        let all = Arc::new(AtomicUsize::new(OUT_BYTES_TOTAL_MAX));
+        let backlog = Backlog {
+            own: AtomicUsize::new(0),
+            addr: Arc::clone(&addr),
+            all: Arc::clone(&all),
+        };
+        let small = OUT_BYTES_FLOOR / 4;
+        for n in 0..4 {
+            assert!(
+                backlog.take(small),
+                "frame {n} fits though everything is full"
+            );
+        }
+        assert!(!backlog.take(1), "past the floor the shared caps apply");
+        assert_eq!(
+            addr.load(Ordering::Relaxed),
+            OUT_BYTES_ADDR_MAX + OUT_BYTES_FLOOR,
+            "what fits still counts for its address"
+        );
+        assert_eq!(
+            all.load(Ordering::Relaxed),
+            OUT_BYTES_TOTAL_MAX + OUT_BYTES_FLOOR
+        );
+        backlog.give(small);
+        assert!(backlog.take(small), "what it reads makes room again");
+        backlog.give(OUT_BYTES_FLOOR);
+        assert!(
+            !backlog.take(OUT_BYTES_FLOOR + 1),
+            "a frame bigger than the floor needs shared room"
+        );
+        addr.store(0, Ordering::Relaxed);
+        all.store(0, Ordering::Relaxed);
+        assert!(backlog.take(OUT_BYTES_FLOOR + 1));
+        assert!(!backlog.take(OUT_BYTES_MAX), "a connection's own cap stays");
+    }
+
+    /// The reviewer's R2 case: the shared budget is full, and peers that read promptly still
+    /// get small frames, also at an address that holds all it may.
+    #[test]
+    fn a_full_shared_budget_still_relays_small_frames_to_peers_that_read() {
+        let mut realm = Realm::default();
+        let big = Value::String("y".repeat(FRAME_MAX / 2));
+        let mut alice = member(&mut realm, "alice");
+        let mut bob = member(&mut realm, "bob");
+        assert_eq!(alice.next().as_deref(), Some(OPEN));
+        assert_eq!(bob.next().as_deref(), Some(OPEN));
+        let per_address = OUT_BYTES_ADDR_MAX / OUT_BYTES_MAX + 1;
+        let addresses = OUT_BYTES_TOTAL_MAX / OUT_BYTES_ADDR_MAX + 3;
+        let tiny = Value::String("t".repeat(100));
+        let mut held: Vec<Member> = Vec::new();
+        let mut clients = Vec::new();
+        for a in 0..addresses {
+            let one = client(&format!("198.51.100.{a}"));
+            let first = held.len();
+            for n in 0..per_address {
+                let id = format!("a{a}n{n}");
+                held.push(member_of(&mut realm, &id, &one));
+                fill(&mut realm, &mut alice, &id, &big);
+            }
+            for stalled in &held[first..] {
+                loop {
+                    let before = stalled.held();
+                    realm.relay(OFFER, &held[0].id, &stalled.id, Some(&tiny));
+                    if stalled.held() == before {
+                        break;
+                    }
+                }
+            }
+            clients.push(one);
+        }
+        assert!(
+            queued(&realm) > OUT_BYTES_TOTAL_MAX - 200,
+            "the shared budget is full to the byte"
+        );
+        realm.relay(OFFER, "alice", "bob", Some(&big));
+        assert!(refused(&mut alice, "bob"), "a big frame finds no room");
+
+        let sdp = Value::String("s".repeat(3000));
+        let candidate = Value::String("c".repeat(300));
+        let mut carol = member_of(&mut realm, "carol", &clients[0]);
+        assert_eq!(carol.next().as_deref(), Some(OPEN));
+        assert!(
+            share(&clients[0]) > OUT_BYTES_ADDR_MAX - 200,
+            "Carol's address holds all it may"
+        );
+        for (to, them) in [("bob", &mut bob), ("carol", &mut carol)] {
+            realm.relay(OFFER, "alice", to, Some(&sdp));
+            assert!(!refused(&mut alice, to));
+            assert!(
+                them.next()
+                    .is_some_and(|frame| frame.contains(r#""type":"OFFER""#))
+            );
+            for n in 0..50 {
+                realm.relay(CANDIDATE, "alice", to, Some(&candidate));
+                assert!(!refused(&mut alice, to), "candidate {n} to {to}");
+                assert!(them.next().is_some());
+            }
+        }
+        realm.relay(ANSWER, "bob", "alice", Some(&sdp));
+        assert!(
+            alice
+                .next()
+                .is_some_and(|frame| frame.contains(r#""type":"ANSWER""#))
+        );
+        assert_eq!(bob.next(), None, "Bob was refused nothing");
+
+        // One that stops reading holds no more than the floor.
+        let mut sent = 0;
+        loop {
+            realm.relay(CANDIDATE, "alice", "bob", Some(&candidate));
+            if refused(&mut alice, "bob") {
+                break;
+            }
+            sent += 1;
+            assert!(sent < OUT_FRAMES);
+        }
+        assert!(sent > 0);
+        assert!(bob.held() <= OUT_BYTES_FLOOR);
+        assert!(bob.held() > OUT_BYTES_FLOOR - 400);
+        realm.peers.clear();
+        drop(held);
+        drop((alice, bob, carol));
+        assert_eq!(queued(&realm), 0);
+    }
+
+    #[test]
     fn waiting_messages_are_shared_out_by_sender_address() {
         let mut realm = Realm::default();
         let big = Value::String("y".repeat(FRAME_MAX / 2));
@@ -1740,6 +1875,7 @@ mod tests {
         let stock = Settings::default();
         assert_eq!(stock.stale, stale);
         let shares = [
+            (OUT_BYTES_FLOOR, OUT_BYTES_MAX, 16),
             (OUT_BYTES_MAX, OUT_BYTES_ADDR_MAX, 8),
             (OUT_BYTES_ADDR_MAX, OUT_BYTES_TOTAL_MAX, 16),
             (WAITING_BYTES_ADDR_MAX, WAITING_BYTES_MAX, 16),
@@ -2170,6 +2306,108 @@ mod tests {
         assert_eq!(raw(&mut back).await, OPEN, "its own token gets it back");
         drop(stalled);
         reading.abort();
+    }
+
+    /// R2 under load: connections at many addresses that never read keep the shared budget
+    /// full, and a pair that reads promptly still connects through it.
+    #[tokio::test]
+    async fn a_pair_that_reads_connects_while_many_addresses_keep_the_budget_full() {
+        let served = serve(Settings::default()).await;
+        let peers = served.peers.clone();
+        let flooding = tokio::spawn(async move {
+            let big = Value::String("y".repeat(FRAME_MAX / 2));
+            let tiny = Value::String("t".repeat(100));
+            let per_address = OUT_BYTES_ADDR_MAX / OUT_BYTES_MAX + 1;
+            let addresses = OUT_BYTES_TOTAL_MAX / OUT_BYTES_ADDR_MAX + 8;
+            let mut held = Vec::new();
+            let mut ids = Vec::new();
+            for a in 0..addresses {
+                let one = client(&format!("2001:db8:{a:x}::1"));
+                for n in 0..per_address {
+                    let id = format!("a{a}n{n}");
+                    let joined = peers.realm().join(&id, "t", usize::MAX, &one);
+                    held.push(joined.expect("join"));
+                    ids.push(id);
+                }
+            }
+            loop {
+                for (n, id) in ids.iter().enumerate() {
+                    let from = &ids[(n + 1) % ids.len()];
+                    let mut realm = peers.realm();
+                    for payload in [Some(&big), Some(&tiny), None] {
+                        realm.relay(OFFER, from, id, payload);
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        let queued = |peers: &Peers| peers.realm().queued.load(Ordering::Relaxed);
+        until("the shared budget is full to the byte", || {
+            queued(&served.peers) > OUT_BYTES_TOTAL_MAX - 64
+        })
+        .await;
+        let mut alice = join(&served, "alice").await;
+        let mut bob = join(&served, "bob").await;
+        let big = "y".repeat(FRAME_MAX / 2);
+        say(
+            &mut alice,
+            serde_json::json!({ "type": "OFFER", "dst": "bob", "payload": big }),
+        )
+        .await;
+        assert_eq!(
+            raw(&mut alice).await,
+            r#"{"type":"EXPIRE","src":"bob","dst":"alice"}"#,
+            "a big frame finds no room"
+        );
+
+        let sdp = "s".repeat(3000);
+        let offer = serde_json::json!({ "sdp": { "type": "offer", "sdp": sdp }, "type": "data" });
+        say(
+            &mut alice,
+            serde_json::json!({ "type": "OFFER", "dst": "bob", "payload": offer }),
+        )
+        .await;
+        assert_eq!(
+            next(&mut bob).await,
+            Some(
+                serde_json::json!({ "type": "OFFER", "src": "alice", "dst": "bob", "payload": offer })
+            )
+        );
+        let answer = serde_json::json!({ "sdp": { "type": "answer", "sdp": sdp }, "type": "data" });
+        say(
+            &mut bob,
+            serde_json::json!({ "type": "ANSWER", "dst": "alice", "payload": answer }),
+        )
+        .await;
+        assert_eq!(
+            next(&mut alice).await,
+            Some(
+                serde_json::json!({ "type": "ANSWER", "src": "bob", "dst": "alice", "payload": answer })
+            )
+        );
+        for n in 0..20 {
+            for alice_sends in [true, false] {
+                let (from, to, name, other) = match alice_sends {
+                    true => (&mut alice, &mut bob, "alice", "bob"),
+                    false => (&mut bob, &mut alice, "bob", "alice"),
+                };
+                let candidate = serde_json::json!({ "candidate": format!("candidate:{n} 1 udp 1 192.0.2.1 9 typ host") });
+                say(
+                    from,
+                    serde_json::json!({ "type": "CANDIDATE", "dst": other, "payload": candidate }),
+                )
+                .await;
+                assert_eq!(
+                    next(to).await,
+                    Some(
+                        serde_json::json!({ "type": "CANDIDATE", "src": name, "dst": other, "payload": candidate })
+                    ),
+                    "candidate {n} from {name}"
+                );
+            }
+        }
+        assert!(queued(&served.peers) > OUT_BYTES_TOTAL_MAX - FRAME_MAX);
+        flooding.abort();
     }
 
     #[tokio::test]
