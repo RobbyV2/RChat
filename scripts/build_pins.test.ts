@@ -25,7 +25,18 @@ describe('wasm builds', () => {
         packs
       )
       if (file.endsWith('.yml'))
-        expect(count(text, `key: wasm-bindgen-\${{ runner.os }}-${bindgen}`)).toBe(packs)
+        expect(
+          count(text, `key: wasm-bindgen-\${{ runner.os }}-${bindgen}`) +
+            count(text, `key: wasm-bindgen-\${{ matrix.runner }}-${bindgen}`)
+        ).toBe(packs)
+    }
+  })
+
+  test('jobs on a matrix runner key their caches by that runner', () => {
+    for (const f of readdirSync(join(import.meta.dir, '..', '.github/workflows'))) {
+      const text = read(`.github/workflows/${f}`)
+      if (text.includes('runs-on: ${{ matrix.runner }}'))
+        expect(text).not.toMatch(/key: [\w-]+-\$\{\{ runner\.os \}\}/)
     }
   })
 

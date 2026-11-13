@@ -66,11 +66,12 @@ jobs:
       - if: matrix.os == 'linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev patchelf
       - run: bun install --frozen-lockfile
+      # Keyed by runner image: a tool built on a newer image needs a newer glibc than ubuntu-22.04 has.
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: tauri-cli
         with:
           path: ~/.cargo/bin/cargo-tauri${{ runner.os == 'Windows' && '.exe' || '' }}
-          key: tauri-cli-${{ runner.os }}-2.12.2
+          key: tauri-cli-${{ matrix.runner }}-2.12.2
       - if: steps.tauri-cli.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version 2.12.2 --locked --force
       # The profanity filter's wasm, built by the Tauri beforeBuildCommand (`bun run build:tauri`).
@@ -78,7 +79,7 @@ jobs:
         id: wasm-pack
         with:
           path: ~/.cargo/bin/wasm-pack${{ runner.os == 'Windows' && '.exe' || '' }}
-          key: wasm-pack-${{ runner.os }}-0.15.0
+          key: wasm-pack-${{ matrix.runner }}-0.15.0
       - if: steps.wasm-pack.outputs.cache-hit != 'true'
         run: cargo install wasm-pack --version 0.15.0 --locked --force
       # The wasm-bindgen Cargo.lock pins, so wasm-pack does not download one.
@@ -86,7 +87,7 @@ jobs:
         id: wasm-bindgen
         with:
           path: ~/.cargo/bin/wasm-bindgen${{ runner.os == 'Windows' && '.exe' || '' }}
-          key: wasm-bindgen-${{ runner.os }}-0.2.129
+          key: wasm-bindgen-${{ matrix.runner }}-0.2.129
       - if: steps.wasm-bindgen.outputs.cache-hit != 'true'
         run: cargo install wasm-bindgen-cli --version 0.2.129 --locked --force
 
