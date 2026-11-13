@@ -1,8 +1,6 @@
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
 
-use sqlx::AnyConnection;
-
 use super::pool::{Db, is_sqlite, pool_key};
 
 pub(super) const SQLITE_SCHEMA: &str = "
@@ -295,14 +293,6 @@ const SQLITE_SEARCH: &[&str] = &[
     "CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF content ON messages BEGIN INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.id, old.content); INSERT INTO messages_fts(rowid, content) VALUES(new.id, new.content); END",
 ];
 
-const POSTGRES_SEARCH: &[&str] = &[
-    "CREATE INDEX IF NOT EXISTS idx_messages_content_trgm ON messages USING gin (lower(content) gin_trgm_ops)",
-    "CREATE INDEX IF NOT EXISTS idx_users_username_trgm ON users USING gin (lower(username) gin_trgm_ops)",
-    "CREATE INDEX IF NOT EXISTS idx_users_display_name_trgm ON users USING gin (lower(display_name) gin_trgm_ops)",
-    "CREATE INDEX IF NOT EXISTS idx_servers_name_trgm ON servers USING gin (lower(name) gin_trgm_ops)",
-    "CREATE INDEX IF NOT EXISTS idx_servers_display_name_trgm ON servers USING gin (lower(display_name) gin_trgm_ops)",
-];
-
 pub(super) const SQLITE_TRIGGERS: &[&str] = &[
     "CREATE TRIGGER IF NOT EXISTS messages_dm_latest_insert AFTER INSERT ON messages WHEN new.dm_id IS NOT NULL BEGIN UPDATE dms SET last_message_id = new.id WHERE id = new.dm_id AND last_message_id < new.id; END",
     "CREATE TRIGGER IF NOT EXISTS messages_dm_latest_delete AFTER DELETE ON messages WHEN old.dm_id IS NOT NULL BEGIN UPDATE dms SET last_message_id = COALESCE((SELECT MAX(id) FROM messages WHERE dm_id = old.dm_id), 0) WHERE id = old.dm_id AND last_message_id = old.id; END",
@@ -373,22 +363,4 @@ pub(super) async fn sqlite_search_index(pool: &Db) -> anyhow::Result<()> {
         tracing::info!("built message search index");
     }
     Ok(())
-}
-
-async fn guarded(conn: &mut AnyConnection, stmt: &'static str) -> Result<(), sqlx::Error> {
-    let mut savepoint = sqlx::Connection::begin(&mut *conn).await?;
-    sqlx::query(stmt).execute(&mut *savepoint).await?;
-    savepoint.commit().await
-}
-
-pub(super) async fn postgres_search_index(conn: &mut AnyConnection) {
-    if let Err(e) = guarded(conn, "CREATE EXTENSION IF NOT EXISTS pg_trgm").await {
-        tracing::warn!("pg_trgm unavailable, search falls back to unindexed LIKE: {e}");
-        return;
-    }
-    for stmt in POSTGRES_SEARCH {
-        if let Err(e) = guarded(conn, stmt).await {
-            tracing::warn!("search index not created: {e}");
-        }
-    }
 }

@@ -8,7 +8,7 @@ use crate::relay::{DEFAULT_TOTAL_KIB_PER_SEC, DEFAULT_USER_ALLOCATIONS, DEFAULT_
 const MIB: usize = 1024 * 1024;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 42] = [
+const RANGES: [(&str, i64, i64); 43] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("WS_CONNECTIONS_PER_USER", 1, 10_000),
@@ -22,6 +22,7 @@ const RANGES: [(&str, i64, i64); 42] = [
     ("DATABASE_MIN_CONNECTIONS", 0, 1_000),
     ("DATABASE_ACQUIRE_TIMEOUT_SECS", 1, 3_600),
     ("DATABASE_READ_CONNECTIONS", 0, 64),
+    ("DATABASE_INDEX_BUILD_MIB", 16, 16_384),
     ("UPLOAD_MAX_MIB", 1, 512),
     ("UPLOAD_BUDGET_MIB", 0, 1_048_576),
     ("UPLOAD_BUFFER_MIB", 32, 1_048_576),
@@ -69,6 +70,7 @@ pub struct Limits {
     pub database_min_connections: Option<u32>,
     pub database_acquire_timeout_secs: Option<u64>,
     pub database_read_connections: Option<u32>,
+    pub database_index_build_mib: u32,
     pub upload_max_mib: u64,
     pub upload_budget_mib: u64,
     pub upload_buffer_mib: u64,
@@ -118,6 +120,7 @@ impl Default for Limits {
             database_min_connections: None,
             database_acquire_timeout_secs: None,
             database_read_connections: None,
+            database_index_build_mib: 256,
             upload_max_mib: 25,
             upload_budget_mib: DEFAULT_BUDGET_MIB,
             upload_buffer_mib: DEFAULT_BUFFER_MIB,
@@ -214,6 +217,8 @@ impl Limits {
             database_min_connections: e.opt("DATABASE_MIN_CONNECTIONS")?,
             database_acquire_timeout_secs: e.opt("DATABASE_ACQUIRE_TIMEOUT_SECS")?,
             database_read_connections: e.opt("DATABASE_READ_CONNECTIONS")?,
+            database_index_build_mib: e
+                .num("DATABASE_INDEX_BUILD_MIB", d.database_index_build_mib)?,
             upload_max_mib: e.num("UPLOAD_MAX_MIB", d.upload_max_mib)?,
             upload_budget_mib: e.num("UPLOAD_BUDGET_MIB", d.upload_budget_mib)?,
             upload_buffer_mib: e.num("UPLOAD_BUFFER_MIB", d.upload_buffer_mib)?,
@@ -270,6 +275,7 @@ impl Limits {
             database_min_connections,
             database_acquire_timeout_secs,
             database_read_connections,
+            database_index_build_mib,
             upload_max_mib,
             upload_budget_mib,
             upload_buffer_mib,
@@ -325,6 +331,7 @@ impl Limits {
                 opt(database_acquire_timeout_secs),
             ),
             ("DATABASE_READ_CONNECTIONS", opt(database_read_connections)),
+            ("DATABASE_INDEX_BUILD_MIB", set(database_index_build_mib)),
             ("UPLOAD_MAX_MIB", set(upload_max_mib)),
             ("UPLOAD_BUDGET_MIB", set(upload_budget_mib)),
             ("UPLOAD_BUFFER_MIB", set(upload_buffer_mib)),

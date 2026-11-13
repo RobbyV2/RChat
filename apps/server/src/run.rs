@@ -162,6 +162,20 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
     let roles = config.roles;
     let db = crate::db::open_with(config.database_url.as_deref(), &config.db_options()).await?;
     held.db = Some(db.clone());
+    let (indexes, limits) = (db.clone(), config.limits.clone());
+    held.spawn(async move {
+        match crate::db::build_online(&indexes, &limits).await {
+            Ok(built) => {
+                if !built.built.is_empty() || !built.dropped.is_empty() {
+                    info!(
+                        "Online indexes: built {:?}, dropped {:?}",
+                        built.built, built.dropped
+                    );
+                }
+            }
+            Err(e) => tracing::warn!("online index builds failed: {e}"),
+        }
+    });
     held.grant_ttl = config.limits.guest_grant_ttl();
     let instance = crate::instance::Instance::load(&db, &config.instance()).await?;
     info!("Instance: {} ({})", instance.name, instance.id);

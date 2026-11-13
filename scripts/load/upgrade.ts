@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
 const USAGE =
-  'Usage: bun scripts/load/upgrade.ts --old <bin> --new <bin> --db sqlite|postgres [--pg-url <url>] [--check <file.sql>]'
+  'Usage: bun scripts/load/upgrade.ts --old <bin> --new <bin> --db sqlite|postgres [--pg-url <url>] [--check <file.sql>] [--wait <seconds>]'
 const PASSWORD = 'upgrade-pass-1'
 
 const bare = (sql: string) =>
@@ -45,7 +45,29 @@ export function failures(results: Checked[]) {
   })
 }
 
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
+
+// `--wait`: whole seconds from 0 to 86400, 0 when it is not given. `null` for anything else.
+export const waitSeconds = (raw: string | undefined) => {
+  if (raw === undefined) return 0
+  const seconds = /^\d+$/.test(raw) ? Number(raw) : -1
+  return seconds >= 0 && seconds <= 86_400 ? seconds : null
+}
+
+// Runs `check` every second until nothing fails or `waitMs` has passed. The last results.
+export async function checkUntil(
+  check: () => Promise<Checked[]>,
+  waitMs: number,
+  pause: (ms: number) => Promise<void> = sleep,
+  now: () => number = Date.now
+) {
+  const until = now() + waitMs
+  for (;;) {
+    const results = await check()
+    if (!failures(results).length || now() >= until) return results
+    await pause(1000)
+  }
+}
 
 const freePort = () =>
   new Promise<number>((resolve, reject) => {
@@ -183,12 +205,15 @@ async function main() {
       db: { type: 'string' },
       'pg-url': { type: 'string' },
       check: { type: 'string' },
+      wait: { type: 'string' },
     },
   })
   const { old: oldBin, new: newBin, db, 'pg-url': pgUrl, check } = values
+  const wait = waitSeconds(values.wait)
   if (
     !oldBin ||
     !newBin ||
+    wait === null ||
     (db !== 'sqlite' && db !== 'postgres') ||
     (db === 'postgres' && !pgUrl)
   ) {
@@ -258,9 +283,10 @@ async function main() {
     await stop(await start(newBin, 'new-1'))
     const second = await start(newBin, 'new-2')
     await readBack(await apiOf(base), seeded)
+    const waited = wait ? await checkUntil(() => runCheck(db, target, statements), wait * 1000) : []
     await stop(second)
     if (check) {
-      const results = await runCheck(db, target, statements)
+      const results = wait ? waited : await runCheck(db, target, statements)
       for (const { sql, rows } of results)
         console.log(`${sql}\n  -> ${JSON.stringify(rows.map(r => r.map(String)))}`)
       const failed = failures(results)

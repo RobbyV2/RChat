@@ -13,7 +13,15 @@ import { join } from 'node:path'
 import { joinCode } from './load/join'
 import { findChrome, pct, stats } from './load/lib'
 import { phaseError } from './load/run'
-import { apiBaseOf, failures, multiStatements, splitStatements, truthy } from './load/upgrade'
+import {
+  apiBaseOf,
+  checkUntil,
+  failures,
+  multiStatements,
+  splitStatements,
+  truthy,
+  waitSeconds,
+} from './load/upgrade'
 
 const dir = join(import.meta.dir, 'load')
 const scripts = () => readdirSync(dir).filter(name => name.endsWith('.ts'))
@@ -166,6 +174,31 @@ describe('load harness helpers', () => {
       'a: row 2 is ["false","why"]',
     ])
     expect(failures([{ sql: 'b', rows: [] }])).toEqual(['b: no rows'])
+  })
+
+  test('a waiting check runs again until every row is true or the time is up', async () => {
+    const clock = { now: 0, runs: 0 }
+    const pause = async (ms: number) => void (clock.now += ms)
+    const check = (trueFrom: number) => async () => [
+      { sql: 'a', rows: [[++clock.runs >= trueFrom]] },
+    ]
+    const run = async (trueFrom: number, waitMs: number) => {
+      clock.runs = 0
+      clock.now = 0
+      const results = await checkUntil(check(trueFrom), waitMs, pause, () => clock.now)
+      return { runs: clock.runs, failed: failures(results).length }
+    }
+    expect(await run(1, 0)).toEqual({ runs: 1, failed: 0 })
+    expect(await run(2, 0)).toEqual({ runs: 1, failed: 1 })
+    expect(await run(3, 5000)).toEqual({ runs: 3, failed: 0 })
+    expect(await run(99, 3000)).toEqual({ runs: 4, failed: 1 })
+  })
+
+  test('--wait takes whole seconds from 0 to 86400', () => {
+    expect(waitSeconds(undefined)).toBe(0)
+    expect(waitSeconds('0')).toBe(0)
+    expect(waitSeconds('600')).toBe(600)
+    for (const bad of ['', '-1', '1.5', 'soon', '86401']) expect(waitSeconds(bad)).toBeNull()
   })
 })
 

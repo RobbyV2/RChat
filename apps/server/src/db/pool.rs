@@ -6,7 +6,7 @@ use sqlx::AnyPool;
 use sqlx::any::{AnyPoolOptions, install_default_drivers};
 
 use super::migrate::{ConfigChange, ConfigStart, init_schema};
-use super::schema::{postgres_search_index, probe_fts, set_fts, sqlite_search_index};
+use super::schema::{probe_fts, set_fts, sqlite_search_index};
 use super::secrets::{PEPPERS, pepper_with};
 use crate::api::controls::{Control, ControlSeeds};
 use crate::limits::Limits;
@@ -204,6 +204,9 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
             "DATABASE_MAX_CONNECTIONS is ignored for sqlite: it has a single writer; use DATABASE_READ_CONNECTIONS for reads"
         );
     }
+    if is_sqlite && limits.database_index_build_mib != Limits::default().database_index_build_mib {
+        tracing::warn!("DATABASE_INDEX_BUILD_MIB is ignored for sqlite");
+    }
     let mut options = pool_options(
         writer_connections(is_sqlite, max),
         limits.database_acquire_timeout_secs,
@@ -230,9 +233,6 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
             .await?;
     }
     let started = init_schema(&mut tx, is_sqlite, controls.as_ref()).await?;
-    if !is_sqlite {
-        postgres_search_index(&mut tx).await;
-    }
     tx.commit().await?;
     for ConfigChange {
         key,

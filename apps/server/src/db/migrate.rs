@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use sha2::{Digest, Sha256};
 use sqlx::{AnyConnection, Row};
 
+use super::indexes::{ONLINE_INDEXES, build_inline, create_indexes};
 use super::schema::{POSTGRES_SCHEMA, POSTGRES_TRIGGERS, SQLITE_SCHEMA, SQLITE_TRIGGERS};
 use super::secrets::secret_key;
 use super::{NO_EXTRA_HASH, now};
@@ -196,7 +197,7 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 pub const SCHEMA_VERSION: i64 = 23;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 19] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 15] {
     [
         "CREATE INDEX IF NOT EXISTS idx_users_username_key ON users(username_key)",
         "CREATE INDEX IF NOT EXISTS idx_users_username_key_alt ON users(username_key_alt)",
@@ -219,10 +220,6 @@ pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 19] {
         "CREATE INDEX IF NOT EXISTS idx_media_default_expiry ON media(uploaded_at) WHERE ttl IS NULL",
         "CREATE INDEX IF NOT EXISTS idx_media_timed_expiry ON media((uploaded_at + ttl)) WHERE ttl > 0",
         "CREATE INDEX IF NOT EXISTS idx_media_kept ON media(ttl) WHERE ttl IS NOT NULL",
-        "CREATE INDEX IF NOT EXISTS idx_media_kept_by ON media(kept_by, size) WHERE kept_by IS NOT NULL",
-        "CREATE INDEX IF NOT EXISTS idx_media_uploader ON media(uploader, uploaded_at)",
-        "CREATE INDEX IF NOT EXISTS idx_media_charged_to ON media(charged_to, uploaded_at) WHERE charged_to IS NOT NULL",
-        "CREATE INDEX IF NOT EXISTS idx_media_charged_server ON media(charged_server, uploaded_at) WHERE charged_server IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_servers_upload_expiry_by ON servers(upload_expiry_by) WHERE upload_expiry_by IS NOT NULL",
     ]
 }
@@ -441,12 +438,13 @@ pub(super) async fn init_schema(
         sqlx::query(stmt).execute(&mut *conn).await?;
     }
     let added = reconcile_columns(conn, is_sqlite).await?;
-    for stmt in rest {
-        sqlx::query(stmt).execute(&mut *conn).await?;
-    }
-    for stmt in late_indexes(is_sqlite) {
-        sqlx::query(stmt).execute(&mut *conn).await?;
-    }
+    create_indexes(
+        conn,
+        is_sqlite,
+        rest.into_iter().chain(late_indexes(is_sqlite)),
+    )
+    .await?;
+    build_inline(conn, is_sqlite, ONLINE_INDEXES).await?;
     hash_stored_secrets(conn).await?;
     key_usernames(conn).await?;
     sqlx::query("UPDATE server_passwords SET hash = $1 WHERE hash <> $1")

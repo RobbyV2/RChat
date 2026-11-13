@@ -1,3 +1,4 @@
+mod indexes;
 mod migrate;
 mod pool;
 mod schema;
@@ -11,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::any::AnyRow;
 use sqlx::{AnyConnection, Row};
 
+pub use indexes::{Built, build_online};
 pub(crate) use migrate::PINNED;
 pub use migrate::{ConfigChange, ConfigStart, SCHEMA_VERSION, trigger_version};
 #[cfg(test)]

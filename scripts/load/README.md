@@ -103,6 +103,9 @@ bun scripts/load/upgrade.ts --old <old server binary> --new target/debug/server 
   --pg-url postgres://postgres:pw@127.0.0.1:55411/postgres --check "$HOME/rchat-load/check.sql"
 ```
 
+With `--wait <seconds>` the check runs while the new build is up, every second until every row is true
+or the time is over. Use it for indexes that Postgres builds after the start.
+
 Statements in the check file end with `;` at the end of a line, optionally followed by a `--` comment.
 More than one statement per line is rejected. Each must return at least one row, and the first column
 of every row must be true.
