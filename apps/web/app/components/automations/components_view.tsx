@@ -1,0 +1,296 @@
+'use client'
+
+import { useId, useState } from 'react'
+import { Check, ChevronDown, ExternalLink } from 'lucide-react'
+
+// The buttons and menus under an automation's message, as the shared rules write them.
+export type ButtonStyle = 'plain' | 'primary' | 'danger'
+
+export type ButtonPress =
+  | { do: 'role'; role: number | string }
+  | { do: 'run' }
+  | { do: 'link'; url: string }
+  | { do: 'jump'; channel: number | string }
+
+export interface SelectOption {
+  value: string
+  label: string
+  emoji?: string
+  description?: string
+  role?: number | string
+}
+
+export type Component =
+  | ({
+      type: 'button'
+      cid: string
+      label: string
+      emoji?: string
+      style?: ButtonStyle
+    } & ButtonPress)
+  | {
+      type: 'select'
+      cid: string
+      placeholder?: string
+      min?: number
+      max?: number
+      options: SelectOption[]
+    }
+
+type Select = Extract<Component, { type: 'select' }>
+type Button = Extract<Component, { type: 'button' }>
+
+const most = (s: Select) => s.max ?? 1
+const least = (s: Select) => s.min ?? 0
+
+// The picks after one option is pressed, in option order: a menu of one swaps, a menu of more
+// toggles up to its most.
+export const togglePick = (s: Select, picks: readonly string[], value: string): string[] => {
+  const known = s.options.map(o => o.value)
+  const mine = known.filter(v => picks.includes(v))
+  if (!known.includes(value)) return mine
+  if (mine.includes(value))
+    return most(s) === 1 && least(s) >= 1 ? mine : mine.filter(v => v !== value)
+  if (most(s) === 1) return [value]
+  return mine.length >= most(s) ? mine : known.filter(v => v === value || mine.includes(v))
+}
+
+export const picksOk = (s: Select, picks: readonly string[]) =>
+  picks.every(v => s.options.some(o => o.value === v)) &&
+  picks.length >= least(s) &&
+  picks.length <= most(s)
+
+export const pickedLabel = (s: Select, picks: readonly string[]) =>
+  s.options
+    .filter(o => picks.includes(o.value))
+    .map(o => o.label)
+    .join(', ') ||
+  s.placeholder ||
+  'Choose'
+
+const baseCls =
+  'flex min-h-11 max-w-full cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium disabled:cursor-default disabled:opacity-40'
+const STYLES: Record<ButtonStyle, string> = {
+  plain: 'border border-outline text-on-surface hover:bg-surface-container-highest',
+  primary: 'bg-primary text-on-primary hover:opacity-90',
+  danger: 'bg-error text-on-error hover:opacity-90',
+}
+const pressedCls = 'border border-transparent bg-secondary-container text-on-secondary-container'
+
+interface Shared {
+  // Why nothing can be used ("Sign in to use this"); null when it can.
+  reason: string | null
+  reasonId: string
+  // What a control waits for, by cid.
+  waiting: Record<string, string>
+}
+
+function ButtonView({
+  c,
+  pressed,
+  shared: { reason, reasonId, waiting },
+  onPress,
+}: {
+  c: Button
+  pressed: boolean
+  shared: Shared
+  onPress: (cid: string) => void
+}) {
+  const wait = waiting[c.cid]
+  const role = c.do === 'role'
+  return (
+    <button
+      type="button"
+      data-cid={c.cid}
+      aria-pressed={role ? pressed : undefined}
+      aria-busy={wait ? true : undefined}
+      aria-describedby={reason ? reasonId : undefined}
+      disabled={reason !== null || wait !== undefined}
+      title={reason ?? wait ?? (c.do === 'link' ? c.url : undefined)}
+      onClick={() => onPress(c.cid)}
+      className={`${baseCls} ${role && pressed ? pressedCls : STYLES[c.style ?? 'plain']}`}
+    >
+      {c.emoji && <span aria-hidden="true">{c.emoji}</span>}
+      <span className="min-w-0 truncate">{wait ?? c.label}</span>
+      {role && pressed && <Check size={14} className="shrink-0" aria-hidden="true" />}
+      {c.do === 'link' && <ExternalLink size={14} className="shrink-0" aria-hidden="true" />}
+    </button>
+  )
+}
+
+function SelectView({
+  c,
+  picks,
+  startOpen,
+  shared: { reason, reasonId, waiting },
+  onPick,
+}: {
+  c: Select
+  picks: readonly string[]
+  startOpen: boolean
+  shared: Shared
+  onPick: (cid: string, values: string[]) => void
+}) {
+  const [open, setOpen] = useState(startOpen)
+  const [draft, setDraft] = useState<string[] | null>(null)
+  const listId = useId()
+  const wait = waiting[c.cid]
+  const off = reason !== null || wait !== undefined
+  const shown = draft ?? picks
+  const many = most(c) > 1
+  const close = () => {
+    setOpen(false)
+    setDraft(null)
+  }
+  const choose = (value: string) => {
+    const next = togglePick(c, shown, value)
+    if (many) return setDraft(next)
+    close()
+    if (picksOk(c, next)) onPick(c.cid, next)
+  }
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-1">
+      <button
+        type="button"
+        data-cid={c.cid}
+        aria-haspopup="listbox"
+        aria-expanded={open && !off}
+        aria-controls={open && !off ? listId : undefined}
+        aria-busy={wait ? true : undefined}
+        aria-describedby={reason ? reasonId : undefined}
+        disabled={off}
+        title={reason ?? wait}
+        onClick={() => (open ? close() : setOpen(true))}
+        onKeyDown={e => {
+          if (e.key === 'Escape' && open) close()
+        }}
+        className={`${baseCls} w-full justify-between rounded-xl ${STYLES.plain}`}
+      >
+        <span className="min-w-0 truncate">{wait ?? pickedLabel(c, picks)}</span>
+        <ChevronDown size={16} className="shrink-0" aria-hidden="true" />
+      </button>
+      {open && !off && (
+        <div className="rounded-xl border border-outline-variant bg-surface-container p-1">
+          <div
+            id={listId}
+            role="listbox"
+            aria-label={c.placeholder || 'Choose'}
+            aria-multiselectable={many ? true : undefined}
+            className="flex flex-col"
+            onKeyDown={e => {
+              if (e.key === 'Escape') close()
+            }}
+          >
+            {c.options.map(o => {
+              const on = shown.includes(o.value)
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="option"
+                  aria-selected={on}
+                  onClick={() => choose(o.value)}
+                  className={`flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-3 py-1.5 text-left text-sm ${
+                    on
+                      ? 'bg-secondary-container text-on-secondary-container'
+                      : 'text-on-surface hover:bg-surface-container-highest'
+                  }`}
+                >
+                  {o.emoji && <span aria-hidden="true">{o.emoji}</span>}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{o.label}</span>
+                    {o.description && (
+                      <span className="block truncate text-xs opacity-80">{o.description}</span>
+                    )}
+                  </span>
+                  {on && <Check size={16} className="shrink-0" aria-hidden="true" />}
+                </button>
+              )
+            })}
+          </div>
+          {many && (
+            <div className="flex justify-end px-1 pt-1">
+              <button
+                type="button"
+                disabled={!picksOk(c, shown)}
+                onClick={() => {
+                  close()
+                  onPick(c.cid, [...shown])
+                }}
+                className="cursor-pointer rounded-full bg-primary px-4 py-2 text-sm font-medium text-on-primary hover:opacity-90 disabled:cursor-default disabled:opacity-40"
+              >
+                Done
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Props only: what is pressed and picked comes from the viewer's roles, and a press or a pick
+// goes to the caller.
+export function ComponentsView({
+  rows,
+  pressed,
+  picks,
+  disabled = null,
+  waiting = {},
+  open,
+  onPress,
+  onPick,
+}: {
+  rows: Component[][]
+  // The cids of the role buttons shown as pressed.
+  pressed?: ReadonlySet<string>
+  // The picked values of each menu, by cid.
+  picks?: Record<string, readonly string[]>
+  disabled?: string | null
+  waiting?: Record<string, string>
+  // The cid of a menu that starts open.
+  open?: string
+  onPress: (cid: string) => void
+  onPick: (cid: string, values: string[]) => void
+}) {
+  const reasonId = useId()
+  const shared = { reason: disabled, reasonId, waiting }
+  if (!rows.some(row => row.length)) return null
+  return (
+    <div className="mt-1 flex max-w-full flex-col gap-1.5">
+      {rows.map((row, i) => (
+        <div
+          key={i}
+          role="group"
+          className={row.some(c => c.type === 'button') ? 'flex flex-wrap gap-1.5' : 'flex'}
+        >
+          {row.map(c =>
+            c.type === 'button' ? (
+              <ButtonView
+                key={c.cid}
+                c={c}
+                pressed={pressed?.has(c.cid) ?? false}
+                shared={shared}
+                onPress={onPress}
+              />
+            ) : (
+              <SelectView
+                key={c.cid}
+                c={c}
+                picks={picks?.[c.cid] ?? []}
+                startOpen={open === c.cid}
+                shared={shared}
+                onPick={onPick}
+              />
+            )
+          )}
+        </div>
+      ))}
+      {disabled && (
+        <p id={reasonId} className="text-xs text-on-surface-variant">
+          {disabled}
+        </p>
+      )}
+    </div>
+  )
+}
