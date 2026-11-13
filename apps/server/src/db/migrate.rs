@@ -194,10 +194,12 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// `servers.upload_expiry_by` (the account charged for a server's longer choice), their indexes
 /// and the indexes of the upload budget sums.
 /// 23: the look-alike keys of usernames (`users.username_key`, `users.username_key_alt`).
-pub const SCHEMA_VERSION: i64 = 23;
+/// 24: the `pings(server)` index, and without the indexes that another index covers
+/// (`idx_members_username`, `idx_dms_user_b`, `idx_reactions_message`, `idx_group_pings_server`).
+pub const SCHEMA_VERSION: i64 = 24;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 15] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 14] {
     [
         "CREATE INDEX IF NOT EXISTS idx_users_username_key ON users(username_key)",
         "CREATE INDEX IF NOT EXISTS idx_users_username_key_alt ON users(username_key_alt)",
@@ -212,7 +214,6 @@ pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 15] {
                 "CREATE INDEX IF NOT EXISTS idx_users_display_lower ON users((lower(display_name) COLLATE \"C\"))"
             }
         },
-        "CREATE INDEX IF NOT EXISTS idx_reactions_agg ON reactions(message_id, emoji, created_at, username)",
         "CREATE INDEX IF NOT EXISTS idx_pings_kept ON pings(username, id) WHERE seen <> 0",
         "CREATE INDEX IF NOT EXISTS idx_messages_system_channel ON messages(channel_id, created_at) WHERE kind IN ('join','leave')",
         "CREATE INDEX IF NOT EXISTS idx_messages_pin_notice ON messages(pin_message_id, created_at) WHERE kind = 'pin'",

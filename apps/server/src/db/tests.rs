@@ -1492,7 +1492,7 @@ async fn group_mentions_are_added_to_an_old_database() {
         "DROP INDEX idx_group_pings_message",
         "DROP INDEX idx_group_pings_created",
         "DROP INDEX idx_group_pings_role",
-        "DROP INDEX idx_group_pings_server",
+        "DROP INDEX idx_group_pings_server_time",
         "DROP INDEX idx_here_pings_ping",
         "DROP TABLE here_pings",
         "DROP TABLE group_pings",
@@ -1536,7 +1536,7 @@ async fn group_mentions_are_added_to_an_old_database() {
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND (name LIKE 'idx_group_pings_%' OR name = 'idx_here_pings_ping')").await,
-            9
+            8
         );
         assert_eq!(
             count(
@@ -2027,7 +2027,7 @@ async fn pings_table_is_added_to_an_old_database() {
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_pings_%'").await,
-            6
+            7
         );
         sqlx::query("INSERT INTO pings(username, kind, scope, server, message_id, actor, created_at) SELECT 'bob', 'mention', 'c' || channel_id, 'rchat', id, 'alice', 8 FROM messages WHERE author = 'alice'")
             .execute(&db)
@@ -2825,7 +2825,7 @@ async fn reactions_table_is_added_to_an_old_database() {
     wipe();
     let db = open(path.to_str()).await.expect("open");
     for stmt in [
-        "DROP INDEX idx_reactions_message",
+        "DROP INDEX idx_reactions_agg",
         "DROP INDEX idx_reactions_username",
         "DROP TABLE reactions",
         "INSERT INTO messages(channel_id, author, content, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'alice', 'old message', 7)",
@@ -2858,7 +2858,7 @@ async fn reactions_table_is_added_to_an_old_database() {
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_reactions_%'").await,
-            3
+            2
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM reactions").await,

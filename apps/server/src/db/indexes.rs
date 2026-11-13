@@ -87,6 +87,41 @@ pub(super) const ONLINE_INDEXES: &[OnlineIndex] = &[
         replaces: &[],
         extension: None,
     },
+    OnlineIndex {
+        name: "idx_members_user_joined",
+        table: "members",
+        body: "ON members(username, joined_at, server)",
+        replaces: &["idx_members_username"],
+        extension: None,
+    },
+    OnlineIndex {
+        name: "idx_dms_b_latest",
+        table: "dms",
+        body: "ON dms(user_b, last_message_id, id)",
+        replaces: &["idx_dms_user_b"],
+        extension: None,
+    },
+    OnlineIndex {
+        name: "idx_reactions_agg",
+        table: "reactions",
+        body: "ON reactions(message_id, emoji, created_at, username)",
+        replaces: &["idx_reactions_message"],
+        extension: None,
+    },
+    OnlineIndex {
+        name: "idx_group_pings_server_time",
+        table: "group_pings",
+        body: "ON group_pings(server, created_at, message_id)",
+        replaces: &["idx_group_pings_server"],
+        extension: None,
+    },
+    OnlineIndex {
+        name: "idx_pings_server",
+        table: "pings",
+        body: "ON pings(server)",
+        replaces: &[],
+        extension: None,
+    },
 ];
 
 /// Rows from which a Postgres table gets its online indexes after the start.

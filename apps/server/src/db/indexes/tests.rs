@@ -401,6 +401,386 @@ async fn a_missing_extension_skips_its_index() {
     drop(pg);
 }
 
+async fn rows(db: &Db, stmt: &str) -> Vec<sqlx::any::AnyRow> {
+    sqlx::query(sqlx::AssertSqlSafe(stmt.to_string()))
+        .fetch_all(db)
+        .await
+        .expect(stmt)
+}
+
+async fn texts(db: &Db, stmt: &str) -> Vec<String> {
+    rows(db, stmt)
+        .await
+        .iter()
+        .map(|row| row.get::<String, _>(0))
+        .collect()
+}
+
+/// Runs `body` on a fresh SQLite file and, when `TEST_POSTGRES_URL` is set, on a fresh Postgres
+/// database.
+async fn on_each_database<F, Fut>(tag: &str, body: F)
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let path = temp_db_path(tag);
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    body(path.to_str().expect("path").to_string()).await;
+    wipe();
+    if let Some(pg) = pg_temp(tag).await {
+        body(pg.url.clone()).await;
+        drop(pg);
+    }
+}
+
+async fn has_index(db: &Db, name: &str) -> bool {
+    let sql = match is_sqlite(db) {
+        true => "SELECT name FROM sqlite_master WHERE type = 'index' AND name = $1",
+        false => "SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = $1",
+    };
+    sqlx::query(sql)
+        .bind(name)
+        .fetch_optional(db)
+        .await
+        .expect("index")
+        .is_some()
+}
+
+/// The plan of `query`, with sequential scans off on Postgres so that a table of a few rows
+/// shows which index serves it.
+async fn plan(db: &Db, query: &str) -> String {
+    let mut conn = db.acquire().await.expect("connection");
+    let (explain, column) = match is_sqlite(db) {
+        true => ("EXPLAIN QUERY PLAN", 3),
+        false => {
+            sqlx::query("SET enable_seqscan = off")
+                .execute(&mut *conn)
+                .await
+                .expect("no sequential scans");
+            ("EXPLAIN", 0)
+        }
+    };
+    let lines: Vec<String> = sqlx::query(sqlx::AssertSqlSafe(format!("{explain} {query}")))
+        .fetch_all(&mut *conn)
+        .await
+        .expect(query)
+        .iter()
+        .map(|row| row.get::<String, _>(column))
+        .collect();
+    if !is_sqlite(db) {
+        sqlx::query("RESET enable_seqscan")
+            .execute(&mut *conn)
+            .await
+            .expect("reset");
+    }
+    lines.join("\n")
+}
+
+const PREFIX_DUPLICATES: [(&str, &str); 4] = [
+    ("idx_members_username", "ON members(username)"),
+    ("idx_dms_user_b", "ON dms(user_b)"),
+    (
+        "idx_reactions_message",
+        "ON reactions(message_id, emoji, created_at)",
+    ),
+    ("idx_group_pings_server", "ON group_pings(server)"),
+];
+
+const STORED_SCHEMA: &str =
+    "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'";
+
+async fn prefix_duplicates_upgrade(url: String) {
+    let db = open_started(Some(&url)).await.expect("open");
+    for (name, body) in PREFIX_DUPLICATES {
+        run(&db, &format!("CREATE INDEX {name} {body}")).await;
+    }
+    for stmt in [
+        "DROP INDEX idx_pings_server",
+        "UPDATE settings SET value = '21' WHERE key = 'schema_version'",
+        "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 7)",
+        "INSERT INTO channels(server, name, created_at) VALUES('club', 'general', 7)",
+        "INSERT INTO members(server, username, joined_at) VALUES('club', 'alice', 7)",
+        "INSERT INTO members(server, username, joined_at) VALUES('club', 'bob', 8)",
+        "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')",
+        "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', '@everyone hello', 7 FROM channels WHERE server = 'club'",
+        "INSERT INTO reactions(message_id, username, emoji, created_at) SELECT id, 'bob', 'x', 9 FROM messages WHERE content = '@everyone hello'",
+        "INSERT INTO group_pings(message_id, channel_id, server, kind, actor, created_at) SELECT id, channel_id, 'club', 'everyone', 'alice', 7 FROM messages WHERE content = '@everyone hello'",
+        "INSERT INTO pings(username, kind, scope, server, message_id, actor, created_at) SELECT 'bob', 'mention', 'c' || channel_id, 'club', id, 'alice', 7 FROM messages WHERE content = '@everyone hello'",
+    ] {
+        run(&db, stmt).await;
+    }
+    close(&db).await;
+    for _ in 0..2 {
+        let db = open_started(Some(&url)).await.expect("upgrade");
+        assert_eq!(
+            rows(&db, STORED_SCHEMA).await[0].get::<i64, _>(0),
+            super::super::migrate::SCHEMA_VERSION
+        );
+        for (name, _) in PREFIX_DUPLICATES {
+            assert!(!has_index(&db, name).await, "{name} is gone");
+        }
+        for name in [
+            "idx_members_user_joined",
+            "idx_dms_b_latest",
+            "idx_reactions_agg",
+            "idx_group_pings_server_time",
+            "idx_pings_server",
+        ] {
+            assert!(has_index(&db, name).await, "{name}");
+        }
+        for (query, index) in [
+            (
+                "SELECT server, joined_at FROM members WHERE username = 'alice'",
+                "idx_members_user_joined",
+            ),
+            (
+                "SELECT id, user_a, user_b, last_message_id FROM dms WHERE user_b = 'bob' AND user_a <> user_b AND closed_b = 0",
+                "idx_dms_b_latest",
+            ),
+            (
+                "SELECT message_id, emoji, COUNT(*), MIN(created_at) / 1000, MAX(CASE WHEN username = 'bob' THEN 1 ELSE 0 END) FROM reactions WHERE message_id IN (1, 2) GROUP BY message_id, emoji ORDER BY message_id, MIN(created_at), emoji",
+                "idx_reactions_agg",
+            ),
+            (
+                "SELECT g.message_id FROM group_pings g WHERE g.server = 'club'",
+                "idx_group_pings_server_time",
+            ),
+            (
+                "SELECT id FROM pings WHERE server = 'club'",
+                "idx_pings_server",
+            ),
+        ] {
+            let plan = plan(&db, query).await;
+            assert!(plan.contains(index), "{query} uses {index}: {plan}");
+        }
+        for (table, kept) in [
+            ("members WHERE server = 'club'", 2),
+            ("dms", 1),
+            ("reactions", 1),
+            ("group_pings", 1),
+            ("pings", 1),
+        ] {
+            assert_eq!(
+                rows(&db, &format!("SELECT COUNT(*) FROM {table}")).await[0].get::<i64, _>(0),
+                kept,
+                "{table}"
+            );
+        }
+        close(&db).await;
+    }
+}
+
+#[tokio::test]
+async fn prefix_duplicate_indexes_are_dropped() {
+    on_each_database("prefix_duplicates", prefix_duplicates_upgrade).await;
+}
+
+/// One index of a table: its columns in order (`None` for an expression), whether it is unique
+/// and its `WHERE`.
+struct Listed {
+    table: String,
+    name: String,
+    columns: Vec<Option<String>>,
+    unique: bool,
+    predicate: Option<String>,
+}
+
+/// Every SQLite index, with the primary key of a rowid table as an index of its own.
+async fn sqlite_indexes(db: &Db, table: &str) -> Vec<Listed> {
+    let mut listed = Vec::new();
+    let mut keyed = false;
+    for row in rows(db, &format!("PRAGMA index_list({table})")).await {
+        keyed |= row.get::<String, _>(3) == "pk";
+        let name: String = row.get(1);
+        let columns = rows(db, &format!("PRAGMA index_info({name})"))
+            .await
+            .iter()
+            .map(|col| col.get::<Option<String>, _>(2))
+            .collect();
+        let sql: Option<String> = sqlx::query("SELECT sql FROM sqlite_master WHERE name = $1")
+            .bind(&name)
+            .fetch_one(db)
+            .await
+            .expect("index sql")
+            .get(0);
+        listed.push(Listed {
+            table: table.to_string(),
+            name,
+            columns,
+            unique: row.get::<i64, _>(2) != 0,
+            predicate: sql.and_then(|sql| sql.split_once(" WHERE ").map(|(_, p)| p.to_string())),
+        });
+    }
+    let mut key: Vec<(i64, String)> = rows(db, &format!("PRAGMA table_info({table})"))
+        .await
+        .iter()
+        .map(|col| (col.get::<i64, _>(5), col.get::<String, _>(1)))
+        .filter(|(order, _)| *order > 0)
+        .collect();
+    key.sort();
+    if !key.is_empty() && !keyed {
+        listed.push(Listed {
+            table: table.to_string(),
+            name: format!("{table}_rowid"),
+            columns: key.into_iter().map(|(_, name)| Some(name)).collect(),
+            unique: true,
+            predicate: None,
+        });
+    }
+    listed
+}
+
+async fn sqlite_tables(db: &Db) -> Vec<String> {
+    texts(
+        db,
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'messages_fts%' ORDER BY name",
+    )
+    .await
+}
+
+/// `table(columns)` of every SQLite foreign key that no index starts with. A partial index
+/// counts when it leaves out only the rows without the key.
+async fn sqlite_keys_without_index(db: &Db) -> Vec<String> {
+    let mut missing = Vec::new();
+    for table in sqlite_tables(db).await {
+        let indexes = sqlite_indexes(db, &table).await;
+        let mut keys: Vec<(i64, Vec<String>)> = Vec::new();
+        for row in rows(db, &format!("PRAGMA foreign_key_list({table})")).await {
+            let (id, from): (i64, String) = (row.get(0), row.get(3));
+            match keys.iter_mut().find(|(key, _)| *key == id) {
+                Some((_, columns)) => columns.push(from),
+                None => keys.push((id, vec![from])),
+            }
+        }
+        for (_, mut key) in keys {
+            key.sort();
+            let only_set = format!("{} IS NOT NULL", key[0]);
+            let served = indexes.iter().any(|index| {
+                let mut leading: Vec<String> = index
+                    .columns
+                    .iter()
+                    .take(key.len())
+                    .flatten()
+                    .cloned()
+                    .collect();
+                leading.sort();
+                leading == key
+                    && (index.predicate.is_none()
+                        || (key.len() == 1 && index.predicate.as_deref() == Some(&only_set)))
+            });
+            if !served {
+                missing.push(format!("{table}({})", key.join(",")));
+            }
+        }
+    }
+    missing
+}
+
+const POSTGRES_KEYS_WITHOUT_INDEX: &str = "SELECT c.conrelid::regclass::text || '(' || k.columns || ')' FROM pg_constraint c CROSS JOIN LATERAL (SELECT string_agg(a.attname, ',' ORDER BY a.attname) AS columns FROM pg_attribute a WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)) k WHERE c.contype = 'f' AND c.connamespace = current_schema()::regnamespace AND NOT EXISTS(SELECT 1 FROM pg_index i WHERE i.indrelid = c.conrelid AND i.indisvalid AND (i.indpred IS NULL OR pg_get_expr(i.indpred, i.indrelid) = '(' || k.columns || ' IS NOT NULL)') AND (SELECT array_agg(x ORDER BY x) FROM unnest((i.indkey::int2[])[0:cardinality(c.conkey) - 1]) x) = (SELECT array_agg(x ORDER BY x) FROM unnest(c.conkey) x)) ORDER BY 1";
+
+#[tokio::test]
+async fn every_foreign_key_has_an_index() {
+    on_each_database("fk_indexes", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        let keys = match is_sqlite(&db) {
+            true => {
+                rows(&db, "SELECT COUNT(*) FROM pragma_foreign_key_list('pings')").await[0]
+                    .get::<i64, _>(0)
+            }
+            false => rows(&db, "SELECT COUNT(*) FROM pg_constraint WHERE contype = 'f' AND conrelid = 'pings'::regclass").await[0]
+                .get::<i64, _>(0),
+        };
+        assert_eq!(keys, 2, "the scan sees the foreign keys of pings");
+        let missing = match is_sqlite(&db) {
+            true => sqlite_keys_without_index(&db).await,
+            false => texts(&db, POSTGRES_KEYS_WITHOUT_INDEX).await,
+        };
+        assert_eq!(missing, Vec::<String>::new());
+        run(&db, "DROP INDEX idx_pings_server").await;
+        let missing = match is_sqlite(&db) {
+            true => sqlite_keys_without_index(&db).await,
+            false => texts(&db, POSTGRES_KEYS_WITHOUT_INDEX).await,
+        };
+        assert_eq!(missing, ["pings(server)"], "the scan finds a key without an index");
+        close(&db).await;
+    })
+    .await;
+}
+
+/// `a is a prefix of b` for every SQLite index `a` whose columns start another index `b` of the
+/// same table with the same `WHERE`. Unique indexes are constraints and stay.
+async fn sqlite_prefix_indexes(db: &Db) -> Vec<String> {
+    let mut found = Vec::new();
+    for table in sqlite_tables(db).await {
+        let indexes = sqlite_indexes(db, &table).await;
+        for a in &indexes {
+            for b in &indexes {
+                let whole = a.columns.iter().all(Option::is_some);
+                let prefix = b.columns.len() >= a.columns.len()
+                    && b.columns[..a.columns.len()] == a.columns[..];
+                let first = a.columns.len() < b.columns.len() || a.name < b.name;
+                if a.name != b.name
+                    && a.table == b.table
+                    && !a.unique
+                    && whole
+                    && prefix
+                    && first
+                    && a.predicate == b.predicate
+                {
+                    found.push(format!("{} is a prefix of {}", a.name, b.name));
+                }
+            }
+        }
+    }
+    found
+}
+
+const POSTGRES_PREFIX_INDEXES: &str = "WITH idx AS (SELECT i.indrelid AS tbl, c.relname AS name, i.indisunique AS uniq, COALESCE(pg_get_expr(i.indpred, i.indrelid), '') AS pred, c.relam AS am, (SELECT array_agg(pg_get_indexdef(i.indexrelid, k, true) ORDER BY k) FROM generate_series(1, i.indnkeyatts) k) AS cols FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relnamespace = current_schema()::regnamespace) SELECT a.name || ' is a prefix of ' || b.name FROM idx a JOIN idx b ON a.tbl = b.tbl AND a.name <> b.name AND a.pred = b.pred AND a.am = b.am AND NOT a.uniq AND cardinality(a.cols) <= cardinality(b.cols) AND a.cols = b.cols[1:cardinality(a.cols)] AND (cardinality(a.cols) < cardinality(b.cols) OR a.name < b.name) ORDER BY 1";
+
+/// Postgres compares these by the database collation and the primary key by another one only
+/// when the database collation is not `C`, so the catalog shows the same columns.
+const COLLATION_INDEXES: [&str; 1] = ["idx_members_name_c is a prefix of members_pkey"];
+
+#[tokio::test]
+async fn no_index_is_a_prefix_of_another() {
+    on_each_database("prefix_indexes", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        let sqlite = is_sqlite(&db);
+        let found = || async {
+            match sqlite {
+                true => sqlite_prefix_indexes(&db).await,
+                false => texts(&db, POSTGRES_PREFIX_INDEXES)
+                    .await
+                    .into_iter()
+                    .filter(|pair| !COLLATION_INDEXES.contains(&pair.as_str()))
+                    .collect(),
+            }
+        };
+        assert_eq!(found().await, Vec::<String>::new());
+        run(
+            &db,
+            "CREATE INDEX idx_members_username ON members(username)",
+        )
+        .await;
+        run(&db, "CREATE INDEX idx_pings_server_again ON pings(server)").await;
+        assert_eq!(
+            found().await,
+            [
+                "idx_members_username is a prefix of idx_members_user_joined",
+                "idx_pings_server is a prefix of idx_pings_server_again"
+            ],
+            "the scan finds a prefix and a copy"
+        );
+        close(&db).await;
+    })
+    .await;
+}
+
 /// Tables that can be big. Their new indexes go in `ONLINE_INDEXES`.
 const BIG_TABLES: [&str; 11] = [
     "messages",
@@ -418,8 +798,7 @@ const BIG_TABLES: [&str; 11] = [
 
 /// The indexes on big tables that the schema strings and `late_indexes` had before online
 /// indexes. Nothing is added here.
-const INLINE_BEFORE: [&str; 45] = [
-    "idx_members_username",
+const INLINE_BEFORE: [&str; 39] = [
     "idx_messages_channel_id",
     "idx_messages_dm_id",
     "idx_messages_author",
@@ -429,7 +808,6 @@ const INLINE_BEFORE: [&str; 45] = [
     "idx_messages_media",
     "idx_messages_channel_author",
     "idx_message_embeds_url",
-    "idx_members_user_joined",
     "idx_members_admins",
     "idx_members_name_c",
     "idx_members_admins_c",
@@ -438,7 +816,6 @@ const INLINE_BEFORE: [&str; 45] = [
     "idx_pings_created",
     "idx_pings_seen",
     "idx_pings_actor",
-    "idx_reactions_message",
     "idx_reactions_username",
     "idx_messages_fwd_author",
     "idx_messages_channel_pins",
@@ -449,15 +826,12 @@ const INLINE_BEFORE: [&str; 45] = [
     "idx_group_pings_created",
     "idx_group_pings_role",
     "idx_here_pings_ping",
-    "idx_group_pings_server",
-    "idx_group_pings_server_time",
     "idx_audit_log_server",
     "idx_audit_log_action",
     "idx_audit_log_actor",
     "idx_audit_log_created",
     "idx_poll_votes_option",
     "idx_poll_votes_voter",
-    "idx_reactions_agg",
     "idx_pings_kept",
     "idx_messages_system_channel",
     "idx_messages_pin_notice",
