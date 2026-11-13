@@ -59,9 +59,7 @@ CREATE TABLE IF NOT EXISTS webhooks(id INTEGER PRIMARY KEY AUTOINCREMENT, server
 CREATE TABLE IF NOT EXISTS outgoing_webhooks(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL, secret TEXT NOT NULL, creator TEXT, enabled INTEGER NOT NULL DEFAULT 1, failures INTEGER NOT NULL DEFAULT 0, disabled_at INTEGER, disabled_reason TEXT, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS webhook_deliveries(id INTEGER PRIMARY KEY AUTOINCREMENT, hook_id INTEGER NOT NULL REFERENCES outgoing_webhooks(id) ON DELETE CASCADE, event TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','failed')), attempts INTEGER NOT NULL DEFAULT 0, next_at INTEGER NOT NULL, claimed_at INTEGER NOT NULL DEFAULT 0, last_code INTEGER, last_ms INTEGER, last_error TEXT, created_at INTEGER NOT NULL, finished_at INTEGER);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
-CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author);
-CREATE INDEX IF NOT EXISTS idx_messages_thread_root ON messages(thread_root_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_top ON messages(channel_id, id) WHERE thread_root_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_media_uploaded_at ON media(uploaded_at);
 CREATE INDEX IF NOT EXISTS idx_messages_media ON messages(media_id) WHERE media_id IS NOT NULL;
@@ -193,9 +191,7 @@ CREATE TABLE IF NOT EXISTS webhooks(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMA
 CREATE TABLE IF NOT EXISTS outgoing_webhooks(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, name TEXT NOT NULL, url TEXT NOT NULL, events TEXT NOT NULL, secret TEXT NOT NULL, creator TEXT, enabled BIGINT NOT NULL DEFAULT 1, failures BIGINT NOT NULL DEFAULT 0, disabled_at BIGINT, disabled_reason TEXT, created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS webhook_deliveries(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, hook_id BIGINT NOT NULL REFERENCES outgoing_webhooks(id) ON DELETE CASCADE, event TEXT NOT NULL, payload TEXT, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','failed')), attempts BIGINT NOT NULL DEFAULT 0, next_at BIGINT NOT NULL, claimed_at BIGINT NOT NULL DEFAULT 0, last_code BIGINT, last_ms BIGINT, last_error TEXT, created_at BIGINT NOT NULL, finished_at BIGINT);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages(channel_id, id);
-CREATE INDEX IF NOT EXISTS idx_messages_dm_id ON messages(dm_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author);
-CREATE INDEX IF NOT EXISTS idx_messages_thread_root ON messages(thread_root_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_top ON messages(channel_id, id) WHERE thread_root_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_media_uploaded_at ON media(uploaded_at);
 CREATE INDEX IF NOT EXISTS idx_messages_media ON messages(media_id) WHERE media_id IS NOT NULL;

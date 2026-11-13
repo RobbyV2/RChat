@@ -580,6 +580,118 @@ async fn prefix_duplicate_indexes_are_dropped() {
     on_each_database("prefix_duplicates", prefix_duplicates_upgrade).await;
 }
 
+const OLD_MESSAGE_INDEXES: [(&str, &str); 2] = [
+    ("idx_messages_dm_id", "ON messages(dm_id, id)"),
+    (
+        "idx_messages_thread_root",
+        "ON messages(thread_root_id, id)",
+    ),
+];
+
+async fn message_indexes_upgrade(url: String) {
+    let db = open_started(Some(&url)).await.expect("open");
+    for (name, body) in OLD_MESSAGE_INDEXES {
+        run(&db, &format!("CREATE INDEX {name} {body}")).await;
+    }
+    for stmt in [
+        "DROP INDEX idx_messages_dm",
+        "DROP INDEX idx_messages_thread",
+        "UPDATE settings SET value = '24' WHERE key = 'schema_version'",
+        "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')",
+        "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'root', 7 FROM channels WHERE server = 'rchat'",
+        "INSERT INTO messages(channel_id, thread_root_id, author, content, created_at) SELECT channel_id, id, 'bob', 'reply', 8 FROM messages WHERE content = 'root'",
+        "INSERT INTO messages(dm_id, author, content, created_at) SELECT id, 'alice', 'direct', 9 FROM dms",
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500) INSERT INTO messages(channel_id, author, content, created_at) SELECT c.id, 'alice', 'more', 10 FROM n, channels c WHERE c.server = 'rchat'",
+        "ANALYZE",
+    ] {
+        run(&db, stmt).await;
+    }
+    close(&db).await;
+    for _ in 0..2 {
+        let db = open_started(Some(&url)).await.expect("upgrade");
+        assert_eq!(
+            rows(&db, STORED_SCHEMA).await[0].get::<i64, _>(0),
+            super::super::migrate::SCHEMA_VERSION
+        );
+        for (name, _) in OLD_MESSAGE_INDEXES {
+            assert!(!has_index(&db, name).await, "{name} is gone");
+        }
+        for (query, index) in [
+            (
+                "SELECT m.id FROM messages m WHERE m.dm_id = 1 AND m.id < 1000 ORDER BY m.id DESC LIMIT 51",
+                "idx_messages_dm",
+            ),
+            (
+                "SELECT MAX(id) FROM messages WHERE dm_id = 1",
+                "idx_messages_dm",
+            ),
+            (
+                "SELECT m.id FROM messages m WHERE m.thread_root_id = 1 AND m.id > 0 ORDER BY m.id LIMIT 51",
+                "idx_messages_thread",
+            ),
+            (
+                "SELECT m.id, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id) FROM messages m WHERE m.id = 1",
+                "idx_messages_thread",
+            ),
+        ] {
+            assert!(has_index(&db, index).await, "{index}");
+            let plan = plan(&db, query).await;
+            assert!(
+                plan.contains(&format!("{index} "))
+                    || plan.ends_with(index)
+                    || plan.contains(&format!("{index}\n")),
+                "{query} uses {index}: {plan}"
+            );
+        }
+        for (kind, kept) in [
+            ("dm_id IS NOT NULL", 1),
+            ("thread_root_id IS NOT NULL", 1),
+            ("content = 'root'", 1),
+        ] {
+            assert_eq!(
+                rows(&db, &format!("SELECT COUNT(*) FROM messages WHERE {kind}")).await[0]
+                    .get::<i64, _>(0),
+                kept,
+                "{kind}"
+            );
+        }
+        close(&db).await;
+    }
+}
+
+#[tokio::test]
+async fn old_message_indexes_are_replaced() {
+    on_each_database("message_indexes", message_indexes_upgrade).await;
+}
+
+#[tokio::test]
+async fn an_invalid_concurrent_index_is_rebuilt() {
+    let Some(pg) = pg_temp("online_invalid_messages").await else {
+        return;
+    };
+    let db = open_started(Some(&pg.url)).await.expect("open");
+    run(
+        &db,
+        &format!("INSERT INTO messages(channel_id, thread_root_id, author, content, created_at) SELECT c.id, NULLIF(g % 10, 0), 'alice', 'message ' || g, 1 FROM channels c, generate_series(1, {ONLINE_ROWS}) g WHERE c.server = 'rchat'"),
+    )
+    .await;
+    run(
+        &db,
+        "UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'idx_messages_thread'::regclass",
+    )
+    .await;
+    close(&db).await;
+    let db = open_started(Some(&pg.url)).await.expect("start");
+    assert_eq!(state(&db, "idx_messages_thread").await, Some(false));
+    assert_eq!(
+        build_online(&db, &Limits::default()).await.expect("build"),
+        built(&["idx_messages_thread"], &[])
+    );
+    assert_eq!(state(&db, "idx_messages_thread").await, Some(true));
+    close(&db).await;
+    drop(pg);
+}
+
 /// One index of a table: its columns in order (`None` for an expression), whether it is unique
 /// and its `WHERE`.
 struct Listed {
@@ -798,11 +910,9 @@ const BIG_TABLES: [&str; 11] = [
 
 /// The indexes on big tables that the schema strings and `late_indexes` had before online
 /// indexes. Nothing is added here.
-const INLINE_BEFORE: [&str; 39] = [
+const INLINE_BEFORE: [&str; 37] = [
     "idx_messages_channel_id",
-    "idx_messages_dm_id",
     "idx_messages_author",
-    "idx_messages_thread_root",
     "idx_messages_channel_top",
     "idx_media_uploaded_at",
     "idx_messages_media",

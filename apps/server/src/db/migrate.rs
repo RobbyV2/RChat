@@ -196,7 +196,9 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 23: the look-alike keys of usernames (`users.username_key`, `users.username_key_alt`).
 /// 24: the `pings(server)` index, and without the indexes that another index covers
 /// (`idx_members_username`, `idx_dms_user_b`, `idx_reactions_message`, `idx_group_pings_server`).
-pub const SCHEMA_VERSION: i64 = 24;
+/// 25: the DM and thread indexes of `messages` hold only DM messages and thread replies
+/// (`idx_messages_dm`, `idx_messages_thread`).
+pub const SCHEMA_VERSION: i64 = 25;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 14] {

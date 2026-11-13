@@ -122,6 +122,20 @@ pub(super) const ONLINE_INDEXES: &[OnlineIndex] = &[
         replaces: &[],
         extension: None,
     },
+    OnlineIndex {
+        name: "idx_messages_dm",
+        table: "messages",
+        body: "ON messages(dm_id, id) WHERE dm_id IS NOT NULL",
+        replaces: &["idx_messages_dm_id"],
+        extension: None,
+    },
+    OnlineIndex {
+        name: "idx_messages_thread",
+        table: "messages",
+        body: "ON messages(thread_root_id, id) WHERE thread_root_id IS NOT NULL",
+        replaces: &["idx_messages_thread_root"],
+        extension: None,
+    },
 ];
 
 /// Rows from which a Postgres table gets its online indexes after the start.
