@@ -1,11 +1,20 @@
 'use client'
 
-import { useEffect, useId, useRef, useState } from 'react'
-import { displayNameError, showsUsername } from '../lib/display_name'
+import { useEffect, useId, useRef, useState, type HTMLAttributes } from 'react'
+import { displayNameError, maskedName, showsUsername } from '../lib/display_name'
 import { isGuestName } from '../lib/guest_voice'
-import { useStore } from '../lib/store'
+import { useMask, useStore } from '../lib/store'
 import type { UserRef } from '../lib/types'
-import { FieldError, Masked, MaskedTogether, fieldCls, filledBtn } from './ui'
+import {
+  FieldError,
+  Masked,
+  MaskedTogether,
+  RevealScope,
+  fieldCls,
+  filledBtn,
+  useOwn,
+  useRevealed,
+} from './ui'
 
 const nameFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
@@ -13,17 +22,33 @@ export const nameRevealKey = (username: string) => `name:${username}`
 
 // The display name truncates; the username stays whole after it. Both are masked for other
 // people's names only: `own` decides where the username is not an account here (P2P). One reveal
-// shows the whole pair.
+// shows the whole pair. `fit`, for a narrow row that fills its width: the display name truncates
+// down to a few letters, then the username wraps out of sight (the row's title has it).
 export function NameWithUsername({
   user,
   own,
+  fit = false,
 }: {
   user: Pick<UserRef, 'username' | 'display_name'>
   own?: boolean
+  fit?: boolean
 }) {
   const by = own === undefined ? user.username : null
   if (isGuestName(user.username)) return <span>{user.display_name}</span>
   if (!showsUsername(user)) return <Masked text={user.display_name} by={by} own={own} />
+  if (fit)
+    return (
+      <MaskedTogether word={nameRevealKey(user.username)}>
+        <span className="flex h-[1lh] min-w-0 flex-wrap items-baseline overflow-hidden text-ellipsis">
+          <span dir="auto" className="max-w-max min-w-0 flex-[1_1_4rem] truncate">
+            <Masked text={user.display_name} by={by} own={own} />
+          </span>
+          <span className="streamer shrink-0 pl-1 text-on-surface-variant">
+            (<Masked text={user.username} by={by} own={own} />)
+          </span>
+        </span>
+      </MaskedTogether>
+    )
   return (
     <MaskedTogether word={nameRevealKey(user.username)}>
       <span className="inline-flex max-w-full min-w-0 items-baseline">
@@ -35,6 +60,33 @@ export function NameWithUsername({
         </span>
       </span>
     </MaskedTogether>
+  )
+}
+
+type FitNameProps = { user: Pick<UserRef, 'username' | 'display_name'> } & Omit<
+  HTMLAttributes<HTMLSpanElement>,
+  'title' | 'children'
+>
+
+// A name in a row it fills (member list, message header), as `fit`. The span's title has the
+// whole name as shown: masked until the pair is revealed, none in streamer mode.
+export function FitName(props: FitNameProps) {
+  return (
+    <RevealScope>
+      <FitNameSpan {...props} />
+    </RevealScope>
+  )
+}
+
+function FitNameSpan({ user, ...span }: FitNameProps) {
+  const own = useOwn(user.username)
+  const revealed = useRevealed(nameRevealKey(user.username))
+  const mask = useMask(own || revealed)
+  const streamer = useStore(s => s.streamer)
+  return (
+    <span title={streamer ? undefined : maskedName(user, mask)} {...span}>
+      <NameWithUsername user={user} fit />
+    </span>
   )
 }
 

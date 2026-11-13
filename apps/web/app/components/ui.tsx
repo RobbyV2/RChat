@@ -322,13 +322,24 @@ export function MaskedWords({
   return <RevealedWords.Provider value={value}>{children}</RevealedWords.Provider>
 }
 
+// A reveal scope for what's inside, unless one is around it already.
+export function RevealScope({ children }: { children: ReactNode }) {
+  const outer = useContext(RevealedWords)
+  return outer ? children : <MaskedWords>{children}</MaskedWords>
+}
+
+// Whether the masked words under `word` were revealed in the scope around.
+export const useRevealed = (word: string) => !!useContext(RevealedWords)?.open.has(word)
+
 const MaskGroup = createContext<string | undefined>(undefined)
 
 // The masked words inside open together under `word`, in the scope around them or their own.
 export function MaskedTogether({ word, children }: { word: string; children: ReactNode }) {
-  const outer = useContext(RevealedWords)
-  const group = <MaskGroup.Provider value={word}>{children}</MaskGroup.Provider>
-  return outer ? group : <MaskedWords>{group}</MaskedWords>
+  return (
+    <RevealScope>
+      <MaskGroup.Provider value={word}>{children}</MaskGroup.Provider>
+    </RevealScope>
+  )
 }
 
 // Elements that are controls: a masked word inside one may not be a control itself.

@@ -74,7 +74,7 @@ import {
   useScrollAnchor,
 } from './viewport_height'
 import { Masked, useEscape, useOwnServer } from './ui'
-import { NameWithUsername } from './display_name'
+import { FitName, NameWithUsername } from './display_name'
 import { showsUsername } from '../lib/display_name'
 import { PingBadge, pingLabel } from './ping_badge'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
@@ -297,13 +297,12 @@ export function AuthorRow({
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-          <span
+          <FitName
+            user={author}
             {...profileTrigger(author, server)}
             style={{ color }}
             className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
-          >
-            <NameWithUsername user={author} />
-          </span>
+          />
           {isWebhookAuthor(author.username) && <WebhookBadge />}
           {meta}
         </div>

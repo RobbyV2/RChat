@@ -4,7 +4,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import { DmRow } from '../../components/channel_sidebar'
-import { DisplayNameField, NameWithUsername } from '../../components/display_name'
+import { MemberName } from '../../components/member_sidebar'
+import { DisplayNameField, NameWithUsername, nameRevealKey } from '../../components/display_name'
+import { MaskedWords } from '../../components/ui'
 import { MarkdownMessage } from '../../components/markdown_message'
 import { AuthorRow, DmPeer } from '../../components/message_pane'
 import { SystemNotice } from '../../components/system_messages'
@@ -27,6 +29,7 @@ import {
 } from '../display_name'
 import { DEFAULT_FEATURES } from '../features'
 import { api } from '../instances'
+import { setMasking, resetMasking } from '../profanity'
 import { resetSessionCaches, useStore } from '../store'
 import { ApiError } from '../api'
 import { typerNames } from '../typing'
@@ -73,6 +76,47 @@ test('the username shows next to a display name that differs', () => {
 const USERNAME_AFTER = (display: string, username: string) =>
   `<span class="inline-flex max-w-full min-w-0 items-baseline"><span class="min-w-0 truncate">${display}</span><span class="streamer max-w-full shrink-0 truncate pl-1 text-on-surface-variant">(${username})</span></span>`
 
+// In a narrow row: the display name truncates first, and a username with no room left wraps
+// out of sight (it stays in the title and for screen readers).
+const FITTED = (display: string, username: string) =>
+  `<span class="flex h-[1lh] min-w-0 flex-wrap items-baseline overflow-hidden text-ellipsis"><span dir="auto" class="max-w-max min-w-0 flex-[1_1_4rem] truncate">${display}</span><span class="streamer shrink-0 pl-1 text-on-surface-variant">(${username})</span></span>`
+
+test('a member list name fits its row, with the whole name in its title', async () => {
+  const row = (u: ReturnType<typeof user>, color?: string) =>
+    renderToStaticMarkup(<MemberName user={u} color={color} />)
+  const cls = 'class="streamer min-w-0 flex-1 truncate text-sm"'
+  expect(row(user('bob', { display_name: 'Robert' }))).toBe(
+    `<span title="Robert (bob)" ${cls}>${FITTED('Robert', 'bob')}</span>`
+  )
+  expect(row(user('alice', { display_name: 'Alice' }), '#ff0000')).toBe(
+    `<span title="Alice" style="color:#ff0000" ${cls}>Alice</span>`
+  )
+  Object.assign(initial, { streamer: true })
+  expect(row(user('bob', { display_name: 'Robert' })).includes('title=')).toBe(false)
+  Object.assign(initial, {
+    streamer: false,
+    profanityOn: true,
+    profanityReady: true,
+    me: me('alice'),
+  })
+  await setMasking(true, () => Promise.resolve(t => t.replace(/shit/g, '****')))
+  try {
+    expect(row(user('shit', { display_name: 'Robert' }))).toContain('title="Robert (****)"')
+    expect(row(user('alice', { display_name: 'shit' }))).toContain('title="shit (alice)"')
+    const revealed = (username: string) =>
+      renderToStaticMarkup(
+        <MaskedWords open={[nameRevealKey(username)]}>
+          <MemberName user={user('shit', { display_name: 'shit head' })} />
+        </MaskedWords>
+      )
+    expect(revealed('shit')).toContain('title="shit head (shit)"')
+    expect(revealed('shit').includes('data-masked-word')).toBe(false)
+    expect(revealed('fuck')).toContain('title="**** head (****)"')
+  } finally {
+    resetMasking()
+  }
+})
+
 const impostor = user('bob', { display_name: 'alice' })
 
 const router = {
@@ -98,13 +142,21 @@ test('text and mentions name the account a display name belongs to', () => {
   expect(render(<NameWithUsername user={hook} />)).toBe('Deploy bot')
 })
 
-test('message headers show the username next to a display name', () => {
+test('message headers show the username next to a display name, fitted to the row', () => {
   const html = render(
     <AuthorRow author={impostor} server={null} size={36} meta={null}>
       hi
     </AuthorRow>
   )
-  expect(html).toContain(USERNAME_AFTER('alice', 'bob'))
+  expect(html).toContain(`title="alice (bob)" role="button"`)
+  expect(html).toContain(FITTED('alice', 'bob'))
+  Object.assign(initial, { streamer: true })
+  const streamer = render(
+    <AuthorRow author={impostor} server={null} size={36} meta={null}>
+      hi
+    </AuthorRow>
+  )
+  expect(streamer.includes('title="alice (bob)"')).toBe(false)
 })
 
 test('join and leave lines show the username next to a display name', () => {

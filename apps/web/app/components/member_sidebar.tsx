@@ -10,7 +10,7 @@ import { UserAvatar } from './user_avatar'
 import { longPress } from './context_menu'
 import { Badge, profileTrigger } from './profile_card'
 import { Sentinel } from './ui'
-import { NameWithUsername } from './display_name'
+import { FitName } from './display_name'
 import { TimeoutBadge, useMemberTimeout } from './timeout_dialog'
 
 const byName = (a: Member, b: Member) => a.display_name.localeCompare(b.display_name)
@@ -61,6 +61,15 @@ function useWindowed(items: Item[]) {
   const range = visibleRange(prefix, port.top, port.height, OVERSCAN)
   return { ref, range }
 }
+
+// A row's name, sized to the room the badges leave; its title has the whole name.
+export const MemberName = ({ user, color }: { user: UserRef; color?: string }) => (
+  <FitName
+    user={user}
+    style={color === undefined ? undefined : { color }}
+    className="streamer min-w-0 flex-1 truncate text-sm"
+  />
+)
 
 function MemberTimeout({ server, username }: { server: string; username: string }) {
   const t = useMemberTimeout(server, username)
@@ -150,12 +159,7 @@ export default function MemberSidebar() {
           avatarColor={m.avatar_color}
           size={28}
         />
-        <span
-          style={{ color: roleColor(detail.roles, m.role_ids) }}
-          className="streamer min-w-0 flex-1 truncate text-sm"
-        >
-          <NameWithUsername user={m} />
-        </span>
+        <MemberName user={m} color={roleColor(detail.roles, m.role_ids)} />
         <MemberTimeout server={detail.name} username={m.username} />
         {m.is_creator && <Badge tone="tertiary">Creator</Badge>}
         {m.is_admin && <Badge tone="primary">Admin</Badge>}
@@ -180,9 +184,7 @@ export default function MemberSidebar() {
         avatarColor={u.avatar_color}
         size={28}
       />
-      <span className="streamer min-w-0 flex-1 truncate text-sm">
-        <NameWithUsername user={u} />
-      </span>
+      <MemberName user={u} />
     </div>
   )
 
