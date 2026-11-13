@@ -24,7 +24,7 @@ import {
 } from '../lib/openapi'
 import { holdEscape } from '../lib/palette_store'
 import { sharing } from '../lib/platform'
-import { useStore } from '../lib/store'
+import { sessionMark, useStore } from '../lib/store'
 import { CodeBlock } from './code_block'
 import { SettingSwitch } from './admin_panel'
 import { dangerBtn, filledBtn, filledDangerBtn, iconBtn, textBtn, useCopied } from './ui'
@@ -409,8 +409,12 @@ export function ApiConsole({
     setPending(null)
     setBusy(true)
     setFailure(null)
+    const at = sessionMark()
     const note = (status: number) =>
-      noteRequest({ op: op.id, method: op.method, path: op.path, status, at: Date.now(), values })
+      noteRequest(
+        { op: op.id, method: op.method, path: op.path, status, at: Date.now(), values },
+        at
+      )
     try {
       const out = await sendRequest(request)
       setRes(out)

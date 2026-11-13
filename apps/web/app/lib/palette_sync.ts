@@ -22,7 +22,7 @@ import {
   messageDocId,
   type IndexDoc,
 } from './palette_index'
-import { loadPalettePrefs, usePaletteUi } from './palette_store'
+import { closePalette, closePalettePoll, loadPalettePrefs, usePaletteUi } from './palette_store'
 import { tapWs, useStore } from './store'
 import type { RChatState } from './store_types'
 import type { Member, Message, UserRef, WsEvent } from './types'
@@ -560,10 +560,15 @@ const reset = () => {
 }
 
 // A new account (or none, after logout): the previous account's device copy is removed, never
-// saved again. Runs at once, so changes that follow each other can't interleave.
+// saved again, and what it had open in the palette is closed. Runs at once, so changes that
+// follow each other can't interleave.
 const switchOwner = (who: string | null, guest: boolean) => {
   const before = ownerPrefix
   const hadAccount = owner !== null && owner !== 'guest'
+  if (idOf(who) !== ownerId) {
+    closePalette()
+    closePalettePoll()
+  }
   reset()
   if (before && hadAccount) void wipeDevice(before)
   owner = who

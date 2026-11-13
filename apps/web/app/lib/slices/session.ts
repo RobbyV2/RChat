@@ -78,14 +78,19 @@ import { SELF_AUDIO_IDLE } from '../voice_layout'
 import { trimWindow } from '../window'
 import {
   Banned,
+  Ended,
   type GetState,
   type Handlers,
   PAGE,
   type SetState,
   emptyPage,
   emptySearch,
+  endSession,
   errorText,
+  inSession,
+  live,
   serverKey,
+  sessionMark,
 } from './ctx'
 import { applyEmbeds, dmKey, type messagesSlice } from './messages'
 import type { presenceSlice } from './presence'
@@ -226,6 +231,7 @@ export type SessionDeps = Pick<
     readsHub: Pick<Reads, 'forget' | 'ready'>
     messagesHub: Pick<Messages, 'forget'>
     serversHub: Pick<Servers, 'forget'>
+    pollsHub: { forget: () => void }
   }
 
 export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) => {
@@ -264,6 +270,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     openMessageAt,
     pinSelf,
     placeAnchor,
+    pollsHub,
     presenceHub,
     pruneServers,
     putServer,
@@ -358,6 +365,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   const pruneScopes = async () => {
     if (!notifySynced) return
+    const at = sessionMark()
     const owner = notifyOwner()
     const start = get()
     const prefs = start.notifyPrefs
@@ -371,7 +379,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     } catch {
       return
     }
-    if (!notifySynced || notifyOwner() !== owner) return
+    if (at !== sessionMark() || !notifySynced || notifyOwner() !== owner) return
     const s = get()
     const members = new Set(serverNames(s))
     const dms = new Set(s.dms.map(d => d.id))
@@ -401,7 +409,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       return null
     }
     const username = me?.username ?? null
-    const still = () => (get().me?.username ?? null) === username && (!!get().me || get().guest)
+    const at = sessionMark()
+    const still = () =>
+      at === sessionMark() &&
+      (get().me?.username ?? null) === username &&
+      (!!get().me || get().guest)
     const failed: string[] = []
     if (want.has('appearOffline') && me && doc.appearOffline !== undefined) {
       try {
@@ -487,12 +499,15 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   const applyStashedConfig = async () => {
     const stashed = takeStashedConfig()
     if (!stashed || !stashed.keys.length) return
+    const at = sessionMark()
     const error = await applyConfigDoc(stashed.doc, stashed.keys)
+    if (at !== sessionMark()) return
     if (error) fail(new Error(error))
     else toast('Config applied')
   }
 
-  const syncLayout = async (username: string) => {
+  const syncLayout = async () => {
+    const at = sessionMark()
     const { servers } = get().layout
     const asked = bootDms(get().layout, PAGE)
     try {
@@ -501,7 +516,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     } catch {
       return
     }
-    if (!sameUser(username)) return
+    if (at !== sessionMark()) return
     const s = get()
     const dmIds = knownDms(
       s.layout,
@@ -512,6 +527,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     pinSelf()
     notifySynced = true
     await pruneScopes()
+    if (at !== sessionMark()) return
     await applyStashedConfig()
   }
 
@@ -530,15 +546,15 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   }
 
   const loadBlocked = async () => {
-    const username = get().me?.username
-    if (!username || get().guest) return
+    if (!get().me || get().guest) return
+    const at = sessionMark()
     let names: unknown
     try {
       names = await api.blockedUsernames()
     } catch {
       return
     }
-    if (!sameUser(username) || !Array.isArray(names)) return
+    if (at !== sessionMark() || !Array.isArray(names)) return
     setBlocked(blockedSet(names.filter((n): n is string => typeof n === 'string')))
   }
 
@@ -610,20 +626,25 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     pinSelf()
     if (resume.servers) void get().loadMoreServers()
     if (resume.dms) void get().loadMoreDms()
-    if (!same) void syncLayout(fresh.username)
+    if (!same) void syncLayout()
     if (!same) void loadBlocked()
     if (!same) void friendsHub.loadSummary()
     if (!same) void selectionHub.loadJobs()
   }
 
-  const refetchMe = () =>
-    api
+  const refetchMe = () => {
+    const at = sessionMark()
+    return api
       .me()
-      .then(me => applyMe(me, true))
+      .then(me => {
+        if (at === sessionMark()) applyMe(me, true)
+      })
       .catch(e => {
+        if (at !== sessionMark()) return
         if (endsSession(e)) expireSession()
         else fail(e)
       })
+  }
 
   let meRetry: ReturnType<typeof setTimeout> | null = null
   let meAttempt = 0
@@ -645,9 +666,10 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     meRetry = null
     if (recovering || get().me || !get().token) return
     recovering = true
+    const at = sessionMark()
     try {
       const me = await api.me()
-      if (!get().token) return
+      if (!get().token || at !== sessionMark()) return
       meAttempt = 0
       applyMe(me, false)
       set({ bootError: null })
@@ -655,7 +677,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       void loadUnreads()
       await bootUrl()
     } catch (e) {
-      retryMe(e)
+      if (at === sessionMark()) retryMe(e)
     } finally {
       recovering = false
     }
@@ -674,7 +696,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       const key = viewKey(view)
       if (detached(key)) {
         if (view.kind === 'channel') {
-          const detail = await api.getServer(view.server)
+          const detail = await live(api.getServer(view.server))
           putServer(view.server, detail)
         }
         return
@@ -707,10 +729,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }))
       askP2p(msgs)
       if (view.kind === 'channel') {
-        const detail = await api.getServer(view.server)
+        const detail = await live(api.getServer(view.server))
         putServer(view.server, detail)
       }
     } catch (e) {
+      if (e instanceof Ended) return
       if (view.kind === 'channel' && lockedOut(e)) guestLocked(view.server)
       else console.error('degraded poll', e)
     }
@@ -735,12 +758,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     if (get().me) void loadUnreads()
     void pruneServers()
       .catch(() => {})
-      .then(() => {
-        const { view, members } = get()
-        if (view?.kind !== 'channel') return
-        if (members[view.server]) void get().loadMembers(view.server, true)
-        refreshMemberInfo(view.server)
-      })
+      .then(
+        inSession(() => {
+          const { view, members } = get()
+          if (view?.kind !== 'channel') return
+          if (members[view.server]) void get().loadMembers(view.server, true)
+          refreshMemberInfo(view.server)
+        })
+      )
   }
 
   const catchUp = () => {
@@ -961,13 +986,17 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   // `retrying`: a boot that tries again after a 429, so it must not fall back yet.
   const resolveUrl = async (nav: 'replace' | 'none', retrying = false) => {
     if (readInvite() || readConfigLink() || (!get().me && !get().guest)) return
+    const at = sessionMark()
+    const ended = () => at !== sessionMark()
     const target = parsePath(window.location.pathname)
     const fallback = async () => {
       await readsHub.ready()
+      if (ended()) return
       return leaveForSafety()
     }
     if (target?.kind === 'message') {
       await readsHub.ready()
+      if (ended()) return
       const opened = await openMessageAt(target.id, 'replace').catch((e: unknown) => {
         fail(e)
         return true
@@ -989,11 +1018,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
           .catch(() => {})
       if (!known() && !closedDms.has(target.dmId)) return fallback()
       await readsHub.ready()
+      if (ended()) return
       return get().openDm(target.dmId, nav)
     }
     let detail: ServerDetail
     try {
-      detail = (await Promise.all([fetchServer(target.server), ensureMembership(target.server)]))[0]
+      detail = (
+        await live(Promise.all([fetchServer(target.server), ensureMembership(target.server)]))
+      )[0]
     } catch (e) {
       if (e instanceof Banned) {
         const now = get().view
@@ -1019,6 +1051,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     if (cur?.kind === 'channel' && cur.server === target.server && cur.channelId === channel.id)
       return syncUrl(cur, 'replace')
     await readsHub.ready()
+    if (ended()) return
     return get().openChannel(target.server, channel.id, channel.id === wanted ? nav : 'replace')
   }
 
@@ -1062,8 +1095,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     get().setViewing(null)
   }
 
-  const sameUser = (username: string) => get().me?.username === username
-
   const enterView = (view: View) => {
     const key = viewKey(view)
     const before = get().view
@@ -1090,16 +1121,18 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     const s = get()
     const here = s.view?.kind === 'channel' && s.view.channelId === channelId
     const at = threadRootId ?? id
+    const mark = sessionMark()
     set({ panel: null })
     if (here) await get().jumpTo(viewKey({ kind: 'channel', server, channelId }), at)
     else await get().openServer(server, channelId, nav, at)
-    if (threadRootId === null) return
+    if (threadRootId === null || mark !== sessionMark()) return
     const root = (get().messages[`c${channelId}`] ?? []).find(m => m.id === threadRootId)
     if (root) await get().openThread(root, id)
   }
 
   // Drops the timers, queues and caches of the signed-in session.
   const forgetSession = () => {
+    endSession()
     dropLinkCards()
     hideTypers([])
     uiHub.forget()
@@ -1114,6 +1147,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     serverPager.reset(null)
     presenceHub.forget()
     serversHub.forget()
+    pollsHub.forget()
   }
 
   const actions: Pick<
@@ -1236,7 +1270,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     patchMe: (avatar_kind, avatar_color, banner_color) =>
       act(async () => {
-        const user = await api.patchMe(avatar_kind, avatar_color, banner_color)
+        const user = await live(api.patchMe(avatar_kind, avatar_color, banner_color))
         set(s => (s.me ? { me: { ...s.me, ...user } } : {}))
       }),
 
@@ -1268,7 +1302,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     setAppearOffline: appearOffline =>
       act(async () => {
-        await api.setAppearOffline(appearOffline)
+        await live(api.setAppearOffline(appearOffline))
         set(s => (s.me ? { me: { ...s.me, appear_offline: appearOffline } } : {}))
       }),
 
@@ -1286,11 +1320,13 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     },
 
     changePassword: async (current, next, kind) => {
+      const at = sessionMark()
       try {
         await api.changePassword(current, next)
-        set(s => (s.me ? { me: { ...s.me, password_kind: kind } } : {}))
+        if (at === sessionMark()) set(s => (s.me ? { me: { ...s.me, password_kind: kind } } : {}))
         return null
       } catch (e) {
+        if (at !== sessionMark()) return errorText(e)
         if (e instanceof ApiError && e.status === 401 && e.message === 'Unauthorized')
           expireSession()
         return errorText(e)
@@ -1500,7 +1536,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         }
       }
       if (!(await viaGrant())) {
-        const { grant } = await api.guestAccess(id, password)
+        const { grant } = await live(api.guestAccess(id, password))
         if (grant) persistGrants({ ...get().guestGrants, [id]: grant })
         await fetchServer(id)
       }
@@ -1512,7 +1548,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     openServer: (name, channelId, nav = 'push', at) =>
       act(async () => {
-        const [detail] = await Promise.all([fetchServer(name), ensureMembership(name)])
+        const [detail] = await live(Promise.all([fetchServer(name), ensureMembership(name)]))
         putServer(name, detail)
         void pruneScopes()
         const target = detail.channels.find(c => c.id === channelId) ?? detail.channels[0]
@@ -1557,7 +1593,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         if (username && !get().dms.some(d => d.id === dmId))
           void get()
             .ensureDms([dmId])
-            .then(() => reopenDm(dmId))
+            .then(inSession(() => reopenDm(dmId)))
             .catch(() => {})
         if (at !== undefined) {
           await loadAround(key, at)
@@ -1609,10 +1645,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       if (!me) return
       const stored = Number(localStorage.getItem(`${LS.lastDm}:${me.username}`))
       const known = () => get().dms.some(d => d.id === stored)
+      const at = sessionMark()
       const go = () => {
         const { dms } = get()
         const target = known() ? stored : (dms.find(d => d.is_self) ?? dms[0])?.id
-        if (target !== undefined && sameUser(me.username)) void get().openDm(target)
+        if (target !== undefined && at === sessionMark()) void get().openDm(target)
       }
       if (known() || !(stored > 0)) go()
       else
@@ -1636,11 +1673,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       ),
 
     blockUser: async username => {
-      const me = get().me
-      if (!me || get().guest) return null
+      if (!get().me || get().guest) return null
+      const at = sessionMark()
       try {
         const b = await api.block(username.trim())
-        if (sameUser(me.username)) noteBlocked(b)
+        if (at === sessionMark()) noteBlocked(b)
         return null
       } catch (e) {
         return errorText(e)
@@ -1649,10 +1686,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     unblockUser: (username, name) =>
       act(async () => {
-        const me = get().me
-        if (!me) return
-        await api.unblock(username)
-        if (!sameUser(me.username)) return
+        if (!get().me) return
+        await live(api.unblock(username))
         noteUnblocked(username)
         if (name) toast('Unblocked', name)
       }),
@@ -1667,10 +1702,12 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         action: () =>
           void get()
             .blockUser(user.username)
-            .then(err => {
-              if (err) fail(new Error(err))
-              else toast('Blocked', user.display_name)
-            }),
+            .then(
+              inSession(err => {
+                if (err) fail(new Error(err))
+                else toast('Blocked', user.display_name)
+              })
+            ),
       })
     },
 
@@ -1716,7 +1753,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     persistGuestServers,
     refetchMe,
     rememberGuestName,
-    sameUser,
     syncUrl,
     forgetSession,
   }

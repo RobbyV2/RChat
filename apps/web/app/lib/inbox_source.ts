@@ -2,6 +2,7 @@ import type { InboxQuery } from './api'
 import { api } from './instances'
 import { DM_PLACE, entryOf, type InboxAdapter, type InboxEntry, type InboxView } from './inbox'
 import { groupKindsShown, pingShown, type NotifyPrefs } from './notify'
+import { live, sessionMark } from './slices/ctx'
 import { useStore } from './store'
 import type { GroupKind, InboxItem, InboxUntil } from './types'
 
@@ -16,9 +17,13 @@ const queryOf = (view: InboxView): InboxQuery => ({
 
 const viewKey = (view: InboxView) => `${view.unread}\n${view.kind ?? ''}\n${view.place ?? ''}`
 
-// The newest ids of the first page of each view: "Mark all as read" goes up to them (or to
-// newer entries shown since), never past what the user saw.
-const shownUntil = new Map<string, InboxUntil>()
+// The newest ids of the first page of each view, per session: "Mark all as read" goes up to them
+// (or to newer entries shown since), never past what the user saw.
+let bounds = { at: sessionMark(), views: new Map<string, InboxUntil>() }
+const shownUntil = () => {
+  if (bounds.at !== sessionMark()) bounds = { at: sessionMark(), views: new Map() }
+  return bounds.views
+}
 
 export const untilFor = (base: InboxUntil | undefined, shown: InboxEntry[]): InboxUntil => {
   const out = { ...(base ?? { pings: 0, groups: 0, friends: 0 }) }
@@ -51,8 +56,8 @@ export const instanceInbox: InboxAdapter = {
   load: async (view, cursor) => {
     let at = cursor
     for (let i = 0; ; i++) {
-      const page = await api.inbox(queryOf(view), at)
-      if (page.until) shownUntil.set(viewKey(view), page.until)
+      const page = await live(api.inbox(queryOf(view), at))
+      if (page.until) shownUntil().set(viewKey(view), page.until)
       const prefs = useStore.getState().notifyPrefs
       const items = view.unread ? page.items.filter(it => itemNotifies(prefs, it)) : page.items
       if (items.length || page.next === null || i + 1 >= EMPTY_PAGES_MAX)
@@ -65,7 +70,7 @@ export const instanceInbox: InboxAdapter = {
     await api.inboxRead(item.source, item.id)
   },
   markAll: async (view, shown) => {
-    const until = untilFor(shownUntil.get(viewKey(view)), shown)
+    const until = untilFor(shownUntil().get(viewKey(view)), shown)
     await api.inboxReadAll(until, queryOf(view))
   },
   open: entry => {

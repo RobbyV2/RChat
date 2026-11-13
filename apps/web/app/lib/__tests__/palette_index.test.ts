@@ -13,6 +13,7 @@ import {
   startIndexSync,
   useIndexStatus,
 } from '../palette_sync'
+import { usePaletteUi } from '../palette_store'
 import { resetSessionCaches, useStore } from '../store'
 import type { Message, WsEvent } from '../types'
 import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
@@ -403,6 +404,17 @@ describe('following the app', () => {
     expect(ids('after')).toEqual(['m45'])
     // What is loaded in that conversation stays.
     expect(ids('otherworld')).toEqual(['m4'])
+  })
+
+  test('what the palette had open for an account is closed when the account changes', async () => {
+    start('loaded')
+    await __sync.settled()
+    usePaletteUi.setState({ open: true, text: 'alice', poll: { kind: 'channel', id: 1 } })
+    useStore.setState({ me: null, token: null })
+    expect(usePaletteUi.getState()).toMatchObject({ open: false, text: '', poll: null })
+    usePaletteUi.setState({ poll: { kind: 'channel', id: 1 } })
+    useStore.setState({ token: 'tok', me: me('bob') })
+    expect(usePaletteUi.getState().poll).toBeNull()
   })
 
   test('logout and account switch remove the device copy and never save it again', async () => {

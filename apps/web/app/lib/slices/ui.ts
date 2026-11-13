@@ -74,7 +74,17 @@ import { type ShowSpoilers, parseSpoilers, spoilersKey, spoilersValue } from '..
 import type { RChatState } from '../store_types'
 import { type TimeoutWire, fromWire } from '../timeouts'
 import { parseTyping, typingKey, typingValue } from '../typing'
-import { Banned, type GetState, type SetState, emptySearch, errorText, readScoped } from './ctx'
+import {
+  Banned,
+  Ended,
+  type GetState,
+  type SetState,
+  emptySearch,
+  errorText,
+  inSession,
+  readScoped,
+  sessionMark,
+} from './ctx'
 import { isSelfDm } from './messages'
 import type { StoreApi } from 'zustand'
 
@@ -127,7 +137,11 @@ export const confirmKick = (server: string, username: string, after?: () => void
       title: 'Kick Member',
       body: 'Kick this member? They are removed from the server but can join again.',
       confirm: 'Kick',
-      action: () => void store().getState().kickMember(server, username).then(after),
+      action: () =>
+        void store()
+          .getState()
+          .kickMember(server, username)
+          .then(after && inSession(after)),
     })
 
 export const confirmTransfer = (server: string, username: string) =>
@@ -142,7 +156,11 @@ export const confirmTransfer = (server: string, username: string) =>
 
 export const revokeAdminFor = (server: string, username: string, after?: () => void) => {
   const s = store().getState()
-  const revoke = () => void store().getState().revokeAdmin(server, username).then(after)
+  const revoke = () =>
+    void store()
+      .getState()
+      .revokeAdmin(server, username)
+      .then(after && inSession(after))
   if (s.me?.username !== username) {
     revoke()
     return
@@ -180,7 +198,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   let limitedAt = 0
 
   const fail = (e: unknown) => {
-    if (e instanceof Banned) return
+    if (e instanceof Banned || e instanceof Ended) return
     if (e instanceof ApiError && e.status === 429) limitedAt = Date.now()
     const message = errorText(e)
     set({ error: message })
@@ -190,10 +208,11 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   }
 
   const act = async (fn: () => Promise<void>) => {
+    const at = sessionMark()
     try {
       await fn()
     } catch (e) {
-      fail(e)
+      if (at === sessionMark()) fail(e)
     }
   }
 

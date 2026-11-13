@@ -1,4 +1,5 @@
 import { canChangeRole, canModerate, canPromote, canRevoke, canTransferTo } from './rules'
+import { sessionMark } from './slices/ctx'
 import { Perm, hasPerm, type Profile, type Role, type UserRef } from './types'
 
 const PROFILE_CACHE = 100
@@ -9,7 +10,9 @@ export const profileKey = (username: string, server: string | null) =>
 
 export const cachedProfile = (key: string) => profiles.get(key) ?? null
 
-export const rememberProfile = (key: string, profile: Profile) => {
+// `at`: the session that asked; a profile that answers after it ended is not kept.
+export const rememberProfile = (key: string, profile: Profile, at: object) => {
+  if (at !== sessionMark()) return
   profiles.delete(key)
   profiles.set(key, profile)
   if (profiles.size > PROFILE_CACHE) profiles.delete(profiles.keys().next().value as string)

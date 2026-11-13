@@ -78,7 +78,16 @@ import { remarkMask } from '../lib/profanity'
 import { markSpoilers, spoilerParts } from '../lib/spoilers'
 import { hideSpoilers, type MdNode as SpoilerNode } from '../lib/spoiler_tree'
 import { openActionMenu } from '../lib/actions/menu'
-import { groupPills, knownMentions, useMask, userRefFor, useStore } from '../lib/store'
+import {
+  Ended,
+  errorText,
+  groupPills,
+  knownMentions,
+  sessionMark,
+  useMask,
+  userRefFor,
+  useStore,
+} from '../lib/store'
 import { useChatSource } from './chat_source'
 import type { Embed, Message, MessageMedia, UserRef } from '../lib/types'
 import { longPress } from './context_menu'
@@ -611,8 +620,10 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
     ctl.current = job
     setFailed(null)
     setProgress({ got: 0, total: size ?? 0 })
+    const at = sessionMark()
     fetchFile(c.signal)
       .then(async got => {
+        if (at !== sessionMark()) return
         if (canText && !save) {
           const file = await blobText(got.blob)
           keepText(`p2p:${messageId}`, file && { ...file, verified: got.verified })
@@ -629,7 +640,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
       })
       .catch((e: unknown) => {
         const text = e instanceof Error ? e.message : String(e)
-        if (text === CANCELED) return
+        if (text === CANCELED || at !== sessionMark()) return
         setFailed(text)
         if (save) p2p.onError(text)
         else console.error('p2p fetch', e)
@@ -930,9 +941,9 @@ function MediaAttachment({
     return <SpoilerCover onReveal={() => setRevealed(true)} />
   }
   const save = () =>
-    void saveMedia(id, server, filename).catch((err: unknown) =>
-      useStore.getState().setError(err instanceof Error ? err.message : String(err))
-    )
+    void saveMedia(id, server, filename).catch((err: unknown) => {
+      if (!(err instanceof Ended)) useStore.getState().setError(errorText(err))
+    })
   if (lang !== null && text === undefined) return <CodePreviewLoading filename={filename} />
   if (lang !== null && text) {
     const iconBtn =

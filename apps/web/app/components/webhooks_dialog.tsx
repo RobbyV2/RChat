@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Check, ChevronDown, Copy, KeyRound, Pencil, Plus, Power, Send, Trash2 } from 'lucide-react'
 import { api, shareOrigin } from '../lib/instances'
-import { errorText, useStore } from '../lib/store'
+import { errorText, inSession, useStore } from '../lib/store'
 import { sharing } from '../lib/platform'
 import { fullTimeOf, relativeTime } from '../lib/timestamps'
 import type { AvatarKind, Channel, UserRef } from '../lib/types'
@@ -762,12 +762,14 @@ function Outgoing({ server }: { server: string }) {
       setTaking(null)
     })
 
-  const test = (hook: OutgoingWebhook) =>
+  const test = (hook: OutgoingWebhook) => {
+    const queued = inSession(showToast)
     void run(async () => {
       await api.testOutgoing(server, hook.id)
       setLog(hook.id)
-      showToast('Test event queued')
+      queued('Test event queued')
     }).then(setError)
+  }
 
   const newSecret = (hook: OutgoingWebhook) =>
     takesOver(hook.creator, me)

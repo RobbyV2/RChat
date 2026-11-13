@@ -3,6 +3,7 @@
 import type { PollReq } from './api'
 import { api } from './instances'
 import { mergePoll } from './polls'
+import { live, sessionMark } from './slices/ctx'
 import type { RChatState } from './store_types'
 import type { Message, Poll, WsEvent } from './types'
 
@@ -35,14 +36,18 @@ export const pollsSlice = (d: PollsDeps) => {
       id,
       setTimeout(() => {
         waiting.delete(id)
+        const at = sessionMark()
         api.poll(id).then(
-          poll => setPoll(id, poll),
+          poll => {
+            if (at === sessionMark()) setPoll(id, poll)
+          },
           () => {}
         )
       }, POLL_FETCH_MS)
     )
   }
-  const run = (id: number, call: () => Promise<Poll>) => act(async () => setPoll(id, await call()))
+  const run = (id: number, call: () => Promise<Poll>) =>
+    act(async () => setPoll(id, await live(call())))
 
   const actions = {
     createPoll: async (target: PollTarget, req: PollReq): Promise<string | null> => {
@@ -61,7 +66,7 @@ export const pollsSlice = (d: PollsDeps) => {
     retractVote: (id: number) => run(id, () => api.retractVote(id)),
     addPollOption: async (id: number, text: string, emoji: string | null) => {
       try {
-        setPoll(id, await api.addPollOption(id, text, emoji))
+        setPoll(id, await live(api.addPollOption(id, text, emoji)))
         return null
       } catch (e) {
         return d.errorText(e)
@@ -81,5 +86,11 @@ export const pollsSlice = (d: PollsDeps) => {
     return true
   }
 
-  return { actions, onEvent }
+  // The refetches the ended session asked for are never sent.
+  const forget = () => {
+    for (const timer of waiting.values()) clearTimeout(timer)
+    waiting.clear()
+  }
+
+  return { actions, onEvent, forget }
 }

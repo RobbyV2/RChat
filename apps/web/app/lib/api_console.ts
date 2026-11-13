@@ -15,6 +15,7 @@ import {
   type HistoryEntry,
   type Operation,
 } from './openapi'
+import { sessionMark } from './slices/ctx'
 
 // The operations of this instance's OpenAPI document (loaded once per session and account) and
 // the console's request history per account.
@@ -82,7 +83,9 @@ export const loadApiHistory = (owner: string | null) => {
   )
 }
 
-export const noteRequest = (entry: HistoryEntry) => {
+// `at`: the session that sent it; a request that answers after it ended is not kept.
+export const noteRequest = (entry: HistoryEntry, at: object) => {
+  if (at !== sessionMark()) return
   const { owner, history } = useApiDoc.getState()
   const next = pushHistory(history, entry)
   useApiDoc.setState({ history: next })

@@ -4,6 +4,7 @@
 import type { BulkDeleteReq } from './api'
 import { ApiError } from './api'
 import { api } from './instances'
+import { Ended, live, sessionMark } from './slices/ctx'
 import { canForward } from './forward'
 import { messageLinkUrl } from './message_links'
 import { canPin, isPinned } from './pins'
@@ -137,10 +138,12 @@ const fetchPage = (scope: string, after: number) => {
 export const exportBackoff = { ms: 1000 }
 
 // One export page, tried again (up to 5 times, waiting longer each time) when rate limited.
-const fetchAfter = async (scope: string, after: number) => {
+// Nothing is asked once the session `at` ended.
+const fetchAfter = async (scope: string, after: number, at: object) => {
   for (let tries = 0; ; tries++) {
+    if (at !== sessionMark()) throw new Ended('The session ended')
     try {
-      return await fetchPage(scope, after)
+      return await live(fetchPage(scope, after))
     } catch (e) {
       if (!(e instanceof ApiError) || e.status !== 429 || tries >= 5) throw e
       await new Promise(r => setTimeout(r, exportBackoff.ms * 2 ** tries))
@@ -167,7 +170,7 @@ export const selectionSlice = (d: SelectionDeps) => {
   const estimate = (scope: string, author: string | null = null) => {
     const req: BulkDeleteReq = { scope, all: true, dry_run: true }
     if (author !== null) req.author = author
-    api.bulkDelete(req).then(
+    live(api.bulkDelete(req)).then(
       r =>
         set(s => {
           const sel = s.selection
@@ -192,7 +195,7 @@ export const selectionSlice = (d: SelectionDeps) => {
   const deletePicked = async (scope: string, ids: number[], threadRootId: number | null) => {
     let deleted = 0
     for (const part of chunked(ids, IDS_MAX)) {
-      const r = await api.bulkDelete({ scope, ids: part })
+      const r = await live(api.bulkDelete({ scope, ids: part }))
       d.dropDeleted(r.ids, threadRootId, scopePlace(get(), scope).server)
       deleted += r.deleted
     }
@@ -204,7 +207,7 @@ export const selectionSlice = (d: SelectionDeps) => {
     const req: BulkDeleteReq = { scope: sel.scope, all: true, except: [...sel.except] }
     if (upto !== null && upto !== undefined) req.before = upto + 1
     if (author !== undefined) req.author = author
-    const r = await api.bulkDelete(req)
+    const r = await live(api.bulkDelete(req))
     if (r.job) noteJob(r.job)
   }
 
@@ -213,12 +216,13 @@ export const selectionSlice = (d: SelectionDeps) => {
     let after = 0
     let count = 0
     let first = true
+    const at = sessionMark()
     if (format === 'json')
       parts.push(
         `{"version":${EXPORT_VERSION},"scope":${JSON.stringify(sel.scope)},"exported_at":${Math.floor(Date.now() / 1000)},"messages":[`
       )
     for (;;) {
-      const page = await fetchAfter(sel.scope, after)
+      const page = await fetchAfter(sel.scope, after, at)
       const kept = page.filter(m => isSelected(sel, m))
       if (kept.length) {
         const text =
@@ -242,13 +246,14 @@ export const selectionSlice = (d: SelectionDeps) => {
 
   const busy = async (label: string, fn: () => Promise<void>) => {
     if (get().selectionBusy) return
+    const at = sessionMark()
     set({ selectionBusy: label })
     try {
       await fn()
     } catch (e) {
       d.fail(e)
     } finally {
-      set({ selectionBusy: null })
+      if (at === sessionMark()) set({ selectionBusy: null })
     }
   }
 
@@ -298,12 +303,14 @@ export const selectionSlice = (d: SelectionDeps) => {
           return
         }
         void busy('Counting messages', async () => {
-          const r = await api.bulkDelete({
-            scope: sel.scope,
-            all: true,
-            except: [...sel.except],
-            dry_run: true,
-          })
+          const r = await live(
+            api.bulkDelete({
+              scope: sel.scope,
+              all: true,
+              except: [...sel.except],
+              dry_run: true,
+            })
+          )
           if (!r.deletable) {
             get().setError('There are no messages here you can delete')
             return
@@ -335,13 +342,15 @@ export const selectionSlice = (d: SelectionDeps) => {
           .filter(m => mod || m.author.username === me)
           .map(m => m.id)
         void busy('Counting messages', async () => {
-          const r = await api.bulkDelete({
-            scope: sel.scope,
-            all: true,
-            author,
-            except: [...sel.except],
-            dry_run: true,
-          })
+          const r = await live(
+            api.bulkDelete({
+              scope: sel.scope,
+              all: true,
+              author,
+              except: [...sel.except],
+              dry_run: true,
+            })
+          )
           if (!r.deletable && !extra.length) {
             get().setError('There are no messages here you can delete')
             return
@@ -390,7 +399,9 @@ export const selectionSlice = (d: SelectionDeps) => {
         const s = get()
         const picked = pickedMessages(s).filter(canPin)
         if (!s.selection || picked.length > PIN_MAX || !canPinIn(s, s.selection.scope)) return
+        const at = sessionMark()
         for (const m of picked) {
+          if (at !== sessionMark()) return
           if (pin && !isPinned(m)) await get().pinMessage(m.id)
           if (!pin && isPinned(m)) await get().unpinMessage(m.id)
         }
@@ -449,7 +460,7 @@ export const selectionSlice = (d: SelectionDeps) => {
       const job = get().bulkJobs[scope]
       if (!job || job.status !== 'running') return
       try {
-        noteJob(await api.cancelBulkJob(job.id))
+        noteJob(await live(api.cancelBulkJob(job.id)))
       } catch (e) {
         d.fail(e)
       }
@@ -458,7 +469,7 @@ export const selectionSlice = (d: SelectionDeps) => {
 
   const loadJobs = async () => {
     try {
-      const jobs = await api.bulkJobs()
+      const jobs = await live(api.bulkJobs())
       const running = jobs.filter(j => j.status === 'running')
       set({ bulkJobs: Object.fromEntries(running.map(j => [j.scope, j])) })
     } catch {

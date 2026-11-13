@@ -3,6 +3,7 @@
 // pings and WS events.
 
 import { api } from './instances'
+import { Ended, live, sessionMark } from './slices/ctx'
 import { addPing, clearPings, pingUntil, setScopePings } from './pings'
 import {
   FRIENDS_SCOPE,
@@ -61,16 +62,16 @@ export const friendsSlice = (d: FriendsDeps) => {
 
   let summaryAsked = 0
   const loadSummary = async () => {
-    const username = get().me?.username
-    if (!username || get().guest) return
+    if (!get().me || get().guest) return
     const asked = ++summaryAsked
+    const at = sessionMark()
     let sum: Awaited<ReturnType<typeof api.friendSummary>>
     try {
       sum = await api.friendSummary()
     } catch {
       return
     }
-    if (asked !== summaryAsked || !mine(username) || typeof sum !== 'object' || !sum) return
+    if (asked !== summaryAsked || at !== sessionMark() || typeof sum !== 'object' || !sum) return
     const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
     set(s => ({
       friendCounts: { incoming: n(sum.incoming), outgoing: n(sum.outgoing) },
@@ -200,7 +201,11 @@ export const friendsSlice = (d: FriendsDeps) => {
     // One request per name, in order; resolves to each result.
     sendFriendRequests: async (names: string[]) => {
       const out: Record<string, SendResult> = {}
-      for (const name of names) out[name] = await actions.sendFriendRequest(name)
+      const at = sessionMark()
+      for (const name of names) {
+        out[name] = await actions.sendFriendRequest(name)
+        if (at !== sessionMark()) return out
+      }
       const done = Object.values(out).filter(r => r.ok)
       const only = done.length === 1 && names.length === 1 ? done[0] : null
       if (only?.ok) d.toast(sendLabel(only.status), only.user.display_name)
@@ -217,7 +222,7 @@ export const friendsSlice = (d: FriendsDeps) => {
 
     acceptFriend: (user: UserRef) =>
       act(async () => {
-        await api.acceptFriend(user.username)
+        await live(api.acceptFriend(user.username))
         d.toast('Now friends with', user.display_name)
       }),
 
@@ -233,7 +238,7 @@ export const friendsSlice = (d: FriendsDeps) => {
 
     removeFriend: (user: UserRef) =>
       act(async () => {
-        await api.removeFriend(user.username)
+        await live(api.removeFriend(user.username))
         d.toast('Removed friend', user.display_name)
       }),
 
@@ -248,27 +253,26 @@ export const friendsSlice = (d: FriendsDeps) => {
     },
 
     loadPrivacy: async () => {
-      const username = get().me?.username
-      if (!username || get().guest) return
+      if (!get().me || get().guest) return
+      const at = sessionMark()
       try {
         const raw = await api.privacy()
-        if (mine(username)) set({ privacy: parsePrivacy(raw) })
+        if (at === sessionMark()) set({ privacy: parsePrivacy(raw) })
       } catch (e) {
-        d.fail(e)
+        if (at === sessionMark()) d.fail(e)
       }
     },
 
     setPrivacy: (patch: Partial<NonNullable<RChatState['privacy']>>) =>
       act(async () => {
-        const username = get().me?.username
-        if (!username || get().guest) return
+        if (!get().me || get().guest) return
         const prev = get().privacy
         if (prev) set({ privacy: { ...prev, ...patch } })
         try {
-          const raw = await api.setPrivacy(patch)
-          if (mine(username)) set({ privacy: parsePrivacy(raw) })
+          const raw = await live(api.setPrivacy(patch))
+          set({ privacy: parsePrivacy(raw) })
         } catch (e) {
-          if (mine(username)) set({ privacy: prev })
+          if (!(e instanceof Ended)) set({ privacy: prev })
           throw e
         }
       }),

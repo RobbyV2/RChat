@@ -37,6 +37,7 @@ import { openPollFromPalette } from '../palette_store'
 import { sharing } from '../platform'
 import type { PollTarget } from '../polls_store'
 import { dayEndTs } from '../search'
+import { Ended, live } from '../slices/ctx'
 import {
   myPerms,
   scopeMarkTargets,
@@ -205,15 +206,17 @@ const jumpToDate = async ({ s }: ActionCtx, date: string) => {
   const end = dayEndTs(date.trim())
   if (v?.kind !== 'channel' || end === null) return
   try {
-    const page = await api.search({ server: v.server, channel_id: v.channelId, before_ts: end })
+    const page = await live(
+      api.search({ server: v.server, channel_id: v.channelId, before_ts: end })
+    )
     const hit = page.items[0]
     if (!hit) {
       get().showToast('No messages on or before that day')
       return
     }
     await get().jumpTo(viewKey(v), hit.message.id, true)
-  } catch {
-    get().setError("Couldn't search this channel")
+  } catch (e) {
+    if (!(e instanceof Ended)) get().setError("Couldn't search this channel")
   }
 }
 

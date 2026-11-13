@@ -17,7 +17,7 @@ import {
   type PollDraft,
 } from '../lib/polls'
 import type { PollTarget } from '../lib/polls_store'
-import { useStore } from '../lib/store'
+import { inSession, useStore } from '../lib/store'
 import type { PollKind, ShowResults } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
 import { Chips, Dialog, FieldError, fieldCls, filledBtn, textBtn } from './ui'
@@ -93,10 +93,11 @@ export function CreatePollDialog({ target, onClose }: { target: PollTarget; onCl
       return
     }
     setBusy(true)
+    const close = inSession(onClose)
     const err = await createPoll(target, draftRequest(draft))
     setBusy(false)
     if (err) setError(err)
-    else onClose()
+    else close()
   }
   return (
     <Dialog title="Create poll" onClose={onClose} full>

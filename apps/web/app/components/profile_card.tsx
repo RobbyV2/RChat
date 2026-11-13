@@ -31,12 +31,14 @@ import {
   confirmBan,
   confirmKick,
   confirmTransfer,
+  inSession,
   memberState,
   myPerms,
   myRolePerms,
   noteTimeout,
   type ProfileTarget,
   revokeAdminFor,
+  sessionMark,
   useMask,
   useStore,
 } from '../lib/store'
@@ -227,10 +229,11 @@ function Card({ target }: { target: ProfileTarget }) {
     if (hook) return
     let current = true
     const key = profileKey(username, server)
+    const at = sessionMark()
     api
       .userProfile(username, server)
       .then(p => {
-        rememberProfile(key, p)
+        rememberProfile(key, p, at)
         if (!current) return
         setProfile(p)
         setFailed(false)
@@ -430,7 +433,7 @@ function Card({ target }: { target: ProfileTarget }) {
     const done = assign
       ? s.assignRole(server, role.id, username)
       : s.unassignRole(server, role.id, username)
-    void done.then(() => useStore.getState().refreshMember(server, username))
+    void done.then(inSession(() => useStore.getState().refreshMember(server, username)))
   }
 
   const copyId = () => {

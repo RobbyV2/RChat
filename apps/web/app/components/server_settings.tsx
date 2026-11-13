@@ -8,6 +8,7 @@ import { api } from '../lib/instances'
 import {
   changeableRoles,
   errorText,
+  inSession,
   revokeAdminFor,
   serverAdminPerms,
   useStore,
@@ -101,6 +102,7 @@ export function useMemberSearch(server: string, q: string, admins = false, enabl
 
   const fetchFrom = useCallback(
     async (cursor: string | null, mine: number) => {
+      const showError = inSession(setError)
       setState(s => ({ ...s, loading: true }))
       try {
         const page = await api.listMembers(server, cursor, {
@@ -120,7 +122,7 @@ export function useMemberSearch(server: string, q: string, admins = false, enabl
       } catch (e) {
         if (epoch.current !== mine) return
         setState(s => ({ ...s, loading: false }))
-        setError(errorText(e))
+        showError(errorText(e))
       }
     },
     [server, needle, admins, setError]
@@ -273,16 +275,16 @@ function RoleRow({
         <ColorSwatch
           initial={role.color}
           locked={locked}
-          onCommit={color => void updateRole(server, role.id, { color }).then(after)}
+          onCommit={color => void updateRole(server, role.id, { color }).then(inSession(after))}
         />
         <RoleNameForm
           initial={role.name}
           locked={locked}
-          onRename={name => void updateRole(server, role.id, { name }).then(after)}
+          onRename={name => void updateRole(server, role.id, { name }).then(inSession(after))}
         />
         <span title={noDelete ?? `Delete ${role.name}`} className="shrink-0">
           <button
-            onClick={() => void deleteRole(server, role.id).then(after)}
+            onClick={() => void deleteRole(server, role.id).then(inSession(after))}
             disabled={!!noDelete}
             aria-label={`Delete ${role.name}`}
             title={noDelete ?? `Delete ${role.name}`}
@@ -297,7 +299,7 @@ function RoleRow({
         value={role.perms}
         locked={locked}
         allowed={limit === undefined ? undefined : v => canGrant(limit, false, v)}
-        onChange={v => void updateRole(server, role.id, { perms: v }).then(after)}
+        onChange={v => void updateRole(server, role.id, { perms: v }).then(inSession(after))}
       />
       <label
         title={
@@ -313,7 +315,9 @@ function RoleRow({
           checked={!!role.mentionable}
           disabled={!!locked || noMention}
           onChange={() =>
-            void updateRole(server, role.id, { mentionable: !role.mentionable }).then(after)
+            void updateRole(server, role.id, { mentionable: !role.mentionable }).then(
+              inSession(after)
+            )
           }
           className="accent-primary"
         />
@@ -361,7 +365,7 @@ function RoleCreate({ server, refresh }: { server: string; refresh?: () => void 
   return (
     <RoleCreateForm
       onCreate={(name, color) =>
-        createRole(server, { name, color, perms: 0 }).then(() => refresh?.())
+        createRole(server, { name, color, perms: 0 }).then(inSession(() => refresh?.()))
       }
     />
   )
@@ -388,6 +392,7 @@ function ChannelPermsEditor({
   const [subject, setSubject] = useState('')
 
   const reload = useCallback(async () => {
+    const showError = inSession(setError)
     try {
       const all: ChannelPerm[] = []
       let cursor: string | null = null
@@ -398,14 +403,14 @@ function ChannelPermsEditor({
       } while (cursor !== null)
       setRows(all)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      showError(errorText(e))
     }
   }, [channelId, setError])
   useEffect(() => {
     void reload()
   }, [reload])
 
-  const save = (perm: ChannelPerm) => void setChannelPerm(channelId, perm).then(reload)
+  const save = (perm: ChannelPerm) => void setChannelPerm(channelId, perm).then(inSession(reload))
   const allow = (subj: string) =>
     save({ subject: subj, can_view: true, can_send: true, can_read_history: true })
   const listed = (subj: string) => rows.some(r => r.subject === subj)
@@ -435,7 +440,9 @@ function ChannelPermsEditor({
         value={channel}
         send={channel.kind === 'text'}
         onToggle={key =>
-          void setChannelRestrict(channelId, { [key]: !channel[key] }).then(() => refresh?.())
+          void setChannelRestrict(channelId, { [key]: !channel[key] }).then(
+            inSession(() => refresh?.())
+          )
         }
       />
       <p className="pt-1 text-xs font-medium text-on-surface-variant">
@@ -453,7 +460,7 @@ function ChannelPermsEditor({
           {channel.kind === 'text' && flag(perm, 'can_send', 'Send')}
           {channel.kind === 'text' && flag(perm, 'can_read_history', 'History')}
           <button
-            onClick={() => void clearChannelPerm(channelId, perm.subject).then(reload)}
+            onClick={() => void clearChannelPerm(channelId, perm.subject).then(inSession(reload))}
             aria-label={`Remove ${label(perm.subject)}`}
             title="Remove"
             className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest hover:text-error"
@@ -515,7 +522,7 @@ function ChannelSlowmode({ channel, refresh }: { channel: Channel; refresh?: () 
   return (
     <SlowmodeField
       current={channel.slowmode_seconds}
-      onApply={n => void setSlowmode(channel.id, n).then(() => refresh?.())}
+      onApply={n => void setSlowmode(channel.id, n).then(inSession(() => refresh?.()))}
     />
   )
 }
@@ -673,7 +680,7 @@ export function ServerPasswordField({
               const members = choice.startsWith('remove') ? 'remove' : 'keep'
               const keepGuests = choice === `keep${WITH_OPTION}`
               api.updateServer(server, { password: next, members, keep_guests: keepGuests }).then(
-                res => {
+                inSession(res => {
                   setPassword('')
                   const guests =
                     changed && members === 'keep'
@@ -683,7 +690,7 @@ export function ServerPasswordField({
                       : ''
                   setDone(passwordDone(prompt.confirm, members, res.removed, res.kept) + guests)
                   refresh?.()
-                },
+                }),
                 (err: unknown) => setError(errorText(err))
               )
             },
@@ -830,10 +837,10 @@ export function ServerAppearance({
                   ...(!rchat && name !== savedName ? { name_color: name } : {}),
                 })
                 .then(
-                  () => {
+                  inSession(() => {
                     setDone(true)
                     refresh?.()
-                  },
+                  }),
                   (err: unknown) => setError(errorText(err))
                 )
                 .finally(() => setSaving(false))
@@ -948,7 +955,9 @@ export function AdminPermsEditor({
         onChange={v => {
           setLastBlocked(v === 0)
           if (v !== 0)
-            void setAdminPerms(server, username, v === ALL_PERMS ? 0 : v).then(() => refresh?.())
+            void setAdminPerms(server, username, v === ALL_PERMS ? 0 : v).then(
+              inSession(() => refresh?.())
+            )
         }}
       />
       {lastBlocked && (
@@ -1349,7 +1358,7 @@ function Settings({ server }: { server: string }) {
                 m,
                 promote && (
                   <button
-                    onClick={() => void grantAdmin(server, m.username).then(reloadBoth)}
+                    onClick={() => void grantAdmin(server, m.username).then(inSession(reloadBoth))}
                     className={textBtn}
                   >
                     Make Admin

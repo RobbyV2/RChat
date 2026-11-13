@@ -7,7 +7,7 @@ import { api } from '../lib/instances'
 import { messageFriend } from '../lib/actions/member'
 import { openActionMenu } from '../lib/actions/menu'
 import type { Target } from '../lib/actions/types'
-import { useStore } from '../lib/store'
+import { inSession, useStore } from '../lib/store'
 import { bannerColor } from '../lib/profile'
 import { scopePings } from '../lib/pings'
 import { badgePings } from '../lib/selectors'
@@ -563,9 +563,10 @@ function AddFriends({ names }: { names: string[] }) {
   const send = async () => {
     if (!targets.length || busy) return
     setBusy(true)
+    const close = inSession(closeDialog)
     const out = await sendFriendRequests(targets)
     setBusy(false)
-    if (single && out[targets[0]]?.ok) closeDialog()
+    if (single && out[targets[0]]?.ok) close()
     else setResults(out)
   }
   const confirm = !single

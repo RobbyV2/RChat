@@ -53,7 +53,9 @@ import {
   PAGE,
   emptyPage,
   errorText,
+  live,
   serverKey,
+  sessionMark,
   settled,
   type GetState,
   type Handlers,
@@ -105,7 +107,6 @@ export interface ServersDeps {
   reauthorLinkCards: (u: UserRef) => void
   refetchMe: () => Promise<void>
   rememberGuestName: (name: string, display: string) => void
-  sameUser: (username: string) => boolean
   saveLayout: (next: Layout) => void
   saveNotify: (next: NotifyPrefs) => void
   syncUrl: (view: View | null, nav: Nav) => void
@@ -244,7 +245,6 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     reauthorLinkCards,
     refetchMe,
     rememberGuestName,
-    sameUser,
     saveLayout,
     saveNotify,
     syncUrl,
@@ -315,8 +315,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
 
   const reloadServer = (server: string): Promise<void> => {
     if (!get().servers[server]) return Promise.resolve()
-    return api
-      .getServer(server)
+    return live(api.getServer(server))
       .then(detail => {
         const { view } = get()
         const lost =
@@ -337,6 +336,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
   const pruneServers = async () => {
     const me = get().me
     if (!me) return
+    const at = sessionMark()
     const since = serverGen
     const names = me.servers.map(x => x.name)
     const titles = new Map(me.servers.map(x => [x.name, x.display_name]))
@@ -347,6 +347,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         () => serverGen,
         () => api.myServersByName(batch)
       )
+      if (at !== sessionMark()) return
       for (const x of found) joined.add(x.name)
     }
     const dropped = (name: string) => (droppedAt.get(name) ?? 0) > since
@@ -359,7 +360,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         )
       )
     )
-    if (!sameUser(me.username)) return
+    if (at !== sessionMark()) return
     lost.forEach((name, i) => {
       if (dropped(name)) return
       if (exists[i]) removedFrom(name, false, titles.get(name))
@@ -376,7 +377,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
 
   const fetchServer = async (name: string) => {
     try {
-      const detail = await api.getServer(name)
+      const detail = await live(api.getServer(name))
       bannedHere.delete(name)
       if (get().guest) rememberGuestName(detail.name, detail.display_name)
       return detail
@@ -396,7 +397,9 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
   }
 
   const addServer = async (name: string) => {
+    const at = sessionMark()
     await get().ensureServers([name])
+    if (at !== sessionMark()) return
     if (get().me && !get().me?.servers.some(x => x.name === name)) await refetchMe()
   }
 
@@ -547,7 +550,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     set(s => ({ members: { ...s.members, [server]: page } }))
 
   const memberGen: Record<string, number> = {}
-  const memberPending = new Set<string>()
+  // Per session, like the lookups it counts.
+  let memberPending = new Set<string>()
   const listSince = new Map<string, number>()
   const pastOnline = new Set<string>()
   const pendingKey = (server: string, username: string) => `${server}\n${username}`
@@ -583,22 +587,23 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     })
 
   const fetchMemberInfo = async (server: string, names: string[]) => {
+    const pending = memberPending
     for (let i = 0; i < names.length; i += LIST_MAX) {
       const batch = names.slice(i, i + LIST_MAX)
       const gen = memberGen[server] ?? 0
-      for (const n of batch) memberPending.add(pendingKey(server, n))
+      for (const n of batch) pending.add(pendingKey(server, n))
       let found: Member[]
       const since = presenceHub.seq()
       try {
         found = presenceHub.fresh(
           server,
-          await api.membersByName(server, batch).catch(e => {
+          await live(api.membersByName(server, batch)).catch(e => {
             throw banCheck(e, server)
           }),
           since
         )
       } finally {
-        for (const n of batch) memberPending.delete(pendingKey(server, n))
+        for (const n of batch) pending.delete(pendingKey(server, n))
       }
       if ((memberGen[server] ?? 0) !== gen) {
         if (get().servers[server]) void get().ensureMembers(server, batch)
@@ -710,6 +715,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
   }
 
   const forget = () => {
+    memberPending = new Set()
     bannedHere.clear()
     listSince.clear()
     pastOnline.clear()
@@ -780,6 +786,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     ensureServers: async names => {
       const me = get().me
       if (!me) return
+      const at = sessionMark()
       const have = new Set(me.servers.map(x => x.name))
       const missing = [...new Set(names.map(n => n.toLowerCase()))].filter(n => n && !have.has(n))
       for (let i = 0; i < missing.length; i += LIST_MAX) {
@@ -788,7 +795,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           () => serverGen,
           () => api.myServersByName(batch)
         )
-        if (!sameUser(me.username)) return
+        if (at !== sessionMark()) return
         set(s =>
           s.me ? { me: { ...s.me, servers: appendUnique(s.me.servers, found, serverKey) } } : {}
         )
@@ -796,14 +803,14 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     },
 
     createServer: async (name, password) => {
-      const { name: id } = await api.createServer(name, password)
-      await addServer(id).catch(fail)
+      const { name: id } = await live(api.createServer(name, password))
+      await live(addServer(id).catch(fail))
       await get().openServer(id)
     },
 
     joinServer: async (name, password, nav = 'push') => {
-      const { name: id } = await api.joinServer(name.trim().toLowerCase(), password)
-      await addServer(id).catch(fail)
+      const { name: id } = await live(api.joinServer(name.trim().toLowerCase(), password))
+      await live(addServer(id).catch(fail))
       const { view } = get()
       const here = view?.kind === 'channel' && view.server === id ? view.channelId : undefined
       await get().openServer(id, here, here === undefined ? nav : 'replace')
@@ -812,8 +819,9 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     // Join from the preview tile's menu: the JoinBar's steps, with the password asked in the
     // join dialog when the server wants one.
     joinPreview: async name => {
+      const at = sessionMark()
       const out = await runJoinStep('name', '', pw => get().joinServer(name, pw), errorText)
-      if (out.done) return
+      if (out.done || at !== sessionMark()) return
       if (out.step === 'password')
         get().openDialog({ kind: 'add_server', join: name, locked: true })
       else get().setError(out.error)
@@ -824,12 +832,13 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         if (get().guest) {
           persistGuestServers(get().guestServers.filter(n => n !== name))
         } else {
-          await api.leaveServer(name)
+          await live(api.leaveServer(name))
         }
         dropServer(name)
       }),
 
-    renameServer: async (name, newName) => void (await api.updateServer(name, { name: newName })),
+    renameServer: async (name, newName) =>
+      void (await live(api.updateServer(name, { name: newName }))),
     deleteServer: name => act(async () => void (await api.deleteServer(name))),
     createChannel: (server, name, kind = 'text', category = null) =>
       act(async () => void (await api.createChannel(server, name, kind, category))),
@@ -853,7 +862,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     setChannelRestrict: (id, patch) => act(async () => void (await api.updateChannel(id, patch))),
     setChannelTopic: async (server, id, topic) => {
       try {
-        const channel = await api.updateChannel(id, { topic: cleanTopic(topic) || null })
+        const channel = await live(api.updateChannel(id, { topic: cleanTopic(topic) || null }))
         patchServer(server, d => ({
           ...d,
           channels: d.channels.map(c => (c.id === channel.id ? channel : c)),
@@ -868,7 +877,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       act(async () => void (await api.kickMember(server, username))),
     timeoutMember: async (server, username, seconds, reason) => {
       try {
-        const t = await api.timeoutMember(server, username, seconds, reason.trim() || null)
+        const t = await live(api.timeoutMember(server, username, seconds, reason.trim() || null))
         noteTimeout(server, username, t)
         return true
       } catch (e) {
@@ -878,17 +887,17 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     },
     removeTimeout: (server, username) =>
       act(async () => {
-        await api.removeTimeout(server, username)
+        await live(api.removeTimeout(server, username))
         noteTimeout(server, username, undefined)
       }),
     banMember: (server, username) =>
       act(async () => {
-        await api.banMember(server, username)
+        await live(api.banMember(server, username))
         if (get().bans[server]) await get().loadBans(server, true)
       }),
     unbanMember: (server, username) =>
       act(async () => {
-        await api.unbanMember(server, username)
+        await live(api.unbanMember(server, username))
         const id = `b:${server}`
         epochs[id] = (epochs[id] ?? 0) + 1
         set(s => {
@@ -932,7 +941,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     adminDeleteUser: username => act(async () => void (await api.adminDeleteUser(username))),
     adminRemovePhrase: username =>
       act(async () => {
-        const { removed } = await api.adminRemovePhrase(username)
+        const { removed } = await live(api.adminRemovePhrase(username))
         get().showToast(removed ? 'Backup phrase removed' : 'No backup phrase was set')
       }),
     adminDeleteMessage: id => act(async () => void (await api.adminDeleteMessage(id))),
@@ -946,7 +955,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           async cursor => {
             const since = presenceHub.seq()
             if (cursor === null) listSince.set(server, since)
-            const page = await api.listMembers(server, cursor).catch(e => {
+            const page = await live(api.listMembers(server, cursor)).catch(e => {
               throw banCheck(e, server)
             })
             if (page.items.at(-1)?.online === false) pastOnline.add(server)
@@ -970,7 +979,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
           () => get().interacted[server] ?? emptyPage<UserRef>(),
           page => set(s => ({ interacted: { ...s.interacted, [server]: page } })),
           cursor =>
-            api.listInteracted(server, cursor).catch(e => {
+            live(api.listInteracted(server, cursor)).catch(e => {
               throw banCheck(e, server)
             }),
           u => u.username,
@@ -1029,7 +1038,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     refreshMember: async (server, username) => {
       let found: Member | undefined
       try {
-        found = (await api.membersByName(server, [username]))[0]
+        found = (await live(api.membersByName(server, [username])))[0]
       } catch {
         return
       }
@@ -1042,7 +1051,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
 
     loadAdminOverview: () =>
       act(async () => {
-        set({ adminOverview: await api.adminOverview() })
+        set({ adminOverview: await live(api.adminOverview()) })
       }),
 
     loadAdminUsers: (q, reset = false) =>

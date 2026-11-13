@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { api } from '../lib/instances'
-import { errorText, useStore } from '../lib/store'
+import { errorText, inSession, useStore } from '../lib/store'
 import type { ServerMatch } from '../lib/types'
 import { enterKey } from '../lib/keys'
 import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
@@ -73,6 +73,7 @@ function AddServerDialog({
     if (!trimmed || busy) return
     setBusy(true)
     setError(null)
+    const close = inSession(closeDialog)
     if (creating) {
       if (tooShort(password)) {
         setError(SHORT_PASSWORD)
@@ -81,7 +82,7 @@ function AddServerDialog({
       }
       try {
         await createServer(trimmed, password.trim() || undefined)
-        closeDialog()
+        close()
       } catch (e) {
         setError(errorText(e))
         setBusy(false)
@@ -95,7 +96,7 @@ function AddServerDialog({
       errorText
     )
     if (out.done) {
-      closeDialog()
+      close()
       return
     }
     setStep(out.step)

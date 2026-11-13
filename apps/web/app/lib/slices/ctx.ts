@@ -25,6 +25,37 @@ export const routeEvent = (ev: WsEvent, tables: readonly Handlers[]): boolean =>
   return false
 }
 
+// Each session (an account or a guest) has its own mark, and ending it starts a new one. An
+// answer that comes back after its session ended sees another mark and is dropped.
+let session = {}
+export const sessionMark = () => session
+export const endSession = () => {
+  session = {}
+}
+
+// What a late answer throws: it stops what waited for it, and nothing shows it.
+export class Ended extends Error {}
+
+// Waits for `p`, but throws `Ended` instead when the session ended meanwhile.
+export const live = async <T>(p: Promise<T>): Promise<T> => {
+  const at = session
+  let out: T
+  try {
+    out = await p
+  } catch (e) {
+    if (at === session) throw e
+    throw new Ended('The session ended')
+  }
+  if (at !== session) throw new Ended('The session ended')
+  return out
+}
+
+// `fn`, which does nothing once the session it was made in ended: for what runs after a request.
+export const inSession = <A extends unknown[], R>(fn: (...a: A) => R) => {
+  const at = session
+  return (...a: A): R | undefined => (at === session ? fn(...a) : undefined)
+}
+
 export const pageVisible = () =>
   typeof document === 'undefined' || document.visibilityState === 'visible'
 
@@ -62,7 +93,8 @@ export const readScoped = <T>(key: string, parse: (raw: string | null) => T, fal
   }
 }
 
-// Loads a paged list; a page that arrives after the list was reset or searched again is dropped.
+// Loads a paged list; a page that arrives after the list was reset or searched again, or after
+// its session ended, is dropped.
 export const pageLoader = (epochs: Record<string, number>) => {
   const pageKeys = new WeakMap<unknown[], Set<Key>>()
 
@@ -80,6 +112,8 @@ export const pageLoader = (epochs: Record<string, number>) => {
     if (!fresh && (cur.loading || !cur.hasMore)) return
     if (fresh) epochs[id] = (epochs[id] ?? 0) + 1
     const epoch = epochs[id] ?? 0
+    const at = session
+    const current = () => (epochs[id] ?? 0) === epoch && at === session
     const base: Paged<T> = fresh
       ? { list: [], hasMore: true, loading: true, q, cursor: null }
       : { ...cur, loading: true }
@@ -88,10 +122,10 @@ export const pageLoader = (epochs: Record<string, number>) => {
     try {
       page = await fetchPage(base.cursor ?? null)
     } catch (e) {
-      if ((epochs[id] ?? 0) === epoch) write({ ...base, loading: false })
+      if (current()) write({ ...base, loading: false })
       throw e
     }
-    if ((epochs[id] ?? 0) !== epoch) return
+    if (!current()) return
     const seen = pageKeys.get(base.list) ?? new Set<Key>(base.list.map(keyOf))
     const added = page.items.filter(item => {
       const key = keyOf(item)

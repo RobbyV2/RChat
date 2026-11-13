@@ -5,7 +5,7 @@ import { Trash2 } from 'lucide-react'
 import { api } from '../lib/instances'
 import type { InstanceAuditEntry, RelayStatus, ServerDetail, ServerSummaryLite } from '../lib/types'
 import { instanceAuditLine } from '../lib/instance_audit'
-import { confirmKick, errorText, revokeAdminFor, useStore } from '../lib/store'
+import { confirmKick, errorText, inSession, revokeAdminFor, useStore } from '../lib/store'
 import {
   PROFANITY_TARGETS,
   canDeleteChannel,
@@ -325,7 +325,7 @@ function InstanceAudit() {
           })
           setNext(page.next)
         })
-        .catch((e: unknown) => setError(errorText(e)))
+        .catch(inSession((e: unknown) => setError(errorText(e))))
         .finally(() => {
           busy.current = false
         })
@@ -392,7 +392,7 @@ function UserServers({ username }: { username: string }) {
           })
           setNext(page.next)
         })
-        .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+        .catch(inSession((e: unknown) => setError(errorText(e))))
         .finally(() => {
           busy.current = false
           setLoading(false)
@@ -641,7 +641,7 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
       api
         .getServer(name)
         .then(setDetail)
-        .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))),
+        .catch(inSession((e: unknown) => setError(errorText(e)))),
     [name, setError]
   )
   useEffect(() => {
@@ -656,7 +656,7 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
   }, [name, loadMembers, reloadSearch])
 
   if (!detail) return null
-  const run = (fn: () => Promise<void>) => void fn().then(refresh)
+  const run = (fn: () => Promise<void>) => void fn().then(inSession(refresh))
 
   return (
     <div className="space-y-2 border-t border-outline-variant px-3 py-3">
@@ -668,7 +668,10 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
             submitLabel="Rename"
             streamer
             onSubmit={v =>
-              renameServer(name, v).then(onCollapse, (e: unknown) => setError(errorText(e)))
+              renameServer(name, v).then(
+                onCollapse,
+                inSession((e: unknown) => setError(errorText(e)))
+              )
             }
           />
           <ServerPasswordField
@@ -768,7 +771,7 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
               onClick={() =>
                 m.is_admin
                   ? revokeAdminFor(name, m.username, reloadMembers)
-                  : void grantAdmin(name, m.username).then(reloadMembers)
+                  : void grantAdmin(name, m.username).then(inSession(reloadMembers))
               }
               className={textBtn}
             >
@@ -782,7 +785,7 @@ function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => vo
                 <button
                   onClick={() => {
                     setBanning(null)
-                    run(() => banMember(name, m.username).then(reloadMembers))
+                    run(() => banMember(name, m.username).then(inSession(reloadMembers)))
                   }}
                   className={dangerBtn}
                 >

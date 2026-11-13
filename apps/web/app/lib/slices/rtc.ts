@@ -14,7 +14,7 @@ import type { RChatState } from '../store_types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE, timedOutLine } from '../timeouts'
 import type { CallKind, VoiceMsg, WsEvent } from '../types'
 import { SELF_AUDIO_IDLE, type SelfAudio, toggleDeafenAudio, toggleMicAudio } from '../voice_layout'
-import type { GetState, Handlers, SetState } from './ctx'
+import { sessionMark, type GetState, type Handlers, type SetState } from './ctx'
 
 export interface RtcDeps {
   act: (fn: () => Promise<void>) => Promise<void>
@@ -237,6 +237,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
         home.ws.ensureConnected()
         await get().openChannel(server, channelId)
         if (voice?.channelId === channelId) return
+        const at = sessionMark()
         try {
           p2pCall.hangup()
           p2pVoice.leave()
@@ -245,7 +246,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
           applyMic()
         } catch (e) {
           if (e instanceof JoinAborted) return
-          abandonMedia()
+          if (at === sessionMark()) abandonMedia()
           throw e
         }
         sendOrAbandon({ type: 'voice_join', channel_id: channelId })
@@ -286,6 +287,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     startCall: (dmId, video) =>
       act(async () => {
         const me = caller()
+        const at = sessionMark()
         try {
           p2pCall.hangup()
           p2pVoice.leave()
@@ -295,9 +297,10 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
           if (video) await rtc.camera(true)
         } catch (e) {
           if (e instanceof JoinAborted) return
-          abandonMedia()
+          if (at === sessionMark()) abandonMedia()
           throw e
         }
+        if (at !== sessionMark()) return
         sendOrAbandon({ type: 'call_start', dm_id: dmId, video })
         set({ voice: null })
       }),
@@ -305,7 +308,9 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     startP2pCall: (dmId, video, relay) =>
       act(async () => {
         caller()
+        const at = sessionMark()
         const plan = await relayBook.check(relay ?? relayBook.prefs.choice)
+        if (at !== sessionMark()) return
         try {
           p2pCall.hangup()
           p2pVoice.leave()
@@ -315,8 +320,12 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
           applyMic()
           if (video) await p2p.toggleCamera()
         } catch (e) {
-          abandonMedia()
+          if (at === sessionMark()) abandonMedia()
           throw e
+        }
+        if (at !== sessionMark()) {
+          p2p.endMedia()
+          return
         }
         sendOrAbandon({
           type: 'call_start',

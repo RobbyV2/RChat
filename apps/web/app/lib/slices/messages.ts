@@ -80,12 +80,16 @@ import {
   trimWindow,
 } from '../window'
 import {
+  Ended,
   type GetState,
   type Handlers,
   LIST_MAX,
   PAGE,
   type SetState,
+  inSession,
+  live,
   pageVisible,
+  sessionMark,
   settled,
 } from './ctx'
 
@@ -113,7 +117,6 @@ export interface MessagesDeps {
   persistGuestServers: (list: string[]) => void
   pinSelf: () => void
   readsHub: { more: () => boolean }
-  sameUser: (username: string) => boolean
   saveForward: (clip: ForwardClip | null) => void
   saveLayout: (next: Layout) => void
   selfDmId: () => number | undefined
@@ -260,7 +263,6 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     persistGuestServers,
     pinSelf,
     readsHub,
-    sameUser,
     saveForward,
     saveLayout,
     selfDmId,
@@ -331,15 +333,19 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     tails.delete(key)
     return held.filter(m => m.id > after)
   }
-  const heads = new Map<string, number>()
+  // Per session: a first page that answers after its session ended (`fetchPage` throws `Ended`)
+  // lands nowhere and holds no live message of the next session back.
+  let heads = new Map<string, number>()
   const loadingHead = (key: string) => (heads.get(key) ?? 0) > 0
   const holding = (key: string) => detached(key) || loadingHead(key)
   const headLoad = async <T>(key: string, run: () => Promise<T>): Promise<T> => {
-    heads.set(key, (heads.get(key) ?? 0) + 1)
+    const mine = heads
+    mine.set(key, (mine.get(key) ?? 0) + 1)
     if (get().messages[key]?.length) set(s => ({ stale: { ...s.stale, [key]: true } }))
     try {
       return await run()
     } catch (e) {
+      if (mine !== heads) throw e
       if (heads.get(key) === 1) {
         const caught = detached(key) ? [] : takeTail(key, 0)
         set(s => ({
@@ -352,9 +358,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       }
       throw e
     } finally {
-      const left = (heads.get(key) ?? 1) - 1
-      if (left > 0) heads.set(key, left)
-      else heads.delete(key)
+      const left = (mine.get(key) ?? 1) - 1
+      if (left > 0) mine.set(key, left)
+      else mine.delete(key)
     }
   }
   const mapTails = (fn: (list: Message[]) => Message[]) => {
@@ -592,7 +598,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       return true
     }
     try {
-      applyUpdated(await api.editMessage(m.id, next))
+      applyUpdated(await live(api.editMessage(m.id, next)))
       return true
     } catch (e) {
       fail(e)
@@ -760,10 +766,10 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
   const reopenDm = async (id: number) => {
     const closed = closedDms.get(id)
-    const me = get().me
-    if (!closed || !me) return
+    if (!closed || !get().me) return
+    const at = sessionMark()
     const dm = await api.openDm(closed.other.username)
-    if (!sameUser(me.username)) return
+    if (at !== sessionMark()) return
     closedDms.delete(id)
     set(s => ({ dms: bumpFront(s.dms, dm, dmKey, isSelfDm) }))
     pinSelf()
@@ -774,7 +780,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     else
       void get()
         .ensureDms([id])
-        .then(() => moveDmUp(id))
+        .then(inSession(() => moveDmUp(id)))
         .catch(() => {})
   }
 
@@ -786,11 +792,11 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     try {
       switch (key[0]) {
         case 'c':
-          return await api.channelMessages(id, page)
+          return await live(api.channelMessages(id, page))
         case 'd':
-          return await api.dmMessages(id, page)
+          return await live(api.dmMessages(id, page))
         default:
-          return await api.threadMessages(id, page)
+          return await live(api.threadMessages(id, page))
       }
     } catch (e) {
       const { servers, view } = get()
@@ -994,6 +1000,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       for (const id of ids) linkQueue.delete(id)
       linkFlights += 1
       const gen = linkGen
+      const at = sessionMark()
       void api
         .messageLocations(ids)
         .then(
@@ -1001,6 +1008,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           e => (refused(e) ? [] : undefined)
         )
         .then(found => {
+          if (at !== sessionMark()) return
           linkFlights -= 1
           for (const id of ids) linkLoads.delete(id)
           if (gen !== linkGen) for (const id of ids) get().resolveLinkCard(id)
@@ -1019,7 +1027,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   // Where a message is, through the same gate as reading it; null for every refusal.
   const locateMessage = async (id: number) => {
     try {
-      const loc = await api.messageLocation(id)
+      const loc = await live(api.messageLocation(id))
       keepLinkCard(id, loc)
       return loc
     } catch (e) {
@@ -1135,6 +1143,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
             try {
               real = await head.send(opts)
             } catch (e) {
+              if (mine !== draining) throw e
               if (p2pId === null || !p2pIdTaken(e) || !head.pending || !opts.p2p) throw e
               // Someone posted our P2P id first: keep the file under a fresh one and try once more.
               p2p.removeFile(p2pId)
@@ -1147,6 +1156,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
                 opts.p2p.sha256,
                 head.pending.relay ?? relayBook.prefs.choice
               )
+              if (mine !== draining) throw new Ended('The session ended')
               real = await head.send({ ...opts, p2p: { ...opts.p2p, p2p_id: id } })
             }
           } catch (e) {
@@ -1207,6 +1217,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   }
 
   const forget = () => {
+    heads = new Map()
     dmPager.reset(null)
     closedDms.clear()
     historyGen.clear()
@@ -1223,6 +1234,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     pendingEmbeds.clear()
     linkQueue.clear()
     linkLoads.clear()
+    linkFlights = 0
     linkGen += 1
   }
 
@@ -1286,7 +1298,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     startDm: username =>
       act(async () => {
-        const dm = await api.openDm(username)
+        const dm = await live(api.openDm(username))
         set(s => ({ dms: bumpFront(s.dms, dm, dmKey, isSelfDm) }))
         pinSelf()
         await get().openDm(dm.id)
@@ -1296,13 +1308,14 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       act(async () => {
         const { me, settings } = get()
         if (!me) throw new Error(`${accountPrompt(settings)} to send messages`)
+        const at = sessionMark()
         const dm = await api.openDm(username)
-        if (!sameUser(me.username)) return
+        if (at !== sessionMark()) return
         set(s => ({ dms: bumpFront(s.dms, dm, dmKey, isSelfDm) }))
         pinSelf()
         await get().openDm(dm.id)
         const author = get().me
-        if (content.trim() && author?.username === me.username)
+        if (at === sessionMark() && content.trim() && author)
           queueMessage({ kind: 'dm', dmId: dm.id }, author, content, null, null)
       }),
 
@@ -1312,8 +1325,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       }),
 
     ensureDms: async ids => {
-      const me = get().me
-      if (!me) return
+      if (!get().me) return
+      const at = sessionMark()
       const have = new Set(get().dms.map(d => d.id))
       const missing = [...new Set(ids)].filter(id => Number.isSafeInteger(id) && !have.has(id))
       for (let i = 0; i < missing.length; i += LIST_MAX) {
@@ -1322,7 +1335,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           () => dmGen,
           () => api.dmsById(batch)
         )
-        if (!sameUser(me.username)) return
+        if (at !== sessionMark()) return
         for (const d of found) {
           if (d.closed) closedDms.set(d.id, d)
           else closedDms.delete(d.id)
@@ -1340,13 +1353,13 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     closeDm: id =>
       act(async () => {
-        const me = get().me
-        if (!me) return
+        if (!get().me) return
+        const at = sessionMark()
         hideDm(id)
         try {
           await api.closeDm(id)
         } catch (e) {
-          if (!sameUser(me.username)) return
+          if (at !== sessionMark()) return
           closedDms.delete(id)
           await get()
             .ensureDms([id])
@@ -1416,7 +1429,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     pinMessage: id =>
       act(async () => {
-        await api.pinMessage(id)
+        await live(api.pinMessage(id))
         patchReactions(id, m => (m.pinned_at ? m : withPinnedAt(m, Math.floor(Date.now() / 1000))))
       }),
 
@@ -1434,7 +1447,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     unpinMessage: id =>
       act(async () => {
-        await api.unpinMessage(id)
+        await live(api.unpinMessage(id))
         setPinned(id, null)
       }),
 
@@ -1572,12 +1585,12 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       if (text === m.content) return
       const edited_at = Math.floor(Date.now() / 1000)
       patchReactions(m.id, x => ({ ...x, content: text, edited_at }))
-      api
-        .editMessage(m.id, text)
+      live(api.editMessage(m.id, text))
         .then(saved => {
           if (findMessage(m.id)?.content === text) applyUpdated(saved)
         })
         .catch(e => {
+          if (e instanceof Ended) return
           patchReactions(m.id, x =>
             x.content === text ? { ...x, content: m.content, edited_at: m.edited_at } : x
           )
@@ -1612,7 +1625,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           fail(new Error('No match in your last message'))
           return false
         }
+        const at = sessionMark()
         const sent = await sentAs(sending.tempId)
+        if (at !== sessionMark()) return false
         if (!sent) {
           fail(new Error('Your last message was not sent'))
           return false
@@ -1810,6 +1825,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         if (!reset && (cur.loading || !cur.hasMore)) return
         if (reset) epochs.search = (epochs.search ?? 0) + 1
         const epoch = epochs.search ?? 0
+        const at = sessionMark()
+        const current = () => (epochs.search ?? 0) === epoch && at === sessionMark()
         let results = reset ? [] : cur.results
         let cursor = reset ? null : (cur.cursor ?? null)
         set({ search: { results, hasMore: true, loading: true, cursor } })
@@ -1820,11 +1837,10 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           try {
             page = await api.search(searchParams(args, cursor, guest ? guestServers : null))
           } catch (e) {
-            if ((epochs.search ?? 0) === epoch)
-              set({ search: { results, hasMore: true, loading: false, cursor } })
+            if (current()) set({ search: { results, hasMore: true, loading: false, cursor } })
             throw e
           }
-          if ((epochs.search ?? 0) !== epoch) return
+          if (!current()) return
           const next = addSearchPage(results, page.items, page.next)
           results = next.results
           cursor = page.next
@@ -1837,7 +1853,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     deleteMessage: id =>
       act(async () => {
-        await api.deleteMessage(id)
+        await live(api.deleteMessage(id))
         unhost(id)
         setPinned(id, null)
         const drop = (list: Message[]) => {
@@ -1853,7 +1869,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     deleteMedia: messageId =>
       act(async () => {
-        await api.deleteMedia(messageId)
+        await live(api.deleteMedia(messageId))
         unhost(messageId)
         patchMessage(messageId, m =>
           m.media ? { ...m, media: { ...m.media, removed: true, removed_by_author: true } } : m
@@ -1862,7 +1878,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     deleteEmbed: (messageId, ord, banner) =>
       act(async () => {
-        await api.deleteEmbed(messageId, ord, banner)
+        await live(api.deleteEmbed(messageId, ord, banner))
         patchMessage(messageId, m => ({ ...m, embeds: withoutEmbed(m.embeds, ord, banner) }))
       }),
 

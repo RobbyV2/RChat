@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from './instances'
 import { headOf } from './p2p'
 import { sharing } from './platform'
+import { live } from './slices/ctx'
 import { downloadName, NEUTRAL_TYPE, sniff } from './sniff'
 
 // Media a URL can't load is fetched with the credential in a header and shown from a `blob:`
@@ -183,6 +184,6 @@ export const usePreviewSrc = (path: string | null, server: string | undefined) =
 }
 
 export const saveMedia = async (id: string, server: string | undefined, filename: string) => {
-  const blob = await api.mediaBlob(id, server)
+  const blob = await live(api.mediaBlob(id, server))
   sharing().saveBlob(downloadName(filename), new Blob([blob], { type: NEUTRAL_TYPE }))
 }

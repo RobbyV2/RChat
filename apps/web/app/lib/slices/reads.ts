@@ -41,7 +41,7 @@ import {
 import type { RChatState } from '../store_types'
 import type { Message, Unread, WsEvent } from '../types'
 import { viewKey } from '../view'
-import { pageVisible, type GetState, type Handlers, type SetState } from './ctx'
+import { pageVisible, sessionMark, type GetState, type Handlers, type SetState } from './ctx'
 
 export interface ReadsDeps {
   alertUser: (alert: AlertInput) => void
@@ -125,10 +125,12 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
     const before = get().reads
     const pingsBefore = get().pings
     const groupsBefore = get().groupPings
+    const at = sessionMark()
     unreadsLoading += 1
     unreadsReady = api
       .getUnreads()
       .then(({ items, more }) => {
+        if (at !== sessionMark()) return
         unreadsMore = more
         placeLate(items)
         set(s => ({
@@ -139,6 +141,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
       })
       .catch(() => {})
       .finally(() => {
+        if (at !== sessionMark()) return
         unreadsLoading -= 1
         if (!unreadsLoading) lateAnchor.clear()
         if (!get().readsReady) set({ readsReady: true })
@@ -262,6 +265,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
 
   const forget = () => {
     readQueue.clear()
+    unreadsLoading = 0
     unreadsMore = false
     unreadsReady = Promise.resolve()
     lateAnchor.clear()
@@ -316,11 +320,13 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
       const reads = get().reads
       for (const key of keys) if (key[0] !== 't' && get().unreadAnchor[key]) clearAnchor(key)
       if (!get().token) return
+      const at = sessionMark()
       for (const chunk of chunked(keys)) {
         const failed = await api.postReadBatch(chunk).then(
           () => false,
           () => true
         )
+        if (at !== sessionMark()) return
         for (const key of chunk) {
           const at = reads[key]?.lastRead ?? 0
           if (key[0] === 't') {
@@ -341,9 +347,12 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
 
     // The unread list is capped, so when it was cut, marking reloads it and goes on (bounded).
     markAllRead: async () => {
+      const at = sessionMark()
       await get().markScopesRead(allMarkTargets(get()))
       for (let round = 0; unreadsMore && round < 5; round += 1) {
+        if (at !== sessionMark()) return
         await loadUnreads()
+        if (at !== sessionMark()) return
         const more = allMarkTargets(get())
         if (!more.length) return
         await get().markScopesRead(more)

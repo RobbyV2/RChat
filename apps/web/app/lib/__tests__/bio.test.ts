@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { cachedProfile, profileKey, rememberProfile } from '../profile'
+import { sessionMark } from '../slices/ctx'
 import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio } from '../rules'
 import { useStore, resetSessionCaches } from '../store'
 import { me, user } from './fixtures'
@@ -98,7 +99,7 @@ describe('bio in the store', () => {
       member: null,
     })
     for (const key of [profileKey('bob', null), profileKey('bob', 's'), profileKey('bobby', 's')])
-      rememberProfile(key, profile(key.startsWith('bobby') ? 'bobby' : 'bob'))
+      rememberProfile(key, profile(key.startsWith('bobby') ? 'bobby' : 'bob'), sessionMark())
     st().applyWsEvent({ type: 'banned', username: 'bob' })
     expect(cachedProfile(profileKey('bob', null))).toBeNull()
     expect(cachedProfile(profileKey('bob', 's'))).toBeNull()

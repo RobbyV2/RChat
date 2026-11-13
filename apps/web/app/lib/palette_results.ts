@@ -38,7 +38,7 @@ import type { IndexDoc, PaletteIndex } from './palette_index'
 import { indexSource } from './palette_sync'
 import { openPalette, setPaletteView } from './palette_store'
 import { SHORTCUTS, shortcutLabel } from './shortcuts'
-import { useStore } from './store'
+import { sessionMark, useStore } from './store'
 import type { RChatState } from './store_types'
 import type { Message, UserRef } from './types'
 
@@ -168,8 +168,9 @@ export const threadItems = (s: RChatState, mask: (t: string) => string): Palette
       group: 'navigation',
       icon: MessagesSquare,
       run: async () => {
+        const at = sessionMark()
         if (m.channel_id !== null) await get().openChannel(server, m.channel_id)
-        await get().openThread(m)
+        if (at === sessionMark()) await get().openThread(m)
       },
     }
   })

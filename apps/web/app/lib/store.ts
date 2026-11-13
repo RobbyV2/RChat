@@ -11,11 +11,14 @@ import { DEFAULT_FEATURES } from './features'
 import { SELF_AUDIO_IDLE } from './voice_layout'
 import type { RChatState } from './store_types'
 import {
+  Ended,
   emptyPage,
   emptySearch,
   errorText,
+  inSession,
   pageLoader,
   routeEvent,
+  sessionMark,
   type Handlers,
 } from './slices/ctx'
 import { presenceSlice } from './slices/presence'
@@ -46,7 +49,7 @@ export { siteSettings } from './features'
 export * from './selectors'
 export * from './store_types'
 export * from './view'
-export { errorText }
+export { Ended, errorText, inSession, sessionMark }
 export {
   BOOT_RETRY_MS,
   confirmBan,
@@ -159,7 +162,6 @@ export const useStore = create<RChatState>()((set, get) => {
     persistGuestServers: (...a) => sessionHub.persistGuestServers(...a),
     pinSelf,
     readsHub,
-    sameUser: (...a) => sessionHub.sameUser(...a),
     saveForward,
     saveLayout,
     selfDmId,
@@ -238,7 +240,6 @@ export const useStore = create<RChatState>()((set, get) => {
     reauthorLinkCards,
     refetchMe: (...a) => sessionHub.refetchMe(...a),
     rememberGuestName: (...a) => sessionHub.rememberGuestName(...a),
-    sameUser: (...a) => sessionHub.sameUser(...a),
     saveLayout,
     saveNotify,
     syncUrl: (...a) => sessionHub.syncUrl(...a),
@@ -294,6 +295,7 @@ export const useStore = create<RChatState>()((set, get) => {
     openMessageAt,
     pinSelf,
     placeAnchor,
+    pollsHub,
     presenceHub,
     pruneServers,
     putServer,

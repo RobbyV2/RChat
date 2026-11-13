@@ -15,7 +15,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { api } from '../lib/instances'
-import { errorText, useStore } from '../lib/store'
+import { errorText, inSession, useStore } from '../lib/store'
 import {
   AUDIT_GROUPS,
   NO_FILTERS,
@@ -93,6 +93,7 @@ function AuditLog({ server }: { server: string }) {
 
   const fetchFrom = useCallback(
     async (cursor: string | null, mine: number) => {
+      const showError = inSession(setError)
       setLog(s => ({ ...s, loading: true }))
       try {
         const page = await api.listAudit(server, cursor, JSON.parse(key))
@@ -110,7 +111,7 @@ function AuditLog({ server }: { server: string }) {
       } catch (e) {
         if (epoch.current !== mine) return
         setLog(s => ({ ...s, loading: false, loaded: true, next: null }))
-        setError(errorText(e))
+        showError(errorText(e))
       }
     },
     [server, key, setError]
