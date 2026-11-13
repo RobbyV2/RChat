@@ -116,6 +116,18 @@ impl DmCreation {
     }
 }
 
+/// Whether the instance still has the built-in server it started with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Builtin {
+    #[default]
+    Kept,
+    Removed,
+}
+
+/// The control that lists the servers every new account joins, by key and in order.
+pub const DEFAULT_SERVERS: &str = "default_servers";
+
 /// The switch for new friend requests.
 pub const FRIEND_REQUESTS: &str = "friend_requests";
 
@@ -260,13 +272,65 @@ pub(crate) async fn move_creator_roles(
     store_creators(conn, &list).await
 }
 
+/// Keeps the stored list of default servers true to the server `key` when its name stops being
+/// its own: its entry follows it to `renamed`, or goes when it is deleted, so whoever takes the
+/// old name next gets no new accounts from it.
+pub(crate) async fn move_default_server(
+    conn: &mut sqlx::AnyConnection,
+    key: &str,
+    renamed: Option<&str>,
+) -> sqlx::Result<()> {
+    let stored: Option<String> = sqlx::query("SELECT value FROM settings WHERE key = $1")
+        .bind(DEFAULT_SERVERS)
+        .fetch_optional(&mut *conn)
+        .await?
+        .map(|r| r.try_get(0))
+        .transpose()?;
+    let Some(list) = stored else {
+        return Ok(());
+    };
+    if !servers_of(&list).any(|entry| entry == key) {
+        return Ok(());
+    }
+    let mut kept: Vec<&str> = Vec::new();
+    for entry in servers_of(&list) {
+        let entry = match (entry == key, renamed) {
+            (false, _) => entry,
+            (true, Some(new)) => new,
+            (true, None) => continue,
+        };
+        if !kept.contains(&entry) {
+            kept.push(entry);
+        }
+    }
+    sqlx::query("UPDATE settings SET value = $1 WHERE key = $2")
+        .bind(kept.join(","))
+        .bind(DEFAULT_SERVERS)
+        .execute(&mut *conn)
+        .await
+        .map(|_| ())
+}
+
+/// The entries of a stored list of servers.
+fn servers_of(list: &str) -> impl Iterator<Item = &str> {
+    list.split(',').map(str::trim).filter(|e| !e.is_empty())
+}
+
 /// The instance's lists and report forms, which `Settings` (a `Copy` value sent to every
 /// client) leaves out.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Policy {
     pub server_creators: Vec<Creator>,
     pub report_forms: ReportForms,
+    /// Keys of the servers every new account joins, in order.
+    pub default_servers: Vec<String>,
+    /// The default servers that people who aren't members can read right now.
+    pub guest_servers: Vec<String>,
 }
+
+/// What `Policy::read` finds: the creators, the stored forms, the default servers and the ones
+/// of them anyone may read.
+type Stored = (String, Option<String>, Vec<String>, Vec<String>);
 
 /// The lists of each database this process has open, with when they were read.
 type PolicyCache = Mutex<HashMap<String, (Instant, Arc<Policy>)>>;
@@ -276,12 +340,7 @@ static POLICY_CACHE: LazyLock<PolicyCache> = LazyLock::new(Default::default);
 impl Policy {
     /// Reads the lists. A read failure answers the last known ones, else empty ones.
     pub async fn load(db: &Db) -> Arc<Policy> {
-        let rows = match sqlx::query("SELECT key, value FROM settings WHERE key IN ($1, $2)")
-            .bind(SERVER_CREATORS)
-            .bind(forms::KEY)
-            .fetch_all(db)
-            .await
-        {
+        let rows = match Policy::read(db).await {
             Ok(rows) => rows,
             Err(e) => {
                 tracing::warn!("settings could not be read, using the last known lists: {e}");
@@ -292,13 +351,8 @@ impl Policy {
                     .unwrap_or_default();
             }
         };
-        let value = |key: &str| {
-            rows.iter()
-                .find(|r| r.try_get::<String, _>(0).is_ok_and(|k| k == key))
-                .and_then(|r| r.try_get::<String, _>(1).ok())
-        };
-        let list = value(SERVER_CREATORS).unwrap_or_default();
-        let report_forms = match value(forms::KEY) {
+        let (creators, forms, default_servers, guest_servers) = rows;
+        let report_forms = match forms {
             Some(stored) => ReportForms::from_stored(&stored).unwrap_or_else(|| {
                 tracing::warn!("the stored report forms can't be read, using the defaults");
                 ReportForms::defaults()
@@ -307,17 +361,42 @@ impl Policy {
         };
         let policy = Arc::new(Policy {
             report_forms,
-            server_creators: list
+            server_creators: creators
                 .split(',')
                 .map(str::trim)
                 .filter(|entry| !entry.is_empty())
                 .map(Creator::parse)
                 .collect(),
+            default_servers,
+            guest_servers,
         });
         if let Ok(mut cache) = POLICY_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), policy.clone()));
         }
         policy
+    }
+
+    /// The stored list of server creators, the stored report forms, the default servers, and
+    /// the default servers that people who aren't members can read.
+    async fn read(db: &Db) -> sqlx::Result<Stored> {
+        let mut stored = HashMap::new();
+        for row in sqlx::query("SELECT key, value FROM settings WHERE key IN ($1, $2, $3)")
+            .bind(SERVER_CREATORS)
+            .bind(DEFAULT_SERVERS)
+            .bind(forms::KEY)
+            .fetch_all(db)
+            .await?
+        {
+            stored.insert(row.try_get::<String, _>(0)?, row.try_get::<String, _>(1)?);
+        }
+        let creators = stored.remove(SERVER_CREATORS).unwrap_or_default();
+        let forms = stored.remove(forms::KEY);
+        let defaults = stored
+            .remove(DEFAULT_SERVERS)
+            .unwrap_or_else(|| crate::db::BUILTIN_SERVER.to_string());
+        let default_servers: Vec<String> = servers_of(&defaults).map(str::to_string).collect();
+        let guest_servers = crate::api::access::readable_by_name(db, &default_servers).await?;
+        Ok((creators, forms, default_servers, guest_servers))
     }
 
     pub async fn cached(db: &Db) -> Arc<Policy> {
@@ -744,6 +823,487 @@ mod tests {
         .expect("a copy from before the switches");
         assert_eq!(older.server_joining, ServerJoining::Everyone);
         assert!(older.server_search);
+        done(state, path).await;
+    }
+
+    async fn sign_up(state: &AppState, name: &str) {
+        let req: crate::api::auth::RegisterReq = serde_json::from_value(
+            json!({"username": name, "password": "pw", "avatar_kind": "identicon"}),
+        )
+        .expect("req");
+        let _ = crate::api::auth::register(State(state.clone()), Json(req))
+            .await
+            .expect("sign-up");
+    }
+
+    async fn texts(db: &Db, sql: &str) -> Vec<String> {
+        use sqlx::Row;
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .fetch_all(db)
+            .await
+            .expect(sql)
+            .iter()
+            .map(|r| r.try_get(0).expect("text"))
+            .collect()
+    }
+
+    async fn stored_defaults(db: &Db) -> String {
+        texts(
+            db,
+            "SELECT value FROM settings WHERE key = 'default_servers'",
+        )
+        .await
+        .concat()
+    }
+
+    /// Two servers of bob's: `lobby` without a password and `vault` with one.
+    async fn lobby_and_vault(state: &AppState) {
+        add_user(&state.db, "root", true).await;
+        add_user(&state.db, "bob", false).await;
+        create(state, "bob", "Lobby").await.expect("lobby");
+        let req: CreateServerReq =
+            serde_json::from_value(json!({"name": "Vault", "password": "vault-pass-1"}))
+                .expect("req");
+        let _ = create_server(
+            State(state.clone()),
+            Authed(mem_user("bob", false)),
+            Json(req),
+        )
+        .await
+        .expect("vault");
+    }
+
+    #[tokio::test]
+    async fn new_accounts_join_the_default_servers_in_order() {
+        use crate::ws::WsEvent;
+        let (state, path) = temp_state("default_join").await;
+        let db = &state.db;
+        lobby_and_vault(&state).await;
+        let joined = |state: &AppState, name: &'static str| {
+            let state = state.clone();
+            async move {
+                let mut rx = state.hub.subscribe();
+                sign_up(&state, name).await;
+                let mut servers = Vec::new();
+                while let Ok(event) = rx.try_recv() {
+                    if let WsEvent::MemberJoined { server, member } = event {
+                        assert_eq!(member.user.username, name.to_lowercase());
+                        servers.push(server);
+                    }
+                }
+                servers
+            }
+        };
+        let member_of = |name: &'static str| async move {
+            texts(
+                db,
+                &format!("SELECT server FROM members WHERE username = '{name}' ORDER BY server"),
+            )
+            .await
+        };
+        assert_eq!(joined(&state, "Ann").await, ["rchat"], "the default list");
+
+        set(
+            &state,
+            json!({"default_servers": ["Vault", "nowhere", "Lobby", "rchat", "lobby"]}),
+        )
+        .await
+        .expect("patch");
+        assert_eq!(stored_defaults(db).await, "vault,nowhere,lobby,rchat");
+        let before = texts(
+            db,
+            "SELECT CAST(member_count AS TEXT) FROM servers ORDER BY name",
+        )
+        .await;
+        assert_eq!(
+            joined(&state, "Dana").await,
+            ["vault", "lobby", "rchat"],
+            "in the list's order, a missing server skipped, a password server joined"
+        );
+        assert_eq!(member_of("dana").await, ["lobby", "rchat", "vault"]);
+        let after = texts(
+            db,
+            "SELECT CAST(member_count AS TEXT) FROM servers ORDER BY name",
+        )
+        .await;
+        let up: Vec<i64> = before
+            .iter()
+            .zip(&after)
+            .map(|(b, a)| a.parse::<i64>().expect("n") - b.parse::<i64>().expect("n"))
+            .collect();
+        assert_eq!(up, [1, 1, 1]);
+        assert_eq!(
+            member_of("ann").await,
+            ["rchat"],
+            "changing the list never touches existing members"
+        );
+
+        exec(
+            db,
+            "INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('lobby', 'erin', 'bob', 1)",
+        )
+        .await;
+        exec(
+            db,
+            "UPDATE servers SET password_hash = '!purging' WHERE name = 'vault'",
+        )
+        .await;
+        assert_eq!(
+            joined(&state, "Erin").await,
+            ["rchat"],
+            "a server that bans the name and one being deleted are skipped"
+        );
+        assert_eq!(member_of("erin").await, ["rchat"]);
+
+        set(&state, json!({"default_servers": []}))
+            .await
+            .expect("patch");
+        assert_eq!(stored_defaults(db).await, "");
+        assert_eq!(joined(&state, "Finn").await, [] as [&str; 0]);
+        assert_eq!(member_of("finn").await, [] as [&str; 0]);
+        assert_eq!(
+            texts(db, "SELECT user_b FROM dms WHERE user_a = 'finn'").await,
+            ["finn"],
+            "the self DM is still made"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_default_servers_are_validated_and_audited() {
+        let (state, path) = temp_state("default_patch").await;
+        let db = &state.db;
+        add_user(db, "root", true).await;
+        let eleven: Vec<String> = (0..11).map(|n| format!("s{n}")).collect();
+        for bad in [
+            json!({"default_servers": eleven}),
+            json!({"default_servers": ["a,b"]}),
+            json!({"default_servers": [" "]}),
+            json!({"default_servers": ["a".repeat(101)]}),
+        ] {
+            let ApiError(status, error, reason) =
+                set(&state, bad.clone()).await.expect_err("refused");
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            assert_eq!(error, "default_servers: expected up to 10 server names");
+            assert!(reason.is_none());
+        }
+        assert_eq!(stored_defaults(db).await, "rchat");
+        set(&state, json!({"default_servers": ["None", "Lobby"]}))
+            .await
+            .expect("a server may be called none");
+        assert_eq!(stored_defaults(db).await, "none,lobby");
+        set(&state, json!({"default_servers": []}))
+            .await
+            .expect("patch");
+        let audit = texts(
+            db,
+            "SELECT detail FROM instance_audit WHERE action = 'settings.change' ORDER BY id",
+        )
+        .await;
+        let audit: Vec<serde_json::Value> = audit
+            .iter()
+            .map(|d| serde_json::from_str(d).expect("json"))
+            .collect();
+        assert_eq!(
+            audit,
+            [
+                json!({"key": "default_servers", "from": "rchat", "to": "none,lobby"}),
+                json!({"key": "default_servers", "from": "none,lobby", "to": "none"}),
+            ]
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn guests_start_in_the_default_servers_anyone_reads() {
+        use crate::api::admin::get_settings;
+        let (state, path) = temp_state("guest_servers").await;
+        let db = &state.db;
+        lobby_and_vault(&state).await;
+        let wire = || async {
+            Policy::forget(&state.db);
+            serde_json::to_value(get_settings(State(state.clone())).await.0).expect("json")
+        };
+        assert_eq!(wire().await["guest_servers"], json!(["rchat"]));
+        assert_eq!(wire().await["builtin_server"], json!("kept"));
+        let mut rx = state.hub.subscribe();
+        set(
+            &state,
+            json!({"default_servers": ["rchat", "vault", "lobby", "gone"]}),
+        )
+        .await
+        .expect("patch");
+        let event = serde_json::to_value(rx.try_recv().expect("settings_changed")).expect("json");
+        assert_eq!(event["type"], json!("settings_changed"));
+        assert_eq!(
+            event["settings"]["guest_servers"],
+            json!(["rchat", "lobby"])
+        );
+        assert_eq!(event["settings"]["public_reading"], json!(true));
+        let sent = wire().await;
+        assert_eq!(
+            sent["guest_servers"],
+            json!(["rchat", "lobby"]),
+            "never a server with a password, a missing one, or the full list"
+        );
+        assert!(sent.get("default_servers").is_none());
+        assert!(!sent.to_string().contains("vault"));
+
+        set(&state, json!({"server_joining": "invites"}))
+            .await
+            .expect("patch");
+        assert_eq!(
+            wire().await["guest_servers"],
+            json!([]),
+            "nothing a guest couldn't open"
+        );
+        exec(
+            db,
+            "UPDATE servers SET public_read = 1 WHERE name = 'vault'",
+        )
+        .await;
+        assert_eq!(
+            wire().await["guest_servers"],
+            json!(["vault"]),
+            "its owner made it readable"
+        );
+        set(&state, json!({"public_reading": false}))
+            .await
+            .expect("patch");
+        assert_eq!(wire().await["guest_servers"], json!([]));
+        set(
+            &state,
+            json!({"public_reading": true, "server_joining": "everyone"}),
+        )
+        .await
+        .expect("patch");
+        assert_eq!(
+            wire().await["guest_servers"],
+            json!(["rchat", "vault", "lobby"])
+        );
+        exec(
+            db,
+            "UPDATE servers SET public_read = 0 WHERE name = 'rchat'",
+        )
+        .await;
+        assert_eq!(wire().await["guest_servers"], json!(["vault", "lobby"]));
+
+        let older: crate::api::PublicSettings = serde_json::from_value(json!({
+            "profanity_filter": true,
+            "asset_previews": true,
+            "asset_uploads": true,
+            "guests_enabled": true,
+        }))
+        .expect("a copy from before the list");
+        assert!(older.guest_servers.is_empty());
+        assert_eq!(older.builtin_server, super::Builtin::Kept);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_guest_list_follows_owners_changing_who_reads() {
+        use crate::api::PublicSettings;
+        use crate::api::servers::{ServerPatch, update_server};
+        use crate::ws::WsEvent;
+        use axum::extract::Path;
+        let (state, path) = temp_state("guest_list_live").await;
+        let db = &state.db;
+        lobby_and_vault(&state).await;
+        create(&state, "bob", "Other").await.expect("other");
+        set(&state, json!({"default_servers": ["lobby", "vault"]}))
+            .await
+            .expect("patch");
+        assert_eq!(PublicSettings::cached(db).await.guest_servers, ["lobby"]);
+        let mut rx = state.hub.subscribe();
+        let mut change = async |server: &str, body: serde_json::Value| {
+            let patch: ServerPatch = serde_json::from_value(body).expect("patch");
+            let _ = update_server(
+                State(state.clone()),
+                Authed(mem_user("bob", false)),
+                Path(server.to_string()),
+                Json(patch),
+            )
+            .await
+            .expect("change");
+            let mut sent = Vec::new();
+            while let Ok(event) = rx.try_recv() {
+                if let WsEvent::SettingsChanged { settings } = event {
+                    sent.push(settings.guest_servers.clone());
+                }
+            }
+            (sent, PublicSettings::cached(db).await.guest_servers)
+        };
+        let none: Vec<Vec<String>> = Vec::new();
+        assert_eq!(
+            change("lobby", json!({"password": "lobby-pass-1"})).await,
+            (vec![Vec::<String>::new()], Vec::<String>::new()),
+            "a password hides it from guests at once"
+        );
+        assert_eq!(
+            change("vault", json!({"public_read": true})).await,
+            (vec![vec!["vault".to_string()]], vec!["vault".to_string()]),
+            "its owner made it readable"
+        );
+        assert_eq!(
+            change("vault", json!({"banner_color": "#112233"})).await,
+            (none.clone(), vec!["vault".to_string()]),
+            "nothing about reading changed"
+        );
+        assert_eq!(
+            change("other", json!({"public_read": false})).await,
+            (none.clone(), vec!["vault".to_string()]),
+            "not a default server"
+        );
+        assert_eq!(
+            change("vault", json!({"public_read": null})).await,
+            (vec![Vec::<String>::new()], Vec::<String>::new())
+        );
+        assert_eq!(
+            change("lobby", json!({"password": ""})).await,
+            (vec![vec!["lobby".to_string()]], vec!["lobby".to_string()])
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_default_list_follows_renames_and_deletions() {
+        use crate::api::servers::{ServerPatch, delete_server, update_server};
+        use axum::extract::Path;
+        let (state, path) = temp_state("default_moves").await;
+        let db = &state.db;
+        lobby_and_vault(&state).await;
+        set(
+            &state,
+            json!({"default_servers": ["vault", "lobby", "rchat"]}),
+        )
+        .await
+        .expect("patch");
+        let patch: ServerPatch = serde_json::from_value(json!({"name": "Den"})).expect("patch");
+        let _ = update_server(
+            State(state.clone()),
+            Authed(mem_user("bob", false)),
+            Path("lobby".to_string()),
+            Json(patch),
+        )
+        .await
+        .expect("rename");
+        assert_eq!(stored_defaults(db).await, "vault,den,rchat");
+        assert_eq!(
+            Policy::cached(db).await.default_servers,
+            ["vault", "den", "rchat"]
+        );
+        let _ = delete_server(
+            State(state.clone()),
+            Authed(mem_user("bob", false)),
+            Path("vault".to_string()),
+        )
+        .await
+        .expect("delete");
+        assert_eq!(stored_defaults(db).await, "den,rchat");
+        assert_eq!(Policy::cached(db).await.default_servers, ["den", "rchat"]);
+        add_user(db, "carol", false).await;
+        create(&state, "carol", "Lobby")
+            .await
+            .expect("the old name is free");
+        assert_eq!(
+            stored_defaults(db).await,
+            "den,rchat",
+            "whoever takes the old name gets no new accounts"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_builtin_server_is_renamed_in_place_and_removed_off_the_default_list() {
+        use crate::api::servers::{ServerPatch, is_builtin, update_server};
+        use crate::ws::WsEvent;
+        use axum::extract::Path;
+        let (state, path) = temp_state("builtin").await;
+        let db = &state.db;
+        add_user(db, "root", true).await;
+        let root = || Authed(mem_user("root", true));
+        let patch = |body: serde_json::Value| {
+            let state = state.clone();
+            async move {
+                let patch: ServerPatch = serde_json::from_value(body).expect("patch");
+                update_server(
+                    State(state),
+                    Authed(mem_user("root", true)),
+                    Path("rchat".to_string()),
+                    Json(patch),
+                )
+                .await
+            }
+        };
+        let renamed = patch(json!({"name": "Town Square"}))
+            .await
+            .expect("rename")
+            .0;
+        assert_eq!(
+            (
+                renamed.server.name.as_str(),
+                renamed.server.display_name.as_str()
+            ),
+            ("rchat", "Town Square"),
+            "its key and URL stay"
+        );
+        assert_eq!(
+            texts(db, "SELECT name || '/' || display_name FROM servers").await,
+            ["rchat/Town Square"]
+        );
+        for body in [
+            json!({"password": "a-long-password"}),
+            json!({"protected": true}),
+        ] {
+            let ApiError(status, error, _) = patch(body).await.err().expect("refused");
+            assert_eq!(
+                (status, error.as_str()),
+                (StatusCode::FORBIDDEN, "The rchat server is protected")
+            );
+        }
+        let delete = || {
+            crate::api::admin::delete_server(
+                State(state.clone()),
+                root(),
+                Path("RChat".to_string()),
+            )
+        };
+        let ApiError(status, error, _) = delete().await.err().expect("a default server");
+        assert_eq!(
+            (status, error.as_str()),
+            (
+                StatusCode::BAD_REQUEST,
+                "The rchat server is a default server. Take it off the default servers first"
+            )
+        );
+        assert!(is_builtin(db, "rchat").await);
+        set(&state, json!({"default_servers": []}))
+            .await
+            .expect("patch");
+        let mut rx = state.hub.subscribe();
+        let _ = delete().await.expect("deleted");
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                WsEvent::ServerDeleted { name } => events.push(format!("deleted {name}")),
+                WsEvent::SettingsChanged { settings } => events.push(format!(
+                    "settings {:?} {:?}",
+                    settings.builtin_server, settings.guest_servers
+                )),
+                _ => {}
+            }
+        }
+        assert_eq!(events, ["deleted rchat", "settings Removed []"]);
+        assert_eq!(
+            texts(
+                db,
+                "SELECT value FROM settings WHERE key = 'builtin_server'"
+            )
+            .await,
+            ["removed"]
+        );
+        assert!(!is_builtin(db, "rchat").await);
+        assert!(!is_builtin(db, "lobby").await);
         done(state, path).await;
     }
 

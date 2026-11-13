@@ -7,7 +7,7 @@ use super::{CallKind, CallPhase};
 use crate::api::access::ViewRules;
 use crate::api::pings::{Ping, ThreadPings};
 use crate::api::{
-    Channel, ChannelLayout, Embed, Member, Message, ServerSummaryLite, Settings, UserRef,
+    Channel, ChannelLayout, Embed, Member, Message, PublicSettings, ServerSummaryLite, UserRef,
 };
 
 thread_local! {
@@ -496,7 +496,7 @@ pub enum WsEvent {
         username: String,
     },
     SettingsChanged {
-        settings: Settings,
+        settings: PublicSettings,
     },
     TokensRevoked {
         username: String,

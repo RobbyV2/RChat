@@ -5,11 +5,11 @@ use sqlx::Row;
 
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
-    Creator, DmCreation, FRIEND_REQUESTS, PUBLIC_READING, SERVER_CREATORS, SERVER_SEARCH,
-    ServerCreation, ServerJoining,
+    Creator, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, PUBLIC_READING, SERVER_CREATORS,
+    SERVER_SEARCH, ServerCreation, ServerJoining,
 };
 use crate::api::reports::forms::{self, ReportForms};
-use crate::api::{ProfanitySwitch, ProfanityTargets, Settings, upload_expiry};
+use crate::api::{ProfanitySwitch, ProfanityTargets, PublicSettings, upload_expiry};
 use crate::db::{ConfigStart, Db};
 use crate::limits::Env;
 use crate::state::AppState;
@@ -32,6 +32,8 @@ pub enum Kind {
     /// The report forms, a JSON document. The env names a file that holds it, and the stored
     /// value is the document with the revision the instance counts.
     Forms,
+    /// A comma list of up to 10 server names, or `none`, stored as the servers' keys.
+    Servers,
 }
 
 /// Something the site admin page changes while the server runs: one or more rows of the
@@ -134,6 +136,13 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
     all.push(switch(FRIEND_REQUESTS, "FEATURE_FRIEND_REQUESTS", true));
     all.push(switch(PUBLIC_READING, "PUBLIC_READING", true));
     all.push(Control {
+        key: DEFAULT_SERVERS,
+        env: "DEFAULT_SERVERS",
+        kind: Kind::Servers,
+        default: crate::db::BUILTIN_SERVER,
+        public: false,
+    });
+    all.push(Control {
         key: forms::KEY,
         env: forms::ENV,
         kind: Kind::Forms,
@@ -143,13 +152,13 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
     all
 });
 
-/// Reads the `settings` rows of every control, and the retired `profanity_display_names` that
-/// `Settings::load` still warns about.
+/// Reads the `settings` rows of every control, the retired `profanity_display_names` that
+/// `Settings::load` still warns about, and whether the built-in server is kept.
 pub(crate) static ROWS_SQL: LazyLock<String> = LazyLock::new(|| {
     let keys: Vec<String> = Control::all()
         .iter()
         .flat_map(|c| c.keys())
-        .chain(["profanity_display_names"])
+        .chain(["profanity_display_names", crate::db::BUILTIN_STATE])
         .map(|key| format!("'{key}'"))
         .collect();
     format!(
@@ -206,6 +215,11 @@ impl Control {
                 }
                 .stored()
             }),
+            Kind::Servers => match word.as_str() {
+                "none" => Ok(String::new()),
+                _ => parse_servers(raw)
+                    .ok_or_else(|| format!("expected none or up to {SERVERS_MAX} server names")),
+            },
         }
     }
 
@@ -214,8 +228,13 @@ impl Control {
         match (self.kind, stored) {
             (Kind::Switch, "1") => "on".to_string(),
             (Kind::Switch, _) => "off".to_string(),
+            (Kind::Servers, "") => "none".to_string(),
             (
-                Kind::Choice(_) | Kind::Targets | Kind::Number { min: _, max: _ } | Kind::Names,
+                Kind::Choice(_)
+                | Kind::Targets
+                | Kind::Number { min: _, max: _ }
+                | Kind::Names
+                | Kind::Servers,
                 stored,
             ) => stored.to_string(),
             (Kind::Forms, stored) => match ReportForms::from_stored(stored) {
@@ -232,7 +251,8 @@ impl Control {
             | Kind::Choice(_)
             | Kind::Targets
             | Kind::Number { min: _, max: _ }
-            | Kind::Names => stored == env,
+            | Kind::Names
+            | Kind::Servers => stored == env,
             Kind::Forms => match (
                 ReportForms::from_stored(stored),
                 ReportForms::from_stored(env),
@@ -251,7 +271,8 @@ impl Control {
             | Kind::Choice(_)
             | Kind::Targets
             | Kind::Number { min: _, max: _ }
-            | Kind::Names => env.to_string(),
+            | Kind::Names
+            | Kind::Servers => env.to_string(),
             Kind::Forms => match (
                 ReportForms::from_stored(stored),
                 ReportForms::from_stored(env),
@@ -273,7 +294,8 @@ impl Control {
             | Kind::Choice(_)
             | Kind::Number { min: _, max: _ }
             | Kind::Names
-            | Kind::Forms => {
+            | Kind::Forms
+            | Kind::Servers => {
                 vec![self.key]
             }
             Kind::Targets => ProfanitySwitch::ALL.into_iter().map(|t| t.key()).collect(),
@@ -287,7 +309,8 @@ impl Control {
             | Kind::Choice(_)
             | Kind::Number { min: _, max: _ }
             | Kind::Names
-            | Kind::Forms => {
+            | Kind::Forms
+            | Kind::Servers => {
                 vec![(self.key, stored.to_string())]
             }
             Kind::Targets => {
@@ -307,7 +330,8 @@ impl Control {
             | Kind::Choice(_)
             | Kind::Number { min: _, max: _ }
             | Kind::Names
-            | Kind::Forms => rows.get(self.key).cloned(),
+            | Kind::Forms
+            | Kind::Servers => rows.get(self.key).cloned(),
             Kind::Targets => ProfanitySwitch::ALL
                 .into_iter()
                 .any(|t| rows.contains_key(t.key()))
@@ -342,6 +366,29 @@ fn parse_names(list: &str) -> Option<String> {
             kept.push(entry);
         }
         if kept.len() > NAMES_MAX {
+            return None;
+        }
+    }
+    Some(kept.join(","))
+}
+
+/// The most servers the list of default servers holds.
+pub const SERVERS_MAX: usize = 10;
+
+/// A comma list of server names as it is stored: each server's key (its name in lowercase),
+/// in the order written, without empty or repeated entries. `None` for more than
+/// `SERVERS_MAX` entries, a name longer than a server name, or a NUL.
+pub(crate) fn parse_servers(list: &str) -> Option<String> {
+    let mut kept: Vec<String> = Vec::new();
+    for entry in list.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        if entry.contains('\0') || entry.chars().count() > crate::api::NAME_MAX {
+            return None;
+        }
+        let key = entry.to_lowercase();
+        if !kept.contains(&key) {
+            kept.push(key);
+        }
+        if kept.len() > SERVERS_MAX {
             return None;
         }
     }
@@ -430,7 +477,8 @@ impl ControlSeeds {
                 | Kind::Choice(_)
                 | Kind::Targets
                 | Kind::Number { min: _, max: _ }
-                | Kind::Names => c
+                | Kind::Names
+                | Kind::Servers => c
                     .parse(&raw)
                     .map_err(|expected| anyhow::anyhow!("{}: {expected}, got {raw}", c.env))?,
                 Kind::Forms => {
@@ -522,7 +570,7 @@ pub async fn config_applied(state: &AppState) {
     {
         tracing::warn!("files were not re-timed under the new upload expiry cap: {e}");
     }
-    let settings = Settings::load(&state.db).await;
+    let settings = PublicSettings::load(&state.db).await;
     state.hub.broadcast(WsEvent::SettingsChanged { settings });
 }
 
@@ -596,7 +644,7 @@ mod tests {
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
         assert_eq!(
-            table[table.len() - 9..table.len() - 1],
+            table[table.len() - 10..table.len() - 1],
             [
                 ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
                 ("server_creation", "SERVER_CREATION", "everyone"),
@@ -606,9 +654,12 @@ mod tests {
                 ("dm_creation", "DM_CREATION", "everyone"),
                 ("friend_requests", "FEATURE_FRIEND_REQUESTS", "1"),
                 ("public_reading", "PUBLIC_READING", "1"),
+                ("default_servers", "DEFAULT_SERVERS", "rchat"),
             ]
         );
         assert_eq!(control("public_reading").kind, Kind::Switch);
+        assert_eq!(control("default_servers").kind, Kind::Servers);
+        assert!(!control("default_servers").public);
         assert_eq!(
             control("upload_expiry_max_days").kind,
             Kind::Number { min: 0, max: 365 }
@@ -657,7 +708,8 @@ mod tests {
                 | Kind::Choice(_)
                 | Kind::Targets
                 | Kind::Number { min: _, max: _ }
-                | Kind::Names => c.shown(c.default),
+                | Kind::Names
+                | Kind::Servers => c.shown(c.default),
             };
             assert_eq!(
                 c.parse(&written).as_deref(),
@@ -765,9 +817,32 @@ mod tests {
     }
 
     #[test]
+    fn the_default_servers_are_a_short_list_of_server_keys() {
+        let c = control("default_servers");
+        assert_eq!(
+            c.parse(" Lobby, rchat ,lobby,, Town Square ").as_deref(),
+            Ok("lobby,rchat,town square")
+        );
+        assert_eq!(c.parse("none").as_deref(), Ok(""));
+        assert_eq!(c.parse(" NONE ").as_deref(), Ok(""));
+        assert_eq!(c.shown(""), "none");
+        assert_eq!(c.shown("lobby,rchat"), "lobby,rchat");
+        let ten: Vec<String> = (0..10).map(|n| format!("s{n}")).collect();
+        assert_eq!(c.parse(&ten.join(",")), Ok(ten.join(",")));
+        let expected = Err("expected none or up to 10 server names".to_string());
+        assert_eq!(c.parse(&format!("{},s10", ten.join(","))), expected);
+        assert_eq!(c.parse(&"a".repeat(101)), expected);
+        assert_eq!(c.parse("a\0b"), expected);
+        assert_eq!(
+            c.rows("lobby,rchat"),
+            [("default_servers", "lobby,rchat".to_string())]
+        );
+    }
+
+    #[test]
     fn bad_env_values_name_what_they_expect() {
         for c in Control::all() {
-            if matches!(c.kind, Kind::Names | Kind::Forms) {
+            if matches!(c.kind, Kind::Names | Kind::Forms | Kind::Servers) {
                 continue;
             }
             let err = c.parse("maybe").unwrap_err();
@@ -791,7 +866,7 @@ mod tests {
                     TARGETS.replace(',', ", ")
                 ),
                 Kind::Number { min, max } => format!("expected {min} to {max}"),
-                Kind::Names => unreachable!("a name list takes any word"),
+                Kind::Names | Kind::Servers => unreachable!("a list of names takes any word"),
                 Kind::Forms => unreachable!("the forms come from a file"),
             };
             assert_eq!(err, want, "{}", c.key);
@@ -976,6 +1051,7 @@ mod tests {
                 Kind::Number { min, max } => format!("{min} to {max}"),
                 Kind::Names => "server:role".to_string(),
                 Kind::Forms => "JSON".to_string(),
+                Kind::Servers => "none".to_string(),
             };
             let value = documented(c.env, &[&words, "Admin page"]);
             if c.kind == Kind::Forms {

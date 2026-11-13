@@ -456,6 +456,22 @@ impl Reading {
     }
 }
 
+/// The servers of `keys`, in that order, that people who aren't members may read by name right
+/// now. A server that only members read, a missing one and one being purged are left out.
+pub(crate) async fn readable_by_name(db: &Db, keys: &[String]) -> sqlx::Result<Vec<String>> {
+    let reading = Reading::now(db).await;
+    let mut readable = Vec::new();
+    for key in keys {
+        if ws_server_lite(db, key)
+            .await?
+            .is_some_and(|lite| reading.reads(&lite))
+        {
+            readable.push(key.clone());
+        }
+    }
+    Ok(readable)
+}
+
 /// A server's `public_read` column at `idx` of `row`: on, off, or not set.
 pub(crate) fn public_read(row: &AnyRow, idx: usize) -> sqlx::Result<Option<bool>> {
     Ok(row.try_get::<Option<i64>, _>(idx)?.map(|on| on != 0))

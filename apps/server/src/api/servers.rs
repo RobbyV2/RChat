@@ -30,9 +30,10 @@ use crate::api::timeouts::{running_timeouts, timeout_event};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
     NAME_MAX, OFFSET_MAX, OkResp, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX,
-    ServerDetail, ServerSummary, ServerSummaryLite, TOPIC_MAX, UserRef, allowed, bad, check_len,
-    check_profanity, cursor_int, decode_cursor, encode_cursor, header_grants, ok, page_bounds,
-    placeholders, require_guest_ok, unique_capped, user_from, user_ref, user_refs, valid_color,
+    ServerDetail, ServerSummary, ServerSummaryLite, Settings, TOPIC_MAX, UserRef, allowed, bad,
+    check_len, check_profanity, cursor_int, decode_cursor, encode_cursor, header_grants, ok,
+    page_bounds, placeholders, require_guest_ok, unique_capped, user_from, user_ref, user_refs,
+    valid_color,
 };
 use crate::db::{
     ChannelKind, Db, NO_PERMANENT_HASH, User, get_user, lock_server, now, shift_member_count,
@@ -100,7 +101,8 @@ pub enum PasswordMembers {
 pub struct ServerPatch {
     /// New server name, with the same rules as when creating a server (trimmed, 1-100
     /// characters, not `.` or `..`, profanity-filtered, not taken). Changes the lowercase `name`
-    /// used in URLs as well as the `display_name`. Not allowed on the rchat server.
+    /// used in URLs as well as the `display_name`. On the built-in rchat server only the
+    /// `display_name` changes: its key and URLs stay `rchat`.
     name: Option<String>,
     /// New permanent join password. Surrounding whitespace is trimmed; a blank value removes
     /// the permanent password, which makes the server public unless `protected` is `true`. Omit
@@ -627,10 +629,17 @@ async fn check_server_name(db: &Db, name: &str) -> Result<(), ApiError> {
     }
 }
 
-pub(crate) fn guard_rchat(key: &str) -> Result<(), ApiError> {
-    match key {
-        "rchat" => Err(forbidden("The rchat server is protected")),
-        _ => Ok(()),
+/// Whether `key` is the instance's built-in server: the server `rchat`, until the site admin
+/// deletes it.
+pub(crate) async fn is_builtin(db: &Db, key: &str) -> bool {
+    key == crate::db::BUILTIN_SERVER
+        && Settings::cached(db).await.builtin_server == crate::api::policy::Builtin::Kept
+}
+
+pub(crate) async fn guard_rchat(db: &Db, key: &str) -> Result<(), ApiError> {
+    match is_builtin(db, key).await {
+        true => Err(forbidden("The rchat server is protected")),
+        false => Ok(()),
     }
 }
 
@@ -2180,8 +2189,9 @@ pub(crate) async fn leave_server(
 /// clears its permanent password, changes its header colors, and sets whether people who
 /// aren't members can read it (`public_read`); every field is optional.
 /// Requires the Delete server permission; `members: remove` together with `password` also
-/// requires Kick. The rchat server can't be renamed or given a password, but its colors and
-/// `public_read` may change.
+/// requires Kick. The built-in rchat server can't be given a password and keeps its key
+/// `rchat` (a new name changes only its display name); its colors and `public_read` may
+/// change.
 ///
 /// When `password` is present, `members: remove` removes every other member whose server
 /// permissions are a strict subset of yours (their roles are dropped, as if kicked) and existing
@@ -2204,7 +2214,7 @@ pub(crate) async fn leave_server(
         (status = 200, description = "The updated server, with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated),
         (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, a new password shorter than 8 characters, or a new password that is already a live extra password of the server. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, a rename or password change on the protected rchat server, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`)", body = ApiErrorBody),
+        (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, a password change on the protected rchat server, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 409, description = "The new name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
@@ -2229,8 +2239,9 @@ pub(crate) async fn update_server(
         name_color,
         public_read,
     } = req;
-    if name.is_some() || password.is_some() || protected.is_some() {
-        guard_rchat(&key)?;
+    let builtin = is_builtin(&state.db, &key).await;
+    if password.is_some() || protected.is_some() {
+        guard_rchat(&state.db, &key).await?;
     }
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::DeleteServer).await?;
@@ -2246,6 +2257,7 @@ pub(crate) async fn update_server(
     }
     let key = access.name().to_string();
     let lite = access.lite().clone();
+    let listed = crate::api::policy::Policy::cached(&state.db).await;
     let banner_color = server_color(banner_color, "banner")?;
     let name_color = server_color(name_color, "name")?;
     let purge = password.is_some() && members == PasswordMembers::Remove;
@@ -2257,7 +2269,10 @@ pub(crate) async fn update_server(
     let (new_key, display) = match &name {
         Some(n) => {
             let display = n.trim().to_string();
-            let new_key = display.to_lowercase();
+            let new_key = match builtin {
+                true => key.clone(),
+                false => display.to_lowercase(),
+            };
             check_server_name(&state.db, &display).await?;
             if new_key != key {
                 name_free(&state.db, &new_key).await?;
@@ -2289,6 +2304,7 @@ pub(crate) async fn update_server(
     rename_live(&mut tx, &key, &new_key, &display, password_hash.as_ref()).await?;
     if new_key != key {
         crate::api::policy::move_creator_roles(&mut tx, &key, Some(&new_key)).await?;
+        crate::api::policy::move_default_server(&mut tx, &key, Some(&new_key)).await?;
     }
     set_colors(
         &mut tx,
@@ -2380,8 +2396,12 @@ pub(crate) async fn update_server(
         .await?;
     }
     tx.commit().await?;
-    if new_key != key {
-        crate::api::policy::Policy::load(&state.db).await;
+    let reading = password_hash.is_some() || public_read.is_some();
+    if new_key != key || (reading && listed.default_servers.contains(&key)) {
+        let settings = crate::api::PublicSettings::load(&state.db).await;
+        if settings.guest_servers != listed.guest_servers {
+            state.hub.broadcast(WsEvent::SettingsChanged { settings });
+        }
     }
     let renamed = new_key != key || display != lite.display_name;
     let server = ServerSummaryLite {
@@ -2630,7 +2650,7 @@ pub(crate) async fn delete_server(
     Path(name): Path<String>,
 ) -> Result<Json<OkResp>, ApiError> {
     let key = name.to_lowercase();
-    guard_rchat(&key)?;
+    guard_rchat(&state.db, &key).await?;
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::DeleteServer).await?;
     match crate::api::admin::remove_server(&state, access.name()).await? {
@@ -6623,11 +6643,11 @@ mod tests {
             &state,
             mem_user("root", true),
             "rchat",
-            r##"{"name":"other","banner_color":"#111111"}"##,
+            r##"{"password":"a-long-password","banner_color":"#111111"}"##,
         )
         .await
         .err()
-        .expect("rchat rename stays protected");
+        .expect("rchat takes no password");
         assert_eq!(err.0, StatusCode::FORBIDDEN);
         let err = patch_colors(&state, alice(), "rchat", r##"{"banner_color":"#111111"}"##)
             .await

@@ -6,7 +6,7 @@ use sqlx::{AnyConnection, Row};
 use super::indexes::{ONLINE_INDEXES, build_inline, create_indexes};
 use super::schema::{POSTGRES_SCHEMA, POSTGRES_TRIGGERS, SQLITE_SCHEMA, SQLITE_TRIGGERS};
 use super::secrets::secret_key;
-use super::{NO_EXTRA_HASH, now};
+use super::{BUILTIN_STATE, NO_EXTRA_HASH, now};
 use crate::api::access::perms::{ALL_PERMS, PRE_REPORT_PERMS, Perm};
 use crate::api::controls::{Control, ControlSeeds};
 
@@ -561,15 +561,18 @@ pub(super) async fn init_schema(
     if version < 18 {
         grant_manage_reports(conn).await?;
     }
-    let t = now();
-    sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
-        .bind(t)
-        .execute(&mut *conn)
-        .await?;
-    sqlx::query("INSERT INTO channels(server, name, created_at) SELECT 'rchat', 'general', $1 WHERE NOT EXISTS(SELECT 1 FROM channels WHERE server = 'rchat')")
-        .bind(t)
-        .execute(&mut *conn)
-        .await?;
+    if stored_setting(conn, BUILTIN_STATE).await?.is_none() {
+        let t = now();
+        sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
+            .bind(t)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("INSERT INTO channels(server, name, created_at) SELECT 'rchat', 'general', $1 WHERE NOT EXISTS(SELECT 1 FROM channels WHERE server = 'rchat')")
+            .bind(t)
+            .execute(&mut *conn)
+            .await?;
+        seed_setting(conn, BUILTIN_STATE, "kept").await?;
+    }
     let started = match controls {
         Some(controls) => apply_controls(conn, controls).await?,
         None => ConfigStart::default(),

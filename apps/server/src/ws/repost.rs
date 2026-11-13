@@ -10,7 +10,7 @@ use crate::api::access::{
     ws_channel_now, ws_server_lite, ws_voice_viewable,
 };
 use crate::api::messages::{Quotes, load_broadcast, load_message};
-use crate::api::{Settings, UserRef};
+use crate::api::{PublicSettings, UserRef};
 use crate::db::get_user;
 use crate::hub::{Aftermath, Hub, Op, Purge};
 use crate::state::AppState;
@@ -377,7 +377,7 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
             Ok(None) | Err(_) => Some(WsEvent::Banned { username }),
         },
         WsEvent::SettingsChanged { settings: _ } => Some(WsEvent::SettingsChanged {
-            settings: Settings::load(db).await,
+            settings: PublicSettings::load(db).await,
         }),
         WsEvent::RtcSignal {
             to,

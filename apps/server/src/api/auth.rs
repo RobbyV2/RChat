@@ -445,12 +445,22 @@ pub(crate) async fn words(Path(username): Path<String>) -> Json<WordsResp> {
     })
 }
 
+/// The default servers in the order a sign-up locks them: by key, so two sign-ups that read
+/// the list before and after a reorder never wait on each other.
+fn lock_order(defaults: &[String]) -> Vec<&str> {
+    let mut keys: Vec<&str> = defaults.iter().map(String::as_str).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    keys
+}
+
 /// Create an account
 ///
 /// Registers a user with either a text password or 7 words from their word set, signs them in
-/// and returns a session token. The new user joins the default `rchat` server (emitting
-/// `member_joined` to its members and to the user, plus its join message as `message` when join
-/// messages are on) and gets their self DM. Answers 404 unless `registration` is `open` and
+/// and returns a session token. The new user joins the instance's default servers in their
+/// order (`rchat` unless the instance changed the list; each emits `member_joined` to its
+/// members and to the user, plus its join message as `message` when join messages are on) and
+/// gets their self DM. A default server that is missing, or that bans the username, is skipped. Answers 404 unless `registration` is `open` and
 /// `password_login` is on in `GET /api/v1/settings`. No authentication.
 /// Strict and general rate-limit buckets.
 #[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), NUL-containing, `@`-containing, banned, taken or profanity-filtered username; empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; a missing or invalid avatar color for `color` avatars; or an invalid background color for `identicon` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(()))]
@@ -483,8 +493,14 @@ pub(crate) async fn register(
     let avatar_color = check_avatar(avatar_kind, avatar_color)?;
     check_profanity(&state.db, ProfanityTarget::Usernames, &username).await?;
     let password_hash = hash_password(&secret).await?;
+    let defaults = crate::api::policy::Policy::cached(&state.db)
+        .await
+        .default_servers
+        .clone();
     let mut tx = state.db.begin().await?;
-    lock_server(&mut tx, "rchat").await?;
+    for server in lock_order(&defaults) {
+        lock_server(&mut tx, server).await?;
+    }
     let banned = sqlx::query("SELECT 1 FROM banned_usernames WHERE username = $1")
         .bind(&key)
         .fetch_optional(&mut *tx)
@@ -515,15 +531,24 @@ pub(crate) async fn register(
         },
     )
     .await?;
-    sqlx::query(
-        "INSERT INTO members(server, username, is_admin, joined_at) VALUES('rchat', $1, 0, $2)",
-    )
-    .bind(&key)
-    .bind(t)
-    .execute(&mut *tx)
-    .await?;
-    shift_member_count(&mut tx, "rchat", 1).await?;
-    let notice = post_system(&mut tx, "rchat", &key, SystemKind::Join).await?;
+    let mut joined = Vec::new();
+    for server in &defaults {
+        let inserted = sqlx::query(
+            "INSERT INTO members(server, username, is_admin, joined_at) SELECT s.name, $2, 0, $3 FROM servers s WHERE s.name = $1 AND COALESCE(s.password_hash, '') <> '!purging' AND NOT EXISTS(SELECT 1 FROM server_bans b WHERE b.server = s.name AND b.username = $2)",
+        )
+        .bind(server)
+        .bind(&key)
+        .bind(t)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if inserted == 0 {
+            continue;
+        }
+        shift_member_count(&mut tx, server, 1).await?;
+        let notice = post_system(&mut tx, server, &key, SystemKind::Join).await?;
+        joined.push((server.clone(), notice));
+    }
     sqlx::query("INSERT INTO dms(user_a, user_b) VALUES($1, $2)")
         .bind(&key)
         .bind(&key)
@@ -542,20 +567,22 @@ pub(crate) async fn register(
         None => return Err(anyhow::anyhow!("user missing after insert").into()),
     };
     let me = me_payload(&state.db, &user).await?;
-    state.hub.broadcast(WsEvent::MemberJoined {
-        server: "rchat".to_string(),
-        member: Member {
-            user: UserRef::from_user(&user),
-            is_admin: false,
-            is_creator: false,
-            online: false,
-            perms: 0,
-            role_ids: Vec::new(),
-            joined_via: None,
-            timeout: None,
-        },
-    });
-    announce_system(&state, "rchat", notice).await;
+    for (server, notice) in joined {
+        state.hub.broadcast(WsEvent::MemberJoined {
+            server: server.clone(),
+            member: Member {
+                user: UserRef::from_user(&user),
+                is_admin: false,
+                is_creator: false,
+                online: false,
+                perms: 0,
+                role_ids: Vec::new(),
+                joined_via: None,
+                timeout: None,
+            },
+        });
+        announce_system(&state, &server, notice).await;
+    }
     state.hub.broadcast(WsEvent::UserRegistered {
         user: UserRef::from_user(&user),
     });
@@ -1071,6 +1098,22 @@ mod tests {
     use super::*;
     use crate::api::test_util::{done, pg_done, pg_state, temp_state};
     use crate::state::AppState;
+
+    #[test]
+    fn sign_ups_lock_the_default_servers_in_one_order() {
+        let list = |keys: &[&str]| keys.iter().map(|k| k.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            lock_order(&list(&["lounge", "alpha", "rchat"])),
+            ["alpha", "lounge", "rchat"]
+        );
+        assert_eq!(
+            lock_order(&list(&["rchat", "alpha", "lounge"])),
+            lock_order(&list(&["lounge", "rchat", "alpha"])),
+            "a sign-up that read the list before a reorder locks like one that read it after"
+        );
+        assert_eq!(lock_order(&list(&["a", "b", "a"])), ["a", "b"]);
+        assert!(lock_order(&[]).is_empty());
+    }
 
     #[tokio::test]
     async fn one_network_can_not_fill_the_server_queue() {

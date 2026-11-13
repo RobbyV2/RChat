@@ -635,9 +635,12 @@ fn every_event() -> Vec<WsEvent> {
             user: message().author,
         },
         WsEvent::SettingsChanged {
-            settings: Settings {
-                profanity_filter: false,
-                ..Settings::DENY
+            settings: crate::api::PublicSettings {
+                settings: Settings {
+                    profanity_filter: false,
+                    ..Settings::DENY
+                },
+                guest_servers: Vec::new(),
             },
         },
         WsEvent::Error {

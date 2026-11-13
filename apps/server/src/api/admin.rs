@@ -11,13 +11,13 @@ use crate::api::access::{MsgScope, not_found, staff_message};
 use crate::api::controls::{ConfigRecords, Control, ROWS_SQL};
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
-    DmCreation, FRIEND_REQUESTS, PUBLIC_READING, Policy, SERVER_CREATORS, SERVER_SEARCH,
-    ServerCreation, ServerJoining,
+    Builtin, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, PUBLIC_READING, Policy, SERVER_CREATORS,
+    SERVER_SEARCH, ServerCreation, ServerJoining,
 };
 use crate::api::reports::forms::{self, Form, ReportForms};
 use crate::api::{
-    ApiError, Authed, OkResp, Paged, ProfanitySwitch, ServerDetail, ServerSummaryLite, Settings,
-    UserRef, bad, decode_cursor, encode_cursor, ok, reports, upload_expiry,
+    ApiError, Authed, OkResp, Paged, ProfanitySwitch, PublicSettings, ServerDetail,
+    ServerSummaryLite, UserRef, bad, decode_cursor, encode_cursor, ok, reports, upload_expiry,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now, purge_messages, recount_members, user_row};
 use crate::state::AppState;
@@ -256,6 +256,7 @@ pub struct SettingsPatch {
     dm_creation: Option<DmCreation>,
     friend_requests: Option<bool>,
     public_reading: Option<bool>,
+    default_servers: Option<Vec<String>>,
 }
 
 pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
@@ -273,22 +274,23 @@ pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
 /// password sign-in and sign-up, the media server, P2P, whether the web app this instance
 /// serves offers other instances, who may create servers, how people join them, whether
 /// they can be searched, who may start direct conversations, whether friend requests are
-/// on and whether servers can be readable by people who aren't members. A switched-off
+/// on, whether servers can be readable by people who aren't members, the servers a guest
+/// starts in (`guest_servers`) and whether the built-in server is kept. A switched-off
 /// feature's endpoints answer 404, except that
 /// uploads, P2P attachments and outgoing webhooks answer 403, guests get 401 while guest
 /// access is off, and `client_other_instances` gates no endpoint. No authentication. Values
 /// may lag a change by up to 5 seconds per server process; live changes also arrive as the
 /// `settings_changed` WebSocket event. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/settings", tag = "Instance", responses((status = 200, description = "Site-wide switches: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, guest access, outgoing webhooks, reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding, password sign-in, the media server, P2P, other instances in this instance's web app, `registration`, `server_creation`, `server_joining`, `server_search`, `dm_creation`, `friend_requests` and `public_reading`", body = Settings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
-pub(crate) async fn get_settings(State(state): State<AppState>) -> Json<Settings> {
-    Json(Settings::cached(&state.db).await)
+#[utoipa::path(get, path = "/api/v1/settings", tag = "Instance", responses((status = 200, description = "Site-wide switches: profanity filter (master switch `profanity_filter` plus per-target `profanity_targets`), link previews, uploads, P2P attachments, guest access, outgoing webhooks, reports, widgets, encryption, backup phrases, P2P backups, display names, onboarding, password sign-in, the media server, P2P, other instances in this instance's web app, `registration`, `server_creation`, `server_joining`, `server_search`, `dm_creation`, `friend_requests`, `public_reading`, `guest_servers` and `builtin_server`", body = PublicSettings), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(()))]
+pub(crate) async fn get_settings(State(state): State<AppState>) -> Json<PublicSettings> {
+    Json(PublicSettings::cached(&state.db).await)
 }
 
 pub(crate) async fn patch_settings(
     State(state): State<AppState>,
     Authed(user): Authed,
     Json(req): Json<SettingsPatch>,
-) -> Result<Json<Settings>, ApiError> {
+) -> Result<Json<PublicSettings>, ApiError> {
     require_site_admin(&user)?;
     let SettingsPatch {
         profanity_filter,
@@ -323,6 +325,7 @@ pub(crate) async fn patch_settings(
         dm_creation,
         friend_requests,
         public_reading,
+        default_servers,
     } = req;
     if upload_expiry_max_days.is_some_and(|d| !(0..=upload_expiry::CAP_DAYS_MAX).contains(&d)) {
         return Err(bad("The longest file expiry must be 0 to 365 days"));
@@ -342,6 +345,24 @@ pub(crate) async fn patch_settings(
                     .parse(&entries.join(",")),
             };
             Some(stored.map_err(|expected| bad(&format!("{SERVER_CREATORS}: {expected}")))?)
+        }
+        None => None,
+    };
+    let defaults = match default_servers {
+        Some(entries) => {
+            let stored = match entries
+                .iter()
+                .any(|e| e.trim().is_empty() || e.contains(','))
+            {
+                true => None,
+                false => crate::api::controls::parse_servers(&entries.join(",")),
+            };
+            Some(stored.ok_or_else(|| {
+                bad(&format!(
+                    "{DEFAULT_SERVERS}: expected up to {} server names",
+                    crate::api::controls::SERVERS_MAX
+                ))
+            })?)
         }
         None => None,
     };
@@ -387,6 +408,7 @@ pub(crate) async fn patch_settings(
         .chain(upload_expiry_max_days.map(|d| (upload_expiry::CAP_KEY, d.to_string())))
         .chain(server_creation.map(|c| (ServerCreation::KEY, c.as_str().to_string())))
         .chain(creators.map(|list| (SERVER_CREATORS, list)))
+        .chain(defaults.map(|list| (DEFAULT_SERVERS, list)))
         .chain(server_joining.map(|j| (ServerJoining::KEY, j.as_str().to_string())))
         .chain(dm_creation.map(|d| (DmCreation::KEY, d.as_str().to_string())))
         .collect();
@@ -430,13 +452,14 @@ pub(crate) async fn patch_settings(
         }
     }
     tx.commit().await?;
-    let settings = Settings::load(&state.db).await;
-    Policy::load(&state.db).await;
+    let settings = PublicSettings::load(&state.db).await;
     if let Some(cap) = upload_expiry_max_days {
         upload_expiry::retime_all(&state.db, cap, upload_expiry::KeptLimits::of(&state.limits))
             .await?;
     }
-    state.hub.broadcast(WsEvent::SettingsChanged { settings });
+    state.hub.broadcast(WsEvent::SettingsChanged {
+        settings: settings.clone(),
+    });
     Ok(Json(settings))
 }
 
@@ -607,7 +630,7 @@ pub(crate) async fn put_report_forms(
     .await?;
     tx.commit().await?;
     Policy::load(&state.db).await;
-    let settings = Settings::load(&state.db).await;
+    let settings = PublicSettings::load(&state.db).await;
     state.hub.broadcast(WsEvent::SettingsChanged { settings });
     Ok(Json(after))
 }
@@ -740,8 +763,15 @@ pub(crate) async fn delete_server(
 ) -> Result<Json<OkResp>, ApiError> {
     require_site_admin(&user)?;
     let name = name.to_lowercase();
-    if name == "rchat" {
-        return Err(bad("The rchat server cannot be deleted"));
+    if crate::api::servers::is_builtin(&state.db, &name).await
+        && Policy::load(&state.db)
+            .await
+            .default_servers
+            .contains(&name)
+    {
+        return Err(bad(
+            "The rchat server is a default server. Take it off the default servers first",
+        ));
     }
     match remove_server(&state, &name).await? {
         true => Ok(ok()),
@@ -837,12 +867,24 @@ pub(crate) async fn remove_server(state: &AppState, name: &str) -> Result<bool, 
         .await?;
     }
     crate::api::policy::move_creator_roles(&mut tx, name, None).await?;
+    crate::api::policy::move_default_server(&mut tx, name, None).await?;
+    let builtin_gone = name == crate::db::BUILTIN_SERVER
+        && sqlx::query("UPDATE settings SET value = 'removed' WHERE key = $1 AND value = 'kept'")
+            .bind(crate::db::BUILTIN_STATE)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+            > 0;
     note_purge(&mut tx, PurgeKind::Server, name, now()).await?;
     tx.commit().await?;
-    Policy::load(&state.db).await;
+    let settings = PublicSettings::load(&state.db).await;
+    debug_assert!(!builtin_gone || settings.builtin_server == Builtin::Removed);
     state.hub.broadcast(WsEvent::ServerDeleted {
         name: name.to_string(),
     });
+    if builtin_gone {
+        state.hub.broadcast(WsEvent::SettingsChanged { settings });
+    }
     spawn_purge(state, PurgeKind::Server, name);
     Ok(true)
 }
@@ -1071,6 +1113,7 @@ async fn run_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result
             clear_purge(&mut tx, kind, key).await?;
             tx.commit().await?;
             if let Some((gone, polls)) = gone {
+                Policy::forget(&state.db);
                 Policy::load(&state.db).await;
                 for id in polls {
                     crate::api::polls::schedule_update(state, id);
@@ -1415,6 +1458,7 @@ pub(crate) async fn delete_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::Settings;
     use crate::api::auth::{AuthResp, RegisterReq, register};
     use crate::api::test_util::{done, temp_state};
     use crate::db::{Db, get_user, now};
@@ -2609,7 +2653,7 @@ mod tests {
             serde_json::from_value(body).expect("patch")
         };
         let fresh = get_settings(State(state.clone())).await.0;
-        let wire = serde_json::to_value(fresh).expect("json");
+        let wire = serde_json::to_value(fresh.clone()).expect("json");
         for f in Feature::ALL {
             assert_eq!(fresh.on(f), f.default_on(), "{f:?}");
             assert_eq!(wire[f.key()], json!(f.default_on()), "{f:?}");
@@ -2645,7 +2689,7 @@ mod tests {
         assert_eq!(event["type"], json!("settings_changed"));
         Settings::forget(&state.db);
         let stored = Settings::load(&state.db).await;
-        for (what, s) in [("response", got), ("stored", stored)] {
+        for (what, s) in [("response", got.settings), ("stored", stored)] {
             for f in Feature::ALL {
                 assert_eq!(s.on(f), !f.default_on(), "{what} {f:?}");
             }
@@ -3732,7 +3776,7 @@ mod tests {
         let patch = |on: bool| -> Json<SettingsPatch> {
             Json(serde_json::from_value(json!({ KEY: on })).expect("patch"))
         };
-        let sent = |s: Settings| serde_json::to_value(s).expect("json")[KEY].clone();
+        let sent = |s: PublicSettings| serde_json::to_value(s).expect("json")[KEY].clone();
         assert_eq!(
             sent(get_settings(State(state.clone())).await.0),
             json!(true)
@@ -3759,7 +3803,7 @@ mod tests {
                 .await
                 .expect("patch")
                 .0;
-            assert_eq!(sent(got), json!(on));
+            assert_eq!(sent(got.clone()), json!(on));
             for f in Feature::ALL.into_iter().filter(|f| f.key() != KEY) {
                 assert_eq!(got.on(f), f.default_on(), "{f:?} stays");
             }

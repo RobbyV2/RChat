@@ -153,7 +153,7 @@ pub fn generate() -> String {
 }
 
 async fn manage(state: &AppState, user: &User, name: &str) -> Result<ServerAccess, ApiError> {
-    guard_rchat(&name.to_lowercase())?;
+    guard_rchat(&state.db, &name.to_lowercase()).await?;
     let access = resolve_server(&state.db, name, Some(user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::DeleteServer).await?;
     Ok(access)

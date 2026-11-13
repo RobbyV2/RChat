@@ -62,7 +62,7 @@ pub use crate::api::error::{
     ApiError, ApiErrorBody, Reason, ReasonKind, SERVER_BUSY, SERVER_ERROR,
 };
 use crate::api::features::{Feature, Registration};
-use crate::api::policy::{DmCreation, ServerCreation, ServerJoining};
+use crate::api::policy::{Builtin, DmCreation, ServerCreation, ServerJoining};
 use crate::config::Roles;
 use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, pool_key};
 use crate::server::client_ip::ClientIp;
@@ -1259,6 +1259,52 @@ pub struct Settings {
     /// `PATCH /api/v1/servers/{name}` refuses `public_read: true` with reason `off_site`.
     #[serde(default = "yes")]
     pub public_reading: bool,
+    /// Whether the instance still has its built-in server `rchat`: `kept`, or `removed` once
+    /// the instance deleted it. While it is kept, its key and URL stay `rchat`, it takes no
+    /// password, and only its display name changes on a rename.
+    #[serde(default)]
+    pub builtin_server: Builtin,
+}
+
+/// The public settings as `GET /api/v1/settings` and the `settings_changed` WebSocket event
+/// send them: every switch of `Settings`, plus the lists that are public.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+pub struct PublicSettings {
+    #[serde(flatten)]
+    pub settings: Settings,
+    /// Keys of the servers a guest starts in: the instance's default servers that people who
+    /// aren't members can read right now, in the instance's order. A default server that only
+    /// members read is never listed. Older servers send no list.
+    #[serde(default)]
+    pub guest_servers: Vec<String>,
+}
+
+impl std::ops::Deref for PublicSettings {
+    type Target = Settings;
+
+    fn deref(&self) -> &Settings {
+        &self.settings
+    }
+}
+
+impl PublicSettings {
+    /// The settings and public lists as last read, at most 5 seconds old.
+    pub async fn cached(db: &Db) -> PublicSettings {
+        let settings = Settings::cached(db).await;
+        PublicSettings {
+            settings,
+            guest_servers: policy::Policy::cached(db).await.guest_servers.clone(),
+        }
+    }
+
+    /// Reads the settings and the lists again.
+    pub async fn load(db: &Db) -> PublicSettings {
+        let settings = Settings::load(db).await;
+        PublicSettings {
+            settings,
+            guest_servers: policy::Policy::load(db).await.guest_servers.clone(),
+        }
+    }
 }
 
 pub(crate) fn yes() -> bool {
@@ -1303,6 +1349,7 @@ impl Settings {
         dm_creation: DmCreation::Nobody,
         friend_requests: false,
         public_reading: false,
+        builtin_server: Builtin::Kept,
     };
 
     pub async fn load(db: &Db) -> Settings {
@@ -1380,6 +1427,10 @@ impl Settings {
             dm_creation: DmCreation::parse(&stored(DmCreation::KEY)).unwrap_or(DmCreation::Nobody),
             friend_requests: on(policy::FRIEND_REQUESTS),
             public_reading: on(policy::PUBLIC_READING),
+            builtin_server: match value(crate::db::BUILTIN_STATE).as_deref() {
+                Some("removed") => Builtin::Removed,
+                Some(_) | None => Builtin::Kept,
+            },
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1439,6 +1490,7 @@ impl Settings {
             dm_creation: _,
             friend_requests: _,
             public_reading: _,
+            builtin_server: _,
         } = *self;
         match feature {
             Feature::ServerReports => server_reports,

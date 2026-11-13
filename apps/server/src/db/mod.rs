@@ -170,6 +170,12 @@ impl User {
 
 pub const PURGING_HASH: &str = "!purging";
 
+/// The key of the built-in server that a fresh database starts with.
+pub const BUILTIN_SERVER: &str = "rchat";
+
+/// The `settings` row that says whether the built-in server is `kept` or `removed`.
+pub const BUILTIN_STATE: &str = "builtin_server";
+
 pub const NO_PERMANENT_HASH: &str = "!none";
 
 pub const LIVE_DM: &str = "NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (user_a, user_b) AND pu.password_hash = '!purging')";

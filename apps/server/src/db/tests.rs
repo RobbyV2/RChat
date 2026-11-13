@@ -6258,3 +6258,88 @@ async fn the_public_reading_control_is_added_to_an_old_database() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn the_default_servers_control_is_added_to_an_old_database() {
+    controls_reach_an_old_database(
+        "default_servers_control",
+        &["default_servers"],
+        &["rchat"],
+        &[("DEFAULT_SERVERS", " Lobby, rchat ", "lobby,rchat")],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn the_builtin_server_is_made_once_and_stays_removed() {
+    on_each_database("builtin_state", |url| async move {
+        let named = "SELECT COUNT(*) FROM servers WHERE name = 'rchat' AND display_name = 'Town'";
+        let db = open(Some(&url)).await.expect("fresh");
+        assert_eq!(stored(&db, BUILTIN_STATE).await.as_deref(), Some("kept"));
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM channels WHERE server = 'rchat'").await,
+            1
+        );
+        sqlx::query("DELETE FROM settings WHERE key = $1")
+            .bind(BUILTIN_STATE)
+            .execute(&db)
+            .await
+            .expect("a database from before the row");
+        sqlx::query("UPDATE servers SET display_name = 'Town' WHERE name = 'rchat'")
+            .execute(&db)
+            .await
+            .expect("renamed");
+        add_member(&db, "rchat", "alice", 0, 0, 5).await;
+        close(&db).await;
+        for round in 0..2 {
+            let db = open(Some(&url)).await.expect("upgrade");
+            assert_eq!(
+                stored(&db, BUILTIN_STATE).await.as_deref(),
+                Some("kept"),
+                "start {round}"
+            );
+            assert_eq!(count(&db, named).await, 1, "start {round}: kept as it was");
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM members WHERE server = 'rchat' AND username = 'alice'"
+                )
+                .await,
+                1,
+                "start {round}"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channels WHERE server = 'rchat'").await,
+                1,
+                "start {round}"
+            );
+            close(&db).await;
+        }
+        let db = open(Some(&url)).await.expect("run");
+        sqlx::query("DELETE FROM servers WHERE name = 'rchat'")
+            .execute(&db)
+            .await
+            .expect("deleted");
+        page_sets(&db, BUILTIN_STATE, "removed").await;
+        close(&db).await;
+        for round in 0..2 {
+            let db = open(Some(&url)).await.expect("restart");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers").await,
+                0,
+                "start {round}: not made again"
+            );
+            assert_eq!(
+                stored(&db, BUILTIN_STATE).await.as_deref(),
+                Some("removed"),
+                "start {round}"
+            );
+            assert_eq!(
+                crate::api::Settings::load(&db).await.builtin_server,
+                crate::api::policy::Builtin::Removed
+            );
+            close(&db).await;
+        }
+    })
+    .await;
+}
