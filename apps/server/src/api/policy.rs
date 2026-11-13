@@ -128,6 +128,9 @@ pub enum Builtin {
 /// The control that lists the servers every new account joins, by key and in order.
 pub const DEFAULT_SERVERS: &str = "default_servers";
 
+/// The switch for voice channels and DM calls that run through the instance.
+pub const CALLS: &str = "calls";
+
 /// The switch for new friend requests.
 pub const FRIEND_REQUESTS: &str = "friend_requests";
 
@@ -487,6 +490,17 @@ impl Effective<'_> {
     /// Who the user may start a direct conversation with.
     pub fn dm_creation(&self) -> DmCreation {
         self.settings.dm_creation
+    }
+
+    /// Whether the user may join voice channels and start or accept DM calls that run through
+    /// the instance.
+    pub fn calls(&self) -> bool {
+        self.settings.calls
+    }
+
+    /// Whether the user may use peer-to-peer features, P2P calls included.
+    pub fn p2p(&self) -> bool {
+        self.settings.p2p
     }
 
     /// Whether the user may send new friend requests.

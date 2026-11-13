@@ -1,5 +1,6 @@
+use super::CallKind;
 use super::access::Access;
-use super::calls::{finalize_call_log, relay_signal};
+use super::calls::{finalize_call_log, relay_signal, still_on, switched_on};
 use super::protocol::{ClientMsg, Refused};
 
 use crate::api::access::{ws_channel_now, ws_guest_voice_channel};
@@ -32,6 +33,7 @@ pub(super) async fn guest_voice(
 ) -> Result<(), Refused> {
     match msg {
         ClientMsg::VoiceJoin { channel_id } => {
+            switched_on(state, CallKind::Rtc).await?;
             let gone = || Refused::from("Channel not found");
             let Some((server, _)) = ws_channel_now(&state.read(), channel_id).await? else {
                 return Err(gone());
@@ -55,7 +57,7 @@ pub(super) async fn guest_voice(
             for end in ends {
                 finalize_call_log(state, end, false).await;
             }
-            Ok(())
+            still_on(state, CallKind::Rtc).await
         }
         ClientMsg::VoiceLeave => {
             state.hub.voice_leave(name).await;

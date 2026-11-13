@@ -47,7 +47,7 @@ impl Room {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Call {
-    dm_users: Vec<String>,
+    pub(super) dm_users: Vec<String>,
     from: String,
     occupants: Vec<(String, u64)>,
     active: bool,
@@ -379,6 +379,9 @@ pub enum Op {
     EvictVoice {
         user: String,
         channel_id: i64,
+        /// What the evicted user is told; `None` says they lost access to the channel.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     Heartbeat,
     Depart,
@@ -417,6 +420,7 @@ impl Op {
             | Op::EvictVoice {
                 user: _,
                 channel_id: _,
+                reason: _,
             } => true,
             Op::Viewing {
                 user: _,
@@ -1686,7 +1690,11 @@ impl Replica {
                 );
                 Outcome::Done
             }
-            Op::EvictVoice { user, channel_id } => {
+            Op::EvictVoice {
+                user,
+                channel_id,
+                reason,
+            } => {
                 let hit = match self.rooms.get_mut(&channel_id) {
                     Some(room) => {
                         let before = room.users.len();
@@ -1716,7 +1724,9 @@ impl Replica {
                         channel_id: Some(channel_id),
                         dm_id: None,
                         dm_users: Some(vec![user]),
-                        reason: "You no longer have access to this voice channel".to_string(),
+                        reason: reason.unwrap_or_else(|| {
+                            "You no longer have access to this voice channel".to_string()
+                        }),
                     });
                 }
                 Outcome::Done

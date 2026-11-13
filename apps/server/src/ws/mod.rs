@@ -21,7 +21,7 @@ mod rewrite;
 mod typing;
 
 pub(crate) use access::LogGate;
-pub(crate) use calls::end_dm_call;
+pub(crate) use calls::{end_dm_call, end_switched_off};
 pub use conn::{__path_handler, handler};
 pub use event::{CallPeer, CallRelays, EditStub, Updated, UserScope, WsEvent, to_bus_json};
 pub(crate) use guests::is_guest;

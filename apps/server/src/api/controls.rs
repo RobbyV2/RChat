@@ -5,7 +5,7 @@ use sqlx::Row;
 
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
-    Creator, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, PUBLIC_READING, SERVER_CREATORS,
+    CALLS, Creator, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, PUBLIC_READING, SERVER_CREATORS,
     SERVER_SEARCH, ServerCreation, ServerJoining,
 };
 use crate::api::reports::forms::{self, ReportForms};
@@ -142,6 +142,7 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
         default: crate::db::BUILTIN_SERVER,
         public: false,
     });
+    all.push(switch(CALLS, "FEATURE_CALLS", true));
     all.push(Control {
         key: forms::KEY,
         env: forms::ENV,
@@ -644,7 +645,7 @@ mod tests {
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
         assert_eq!(
-            table[table.len() - 10..table.len() - 1],
+            table[table.len() - 11..table.len() - 1],
             [
                 ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
                 ("server_creation", "SERVER_CREATION", "everyone"),
@@ -655,6 +656,7 @@ mod tests {
                 ("friend_requests", "FEATURE_FRIEND_REQUESTS", "1"),
                 ("public_reading", "PUBLIC_READING", "1"),
                 ("default_servers", "DEFAULT_SERVERS", "rchat"),
+                ("calls", "FEATURE_CALLS", "1"),
             ]
         );
         assert_eq!(control("public_reading").kind, Kind::Switch);

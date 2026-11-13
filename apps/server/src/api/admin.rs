@@ -11,8 +11,8 @@ use crate::api::access::{MsgScope, not_found, staff_message};
 use crate::api::controls::{ConfigRecords, Control, ROWS_SQL};
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
-    Builtin, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, PUBLIC_READING, Policy, SERVER_CREATORS,
-    SERVER_SEARCH, ServerCreation, ServerJoining,
+    Builtin, CALLS, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, PUBLIC_READING, Policy,
+    SERVER_CREATORS, SERVER_SEARCH, ServerCreation, ServerJoining,
 };
 use crate::api::reports::forms::{self, Form, ReportForms};
 use crate::api::{
@@ -257,6 +257,7 @@ pub struct SettingsPatch {
     friend_requests: Option<bool>,
     public_reading: Option<bool>,
     default_servers: Option<Vec<String>>,
+    calls: Option<bool>,
 }
 
 pub(crate) fn require_site_admin(user: &User) -> Result<(), ApiError> {
@@ -326,6 +327,7 @@ pub(crate) async fn patch_settings(
         friend_requests,
         public_reading,
         default_servers,
+        calls,
     } = req;
     if upload_expiry_max_days.is_some_and(|d| !(0..=upload_expiry::CAP_DAYS_MAX).contains(&d)) {
         return Err(bad("The longest file expiry must be 0 to 365 days"));
@@ -394,6 +396,7 @@ pub(crate) async fn patch_settings(
         (SERVER_SEARCH, server_search),
         (FRIEND_REQUESTS, friend_requests),
         (PUBLIC_READING, public_reading),
+        (CALLS, calls),
     ]
     .into_iter()
     .chain(

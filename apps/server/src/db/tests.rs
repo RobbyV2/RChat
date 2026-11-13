@@ -6343,3 +6343,14 @@ async fn the_builtin_server_is_made_once_and_stays_removed() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn the_calls_control_is_added_to_an_old_database() {
+    controls_reach_an_old_database(
+        "calls_control",
+        &["calls"],
+        &["1"],
+        &[("FEATURE_CALLS", "off", "0")],
+    )
+    .await;
+}

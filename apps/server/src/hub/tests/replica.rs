@@ -784,6 +784,7 @@ fn indexes_follow_every_op() {
         Op::EvictVoice {
             user: s("erin"),
             channel_id: 11,
+            reason: None,
         },
         Op::DropConn {
             user: s("gina"),

@@ -88,6 +88,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         friend_requests: _,
         public_reading: _,
         builtin_server: _,
+        calls: _,
     } = Settings::cached(&state.read()).await;
     state.instance.discovery(
         &state.instance.origin(peer, headers),

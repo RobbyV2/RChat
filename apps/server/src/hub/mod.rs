@@ -1320,7 +1320,43 @@ impl Hub {
         self.post(Op::EvictVoice {
             user: user.to_string(),
             channel_id,
+            reason: None,
         });
+    }
+
+    /// Takes `user` out of the voice room `channel_id`, telling them `reason`.
+    pub fn end_voice(&self, user: &str, channel_id: i64, reason: &str) {
+        self.post(Op::EvictVoice {
+            user: user.to_string(),
+            channel_id,
+            reason: Some(reason.to_string()),
+        });
+    }
+
+    /// Every voice room with the users in it.
+    pub fn rooms(&self) -> Vec<(i64, Vec<String>)> {
+        self.replica(|replica| {
+            replica
+                .rooms
+                .iter()
+                .map(|(cid, room)| (*cid, room.users.iter().map(|(u, _)| u.clone()).collect()))
+                .collect()
+        })
+    }
+
+    /// Every DM call, ringing or answered: its DM, its kind and one of its two users.
+    pub fn calls(&self) -> Vec<(i64, CallKind, String)> {
+        self.replica(|replica| {
+            replica
+                .calls
+                .iter()
+                .filter_map(|(dm_id, call)| {
+                    call.dm_users
+                        .first()
+                        .map(|user| (*dm_id, call.kind, user.clone()))
+                })
+                .collect()
+        })
     }
 
     pub fn voice_snapshot(&self) -> Vec<WsEvent> {

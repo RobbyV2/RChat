@@ -73,7 +73,11 @@ use crate::state::AppState;
 /// Guests are read-only: no presence, typing or calls. A guest connection first gets
 /// `guest_name` (`{name}`): its name in voice rooms, `@guest:` and 16 hex digits, new for each
 /// connection. A guest may join the voice channels it can view in the servers it follows
-/// (`subscribe`) and send `rtc_signal` to the others in its room. The server sends the events in `WsEvent` (`apps/server/src/ws/event.rs`),
+/// (`subscribe`) and send `rtc_signal` to the others in its room. While the instance's `calls`
+/// setting is off, `voice_join`, and `call_start` and `call_accept` for a call that is not
+/// P2P, get an `error` frame with reason `off_site` and control `calls`, and running voice
+/// rooms and calls end (`voice_ended` with `Calls were turned off`, `call_state` ended); P2P
+/// calls follow `p2p` the same way. The server sends the events in `WsEvent` (`apps/server/src/ws/event.rs`),
 /// for example `message`, `message_updated`, `message_deleted`, `member_joined`, `presence_changed`,
 /// `voice_state`, `call_state` (with `kind` and `video`; an active P2P call also carries its id
 /// and the peer id of both tabs), `p2p_hosted` (tells a `p2p_hosting` sender which of its files are still live

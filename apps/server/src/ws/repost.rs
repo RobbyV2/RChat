@@ -454,7 +454,16 @@ pub(crate) async fn repost(state: &AppState, op: Op) {
                 state.hub.force_offline(&server, &user);
             }
         }
-        Op::EvictVoice { user, channel_id } => {
+        Op::EvictVoice {
+            user: _,
+            channel_id: _,
+            reason: Some(_),
+        } => crate::ws::end_switched_off(state).await,
+        Op::EvictVoice {
+            user,
+            channel_id,
+            reason: None,
+        } => {
             let allowed = match ws_channel_now(&state.read(), channel_id).await {
                 Ok(Some((server, _))) => {
                     ws_voice_viewable(&state.read(), &server, channel_id, &user).await

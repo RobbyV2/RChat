@@ -1622,3 +1622,286 @@ async fn call_errors_never_carry_database_text() {
     starved.close().await;
     crate::api::test_util::done(state, path).await;
 }
+
+fn off(control: &'static str, message: &str) -> crate::ws::protocol::Refused {
+    crate::ws::protocol::Refused {
+        message: message.to_string(),
+        reason: Some(crate::api::Reason {
+            kind: crate::api::ReasonKind::OffSite,
+            control: Some(control.to_string()),
+            retry_after: None,
+            field: None,
+        }),
+    }
+}
+
+const CALLS_OFF: &str = "Calls are turned off on this site";
+const P2P_OFF: &str = "P2P is turned off on this site";
+
+fn rtc_call(dm_id: i64, p2p: bool) -> ClientMsg {
+    ClientMsg::CallStart {
+        dm_id,
+        p2p,
+        video: false,
+        peer_id: None,
+        relays: Vec::new(),
+    }
+}
+
+fn accept(dm_id: i64) -> ClientMsg {
+    ClientMsg::CallAccept {
+        dm_id,
+        peer_id: None,
+        relays: Vec::new(),
+    }
+}
+
+#[tokio::test]
+async fn the_calls_switch_refuses_voice_and_calls_with_its_reason() {
+    let (state, path) = crate::api::test_util::temp_state("calls_switch").await;
+    let db = &state.db;
+    for name in ["alice", "bob", "carol", "dave"] {
+        add_user_row(db, name).await;
+    }
+    crate::db::NewUser::plain("root")
+        .hash("x")
+        .admin(true)
+        .add(db)
+        .await;
+    for name in ["alice", "bob", "root"] {
+        crate::api::test_util::add_member(db, "rchat", name, 0, 0, 0).await;
+    }
+    let cid = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+    let dm = insert_id(
+        db,
+        "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+    )
+    .await;
+    let other = insert_id(
+        db,
+        "INSERT INTO dms(user_a, user_b) VALUES('carol', 'dave') RETURNING id",
+    )
+    .await;
+    let join = |user: &'static str, channel_id| {
+        voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id })
+    };
+    let guest = guest_at(&["rchat"], &[]);
+
+    join("alice", cid).await.expect("calls are on");
+    voice_msg(&state, "alice", 1, ClientMsg::VoiceLeave)
+        .await
+        .expect("leave");
+    as_guest(&state, &guest, ClientMsg::VoiceJoin { channel_id: cid })
+        .await
+        .expect("a guest joins too");
+    as_guest(&state, &guest, ClientMsg::VoiceLeave)
+        .await
+        .expect("leave");
+
+    voice_msg(&state, "alice", 1, rtc_call(dm, false))
+        .await
+        .expect("a call rings while calls are on");
+    let mut rx = state.hub.subscribe();
+    site_sets(&state, serde_json::json!({"calls": false})).await;
+    let event = serde_json::to_value(rx.try_recv().expect("settings_changed")).expect("json");
+    assert_eq!(event["settings"]["calls"], serde_json::json!(false));
+    let older: crate::api::Settings = serde_json::from_value(serde_json::json!({
+        "profanity_filter": true,
+        "asset_previews": true,
+        "asset_uploads": true,
+        "guests_enabled": true,
+    }))
+    .expect("a copy from before the switch");
+    assert!(older.calls);
+    let calls_off = || Err(off("calls", CALLS_OFF));
+    for (who, channel) in [
+        ("alice", cid),
+        ("carol", cid),
+        ("root", cid),
+        ("alice", cid + 500),
+        ("nobody", cid),
+    ] {
+        assert_eq!(
+            join(who, channel).await,
+            calls_off(),
+            "{who} at {channel}: a member, a non-member, the site admin and an unknown channel answer alike"
+        );
+    }
+    assert_eq!(
+        as_guest(&state, &guest, ClientMsg::VoiceJoin { channel_id: cid }).await,
+        calls_off(),
+        "a guest gets the same answer"
+    );
+    assert!(state.hub.rooms_in("rchat", None).is_empty());
+    for (who, dm_id) in [("alice", dm), ("carol", dm), ("alice", dm + 500)] {
+        assert_eq!(
+            voice_msg(&state, who, 1, rtc_call(dm_id, false)).await,
+            calls_off(),
+            "{who} starts in {dm_id}: a DM of theirs, someone else's and none answer alike"
+        );
+    }
+    assert_eq!(
+        insert_id(db, "SELECT COUNT(*) FROM messages WHERE kind = 'call'").await,
+        1,
+        "only the call from before the switch has a log"
+    );
+    assert_eq!(
+        voice_msg(&state, "bob", 2, accept(dm)).await,
+        calls_off(),
+        "the call that was ringing can't be answered"
+    );
+    for (who, dm_id) in [("carol", dm), ("alice", dm + 500)] {
+        assert_eq!(
+            voice_msg(&state, who, 1, accept(dm_id))
+                .await
+                .expect_err("not theirs")
+                .reason,
+            None,
+            "{who} in {dm_id}: nothing about a DM that isn't theirs"
+        );
+    }
+    voice_msg(&state, "bob", 2, ClientMsg::CallDecline { dm_id: dm })
+        .await
+        .expect("declining is never refused");
+    voice_msg(&state, "alice", 1, ClientMsg::VoiceLeave)
+        .await
+        .expect("leaving is never refused");
+    assert_eq!(
+        insert_id(db, "SELECT COUNT(*) FROM channels WHERE kind = 'voice'").await,
+        1,
+        "voice channels stay"
+    );
+
+    voice_msg(&state, "carol", 3, rtc_call(other, true))
+        .await
+        .expect("P2P calls follow P2P, which is on");
+    voice_msg(&state, "dave", 4, accept(other))
+        .await
+        .expect("and so does accepting one");
+    voice_msg(&state, "dave", 4, ClientMsg::CallLeave { dm_id: other })
+        .await
+        .expect("leave");
+    site_sets(&state, serde_json::json!({"p2p": false, "calls": true})).await;
+    assert_eq!(
+        voice_msg(&state, "carol", 3, rtc_call(other, true)).await,
+        Err(off("p2p", P2P_OFF))
+    );
+    assert_eq!(
+        voice_msg(&state, "carol", 3, rtc_call(other + 500, true)).await,
+        Err(off("p2p", P2P_OFF))
+    );
+    voice_msg(&state, "bob", 2, rtc_call(dm, false))
+        .await
+        .expect("a call through the instance");
+    voice_msg(&state, "bob", 2, ClientMsg::CallLeave { dm_id: dm })
+        .await
+        .expect("leave");
+    join("alice", cid).await.expect("calls are on again");
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn turning_calls_off_ends_running_calls() {
+    let (state, path) = crate::api::test_util::temp_state("calls_end").await;
+    let db = &state.db;
+    for name in ["alice", "bob", "carol", "dave", "erin"] {
+        add_user_row(db, name).await;
+    }
+    crate::api::test_util::add_member(db, "rchat", "erin", 0, 0, 0).await;
+    crate::api::test_util::add_member(db, "rchat", "alice", 0, 0, 0).await;
+    let cid = insert_id(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+    let dm = insert_id(
+        db,
+        "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+    )
+    .await;
+    let p2p = insert_id(
+        db,
+        "INSERT INTO dms(user_a, user_b) VALUES('carol', 'dave') RETURNING id",
+    )
+    .await;
+    let follow = crate::api::Settings::follow(&state);
+    voice_msg(&state, "erin", 5, ClientMsg::VoiceJoin { channel_id: cid })
+        .await
+        .expect("erin joins voice");
+    voice_msg(&state, "alice", 1, rtc_call(dm, false))
+        .await
+        .expect("start");
+    voice_msg(&state, "bob", 2, accept(dm))
+        .await
+        .expect("accept");
+    voice_msg(&state, "carol", 3, rtc_call(p2p, true))
+        .await
+        .expect("a P2P call rings");
+    assert!(in_call(&state, dm, "alice") && in_voice(&state, "rchat", cid, "erin"));
+
+    let mut rx = state.hub.subscribe();
+    site_sets(&state, serde_json::json!({"calls": false})).await;
+    within_5s("the voice room and the call end", || {
+        state.hub.rooms_in("rchat", None).is_empty() && state.hub.call_kind(dm).is_none()
+    })
+    .await;
+    assert_eq!(
+        state.hub.call_kind(p2p),
+        Some(crate::ws::CallKind::P2p),
+        "a P2P call follows P2P"
+    );
+    let mut seen = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        match ev {
+            WsEvent::VoiceEnded {
+                server: _,
+                channel_id,
+                dm_id: _,
+                dm_users,
+                reason,
+            } => seen.push(format!("voice {channel_id:?} {dm_users:?} {reason}")),
+            WsEvent::CallState {
+                dm_id,
+                dm_users: _,
+                state: crate::ws::CallPhase::Ended,
+                from: _,
+                kind: _,
+                video: _,
+                call_id: _,
+                answered_at: _,
+                peers: _,
+                relays: _,
+            } => seen.push(format!("call {dm_id} ended")),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        seen,
+        [
+            format!("voice Some({cid}) Some([\"erin\"]) Calls were turned off"),
+            format!("call {dm} ended"),
+        ]
+    );
+    let until = Instant::now() + std::time::Duration::from_secs(5);
+    let outcome: String = loop {
+        let row = sqlx::query(
+            "SELECT call_outcome FROM messages WHERE kind = 'call' AND dm_id = $1 AND call_ended_at IS NOT NULL",
+        )
+        .bind(dm)
+        .fetch_optional(db)
+        .await
+        .expect("the call's log");
+        match row {
+            Some(row) => break row.try_get(0).expect("outcome"),
+            None => {
+                assert!(
+                    Instant::now() < until,
+                    "the call log closes within 5 seconds"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        }
+    };
+    assert_eq!(outcome, "completed");
+
+    site_sets(&state, serde_json::json!({"p2p": false})).await;
+    within_5s("the P2P call ends", || state.hub.call_kind(p2p).is_none()).await;
+    follow.abort();
+    crate::api::test_util::done(state, path).await;
+}

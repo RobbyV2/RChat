@@ -121,6 +121,68 @@ pub fn in_call(state: &AppState, dm: i64, user: &str) -> bool {
     state.hub.in_active_call(dm, user)
 }
 
+/// What a voice room's users are told when the instance turns calls off.
+const CALLS_ENDED: &str = "Calls were turned off";
+
+pub(crate) const CALLS_OFF: &str = "Calls are turned off on this site";
+pub(crate) const P2P_OFF: &str = "P2P is turned off on this site";
+
+/// Whether the instance lets calls of `kind` run: voice channels and calls through the instance
+/// follow `calls`, P2P calls follow `p2p`. The refusal names the switch. A site admin follows
+/// the same rule as everyone.
+pub(super) async fn switched_on(state: &AppState, kind: CallKind) -> Result<(), Refused> {
+    let allowed = crate::api::policy::effective(&state.db, None).await;
+    let forbidden = |text: &str| {
+        crate::api::ApiError(axum::http::StatusCode::FORBIDDEN, text.to_string(), None)
+    };
+    match kind {
+        CallKind::Rtc if !allowed.calls() => {
+            Err(crate::api::policy::refused(crate::api::policy::CALLS, forbidden(CALLS_OFF)).into())
+        }
+        CallKind::P2p if !allowed.p2p() => Err(crate::api::policy::refused(
+            crate::api::features::Feature::P2p.key(),
+            forbidden(P2P_OFF),
+        )
+        .into()),
+        CallKind::Rtc | CallKind::P2p => Ok(()),
+    }
+}
+
+/// Ends what the instance's switches no longer allow: every voice room and every call through
+/// the instance while `calls` is off, every P2P call while `p2p` is off. Nothing else changes:
+/// the voice channels and the call logs stay.
+pub(crate) async fn end_switched_off(state: &AppState) {
+    let allowed = crate::api::policy::effective(&state.db, None).await;
+    if !allowed.calls() {
+        for (channel_id, users) in state.hub.rooms() {
+            for user in users {
+                state.hub.end_voice(&user, channel_id, CALLS_ENDED);
+            }
+        }
+    }
+    for (dm_id, kind, user) in state.hub.calls() {
+        let off = match kind {
+            CallKind::Rtc => !allowed.calls(),
+            CallKind::P2p => !allowed.p2p(),
+        };
+        if off && let Ok(end) = state.hub.call_end(&user, dm_id).await {
+            finalize_call_log(state, end, false).await;
+        }
+    }
+}
+
+/// A call of `kind` just started or grew: when its switch went off meanwhile, it ends with the
+/// rest and the caller gets the refusal.
+pub(super) async fn still_on(state: &AppState, kind: CallKind) -> Result<(), Refused> {
+    match switched_on(state, kind).await {
+        Ok(()) => Ok(()),
+        Err(refusal) => {
+            end_switched_off(state).await;
+            Err(refusal)
+        }
+    }
+}
+
 pub(super) async fn voice_msg(
     state: &AppState,
     user: &str,
@@ -129,6 +191,7 @@ pub(super) async fn voice_msg(
 ) -> Result<(), Refused> {
     match msg {
         ClientMsg::VoiceJoin { channel_id } => {
+            switched_on(state, CallKind::Rtc).await?;
             let channel = ws_voice_channel(&state.read(), user, channel_id).await?;
             if channel.kind() != ChannelKind::Voice {
                 return Err("Not a voice channel".into());
@@ -148,6 +211,7 @@ pub(super) async fn voice_msg(
             for end in ends {
                 finalize_call_log(state, end, false).await;
             }
+            still_on(state, CallKind::Rtc).await?;
             if crate::api::access::timed_out(&state.db, &server, user)
                 .await?
                 .is_some()
@@ -172,6 +236,11 @@ pub(super) async fn voice_msg(
             peer_id,
             relays,
         } => {
+            let kind = match p2p {
+                true => CallKind::P2p,
+                false => CallKind::Rtc,
+            };
+            switched_on(state, kind).await?;
             let peer_id = call_peer_id(peer_id)?;
             let relays = match p2p {
                 true => crate::p2p::relay_hosts(relays)?,
@@ -191,10 +260,6 @@ pub(super) async fn voice_msg(
                 false => &a,
             };
             crate::api::blocks::check_dm(&state.db, user, other).await?;
-            let kind = match p2p {
-                true => CallKind::P2p,
-                false => CallKind::Rtc,
-            };
             if let Some(busy) = state.hub.call_busy(user, other) {
                 return Err(busy.into());
             }
@@ -215,7 +280,7 @@ pub(super) async fn voice_msg(
             {
                 Ok(()) => {
                     broadcast_call_log(state, dm_id, dm_users, log_id).await;
-                    Ok(())
+                    still_on(state, kind).await
                 }
                 Err(e) => {
                     let _ = sqlx::query("DELETE FROM messages WHERE id = $1")
@@ -238,7 +303,11 @@ pub(super) async fn voice_msg(
             let (a, b) = ws_dm_users(&state.read(), dm_id, user)
                 .await?
                 .ok_or_else(|| "No incoming call".to_string())?;
-            let relays = match state.hub.call_kind(dm_id) {
+            let ringing = state.hub.call_kind(dm_id);
+            if let Some(kind) = ringing {
+                switched_on(state, kind).await?;
+            }
+            let relays = match ringing {
                 Some(CallKind::P2p) => crate::p2p::relay_hosts(relays)?,
                 Some(CallKind::Rtc) | None => Vec::new(),
             };
@@ -248,7 +317,10 @@ pub(super) async fn voice_msg(
                 .call_accept_from(user, conn, dm_id, (peer_id, relays))
                 .await?;
             answer_call_log(state, dm_users, log_id).await;
-            Ok(())
+            match ringing {
+                Some(kind) => still_on(state, kind).await,
+                None => Ok(()),
+            }
         }
         ClientMsg::CallDecline { dm_id } => {
             let end = state.hub.call_end(user, dm_id).await?;

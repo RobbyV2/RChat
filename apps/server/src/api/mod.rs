@@ -1264,6 +1264,12 @@ pub struct Settings {
     /// password, and only its display name changes on a rename.
     #[serde(default)]
     pub builtin_server: Builtin,
+    /// Voice channels and DM calls that run through the instance. Off: joining a voice channel
+    /// and starting or accepting a call are refused with a WebSocket `error` frame whose
+    /// `reason` is `off_site` with control `calls`, and running calls end. Voice channels stay.
+    /// P2P calls follow `p2p` instead.
+    #[serde(default = "yes")]
+    pub calls: bool,
 }
 
 /// The public settings as `GET /api/v1/settings` and the `settings_changed` WebSocket event
@@ -1350,6 +1356,7 @@ impl Settings {
         friend_requests: false,
         public_reading: false,
         builtin_server: Builtin::Kept,
+        calls: false,
     };
 
     pub async fn load(db: &Db) -> Settings {
@@ -1431,6 +1438,7 @@ impl Settings {
                 Some("removed") => Builtin::Removed,
                 Some(_) | None => Builtin::Kept,
             },
+            calls: on(policy::CALLS),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1491,6 +1499,7 @@ impl Settings {
             friend_requests: _,
             public_reading: _,
             builtin_server: _,
+            calls: _,
         } = *self;
         match feature {
             Feature::ServerReports => server_reports,
@@ -1532,8 +1541,8 @@ impl Settings {
     }
 
     /// Keeps this process's cached settings and lists current: reloads them whenever
-    /// `settings_changed` arrives, from this process or from another one over the bus, and
-    /// takes out of voice who can no longer open a server.
+    /// `settings_changed` arrives, from this process or from another one over the bus, ends the
+    /// calls a switch no longer allows, and takes out of voice who can no longer open a server.
     pub fn follow(state: &AppState) -> tokio::task::JoinHandle<()> {
         let mut changes = state.hub.settings_changes();
         let state = state.clone();
@@ -1541,6 +1550,7 @@ impl Settings {
             while changes.changed().await.is_ok() {
                 Settings::load(&state.db).await;
                 policy::Policy::load(&state.db).await;
+                crate::ws::end_switched_off(&state).await;
                 crate::ws::evict_closed_voice(&state).await;
             }
         })
