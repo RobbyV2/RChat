@@ -9,6 +9,7 @@ import {
   CACHE_MAX,
   cachedMasks,
   lru,
+  maskFileName,
   maskOutsideCode,
   maskProfanity,
   maskRuns,
@@ -33,7 +34,8 @@ import { nestedInteractive } from './nesting'
 import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
 import type { Message } from '../types'
 import { ownsP2pServer } from '../p2p/server/types'
-import { embed, me, memoryStorage, msg, user } from './fixtures'
+import { embed, me, media, memoryStorage, msg, user } from './fixtures'
+import { readText } from './masked_text'
 import samples from './fixtures/profanity.json'
 
 afterAll(resetSessionCaches)
@@ -41,6 +43,7 @@ afterAll(resetSessionCaches)
 interface Sample {
   text: string
   masked: string
+  file_name: string
   profane: boolean
 }
 
@@ -495,6 +498,57 @@ describe('in messages', () => {
   })
 })
 
+describe('file names', () => {
+  // As the matcher reads them: "cun.ts" is a listed word in text, and its stem "cun" in a file name.
+  const readings = {
+    text: (t: string) => t.replace(/cun\.ts/g, '***.**'),
+    file: (t: string) => t.replace(/fuck/g, '****'),
+  }
+  const initial = useStore.getInitialState()
+
+  beforeEach(async () => {
+    await setMasking(true, () => Promise.resolve(readings))
+    Object.assign(initial, { profanityOn: true, profanityReady: true, me: me('alice') })
+    useStore.setState({ profanityOn: true, profanityReady: true, me: me('alice') })
+  })
+
+  afterEach(() => {
+    Object.assign(initial, { profanityOn: false, profanityReady: false, me: null })
+    useStore.setState({ profanityOn: false, profanityReady: false, me: null })
+  })
+
+  test('the name of a file is read as one, every other text as text', () => {
+    expect(maskProfanity('cun.ts')).toBe('***.**')
+    expect(maskFileName('cun.ts')).toBe('cun.ts')
+    expect(maskFileName('fuck.ts')).toBe('****.ts')
+    expect(maskOf(useStore.getState(), false, true)('cun.ts')).toBe('cun.ts')
+    expect(maskOf(useStore.getState(), true, true)('fuck.ts')).toBe('fuck.ts')
+    expect(renderToStaticMarkup(<Masked text="cun.ts" file />)).toBe('cun.ts')
+    expect(readText(renderToStaticMarkup(<Masked text="cun.ts" />))).toBe('***.**')
+  })
+
+  test('an attachment shows its name with it, the message text keeps the text reading', () => {
+    const settings = initial.settings
+    Object.assign(initial, { settings: { ...settings, asset_previews: false } })
+    for (const file of [
+      media({ filename: 'cun.ts', mime: 'text/plain' }),
+      media({ filename: 'cun.ts', removed: true }),
+    ]) {
+      const message = msg(1, { content: 'see cun.ts', author: user('bob'), media: file })
+      const html = readText(renderToStaticMarkup(<MarkdownMessage message={message} />))
+      expect(html).toContain('see ***.**')
+      expect(html).toContain(file.removed ? 'File cun.ts ' : '>cun.ts<')
+    }
+    Object.assign(initial, { settings })
+  })
+
+  test('one matcher for all text reads file names too', async () => {
+    resetMasking()
+    await setMasking(true, () => Promise.resolve(fake))
+    expect(maskFileName('shit.txt')).toBe('****.txt')
+  })
+})
+
 describe('the site filter line', () => {
   test('shows only when the site filter covers at least one target', () => {
     const off = Object.fromEntries(
@@ -624,11 +678,13 @@ describe('the compiled matcher', () => {
     const mod = (await import(join(WASM, 'rust_next_wasm.js'))) as {
       initSync: (init: { module: Uint8Array }) => unknown
       mask_profanity: Matcher
+      mask_file_name: Matcher
       is_profane: (text: string) => boolean
     }
     mod.initSync({ module: readFileSync(join(WASM, 'rust_next_wasm_bg.wasm')) })
     for (const s of SAMPLES) {
       expect(mod.mask_profanity(s.text)).toBe(s.masked)
+      expect(mod.mask_file_name(s.text)).toBe(s.file_name)
       expect(mod.is_profane(s.text)).toBe(s.profane)
     }
   })

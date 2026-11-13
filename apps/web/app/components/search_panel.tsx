@@ -221,13 +221,13 @@ export function SearchView({
                   own={r.own && !r.forwarded}
                 />
               ) : (
-                r.file !== null && <Masked text={r.file} own={r.own} />
+                r.file !== null && <Masked text={r.file} file own={r.own} />
               )}
             </p>
             {r.file !== null && (
               <p className="mt-0.5 flex items-center gap-1 text-xs text-on-surface-variant">
                 <FileText size={12} />
-                <Masked text={r.file} own={r.own} />
+                <Masked text={r.file} file own={r.own} />
               </p>
             )}
           </button>

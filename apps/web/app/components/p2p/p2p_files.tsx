@@ -79,7 +79,7 @@ const startDownload = (att: Attachment) => {
 
 // The message menu's way to the per-file buttons: save what is here, download what isn't.
 export const attachmentMenu = (list: Attachment[], canFetch: boolean): ContextMenuItem | null => {
-  const mask = maskOf(useStore.getState())
+  const mask = maskOf(useStore.getState(), false, true)
   const items: ContextMenuItem[] = list.map(att => {
     const v = useP2p.getState().files[att.h]
     const name = mask(downloadName(att.name))

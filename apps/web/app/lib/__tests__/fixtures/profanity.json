@@ -1,232 +1,422 @@
 [
   {
+    "file_name": "hello",
     "masked": "hello",
     "profane": false,
     "text": "hello"
   },
   {
+    "file_name": "I love cats",
     "masked": "I love cats",
     "profane": false,
     "text": "I love cats"
   },
   {
+    "file_name": "push it",
     "masked": "push it",
     "profane": false,
     "text": "push it"
   },
   {
+    "file_name": "assassin",
     "masked": "assassin",
     "profane": false,
     "text": "assassin"
   },
   {
+    "file_name": "Scunthorpe",
     "masked": "Scunthorpe",
     "profane": false,
     "text": "Scunthorpe"
   },
   {
+    "file_name": "Club Night 1802167024629",
     "masked": "Club Night 1802167024629",
     "profane": false,
     "text": "Club Night 1802167024629"
   },
   {
+    "file_name": "order 40056 shipped",
     "masked": "order 40056 shipped",
     "profane": false,
     "text": "order 40056 shipped"
   },
   {
+    "file_name": "club1793",
     "masked": "club1793",
     "profane": false,
     "text": "club1793"
   },
   {
+    "file_name": "room42",
     "masked": "room42",
     "profane": false,
     "text": "room42"
   },
   {
+    "file_name": "see #55 and #12",
     "masked": "see #55 and #12",
     "profane": false,
     "text": "see #55 and #12"
   },
   {
+    "file_name": "****",
     "masked": "****",
     "profane": true,
     "text": "fuck"
   },
   {
+    "file_name": "**** you",
     "masked": "**** you",
     "profane": true,
     "text": "Fuck you"
   },
   {
+    "file_name": "****",
     "masked": "****",
     "profane": true,
     "text": "FUCK"
   },
   {
+    "file_name": "********",
     "masked": "********",
     "profane": true,
     "text": "fuuuuuck"
   },
   {
+    "file_name": "* * * *",
     "masked": "* * * *",
     "profane": true,
     "text": "f u c k"
   },
   {
+    "file_name": "*.*.*.* off",
     "masked": "*.*.*.* off",
     "profane": true,
     "text": "f.u.c.k off"
   },
   {
+    "file_name": "****",
     "masked": "****",
     "profane": true,
     "text": "fučk"
   },
   {
+    "file_name": "****",
     "masked": "****",
     "profane": true,
     "text": "ｆｕｃｋ"
   },
   {
+    "file_name": "what the ****.",
     "masked": "what the ****.",
     "profane": true,
     "text": "what the shit."
   },
   {
+    "file_name": "****",
     "masked": "****",
     "profane": true,
     "text": "sh1t"
   },
   {
+    "file_name": "****",
     "masked": "****",
     "profane": true,
     "text": "5h1t"
   },
   {
+    "file_name": "****",
     "masked": "****",
     "profane": true,
     "text": "f4ck"
   },
   {
+    "file_name": "you are an *******!!",
     "masked": "you are an *******!!",
     "profane": true,
     "text": "you are an asshole!!"
   },
   {
+    "file_name": "*****",
     "masked": "*****",
     "profane": true,
     "text": "bitch"
   },
   {
+    "file_name": "***",
     "masked": "***",
     "profane": true,
     "text": "a55"
   },
   {
+    "file_name": "#******",
     "masked": "#******",
     "profane": true,
     "text": "#55hole"
   },
   {
+    "file_name": "****",
     "masked": "****",
     "profane": true,
     "text": "8008"
   },
   {
+    "file_name": "****",
     "masked": "****",
     "profane": true,
     "text": "1488"
   },
   {
+    "file_name": "****5",
     "masked": "****5",
     "profane": true,
     "text": "80085"
   },
   {
+    "file_name": "*****",
     "masked": "*****",
     "profane": true,
     "text": "pu55y"
   },
   {
+    "file_name": "**** 1793012345678",
     "masked": "**** 1793012345678",
     "profane": true,
     "text": "fuck 1793012345678"
   },
   {
+    "file_name": "https://****.co/x",
     "masked": "https://****.co/x",
     "profane": true,
     "text": "https://fuck.co/x"
   },
   {
+    "file_name": "see https://example.com/****",
     "masked": "see https://example.com/****",
     "profane": true,
     "text": "see https://example.com/fuck"
   },
   {
+    "file_name": "`****` in code",
     "masked": "`****` in code",
     "profane": true,
     "text": "`fuck` in code"
   },
   {
+    "file_name": "**bold ****** text",
     "masked": "**bold ****** text",
     "profane": true,
     "text": "**bold shit** text"
   },
   {
+    "file_name": "@someone **** off",
     "masked": "@someone **** off",
     "profane": true,
     "text": "@someone fuck off"
   },
   {
+    "file_name": "Is this **** good",
     "masked": "Is this **** good",
     "profane": true,
     "text": "Is this shit good"
   },
   {
+    "file_name": "**** club",
     "masked": "**** club",
     "profane": true,
     "text": "fuck club"
   },
   {
+    "file_name": "go **** yourself",
     "masked": "go **** yourself",
     "profane": true,
     "text": "go fuck yourself"
   },
   {
+    "file_name": "bad *** *****",
     "masked": "bad *** *****",
     "profane": true,
     "text": "bad ass bitch"
   },
   {
+    "file_name": "****club",
     "masked": "****club",
     "profane": true,
     "text": "fuckclub"
   },
   {
+    "file_name": "it's ****",
     "masked": "it's ****",
     "profane": true,
     "text": "it's shit"
   },
   {
+    "file_name": "⁦****⁩",
     "masked": "⁦****⁩",
     "profane": true,
     "text": "⁦fuck⁩"
   },
   {
+    "file_name": "**‮**",
     "masked": "**‮**",
     "profane": true,
     "text": "fu‮ck"
   },
   {
+    "file_name": "‮‮‮‮****",
     "masked": "‮‮‮‮****",
     "profane": true,
     "text": "‮‮‮‮fuck"
   },
   {
+    "file_name": "**** you",
     "masked": "**** you",
     "profane": true,
     "text": "shit you"
+  },
+  {
+    "file_name": "a p2p attachment for the channel",
+    "masked": "a p2p attachment for the channel",
+    "profane": false,
+    "text": "a p2p attachment for the channel"
+  },
+  {
+    "file_name": "attachment-from-alice.txt",
+    "masked": "attachment-from-alice.txt",
+    "profane": false,
+    "text": "attachment-from-alice.txt"
+  },
+  {
+    "file_name": "kept.txt",
+    "masked": "kept.txt",
+    "profane": false,
+    "text": "kept.txt"
+  },
+  {
+    "file_name": "note.txt",
+    "masked": "note.txt",
+    "profane": false,
+    "text": "note.txt"
+  },
+  {
+    "file_name": "H2O levels",
+    "masked": "H2O levels",
+    "profane": false,
+    "text": "H2O levels"
+  },
+  {
+    "file_name": "release.exe",
+    "masked": "relea**.**e",
+    "profane": true,
+    "text": "release.exe"
+  },
+  {
+    "file_name": "see example",
+    "masked": "see example",
+    "profane": false,
+    "text": "see example"
+  },
+  {
+    "file_name": "****.txt",
+    "masked": "****.txt",
+    "profane": true,
+    "text": "sh1t.txt"
+  },
+  {
+    "file_name": "**** ***s",
+    "masked": "**** ***s",
+    "profane": true,
+    "text": "blow jobs"
+  },
+  {
+    "file_name": "test.js",
+    "masked": "****.**",
+    "profane": true,
+    "text": "test.js"
+  },
+  {
+    "file_name": "main.cpp",
+    "masked": "main.c**",
+    "profane": true,
+    "text": "main.cpp"
+  },
+  {
+    "file_name": "****.tar.gz",
+    "masked": "****.tar.gz",
+    "profane": true,
+    "text": "fuck.tar.gz"
+  },
+  {
+    "file_name": "https://github.com/a/b/blob/main/src/index.test.js",
+    "masked": "https://github.com/a/b/blob/main/src/index.test.js",
+    "profane": false,
+    "text": "https://github.com/a/b/blob/main/src/index.test.js"
+  },
+  {
+    "file_name": "see https://example.com/main.cpp",
+    "masked": "see https://example.com/main.cpp",
+    "profane": false,
+    "text": "see https://example.com/main.cpp"
+  },
+  {
+    "file_name": "https://example.com/****.txt",
+    "masked": "https://example.com/****.txt",
+    "profane": true,
+    "text": "https://example.com/fuck.txt"
+  },
+  {
+    "file_name": "cun.ts",
+    "masked": "***.**",
+    "profane": true,
+    "text": "cun.ts"
+  },
+  {
+    "file_name": "you are a cun.ts",
+    "masked": "you are a ***.**",
+    "profane": true,
+    "text": "you are a cun.ts"
+  },
+  {
+    "file_name": "https://x.org/src/cun.ts",
+    "masked": "https://x.org/src/cun.ts",
+    "profane": false,
+    "text": "https://x.org/src/cun.ts"
+  },
+  {
+    "file_name": "a** ***",
+    "masked": "a** ***",
+    "profane": true,
+    "text": "api key"
+  },
+  {
+    "file_name": "x** ** you",
+    "masked": "x** ** you",
+    "profane": true,
+    "text": "xfu ck you"
+  },
+  {
+    "file_name": "you are a x**.***",
+    "masked": "you are a x**.***",
+    "profane": true,
+    "text": "you are a xbi.tch"
+  },
+  {
+    "file_name": "slu ts",
+    "masked": "slu ts",
+    "profane": false,
+    "text": "slu ts"
+  },
+  {
+    "file_name": "https://u@***.**/",
+    "masked": "https://u@***.**/",
+    "profane": true,
+    "text": "https://u@cun.ts/"
+  },
+  {
+    "file_name": "** *****",
+    "masked": "** *****",
+    "profane": true,
+    "text": "bi tches"
   }
 ]

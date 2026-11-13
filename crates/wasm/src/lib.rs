@@ -11,6 +11,11 @@ pub fn mask_profanity(text: &str) -> String {
 }
 
 #[wasm_bindgen]
+pub fn mask_file_name(name: &str) -> String {
+    rchat_profanity::mask_file_name(name)
+}
+
+#[wasm_bindgen]
 pub fn is_profane(text: &str) -> bool {
     rchat_profanity::is_profane(text, true)
 }
@@ -26,6 +31,7 @@ mod tests {
             .lines()
             .map(|text| {
                 serde_json::json!({
+                    "file_name": mask_file_name(text),
                     "text": text,
                     "masked": mask_profanity(text),
                     "profane": is_profane(text),

@@ -2023,6 +2023,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const host = ev.server !== null ? get().servers[ev.server] : undefined
       const channel =
         channel_id !== null ? (host?.channels.find(c => c.id === channel_id)?.name ?? null) : null
+      const file = m.kind !== 'pin' && !isSystem(m) && !m.content && !m.media?.spoiler
       alertUser({
         key: scope,
         actor: m.author,
@@ -2033,6 +2034,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
             : isSystem(m)
               ? systemText(m)
               : m.content || (m.media?.spoiler ? '' : m.media?.filename) || 'Attachment',
+        file: file && !!m.media?.filename,
         server: dm_id === null ? (host?.display_name ?? null) : null,
         channel,
         dm: dm_id !== null,

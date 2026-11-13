@@ -3,7 +3,7 @@ import { relayBook } from './relays'
 import { NO_PINGS } from './pings'
 import { NO_GROUP_PINGS } from './group_pings'
 import { EMPTY_NOTIFY } from './notify'
-import { maskProfanity, showText } from './profanity'
+import { maskFileName, maskProfanity, showText } from './profanity'
 import { EMPTY_PREFS } from './emoji'
 import { DEFAULT_ROUTE } from './call_choice'
 import { emptyLayout } from './nav_layout'
@@ -504,8 +504,9 @@ useStore.subscribe((s, prev) => {
 })
 
 // What every display path masks names and text with: the personal profanity filter once it is
-// on and loaded, else the text as it is. Your own text (`own`) is never masked for you.
-export const maskOf = (s: RChatState, own = false) =>
-  s.profanityReady && !own ? maskProfanity : showText
+// on and loaded, else the text as it is. Your own text (`own`) is never masked for you. `file`:
+// the text is the name of a file.
+export const maskOf = (s: RChatState, own = false, file = false) =>
+  s.profanityReady && !own ? (file ? maskFileName : maskProfanity) : showText
 
-export const useMask = (own = false) => useStore(s => maskOf(s, own))
+export const useMask = (own = false, file = false) => useStore(s => maskOf(s, own, file))

@@ -740,7 +740,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
         )}
         <span className="mt-1 flex items-center gap-2">
           <span className="max-w-60 truncate text-xs text-on-surface-variant">
-            <Masked text={filename} own={own} />
+            <Masked text={filename} file own={own} />
           </span>
           {saveButton}
         </span>
@@ -763,7 +763,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
         <span className="flex items-center gap-2 text-sm text-on-surface-variant">
           <FileText size={18} className="shrink-0" />
           <span className="max-w-60 truncate">
-            <Masked text={filename} own={own} />
+            <Masked text={filename} file own={own} />
           </span>
         </span>
         <p className="mt-1 text-xs text-on-surface-variant italic">
@@ -789,7 +789,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
       <div className="flex items-center gap-2">
         <FileText size={18} className="shrink-0 text-tertiary" />
         <span className="max-w-60 truncate text-sm">
-          <Masked text={filename} own={own} />
+          <Masked text={filename} file own={own} />
         </span>
         {size !== null && (
           <span className="shrink-0 text-xs text-on-surface-variant tabular-nums">
@@ -890,7 +890,7 @@ function MediaAttachment({
           'Attachment removed'
         ) : (
           <>
-            File <Masked text={filename} own={own} />{' '}
+            File <Masked text={filename} file own={own} />{' '}
             {removedTail(removedLifetime(expires_at, postedAt, lifetime))}
           </>
         )}
@@ -985,7 +985,7 @@ function MediaAttachment({
       <span className="flex items-center gap-2">
         <FileText size={18} className="shrink-0 text-primary" />
         <span className="max-w-60 truncate text-sm">
-          <Masked text={filename} own={own} />
+          <Masked text={filename} file own={own} />
         </span>
         <Download size={14} className="shrink-0 text-on-surface-variant" />
       </span>

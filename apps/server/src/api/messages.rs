@@ -3404,6 +3404,63 @@ mod tests {
         matches!(res, Err(ApiError(StatusCode::FORBIDDEN, ref m, _)) if m == text)
     }
 
+    // The two messages the site filter refused: "p2p" was read as "pp" and "kept.txt" as "tit".
+    // A file name is read as its stem when its extension is known ("test.js", "cun.ts"); the
+    // text of a message is not.
+    #[tokio::test]
+    async fn ordinary_text_and_file_names_pass_the_site_filter() {
+        let (state, path) = temp_state("ordinary_names").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, now()).await;
+        crate::api::test_util::profanity_on(db).await;
+        let text = "a p2p attachment for the channel";
+        let mut offer = p2p_req(&"d4".repeat(16), 10, None);
+        offer.content = text.to_string();
+        if let Some(p2p) = offer.p2p.as_mut() {
+            p2p.filename = "attachment-from-alice.txt".to_string();
+        }
+        let sent = send_req(&state, cid, offer).await.expect("P2P offer posts");
+        assert_eq!(sent.content, text);
+        for (id, name) in [
+            ("m1", "attachment-from-alice.txt"),
+            ("m2", "kept.txt"),
+            ("m3", "note.txt"),
+            ("m4", "test.js"),
+            ("m5", "main.cpp"),
+            ("m7", "cun.ts"),
+        ] {
+            add_media(db, id, Some("alice")).await;
+            sqlx::query("UPDATE media SET filename = $1 WHERE id = $2")
+                .bind(name)
+                .bind(id)
+                .execute(db)
+                .await
+                .expect("rename");
+            let sent = send_with(&state, cid, "alice", text.to_string(), Some(id))
+                .await
+                .unwrap_or_else(|ApiError(_, e, _)| panic!("{name}: {e}"))
+                .0;
+            assert_eq!(sent.media.expect("media").filename, name);
+        }
+        add_media(db, "m6", Some("alice")).await;
+        sqlx::query("UPDATE media SET filename = 'kept.fuck' WHERE id = 'm6'")
+            .execute(db)
+            .await
+            .expect("rename");
+        for (content, media) in [
+            ("hello", Some("m6")),
+            ("well sh1t", None),
+            ("you are a cun.ts", None),
+        ] {
+            assert!(matches!(
+                send_with(&state, cid, "alice", content.to_string(), media).await,
+                Err(ApiError(StatusCode::BAD_REQUEST, ref m, _)) if m == "Content blocked by profanity filter"
+            ));
+        }
+        done(state, path).await;
+    }
+
     // P2P files are never checked by the instance filter; uploads to the instance are.
     #[tokio::test]
     async fn p2p_file_names_skip_the_site_filter() {

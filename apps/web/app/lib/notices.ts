@@ -22,6 +22,8 @@ export interface AlertInput {
   action: string
   // Raw message text; spoilers and markdown are masked when shown.
   body: string
+  // The body is the name of the file the message holds.
+  file?: boolean
   // Display names; `channel` without the #. Both null for a DM.
   server: string | null
   channel: string | null

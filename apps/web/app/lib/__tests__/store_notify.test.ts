@@ -12,6 +12,7 @@ import {
 } from '../store'
 import { EMPTY_NOTIFY, muteEnd, notifyValue, setLevel, setMute } from '../notify'
 import { setNotifier } from '../platform'
+import { resetMasking, setMasking } from '../profanity'
 import { webNotifier } from '../platform/web_notifications'
 import { home } from '../instances'
 import { fakeNotifier } from './fake_notifier'
@@ -337,6 +338,22 @@ describe('desktop notifications', () => {
     dispatch(file(11, true))
     dispatch(file(12, false))
     expect(fake.shown.map(n => n.body)).toEqual(['Attachment', 'plot12.png'])
+  })
+
+  test('the name of a file without text is masked as a file name', async () => {
+    const readings = {
+      text: (t: string) => t.replace(/plot/g, '****'),
+      file: (t: string) => t.replace(/png/g, '***'),
+    }
+    await setMasking(true, () => Promise.resolve(readings))
+    const ev = inDm(11, '')
+    if (ev.type === 'message') ev.message.media = media({ filename: 'plot.png' })
+    dispatch(ev)
+    expect(st().notices.at(-1)?.file).toBe(true)
+    dispatch(inDm(12, 'plot.png'))
+    expect(st().notices.at(-1)?.file).toBe(false)
+    expect(fake.shown.map(n => n.body)).toEqual(['plot.***', '****.png'])
+    resetMasking()
   })
 
   test('none while the tab has focus, without permission, or switched off', () => {

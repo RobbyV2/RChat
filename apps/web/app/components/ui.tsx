@@ -437,21 +437,23 @@ export const useOwnServer = (name: string | null | undefined) =>
   })
 
 // Text as the personal profanity filter shows it, each masked word revealable. `code`: plain
-// text that may hold markdown code, which stays as written. Your own text (`own`, or `by` you) is
-// never masked.
+// text that may hold markdown code, which stays as written. `file`: the name of a file. Your own
+// text (`own`, or `by` you) is never masked.
 export function Masked({
   text,
   code = false,
+  file = false,
   by,
   own = false,
 }: {
   text: string
   code?: boolean
+  file?: boolean
   by?: string | null
   own?: boolean
 }) {
   const mine = useOwn(by)
-  const mask = useMask(own || mine)
+  const mask = useMask(own || mine, file)
   const shown = code ? maskOutsideCode(text, mask) : mask(text)
   if (shown === text) return <>{text}</>
   return (

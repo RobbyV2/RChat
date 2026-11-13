@@ -26,6 +26,10 @@ export const profanityValue = (on: boolean) => JSON.stringify({ v: 1, on })
 
 export type Matcher = (text: string) => string
 
+// A matcher for all text, or one for text and one for the names of files (a known extension is
+// read apart from the name before it: `test.js`).
+export type Matchers = Matcher | { text: Matcher; file: Matcher }
+
 export const CACHE_MAX = 2000
 
 export const lru = <V>(max: number) => {
@@ -49,24 +53,30 @@ export const lru = <V>(max: number) => {
   }
 }
 
-let matcher: Matcher | null = null
+let matcher: { text: Matcher; file: Matcher } | null = null
 let active = false
 let loading: Promise<boolean> | null = null
 const cache = lru<string>(CACHE_MAX)
+const fileCache = lru<string>(CACHE_MAX)
 
 const stars = (text: string) => text.split('*').length - 1
 
-// Masks profanity in text you are about to show, when the filter is on and loaded.
-export const maskProfanity = (text: string): string => {
-  if (!active || matcher === null || text.trim() === '') return text
-  const hit = cache.get(text)
+const masked = (text: string, mask: Matcher | undefined, seen: typeof cache) => {
+  if (!active || mask === undefined || text.trim() === '') return text
+  const hit = seen.get(text)
   if (hit !== undefined) return hit
-  const out = matcher(text)
+  const out = mask(text)
   // The wasm reads lone surrogates as U+FFFD; text it didn't mask comes back as it was.
   const kept = stars(out) > stars(text) ? out : text
-  cache.set(text, kept)
+  seen.set(text, kept)
   return kept
 }
+
+// Masks profanity in text you are about to show, when the filter is on and loaded.
+export const maskProfanity = (text: string): string => masked(text, matcher?.text, cache)
+
+// `maskProfanity` for the name of a file.
+export const maskFileName = (name: string): string => masked(name, matcher?.file, fileCache)
 
 export const showText = (text: string) => text
 
@@ -85,27 +95,28 @@ export const maskOutsideCode = (text: string, mask: Matcher) =>
 interface WasmModule {
   default: (init: { module_or_path: string }) => Promise<unknown>
   mask_profanity: Matcher
+  mask_file_name: Matcher
 }
 
-export const wasmMatcher = async (): Promise<Matcher> => {
+export const wasmMatcher = async (): Promise<Matchers> => {
   const base = `${getBasePath()}/wasm/rust_next_wasm`
   const mod = (await import(
     /* webpackIgnore: true */ /* turbopackIgnore: true */ `${base}.js`
   )) as WasmModule
   await mod.default({ module_or_path: `${base}_bg.wasm` })
-  return mod.mask_profanity
+  return { text: mod.mask_profanity, file: mod.mask_file_name }
 }
 
 // Turns masking on or off. Resolves true once masking works, false when off, when the page
 // can't run WebAssembly (nothing is loaded then) or when the matcher couldn't load (a later call
 // tries again).
-export const setMasking = (on: boolean, load: () => Promise<Matcher> = wasmMatcher) => {
+export const setMasking = (on: boolean, load: () => Promise<Matchers> = wasmMatcher) => {
   active = on && capabilities().wasm
   if (!active) return Promise.resolve(false)
   if (matcher !== null) return Promise.resolve(true)
   loading ??= load().then(
     m => {
-      matcher = m
+      matcher = typeof m === 'function' ? { text: m, file: m } : m
       return true
     },
     () => {
@@ -134,9 +145,10 @@ export const resetMasking = () => {
   active = false
   loading = null
   cache.clear()
+  fileCache.clear()
 }
 
-export const cachedMasks = () => cache.size()
+export const cachedMasks = () => cache.size() + fileCache.size()
 
 interface MdNode {
   type: string

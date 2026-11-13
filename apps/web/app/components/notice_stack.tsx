@@ -97,7 +97,7 @@ function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
           )}
           {body && (
             <span className="mt-0.5 block truncate text-sm text-on-surface">
-              <Masked text={body} code />
+              <Masked text={body} code file={notice.file} />
             </span>
           )}
         </span>

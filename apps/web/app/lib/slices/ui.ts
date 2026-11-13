@@ -61,6 +61,7 @@ import {
 } from '../notify'
 import { notifications } from '../platform'
 import {
+  maskFileName,
   maskOutsideCode,
   maskProfanity,
   PROFANITY_DEFAULT,
@@ -412,7 +413,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     const { title, body } = desktopText(notice, get().streamer)
     system.show({
       title: maskProfanity(title),
-      body: maskOutsideCode(body, maskProfanity),
+      body: notice.file ? maskFileName(body) : maskOutsideCode(body, maskProfanity),
       tag: notice.key,
       renotify: true,
       onClick: notice.go,

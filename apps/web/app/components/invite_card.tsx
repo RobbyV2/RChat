@@ -390,7 +390,7 @@ export function PreviewLine({
           {media !== null && (
             <span className="ml-1 inline-flex items-center gap-0.5 align-middle">
               <Paperclip size={big ? 13 : 11} />
-              {media.spoiler ? 'Spoiler' : <Masked text={media.filename} />}
+              {media.spoiler ? 'Spoiler' : <Masked text={media.filename} file />}
             </span>
           )}
         </span>

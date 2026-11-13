@@ -290,7 +290,7 @@ function Row({
           </span>
           {snippet && (
             <span className="line-clamp-2 text-sm break-words text-on-surface">
-              <Masked text={snippet} code />
+              <Masked text={snippet} code file={!entry.content} />
             </span>
           )}
           {entry.unread && <span className="sr-only">Unread</span>}

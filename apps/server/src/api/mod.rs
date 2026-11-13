@@ -51,7 +51,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
-pub(crate) use rchat_profanity::is_profane;
+pub(crate) use rchat_profanity::{is_profane, is_profane_file_name};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::any::AnyRow;
@@ -1653,18 +1653,18 @@ pub fn valid_color(color: &str) -> bool {
 impl Settings {
     pub fn blocks(&self, target: ProfanityTarget, text: &str) -> bool {
         let targets = self.profanity_targets;
-        let links = match target {
-            ProfanityTarget::Messages => targets.links,
+        let profane = || match target {
+            ProfanityTarget::Messages => is_profane(text, targets.links),
+            ProfanityTarget::FileNames => is_profane_file_name(text),
             ProfanityTarget::Usernames
             | ProfanityTarget::ServerNames
             | ProfanityTarget::ChannelNames
             | ProfanityTarget::RoleNames
-            | ProfanityTarget::FileNames
             | ProfanityTarget::Bios
             | ProfanityTarget::ChannelTopics
-            | ProfanityTarget::CategoryNames => true,
+            | ProfanityTarget::CategoryNames => is_profane(text, true),
         };
-        self.profanity_filter && targets.get(target.switch()) && is_profane(text, links)
+        self.profanity_filter && targets.get(target.switch()) && off_worker(profane)
     }
 
     pub fn check_profanity(&self, target: ProfanityTarget, text: &str) -> Result<(), ApiError> {
@@ -1672,6 +1672,15 @@ impl Settings {
             true => Err(bad("Content blocked by profanity filter")),
             false => Ok(()),
         }
+    }
+}
+
+// Runs a check that can take a while (the profanity matcher on a long text) off the async worker
+// of the server's runtime, so the other requests on that worker keep going.
+fn off_worker<T>(check: impl FnOnce() -> T) -> T {
+    match tokio::runtime::Handle::try_current().map(|h| h.runtime_flavor()) {
+        Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(check),
+        _ => check(),
     }
 }
 
@@ -2994,7 +3003,101 @@ mod tests {
             let masked = rust_next_wasm::mask_profanity(text);
             assert_eq!(masked.chars().count(), text.chars().count(), "{text}");
             assert_eq!(masked != text, profane, "{text:?} -> {masked:?}");
+            let name = rust_next_wasm::mask_file_name(text);
+            assert_eq!(name.chars().count(), text.chars().count(), "{text}");
+            assert_eq!(
+                name != text,
+                all.blocks(ProfanityTarget::FileNames, text),
+                "{text:?} -> {name:?}"
+            );
         }
+    }
+
+    #[test]
+    fn profanity_passes_ordinary_words_and_file_names() {
+        let all = settings_with(true, ProfanityTargets::ALL);
+        let clean = [
+            "a p2p attachment for the channel",
+            "attachment-from-alice.txt",
+            "kept.txt",
+            "note.txt",
+            "p2p",
+            "P2P files",
+            "h2o",
+            "i18n",
+            "k8s",
+            "report.txt",
+            "meeting notes.docx",
+            "see example",
+            "see https://github.com/a/b/blob/main/src/index.test.js",
+            "https://example.com/main.cpp",
+        ];
+        for text in clean {
+            for target in ProfanityTarget::ALL {
+                assert!(!all.blocks(target, text), "{text} {target:?}");
+            }
+        }
+        // A file name is its stem and a known extension; every other text reads them together.
+        for name in [
+            "test.js",
+            "index.test.js",
+            "main.cpp",
+            "but.txt",
+            "cun.ts",
+            "release.exe",
+            "arena.zip",
+        ] {
+            for target in ProfanityTarget::ALL {
+                assert_eq!(
+                    all.blocks(target, name),
+                    target != ProfanityTarget::FileNames,
+                    "{name} {target:?}"
+                );
+            }
+        }
+        let dirty = [
+            "fuck.txt",
+            "kept.fuck",
+            "shit.cpp",
+            "sh1t",
+            "a5s",
+            "this shit",
+            "f u c k",
+            "sh it",
+            "blow jobs",
+            "kill yourself",
+            "xfu ck you",
+            "you are a xbi.tch",
+            "bi tches",
+            "https://u@cun.ts/",
+        ];
+        for text in dirty {
+            for target in ProfanityTarget::ALL {
+                assert!(all.blocks(target, text), "{text} {target:?}");
+            }
+        }
+    }
+
+    // A check can take a while on a long text: it runs off the async worker, so the other
+    // requests on that worker keep going.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn a_profanity_check_does_not_hold_up_other_requests() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let all = settings_with(true, ProfanityTargets::ALL);
+        let ran = std::sync::Arc::new(AtomicBool::new(false));
+        let other = ran.clone();
+        let checks = tokio::spawn(async move {
+            tokio::spawn(async move { other.store(true, Ordering::SeqCst) });
+            let start = std::time::Instant::now();
+            while !ran.load(Ordering::SeqCst) && start.elapsed() < Duration::from_secs(30) {
+                assert!(all.blocks(ProfanityTarget::Messages, "this shit"));
+            }
+            ran.load(Ordering::SeqCst)
+        });
+        assert!(
+            checks.await.expect("checks"),
+            "nothing else ran during the checks"
+        );
     }
 
     #[test]
