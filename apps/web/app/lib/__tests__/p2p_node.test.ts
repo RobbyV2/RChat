@@ -276,6 +276,101 @@ describe('P2P node', () => {
     expect(clock.now()).toBe(t0)
   })
 
+  // Two friends where the lower peer id started the session both hold; then the other side's
+  // tab dies without a goodbye and a new tab of the same identity dials again.
+  const lostByStarter = async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const x = await makeNode(hub, 'Alice', { clock })
+    const y = await makeNode(hub, 'Bob', { clock })
+    nodes.push(x.node, y.node)
+    await x.node.start()
+    await y.node.start()
+    await befriend(x.node, y.node, clock)
+    const [low, high] = x.node.peerId < y.node.peerId ? [x, y] : [y, x]
+    for (const s of low.node.readySessions(high.node.ik)) s.close('closed')
+    await waitFor(
+      () =>
+        low.node.readySessions(high.node.ik).length === 0 &&
+        high.node.readySessions(low.node.ik).length === 0,
+      'no session'
+    )
+    low.node.schedule(true)
+    await waitFor(() => kept(low.node, high.node) && kept(high.node, low.node), 'the session')
+    const [old] = low.node.readySessions(high.node.ik)
+    expect(old.role).toBe('initiator')
+    // What reaches the starter on a session, and whether that session was its own by then.
+    const heard: boolean[] = []
+    low.node.use({
+      attach: s =>
+        void s.on(
+          'hi',
+          (_, from) => void heard.push(low.node.readySessions(high.node.ik).includes(from))
+        ),
+      ready: () => {},
+    })
+    const kill = () => {
+      hub.crash(high.node.peerId)
+      high.node.stop()
+    }
+    const reopen = async () => {
+      const back = await makeNode(hub, high.node === y.node ? 'Bob' : 'Alice', {
+        clock,
+        db: high.db,
+      })
+      nodes.push(back.node)
+      back.node.use({ attach: () => {}, ready: s => void s.send({ t: 'hi' }) })
+      await back.node.start()
+      expect(back.node.peerId).toBe(high.node.peerId)
+      return back.node
+    }
+    return { clock, low: low.node, old, heard, kill, reopen }
+  }
+
+  test('a lost goodbye of the side that did not start the session: its new tab is back at once', async () => {
+    const { clock, low, old, heard, kill, reopen } = await lostByStarter()
+    const t0 = clock.now()
+    kill()
+    const back = await reopen()
+    await waitFor(() => kept(back, low), 'the new tab')
+    expect(back.presence(low.ik)).toBe('online')
+    // The old session never answers its ping: the redial is kept once the ping goes unanswered.
+    await clock.advance(SESSION_LIMITS.handshakeMs)
+    await waitFor(() => kept(low, back), 'the new session at the starter')
+    expect(old.state).toBe('closed')
+    expect(old.reason).toBe('timeout')
+    const [now] = low.readySessions(back.ik)
+    expect(now.strikes).toBe(0)
+    expect(heard).toEqual([true])
+    expect(low.presence(back.ik)).toBe('online')
+    expect(back.readySessions(low.ik)).toHaveLength(1)
+    expect(clock.now() - t0).toBe(SESSION_LIMITS.handshakeMs)
+  })
+
+  test('a redial that waits on the old session is closed when the node stops', async () => {
+    const { clock, low, kill, reopen } = await lostByStarter()
+    kill()
+    const back = await reopen()
+    await waitFor(() => kept(back, low), 'the new tab')
+    low.stop()
+    await waitFor(() => back.readySessions(low.ik).length === 0, 'the redial closed')
+    await clock.advance(SESSION_LIMITS.handshakeMs)
+    expect(low.readySessions(back.ik)).toEqual([])
+  })
+
+  test('a lost goodbye found when the old session was silent past its keepalive: back at once', async () => {
+    const { clock, low, old, kill, reopen } = await lostByStarter()
+    kill()
+    await clock.advance(SESSION_LIMITS.pingMs + 1)
+    expect(old.state).toBe('ready')
+    const t0 = clock.now()
+    const back = await reopen()
+    await waitFor(() => kept(back, low) && kept(low, back), 'the new session')
+    expect(old.state).toBe('closed')
+    expect(low.presence(back.ik)).toBe('online')
+    expect(clock.now()).toBe(t0)
+  })
+
   test('both dialing at once: each end keeps the session the lower peer id started', async () => {
     const { hub, out } = await setup(['Alice', 'Bob'])
     const [a, b] = out.map(x => x.node)

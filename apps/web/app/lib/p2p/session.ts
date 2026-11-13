@@ -118,6 +118,10 @@ export class Session {
   private closeFns = new Set<(s: Session, why: CloseReason) => void>()
   private timers: unknown[] = []
   private lastHeard = 0
+  private heardFns = new Set<() => void>()
+  // While set, messages past the hello wait here, in order (see `hold`).
+  private held: Promise<void> | null = null
+  private release: (() => void) | null = null
   private tokens: number
   private filledAt: number
   // Bytes of received frames not yet read.
@@ -226,6 +230,7 @@ export class Session {
       return this.close('strikes')
     }
     this.lastHeard = this.clock.now()
+    for (const fn of this.heardFns) fn()
     if (!(await this.throttle())) return
     let msg: Message
     try {
@@ -358,6 +363,42 @@ export class Session {
     }
   }
 
+  // Holds the messages of a ready session until the returned function runs (or it closes):
+  // pings, pongs and goodbyes still pass until the first message waits.
+  hold() {
+    const held = new Promise<void>(resolve => {
+      this.release = resolve
+    })
+    this.held = held
+    return () => {
+      if (this.held !== held) return
+      this.held = null
+      this.release?.()
+      this.release = null
+    }
+  }
+
+  // Whether the peer still answers: false at once when it has been silent past its keepalive,
+  // else whether anything comes back within the handshake time after a ping.
+  alive(): Promise<boolean> {
+    if (this.state !== 'ready' || this.clock.now() - this.lastHeard > this.limits.pingMs)
+      return Promise.resolve(false)
+    return new Promise(resolve => {
+      const done = (yes: boolean) => {
+        this.heardFns.delete(heard)
+        this.closeFns.delete(closed)
+        this.clock.clear(timer)
+        resolve(yes)
+      }
+      const heard = () => done(true)
+      const closed = () => done(false)
+      const timer = this.clock.set(() => done(false), this.limits.handshakeMs)
+      this.heardFns.add(heard)
+      this.closeFns.add(closed)
+      void this.send({ t: 'ping' })
+    })
+  }
+
   // Pings every pingMs; a peer not heard from for deadMs is gone right then.
   private heartbeat() {
     const tick = () => {
@@ -405,6 +446,10 @@ export class Session {
       return
     }
     if (this.state !== 'ready') return this.strike()
+    if (this.held) {
+      await this.held
+      if (this.state !== 'ready') return
+    }
     const fn = this.handlers.get(msg.t)
     // A message type from a newer version (forward compatibility): ignored, at no cost. The
     // session's rate limit still bounds how many arrive.
@@ -547,6 +592,9 @@ export class Session {
     }
     this.bulk.clear()
     for (const fn of this.bulkWaiters) fn()
+    this.held = null
+    this.release?.()
+    this.release = null
     for (const fn of this.closeFns) fn(this, reason)
   }
 }

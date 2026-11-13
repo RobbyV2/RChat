@@ -862,9 +862,9 @@ export class P2pNode {
     const other = this.sessions.get(dk)
     if (other && other !== s) {
       // Both sides dialed at once: keep the session the lower peer id started, on both ends. A
-      // side dials again only once it has no session, so its older one is gone (a lost goodbye).
-      const keepNew = this.initiatorOf(s) <= this.initiatorOf(other)
-      if (!keepNew) return s.close('replaced')
+      // side dials again only once it has no session, so its older one is gone (a lost goodbye):
+      // kept at once when both were started by the same side, else once ours is found dead.
+      if (this.initiatorOf(s) > this.initiatorOf(other)) return void this.unlessAlive(other, s)
       this.sessions.delete(dk)
       other.close('replaced')
     }
@@ -878,6 +878,22 @@ export class P2pNode {
     this.touch(ik)
     this.changed()
     for (const x of this.exts) x.ready(s)
+  }
+
+  // `s` lost the tie-break to `old`: refused while `old` answers, kept once it doesn't. Its
+  // messages wait meanwhile, so none reaches a session that isn't ours yet.
+  private async unlessAlive(old: Session, s: Session) {
+    this.pending.add(s)
+    const go = s.hold()
+    const alive = await old.alive()
+    if (s.state === 'ready') {
+      if (alive) s.close('replaced')
+      else {
+        old.close('timeout')
+        this.ready(s)
+      }
+    }
+    go()
   }
 
   private initiatorOf(s: Session) {
