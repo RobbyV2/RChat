@@ -25,8 +25,9 @@ import { messageFilterOn, siteFilterOn } from '../rules'
 import { home } from '../instances'
 import { maskOf, useStore, resetSessionCaches } from '../store'
 import { MarkdownMessage } from '../../components/markdown_message'
-import { MaskControl, Masked } from '../../components/ui'
-import { NameWithUsername } from '../../components/display_name'
+import { MaskControl, Masked, MaskedWords } from '../../components/ui'
+import { NameWithUsername, nameRevealKey } from '../../components/display_name'
+import { ProfileHandle } from '../../components/profile_card'
 import { dmPlaceholder } from '../display_name'
 import { ReplyPreview } from '../../components/replies'
 import { Tile } from '../../components/voice_grid'
@@ -425,6 +426,44 @@ describe('in messages', () => {
     const mask = (t: string) => t.replace(/shit/g, '****')
     expect(dmPlaceholder(user('shit'), false, mask)).toBe('Message @****')
     expect(dmPlaceholder(user('shit'), true, mask)).toBe('Send a direct message')
+  })
+
+  test('a name pair is revealed whole: one reveal opens the display name and the username', async () => {
+    await masking({})
+    const words = (html: string) => html.split('data-masked-word').length - 1
+    const pair = (u: string, display: string, open: string[]) =>
+      renderToStaticMarkup(
+        <MaskedWords open={open}>
+          <NameWithUsername user={user(u, { display_name: display })} />
+        </MaskedWords>
+      )
+    expect(pair('shit', 'fuck head', [])).toBe(pair('fuck', 'shit head', []))
+    const text = (html: string) => html.replace(/<[^>]+>/g, '')
+    const shown = pair('shit', 'fuck head', [nameRevealKey('shit')])
+    expect(words(shown)).toBe(0)
+    expect(text(shown)).toBe('fuck head(shit)')
+    expect(words(pair('shit', 'fuck head', [nameRevealKey('fuck')]))).toBe(2)
+    const two = renderToStaticMarkup(
+      <MaskedWords open={[nameRevealKey('shit')]}>
+        <NameWithUsername user={user('shit', { display_name: 'fuck head' })} />
+        <NameWithUsername user={user('fuck', { display_name: 'shit head' })} />
+      </MaskedWords>
+    )
+    expect(words(two)).toBe(2)
+    expect(text(two).startsWith('fuck head(shit)')).toBe(true)
+    expect(text(two).includes('shit head')).toBe(false)
+    const alone = renderToStaticMarkup(
+      <NameWithUsername user={user('shit', { display_name: 'fuck head' })} />
+    )
+    expect(words(alone)).toBe(2)
+    expect(alone.includes('shit') || alone.includes('fuck')).toBe(false)
+  })
+
+  test('the profile card shows the username as written', async () => {
+    await masking({})
+    const html = renderToStaticMarkup(<ProfileHandle user={user('shit')} remote={null} />)
+    expect(html).toContain('@shit')
+    expect(html.includes('data-masked-word')).toBe(false)
   })
 
   test('your own text is never masked, whatever the filter', async () => {

@@ -174,6 +174,21 @@ const rowCls = (sheet: boolean) =>
     sheet ? 'min-h-11' : 'py-1.5'
   }`
 
+// The account's handle, never masked: the card is where you check who an account is.
+export function ProfileHandle({
+  user,
+  remote,
+}: {
+  user: Pick<UserRef, 'username'>
+  remote: string | null
+}) {
+  return (
+    <p className="streamer truncate text-sm text-on-surface-variant">
+      @{remote ? formatQualified(user.username, remote) : user.username}
+    </p>
+  )
+}
+
 export function ProfileCard() {
   const target = useStore(s => s.profile)
   if (!target) return null
@@ -350,7 +365,6 @@ function Card({ target }: { target: ProfileTarget }) {
   const bio = self ? (me?.bio ?? null) : (profile?.bio ?? null)
   const ownServer = useOwnServer(server)
   const mask = useMask(ownServer)
-  const nameMask = useMask(self)
   const fetched = profile?.member ?? null
   const known = server === null || live !== undefined || profile !== null || hidden
   const member = server === null ? null : live !== undefined ? live : fetched
@@ -498,9 +512,7 @@ function Card({ target }: { target: ProfileTarget }) {
           >
             <Masked text={user.display_name} own={self} />
           </p>
-          <p className="streamer truncate text-sm text-on-surface-variant">
-            @{remote ? formatQualified(user.username, remote) : user.username}
-          </p>
+          <ProfileHandle user={user} remote={remote} />
           {remote && <InstanceChip host={remote} className="mt-1" />}
           {bio && !hidden && (
             <p className="streamer mt-2 text-sm break-words whitespace-pre-wrap text-on-surface">
@@ -701,7 +713,7 @@ function Card({ target }: { target: ProfileTarget }) {
                   }
                 }}
                 aria-label="Send a direct message"
-                placeholder={dmPlaceholder(user, streamer, nameMask)}
+                placeholder={dmPlaceholder(user, streamer)}
                 className="w-full rounded-xl border border-outline-variant bg-surface-container-low px-3 py-2 text-base text-on-surface outline-none placeholder:text-on-surface-variant focus:border-primary md:text-sm"
               />
             )}

@@ -306,14 +306,29 @@ const RevealedWords = createContext<{ open: Set<string>; reveal: (word: string) 
   null
 )
 
-export function MaskedWords({ children }: { children: ReactNode }) {
-  const [open, setOpen] = useState<Set<string>>(() => new Set())
+export function MaskedWords({
+  children,
+  open: shown,
+}: {
+  children: ReactNode
+  open?: readonly string[]
+}) {
+  const [open, setOpen] = useState<Set<string>>(() => new Set(shown))
   const reveal = useCallback(
     (word: string) => setOpen(o => (o.has(word) ? o : new Set(o).add(word))),
     []
   )
   const value = useMemo(() => ({ open, reveal }), [open, reveal])
   return <RevealedWords.Provider value={value}>{children}</RevealedWords.Provider>
+}
+
+const MaskGroup = createContext<string | undefined>(undefined)
+
+// The masked words inside open together under `word`, in the scope around them or their own.
+export function MaskedTogether({ word, children }: { word: string; children: ReactNode }) {
+  const outer = useContext(RevealedWords)
+  const group = <MaskGroup.Provider value={word}>{children}</MaskGroup.Provider>
+  return outer ? group : <MaskedWords>{group}</MaskedWords>
 }
 
 // Elements that are controls: a masked word inside one may not be a control itself.
@@ -344,7 +359,7 @@ const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayout
 // row's context menu and the palette reveal it from the keyboard (`REVEAL_EVENT`).
 export function MaskedWord({
   hidden,
-  word,
+  word: own,
   children,
 }: {
   hidden: string
@@ -352,6 +367,8 @@ export function MaskedWord({
   children: ReactNode
 }) {
   const shared = useContext(RevealedWords)
+  const group = useContext(MaskGroup)
+  const word = own ?? group
   const mode = useContext(MaskMode)
   const [mine, setMine] = useState(false)
   const [control, setControl] = useState(mode !== 'plain')

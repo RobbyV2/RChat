@@ -5,12 +5,15 @@ import { displayNameError, showsUsername } from '../lib/display_name'
 import { isGuestName } from '../lib/guest_voice'
 import { useStore } from '../lib/store'
 import type { UserRef } from '../lib/types'
-import { FieldError, Masked, fieldCls, filledBtn } from './ui'
+import { FieldError, Masked, MaskedTogether, fieldCls, filledBtn } from './ui'
 
 const nameFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
 
+export const nameRevealKey = (username: string) => `name:${username}`
+
 // The display name truncates; the username stays whole after it. Both are masked for other
-// people's names only: `own` decides where the username is not an account here (P2P).
+// people's names only: `own` decides where the username is not an account here (P2P). One reveal
+// shows the whole pair.
 export function NameWithUsername({
   user,
   own,
@@ -22,14 +25,16 @@ export function NameWithUsername({
   if (isGuestName(user.username)) return <span>{user.display_name}</span>
   if (!showsUsername(user)) return <Masked text={user.display_name} by={by} own={own} />
   return (
-    <span className="inline-flex max-w-full min-w-0 items-baseline">
-      <span className="min-w-0 truncate">
-        <Masked text={user.display_name} by={by} own={own} />
+    <MaskedTogether word={nameRevealKey(user.username)}>
+      <span className="inline-flex max-w-full min-w-0 items-baseline">
+        <span className="min-w-0 truncate">
+          <Masked text={user.display_name} by={by} own={own} />
+        </span>
+        <span className="streamer max-w-full shrink-0 truncate pl-1 text-on-surface-variant">
+          (<Masked text={user.username} by={by} own={own} />)
+        </span>
       </span>
-      <span className="streamer max-w-full shrink-0 truncate pl-1 text-on-surface-variant">
-        (<Masked text={user.username} by={by} own={own} />)
-      </span>
-    </span>
+    </MaskedTogether>
   )
 }
 
