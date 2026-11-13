@@ -347,7 +347,7 @@ test('admin rows on a message: never on your own, Revoke Admin is danger (rule 2
     ['Ban from server', true],
     ['Time Out', true],
     ['Revoke Admin', true],
-    ['Transfer Admin', false],
+    ['Transfer Admin', true],
     ['Assign Role', false],
   ])
   state({ perms: Perm.ManageAdmins | Perm.Kick, bob: { is_admin: true, perms: Perm.Kick } })
@@ -800,7 +800,7 @@ test('the embed menu: remove, the banner when it has one, all', () => {
   state()
   expect(items(embedAt(withEmbeds, 1, true)).map(i => [i.label, !!i.danger, i.icon])).toEqual([
     ['Remove embed', true, undefined],
-    ['Remove banner', false, undefined],
+    ['Remove banner', true, undefined],
     ['Remove all embeds', true, undefined],
   ])
   expect(labels(embedAt(withEmbeds, 2, false))).toEqual(['Remove embed', 'Remove all embeds'])

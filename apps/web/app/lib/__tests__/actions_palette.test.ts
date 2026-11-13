@@ -304,7 +304,7 @@ const LOOKS = [
   ['server_settings', 'Server settings', 'settings', 'Settings', '', '', ''],
   ['audit_log', 'Open audit log', 'commands', 'FileClock', '', '', ''],
   ['webhooks', 'Manage webhooks', 'commands', 'Webhook', '', '', ''],
-  ['timeout_member', 'Time out a member', 'commands', 'Timer', '', '', ''],
+  ['timeout_member', 'Time out a member', 'commands', 'Timer', '', '', 'danger'],
   ['untimeout_s_bob', 'Remove timeout: Bob', 'commands', 'TimerOff', '', '', 'name'],
   ['leave_server', 'Leave this server', 'commands', 'LogOut', '', '', 'danger'],
   ['poll', 'Create poll', 'commands', 'ChartColumn', '', '', ''],

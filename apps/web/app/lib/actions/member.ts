@@ -258,7 +258,6 @@ export const memberActions: Action[] = [
   {
     id: 'member_timeout_remove',
     title: 'Remove Timeout',
-    danger: true,
     ...onMemberOrAuthor,
     order: 430,
     available: ctx => moderates(Perm.TimeoutMembers)(ctx) && timedOut(ctx),
@@ -302,6 +301,7 @@ export const memberActions: Action[] = [
   {
     id: 'member_transfer_admin',
     title: 'Transfer Admin',
+    danger: true,
     ...onMemberOrAuthor,
     order: 450,
     available: ctx =>

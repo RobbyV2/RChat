@@ -160,9 +160,13 @@ const ACTIONS: Record<ProfileAction, { label: string; icon: ReactNode; danger?: 
   untimeout: { label: 'Remove timeout', icon: <TimerOff size={16} /> },
   promote: { label: 'Promote to Admin', icon: <ShieldPlus size={16} /> },
   revoke: { label: 'Revoke Admin', icon: <ShieldMinus size={16} />, danger: true },
-  transfer: { label: 'Transfer Admin', icon: <ArrowRightLeft size={16} /> },
+  transfer: { label: 'Transfer Admin', icon: <ArrowRightLeft size={16} />, danger: true },
   site_ban: { label: 'Ban site-wide', icon: <Gavel size={16} />, danger: true },
 }
+
+// As in the member menu: Change timeout, on someone timed out already, is not danger.
+export const cardDanger = (a: ProfileAction, timedOut: boolean) =>
+  !!ACTIONS[a].danger && !(a === 'timeout' && timedOut)
 
 const labelCls = 'text-[11px] font-semibold tracking-wide text-on-surface-variant uppercase'
 const rowCls = (sheet: boolean) =>
@@ -629,13 +633,13 @@ function Card({ target }: { target: ProfileTarget }) {
         )}
         <div className="mt-2 flex flex-col">
           {actions.map(a => {
-            const { icon, danger } = ACTIONS[a]
+            const { icon } = ACTIONS[a]
             const label = a === 'timeout' && timeout ? 'Change timeout' : ACTIONS[a].label
             return (
               <button
                 key={a}
                 onClick={() => run(a)}
-                className={`${rowCls(sheet)} ${danger ? 'text-error' : 'text-on-surface'}`}
+                className={`${rowCls(sheet)} ${cardDanger(a, !!timeout) ? 'text-error' : 'text-on-surface'}`}
               >
                 <span className="shrink-0">{icon}</span>
                 {label}

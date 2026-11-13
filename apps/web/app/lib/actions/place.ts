@@ -403,6 +403,7 @@ export const placeActions: Action[] = [
     title: 'Time out a member',
     scope: 'server',
     icon: Timer,
+    danger: true,
     keywords: ['mute', 'moderation'],
     args: [usernameStep],
     available: may(Perm.TimeoutMembers),

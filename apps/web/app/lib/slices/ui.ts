@@ -150,7 +150,7 @@ export const confirmTransfer = (server: string, username: string) =>
     .getState()
     .askConfirm({
       title: 'Transfer Admin',
-      body: 'Make this member the server admin? You lose your own admin rights and cannot take them back yourself.',
+      body: "Make this member the server admin? You lose your admin rights and can't take them back.",
       confirm: 'Transfer',
       action: () => void store().getState().transferAdmin(server, username),
     })

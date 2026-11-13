@@ -316,6 +316,7 @@ export const embedActions: Action[] = [
   {
     id: 'embed_remove_banner',
     title: 'Remove banner',
+    danger: true,
     ...embed,
     order: 110,
     available: ctx => !!onEmbed(ctx)?.banner,

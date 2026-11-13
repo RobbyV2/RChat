@@ -204,7 +204,7 @@ test('member list, a timed-out member: Change Timeout, then Remove Timeout', () 
   expect(items(at('bob')).map(i => [i.label, !!i.danger])).toEqual([
     [DM, false],
     ['Change Timeout', false],
-    ['Remove Timeout', true],
+    ['Remove Timeout', false],
     ['Add friend', false],
     ['Block', true],
     [COPY, false],
@@ -400,6 +400,7 @@ test('one definition per behaviour: unified icons and danger (rule 2)', () => {
   expect(byLabel(list, DM)?.icon).toBe(MessageCircle)
   expect(byLabel(list, COPY)?.icon).toBe(AtSign)
   expect(byLabel(list, 'Revoke Admin')?.danger).toBe(true)
+  expect(byLabel(list, 'Transfer Admin')?.danger).toBe(true)
   expect([byLabel(list, 'Add friend')?.icon, byLabel(list, 'Block')?.icon]).toEqual([
     UserPlus,
     UserX,
@@ -487,7 +488,7 @@ const bobRef = { username: 'bob', display_name: 'Bobby' }
 const KICK = 'Kick this member? They are removed from the server but can join again.'
 const BAN = "Ban this user? They are removed from the server and can't join again until unbanned."
 const TRANSFER =
-  'Make this member the server admin? You lose your own admin rights and cannot take them back yourself.'
+  "Make this member the server admin? You lose your admin rights and can't take them back."
 
 test('each member row does what it did', async () => {
   state({ siteAdmin: true, bob: { is_admin: true, perms: Perm.Kick } })
