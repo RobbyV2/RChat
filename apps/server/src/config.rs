@@ -406,6 +406,11 @@ impl AppConfig {
             pepper: self.secrets.password_pepper.clone(),
             controls: Some(self.controls.clone()),
             light_commits: self.light_commits,
+            web_only: self.roles
+                == Roles {
+                    web: true,
+                    ..Roles::NONE
+                },
         }
     }
 

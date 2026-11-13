@@ -1136,3 +1136,43 @@ async fn in_call_is_false_in_p2p_calls() {
     assert!(!in_call(&state, 3, "b"));
     crate::api::test_util::done(state, path).await;
 }
+
+#[tokio::test]
+async fn call_errors_never_carry_database_text() {
+    let (state, path) = crate::api::test_util::temp_state("call_db_errors").await;
+    for name in ["alice", "bob"] {
+        add_user_row(&state.db, name).await;
+    }
+    let dm = insert_id(
+        &state.db,
+        "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
+    )
+    .await;
+    let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
+    let url = format!("sqlite://{}?mode=rwc", path.display());
+    let starved = sqlx::any::AnyPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect(&url)
+        .await
+        .expect("starved pool");
+    let held = starved.acquire().await.expect("the only connection");
+    let busy = state.clone().with_reader(starved.clone());
+    let start = ClientMsg::CallStart {
+        dm_id: dm,
+        p2p: false,
+        video: false,
+        peer_id: None,
+        relays: Vec::new(),
+    };
+    let join = ClientMsg::VoiceJoin { channel_id: cid };
+    for msg in [start, join] {
+        assert_eq!(
+            voice_msg(&busy, "alice", 1, msg).await,
+            Err(crate::api::SERVER_BUSY.to_string())
+        );
+    }
+    drop(held);
+    starved.close().await;
+    crate::api::test_util::done(state, path).await;
+}

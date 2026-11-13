@@ -576,12 +576,15 @@ pub(crate) async fn forget_user(conn: &mut AnyConnection, username: &str) -> sql
 pub(crate) async fn purge_server(db: &Db, server: &str) -> sqlx::Result<u64> {
     let mut total = 0;
     loop {
+        let mut tx = db.begin().await?;
+        crate::db::no_statement_limit(&mut tx).await?;
         let n = sqlx::query("DELETE FROM audit_log WHERE id IN (SELECT id FROM audit_log WHERE server = $1 LIMIT $2)")
             .bind(server)
             .bind(PURGE_BATCH)
-            .execute(db)
+            .execute(&mut *tx)
             .await?
             .rows_affected();
+        tx.commit().await?;
         total += n;
         if n < PURGE_BATCH as u64 {
             return Ok(total);

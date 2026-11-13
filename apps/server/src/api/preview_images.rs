@@ -456,9 +456,9 @@ pub(crate) async fn serve(
     let proof = Proof::headers(headers, &state.limits);
     resolve_message(db, message_id, user.as_ref(), &proof)
         .await
-        .map_err(|e| match e {
-            e @ ApiError(StatusCode::INTERNAL_SERVER_ERROR, _) => e,
-            _ => not_found(),
+        .map_err(|e| match e.0.is_server_error() {
+            true => e,
+            false => not_found(),
         })?;
     let source = source_of(db, message_id, ord)
         .await?

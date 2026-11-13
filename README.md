@@ -405,6 +405,8 @@ An instance that sets `PEERJS_PORT` or `PUBLIC_PEERJS_URL`, or whose web build w
 
 When you raise `UPLOAD_MAX_MIB`, keep `UPLOAD_BUFFER_MIB` (256 by default) at least twice as large.
 
+A request that waits more than 10 seconds for a database connection gets `503` with `Retry-After: 1` (`DATABASE_ACQUIRE_TIMEOUT_SECS`). On Postgres a statement stops after 60 seconds (`DATABASE_STATEMENT_TIMEOUT_SECS`, `0` for no limit), and a process that runs only the `web` role opens one database connection.
+
 The relay is optional. It uses UDP port 3478 and UDP ports 49160 to 49415. Open them in the firewall. Reserve the range so no other program uses it (`sysctl -w net.ipv4.ip_local_reserved_ports=49160-49415`). The media server for calls (`SFU_ENABLED`) is optional and off by default too.
 
 Data is not encrypted at rest.

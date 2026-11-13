@@ -7,8 +7,11 @@ use crate::relay::{DEFAULT_TOTAL_KIB_PER_SEC, DEFAULT_USER_ALLOCATIONS, DEFAULT_
 
 const MIB: usize = 1024 * 1024;
 
+/// Seconds a request waits for a free database connection when the operator sets nothing.
+pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
+
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 43] = [
+const RANGES: [(&str, i64, i64); 44] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("WS_CONNECTIONS_PER_USER", 1, 10_000),
@@ -23,6 +26,7 @@ const RANGES: [(&str, i64, i64); 43] = [
     ("DATABASE_ACQUIRE_TIMEOUT_SECS", 1, 3_600),
     ("DATABASE_READ_CONNECTIONS", 0, 64),
     ("DATABASE_INDEX_BUILD_MIB", 16, 16_384),
+    ("DATABASE_STATEMENT_TIMEOUT_SECS", 0, 3_600),
     ("UPLOAD_MAX_MIB", 1, 512),
     ("UPLOAD_BUDGET_MIB", 0, 1_048_576),
     ("UPLOAD_BUFFER_MIB", 32, 1_048_576),
@@ -71,6 +75,7 @@ pub struct Limits {
     pub database_acquire_timeout_secs: Option<u64>,
     pub database_read_connections: Option<u32>,
     pub database_index_build_mib: u32,
+    pub database_statement_timeout_secs: u64,
     pub upload_max_mib: u64,
     pub upload_budget_mib: u64,
     pub upload_buffer_mib: u64,
@@ -121,6 +126,7 @@ impl Default for Limits {
             database_acquire_timeout_secs: None,
             database_read_connections: None,
             database_index_build_mib: 256,
+            database_statement_timeout_secs: 60,
             upload_max_mib: 25,
             upload_budget_mib: DEFAULT_BUDGET_MIB,
             upload_buffer_mib: DEFAULT_BUFFER_MIB,
@@ -219,6 +225,10 @@ impl Limits {
             database_read_connections: e.opt("DATABASE_READ_CONNECTIONS")?,
             database_index_build_mib: e
                 .num("DATABASE_INDEX_BUILD_MIB", d.database_index_build_mib)?,
+            database_statement_timeout_secs: e.num(
+                "DATABASE_STATEMENT_TIMEOUT_SECS",
+                d.database_statement_timeout_secs,
+            )?,
             upload_max_mib: e.num("UPLOAD_MAX_MIB", d.upload_max_mib)?,
             upload_budget_mib: e.num("UPLOAD_BUDGET_MIB", d.upload_budget_mib)?,
             upload_buffer_mib: e.num("UPLOAD_BUFFER_MIB", d.upload_buffer_mib)?,
@@ -276,6 +286,7 @@ impl Limits {
             database_acquire_timeout_secs,
             database_read_connections,
             database_index_build_mib,
+            database_statement_timeout_secs,
             upload_max_mib,
             upload_budget_mib,
             upload_buffer_mib,
@@ -332,6 +343,10 @@ impl Limits {
             ),
             ("DATABASE_READ_CONNECTIONS", opt(database_read_connections)),
             ("DATABASE_INDEX_BUILD_MIB", set(database_index_build_mib)),
+            (
+                "DATABASE_STATEMENT_TIMEOUT_SECS",
+                set(database_statement_timeout_secs),
+            ),
             ("UPLOAD_MAX_MIB", set(upload_max_mib)),
             ("UPLOAD_BUDGET_MIB", set(upload_budget_mib)),
             ("UPLOAD_BUFFER_MIB", set(upload_buffer_mib)),
@@ -397,6 +412,12 @@ impl Limits {
             )),
             false => None,
         }
+    }
+
+    /// Seconds a request waits for a free database connection (`DATABASE_ACQUIRE_TIMEOUT_SECS`).
+    pub fn acquire_timeout_secs(&self) -> u64 {
+        self.database_acquire_timeout_secs
+            .unwrap_or(DEFAULT_ACQUIRE_TIMEOUT_SECS)
     }
 
     /// The realtime limits the hub enforces.

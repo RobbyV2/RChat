@@ -3920,6 +3920,7 @@ async fn open_with_uses_the_configured_options() {
             .expect("controls"),
         ),
         light_commits: LightCommits::Sync,
+        web_only: false,
     };
     let db = open_with(path.to_str(), &opts).await.expect("open");
     assert_eq!(pepper(&db).await.expect("pepper"), b"configured");

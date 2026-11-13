@@ -2,12 +2,61 @@ use axum::Json;
 use axum::Router;
 use axum::routing::get;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+use utoipa::openapi::{ContentBuilder, Ref, RefOr, ResponseBuilder};
 use utoipa::{Modify, OpenApi};
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::state::AppState;
 
 struct Bearer;
+
+/// Adds the 503 a busy database gives to every operation that reads or writes it.
+struct Busy;
+
+/// Paths that never wait for the database, or answer for it themselves.
+const NEVER_BUSY: [&str; 2] = ["/api/v1/health", "/api/v1/ready"];
+
+const BUSY: &str = "`Server busy, try again in a moment`: the database did not answer in time. Retry after the seconds in the `Retry-After` header";
+
+impl Modify for Busy {
+    fn modify(&self, doc: &mut utoipa::openapi::OpenApi) {
+        for (path, item) in doc.paths.paths.iter_mut() {
+            if NEVER_BUSY.contains(&path.as_str()) {
+                continue;
+            }
+            let operations = [
+                &mut item.get,
+                &mut item.put,
+                &mut item.post,
+                &mut item.delete,
+                &mut item.patch,
+            ];
+            for operation in operations.into_iter().flatten() {
+                match operation.responses.responses.get_mut("503") {
+                    Some(RefOr::T(listed)) => {
+                        listed.description = format!("{}. Also {BUSY}", listed.description);
+                    }
+                    Some(RefOr::Ref(_)) => {}
+                    None => {
+                        let busy = ResponseBuilder::new()
+                            .description(BUSY)
+                            .content(
+                                "application/json",
+                                ContentBuilder::new()
+                                    .schema(Some(Ref::from_schema_name("ApiErrorBody")))
+                                    .build(),
+                            )
+                            .build();
+                        operation
+                            .responses
+                            .responses
+                            .insert("503".to_string(), RefOr::T(busy));
+                    }
+                }
+            }
+        }
+    }
+}
 
 impl Modify for Bearer {
     fn modify(&self, doc: &mut utoipa::openapi::OpenApi) {
@@ -194,7 +243,7 @@ impl Modify for Bearer {
         super::pings::GroupPing
     )),
     servers((url = "/", description = "The instance serving this document")),
-    modifiers(&Bearer),
+    modifiers(&Bearer, &Busy),
     info(
         title = "RChat API",
         version = env!("CARGO_PKG_VERSION"),
@@ -212,7 +261,7 @@ impl Modify for Bearer {
 
 **Rate limits.** Every `/api` route except `/api/v1/health` and `/api/v1/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, word hints, recovery challenges, recovery sign-in, password change, backup phrase changes, guest access, server name checks, config links, P2P identity bindings and media upload also share a strict per-IP bucket (2 per second, burst 30). Invite previews and joining a server each have their own bucket of the same size. Exceeding a bucket answers 429 with a plain-text body.
 
-**Errors.** Errors raised by the API come as JSON `{\"error\": \"...\"}` (`ApiErrorBody`). Malformed JSON bodies are rejected by the framework with a plain-text 400, 415 or 422.
+**Errors.** Errors raised by the API come as JSON `{\"error\": \"...\"}` (`ApiErrorBody`). When the database does not answer in time, an endpoint answers `503 {\"error\": \"Server busy, try again in a moment\"}` with `Retry-After: 1`: retry the request. Any other server error is `500 {\"error\": \"Something went wrong\"}`. Malformed JSON bodies are rejected by the framework with a plain-text 400, 415 or 422.
 
 **Private servers stay hidden.** A password-protected server is indistinguishable from one that does not exist to anyone without access (membership, a valid guest grant, or the password where an endpoint takes one). Every endpoint that takes a server name answers both with the same `404 {\"error\": \"Server not found or wrong password\"}`; endpoints that take a password (`join`, `guest_access`, invites) answer a missing password with the same `401 {\"error\": \"Password required\"}` and a wrong one with that 404, and always hash the password, also for names that do not exist. Endpoints that take a channel or message id answer `404 {\"error\": \"Not found\"}` for ids that do not exist, that you cannot see (hidden channels, messages before your join without read history) or that belong to a server you cannot access. Bans are only reported (403) once access was proven. `GET /api/v1/servers/{name}/available` is the one deliberate existence check, because creating a server reveals the same.
 
@@ -492,6 +541,43 @@ mod tests {
         let doc = serde_json::to_value(ApiDoc::openapi()).expect("doc");
         let gaps = doc_gaps(&doc);
         assert!(gaps.is_empty(), "{} gaps:\n{}", gaps.len(), gaps.join("\n"));
+    }
+
+    #[test]
+    fn every_database_endpoint_lists_the_busy_answer() {
+        let doc = serde_json::to_value(ApiDoc::openapi()).expect("doc");
+        let mut operations = 0;
+        for (path, item) in doc["paths"].as_object().expect("paths") {
+            for (method, operation) in item.as_object().expect("path item") {
+                let busy = &operation["responses"]["503"];
+                let about = busy["description"].as_str().unwrap_or_default();
+                match super::NEVER_BUSY.contains(&path.as_str()) {
+                    true => assert!(!about.contains("Server busy"), "{method} {path}"),
+                    false => {
+                        operations += 1;
+                        assert!(
+                            about.contains("`Server busy, try again in a moment`")
+                                && about.contains("`Retry-After`"),
+                            "{method} {path}: {about}"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(operations > 100, "{operations} operations");
+        let me = &doc["paths"]["/api/v1/me"]["get"]["responses"]["503"];
+        assert!(
+            me["description"]
+                .as_str()
+                .is_some_and(|about| about.starts_with("The token could not be checked")
+                    && about.contains(". Also `Server busy"))
+        );
+        let health = &doc["paths"]["/api/v1/health"]["get"]["responses"];
+        assert!(health["503"].is_null());
+        assert_eq!(
+            crate::api::SERVER_BUSY,
+            "Server busy, try again in a moment"
+        );
     }
 
     #[test]

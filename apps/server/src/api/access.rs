@@ -89,9 +89,9 @@ pub(crate) fn forbidden(msg: &str) -> ApiError {
 }
 
 fn hidden(e: ApiError) -> ApiError {
-    match e {
-        ApiError(StatusCode::INTERNAL_SERVER_ERROR, _) => e,
-        _ => not_found(),
+    match e.0.is_server_error() {
+        true => e,
+        false => not_found(),
     }
 }
 
@@ -1730,7 +1730,7 @@ pub(crate) async fn reference_channel_access(
 fn ws_result(res: Result<bool, ApiError>) -> sqlx::Result<bool> {
     match res {
         Ok(open) => Ok(open),
-        Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e)) => Err(sqlx::Error::Protocol(e)),
+        Err(ApiError(status, e)) if status.is_server_error() => Err(sqlx::Error::Protocol(e)),
         Err(_) => Ok(false),
     }
 }
@@ -1794,11 +1794,11 @@ pub(crate) async fn ws_voice_channel(
 ) -> Result<ResolvedChannel, String> {
     let user = crate::db::get_user(db, username)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| ApiError::from(e).1)?
         .ok_or_else(|| "Channel not found".to_string())?;
     match resolve_channel(db, id, Some(&user), &Proof::none()).await {
         Ok(channel) => Ok(channel),
-        Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e)) => Err(e),
+        Err(ApiError(status, e)) if status.is_server_error() => Err(e),
         Err(_) => Err("Channel not found".to_string()),
     }
 }

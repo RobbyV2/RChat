@@ -918,6 +918,7 @@ async fn run_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result
             .await?;
             crate::api::audit::purge_server(&state.db, key).await?;
             let mut tx = state.db.begin().await?;
+            crate::db::no_statement_limit(&mut tx).await?;
             sqlx::query("DELETE FROM servers WHERE name = $1 AND password_hash = $2")
                 .bind(key)
                 .bind(PURGING_HASH)
@@ -936,6 +937,7 @@ async fn run_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result
             )
             .await?;
             let mut tx = state.db.begin().await?;
+            crate::db::no_statement_limit(&mut tx).await?;
             sqlx::query("UPDATE users SET password_hash = password_hash WHERE username = $1")
                 .bind(key)
                 .execute(&mut *tx)

@@ -94,7 +94,7 @@ pub(crate) fn bad(msg: &str) -> ApiError {
 pub(crate) fn allowed<T>(res: Result<T, ApiError>) -> Result<Option<T>, ApiError> {
     match res {
         Ok(v) => Ok(Some(v)),
-        Err(e @ ApiError(StatusCode::INTERNAL_SERVER_ERROR, _)) => Err(e),
+        Err(e) if e.0.is_server_error() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -106,22 +106,53 @@ pub(crate) fn now_ms() -> i64 {
         .map_or(0, |d| d.as_millis() as i64)
 }
 
+/// The 503 answer to a request that waited too long for the database: no free connection
+/// within `DATABASE_ACQUIRE_TIMEOUT_SECS`, or a statement over `DATABASE_STATEMENT_TIMEOUT_SECS`.
+pub const SERVER_BUSY: &str = "Server busy, try again in a moment";
+
+/// The 500 answer to any other database error. The detail goes to the server log only.
+pub const SERVER_ERROR: &str = "Something went wrong";
+
+/// SQLSTATE `query_canceled`: Postgres stopped a statement at `statement_timeout`.
+const QUERY_CANCELED: &str = "57014";
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let ApiError(status, error) = self;
-        (status, axum::Json(ApiErrorBody { error })).into_response()
+        let busy = status == StatusCode::SERVICE_UNAVAILABLE && error == SERVER_BUSY;
+        let body = axum::Json(ApiErrorBody { error });
+        match busy {
+            true => (status, [(axum::http::header::RETRY_AFTER, "1")], body).into_response(),
+            false => (status, body).into_response(),
+        }
     }
 }
 
 impl From<anyhow::Error> for ApiError {
     fn from(e: anyhow::Error) -> ApiError {
-        ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        match e.downcast::<sqlx::Error>() {
+            Ok(e) => e.into(),
+            Err(e) => ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        }
     }
 }
 
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> ApiError {
-        ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        let canceled = e
+            .as_database_error()
+            .and_then(|d| d.code())
+            .is_some_and(|code| code == QUERY_CANCELED);
+        match canceled || matches!(e, sqlx::Error::PoolTimedOut) {
+            true => {
+                tracing::warn!("database busy: {e}");
+                ApiError(StatusCode::SERVICE_UNAVAILABLE, SERVER_BUSY.to_string())
+            }
+            false => {
+                tracing::error!("database error: {e}");
+                ApiError(StatusCode::INTERNAL_SERVER_ERROR, SERVER_ERROR.to_string())
+            }
+        }
     }
 }
 

@@ -162,6 +162,12 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
     let roles = config.roles;
     let db = crate::db::open_with(config.database_url.as_deref(), &config.db_options()).await?;
     held.db = Some(db.clone());
+    match crate::db::connection_budget(&db).await {
+        Ok(Some(budget)) if budget.tight() => tracing::warn!("{}", budget.message()),
+        Ok(Some(budget)) => info!("{}", budget.message()),
+        Ok(None) => {}
+        Err(e) => tracing::warn!("could not read the Postgres connection limit: {e}"),
+    }
     let (indexes, limits) = (db.clone(), config.limits.clone());
     held.spawn(async move {
         match crate::db::build_online(&indexes, &limits).await {

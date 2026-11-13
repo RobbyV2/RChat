@@ -245,9 +245,9 @@ fn parse_scope(scope: &str) -> Result<(&str, i64), ApiError> {
 
 async fn resolve_place(db: &Db, scope: &str, user: &User) -> Result<Place, ApiError> {
     let (kind, id) = parse_scope(scope)?;
-    let hide = |e: ApiError| match e {
-        e @ ApiError(StatusCode::INTERNAL_SERVER_ERROR, _) => e,
-        _ => not_found(),
+    let hide = |e: ApiError| match e.0.is_server_error() {
+        true => e,
+        false => not_found(),
     };
     match kind {
         "c" => Ok(Place::Channel(Box::new(
@@ -750,6 +750,7 @@ async fn delete_ids(
     }
     let audit_at = audit_place(db, place.channel().map(|c| c.id())).await?;
     let mut tx = db.begin().await?;
+    crate::db::no_statement_limit(&mut tx).await?;
     let gone = delete_rows(&mut tx, &picked).await?;
     let gone_ids: HashSet<i64> = gone.iter().map(|(id, _)| *id).collect();
     audit_counts(&picked, &gone_ids, &mut tally);
@@ -1156,9 +1157,7 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
     };
     let place = match resolve_place(db, &scope, &user).await {
         Ok(place) => place,
-        Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e)) => {
-            return Err(ApiError(StatusCode::INTERNAL_SERVER_ERROR, e));
-        }
+        Err(e) if e.0.is_server_error() => return Err(e),
         Err(_) => {
             gone(GONE).await?;
             return Ok(false);
@@ -1200,6 +1199,7 @@ async fn step(state: &AppState, id: i64) -> Result<bool, ApiError> {
     }
     let audit_at = audit_place(db, channel_id).await?;
     let mut tx = db.begin().await?;
+    crate::db::no_statement_limit(&mut tx).await?;
     // Takes the job row first: a cancel or purge that got there first ends the batch here, and
     // the tally is read under the lock, so a concurrent runner or purge never loses an update.
     let Some(locked) = sqlx::query("UPDATE bulk_delete_jobs SET claimed_at = $1 WHERE id = $2 AND status = 'running' RETURNING authors, audit_id")

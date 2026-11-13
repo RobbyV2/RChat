@@ -3,7 +3,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use sqlx::any::{AnyPoolOptions, install_default_drivers};
-use sqlx::{AnyConnection, AnyPool};
+use sqlx::{AnyConnection, AnyPool, Row};
 
 use super::migrate::{ConfigChange, ConfigStart, init_schema};
 use super::schema::{probe_fts, set_fts, sqlite_search_index};
@@ -77,6 +77,8 @@ pub struct DbOptions {
     pub pepper: Option<String>,
     pub controls: Option<ControlSeeds>,
     pub light_commits: LightCommits,
+    /// This process only serves the web app (`RCHAT_ROLES=web`), so one connection is enough.
+    pub web_only: bool,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -85,6 +87,7 @@ impl std::fmt::Debug for DbOptions {
             .field("limits", &self.limits)
             .field("controls", &self.controls)
             .field("light_commits", &self.light_commits)
+            .field("web_only", &self.web_only)
             .finish_non_exhaustive()
     }
 }
@@ -245,6 +248,7 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
         pepper,
         controls,
         light_commits,
+        web_only,
     } = opts;
     install_default_drivers();
     let url = connect_url(database_url);
@@ -264,6 +268,11 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
             "DATABASE_LIGHT_COMMITS",
             *light_commits != LightCommits::default(),
         ),
+        (
+            "DATABASE_STATEMENT_TIMEOUT_SECS",
+            limits.database_statement_timeout_secs
+                != Limits::default().database_statement_timeout_secs,
+        ),
     ]
     .into_iter()
     .filter(|(_, set)| *set)
@@ -272,24 +281,30 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
     if is_sqlite && !postgres_only.is_empty() {
         tracing::warn!("{} ignored for sqlite", postgres_only.join(", "));
     }
-    let mut options = pool_options(
-        writer_connections(is_sqlite, max),
-        limits.database_acquire_timeout_secs,
-    );
+    let writers = match web_only {
+        true => 1,
+        false => writer_connections(is_sqlite, max),
+    };
+    let mut options = pool_options(writers, limits.acquire_timeout_secs());
     if let Some(min) = limits.database_min_connections {
-        options = options.min_connections(min);
+        options = options.min_connections(min.min(writers));
     }
-    let pragmas: &'static [&'static str] = match is_sqlite {
-        true => &[
+    let session: Vec<String> = match is_sqlite {
+        true => [
             "PRAGMA journal_mode=WAL",
             "PRAGMA foreign_keys=ON",
             "PRAGMA busy_timeout=5000",
             "PRAGMA synchronous=NORMAL",
             "PRAGMA mmap_size=268435456",
-        ],
-        false => &[],
+        ]
+        .map(str::to_string)
+        .to_vec(),
+        false => match limits.database_statement_timeout_secs {
+            0 => Vec::new(),
+            secs => vec![format!("SET statement_timeout = '{secs}s'")],
+        },
     };
-    let pool = with_pragmas(options, pragmas).connect(&url).await?;
+    let pool = on_connect(options, session).connect(&url).await?;
     if let Ok(mut sync) = SYNC_LIGHT.lock() {
         match light_commits {
             LightCommits::Sync => sync.insert(pool_key(&pool)),
@@ -297,6 +312,7 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
         };
     }
     let mut tx = pool.begin().await?;
+    no_statement_limit(&mut tx).await?;
     if !is_sqlite {
         sqlx::query("SELECT COUNT(*) FROM pg_advisory_xact_lock($1)")
             .bind(SCHEMA_LOCK)
@@ -356,7 +372,7 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
                 }),
             };
             if readers > 0 {
-                let read = open_reader(&url, readers, limits.database_acquire_timeout_secs).await?;
+                let read = open_reader(&url, readers, limits.acquire_timeout_secs()).await?;
                 if let Ok(mut map) = READERS.lock() {
                     map.insert(pool_key(&pool), read);
                 }
@@ -376,36 +392,107 @@ pub fn writer_connections(is_sqlite: bool, configured: Option<u32>) -> u32 {
     }
 }
 
-fn pool_options(max: u32, acquire_timeout_secs: Option<u64>) -> AnyPoolOptions {
-    let options = AnyPoolOptions::new().max_connections(max);
-    match acquire_timeout_secs {
-        Some(secs) => options.acquire_timeout(Duration::from_secs(secs)),
-        None => options,
-    }
+fn pool_options(max: u32, acquire_timeout_secs: u64) -> AnyPoolOptions {
+    AnyPoolOptions::new()
+        .max_connections(max)
+        .acquire_timeout(Duration::from_secs(acquire_timeout_secs))
 }
 
-fn with_pragmas(options: AnyPoolOptions, pragmas: &'static [&'static str]) -> AnyPoolOptions {
+/// `options` with `session` run on every new connection.
+fn on_connect(options: AnyPoolOptions, session: Vec<String>) -> AnyPoolOptions {
+    let session = std::sync::Arc::new(session);
     options.after_connect(move |conn, _| {
+        let session = std::sync::Arc::clone(&session);
         Box::pin(async move {
-            for pragma in pragmas {
-                sqlx::query(*pragma).execute(&mut *conn).await?;
+            for stmt in session.iter() {
+                sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+                    .execute(&mut *conn)
+                    .await?;
             }
             Ok(())
         })
     })
 }
 
-async fn open_reader(url: &str, max: u32, acquire_timeout_secs: Option<u64>) -> anyhow::Result<Db> {
-    let pragmas = &[
+async fn open_reader(url: &str, max: u32, acquire_timeout_secs: u64) -> anyhow::Result<Db> {
+    let session = [
         "PRAGMA busy_timeout=5000",
         "PRAGMA query_only=ON",
         "PRAGMA mmap_size=268435456",
-    ];
-    Ok(
-        with_pragmas(pool_options(max, acquire_timeout_secs), pragmas)
-            .connect(url)
-            .await?,
-    )
+    ]
+    .map(str::to_string)
+    .to_vec();
+    Ok(on_connect(pool_options(max, acquire_timeout_secs), session)
+        .connect(url)
+        .await?)
+}
+
+/// Lifts `DATABASE_STATEMENT_TIMEOUT_SECS` for the transaction `tx`: the schema init, purges,
+/// sweeps and bulk delete batches may run longer than a request. Does nothing on SQLite.
+pub async fn no_statement_limit(tx: &mut AnyConnection) -> sqlx::Result<()> {
+    if tx.backend_name() == "PostgreSQL" {
+        sqlx::query("SET LOCAL statement_timeout = 0")
+            .execute(&mut *tx)
+            .await?;
+    }
+    Ok(())
+}
+
+/// What the Postgres connection limit leaves for more copies of this process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConnectionBudget {
+    /// This process's pool size.
+    pub pool: u32,
+    /// `max_connections` without `superuser_reserved_connections`.
+    pub allowed: i64,
+    /// Client connections open now, this process's included.
+    pub used: i64,
+}
+
+impl ConnectionBudget {
+    /// How many more copies with the same pool fit once this one and every open connection of
+    /// the others are counted in full.
+    pub fn room(&self) -> i64 {
+        let ConnectionBudget {
+            pool,
+            allowed,
+            used,
+        } = *self;
+        let pool = i64::from(pool.max(1));
+        ((allowed - (used - 1).max(0) - pool) / pool).max(0)
+    }
+
+    /// Under two more copies fit: worth a warning.
+    pub fn tight(&self) -> bool {
+        self.room() < 2
+    }
+
+    pub fn message(&self) -> String {
+        let ConnectionBudget {
+            pool,
+            allowed,
+            used,
+        } = *self;
+        format!(
+            "A pool of {pool} database connections leaves room for {} more copies like this one ({used} of {allowed} Postgres connections in use)",
+            self.room()
+        )
+    }
+}
+
+/// The connection budget of the Postgres behind `db`, `None` on SQLite.
+pub async fn connection_budget(db: &Db) -> sqlx::Result<Option<ConnectionBudget>> {
+    if is_sqlite(db) {
+        return Ok(None);
+    }
+    let row = sqlx::query("SELECT CAST(current_setting('max_connections') AS BIGINT) - CAST(current_setting('superuser_reserved_connections') AS BIGINT), (SELECT COUNT(*) FROM pg_stat_activity WHERE backend_type = 'client backend')")
+        .fetch_one(db)
+        .await?;
+    Ok(Some(ConnectionBudget {
+        pool: db.options().get_max_connections(),
+        allowed: row.try_get(0)?,
+        used: row.try_get(1)?,
+    }))
 }
 
 #[cfg(test)]

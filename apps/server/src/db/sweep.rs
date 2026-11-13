@@ -1,6 +1,6 @@
 use sqlx::Row;
 
-use super::pool::{Db, reader};
+use super::pool::{Db, no_statement_limit, reader};
 use super::{now, recount_members};
 use crate::limits::Limits;
 
@@ -61,12 +61,15 @@ pub struct Swept {
 async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> sqlx::Result<u64> {
     let mut total = 0;
     loop {
+        let mut tx = db.begin().await?;
+        no_statement_limit(&mut tx).await?;
         let n = sqlx::query(sql)
             .bind(cutoff)
             .bind(PURGE_BATCH)
-            .execute(db)
+            .execute(&mut *tx)
             .await?
             .rows_affected();
+        tx.commit().await?;
         total += n;
         if n < PURGE_BATCH as u64 {
             return Ok(total);
@@ -258,11 +261,14 @@ pub async fn purge_messages(db: &Db, cond: &'static str, key: &str) -> sqlx::Res
     );
     let mut total = 0;
     loop {
+        let mut tx = db.begin().await?;
+        no_statement_limit(&mut tx).await?;
         let n = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
             .bind(key)
-            .execute(db)
+            .execute(&mut *tx)
             .await?
             .rows_affected();
+        tx.commit().await?;
         total += n;
         if n == 0 {
             return Ok(total);

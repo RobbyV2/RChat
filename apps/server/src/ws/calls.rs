@@ -126,7 +126,7 @@ pub(super) async fn voice_msg(
     conn: u64,
     msg: ClientMsg,
 ) -> Result<(), String> {
-    let db_err = |e: sqlx::Error| e.to_string();
+    let db_err = |e: sqlx::Error| crate::api::ApiError::from(e).1;
     match msg {
         ClientMsg::VoiceJoin { channel_id } => {
             let channel = ws_voice_channel(&state.read(), user, channel_id).await?;
