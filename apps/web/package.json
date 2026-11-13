@@ -11,7 +11,7 @@
     "build": "next build",
     "build:desktop": "STATIC_EXPORT=true next build",
     "start": "bash -c 'HOSTNAME=${FRONTEND_HOST:-${HOST:-0.0.0.0}} exec bun .next/standalone/apps/web/server.js'",
-    "test:ui": "bun test app"
+    "test:ui": "../../scripts/test-ui.sh"
   },
   "dependencies": {
     "@bufbuild/protobuf": "2.16.0",

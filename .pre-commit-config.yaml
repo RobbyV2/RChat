@@ -71,8 +71,8 @@ repos:
         stages: [pre-push, manual]
 
       - id: web-tests
-        name: bun test app (web)
-        entry: bash -c 'cd apps/web && bun test app'
+        name: bun run test:ui (web, random order)
+        entry: bun run test:ui
         language: system
         files: ^apps/web/
         pass_filenames: false

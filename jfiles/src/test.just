@@ -8,7 +8,7 @@ test:
 test-wasm:
   cd {{ROOT}} && wasm-pack test --headless --chrome crates/wasm
 
-# Run frontend unit tests
+# Run frontend unit tests in a random order (SEED=<number> runs an order again)
 test-ui: deps
   cd {{ROOT}} && bun run test:ui
 

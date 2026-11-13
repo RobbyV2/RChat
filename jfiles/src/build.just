@@ -59,7 +59,7 @@ gates: deps
   cd {{ROOT}} && bunx prettier --check "**/*.{ts,tsx,js,jsx,json,md,mjs}" {{PRETTIER_IGNORES}}
   cd {{ROOT}} && cargo test --workspace {{DESKTOP_CRATES}}
   cd {{ROOT}} && bun test scripts
-  cd {{WEB}} && bun test app
+  cd {{ROOT}} && bun run test:ui
   cd {{ROOT}} && bun run build
 
 # Format and lint all code
