@@ -10,6 +10,7 @@ import {
   emojiBase,
   emojiCode,
   reactionLabel,
+  reactorNames,
   reactorsText,
   withReaction,
 } from '../reactions'
@@ -81,6 +82,25 @@ describe('reaction tooltip', () => {
     )
     expect(reactionLabel('😭', 'sob', ['Alice'], 5, true)).toBe('😭 :sob: reacted by 5 people')
     expect(reactionLabel('😭', null, null, 1, false)).toBe('😭 reacted by 1 person')
+  })
+
+  test("reactors' names are masked, never your own", () => {
+    const mask = (t: string) => t.replace(/fuck|shit/g, w => '*'.repeat(w.length))
+    const people = [
+      { username: 'shit', display_name: 'fuck head' },
+      { username: 'fuck', display_name: 'shit head' },
+      { username: 'bob', display_name: 'bob' },
+    ]
+    expect(reactorNames(people, u => u === 'shit', mask)).toEqual([
+      'fuck head (shit)',
+      '**** head (****)',
+      'bob',
+    ])
+    expect(reactorNames(people, () => false, mask)).toEqual([
+      '**** head (****)',
+      '**** head (****)',
+      'bob',
+    ])
   })
 
   test('shortcodes resolve skin tones and missing variation selectors', () => {

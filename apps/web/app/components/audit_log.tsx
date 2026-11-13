@@ -292,7 +292,7 @@ function Swatch({ field, value }: { field: string; value: unknown }) {
   )
 }
 
-function AuditRow({ entry }: { entry: AuditEntry }) {
+export function AuditRow({ entry }: { entry: AuditEntry }) {
   const [open, setOpen] = useState(false)
   const group = groupOf(entry.action)
   const Icon = group ? ICONS[group] : ScrollText
@@ -310,7 +310,7 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
           {sentence(entry).map((p, i) =>
             p.name ? (
               <span key={i} className="streamer font-medium">
-                <Masked text={p.text} />
+                <Masked text={p.text} by={p.by} />
               </span>
             ) : (
               <span key={i}>{p.text}</span>

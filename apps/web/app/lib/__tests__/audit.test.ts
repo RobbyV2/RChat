@@ -51,12 +51,37 @@ const channelTarget = (name: string | null) => ({
 describe('audit sentences', () => {
   test('member actions name both sides with the streamer flag', () => {
     expect(sentence(entry({}))).toEqual([
-      { text: 'Alice', name: true },
+      { text: 'Alice', name: true, by: 'alice' },
       { text: ' banned ' },
-      { text: 'Bob', name: true },
+      { text: 'Bob', name: true, by: 'bob' },
     ])
     expect(sentenceText(entry({ action: 'member.kick' }))).toBe('Alice kicked Bob')
     expect(sentenceText(entry({ action: 'member.admin_grant' }))).toBe('Alice made Bob an admin')
+  })
+
+  test("a person's name carries their username, so your own is never masked", () => {
+    const rule = sentence(
+      entry({
+        action: 'channel.perm_set',
+        target: channelTarget('general'),
+        details: { subject: { kind: 'user', name: 'carol' } },
+      })
+    )
+    expect(rule.filter(p => p.name)).toEqual([
+      { text: 'Alice', name: true, by: 'alice' },
+      { text: 'carol', name: true, by: 'carol' },
+    ])
+    const renamed = sentence(
+      entry({
+        action: 'server.update',
+        target: null,
+        details: { changes: [{ field: 'name', before: 'old', after: 'new' }] },
+      })
+    )
+    expect(renamed.filter(p => p.name)).toEqual([
+      { text: 'Alice', name: true, by: 'alice' },
+      { text: 'new', name: true },
+    ])
   })
 
   test('instance staff are never named', () => {

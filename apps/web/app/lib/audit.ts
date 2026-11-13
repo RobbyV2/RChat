@@ -20,8 +20,9 @@ export const groupOf = (action: string): AuditGroup | null => {
   return AUDIT_GROUPS.some(g => g.key === head) ? (head as AuditGroup) : null
 }
 
-// A sentence as text runs; `name` runs are usernames or server names (streamer blur).
-export type Part = { text: string; name?: boolean }
+// A sentence as text runs; `name` runs are usernames or server names (streamer blur), `by` the
+// account a person's name belongs to (your own is never masked).
+export type Part = { text: string; name?: boolean; by?: string }
 
 export interface AuditChange {
   field: string
@@ -172,7 +173,7 @@ export const isNameFact = (label: string) => label === FIELD_LABELS.authors
 
 const actorParts = (entry: AuditEntry): Part[] => {
   if (entry.staff) return [{ text: 'Instance staff' }]
-  if (entry.actor) return [{ text: entry.actor.display_name, name: true }]
+  if (entry.actor) return [{ text: entry.actor.display_name, name: true, by: entry.actor.username }]
   return [{ text: 'Deleted user' }]
 }
 
@@ -182,7 +183,7 @@ const userParts = (entry: AuditEntry): Part[] => {
   if (t.staff) return [{ text: 'Instance staff' }]
   if (t.deleted) return [{ text: 'Deleted user' }]
   const name = t.user?.display_name ?? t.name
-  return name ? [{ text: name, name: true }] : [{ text: 'someone' }]
+  return name ? [{ text: name, name: true, by: t.user?.username }] : [{ text: 'someone' }]
 }
 
 const channelText = (entry: AuditEntry): string => {
@@ -202,7 +203,7 @@ const subjectParts = (entry: AuditEntry): Part[] => {
   if (s.staff === true) return [{ text: 'Instance staff' }]
   if (s.deleted === true) return [{ text: 'Deleted user' }]
   const name = str(s.name)
-  return name ? [{ text: name, name: true }] : [{ text: 'someone' }]
+  return name ? [{ text: name, name: true, by: name }] : [{ text: 'someone' }]
 }
 
 const roleText = (entry: AuditEntry) => {

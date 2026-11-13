@@ -89,18 +89,22 @@ const moveRoles = (v: ServerView, moves: Move[]) => {
   else go()
 }
 
+// Role names in our own server are our own text, never masked.
+const roleMask = (v: ServerView) =>
+  maskOf(useStore.getState(), ownsP2pServer(v, useP2p.getState().me))
+
 const deleteRole = (v: ServerView, r: RoleView) => {
   const s = useStore.getState()
   s.askConfirm({
     title: 'Delete Role',
-    body: `Delete ${maskOf(s)(r.name)}? ${r.holders ? 'Members who have it lose it.' : ''}`.trim(),
+    body: `Delete ${roleMask(v)(r.name)}? ${r.holders ? 'Members who have it lose it.' : ''}`.trim(),
     confirm: 'Delete',
     action: () => void p2pServer.deleteRole(v.id, r.id),
   })
 }
 
 // A role's menu (right-click, long-press): move it a step, or delete it.
-const roleItems = (v: ServerView, r: RoleView): ContextMenuItem[] => {
+export const roleItems = (v: ServerView, r: RoleView): ContextMenuItem[] => {
   if (!can(v, P.ManageRoles) || !r.below) return []
   const i = v.roles.findIndex(x => x.id === r.id)
   const fixed = v.roles.filter(x => !x.below).length
@@ -259,7 +263,7 @@ const takeRole = (v: ServerView, m: MemberView, r: RoleView) => {
   if (m.ik !== useP2p.getState().me) return void p2pServer.revokeRole(v.id, m.ik, r.id)
   s.askConfirm({
     title: 'Remove Role',
-    body: `Remove ${maskOf(s)(r.name)} from yourself? You can't give it back to yourself.`,
+    body: `Remove ${roleMask(v)(r.name)} from yourself? You can't give it back to yourself.`,
     confirm: 'Remove',
     action: () => void p2pServer.revokeRole(v.id, m.ik, r.id),
   })
@@ -267,7 +271,7 @@ const takeRole = (v: ServerView, m: MemberView, r: RoleView) => {
 
 export const roleMenuItems = (v: ServerView, m: MemberView): ContextMenuItem[] => {
   const me = useP2p.getState().me
-  const mask = maskOf(useStore.getState())
+  const mask = roleMask(v)
   return v.roles.flatMap(r => {
     const holds = m.roles.includes(r.id)
     if (holds ? !mayTake(v, m, r, me) : !mayGive(v, m, r, me)) return []
@@ -348,15 +352,24 @@ export function MemberCard({ room, ik }: { room: string; ik: string }) {
 
 const mayWrite = mayWriteRow
 
-// A subject's name as text (labels): @everyone, the role's or the member's.
-const subjectText = (v: ServerView, subj: string, mask: (t: string) => string) =>
+// A subject's name as text (labels): @everyone, the role's (`maskRole`) or the member's (`mask`,
+// never your own).
+const subjectText = (
+  v: ServerView,
+  subj: string,
+  me: string | null,
+  maskRole: (t: string) => string,
+  mask: (t: string) => string
+) =>
   subj === `r:${EVERYONE}`
     ? '@everyone'
     : subj.startsWith('r:')
-      ? mask(v.roles.find(x => `r:${x.id}` === subj)?.name ?? 'Deleted role')
+      ? maskRole(v.roles.find(x => `r:${x.id}` === subj)?.name ?? 'Deleted role')
       : useStore.getState().streamer
         ? 'this member'
-        : mask(memberName(v.id, subj.slice(2)))
+        : subj === `u:${me}`
+          ? memberName(v.id, subj.slice(2))
+          : mask(memberName(v.id, subj.slice(2)))
 
 function SubjectName({ v, subj }: { v: ServerView; subj: string }) {
   const own = useP2p(s => ownsP2pServer(v, s.me))
@@ -390,13 +403,14 @@ function SubjectName({ v, subj }: { v: ServerView; subj: string }) {
 }
 
 // Members to add to an allow list: searched by name, 50 at a time.
-function MemberPicker({
+export function MemberPicker({
   people,
   onPick,
 }: {
   people: MemberView[]
   onPick: (m: MemberView) => void
 }) {
+  const me = useP2p(s => s.me)
   const [q, setQ] = useState('')
   const [shown, setShown] = useState(PAGE)
   const found = matching(people, q, m => m.name)
@@ -422,7 +436,7 @@ function MemberPicker({
             >
               <KeyAvatar ik={m.ik} size={24} />
               <span className="streamer min-w-0 truncate">
-                <Masked text={m.name} />
+                <Masked text={m.name} own={m.ik === me} />
               </span>
             </button>
           </li>
@@ -446,6 +460,9 @@ function MemberPicker({
 export function ChannelAccess({ v, c }: { v: ServerView; c: ChannelView }) {
   const [role, setRole] = useState('')
   const [picking, setPicking] = useState(false)
+  const me = useP2p(s => s.me)
+  const own = useP2p(s => ownsP2pServer(v, s.me))
+  const maskRole = useMask(own)
   const mask = useMask()
   const rows = Object.entries(c.over).filter(
     ([subj]) => subj.startsWith('r:') || subj.startsWith('u:')
@@ -481,7 +498,7 @@ export function ChannelAccess({ v, c }: { v: ServerView; c: ChannelView }) {
         const off = !mayWrite(v, subj)
         const set = (view: boolean, send: boolean) =>
           void p2pServer.setOverwrite(v.id, c.id, subj, overBits(view, send))
-        const name = subjectText(v, subj, mask)
+        const name = subjectText(v, subj, me, maskRole, mask)
         return (
           <div
             key={subj}
@@ -537,7 +554,7 @@ export function ChannelAccess({ v, c }: { v: ServerView; c: ChannelView }) {
               <option value="">Add role…</option>
               {roles.map(r => (
                 <option key={r.id} value={`r:${r.id}`}>
-                  {mask(r.name)}
+                  {maskRole(r.name)}
                 </option>
               ))}
             </select>

@@ -270,6 +270,8 @@ interface TileData {
   shareId: string | null
   // A P2P contact (or this side of a P2P call): no instance profile to open.
   local?: boolean
+  // In a P2P call, whether the tile is your own: people there go by their P2P identity.
+  own?: boolean
 }
 
 export function LiveBadge({
@@ -349,7 +351,8 @@ export function Tile({
   const streamer = useStore(s => s.streamer)
   const box = height ?? (compact ? 72 : 240)
   const avatar = compact ? 32 : Math.round(Math.max(40, Math.min(96, box * 0.3)))
-  const mask = useMask(useOwn(user.username))
+  const mine = useOwn(user.username)
+  const mask = useMask(tile.own ?? mine)
   const name = maskedName(user, mask)
   const label = screen ? `${name}'s screen` : name
   return (
@@ -440,7 +443,7 @@ export function Tile({
           <StateIcons muted={muted} deafened={deafened} size={compact ? 10 : 12} />
         )}
         <span className="streamer truncate">
-          <NameWithUsername user={user} />
+          <NameWithUsername user={user} own={tile.own} />
         </span>
         {pending && <span className="shrink-0 opacity-75">Ringing…</span>}
       </span>
@@ -931,6 +934,7 @@ export function VoiceGrid({
         : cachedProfile(profileKey(user.username, server))?.banner_color
     )
 
+  const p2pIdentity = forRoom !== null || forVoice !== null
   const people: TileData[] = users.map(u => {
     const user = refFor(u)
     const base = {
@@ -940,7 +944,8 @@ export function VoiceGrid({
       tint: tint(user),
       screen: false,
       shareId: null,
-      local: forRoom !== null || forVoice !== null,
+      local: p2pIdentity,
+      own: p2pIdentity ? u === self : undefined,
     }
     if (joined && u === self)
       return {
@@ -1005,6 +1010,7 @@ export function VoiceGrid({
     const user = refFor(pendingOther)
     tiles.push({
       local: forRoom !== null,
+      own: forRoom !== null ? false : undefined,
       key: pendingOther,
       user,
       stream: null,

@@ -59,7 +59,7 @@ function VoiceMember({
         <KeyAvatar ik={u.ik} size={22} />
       </span>
       <span className={`streamer min-w-0 flex-1 truncate ${speaking ? 'text-on-surface' : ''}`}>
-        <Masked text={name} />
+        <Masked text={name} own={self} />
       </span>
       {live && (
         <LiveBadge size="sm" title={self ? "You're sharing your screen" : 'Sharing their screen'} />

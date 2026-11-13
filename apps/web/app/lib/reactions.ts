@@ -1,5 +1,6 @@
+import { nameWithUsername } from './display_name'
 import { shortcodeOf, type Emoji, type EmojiPrefs } from './emoji'
-import type { Message, Reaction, ServerDetail } from './types'
+import type { Message, Reaction, ServerDetail, UserRef } from './types'
 
 const REACTIONS_MAX = 20
 const NAMES_SHOWN = 3
@@ -95,6 +96,13 @@ export function reactorsText(names: string[], total: number, shown = NAMES_SHOWN
   if (head.length === 1) return head[0]
   return `${head.slice(0, -1).join(', ')} and ${head[head.length - 1]}`
 }
+
+// Reactors' names as the personal filter shows them: your own (`own`) never masked.
+export const reactorNames = (
+  users: Pick<UserRef, 'username' | 'display_name'>[],
+  own: (username: string) => boolean,
+  mask: (text: string) => string
+) => users.map(u => (own(u.username) ? nameWithUsername(u) : mask(nameWithUsername(u))))
 
 // Tooltip: "😭 :sob: reacted by alice, bob and 3 others". Streamer mode hides the names.
 export function reactionLabel(

@@ -3,7 +3,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { SmilePlus } from 'lucide-react'
-import { useStore } from '../lib/store'
+import { useMask, useStore } from '../lib/store'
 import type { Message, Reaction, UserRef } from '../lib/types'
 import {
   FULL_TITLE,
@@ -13,13 +13,13 @@ import {
   peopleText,
   reacted,
   reactionLabel,
+  reactorNames,
   reactorsText,
 } from '../lib/reactions'
 import { EmojiPicker, useEmojiData, useTopEmojis } from './emoji_picker'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { UserAvatar } from './user_avatar'
-import { CloseButton, Masked, SheetGrip } from './ui'
-import { nameWithUsername } from '../lib/display_name'
+import { CloseButton, Masked, SheetGrip, useOwnCheck } from './ui'
 import { useReactionActions } from './chat_source'
 
 const EMPTY: Reaction[] = []
@@ -81,10 +81,12 @@ function ReactionTooltip({
   const streamer = useStore(s => s.streamer)
   const { data } = useEmojiData(true)
   const users = useReactors(messageId, r.emoji, r.count, !streamer)
+  const own = useOwnCheck()
+  const mask = useMask()
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const code = data ? emojiCode(data, r.emoji) : null
-  const names = users?.map(nameWithUsername) ?? null
+  const names = users ? reactorNames(users, own, mask) : null
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -118,9 +120,7 @@ function ReactionTooltip({
         {streamer || names === null ? (
           peopleText(r.count)
         ) : (
-          <span className="streamer">
-            <Masked text={reactorsText(names, r.count)} />
-          </span>
+          <span className="streamer">{reactorsText(names, r.count)}</span>
         )}
       </span>
     </div>,

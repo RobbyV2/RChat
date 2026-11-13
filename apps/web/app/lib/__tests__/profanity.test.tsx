@@ -31,6 +31,17 @@ import { ProfileHandle } from '../../components/profile_card'
 import { dmPlaceholder } from '../display_name'
 import { ReplyPreview } from '../../components/replies'
 import { Tile } from '../../components/voice_grid'
+import { P2pVoiceRow } from '../../components/p2p/p2p_voice'
+import {
+  ChannelAccess,
+  MemberPicker,
+  roleItems,
+  roleMenuItems,
+} from '../../components/p2p/p2p_server_roles'
+import { AuditRow } from '../../components/audit_log'
+import { useP2p } from '../p2p/app'
+import type { ChannelView, MemberView, RoleView, ServerView } from '../p2p/server'
+import { P } from '../p2p/state'
 import { nestedInteractive } from './nesting'
 import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
 import type { Message } from '../types'
@@ -398,10 +409,11 @@ describe('in messages', () => {
     expect(theirs).toContain('(<span data-masked-word')
     expect(nestedInteractive(theirs)).toEqual([])
     expect(name('alice', false).includes('shit')).toBe(false)
-    const tile = (u: string) =>
+    const tile = (u: string, p2p?: { own: boolean }) =>
       renderToStaticMarkup(
         <Tile
           tile={{
+            ...(p2p ? { local: true, own: p2p.own } : {}),
             key: u,
             user: user(u, { display_name: 'shit head' }),
             stream: null,
@@ -423,6 +435,13 @@ describe('in messages', () => {
       )
     expect(tile('alice')).toContain('aria-label="Focus shit head (alice)"')
     expect(tile('shit')).toContain('aria-label="Focus **** head (****)"')
+    // A P2P call names people by their P2P identity, never the instance username.
+    const ownTile = tile('shit', { own: true })
+    expect(ownTile).toContain('aria-label="Focus shit head (shit)"')
+    expect(ownTile.includes('data-masked-word')).toBe(false)
+    const peerTile = tile('alice', { own: false })
+    expect(peerTile).toContain('aria-label="Focus **** head (alice)"')
+    expect(peerTile).toContain('data-masked-word')
     const mask = (t: string) => t.replace(/shit/g, '****')
     expect(dmPlaceholder(user('shit'), false, mask)).toBe('Message @****')
     expect(dmPlaceholder(user('shit'), true, mask)).toBe('Send a direct message')
@@ -489,6 +508,170 @@ describe('in messages', () => {
       )
     expect(p2p('IK_ME')).toBe('shit')
     expect(p2p('alice')).toContain('>****</span>')
+    const p2pInitial = useP2p.getInitialState()
+    const was = { me: p2pInitial.me, name: p2pInitial.name }
+    Object.assign(p2pInitial, { me: 'IK_ME', name: 'shit head' })
+    try {
+      const view = {
+        id: 'room',
+        voice: {
+          c1: [
+            { ik: 'IK_ME', video: false },
+            { ik: 'IK_PEER', video: false },
+          ],
+        },
+        members: [
+          { ik: 'IK_ME', name: 'shit head' },
+          { ik: 'IK_PEER', name: 'shit face' },
+        ],
+      } as unknown as ServerView
+      const roster = renderToStaticMarkup(
+        <P2pVoiceRow
+          v={view}
+          c={{ id: 'c1', name: 'talk' }}
+          active
+          menu={() => {}}
+          memberMenu={() => () => {}}
+        />
+      )
+      const shown = roster.replace(/<[^>]+>/g, ' ')
+      expect(shown).toContain('shit head')
+      expect(shown.includes('shit face')).toBe(false)
+      expect(roster.split('data-masked-word').length - 1).toBe(1)
+    } finally {
+      Object.assign(p2pInitial, was)
+    }
+  })
+
+  test('your own name in P2P channel access is never masked', async () => {
+    await masking({})
+    const p2pInitial = useP2p.getInitialState()
+    const was = { me: p2pInitial.me, servers: p2pInitial.servers }
+    const live = useP2p.getState().servers
+    const people = [
+      { ik: 'IK_ME', name: 'shit head', m: 'join', below: false, owner: false },
+      { ik: 'IK_PEER', name: 'shit face', m: 'join', below: true, owner: false },
+    ]
+    const view = (owner: string) =>
+      ({
+        id: 'room',
+        owner,
+        owners: [],
+        rank: [0],
+        roles: [
+          { id: 'R1', name: 'shit crew', below: true },
+          { id: 'R2', name: 'shit squad', below: true },
+        ],
+        members: people,
+      }) as unknown as ServerView
+    const none = { allow: 0, deny: 0 }
+    const channel = {
+      id: 'c1',
+      kind: 'text',
+      restrict_view: true,
+      over: { 'u:IK_ME': none, 'u:IK_PEER': none, 'r:R1': none },
+    } as unknown as ChannelView
+    const access = (owner: string) => {
+      const v = view(owner)
+      Object.assign(p2pInitial, { me: 'IK_ME', servers: { room: v } })
+      useP2p.setState({ servers: { room: v } })
+      return renderToStaticMarkup(<ChannelAccess v={v} c={channel} />)
+    }
+    try {
+      const owned = access('IK_ME')
+      expect(owned).toContain('aria-label="Remove shit head"')
+      expect(owned).toContain('aria-label="Remove **** face"')
+      expect(owned).toContain('aria-label="Remove shit crew"')
+      expect(owned).toContain('>shit squad</option>')
+      const member = access('IK_OWNER')
+      expect(member).toContain('aria-label="Remove shit head"')
+      expect(member).toContain('title="Remove shit head"')
+      expect(member).toContain('aria-label="Remove **** crew"')
+      expect(member).toContain('>**** squad</option>')
+      const picker = renderToStaticMarkup(
+        <MemberPicker people={people as MemberView[]} onPick={() => {}} />
+      )
+      const shown = picker.replace(/<[^>]+>/g, ' ')
+      expect(shown).toContain('shit head')
+      expect(shown.includes('shit face')).toBe(false)
+    } finally {
+      Object.assign(p2pInitial, was)
+      useP2p.setState({ servers: live })
+    }
+  })
+
+  test('role names in your own P2P server are never masked in menus and confirms', async () => {
+    await masking({})
+    const { profanityOn, profanityReady } = useStore.getState()
+    const was = useP2p.getState().me
+    const ME = { ik: 'IK_ME', name: 'me', m: 'join', below: false, owner: false, roles: ['R1'] }
+    const PEER = { ik: 'IK_PEER', name: 'peer', m: 'join', below: true, owner: false, roles: [] }
+    const crew = { id: 'R1', name: 'shit crew', below: true, held: false, holders: 1 }
+    const view = (owner: string) =>
+      ({
+        id: 'room',
+        owner,
+        owners: [],
+        me: 'join',
+        perms: P.ManageRoles,
+        rank: [0],
+        roles: [crew, { id: 'R2', name: 'shit squad', below: true, held: false, holders: 0 }],
+        members: [ME, PEER],
+      }) as unknown as ServerView
+    const said = (run: () => void) => {
+      run()
+      return useStore.getState().confirm?.body
+    }
+    useStore.setState({ profanityOn: true, profanityReady: true })
+    useP2p.setState({ me: 'IK_ME' })
+    try {
+      const owned = view('IK_ME')
+      const labels = (v: ServerView) =>
+        roleMenuItems(v, PEER as unknown as MemberView).map(i => i.label)
+      expect(labels(owned)).toEqual(['shit crew', 'shit squad'])
+      const take = (v: ServerView) =>
+        roleMenuItems(v, ME as unknown as MemberView).find(i => i.checked)?.action
+      expect(said(() => take(owned)?.())).toBe(
+        "Remove shit crew from yourself? You can't give it back to yourself."
+      )
+      const remove = (v: ServerView) =>
+        roleItems(v, crew as unknown as RoleView).find(i => i.label === 'Delete Role')?.action
+      expect(said(() => remove(owned)?.())).toBe('Delete shit crew? Members who have it lose it.')
+      const theirs = view('IK_OWNER')
+      expect(labels(theirs)).toEqual(['**** crew', '**** squad'])
+      expect(said(() => take(theirs)?.())).toContain('Remove **** crew from yourself?')
+      expect(said(() => remove(theirs)?.())).toContain('Delete **** crew?')
+    } finally {
+      useStore.setState({ profanityOn, profanityReady, confirm: null })
+      useP2p.setState({ me: was })
+    }
+  })
+
+  test('your own name in the audit log is never masked', async () => {
+    await masking({ me: me('shit') })
+    const row = renderToStaticMarkup(
+      <AuditRow
+        entry={{
+          id: 1,
+          action: 'member.kick',
+          actor: user('shit', { display_name: 'fuck head' }),
+          staff: false,
+          target: {
+            kind: 'user',
+            id: null,
+            name: 'fuck',
+            user: user('fuck', { display_name: 'fuck face' }),
+            staff: false,
+            deleted: false,
+          },
+          details: {},
+          hidden: false,
+          created_at: 0,
+        }}
+      />
+    )
+    const shown = row.replace(/<span class="sr-only">masked<\/span>/g, '').replace(/<[^>]+>/g, '')
+    expect(shown).toContain('fuck head kicked **** face')
   })
 
   test('an account that never chose has it on, one that turned it off keeps it off', async () => {

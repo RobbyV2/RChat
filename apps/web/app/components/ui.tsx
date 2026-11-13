@@ -437,11 +437,13 @@ export function MaskedWord({
 
 // Whether text written or owned by `by` is your own: your username, or your P2P identity inside
 // a P2P conversation.
-export const useOwn = (by?: string | null) => {
+export const useOwnCheck = () => {
   const src = useChatSource()
   const me = useStore(s => s.me?.username ?? null)
-  return !!by && (src ? src.self === by : me === by)
+  return (by?: string | null) => !!by && (src ? src.self === by : me === by)
 }
+
+export const useOwn = (by?: string | null) => useOwnCheck()(by)
 
 // Whether you created instance server `name`: its server, channel, category and role names are
 // your own text.
