@@ -533,7 +533,9 @@ pub struct InstanceInfo {
     pub ws_url: String,
     /// PeerJS signalling server used for peer-to-peer file sharing and calls: `/peerjs` of this
     /// origin, unless the operator names another address (`PUBLIC_PEERJS_URL`) or the port of a
-    /// separate PeerJS server on this host (`PEERJS_PORT`).
+    /// separate PeerJS server on this host (`PEERJS_PORT`). Left out while the instance has
+    /// both `p2p` and `p2p_attachments` off: it runs no signalling then.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     #[schema(example = "https://chat.example.com/peerjs")]
     pub peerjs_url: String,
     /// URL of this document on this instance (`GET /api/instance`, the latest version).

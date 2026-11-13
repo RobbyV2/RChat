@@ -1330,6 +1330,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn all_of_p2p_turns_off_in_one_change() {
+        let (state, path) = temp_state("p2p_all_off").await;
+        let db = &state.db;
+        add_user(db, "root", true).await;
+        let mut rx = state.hub.subscribe();
+        set(
+            &state,
+            json!({"p2p": false, "p2p_attachments": false, "p2p_backup": false}),
+        )
+        .await
+        .expect("patch");
+        let event = serde_json::to_value(rx.try_recv().expect("settings_changed")).expect("json");
+        for key in ["p2p", "p2p_attachments", "p2p_backup"] {
+            assert_eq!(event["settings"][key], json!(false), "{key}");
+        }
+        assert!(rx.try_recv().is_err(), "one event for the one change");
+        assert_eq!(
+            texts(
+                db,
+                "SELECT target FROM instance_audit WHERE action = 'settings.change' ORDER BY target",
+            )
+            .await,
+            ["p2p", "p2p_attachments", "p2p_backup"]
+        );
+        assert!(!effective(db, None).await.p2p());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn public_reading_is_public_and_changes_live() {
         use crate::api::admin::get_settings;
         let (state, path) = temp_state("reading_setting").await;

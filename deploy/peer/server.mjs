@@ -1,11 +1,13 @@
 import { BlockList, isIP } from 'node:net'
 import process from 'node:process'
+import { clearTimeout, setTimeout } from 'node:timers'
 import { PeerServer } from 'peer'
 import { WebSocketServer } from 'ws'
 
 // The separate PeerJS signaling server (the stock `peer` package), with a cap on open connections
 // per client address next to its global cap. IPv6 addresses count per /64. The Rust server
-// serves the same protocol at /peerjs itself unless PEERJS_BUILTIN is off.
+// serves the same protocol at /peerjs itself unless PEERJS_BUILTIN is off. With
+// PEERJS_SETTINGS_URL (the instance's /api/v1/settings) it follows the instance's P2P switches.
 
 export const setting = (env, name, fallback) => {
   const raw = env[name]
@@ -100,8 +102,58 @@ export const perAddress = max => {
   }
 }
 
-export const start = (env = process.env) => {
+const OFF = 'P2P is turned off on this instance'
+
+// Whether the instance's settings leave signaling on: P2P or P2P attachments.
+export const serves = settings => settings?.p2p !== false || settings?.p2p_attachments !== false
+
+// Puts `serving` in front of every plain request to `server`: while it says no, each one gets
+// the 404 the instance's own /peerjs gives.
+export const gate = (server, serving) => {
+  const handlers = server.listeners('request')
+  server.removeAllListeners('request')
+  server.on('request', (req, res) => {
+    if (serving()) {
+      for (const handle of handlers) handle.call(server, req, res)
+      return
+    }
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+    res.end(OFF)
+  })
+}
+
+// Asks `url` for the instance's settings every `every` ms and tells `apply` whether signaling
+// serves. An answer that can't be read keeps the last one.
+export const follow = (url, every, apply) => {
+  let stopped = false
+  let timer = null
+  const ask = async () => {
+    try {
+      const res = await globalThis.fetch(url, { signal: globalThis.AbortSignal.timeout(10_000) })
+      if (res.ok && !stopped) apply(serves(await res.json()))
+    } catch {
+      // Keeps the last answer.
+    }
+    if (!stopped) timer = setTimeout(ask, every)
+  }
+  void ask()
+  return () => {
+    stopped = true
+    clearTimeout(timer)
+  }
+}
+
+export const start = (env = process.env, { every = 30_000 } = {}) => {
   const port = setting(env, 'PEERJS_PORT', 9001)
+  const settingsUrl = filled(env.PEERJS_SETTINGS_URL)
+    ? String(env.PEERJS_SETTINGS_URL).trim()
+    : null
+  let on = true
+  let sockets = null
+  const apply = serving => {
+    on = serving
+    if (!on) for (const socket of sockets?.clients ?? []) socket.close(1008, OFF)
+  }
   const trusted = proxyList(env.TRUSTED_PROXIES)
   const trustAll = env.TRUST_PROXY === 'true'
   const held = perAddress(setting(env, 'PEERJS_PEERS_PER_IP', 50))
@@ -115,11 +167,17 @@ export const start = (env = process.env) => {
         createWebSocketServer: options => {
           const wss = new WebSocketServer({
             ...options,
-            verifyClient: (info, done) =>
-              held.room(keyOf(info.req)) ? done(true) : done(false, 429, 'Too many connections'),
+            verifyClient: (info, done) => {
+              if (!on) return done(false, 404, OFF)
+              return held.room(keyOf(info.req))
+                ? done(true)
+                : done(false, 429, 'Too many connections')
+            },
           })
+          sockets = wss
           // Counted once open, so an upgrade that fails halfway never holds a slot.
           wss.on('connection', (socket, req) => {
+            if (!on) return socket.close(1008, OFF)
             const key = keyOf(req)
             if (!held.take(key)) return socket.close(1008, 'Too many connections')
             socket.once('close', () => held.give(key))
@@ -127,7 +185,12 @@ export const start = (env = process.env) => {
           return wss
         },
       },
-      server => resolve({ server, held })
+      server => {
+        gate(server, () => on)
+        const stop = settingsUrl ? follow(settingsUrl, every, apply) : () => {}
+        server.once('close', stop)
+        resolve({ server, held, stop, following: settingsUrl !== null })
+      }
     )
   })
 }

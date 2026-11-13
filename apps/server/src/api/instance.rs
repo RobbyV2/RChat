@@ -77,7 +77,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         onboarding: _,
         password_login: _,
         sfu: _,
-        p2p: _,
+        p2p,
         client_other_instances: _,
         registration: _,
         upload_expiry_max_days: _,
@@ -91,7 +91,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         calls: _,
         incoming_webhooks: _,
     } = Settings::cached(&state.read()).await;
-    state.instance.discovery(
+    let mut info = state.instance.discovery(
         &state.instance.origin(peer, headers),
         Features {
             guests: guests_enabled,
@@ -102,7 +102,11 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
             backup_phrase: true,
         },
         &state.limits,
-    )
+    );
+    if !p2p && !p2p_attachments {
+        info.peerjs_url = String::new();
+    }
+    info
 }
 
 /// Describe this instance
@@ -265,7 +269,7 @@ pub struct Binding {
 /// expires (clients ask for a new one every day while the badge is on). Requires a bearer token;
 /// guests can't call it. Answers 404 while the `p2p` switch of `GET /api/v1/settings` is off.
 /// Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/identity/p2p_binding", tag = "Instance", request_body = BindingRequest, responses((status = 200, description = "EdDSA JWT binding ik to sub = user@host for 7 days", body = Binding), (status = 400, description = "ik is not a valid Ed25519 key, ts is more than 5 minutes from the server clock, or proof is not a signature by ik over this account and ts", body = ApiErrorBody), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 404, description = "`Not found`: the `p2p` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/identity/p2p_binding", tag = "Instance", request_body = BindingRequest, responses((status = 200, description = "EdDSA JWT binding ik to sub = user@host for 7 days", body = Binding), (status = 400, description = "ik is not a valid Ed25519 key, ts is more than 5 minutes from the server clock, or proof is not a signature by ik over this account and ts", body = ApiErrorBody), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 404, description = "`Not found` with reason `off_site` and control `p2p`: the `p2p` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn p2p_binding(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -274,8 +278,14 @@ pub(crate) async fn p2p_binding(
     Json(req): Json<BindingRequest>,
 ) -> Result<Json<Binding>, ApiError> {
     let BindingRequest { ik, ts, proof } = req;
-    if !Settings::cached(&state.db).await.p2p {
-        return Err(not_found());
+    if !crate::api::policy::effective(&state.db, Some(&user))
+        .await
+        .p2p()
+    {
+        return Err(crate::api::policy::refused(
+            crate::api::features::Feature::P2p.key(),
+            not_found(),
+        ));
     }
     if user.username.contains('@') {
         return Err(ApiError(
@@ -746,7 +756,13 @@ mod tests {
         assert_eq!(off.status(), StatusCode::OK);
         let res = bind().await.unwrap();
         assert_eq!(res.status(), StatusCode::NOT_FOUND);
-        assert_eq!(json(res).await, serde_json::json!({"error": "Not found"}));
+        assert_eq!(
+            json(res).await,
+            serde_json::json!({
+                "error": "Not found",
+                "reason": {"kind": "off_site", "control": "p2p"},
+            })
+        );
         let settings = json(
             client
                 .get(format!("{base}/api/settings"))
@@ -769,6 +785,45 @@ mod tests {
             (&serde_json::json!(false), &serde_json::json!(false)),
             "what this build supports, not the switches"
         );
+        let signaling = || async {
+            let doc = json(
+                client
+                    .get(format!("{base}/api/instance"))
+                    .send()
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            let known = json(
+                client
+                    .get(format!("{base}/.well-known/rchat"))
+                    .send()
+                    .await
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(doc.get("peerjs_url"), known.get("peerjs_url"));
+            doc.get("peerjs_url").cloned()
+        };
+        assert_eq!(
+            signaling().await,
+            Some(serde_json::json!(format!("{base}/peerjs"))),
+            "P2P attachments still signal there"
+        );
+        for (body, named) in [
+            (r#"{"p2p_attachments": false}"#, false),
+            (r#"{"p2p_attachments": true}"#, true),
+            (r#"{"p2p_attachments": false, "p2p_backup": false}"#, false),
+            (r#"{"p2p": true}"#, true),
+            (r#"{"p2p": false}"#, false),
+        ] {
+            assert_eq!(switch(body).await.unwrap().status(), StatusCode::OK);
+            assert_eq!(
+                signaling().await.is_some(),
+                named,
+                "{body}: named only while P2P or P2P attachments are on"
+            );
+        }
         assert_eq!(
             switch(r#"{"p2p": true}"#).await.unwrap().status(),
             StatusCode::OK

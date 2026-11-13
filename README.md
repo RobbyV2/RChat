@@ -405,6 +405,8 @@ Other instances accept this instance's identity assertions only from a public HT
 
 An instance that sets `PEERJS_PORT` or `PUBLIC_PEERJS_URL`, or whose web build was given `NEXT_PUBLIC_PEERJS_HOST` or `NEXT_PUBLIC_PEERJS_PORT`, keeps its separate PeerJS server (`deploy/peer/server.mjs`): browsers dial that address, and `just src dev`, `just src prod` and the Docker image (built with those two build args, if any) start that server. To use `/peerjs` on the public port, remove those settings, rebuild the web app without the two build settings, and remove any proxy route that sends `/peerjs` to the separate server.
 
+With P2P and P2P attachments both off in the admin page, the built-in signaling stops. Give the separate PeerJS server `PEERJS_SETTINGS_URL` (the instance's `/api/v1/settings` address) so it stops too.
+
 When you raise `UPLOAD_MAX_MIB`, keep `UPLOAD_BUFFER_MIB` (256 by default) at least twice as large.
 
 A request that waits more than 10 seconds for a database connection gets `503` with `Retry-After: 1` (`DATABASE_ACQUIRE_TIMEOUT_SECS`). On Postgres a statement stops after 60 seconds (`DATABASE_STATEMENT_TIMEOUT_SECS`, `0` for no limit), and a process that runs only the `web` role opens one database connection.

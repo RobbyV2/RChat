@@ -100,6 +100,106 @@ describe('PeerJS per-address limit', () => {
     for (const ws of [...first, again]) ws?.close()
   })
 
+  test('it follows the P2P switches of the instance it is given', async () => {
+    const site = { p2p: true, p2p_attachments: true, up: true }
+    let asked = 0
+    const settings = Bun.serve({
+      port: 0,
+      fetch: () => {
+        asked += 1
+        return site.up
+          ? Response.json({ p2p: site.p2p, p2p_attachments: site.p2p_attachments })
+          : new Response('down', { status: 503 })
+      },
+    })
+    const got = await start(
+      {
+        PEERJS_PORT: '0',
+        PEERJS_SETTINGS_URL: `http://127.0.0.1:${settings.port}/api/v1/settings`,
+      },
+      { every: 20 }
+    )
+    server = got.server
+    const addr = server.address()
+    const port = typeof addr === 'object' && addr ? addr.port : 0
+    const open = (id: string) =>
+      new Promise<WebSocket | null>(resolve => {
+        const ws = new WebSocket(
+          `ws://127.0.0.1:${port}/peerjs/peerjs?key=peerjs&id=${id}&token=t${id}`
+        )
+        ws.onmessage = e => {
+          if (String(e.data).includes('"OPEN"')) resolve(ws)
+        }
+        ws.onerror = () => resolve(null)
+        ws.onclose = () => resolve(null)
+      })
+    const closed = (ws: WebSocket) =>
+      new Promise<boolean>(resolve => {
+        if (ws.readyState === WebSocket.CLOSED) return resolve(true)
+        ws.addEventListener('close', () => resolve(true))
+        setTimeout(() => resolve(false), 3000)
+      })
+    const polled = async () => {
+      const from = asked
+      for (let i = 0; i < 300 && asked < from + 2; i++) await Bun.sleep(10)
+    }
+    const routes = ['/peerjs', '/peerjs/peerjs/id', '/peerjs/peerjs/peers']
+    const answers = () =>
+      Promise.all(
+        routes.map(async path => {
+          const res = await fetch(`http://127.0.0.1:${port}${path}`)
+          return [path, res.status, res.status === 404 ? await res.text() : '']
+        })
+      )
+    const served = routes.slice(0, 2).map(path => [path, 200, ''])
+    try {
+      expect((await answers()).slice(0, 2)).toEqual(served)
+      const first = await open('s1')
+      expect(first).not.toBeNull()
+      site.p2p = false
+      await polled()
+      expect(first?.readyState).toBe(WebSocket.OPEN)
+      const second = await open('s2')
+      expect(second).not.toBeNull()
+
+      site.p2p_attachments = false
+      expect(await closed(first as WebSocket)).toBe(true)
+      expect(await closed(second as WebSocket)).toBe(true)
+      expect(await open('s3')).toBeNull()
+      expect(await answers()).toEqual(
+        routes.map(path => [path, 404, 'P2P is turned off on this instance'])
+      )
+
+      site.up = false
+      await polled()
+      expect(await open('s4')).toBeNull()
+
+      site.up = true
+      site.p2p_attachments = true
+      await polled()
+      const back = await open('s5')
+      expect(back).not.toBeNull()
+      expect((await answers()).slice(0, 2)).toEqual(served)
+      site.up = false
+      await polled()
+      expect(back?.readyState).toBe(WebSocket.OPEN)
+      back?.close()
+    } finally {
+      got.stop()
+      settings.stop(true)
+    }
+    const asking = asked
+    await Bun.sleep(80)
+    expect(asked).toBe(asking)
+  }, 30_000)
+
+  test('without a settings address it asks nobody', async () => {
+    const got = await start({ PEERJS_PORT: '0' }, { every: 10 })
+    server = got.server
+    expect(got.following).toBe(false)
+    got.stop()
+  })
+
   test('every deploy runs the limited server with its settings', () => {
     const start = read('deploy/start.sh')
     expect(start).toContain('bun server.mjs')

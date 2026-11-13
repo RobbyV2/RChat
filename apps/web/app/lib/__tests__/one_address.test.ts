@@ -163,7 +163,7 @@ describe('one address', () => {
       for (const address of [found.api_url, found.instance_url, found.jwks_uri])
         expect(new URL(address).origin).toBe(origin)
       expect(place(found.ws_url, origin)).toEqual(place(origin, origin))
-      expect(place(found.peerjs_url, origin)).toEqual(place(origin, origin))
+      expect(place(found.peerjs_url ?? '', origin)).toEqual(place(origin, origin))
     }
     expect(jwksUrl('https://b.example').href).toBe('https://b.example/.well-known/jwks.json')
   })

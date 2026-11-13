@@ -976,7 +976,8 @@ export interface InstanceInfo {
   public_url: string
   api_url: string
   ws_url: string
-  peerjs_url: string
+  // Absent while the instance has P2P and P2P attachments off.
+  peerjs_url?: string
   instance_url: string
   jwks_uri: string
   ice?: InstanceIce
