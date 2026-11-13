@@ -241,6 +241,71 @@ describe('P2P node', () => {
     expect(req?.warning).toBe(b.node.ik)
   })
 
+  test('a device whose goodbye was lost is back at once when it dials again', async () => {
+    const hub = new Hub()
+    const clock = new ManualClock()
+    const a = await makeNode(hub, 'Alice', { clock })
+    const b = await makeNode(hub, 'Bob', { clock })
+    nodes.push(a.node, b.node)
+    await a.node.start()
+    await b.node.start()
+    await befriend(a.node, b.node, clock)
+    // Bob's accept dialed Alice, so Bob started the session both hold.
+    const [old] = a.node.readySessions(b.node.ik)
+    expect(old.role).toBe('responder')
+
+    // Bob's tab dies without a goodbye; a new tab opens the same identity and dials Alice.
+    hub.crash(b.node.peerId)
+    b.node.stop()
+    const t0 = clock.now()
+    const back = await makeNode(hub, 'Bob', { clock, db: b.db })
+    nodes.push(back.node)
+    await back.node.start()
+    expect(back.node.peerId).toBe(b.node.peerId)
+    const pending = (n: P2pNode) => (n as unknown as { pending: Set<Session> }).pending.size
+    await waitFor(
+      () => !back.node.isDialing(a.node.ik) && pending(a.node) === 0 && pending(back.node) === 0,
+      'the dial'
+    )
+    expect(kept(a.node, back.node)).toBe(true)
+    expect(kept(back.node, a.node)).toBe(true)
+    expect(a.node.readySessions(b.node.ik)).not.toContain(old)
+    expect(old.state).toBe('closed')
+    expect(a.node.presence(b.node.ik)).toBe('online')
+    expect(back.node.presence(a.node.ik)).toBe('online')
+    expect(clock.now()).toBe(t0)
+  })
+
+  test('both dialing at once: each end keeps the session the lower peer id started', async () => {
+    const { hub, out } = await setup(['Alice', 'Bob'])
+    const [a, b] = out.map(x => x.node)
+    await befriend(a, b, new ManualClock())
+    const lower = a.peerId < b.peerId ? a : b
+    const higher = lower === a ? b : a
+    const startedBy = (n: P2pNode, s: Session) => (s.role === 'initiator' ? n.peerId : s.peer)
+    for (const first of [lower, higher]) {
+      for (const s of a.readySessions(b.ik)) s.close('closed')
+      await waitFor(
+        () => a.readySessions(b.ik).length === 0 && b.readySessions(a.ik).length === 0,
+        'no session'
+      )
+      const second = first === a ? b : a
+      const dials = hub.dialCount
+      first.schedule(true)
+      second.schedule(true)
+      expect(hub.dialCount - dials).toBe(2)
+      await waitFor(() => kept(a, b) && kept(b, a), 'one session')
+      for (const [n, peer] of [
+        [a, b],
+        [b, a],
+      ] as const) {
+        const ss = n.readySessions(peer.ik)
+        expect(ss).toHaveLength(1)
+        expect(startedBy(n, ss[0])).toBe(lower.peerId)
+      }
+    }
+  })
+
   test('a squatted peer id moves to a suffix that contacts still find', async () => {
     const hub = new Hub()
     const clock = new ManualClock()

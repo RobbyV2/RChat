@@ -861,8 +861,9 @@ export class P2pNode {
     const dk = s.remote?.dk as string
     const other = this.sessions.get(dk)
     if (other && other !== s) {
-      // Both sides dialed at once: keep the session the lower peer id started, on both ends.
-      const keepNew = this.initiatorOf(s) < this.initiatorOf(other)
+      // Both sides dialed at once: keep the session the lower peer id started, on both ends. A
+      // side dials again only once it has no session, so its older one is gone (a lost goodbye).
+      const keepNew = this.initiatorOf(s) <= this.initiatorOf(other)
       if (!keepNew) return s.close('replaced')
       this.sessions.delete(dk)
       other.close('replaced')

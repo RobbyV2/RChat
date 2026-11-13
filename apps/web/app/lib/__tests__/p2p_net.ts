@@ -131,6 +131,7 @@ export class Hub {
   bulkDials = 0
   // Bulk pipes made, for cutting or tampering with them.
   bulkWires: { from: string; to: string; wire: Wire; a: PipeEnd; b: PipeEnd }[] = []
+  private links: { from: string; to: string; wire: Wire; ends: ReturnType<typeof pipePair> }[] = []
 
   transport(): Transport {
     return {
@@ -145,8 +146,11 @@ export class Hub {
         const target = this.peers.get(to)
         if (!target) throw new TransportError('peer-unavailable')
         const wire: Wire = { cut: false }
-        const { a, b } = pipePair(from, to, wire, kind)
+        const ends = pipePair(from, to, wire, kind)
+        const { a, b } = ends
         if (kind === 'bulk') this.bulkWires.push({ from, to, wire, a, b })
+        this.links = this.links.filter(l => !l.ends.a.closed || !l.ends.b.closed)
+        this.links.push({ from, to, wire, ends })
         target.onPipe(b)
         return a
       },
@@ -162,6 +166,17 @@ export class Hub {
 
   online(id: string) {
     return this.peers.has(id)
+  }
+
+  // The tab holding `id` dies: nothing more it sends arrives, and the far ends of its pipes never
+  // hear them close.
+  crash(id: string) {
+    for (const { from, to, wire, ends } of this.links) {
+      const mine = from === id ? ends.a : to === id ? ends.b : null
+      if (!mine) continue
+      wire.cut = true
+      mine.close = () => mine.shut()
+    }
   }
 }
 
