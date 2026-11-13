@@ -33,11 +33,11 @@ jobs:
       NDK_VERSION: 27.2.12479018
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           packages: platform-tools ndk;27.2.12479018
       - run: echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
@@ -49,7 +49,7 @@ jobs:
           key: android
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: bun install --frozen-lockfile
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: tauri-cli
         with:
           path: ~/.cargo/bin/cargo-tauri
@@ -57,7 +57,7 @@ jobs:
       - if: steps.tauri-cli.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version 2.12.2 --locked --force
       # The profanity filter's wasm, built by the Tauri beforeBuildCommand (`bun run build:tauri`).
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: wasm-pack
         with:
           path: ~/.cargo/bin/wasm-pack
@@ -65,7 +65,7 @@ jobs:
       - if: steps.wasm-pack.outputs.cache-hit != 'true'
         run: cargo install wasm-pack --version 0.15.0 --locked --force
       # The wasm-bindgen Cargo.lock pins, so wasm-pack does not download one.
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: wasm-bindgen
         with:
           path: ~/.cargo/bin/wasm-bindgen
@@ -150,14 +150,14 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: bun install --frozen-lockfile
       - run: brew install xcodegen
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: tauri-cli
         with:
           path: ~/.cargo/bin/cargo-tauri
           key: tauri-cli-${{ runner.os }}-2.12.2
       - if: steps.tauri-cli.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version 2.12.2 --locked --force
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: wasm-pack
         with:
           path: ~/.cargo/bin/wasm-pack
@@ -165,7 +165,7 @@ jobs:
       - if: steps.wasm-pack.outputs.cache-hit != 'true'
         run: cargo install wasm-pack --version 0.15.0 --locked --force
       # The wasm-bindgen Cargo.lock pins, so wasm-pack does not download one.
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: wasm-bindgen
         with:
           path: ~/.cargo/bin/wasm-bindgen
