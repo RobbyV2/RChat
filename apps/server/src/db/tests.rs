@@ -3142,6 +3142,7 @@ async fn stale_rows_are_swept() {
             bulk_delete_jobs: 1,
             webhook_deliveries: 0,
             recovery_challenges: 1,
+            reports: 0,
             member_counts: 0,
         }
     );
@@ -5863,4 +5864,254 @@ async fn a_database_with_edited_forms_starts_fresh_with_the_file() {
     })
     .await;
     let _ = std::fs::remove_file(&file);
+}
+
+const REPORT_INDEXES: [&str; 9] = [
+    "idx_reports_scope",
+    "idx_reports_server",
+    "idx_reports_reporter",
+    "idx_reports_target",
+    "idx_reports_closed",
+    "idx_reports_form",
+    "idx_reports_escalated",
+    "idx_report_events_report",
+    "idx_report_pace_last",
+];
+
+const REPORT_TABLES: [&str; 5] = [
+    "report_events",
+    "report_mutes",
+    "instance_report_mutes",
+    "report_pace",
+    "reports",
+];
+
+async fn old_reports_db(db: &Db) {
+    for index in REPORT_INDEXES {
+        let stmt = format!("DROP INDEX {index}");
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(db)
+            .await
+            .expect(&stmt);
+    }
+    for table in REPORT_TABLES {
+        let stmt = format!("DROP TABLE {table}");
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(db)
+            .await
+            .expect(&stmt);
+    }
+    for stmt in [
+        "UPDATE settings SET value = '25' WHERE key = 'schema_version'",
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'old-hash', 'text', 'identicon', 4)",
+        "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 5)",
+        "INSERT INTO members(server, username, joined_at) VALUES('club', 'alice', 6)",
+        "INSERT INTO channels(server, name, created_at) VALUES('club', 'general', 5)",
+        "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'old words', 7 FROM channels WHERE server = 'club'",
+    ] {
+        sqlx::query(stmt).execute(db).await.expect(stmt);
+    }
+}
+
+async fn upgraded_reports_db(db: &Db, run: i64) {
+    assert_eq!(
+        count(db, "SELECT COUNT(*) FROM servers WHERE name = 'club' AND display_name = 'Club' AND creator = 'alice' AND created_at = 5").await,
+        1
+    );
+    assert_eq!(
+        count(db, "SELECT COUNT(*) FROM members WHERE server = 'club' AND username = 'alice' AND joined_at = 6").await,
+        1
+    );
+    assert_eq!(
+        count(db, "SELECT COUNT(*) FROM messages m JOIN channels c ON c.id = m.channel_id WHERE c.server = 'club' AND m.author = 'alice' AND m.content = 'old words' AND m.created_at = 7").await,
+        1
+    );
+    for table in REPORT_TABLES {
+        let sql = match is_sqlite(db) {
+            true => format!(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '{table}'"
+            ),
+            false => format!(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = '{table}'"
+            ),
+        };
+        assert_eq!(count(db, &sql).await, 1, "{table}");
+    }
+    for index in REPORT_INDEXES {
+        let sql = match is_sqlite(db) {
+            true => format!(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = '{index}'"
+            ),
+            false => format!(
+                "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = '{index}'"
+            ),
+        };
+        assert_eq!(count(db, &sql).await, 1, "{index}");
+    }
+    assert_eq!(
+        count(db, "SELECT COUNT(*) FROM reports").await,
+        run,
+        "the reports of the run before are still there"
+    );
+    let id: i64 = sqlx::query("INSERT INTO reports(kind, target_kind, target_key, form, form_label, reason, snapshot, created_at, updated_at) VALUES('instance', 'none', '-', 'bug', 'Report a bug', 'other', '{}', 8, 8) RETURNING id")
+        .fetch_one(db)
+        .await
+        .expect("a report with only the required columns")
+        .try_get(0)
+        .expect("id");
+    assert_eq!(
+        count(db, &format!("SELECT COUNT(*) FROM reports WHERE id = {id} AND status = 'open' AND channel_private = 0 AND answers = '[]' AND franking IS NULL AND assignee IS NULL AND resolved_at IS NULL AND form_rev IS NULL AND reason_label IS NULL AND server IS NULL AND reporter IS NULL AND note IS NULL AND action IS NULL AND escalated_from IS NULL AND escalated_to IS NULL")).await,
+        1,
+        "the defaults"
+    );
+    for (what, sql) in [
+        (
+            "an unknown kind",
+            "INSERT INTO reports(kind, target_kind, target_key, form, form_label, reason, snapshot, created_at, updated_at) VALUES('other', 'none', '-', 'bug', 'Bug', 'other', '{}', 8, 8)",
+        ),
+        (
+            "an unknown target kind",
+            "INSERT INTO reports(kind, target_kind, target_key, form, form_label, reason, snapshot, created_at, updated_at) VALUES('instance', 'channel', '-', 'bug', 'Bug', 'other', '{}', 8, 8)",
+        ),
+        (
+            "a report without its form",
+            "INSERT INTO reports(kind, target_kind, target_key, reason, snapshot, created_at, updated_at) VALUES('instance', 'none', '-', 'other', '{}', 8, 8)",
+        ),
+        (
+            "a report on a missing server",
+            "INSERT INTO reports(kind, server, target_kind, target_key, form, form_label, reason, snapshot, created_at, updated_at) VALUES('server', 'nowhere', 'user', 'u:bob', 'user', 'User', 'spam', '{}', 8, 8)",
+        ),
+        (
+            "a mute on a missing server",
+            "INSERT INTO report_mutes(server, username, muted_by, created_at) VALUES('nowhere', 'bob', 'alice', 8)",
+        ),
+        (
+            "an event without its report",
+            "INSERT INTO report_events(report_id, actor, kind, created_at) VALUES(987654, 'alice', 'note', 8)",
+        ),
+    ] {
+        assert!(
+            sqlx::query(sql).execute(db).await.is_err(),
+            "{what} is refused"
+        );
+    }
+    for target_kind in ["message", "user", "server"] {
+        let sql = format!(
+            "INSERT INTO reports(kind, server, server_name, target_kind, target_key, form, form_label, reason, snapshot, created_at, updated_at) VALUES('server', 'club', 'Club', '{target_kind}', 'u:alice', 'user', 'Report a user', 'spam', '{{}}', 8, 8) RETURNING id"
+        );
+        let made: i64 = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_one(db)
+            .await
+            .expect(target_kind)
+            .try_get(0)
+            .expect("id");
+        let escalated: i64 = sqlx::query("INSERT INTO reports(kind, target_kind, target_key, form, form_label, reason, snapshot, escalated_from, created_at, updated_at) VALUES('instance', 'user', 'u:alice', 'user', 'Report a user', 'spam', '{}', $1, 9, 9) RETURNING id")
+            .bind(made)
+            .fetch_one(db)
+            .await
+            .expect("escalated")
+            .try_get(0)
+            .expect("id");
+        sqlx::query("INSERT INTO report_events(report_id, actor, kind, created_at) VALUES($1, 'alice', 'note', 9)")
+            .bind(made)
+            .execute(db)
+            .await
+            .expect("event");
+        assert_eq!(
+            count(db, &format!("SELECT COUNT(*) FROM report_events WHERE report_id = {made} AND detail = '{{}}'")).await,
+            1
+        );
+        sqlx::query("DELETE FROM reports WHERE id = $1")
+            .bind(made)
+            .execute(db)
+            .await
+            .expect("delete");
+        assert_eq!(
+            count(
+                db,
+                &format!("SELECT COUNT(*) FROM report_events WHERE report_id = {made}")
+            )
+            .await,
+            0,
+            "events go with their report"
+        );
+        assert_eq!(
+            count(
+                db,
+                &format!(
+                    "SELECT COUNT(*) FROM reports WHERE id = {escalated} AND escalated_from IS NULL"
+                )
+            )
+            .await,
+            1,
+            "an escalated report outlives the one it came from"
+        );
+        sqlx::query("DELETE FROM reports WHERE id = $1")
+            .bind(escalated)
+            .execute(db)
+            .await
+            .expect("delete");
+    }
+    sqlx::query("INSERT INTO report_mutes(server, username, muted_by, created_at) VALUES('club', 'bob', 'alice', 8)")
+        .execute(db)
+        .await
+        .expect("mute");
+    assert!(
+        sqlx::query("INSERT INTO report_mutes(server, username, muted_by, created_at) VALUES('club', 'bob', 'alice', 9)")
+            .execute(db)
+            .await
+            .is_err(),
+        "one mute per server and account"
+    );
+    sqlx::query("DELETE FROM report_mutes")
+        .execute(db)
+        .await
+        .expect("unmute");
+    for at in [8, 9] {
+        sqlx::query("INSERT INTO report_pace(reporter, kind, last_at) VALUES('alice', 'server', $1) ON CONFLICT(reporter, kind) DO UPDATE SET last_at = excluded.last_at")
+            .bind(at)
+            .execute(db)
+            .await
+            .expect("pace");
+    }
+    assert_eq!(
+        count(db, "SELECT COUNT(*) FROM report_pace WHERE reporter = 'alice' AND kind = 'server' AND last_at = 9").await,
+        1
+    );
+    sqlx::query("DELETE FROM report_pace")
+        .execute(db)
+        .await
+        .expect("pace");
+    sqlx::query("INSERT INTO instance_report_mutes(username, created_at) VALUES('bob', 8) ON CONFLICT(username) DO NOTHING")
+        .execute(db)
+        .await
+        .expect("instance mute");
+    assert_eq!(
+        count(db, "SELECT COUNT(*) FROM instance_report_mutes").await,
+        1
+    );
+    assert_eq!(
+        count(
+            db,
+            "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+        )
+        .await,
+        SCHEMA_VERSION
+    );
+}
+
+#[tokio::test]
+async fn report_tables_are_added_to_an_old_database() {
+    const { assert!(SCHEMA_VERSION >= 26) };
+    on_each_database("report_tables_upgrade", |url| async move {
+        let db = open(Some(&url)).await.expect("open");
+        old_reports_db(&db).await;
+        close(&db).await;
+        for run in 0..2 {
+            let db = open(Some(&url)).await.expect("upgrade");
+            upgraded_reports_db(&db, run).await;
+            close(&db).await;
+        }
+    })
+    .await;
 }

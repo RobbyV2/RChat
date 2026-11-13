@@ -1,4 +1,7 @@
 pub mod forms;
+mod store;
+
+pub(crate) use store::{forget_user, purge_server, sweep};
 
 use crate::api::{ApiError, bad};
 

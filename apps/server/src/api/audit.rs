@@ -674,7 +674,7 @@ enum Bind {
     Text(String),
 }
 
-fn like_escape(text: &str) -> String {
+pub(crate) fn like_escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push('%');
     for c in text.chars() {

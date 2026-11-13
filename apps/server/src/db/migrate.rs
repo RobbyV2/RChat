@@ -198,7 +198,9 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// (`idx_members_username`, `idx_dms_user_b`, `idx_reactions_message`, `idx_group_pings_server`).
 /// 25: the DM and thread indexes of `messages` hold only DM messages and thread replies
 /// (`idx_messages_dm`, `idx_messages_thread`).
-pub const SCHEMA_VERSION: i64 = 25;
+/// 26: reports (`reports`, `report_events`, `report_mutes`, `instance_report_mutes`,
+/// `report_pace`).
+pub const SCHEMA_VERSION: i64 = 26;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 14] {

@@ -1017,6 +1017,7 @@ async fn run_purge(state: &AppState, kind: PurgeKind, key: &str) -> sqlx::Result
             )
             .await?;
             crate::api::audit::purge_server(&state.db, key).await?;
+            reports::purge_server(&state.db, key).await?;
             let mut tx = state.db.begin().await?;
             crate::db::no_statement_limit(&mut tx).await?;
             sqlx::query("DELETE FROM servers WHERE name = $1 AND password_hash = $2")
@@ -1205,6 +1206,7 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         .await?;
     crate::api::bulk_delete::forget_author(tx, key).await?;
     crate::api::audit::forget_user(tx, key).await?;
+    reports::forget_user(tx, key).await?;
     crate::api::policy::forget_creator(tx, key).await?;
     crate::api::instance_audit::forget_user(tx, key).await
 }
@@ -2771,6 +2773,52 @@ mod tests {
                 "target": "p2p",
                 "detail": {"key": "p2p", "from": "on", "to": "off", "by": "config"},
             })
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn deleting_a_server_or_an_account_cleans_the_reports() {
+        let (state, path) = temp_state("reports_cleanup").await;
+        let db = &state.db;
+        let _ = reg(&state, "bob").await.expect("bob");
+        let _ = reg(&state, "carol").await.expect("carol");
+        sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'bob', 1)")
+            .execute(db)
+            .await
+            .expect("server");
+        for kind in ["server", "instance"] {
+            sqlx::query("INSERT INTO reports(kind, server, server_name, target_kind, target_key, target_user, reporter, form, form_label, reason, snapshot, created_at, updated_at) VALUES($1, 'club', 'Club', 'user', 'u:carol', 'carol', 'bob', 'user', 'Report a user', 'spam', '{\"user\": {\"username\": \"carol\"}}', 5, 5)")
+                .bind(kind)
+                .execute(db)
+                .await
+                .expect("report");
+        }
+        let root = || Authed(crate::api::test_util::mem_user("root", true));
+        let _ = delete_server(State(state.clone()), root(), Path("club".to_string()))
+            .await
+            .expect("delete the server");
+        settle(db).await;
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM reports WHERE kind = 'server'").await,
+            0,
+            "reports to the server's moderators go with the server"
+        );
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM reports WHERE kind = 'instance' AND server IS NULL AND server_name = 'Club' AND reporter = 'bob' AND target_user = 'carol'").await,
+            1,
+            "reports to the instance stay"
+        );
+        for name in ["bob", "carol"] {
+            let _ = delete_user(State(state.clone()), root(), Path(name.to_string()))
+                .await
+                .expect("delete the account");
+            settle(db).await;
+        }
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM reports WHERE reporter IS NULL AND target_user IS NULL AND target_key LIKE 'd:%' AND snapshot NOT LIKE '%carol%'").await,
+            1,
+            "and name neither the reporter nor the reported account any more"
         );
         done(state, path).await;
     }

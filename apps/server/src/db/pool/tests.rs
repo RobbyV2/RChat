@@ -364,6 +364,7 @@ async fn init_purges_and_builds_have_no_statement_limit() {
             ("api/audit.rs", "purge_server"),
             ("api/bulk_delete.rs", "delete_ids"),
             ("api/bulk_delete.rs", "step"),
+            ("api/reports/store.rs", "purge_server"),
             ("db/pool.rs", "open_with"),
             ("db/sweep.rs", "delete_batched"),
             ("db/sweep.rs", "purge_messages"),

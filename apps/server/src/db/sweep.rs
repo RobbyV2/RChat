@@ -55,10 +55,11 @@ pub struct Swept {
     pub bulk_delete_jobs: u64,
     pub webhook_deliveries: u64,
     pub recovery_challenges: u64,
+    pub reports: u64,
     pub member_counts: u64,
 }
 
-async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> sqlx::Result<u64> {
+pub(crate) async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> sqlx::Result<u64> {
     let mut total = 0;
     loop {
         let mut tx = db.begin().await?;
@@ -204,6 +205,7 @@ pub(crate) async fn sweep_stale_at(db: &Db, limits: &Limits, t: i64) -> sqlx::Re
             t,
         )
         .await?,
+        reports: crate::api::reports::sweep(db, limits.report_retention_days, t).await?,
         member_counts: fix_member_counts(db, COUNT_BATCH).await?,
     })
 }
