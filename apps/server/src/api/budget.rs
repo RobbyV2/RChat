@@ -55,7 +55,7 @@ impl<V> Table<V> {
             entry.0 = at;
             self.order.push_back((at, key.to_string()));
         }
-        if self.order.len() > 2 * self.max + 16 {
+        if self.order.len() > 2 * self.map.len() + 16 {
             let mut order: Vec<(Instant, String)> = self
                 .map
                 .iter()
@@ -122,7 +122,11 @@ impl Budget {
 
     /// Like `take`, but returns the start of the window the use counts in, for `refund`.
     pub fn reserve(&self, key: &str) -> Option<Instant> {
-        let limit = self.limit;
+        self.reserve_within(key, self.limit)
+    }
+
+    /// Like `reserve`, with `limit` in place of the budget's own.
+    pub fn reserve_within(&self, key: &str, limit: u32) -> Option<Instant> {
         self.with(key, |start, n| match *n < limit {
             true => {
                 *n += 1;
@@ -153,9 +157,60 @@ impl Budget {
         self.with(key, |_, n| *n = n.saturating_add(1));
     }
 
+    /// The time until the key's window ends.
+    pub fn left(&self, key: &str) -> Duration {
+        let window = self.window;
+        self.with(key, |start, _| window.saturating_sub(start.elapsed()))
+    }
+
     #[cfg(test)]
     pub fn used(&self, key: &str) -> Option<u32> {
         locked(&self.table).map.get(key).map(|(_, n)| *n)
+    }
+}
+
+/// Tokens per key, kept in memory: a bucket holds at most its burst and gains tokens at a
+/// steady rate. Each process has its own buckets.
+pub struct Bucket {
+    table: Mutex<Table<f64>>,
+}
+
+impl Bucket {
+    pub fn new(max_keys: usize) -> Bucket {
+        Bucket {
+            table: Mutex::new(Table::new(max_keys)),
+        }
+    }
+
+    /// Takes one token of `key`, whose bucket holds `burst` and gains `per_minute` a minute.
+    /// When it is empty, the error is the wait until the next token.
+    pub fn take(&self, key: &str, burst: u32, per_minute: u32) -> Result<(), Duration> {
+        self.take_at(key, burst, per_minute, Instant::now())
+    }
+
+    fn take_at(
+        &self,
+        key: &str,
+        burst: u32,
+        per_minute: u32,
+        now: Instant,
+    ) -> Result<(), Duration> {
+        let (burst, rate) = (f64::from(burst.max(1)), f64::from(per_minute.max(1)) / 60.0);
+        let mut table = locked(&self.table);
+        let (at, tokens) = *table.entry(key, now, || burst);
+        let gained = now.saturating_duration_since(at).as_secs_f64() * rate;
+        let tokens = (tokens + gained).min(burst);
+        let (left, answer) = match tokens >= 1.0 {
+            true => (tokens - 1.0, Ok(())),
+            false => (tokens, Err(Duration::from_secs_f64((1.0 - tokens) / rate))),
+        };
+        if now >= at {
+            table.restamp(key, now);
+        }
+        if let Some(entry) = table.map.get_mut(key) {
+            entry.1 = left;
+        }
+        answer
     }
 }
 
@@ -391,6 +446,91 @@ mod tests {
         assert!(short.take("a"));
         std::thread::sleep(Duration::from_millis(5));
         assert!(short.take("a"));
+    }
+
+    #[test]
+    fn budgets_reserve_within_a_limit_and_tell_what_is_left_of_the_window() {
+        let b = Budget::new(u32::MAX, Duration::from_secs(60), 10);
+        let first = b.reserve_within("a", 2).expect("one");
+        assert!(b.reserve_within("a", 2).is_some());
+        assert!(
+            b.reserve_within("a", 2).is_none(),
+            "two is the limit asked for"
+        );
+        assert!(
+            b.reserve_within("a", 3).is_some(),
+            "the next call can ask for more"
+        );
+        assert!(
+            b.reserve_within("b", 2).is_some(),
+            "each key has its own count"
+        );
+        b.refund("a", first);
+        assert_eq!(b.used("a"), Some(2));
+        let left = b.left("a");
+        assert!(
+            left > Duration::from_secs(50) && left <= Duration::from_secs(60),
+            "{left:?}"
+        );
+        let short = Budget::new(u32::MAX, Duration::from_millis(1), 10);
+        assert!(short.reserve_within("a", 1).is_some());
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(
+            short.reserve_within("a", 1).is_some(),
+            "a new window starts at 0"
+        );
+    }
+
+    #[test]
+    fn a_bucket_queue_stays_near_its_live_keys() {
+        let b = Bucket::new(200_000);
+        let start = Instant::now();
+        for n in 0..20_000u64 {
+            let key = format!("k{}", n % 5);
+            let _ = b.take_at(&key, 30, 600, start + Duration::from_millis(n));
+            let table = locked(&b.table);
+            assert!(
+                table.order.len() <= 2 * table.map.len() + 16,
+                "{} queued for {} keys at take {n}",
+                table.order.len(),
+                table.map.len()
+            );
+        }
+    }
+
+    #[test]
+    fn buckets_hold_a_burst_and_refill_at_their_rate() {
+        let b = Bucket::new(10);
+        let t0 = Instant::now();
+        let secs = |res: Result<(), Duration>| res.expect_err("refused").as_secs_f64();
+        for n in 0..5 {
+            assert_eq!(b.take_at("a", 5, 60, t0), Ok(()), "{n}");
+        }
+        assert!(
+            (secs(b.take_at("a", 5, 60, t0)) - 1.0).abs() < 1e-6,
+            "a second"
+        );
+        assert_eq!(b.take_at("b", 5, 60, t0), Ok(()), "keys are apart");
+        let half = t0 + Duration::from_millis(500);
+        assert!((secs(b.take_at("a", 5, 60, half)) - 0.5).abs() < 1e-6);
+        let one = t0 + Duration::from_secs(1);
+        assert_eq!(b.take_at("a", 5, 60, one), Ok(()), "one came back");
+        assert!(b.take_at("a", 5, 60, one).is_err());
+        let later = t0 + Duration::from_secs(3600);
+        let taken = (0..20)
+            .take_while(|_| b.take_at("a", 5, 60, later).is_ok())
+            .count();
+        assert_eq!(taken, 5, "an idle bucket fills to its burst, not past it");
+        assert_eq!(
+            b.take_at("a", 5, 60, t0),
+            Err(Duration::from_secs(1)),
+            "a clock that steps back gives nothing"
+        );
+        let quick = Bucket::new(10);
+        assert_eq!(quick.take("k", 1, 10_000), Ok(()));
+        assert!(quick.take("k", 1, 10_000).is_err());
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(quick.take("k", 1, 10_000), Ok(()), "by the real clock too");
     }
 
     #[test]

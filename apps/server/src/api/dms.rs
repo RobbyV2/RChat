@@ -239,9 +239,10 @@ pub(crate) async fn list_dms(
 /// them and `dm_reopened` (`{username, dm_id}`) goes to their connections. Requires a bearer
 /// token. The instance may limit new conversations (`dm_creation` in `GET /api/v1/settings`):
 /// under `friends` only a DM with a friend is created, under `nobody` none is, and the others
-/// get the same 404 as an unknown user. DMs that exist and the self DM always open. General
-/// rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/dms", tag = "Direct messages", request_body = OpenDmReq, responses((status = 200, description = "The DM with the given user, created if it did not exist yet", body = DmSummary), (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework error; 415 for the latter)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`User not found`: no such user, or the instance does not let you start this conversation", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// get the same 404 as an unknown user. DMs that exist and the self DM always open. A DM that
+/// does not exist yet counts as an action on another account, also for a name with no account:
+/// new DMs and friend requests share 30 per 10 minutes per account. General rate-limit bucket.
+#[utoipa::path(post, path = "/api/v1/dms", tag = "Direct messages", request_body = OpenDmReq, responses((status = 200, description = "The DM with the given user, created if it did not exist yet", body = DmSummary), (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework error; 415 for the latter)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`User not found`: no such user, or the instance does not let you start this conversation", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many actions on other accounts. Try again later.` with a `Retry-After` header (JSON): more than 30 new DMs and friend requests in 10 minutes. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn open_dm(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -264,6 +265,9 @@ pub(crate) async fn open_dm(
             Some(r) => Some(r.try_get(0)?),
             None => None,
         };
+    if existing.is_none() && a != b {
+        crate::api::lookup::contact(&state, &user)?;
+    }
     let (id, created) = match existing {
         Some(id) => match get_user(&state.db, &target).await? {
             Some(_) => (id, false),

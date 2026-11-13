@@ -1422,6 +1422,43 @@ mod tests {
     }
 
     #[test]
+    fn lookup_limits_have_their_defaults_and_ranges() {
+        let l = AppConfig::defaults().limits;
+        assert_eq!(
+            (
+                l.lookup_list_per_minute,
+                l.lookup_typeahead_per_minute,
+                l.lookup_search_per_minute,
+                l.lookup_profile_per_minute,
+                l.lookup_misses_per_hour
+            ),
+            (120, 300, 30, 120, 200)
+        );
+        for (name, bad, range) in [
+            ("LOOKUP_LIST_PER_MINUTE", "9", "10 to 10000"),
+            ("LOOKUP_TYPEAHEAD_PER_MINUTE", "10001", "10 to 10000"),
+            ("LOOKUP_SEARCH_PER_MINUTE", "0", "1 to 1000"),
+            ("LOOKUP_PROFILE_PER_MINUTE", "many", "10 to 10000"),
+            ("LOOKUP_MISSES_PER_HOUR", "100001", "0 to 100000"),
+        ] {
+            let stopped = AppConfig::from_map(&[(name, bad)])
+                .expect_err(name)
+                .to_string();
+            assert_eq!(stopped, format!("{name}: expected {range}, got {bad}"));
+        }
+        let set = AppConfig::from_map(&[
+            ("LOOKUP_MISSES_PER_HOUR", "0"),
+            ("LOOKUP_SEARCH_PER_MINUTE", " 1000 "),
+        ])
+        .expect("config")
+        .limits;
+        assert_eq!(
+            (set.lookup_misses_per_hour, set.lookup_search_per_minute),
+            (0, 1000)
+        );
+    }
+
+    #[test]
     fn plan_owned_limits_have_their_defaults() {
         let l = AppConfig::defaults().limits;
         assert_eq!(

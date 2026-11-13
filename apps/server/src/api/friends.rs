@@ -806,7 +806,7 @@ fn unfriend_events(state: &AppState, a: &str, b: &str) {
 /// (`friend_requests` in `GET /api/v1/settings`); answering a request they sent you still
 /// works. At most 100 pending sent requests and 20 requests per 10 minutes.
 /// Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/friends/requests", tag = "Friends", request_body = FriendReq, responses((status = 200, description = "Sent, accepted (they had asked you) or already friends", body = RequestOutcome), (status = 400, description = "`You cannot add yourself as a friend`, `You have too many pending friend requests`, `You can have at most 1000 friends` or `That user has too many friends`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "You blocked this user", body = ApiErrorBody), (status = 404, description = "`Could not send a friend request to that user.`: no such user, they do not take requests from you, or friend requests are off on this instance", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many friend requests. Try again later.` (JSON), or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/friends/requests", tag = "Friends", request_body = FriendReq, responses((status = 200, description = "Sent, accepted (they had asked you) or already friends", body = RequestOutcome), (status = 400, description = "`You cannot add yourself as a friend`, `You have too many pending friend requests`, `You can have at most 1000 friends` or `That user has too many friends`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "You blocked this user", body = ApiErrorBody), (status = 404, description = "`Could not send a friend request to that user.`: no such user, they do not take requests from you, or friend requests are off on this instance", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many friend requests. Try again later.` (JSON): more than 20 in 10 minutes. `Too many actions on other accounts. Try again later.` with a `Retry-After` header (JSON): more than 30 new DMs and friend requests in 10 minutes. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn send_request(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -823,6 +823,7 @@ pub(crate) async fn send_request(
             refused(),
         ));
     }
+    crate::api::lookup::contact(&state, &user)?;
     let pace = format!("{}\n{}", crate::db::pool_key(&state.db), user.username);
     if !REQUEST_PACE.take(&pace) {
         return Err(ApiError::rate(SLOW_DOWN, None));

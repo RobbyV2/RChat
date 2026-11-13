@@ -8,6 +8,7 @@ use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::friends;
+use crate::api::lookup;
 use crate::api::pings::announce_counts;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, OkResp, Paged, UserRef, bad, cursor_int, decode_cursor,
@@ -193,9 +194,12 @@ async fn drop_pings(state: &AppState, blocker: &str, blocked: &str) -> Result<()
 /// their messages. You can not message, edit, react, pin or call in that DM either until you
 /// unblock them. Blocking is private: the blocked user gets no event and no answer tells them.
 /// Emits `user_blocked` (`{username, user, blocked_at}`) to your connections when the user was not
-/// blocked yet; blocking again changes nothing. At most 1000 blocked users. Requires a bearer
-/// token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/blocks", tag = "Blocking", request_body = BlockReq, responses((status = 200, description = "The blocked user (also when they were blocked already)", body = BlockedUser), (status = 400, description = "`You cannot block yourself`, or `You can block at most 1000 users`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "User not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// blocked yet; blocking again changes nothing. At most 1000 blocked users. Each call counts,
+/// also for a name with no account: 120 blocks per 10 minutes per account, apart from new DMs
+/// and friend requests. A name with no account also counts as a miss (`LOOKUP_MISSES_PER_HOUR`,
+/// as for `GET /api/v1/users/{username}/card`); past the misses every block is refused until the
+/// hour ends. Requires a bearer token. General rate-limit bucket.
+#[utoipa::path(post, path = "/api/v1/blocks", tag = "Blocking", request_body = BlockReq, responses((status = 200, description = "The blocked user (also when they were blocked already)", body = BlockedUser), (status = 400, description = "`You cannot block yourself`, or `You can block at most 1000 users`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "User not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many blocks. Try again later.` with a `Retry-After` header (JSON): more than 120 blocks in 10 minutes. `Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller got more 404s for names this hour than `LOOKUP_MISSES_PER_HOUR`. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn block_user(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -203,12 +207,16 @@ pub(crate) async fn block_user(
 ) -> Result<Json<BlockedUser>, ApiError> {
     let BlockReq { username } = req;
     let target = username.trim().to_lowercase();
-    let Some(other) = get_user(&state.db, &target).await? else {
-        return Err(ApiError(
-            StatusCode::NOT_FOUND,
-            "User not found".to_string(),
-            None,
-        ));
+    let held = match target != user.username {
+        true => Some(lookup::block(&state, &user)?),
+        false => None,
+    };
+    let found = get_user(&state.db, &target)
+        .await?
+        .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "User not found".to_string(), None));
+    let other = match held {
+        Some(held) => lookup::counted(held, found)?,
+        None => found?,
     };
     if other.username == user.username {
         return Err(bad("You cannot block yourself"));

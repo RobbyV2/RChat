@@ -17,6 +17,7 @@ pub mod health;
 pub mod inbox;
 pub mod instance;
 pub mod instance_audit;
+pub mod lookup;
 pub mod media;
 pub mod messages;
 pub mod names;

@@ -8,6 +8,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::perms::Perm;
 use crate::api::access::{Caller, Proof, ServerAccess, UserView, not_found, view_user};
+use crate::api::lookup::{self, LookupClass};
 use crate::api::{ApiError, ApiErrorBody, MaybeAuthed, Role, UserRef, require_guest_ok};
 use crate::db::{Db, User};
 use crate::state::AppState;
@@ -265,8 +266,16 @@ async fn card_of(
 /// `member` is the account's membership in `server`, set when the caller may view that server
 /// and the account is a member, whoever may see the profile. An account with neither part
 /// answers the same 404 as a name with no account, after the same checks. Works without a
-/// token for guests when guest access is on. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/users/{username}/card", tag = "Users", params(("username" = String, Path, description = "Username, case-insensitive"), ProfileQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests"), ("X-Subject-Binding" = Option<String>, Header, description = "A P2P binding of the account: the `token` of `POST /api/v1/identity/p2p_binding` as the account showed it in its P2P badge. It shows that account's profile until the binding expires")), responses((status = 200, description = "The account's name with the parts the caller may see: `profile` (null when the account does not show it to the caller) and `member` (null when `server` was omitted, the caller may not view it, or the account is not a member). Never both null", body = UserCard, headers(("cache-control" = String, description = "`private, no-cache`"))), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such account, or one the caller may see nothing of (identical responses)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+/// token for guests when guest access is on.
+///
+/// Each call takes one of the caller's `profile` lookups (`LOOKUP_PROFILE_PER_MINUTE`, 120 a
+/// minute by default), counted per account, or per client address without one. A caller that
+/// got more 404s for names in an hour than `LOOKUP_MISSES_PER_HOUR` (200 by default) gets the
+/// same 429 for every name until the hour ends. The 404s of this endpoint, `POST /api/v1/blocks`
+/// and the moderation actions by name count, and those of
+/// `GET /api/v1/users/{username}/profile` where this endpoint answers 404 too. General
+/// rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/users/{username}/card", tag = "Users", params(("username" = String, Path, description = "Username, case-insensitive"), ProfileQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests"), ("X-Subject-Binding" = Option<String>, Header, description = "A P2P binding of the account: the `token` of `POST /api/v1/identity/p2p_binding` as the account showed it in its P2P badge. It shows that account's profile until the binding expires")), responses((status = 200, description = "The account's name with the parts the caller may see: `profile` (null when the account does not show it to the caller) and `member` (null when `server` was omitted, the caller may not view it, or the account is not a member). Never both null", body = UserCard, headers(("cache-control" = String, description = "`private, no-cache`"))), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such account, or one the caller may see nothing of (identical responses)", body = ApiErrorBody), (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `profile` lookups, or its misses for the hour. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security((), ("bearer" = [])))]
 pub(crate) async fn card(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -275,6 +284,8 @@ pub(crate) async fn card(
     Query(q): Query<ProfileQuery>,
 ) -> Result<Card, ApiError> {
     require_guest_ok(&state.db, viewer.as_ref()).await?;
+    let held = lookup::unmissed(&state, viewer.as_ref())?;
+    lookup::take(&state, LookupClass::Profile, viewer.as_ref())?;
     let ProfileQuery { server } = q;
     let card = card_of(
         &state,
@@ -283,8 +294,8 @@ pub(crate) async fn card(
         &username,
         server.as_deref(),
     )
-    .await?;
-    Ok(Card(card))
+    .await;
+    Ok(Card(lookup::counted(held, card)?))
 }
 
 /// Get a user's profile
@@ -294,8 +305,9 @@ pub(crate) async fn card(
 /// description and account creation time, plus the membership in `server` when asked. An
 /// account whose profile the caller may not see answers the same 404 as a name with no
 /// account, also when the caller could see its membership. Works without a token for guests
-/// when guest access is on. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/users/{username}/profile", tag = "Users", params(("username" = String, Path, description = "Username, case-insensitive"), ProfileQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests"), ("X-Subject-Binding" = Option<String>, Header, description = "A P2P binding of the account, as for `GET /api/v1/users/{username}/card`")), responses((status = 200, description = "A user's mini profile: public info, banner color (null means the default derived from the avatar) and account creation time. With `server`, `member` holds their membership in it (admin, creator, permissions, role ids, join time, presence); it is null when the server does not exist, the viewer may not view it (same rules as the member list, guests included) or the user is not a member", body = Profile), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such account, or one whose profile the caller may not see (identical responses)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+/// when guest access is on. It takes the same `profile` lookups as the card, and counts a miss
+/// only when the card would answer 404. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/users/{username}/profile", tag = "Users", params(("username" = String, Path, description = "Username, case-insensitive"), ProfileQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests"), ("X-Subject-Binding" = Option<String>, Header, description = "A P2P binding of the account, as for `GET /api/v1/users/{username}/card`")), responses((status = 200, description = "A user's mini profile: public info, banner color (null means the default derived from the avatar) and account creation time. With `server`, `member` holds their membership in it (admin, creator, permissions, role ids, join time, presence); it is null when the server does not exist, the viewer may not view it (same rules as the member list, guests included) or the user is not a member", body = Profile), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such account, or one whose profile the caller may not see (identical responses)", body = ApiErrorBody), (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `profile` lookups, or its misses for the hour. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security((), ("bearer" = [])))]
 pub(crate) async fn profile(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -304,19 +316,22 @@ pub(crate) async fn profile(
     Query(q): Query<ProfileQuery>,
 ) -> Result<Json<Profile>, ApiError> {
     require_guest_ok(&state.db, viewer.as_ref()).await?;
+    let held = lookup::unmissed(&state, viewer.as_ref())?;
+    lookup::take(&state, LookupClass::Profile, viewer.as_ref())?;
     let ProfileQuery { server } = q;
-    let UserCard {
-        user,
-        profile,
-        member,
-    } = card_of(
+    let card = card_of(
         &state,
         &headers,
         viewer.as_ref(),
         &username,
         server.as_deref(),
     )
-    .await?;
+    .await;
+    let UserCard {
+        user,
+        profile,
+        member,
+    } = lookup::counted(held, card)?;
     let ProfileFacts {
         bio,
         banner_color,

@@ -22,6 +22,7 @@ use crate::api::categories::{
     announce, bump, channel_order, layout_version, listed, load_layout, rank, server_categories,
     write_layout,
 };
+use crate::api::lookup::{self, LookupClass};
 use crate::api::messages::recent_channel_messages;
 use crate::api::pings::forget_server_pings;
 use crate::api::policy::ServerCreation;
@@ -454,7 +455,15 @@ pub struct MemberListQuery {
 }
 
 impl MemberListQuery {
-    fn parse(raw: &str) -> Result<MemberListQuery, ApiError> {
+    /// The lookup class of the listing: mention suggestions, or a member list.
+    pub(crate) fn class(&self) -> LookupClass {
+        match (&self.usernames, self.suggest, &self.q) {
+            (None, Some(true), Some(_)) => LookupClass::Typeahead,
+            (_, _, _) => LookupClass::List,
+        }
+    }
+
+    pub(crate) fn parse(raw: &str) -> Result<MemberListQuery, ApiError> {
         let PagedList {
             offset,
             limit,
@@ -1178,7 +1187,10 @@ async fn members_page(
 /// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
 /// password-protected server signed-in callers must be members and guests need a valid
 /// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist.
-/// General rate-limit bucket.
+/// Each call takes one of the caller's `list` lookups (`LOOKUP_LIST_PER_MINUTE`, 120 a minute
+/// by default), or with `suggest` one of its `typeahead` lookups
+/// (`LOOKUP_TYPEAHEAD_PER_MINUTE`, 300 a minute), counted per account, or per client address
+/// without one. General rate-limit bucket.
 #[utoipa::path(
     get,
     path = "/api/v1/servers/{name}/members",
@@ -1190,7 +1202,7 @@ async fn members_page(
         (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `list` lookups, or with `suggest` its `typeahead` lookups. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -1201,6 +1213,8 @@ pub(crate) async fn list_members(
     Path(name): Path<String>,
     RawQuery(raw): RawQuery,
 ) -> Result<Paged<Member>, ApiError> {
+    let query = MemberListQuery::parse(raw.as_deref().unwrap_or(""))?;
+    let class = query.class();
     let MemberListQuery {
         offset,
         limit,
@@ -1209,9 +1223,10 @@ pub(crate) async fn list_members(
         q,
         admins,
         suggest,
-    } = MemberListQuery::parse(raw.as_deref().unwrap_or(""))?;
+    } = query;
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
+    lookup::take(&state, class, viewer.as_ref())?;
     let access = resolve_server(
         db,
         &name,
@@ -1344,7 +1359,9 @@ async fn recent_pairs(
 /// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
 /// password-protected server signed-in callers must be members and guests need a valid
 /// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist.
-/// General rate-limit bucket.
+/// Each call takes one of the caller's `list` lookups (`LOOKUP_LIST_PER_MINUTE`, 120 a minute
+/// by default), counted per account, or per client address without one. General rate-limit
+/// bucket.
 #[utoipa::path(
     get,
     path = "/api/v1/servers/{name}/interacted",
@@ -1356,7 +1373,7 @@ async fn recent_pairs(
         (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `list` lookups. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -1369,6 +1386,7 @@ pub(crate) async fn list_interacted(
 ) -> Result<Paged<UserRef>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
+    lookup::take(&state, LookupClass::List, viewer.as_ref())?;
     let access = resolve_server(
         db,
         &name,
@@ -1652,7 +1670,9 @@ pub(crate) async fn server_available(
 /// searched. A blank `q` returns an empty
 /// list. Signed-in users may call it, and guests when guest access is on (guests only find
 /// servers without a password). Answers 404 while the instance has server search off
-/// (`server_search` in `GET /api/v1/settings`). General rate-limit bucket.
+/// (`server_search` in `GET /api/v1/settings`). Each call takes one of the caller's `search`
+/// lookups (`LOOKUP_SEARCH_PER_MINUTE`, 30 a minute by default), counted per account, or per
+/// client address without one. General rate-limit bucket.
 #[utoipa::path(
     get,
     path = "/api/v1/server_search",
@@ -1662,7 +1682,7 @@ pub(crate) async fn server_available(
         (status = 200, description = "Up to 10 servers without a password or that you are a member of, whose name or display name matches the query", body = Vec<ServerMatch>),
         (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody),
         (status = 404, description = "`Not found`: server search is off on this instance", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `search` lookups. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -1682,6 +1702,7 @@ pub(crate) async fn search_servers(
         ));
     }
     require_guest_ok(db, viewer.as_ref()).await?;
+    lookup::take(&state, LookupClass::Search, viewer.as_ref())?;
     let q = sq.q.as_deref().unwrap_or("").trim().to_lowercase();
     if q.is_empty() {
         return Ok(Json(Vec::new()));
@@ -3177,7 +3198,9 @@ pub(crate) async fn kick_member(
 /// permission, and the target's server permissions must be a strict subset of yours. Banning a
 /// member posts a `leave` system message like leaving does (no reason shown). Emits
 /// `member_kicked` (with `banned: true`) to the server and the user when they were a member,
-/// otherwise `server_banned` to the user. General rate-limit bucket.
+/// otherwise `server_banned` to the user. A username with no account counts as a miss
+/// (`LOOKUP_MISSES_PER_HOUR`, as for `GET /api/v1/users/{username}/card`); past the misses the
+/// call is refused until the hour ends. General rate-limit bucket.
 #[utoipa::path(
     post,
     path = "/api/v1/servers/{name}/bans",
@@ -3191,7 +3214,7 @@ pub(crate) async fn kick_member(
         (status = 403, description = "Missing the Kick permission, or the user's server permissions are not a strict subset of yours", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller got more 404s for names this hour than `LOOKUP_MISSES_PER_HOUR`. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -3208,9 +3231,12 @@ pub(crate) async fn ban_member(
     if target == user.username {
         return Err(bad("You can't ban yourself"));
     }
-    if get_user(&state.db, &target).await?.is_none() {
-        return Err(not_found("User not found"));
-    }
+    let held = lookup::unmissed(&state, Some(&user))?;
+    let found = match get_user(&state.db, &target).await? {
+        Some(_) => Ok(()),
+        None => Err(not_found("User not found")),
+    };
+    lookup::counted(held, found)?;
     access.require_moderate(&state.db, &target).await?;
     let (db, who) = (&state.db, target.as_str());
     let bypassed = access
@@ -4573,15 +4599,24 @@ async fn channel_perm_guard(
     Ok(channel)
 }
 
-async fn check_subject(db: &Db, server: &str, subject: &str) -> Result<(), ApiError> {
+async fn check_subject(
+    state: &AppState,
+    user: &User,
+    server: &str,
+    subject: &str,
+) -> Result<(), ApiError> {
     match subject.split_once(':') {
-        Some(("u", name)) => match get_user(db, name).await? {
-            Some(_) => Ok(()),
-            None => Err(not_found("User not found")),
-        },
+        Some(("u", name)) => {
+            let held = lookup::unmissed(state, Some(user))?;
+            let found = match get_user(&state.db, name).await? {
+                Some(_) => Ok(()),
+                None => Err(not_found("User not found")),
+            };
+            lookup::counted(held, found)
+        }
         Some(("r", id)) => {
             let id: i64 = id.parse().map_err(|_| bad("Invalid subject"))?;
-            require_role(db, server, id).await.map(|_| ())
+            require_role(&state.db, server, id).await.map(|_| ())
         }
         Some((_, _)) | None => Err(bad("Invalid subject")),
     }
@@ -4664,7 +4699,9 @@ pub(crate) async fn list_channel_perms(
 /// channel's `restrict_view` / `restrict_send` leave open. A channel
 /// can have at most 500 rules. Requires the Manage channels permission in the channel's server.
 /// Emits `channel_perms_changed` to the server and removes users from the channel's voice room if
-/// they can no longer view it. General rate-limit bucket.
+/// they can no longer view it. A `u:` subject with no account counts as a miss
+/// (`LOOKUP_MISSES_PER_HOUR`, as for `GET /api/v1/users/{username}/card`); past the misses every
+/// `u:` subject is refused until the hour ends. General rate-limit bucket.
 #[utoipa::path(
     put,
     path = "/api/v1/channels/{id}/perms",
@@ -4678,7 +4715,7 @@ pub(crate) async fn list_channel_perms(
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses); or the subject's user or role does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller got more 404s for names this hour than `LOOKUP_MISSES_PER_HOUR`. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -4702,7 +4739,7 @@ pub(crate) async fn set_channel_perm(
         can_read_history,
     } = req;
     let subject = subject.to_lowercase();
-    check_subject(&state.db, &server, &subject).await?;
+    check_subject(&state, &user, &server, &subject).await?;
     let was = sqlx::query("SELECT can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1 AND subject = $2")
         .bind(id)
         .bind(&subject)

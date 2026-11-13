@@ -10,6 +10,7 @@ use utoipa::ToSchema;
 use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, ServerAccess, acting_on, is_member, resolve_server};
 use crate::api::audit::{self, Details, Entry, Target};
+use crate::api::lookup;
 use crate::api::{ApiError, ApiErrorBody, OkResp, bad, ok, placeholders};
 use crate::api::{Authed, check_len};
 use crate::db::{Db, get_user, now};
@@ -280,8 +281,10 @@ pub(crate) async fn set_timeout(
 /// Ends the running timeout of `username` early. Succeeds without changes when there is none.
 /// Same permissions as timing out (the user need not be a member any more). Logged in the audit
 /// log as `member.untimeout`. Emits `member_timeout` with `until: null` to the user and to
-/// members who hold Timeout members, and `voice_muted` when they are in voice. General
-/// rate-limit bucket.
+/// members who hold Timeout members, and `voice_muted` when they are in voice. A username with
+/// no account counts as a miss (`LOOKUP_MISSES_PER_HOUR`, as for
+/// `GET /api/v1/users/{username}/card`); past the misses the call is refused until the hour
+/// ends. General rate-limit bucket.
 #[utoipa::path(
     delete,
     path = "/api/v1/servers/{name}/timeouts/{username}",
@@ -293,7 +296,7 @@ pub(crate) async fn set_timeout(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Timeout members permission, or the user's server permissions are not a strict subset of yours", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user does not exist (`User not found`)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller got more 404s for names this hour than `LOOKUP_MISSES_PER_HOUR`. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -309,13 +312,16 @@ pub(crate) async fn remove_timeout(
     if target == user.username {
         return Err(bad("You can't remove your own timeout"));
     }
-    if get_user(&state.db, &target).await?.is_none() {
-        return Err(ApiError(
+    let held = lookup::unmissed(&state, Some(&user))?;
+    let found = match get_user(&state.db, &target).await? {
+        Some(_) => Ok(()),
+        None => Err(ApiError(
             StatusCode::NOT_FOUND,
             "User not found".to_string(),
             None,
-        ));
-    }
+        )),
+    };
+    lookup::counted(held, found)?;
     let key = access.name().to_string();
     let actor = moderator(&state.db, &access, &target).await?;
     let mut tx = state.db.begin().await?;

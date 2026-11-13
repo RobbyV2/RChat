@@ -11,7 +11,7 @@ const MIB: usize = 1024 * 1024;
 pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 45] = [
+const RANGES: [(&str, i64, i64); 50] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("WS_CONNECTIONS_PER_USER", 1, 10_000),
@@ -57,6 +57,11 @@ const RANGES: [(&str, i64, i64); 45] = [
     ("WIDGET_BRIDGE_SERVERS_MAX", 1, 10_000),
     ("PEERJS_PEERS_PER_IP", 0, 1_000_000),
     ("PEERJS_CONCURRENT_LIMIT", 1, 1_000_000),
+    ("LOOKUP_LIST_PER_MINUTE", 10, 10_000),
+    ("LOOKUP_TYPEAHEAD_PER_MINUTE", 10, 10_000),
+    ("LOOKUP_SEARCH_PER_MINUTE", 1, 1_000),
+    ("LOOKUP_PROFILE_PER_MINUTE", 10, 10_000),
+    ("LOOKUP_MISSES_PER_HOUR", 0, 100_000),
 ];
 
 /// The operator's instance limits, one field per env name (the name lowercased).
@@ -109,6 +114,11 @@ pub struct Limits {
     pub peerjs_builtin: bool,
     pub peerjs_peers_per_ip: usize,
     pub peerjs_concurrent_limit: usize,
+    pub lookup_list_per_minute: u32,
+    pub lookup_typeahead_per_minute: u32,
+    pub lookup_search_per_minute: u32,
+    pub lookup_profile_per_minute: u32,
+    pub lookup_misses_per_hour: u32,
 }
 
 impl Default for Limits {
@@ -161,6 +171,11 @@ impl Default for Limits {
             peerjs_builtin: true,
             peerjs_peers_per_ip: crate::peerjs::DEFAULT_PEERS_PER_IP,
             peerjs_concurrent_limit: crate::peerjs::DEFAULT_CONCURRENT_LIMIT,
+            lookup_list_per_minute: 120,
+            lookup_typeahead_per_minute: 300,
+            lookup_search_per_minute: 30,
+            lookup_profile_per_minute: 120,
+            lookup_misses_per_hour: 200,
         }
     }
 }
@@ -267,6 +282,14 @@ impl Limits {
             peerjs_builtin: e.switch("PEERJS_BUILTIN", d.peerjs_builtin)?,
             peerjs_peers_per_ip: e.num("PEERJS_PEERS_PER_IP", d.peerjs_peers_per_ip)?,
             peerjs_concurrent_limit: e.num("PEERJS_CONCURRENT_LIMIT", d.peerjs_concurrent_limit)?,
+            lookup_list_per_minute: e.num("LOOKUP_LIST_PER_MINUTE", d.lookup_list_per_minute)?,
+            lookup_typeahead_per_minute: e
+                .num("LOOKUP_TYPEAHEAD_PER_MINUTE", d.lookup_typeahead_per_minute)?,
+            lookup_search_per_minute: e
+                .num("LOOKUP_SEARCH_PER_MINUTE", d.lookup_search_per_minute)?,
+            lookup_profile_per_minute: e
+                .num("LOOKUP_PROFILE_PER_MINUTE", d.lookup_profile_per_minute)?,
+            lookup_misses_per_hour: e.num("LOOKUP_MISSES_PER_HOUR", d.lookup_misses_per_hour)?,
         };
         limits.validate()?;
         Ok(limits)
@@ -323,6 +346,11 @@ impl Limits {
             peerjs_builtin: _,
             peerjs_peers_per_ip,
             peerjs_concurrent_limit,
+            lookup_list_per_minute,
+            lookup_typeahead_per_minute,
+            lookup_search_per_minute,
+            lookup_profile_per_minute,
+            lookup_misses_per_hour,
         } = *self;
         fn set<T: TryInto<i64>>(value: T) -> Option<i64> {
             value.try_into().ok()
@@ -385,6 +413,14 @@ impl Limits {
             ("WIDGET_BRIDGE_SERVERS_MAX", set(widget_bridge_servers_max)),
             ("PEERJS_PEERS_PER_IP", set(peerjs_peers_per_ip)),
             ("PEERJS_CONCURRENT_LIMIT", set(peerjs_concurrent_limit)),
+            ("LOOKUP_LIST_PER_MINUTE", set(lookup_list_per_minute)),
+            (
+                "LOOKUP_TYPEAHEAD_PER_MINUTE",
+                set(lookup_typeahead_per_minute),
+            ),
+            ("LOOKUP_SEARCH_PER_MINUTE", set(lookup_search_per_minute)),
+            ("LOOKUP_PROFILE_PER_MINUTE", set(lookup_profile_per_minute)),
+            ("LOOKUP_MISSES_PER_HOUR", set(lookup_misses_per_hour)),
         ]
     }
 

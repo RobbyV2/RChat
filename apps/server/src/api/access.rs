@@ -4123,6 +4123,11 @@ mod tests {
     #[tokio::test]
     async fn the_public_reading_option_decides_who_reads() {
         let (state, path) = temp_state("public_reading").await;
+        let state = state.with_limits(std::sync::Arc::new(Limits {
+            lookup_list_per_minute: 10_000,
+            lookup_search_per_minute: 1_000,
+            ..Limits::default()
+        }));
         joining_fixture(&state).await;
         let f = fixture_ids(&state.db).await;
         let db = &state.db;
