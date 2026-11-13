@@ -5713,3 +5713,154 @@ async fn kept_files_are_charged_to_their_server_on_an_old_database() {
         drop(pg);
     }
 }
+
+#[tokio::test]
+async fn the_report_forms_follow_the_server_config() {
+    use crate::api::reports::forms::ReportForms;
+    let file = std::env::temp_dir().join(format!("rchat_forms_start_{}.json", std::process::id()));
+    let write = |label: &str| {
+        let mut doc = serde_json::to_value(ReportForms::defaults()).expect("json");
+        doc["forms"][1]["label"] = serde_json::json!(label);
+        std::fs::write(&file, doc.to_string()).expect("write");
+    };
+    let path = file.to_str().expect("path").to_string();
+    on_each_database("forms_start", |url| {
+        let path = path.clone();
+        async move {
+            let start = |pinned: bool| {
+                let (url, path) = (url.clone(), path.clone());
+                async move {
+                    let mut env = vec![("REPORT_FORMS_FILE", path.as_str())];
+                    if pinned {
+                        env.push(("SETTINGS_PINNED", "REPORT_FORMS_FILE"));
+                    }
+                    let db = open_with(Some(&url), &env_opts(&env)).await.expect("start");
+                    let forms = stored(&db, "report_forms").await.expect("stored");
+                    let forms = ReportForms::from_stored(&forms).expect("forms");
+                    let changes = take_config_start(&db).changes.len();
+                    let audit = config_audit(&db).await;
+                    close(&db).await;
+                    (forms.rev, forms.forms[1].label.clone(), changes, audit)
+                }
+            };
+            let page = |label: &'static str| {
+                let url = url.clone();
+                async move {
+                    let db = super::open(Some(&url)).await.expect("open");
+                    let mut forms = stored(&db, "report_forms").await.expect("stored");
+                    let mut read = ReportForms::from_stored(&forms).expect("forms");
+                    read.rev += 1;
+                    read.forms[1].label = label.to_string();
+                    forms = read.stored();
+                    page_sets(&db, "report_forms", &forms).await;
+                    close(&db).await;
+                }
+            };
+
+            let db = open_with(Some(&url), &env_opts(&[]))
+                .await
+                .expect("first start");
+            assert_eq!(
+                stored(&db, "report_forms").await,
+                Some(ReportForms::defaults().stored()),
+                "the defaults without a file"
+            );
+            close(&db).await;
+
+            write("Bug");
+            let (rev, label, changes, audit) = start(false).await;
+            assert_eq!(
+                (rev, label.as_str(), changes),
+                (2, "Bug", 1),
+                "a file set later applies"
+            );
+            assert_eq!(
+                audit,
+                [(
+                    None,
+                    "settings.config".to_string(),
+                    Some("report_forms".to_string()),
+                    serde_json::json!({
+                        "key": "report_forms",
+                        "from": "rev 1, 5 categories",
+                        "to": "rev 2, 5 categories",
+                        "by": "config",
+                    })
+                )]
+            );
+            let (rev, _, changes, audit) = start(false).await;
+            assert_eq!(
+                (rev, changes, audit.len()),
+                (2, 0, 1),
+                "the same file again"
+            );
+
+            page("Glitch").await;
+            let (rev, label, changes, _) = start(false).await;
+            assert_eq!(
+                (rev, label.as_str(), changes),
+                (3, "Glitch", 0),
+                "the page's change stands"
+            );
+
+            write("Defect");
+            let (rev, label, changes, audit) = start(false).await;
+            assert_eq!(
+                (rev, label.as_str(), changes),
+                (4, "Defect", 1),
+                "a changed file applies"
+            );
+            assert_eq!(audit.len(), 2);
+
+            page("Glitch").await;
+            let (rev, label, changes, _) = start(true).await;
+            assert_eq!(
+                (rev, label.as_str(), changes),
+                (6, "Defect", 1),
+                "a pinned file wins"
+            );
+            let (rev, _, changes, audit) = start(true).await;
+            assert_eq!(
+                (rev, changes, audit.len()),
+                (6, 0, 3),
+                "and is written once"
+            );
+        }
+    })
+    .await;
+    let _ = std::fs::remove_file(&file);
+}
+
+#[tokio::test]
+async fn a_database_with_edited_forms_starts_fresh_with_the_file() {
+    use crate::api::reports::forms::ReportForms;
+    let file = std::env::temp_dir().join(format!("rchat_forms_fresh_{}.json", std::process::id()));
+    let mut doc = serde_json::to_value(ReportForms::defaults()).expect("json");
+    doc["rev"] = serde_json::json!(40);
+    doc["forms"][3]["enabled"] = serde_json::json!(false);
+    std::fs::write(&file, doc.to_string()).expect("write");
+    let path = file.to_str().expect("path").to_string();
+    on_each_database("forms_fresh", |url| {
+        let path = path.clone();
+        async move {
+            for round in 0..2 {
+                let env = [("REPORT_FORMS_FILE", path.as_str())];
+                let db = open_with(Some(&url), &env_opts(&env)).await.expect("start");
+                let forms = stored(&db, "report_forms").await.expect("stored");
+                let forms = ReportForms::from_stored(&forms).expect("forms");
+                assert_eq!(
+                    (forms.rev, forms.forms[3].enabled),
+                    (1, false),
+                    "round {round}"
+                );
+                assert!(
+                    config_audit(&db).await.is_empty(),
+                    "a first value is no change"
+                );
+                close(&db).await;
+            }
+        }
+    })
+    .await;
+    let _ = std::fs::remove_file(&file);
+}

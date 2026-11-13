@@ -113,6 +113,7 @@ mod tests {
             "x-guest-grant",
             "x-trust-token",
             "x-trust-client",
+            "if-none-match",
         ] {
             assert!(allowed.contains(&asked.to_string()), "{allowed:?}");
         }
@@ -158,7 +159,8 @@ mod tests {
                 "x-trust-required",
                 "x-trust-remaining",
                 "x-trust-renew",
-                "date"
+                "date",
+                "etag"
             ],
             "{exposed:?}"
         );

@@ -749,8 +749,9 @@ async fn apply_controls(
                 Some(record) => record != env,
                 None => records,
             };
-            if (changed || seeds.pins(control.key)) && stored != env {
-                for (key, value) in control.rows(env) {
+            if (changed || seeds.pins(control.key)) && !control.same(stored, env) {
+                let to = control.applied(stored, env);
+                for (key, value) in control.rows(&to) {
                     store_setting(conn, key, &value).await?;
                 }
                 crate::api::instance_audit::record_config(
@@ -760,7 +761,7 @@ async fn apply_controls(
                     serde_json::json!({
                         "key": control.key,
                         "from": control.shown(stored),
-                        "to": control.shown(env),
+                        "to": control.shown(&to),
                     }),
                     t,
                 )
@@ -768,7 +769,7 @@ async fn apply_controls(
                 changes.push(ConfigChange {
                     key: control.key,
                     from: stored.clone(),
-                    to: env.to_string(),
+                    to,
                     flips: record.is_some_and(|record| record != env) && recent(&at_key),
                 });
             }

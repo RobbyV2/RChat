@@ -9,6 +9,7 @@ export interface AuditPart {
 // Known actions read as a sentence; `target` says they act on an account.
 const ACTIONS: Record<string, { verb: string; target: boolean }> = {
   'user.remove_phrase': { verb: 'removed the backup phrase of', target: true },
+  'report_forms.change': { verb: 'changed the report forms', target: false },
 }
 
 // The longest value of a setting a line shows in full.

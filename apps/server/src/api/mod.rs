@@ -29,6 +29,7 @@ pub mod preview_images;
 pub mod reactions;
 pub mod reauth;
 pub mod recovery;
+pub mod reports;
 pub mod servers;
 pub mod system_messages;
 pub mod timeouts;
@@ -283,7 +284,7 @@ pub(crate) fn split_list(raw: &str) -> Vec<String> {
 
 pub const NEXT_CURSOR: &str = "x-next-cursor";
 
-pub const CORS_REQUEST_HEADERS: [&str; 12] = [
+pub const CORS_REQUEST_HEADERS: [&str; 13] = [
     "content-type",
     "authorization",
     "accept",
@@ -296,15 +297,17 @@ pub const CORS_REQUEST_HEADERS: [&str; 12] = [
     "x-invite-password",
     "x-trust-token",
     "x-trust-client",
+    "if-none-match",
 ];
 
-pub const CORS_RESPONSE_HEADERS: [&str; 6] = [
+pub const CORS_RESPONSE_HEADERS: [&str; 7] = [
     NEXT_CURSOR,
     "retry-after",
     "x-trust-required",
     "x-trust-remaining",
     "x-trust-renew",
     "date",
+    "etag",
 ];
 
 pub(crate) fn encode_cursor(parts: &[&str]) -> String {
@@ -2045,6 +2048,11 @@ fn api_routes(
         .route(
             "/servers/{name}/upload_expiry",
             get(upload_expiry::get_upload_expiry).put(upload_expiry::set_upload_expiry),
+        )
+        .route("/report_forms", get(reports::forms::get_forms))
+        .route(
+            "/admin/report_forms",
+            get(admin::get_report_forms).put(admin::put_report_forms),
         )
         .route("/admin/config", get(admin::get_config))
         .route("/admin/overview", get(admin::overview))

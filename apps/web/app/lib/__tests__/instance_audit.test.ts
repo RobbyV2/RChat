@@ -88,6 +88,12 @@ test('other actions keep their lines', () => {
   )
 })
 
+test('a change of the report forms reads as a sentence', () => {
+  const forms = entry({ action: 'report_forms.change', target: null, detail: { rev: 2 } })
+  expect(text(forms)).toBe('root changed the report forms')
+  expect(names(forms)).toEqual(['root'])
+})
+
 test('a server the admin made for someone names the server and its owner', () => {
   const made = entry({ action: 'server.create', target: 'club', detail: { owner: 'dave' } })
   expect(text(made)).toBe('root created the server club for dave')

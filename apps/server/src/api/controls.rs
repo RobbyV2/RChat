@@ -8,6 +8,7 @@ use crate::api::policy::{
     Creator, DmCreation, FRIEND_REQUESTS, SERVER_CREATORS, SERVER_SEARCH, ServerCreation,
     ServerJoining,
 };
+use crate::api::reports::forms::{self, ReportForms};
 use crate::api::{ProfanitySwitch, ProfanityTargets, Settings, upload_expiry};
 use crate::db::{ConfigStart, Db};
 use crate::limits::Env;
@@ -28,6 +29,9 @@ pub enum Kind {
     Number { min: i64, max: i64 },
     /// A comma list of up to 500 usernames and `server:role` entries.
     Names,
+    /// The report forms, a JSON document. The env names a file that holds it, and the stored
+    /// value is the document with the revision the instance counts.
+    Forms,
 }
 
 /// Something the site admin page changes while the server runs: one or more rows of the
@@ -128,6 +132,13 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
         public: true,
     });
     all.push(switch(FRIEND_REQUESTS, "FEATURE_FRIEND_REQUESTS", true));
+    all.push(Control {
+        key: forms::KEY,
+        env: forms::ENV,
+        kind: Kind::Forms,
+        default: Box::leak(ReportForms::defaults().stored().into_boxed_str()),
+        public: false,
+    });
     all
 });
 
@@ -160,7 +171,8 @@ impl Control {
         Control::all().iter().find(|c| c.env == env)
     }
 
-    /// The stored form of `raw`, a value written in the env. An error says what was expected.
+    /// The stored form of `raw`, a value written in the env (for the forms: the text of the
+    /// file the env names). An error says what was expected.
     pub fn parse(&self, raw: &str) -> Result<String, String> {
         let word = raw.trim().to_ascii_lowercase();
         match self.kind {
@@ -186,6 +198,13 @@ impl Control {
             Kind::Names => parse_names(raw).ok_or_else(|| {
                 format!("expected up to {NAMES_MAX} usernames or server:role entries")
             }),
+            Kind::Forms => ReportForms::parse(raw).map(|forms| {
+                ReportForms {
+                    rev: 1,
+                    forms: forms.forms,
+                }
+                .stored()
+            }),
         }
     }
 
@@ -198,13 +217,62 @@ impl Control {
                 Kind::Choice(_) | Kind::Targets | Kind::Number { min: _, max: _ } | Kind::Names,
                 stored,
             ) => stored.to_string(),
+            (Kind::Forms, stored) => match ReportForms::from_stored(stored) {
+                Some(forms) => format!("rev {}, {} categories", forms.rev, forms.forms.len()),
+                None => "unreadable".to_string(),
+            },
+        }
+    }
+
+    /// Whether the stored value `stored` already says what the env value `env` says.
+    pub fn same(&self, stored: &str, env: &str) -> bool {
+        match self.kind {
+            Kind::Switch
+            | Kind::Choice(_)
+            | Kind::Targets
+            | Kind::Number { min: _, max: _ }
+            | Kind::Names => stored == env,
+            Kind::Forms => match (
+                ReportForms::from_stored(stored),
+                ReportForms::from_stored(env),
+            ) {
+                (Some(stored), Some(env)) => stored.forms == env.forms,
+                (_, _) => stored == env,
+            },
+        }
+    }
+
+    /// What to store when the env value `env` replaces the stored value `stored`: `env`, and
+    /// for the forms the next revision after the stored one.
+    pub fn applied(&self, stored: &str, env: &str) -> String {
+        match self.kind {
+            Kind::Switch
+            | Kind::Choice(_)
+            | Kind::Targets
+            | Kind::Number { min: _, max: _ }
+            | Kind::Names => env.to_string(),
+            Kind::Forms => match (
+                ReportForms::from_stored(stored),
+                ReportForms::from_stored(env),
+            ) {
+                (Some(stored), Some(env)) => ReportForms {
+                    rev: stored.rev + 1,
+                    forms: env.forms,
+                }
+                .stored(),
+                (_, _) => env.to_string(),
+            },
         }
     }
 
     /// The `settings` rows that hold it.
     pub fn keys(&self) -> Vec<&'static str> {
         match self.kind {
-            Kind::Switch | Kind::Choice(_) | Kind::Number { min: _, max: _ } | Kind::Names => {
+            Kind::Switch
+            | Kind::Choice(_)
+            | Kind::Number { min: _, max: _ }
+            | Kind::Names
+            | Kind::Forms => {
                 vec![self.key]
             }
             Kind::Targets => ProfanitySwitch::ALL.into_iter().map(|t| t.key()).collect(),
@@ -214,7 +282,11 @@ impl Control {
     /// The `settings` rows of the stored value `stored`.
     pub fn rows(&self, stored: &str) -> Vec<(&'static str, String)> {
         match self.kind {
-            Kind::Switch | Kind::Choice(_) | Kind::Number { min: _, max: _ } | Kind::Names => {
+            Kind::Switch
+            | Kind::Choice(_)
+            | Kind::Number { min: _, max: _ }
+            | Kind::Names
+            | Kind::Forms => {
                 vec![(self.key, stored.to_string())]
             }
             Kind::Targets => {
@@ -230,9 +302,11 @@ impl Control {
     /// The stored value in `rows` (`settings` rows by key), `None` when no row holds it.
     pub fn read(&self, rows: &HashMap<String, String>) -> Option<String> {
         match self.kind {
-            Kind::Switch | Kind::Choice(_) | Kind::Number { min: _, max: _ } | Kind::Names => {
-                rows.get(self.key).cloned()
-            }
+            Kind::Switch
+            | Kind::Choice(_)
+            | Kind::Number { min: _, max: _ }
+            | Kind::Names
+            | Kind::Forms => rows.get(self.key).cloned(),
             Kind::Targets => ProfanitySwitch::ALL
                 .into_iter()
                 .any(|t| rows.contains_key(t.key()))
@@ -347,12 +421,26 @@ impl ControlSeeds {
         let e = Env(env);
         let mut set = Vec::new();
         for c in Control::all() {
-            if let Some(raw) = e.raw(c.env) {
-                let stored = c
+            let Some(raw) = e.raw(c.env) else {
+                continue;
+            };
+            let stored = match c.kind {
+                Kind::Switch
+                | Kind::Choice(_)
+                | Kind::Targets
+                | Kind::Number { min: _, max: _ }
+                | Kind::Names => c
                     .parse(&raw)
-                    .map_err(|expected| anyhow::anyhow!("{}: {expected}, got {raw}", c.env))?;
-                set.push((c.key, stored));
-            }
+                    .map_err(|expected| anyhow::anyhow!("{}: {expected}, got {raw}", c.env))?,
+                Kind::Forms => {
+                    let path = raw.trim();
+                    let text = std::fs::read_to_string(path)
+                        .map_err(|e| anyhow::anyhow!("{} ({path}): {e}", c.env))?;
+                    c.parse(&text)
+                        .map_err(|wrong| anyhow::anyhow!("{} ({path}): {wrong}", c.env))?
+                }
+            };
+            set.push((c.key, stored));
         }
         let names: Vec<String> = e
             .raw(PINNED_ENV)
@@ -507,7 +595,7 @@ mod tests {
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
         assert_eq!(
-            table[table.len() - 7..],
+            table[table.len() - 8..table.len() - 1],
             [
                 ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
                 ("server_creation", "SERVER_CREATION", "everyone"),
@@ -527,6 +615,10 @@ mod tests {
             Kind::Choice(&["everyone", "friends", "nobody"])
         );
         assert_eq!(control("friend_requests").kind, Kind::Switch);
+        assert_eq!(
+            table.last().map(|(key, env, _)| (*key, *env)),
+            Some(("report_forms", "REPORT_FORMS_FILE"))
+        );
         assert_eq!(
             control("server_joining").kind,
             Kind::Choice(&["everyone", "invites", "nobody"])
@@ -556,8 +648,16 @@ mod tests {
         );
         for c in Control::all() {
             assert_eq!(Control::by_env(c.env), Some(c));
+            let written = match c.kind {
+                Kind::Forms => c.default.to_string(),
+                Kind::Switch
+                | Kind::Choice(_)
+                | Kind::Targets
+                | Kind::Number { min: _, max: _ }
+                | Kind::Names => c.shown(c.default),
+            };
             assert_eq!(
-                c.parse(&c.shown(c.default)).as_deref(),
+                c.parse(&written).as_deref(),
                 Ok(c.default),
                 "{}: the default is a value",
                 c.key
@@ -664,7 +764,7 @@ mod tests {
     #[test]
     fn bad_env_values_name_what_they_expect() {
         for c in Control::all() {
-            if c.kind == Kind::Names {
+            if matches!(c.kind, Kind::Names | Kind::Forms) {
                 continue;
             }
             let err = c.parse("maybe").unwrap_err();
@@ -689,6 +789,7 @@ mod tests {
                 ),
                 Kind::Number { min, max } => format!("expected {min} to {max}"),
                 Kind::Names => unreachable!("a name list takes any word"),
+                Kind::Forms => unreachable!("the forms come from a file"),
             };
             assert_eq!(err, want, "{}", c.key);
             assert!(err.is_ascii());
@@ -871,8 +972,13 @@ mod tests {
                 Kind::Targets => "all, none, or a list".to_string(),
                 Kind::Number { min, max } => format!("{min} to {max}"),
                 Kind::Names => "server:role".to_string(),
+                Kind::Forms => "JSON".to_string(),
             };
             let value = documented(c.env, &[&words, "Admin page"]);
+            if c.kind == Kind::Forms {
+                assert!(value.ends_with(".json"), "{}={value} names a file", c.env);
+                continue;
+            }
             assert_eq!(
                 c.parse(&value).as_deref(),
                 Ok(c.default),
@@ -882,6 +988,74 @@ mod tests {
         }
         assert!(!example.contains("First start only"));
         documented(PINNED_ENV, &["all"]);
+    }
+
+    #[test]
+    fn the_forms_come_from_the_file_the_env_names() {
+        use crate::api::reports::forms::ReportForms;
+        let forms = control("report_forms");
+        assert_eq!((forms.env, forms.kind), ("REPORT_FORMS_FILE", Kind::Forms));
+        assert!(!forms.public);
+        assert_eq!(forms.default, ReportForms::defaults().stored());
+        assert_eq!(forms.shown(forms.default), "rev 1, 5 categories");
+        assert_eq!(forms.shown("{"), "unreadable");
+
+        let dir = std::env::temp_dir();
+        let file = dir.join(format!("rchat_forms_{}.json", std::process::id()));
+        let path = file.to_str().expect("path");
+        let mut doc = serde_json::to_value(ReportForms::defaults()).expect("json");
+        doc["rev"] = serde_json::json!(9);
+        doc["forms"][1]["label"] = serde_json::json!("Bug");
+        std::fs::write(&file, serde_json::to_string_pretty(&doc).expect("json")).expect("write");
+        let set = ControlSeeds::of(&[("REPORT_FORMS_FILE", &format!(" {path} "))]).expect("set");
+        let value = set
+            .value("report_forms")
+            .expect("the file's content is the value");
+        let read = ReportForms::from_stored(value).expect("forms");
+        assert_eq!((read.rev, read.forms[1].label.as_str()), (1, "Bug"));
+        let pinned = ControlSeeds::of(&[
+            ("REPORT_FORMS_FILE", path),
+            ("SETTINGS_PINNED", "REPORT_FORMS_FILE"),
+        ])
+        .expect("pinned");
+        assert!(pinned.pins("report_forms"));
+
+        let stored = ReportForms {
+            rev: 4,
+            forms: ReportForms::defaults().forms,
+        }
+        .stored();
+        assert!(forms.same(&stored, forms.default), "the revision aside");
+        assert!(!forms.same(&stored, value));
+        let applied = ReportForms::from_stored(&forms.applied(&stored, value)).expect("forms");
+        assert_eq!((applied.rev, applied.forms), (5, read.forms.clone()));
+        let p2p = control("p2p");
+        assert!(p2p.same("1", "1") && !p2p.same("1", "0"));
+        assert_eq!(p2p.applied("1", "0"), "0");
+
+        doc["forms"][1]["fields"][2]["max"] = serde_json::json!(2001);
+        std::fs::write(&file, doc.to_string()).expect("write");
+        for stopped in [
+            ControlSeeds::of(&[("REPORT_FORMS_FILE", path)])
+                .expect_err("a bad field")
+                .to_string(),
+            crate::config::AppConfig::from_map(&[("REPORT_FORMS_FILE", path)])
+                .expect_err("a bad field stops the start")
+                .to_string(),
+        ] {
+            assert_eq!(
+                stopped,
+                format!("REPORT_FORMS_FILE ({path}): bug.steps: max must be 1 to 2000")
+            );
+        }
+        std::fs::remove_file(&file).expect("remove");
+        let missing = ControlSeeds::of(&[("REPORT_FORMS_FILE", path)])
+            .expect_err("no file")
+            .to_string();
+        assert!(
+            missing.starts_with(&format!("REPORT_FORMS_FILE ({path}): ")),
+            "{missing}"
+        );
     }
 
     #[tokio::test]

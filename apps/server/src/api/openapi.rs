@@ -217,6 +217,7 @@ impl Modify for Bearer {
         super::media::download_media,
         super::media::delete_media,
         super::admin::get_settings,
+        super::reports::forms::get_forms,
         super::health::health,
         super::health::ready,
         super::instance::instance,
@@ -288,6 +289,7 @@ impl Modify for Bearer {
         (name = "Search", description = "Message and server search."),
         (name = "Invites", description = "Invite link previews."),
         (name = "Realtime", description = "The WebSocket gateway for live events, presence, voice and calls, and the PeerJS signaling for peer-to-peer connections when the instance serves it itself."),
+        (name = "Reports", description = "Report forms: the categories of reports people can send and their fields."),
         (name = "Instance", description = "Instance discovery, public settings, identity assertions for federation, P2P identity bindings for account badges and ICE servers for peer-to-peer connections."),
         (name = "Health", description = "Liveness and readiness probes for load balancers and orchestrators."),
     )
@@ -356,8 +358,10 @@ mod tests {
         ),
     ];
 
-    const ADMIN_ROUTES: [(&str, &str); 13] = [
+    const ADMIN_ROUTES: [(&str, &str); 15] = [
         ("patch", "/api/v1/admin/settings"),
+        ("get", "/api/v1/admin/report_forms"),
+        ("put", "/api/v1/admin/report_forms"),
         ("get", "/api/v1/admin/config"),
         ("get", "/api/v1/admin/overview"),
         ("get", "/api/v1/admin/users"),

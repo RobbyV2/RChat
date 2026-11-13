@@ -7,6 +7,7 @@ use sqlx::Row;
 use utoipa::ToSchema;
 
 use crate::api::access::perms::{held_roles, role_named};
+use crate::api::reports::forms::{self, ReportForms};
 use crate::api::{ApiError, SETTINGS_TTL, Settings};
 use crate::db::{Db, User, pool_key};
 
@@ -255,10 +256,12 @@ pub(crate) async fn move_creator_roles(
     store_creators(conn, &list).await
 }
 
-/// The instance's lists, which `Settings` (a `Copy` value sent to every client) leaves out.
+/// The instance's lists and report forms, which `Settings` (a `Copy` value sent to every
+/// client) leaves out.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Policy {
     pub server_creators: Vec<Creator>,
+    pub report_forms: ReportForms,
 }
 
 /// The lists of each database this process has open, with when they were read.
@@ -269,12 +272,13 @@ static POLICY_CACHE: LazyLock<PolicyCache> = LazyLock::new(Default::default);
 impl Policy {
     /// Reads the lists. A read failure answers the last known ones, else empty ones.
     pub async fn load(db: &Db) -> Arc<Policy> {
-        let row = match sqlx::query("SELECT value FROM settings WHERE key = $1")
+        let rows = match sqlx::query("SELECT key, value FROM settings WHERE key IN ($1, $2)")
             .bind(SERVER_CREATORS)
-            .fetch_optional(db)
+            .bind(forms::KEY)
+            .fetch_all(db)
             .await
         {
-            Ok(row) => row,
+            Ok(rows) => rows,
             Err(e) => {
                 tracing::warn!("settings could not be read, using the last known lists: {e}");
                 return POLICY_CACHE
@@ -284,8 +288,21 @@ impl Policy {
                     .unwrap_or_default();
             }
         };
-        let list: String = row.and_then(|r| r.try_get(0).ok()).unwrap_or_default();
+        let value = |key: &str| {
+            rows.iter()
+                .find(|r| r.try_get::<String, _>(0).is_ok_and(|k| k == key))
+                .and_then(|r| r.try_get::<String, _>(1).ok())
+        };
+        let list = value(SERVER_CREATORS).unwrap_or_default();
+        let report_forms = match value(forms::KEY) {
+            Some(stored) => ReportForms::from_stored(&stored).unwrap_or_else(|| {
+                tracing::warn!("the stored report forms can't be read, using the defaults");
+                ReportForms::defaults()
+            }),
+            None => ReportForms::defaults(),
+        };
         let policy = Arc::new(Policy {
+            report_forms,
             server_creators: list
                 .split(',')
                 .map(str::trim)

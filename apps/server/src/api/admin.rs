@@ -14,9 +14,10 @@ use crate::api::policy::{
     DmCreation, FRIEND_REQUESTS, Policy, SERVER_CREATORS, SERVER_SEARCH, ServerCreation,
     ServerJoining,
 };
+use crate::api::reports::forms::{self, Form, ReportForms};
 use crate::api::{
     ApiError, Authed, OkResp, Paged, ProfanitySwitch, ServerDetail, ServerSummaryLite, Settings,
-    UserRef, bad, decode_cursor, encode_cursor, ok, upload_expiry,
+    UserRef, bad, decode_cursor, encode_cursor, ok, reports, upload_expiry,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now, purge_messages, recount_members, user_row};
 use crate::state::AppState;
@@ -505,6 +506,105 @@ pub(crate) async fn get_config(
         })
         .collect();
     Ok(Json(ConfigView { controls, limits }))
+}
+
+/// The whole forms document, turned-off categories included.
+pub(crate) async fn get_report_forms(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+) -> Result<Json<ReportForms>, ApiError> {
+    require_site_admin(&user)?;
+    Ok(Json(Policy::load(&state.db).await.report_forms.clone()))
+}
+
+/// Request body of `PUT /api/v1/admin/report_forms`: every category, in list order, and the
+/// revision the editor loaded.
+#[derive(Deserialize)]
+pub struct ReportFormsReq {
+    #[serde(default)]
+    rev: Option<i64>,
+    forms: Vec<Form>,
+}
+
+/// Replaces the forms. A change takes the next revision and is noted in the instance audit
+/// log; the same forms again change nothing. A `rev` that is not the stored one is a 409.
+pub(crate) async fn put_report_forms(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Json(ReportFormsReq { rev, forms }): Json<ReportFormsReq>,
+) -> Result<Json<ReportForms>, ApiError> {
+    require_site_admin(&user)?;
+    let control = Control::find(forms::KEY).ok_or_else(not_found)?;
+    if ConfigRecords::load(&state.db).await?.pins(control) {
+        return Err(reports::refused(&format!(
+            "Set in the server config: {}",
+            control.env
+        )));
+    }
+    let mut tx = state.db.begin().await?;
+    let stored: Option<String> = sqlx::query("SELECT value FROM settings WHERE key = $1")
+        .bind(forms::KEY)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(|r| r.try_get(0))
+        .transpose()?;
+    let before = stored
+        .as_deref()
+        .and_then(ReportForms::from_stored)
+        .unwrap_or_default();
+    let changed = || {
+        ApiError(
+            StatusCode::CONFLICT,
+            "The forms changed. Load them again".to_string(),
+        )
+    };
+    if rev.is_some_and(|rev| rev != before.rev) {
+        return Err(changed());
+    }
+    let after = ReportForms {
+        rev: before.rev + 1,
+        forms,
+    };
+    after.check().map_err(|wrong| reports::refused(&wrong))?;
+    if stored.is_some() && after.forms == before.forms {
+        return Ok(Json(before));
+    }
+    let written = match &stored {
+        Some(stored) => {
+            sqlx::query("UPDATE settings SET value = $1 WHERE key = $2 AND value = $3")
+                .bind(after.stored())
+                .bind(forms::KEY)
+                .bind(stored)
+                .execute(&mut *tx)
+                .await?
+        }
+        None => {
+            sqlx::query(
+                "INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO NOTHING",
+            )
+            .bind(forms::KEY)
+            .bind(after.stored())
+            .execute(&mut *tx)
+            .await?
+        }
+    };
+    if written.rows_affected() == 0 {
+        return Err(changed());
+    }
+    crate::api::instance_audit::record_in(
+        &mut tx,
+        &user.username,
+        "report_forms.change",
+        None,
+        serde_json::json!({"rev": after.rev}),
+        now(),
+    )
+    .await?;
+    tx.commit().await?;
+    Policy::load(&state.db).await;
+    let settings = Settings::load(&state.db).await;
+    state.hub.broadcast(WsEvent::SettingsChanged { settings });
+    Ok(Json(after))
 }
 
 /// Request body of `POST /api/v1/admin/servers`.
@@ -2671,6 +2771,150 @@ mod tests {
                 "target": "p2p",
                 "detail": {"key": "p2p", "from": "on", "to": "off", "by": "config"},
             })
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_admin_saves_the_report_forms() {
+        use crate::api::reports::forms::{ReportForms, get_forms};
+        use axum::http::{HeaderMap, header};
+        let (state, path) = temp_state("report_forms_put").await;
+        let mut rx = state.hub.subscribe();
+        let root = || Authed(crate::api::test_util::mem_user("root", true));
+        let alice = || Authed(crate::api::test_util::mem_user("alice", false));
+        let body = |doc: &serde_json::Value| -> Json<ReportFormsReq> {
+            Json(serde_json::from_value(doc.clone()).expect("body"))
+        };
+        let public = || async {
+            let res = get_forms(State(state.clone()), alice(), HeaderMap::new())
+                .await
+                .expect("forms");
+            let etag = res.headers()[header::ETAG]
+                .to_str()
+                .expect("etag")
+                .to_string();
+            let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+                .await
+                .expect("body");
+            let doc: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+            let ids: Vec<String> = doc["forms"]
+                .as_array()
+                .expect("forms")
+                .iter()
+                .map(|f| f["id"].as_str().expect("id").to_string())
+                .collect();
+            (etag, ids)
+        };
+        let audit = || async { audit_rows(&state.db).await };
+
+        for refused in [
+            get_report_forms(State(state.clone()), alice())
+                .await
+                .map(|_| ()),
+            put_report_forms(
+                State(state.clone()),
+                alice(),
+                body(&serde_json::to_value(ReportForms::defaults()).expect("json")),
+            )
+            .await
+            .map(|_| ()),
+        ] {
+            assert!(
+                matches!(refused, Err(ApiError(StatusCode::NOT_FOUND, ref m)) if m == "Not found"),
+                "the same answer as any unknown path"
+            );
+        }
+        let before = get_report_forms(State(state.clone()), root())
+            .await
+            .expect("forms")
+            .0;
+        assert_eq!(before, ReportForms::defaults());
+        assert_eq!(public().await.0, "\"1\"");
+
+        let mut doc = serde_json::to_value(&before).expect("json");
+        let same = put_report_forms(State(state.clone()), root(), body(&doc))
+            .await
+            .expect("the same forms")
+            .0;
+        assert_eq!(same.rev, 1, "nothing changed");
+        assert!(audit().await.is_empty() && rx.try_recv().is_err());
+
+        doc["forms"][1]["enabled"] = json!(false);
+        doc["forms"].as_array_mut().expect("forms").push(json!({
+            "id": "appeal",
+            "label": "Appeal a ban",
+            "line": "Ask for another look.",
+            "base": "none",
+            "fields": [{"id": "why", "kind": "long_text", "label": "Why", "required": true}],
+        }));
+        let saved = put_report_forms(State(state.clone()), root(), body(&doc))
+            .await
+            .expect("saved")
+            .0;
+        assert_eq!((saved.rev, saved.forms.len()), (2, 6));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WsEvent::SettingsChanged { settings: _ })
+        ));
+        assert_eq!(
+            audit().await,
+            [(
+                Some("root".to_string()),
+                "report_forms.change".to_string(),
+                None,
+                json!({"rev": 2}).to_string()
+            )]
+        );
+        let (etag, ids) = public().await;
+        assert_eq!(etag, "\"2\"", "the ETag follows the revision");
+        assert_eq!(
+            ids,
+            ["user", "server", "general", "message", "appeal"],
+            "a turned-off category is not in the public read"
+        );
+        let whole = get_report_forms(State(state.clone()), root())
+            .await
+            .expect("forms")
+            .0;
+        assert_eq!(whole, saved);
+        assert!(!whole.forms[1].enabled, "the admin reads it");
+
+        let stale = put_report_forms(State(state.clone()), root(), body(&doc)).await;
+        assert!(
+            matches!(stale, Err(ApiError(StatusCode::CONFLICT, ref m)) if m == "The forms changed. Load them again"),
+            "an editor that loaded rev 1: {stale:?}"
+        );
+        assert_eq!(audit().await.len(), 1);
+        doc["rev"] = json!(2);
+
+        doc["forms"][5]["fields"][0]["max"] = json!(2001);
+        let refused = put_report_forms(State(state.clone()), root(), body(&doc)).await;
+        assert!(
+            matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "appeal.why: max must be 1 to 2000"),
+            "{refused:?}"
+        );
+        assert_eq!(audit().await.len(), 1);
+        assert_eq!(public().await.0, "\"2\"");
+
+        doc["forms"][5]["fields"][0]["max"] = json!(500);
+        let unchecked = json!({"forms": doc["forms"].clone()});
+        let saved = put_report_forms(State(state.clone()), root(), body(&unchecked))
+            .await
+            .expect("no rev, no check")
+            .0;
+        assert_eq!(saved.rev, 3);
+
+        sqlx::query("INSERT INTO settings(key, value) VALUES('env:pinned', 'p2p,report_forms')")
+            .execute(&state.db)
+            .await
+            .expect("pinned by the server config");
+        doc["rev"] = json!(3);
+        doc["forms"][5]["fields"][0]["max"] = json!(400);
+        let refused = put_report_forms(State(state.clone()), root(), body(&doc)).await;
+        assert!(
+            matches!(refused, Err(ApiError(StatusCode::BAD_REQUEST, ref m)) if m == "Set in the server config: REPORT_FORMS_FILE"),
+            "{refused:?}"
         );
         done(state, path).await;
     }
