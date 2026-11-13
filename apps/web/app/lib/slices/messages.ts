@@ -130,11 +130,13 @@ const merge = mergeSorted<Message>
 export const OPT_BASE = 1e15
 let optSeq = 0
 const nextTempId = () => OPT_BASE + ++optSeq
-const draining = new Set<string>()
+// Per session: a send or reaction that answers after the session ended lands nowhere, and one
+// still queued is never sent.
+let draining = new Set<string>()
+let reactionQueue = new Map<string, Promise<void>>()
 
 const pendingEmbeds = new Map<number, Embed[]>()
 const reactorCache = new Map<string, Promise<UserRef[]>>()
-const reactionQueue = new Map<string, Promise<void>>()
 const REACTOR_CACHE = 200
 const PENDING_EMBEDS_MAX = 256
 const VIEW_CACHE = 8
@@ -1115,8 +1117,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   }
 
   const drain = async (key: string) => {
-    if (draining.has(key)) return
-    draining.add(key)
+    const mine = draining
+    if (mine.has(key)) return
+    mine.add(key)
     try {
       for (;;) {
         const head = (get().outbox[key] ?? [])[0]
@@ -1125,6 +1128,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         let real: Message
         try {
           const built = await buildSendOpts(head.pending, head.p2pExpiresIn)
+          if (mine !== draining) return
           const { opts } = built
           let { p2pId } = built
           try {
@@ -1151,6 +1155,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           }
           if (p2pId !== null) p2p.posted(p2pId, real.id)
         } catch (e) {
+          if (mine !== draining) return
           patchOutgoing(key, head.tempId, 'failed')
           settleSent(head.tempId, null)
           const wait = e instanceof ApiError && e.status === 429 ? slowWait(e.message) : null
@@ -1158,6 +1163,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           fail(e)
           break
         }
+        if (mine !== draining) return
         if (holding(key)) holdTail(key, real)
         const next = holding(key) ? {} : (appendLive(key, [real], true) ?? holdLive(key, [real]))
         set(s => ({ outbox: dropOutgoing(s.outbox, key, head.tempId), ...next }))
@@ -1166,7 +1172,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         if (key[0] !== 't') get().markRead(key, real.id)
       }
     } finally {
-      draining.delete(key)
+      mine.delete(key)
     }
   }
 
@@ -1212,6 +1218,10 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     rereads.clear()
     for (const id of [...sentWaiters.keys()]) settleSent(id, null)
     quoteGen += 1
+    draining = new Set()
+    reactionQueue = new Map()
+    pendingEmbeds.clear()
+    linkQueue.clear()
     linkLoads.clear()
     linkGen += 1
   }
@@ -1871,19 +1881,22 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       }
       apply(adding)
       if (adding && note) get().noteEmoji(emojiBase(get().emoji, emoji), emoji)
-      const prev = reactionQueue.get(key) ?? Promise.resolve()
+      const queue = reactionQueue
+      const prev = queue.get(key) ?? Promise.resolve()
       const next = prev.then(async () => {
+        if (queue !== reactionQueue) return
         try {
           if (adding) await api.addReaction(m.id, emoji)
           else await api.removeReaction(m.id, emoji)
         } catch (e) {
+          if (queue !== reactionQueue) return
           apply(!adding)
           fail(e)
         }
       })
-      reactionQueue.set(key, next)
+      queue.set(key, next)
       void next.then(() => {
-        if (reactionQueue.get(key) === next) reactionQueue.delete(key)
+        if (queue.get(key) === next) queue.delete(key)
       })
     },
 

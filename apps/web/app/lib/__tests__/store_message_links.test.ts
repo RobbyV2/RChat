@@ -262,6 +262,14 @@ describe('link cards', () => {
     }
   })
 
+  test('links still queued when the session ends are never looked up', async () => {
+    readable[40] = card()
+    st().resolveLinkCard(40)
+    resetSessionCaches()
+    await advance(80)
+    expect(batches).toEqual([])
+  })
+
   test('edits and deletes drop the cached card', async () => {
     readable[40] = card()
     st().resolveLinkCard(40)

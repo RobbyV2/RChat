@@ -132,6 +132,15 @@ describe('media / embeds patching via patchMessage', () => {
     expect(st().messages.c1[0].embeds.map(e => e.ord)).toEqual([0])
   })
 
+  test('resolved embeds end with the session, so the next one keeps its own message 80', () => {
+    useStore.setState({ me: me('alice'), messages: { c1: [msg(80, { channel_id: 1 })] } })
+    dispatch({ type: 'embeds_resolved', ...scoped, message_id: 80, embeds: [embed(0)] })
+    resetSessionCaches()
+    useStore.setState({ me: me('bob'), view: viewing, messages: { c1: [msg(10)] } })
+    dispatch({ type: 'message', ...scoped, message: msg(80, { channel_id: 1, embeds: [] }) })
+    expect(st().messages.c1.find(m => m.id === 80)?.embeds).toEqual([])
+  })
+
   test('embeds_removed banner marks banner_removed; full removes the embed', () => {
     useStore.setState({ messages: { c1: [msg(90, { embeds: [embed(0), embed(1)] })] } })
     dispatch({ type: 'embeds_removed', ...scoped, message_id: 90, ord: 0, banner: true })
