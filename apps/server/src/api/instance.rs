@@ -89,6 +89,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         public_reading: _,
         builtin_server: _,
         calls: _,
+        incoming_webhooks: _,
     } = Settings::cached(&state.read()).await;
     state.instance.discovery(
         &state.instance.origin(peer, headers),

@@ -131,6 +131,9 @@ pub const DEFAULT_SERVERS: &str = "default_servers";
 /// The switch for voice channels and DM calls that run through the instance.
 pub const CALLS: &str = "calls";
 
+/// The switch for incoming webhooks: creating them and posting through them.
+pub const INCOMING_WEBHOOKS: &str = "incoming_webhooks";
+
 /// The switch for new friend requests.
 pub const FRIEND_REQUESTS: &str = "friend_requests";
 
@@ -496,6 +499,11 @@ impl Effective<'_> {
     /// the instance.
     pub fn calls(&self) -> bool {
         self.settings.calls
+    }
+
+    /// Whether incoming webhooks may be created and may post.
+    pub fn incoming_webhooks(&self) -> bool {
+        self.settings.incoming_webhooks
     }
 
     /// Whether the user may use peer-to-peer features, P2P calls included.

@@ -6354,3 +6354,14 @@ async fn the_calls_control_is_added_to_an_old_database() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn the_incoming_webhooks_control_is_added_to_an_old_database() {
+    controls_reach_an_old_database(
+        "incoming_control",
+        &["incoming_webhooks"],
+        &["1"],
+        &[("FEATURE_INCOMING_WEBHOOKS", "off", "0")],
+    )
+    .await;
+}

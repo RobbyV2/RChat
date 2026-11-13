@@ -5,8 +5,8 @@ use sqlx::Row;
 
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
-    CALLS, Creator, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, PUBLIC_READING, SERVER_CREATORS,
-    SERVER_SEARCH, ServerCreation, ServerJoining,
+    CALLS, Creator, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, INCOMING_WEBHOOKS,
+    PUBLIC_READING, SERVER_CREATORS, SERVER_SEARCH, ServerCreation, ServerJoining,
 };
 use crate::api::reports::forms::{self, ReportForms};
 use crate::api::{ProfanitySwitch, ProfanityTargets, PublicSettings, upload_expiry};
@@ -143,6 +143,7 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
         public: false,
     });
     all.push(switch(CALLS, "FEATURE_CALLS", true));
+    all.push(switch(INCOMING_WEBHOOKS, "FEATURE_INCOMING_WEBHOOKS", true));
     all.push(Control {
         key: forms::KEY,
         env: forms::ENV,
@@ -645,7 +646,7 @@ mod tests {
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
         assert_eq!(
-            table[table.len() - 11..table.len() - 1],
+            table[table.len() - 12..table.len() - 1],
             [
                 ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
                 ("server_creation", "SERVER_CREATION", "everyone"),
@@ -657,6 +658,7 @@ mod tests {
                 ("public_reading", "PUBLIC_READING", "1"),
                 ("default_servers", "DEFAULT_SERVERS", "rchat"),
                 ("calls", "FEATURE_CALLS", "1"),
+                ("incoming_webhooks", "FEATURE_INCOMING_WEBHOOKS", "1"),
             ]
         );
         assert_eq!(control("public_reading").kind, Kind::Switch);

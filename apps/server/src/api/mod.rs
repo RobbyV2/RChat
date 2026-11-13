@@ -1270,6 +1270,12 @@ pub struct Settings {
     /// P2P calls follow `p2p` instead.
     #[serde(default = "yes")]
     pub calls: bool,
+    /// Incoming webhooks. Off: creating one, resetting its token and every request to a
+    /// webhook URL (`/api/v1/webhooks/{id}/{token}`) answer 404 `Not found` with reason
+    /// `off_site` and control `incoming_webhooks`. Existing webhooks stay, are still listed,
+    /// and work again when it is back on.
+    #[serde(default = "yes")]
+    pub incoming_webhooks: bool,
 }
 
 /// The public settings as `GET /api/v1/settings` and the `settings_changed` WebSocket event
@@ -1357,6 +1363,7 @@ impl Settings {
         public_reading: false,
         builtin_server: Builtin::Kept,
         calls: false,
+        incoming_webhooks: false,
     };
 
     pub async fn load(db: &Db) -> Settings {
@@ -1439,6 +1446,7 @@ impl Settings {
                 Some(_) | None => Builtin::Kept,
             },
             calls: on(policy::CALLS),
+            incoming_webhooks: on(policy::INCOMING_WEBHOOKS),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1500,6 +1508,7 @@ impl Settings {
             public_reading: _,
             builtin_server: _,
             calls: _,
+            incoming_webhooks: _,
         } = *self;
         match feature {
             Feature::ServerReports => server_reports,
