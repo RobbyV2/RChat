@@ -3,7 +3,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use super::now;
-use super::pool::{Db, pool_key};
+use super::pool::{Db, light, pool_key};
 
 const TOUCH_EVERY: Duration = Duration::from_secs(60);
 const TOUCH_MAX: usize = 100_000;
@@ -46,15 +46,17 @@ pub async fn touch_interaction(db: &Db, server: &str, username: &str) -> sqlx::R
     if recently_touched(db, server, username) {
         return Ok(());
     }
+    let mut tx = db.begin().await?;
+    light(db, &mut tx).await?;
     sqlx::query(
         "INSERT INTO interactions(server, username, last_at) VALUES($1, $2, $3) ON CONFLICT(server, username) DO UPDATE SET last_at = excluded.last_at",
     )
     .bind(server)
     .bind(username)
     .bind(now())
-    .execute(db)
-    .await
-    .map(|_| ())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
 }
 
 pub const GRANT_TOUCH_SECS: i64 = 86400;
@@ -111,8 +113,15 @@ pub async fn flush_grant_touches(db: &Db, grant_ttl: i64) -> sqlx::Result<u64> {
         for grant in chunk {
             query = query.bind(grant);
         }
-        match query.execute(db).await {
-            Ok(done) => total += done.rows_affected(),
+        let written = async {
+            let mut tx = db.begin().await?;
+            light(db, &mut tx).await?;
+            let done = query.execute(&mut *tx).await?;
+            tx.commit().await?;
+            Ok::<u64, sqlx::Error>(done.rows_affected())
+        };
+        match written.await {
+            Ok(rows) => total += rows,
             Err(e) => {
                 queue_grant_touches(db, grants.chunks(100).skip(i).flatten().cloned());
                 return Err(e);

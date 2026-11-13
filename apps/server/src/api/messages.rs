@@ -2905,15 +2905,21 @@ async fn read_scope(
         }
     };
     let stored = match wanted {
-        Some(last_read) => sqlx::query(
-            "INSERT INTO read_state(username, scope, last_read) VALUES($1, $2, $3) ON CONFLICT(username, scope) DO UPDATE SET last_read = CASE WHEN excluded.last_read > read_state.last_read THEN excluded.last_read ELSE read_state.last_read END RETURNING last_read",
-        )
-        .bind(&user.username)
-        .bind(scope)
-        .bind(last_read)
-        .fetch_one(&state.db)
-        .await?
-        .try_get(0)?,
+        Some(last_read) => {
+            let mut tx = state.db.begin().await?;
+            crate::db::light(&state.db, &mut tx).await?;
+            let stored = sqlx::query(
+                "INSERT INTO read_state(username, scope, last_read) VALUES($1, $2, $3) ON CONFLICT(username, scope) DO UPDATE SET last_read = CASE WHEN excluded.last_read > read_state.last_read THEN excluded.last_read ELSE read_state.last_read END RETURNING last_read",
+            )
+            .bind(&user.username)
+            .bind(scope)
+            .bind(last_read)
+            .fetch_one(&mut *tx)
+            .await?
+            .try_get(0)?;
+            tx.commit().await?;
+            stored
+        }
         None => current().await?,
     };
     let seen = mark_seen(

@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-use sqlx::AnyPool;
 use sqlx::any::{AnyPoolOptions, install_default_drivers};
+use sqlx::{AnyConnection, AnyPool};
 
 use super::migrate::{ConfigChange, ConfigStart, init_schema};
 use super::schema::{probe_fts, set_fts, sqlite_search_index};
@@ -22,6 +22,51 @@ static CONFIG_STARTS: LazyLock<Mutex<HashMap<String, ConfigStart>>> =
 
 static LIMITS: LazyLock<Mutex<HashMap<String, Limits>>> = LazyLock::new(Default::default);
 
+/// The databases whose bookkeeping writes wait for the disk (`DATABASE_LIGHT_COMMITS=sync`).
+static SYNC_LIGHT: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+
+/// How bookkeeping writes commit on Postgres (`DATABASE_LIGHT_COMMITS`): `Async` returns
+/// before the commit reaches the disk, so a crash can lose the last fraction of a second of
+/// them; `Sync` waits like every other write. SQLite ignores it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LightCommits {
+    #[default]
+    Async,
+    Sync,
+}
+
+impl LightCommits {
+    /// The value of `DATABASE_LIGHT_COMMITS`: `async` when unset or blank.
+    pub fn parse(raw: Option<&str>) -> anyhow::Result<LightCommits> {
+        let raw = raw.map(str::trim).filter(|v| !v.is_empty());
+        match raw.map(str::to_ascii_lowercase).as_deref() {
+            None | Some("async") => Ok(LightCommits::Async),
+            Some("sync") => Ok(LightCommits::Sync),
+            Some(_) => anyhow::bail!(
+                "DATABASE_LIGHT_COMMITS: expected async or sync, got {}",
+                raw.unwrap_or_default()
+            ),
+        }
+    }
+}
+
+/// Marks the transaction `tx` of `db` as bookkeeping that is worth nothing after a crash (a
+/// read mark, a last-used time, a login attempt count): on Postgres its commit does not wait
+/// for the disk, unless `DATABASE_LIGHT_COMMITS=sync`. Never for messages, moderation,
+/// accounts, settings or anything audited.
+pub async fn light(db: &Db, tx: &mut AnyConnection) -> sqlx::Result<()> {
+    let sync = SYNC_LIGHT
+        .lock()
+        .is_ok_and(|sync| sync.contains(&pool_key(db)));
+    if is_sqlite(db) || sync {
+        return Ok(());
+    }
+    sqlx::query("SET LOCAL synchronous_commit = off")
+        .execute(&mut *tx)
+        .await
+        .map(|_| ())
+}
+
 /// What `open_with` reads from the configuration: the limits, `PASSWORD_PEPPER` and the
 /// controls the env sets and pins. `controls` is `Some` only for a server start, which brings
 /// the stored controls in line with its env. `None` (the default, for tools that open the
@@ -31,6 +76,7 @@ pub struct DbOptions {
     pub limits: Limits,
     pub pepper: Option<String>,
     pub controls: Option<ControlSeeds>,
+    pub light_commits: LightCommits,
 }
 
 impl std::fmt::Debug for DbOptions {
@@ -38,6 +84,7 @@ impl std::fmt::Debug for DbOptions {
         f.debug_struct("DbOptions")
             .field("limits", &self.limits)
             .field("controls", &self.controls)
+            .field("light_commits", &self.light_commits)
             .finish_non_exhaustive()
     }
 }
@@ -75,6 +122,9 @@ pub async fn close(db: &Db) {
     take_config_start(db);
     if let Ok(mut limits) = LIMITS.lock() {
         limits.remove(&pool_key(db));
+    }
+    if let Ok(mut sync) = SYNC_LIGHT.lock() {
+        sync.remove(&pool_key(db));
     }
     let read = READERS
         .lock()
@@ -194,6 +244,7 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
         limits,
         pepper,
         controls,
+        light_commits,
     } = opts;
     install_default_drivers();
     let url = connect_url(database_url);
@@ -204,8 +255,22 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
             "DATABASE_MAX_CONNECTIONS is ignored for sqlite: it has a single writer; use DATABASE_READ_CONNECTIONS for reads"
         );
     }
-    if is_sqlite && limits.database_index_build_mib != Limits::default().database_index_build_mib {
-        tracing::warn!("DATABASE_INDEX_BUILD_MIB is ignored for sqlite");
+    let postgres_only: Vec<&str> = [
+        (
+            "DATABASE_INDEX_BUILD_MIB",
+            limits.database_index_build_mib != Limits::default().database_index_build_mib,
+        ),
+        (
+            "DATABASE_LIGHT_COMMITS",
+            *light_commits != LightCommits::default(),
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, set)| *set)
+    .map(|(name, _)| name)
+    .collect();
+    if is_sqlite && !postgres_only.is_empty() {
+        tracing::warn!("{} ignored for sqlite", postgres_only.join(", "));
     }
     let mut options = pool_options(
         writer_connections(is_sqlite, max),
@@ -225,6 +290,12 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
         false => &[],
     };
     let pool = with_pragmas(options, pragmas).connect(&url).await?;
+    if let Ok(mut sync) = SYNC_LIGHT.lock() {
+        match light_commits {
+            LightCommits::Sync => sync.insert(pool_key(&pool)),
+            LightCommits::Async => sync.remove(&pool_key(&pool)),
+        };
+    }
     let mut tx = pool.begin().await?;
     if !is_sqlite {
         sqlx::query("SELECT COUNT(*) FROM pg_advisory_xact_lock($1)")
@@ -336,3 +407,6 @@ async fn open_reader(url: &str, max: u32, acquire_timeout_secs: Option<u64>) -> 
             .await?,
     )
 }
+
+#[cfg(test)]
+mod tests;

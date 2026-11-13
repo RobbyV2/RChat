@@ -567,14 +567,17 @@ pub(crate) async fn register(
 
 pub(crate) async fn throttle_attempt(db: &Db, key: &str, t: i64) -> Result<(), ApiError> {
     let day = (t / 86400).to_string();
+    let mut tx = db.begin().await?;
+    crate::db::light(db, &mut tx).await?;
     let admitted = sqlx::query(
         "INSERT INTO login_attempts(username, day, count, last_at) VALUES($1, $2, 1, $3) ON CONFLICT(username) DO UPDATE SET count = CASE WHEN login_attempts.day = excluded.day THEN login_attempts.count + 1 ELSE 1 END, day = excluded.day, last_at = excluded.last_at WHERE login_attempts.day <> excluded.day OR excluded.last_at - login_attempts.last_at >= 3 RETURNING count",
     )
     .bind(key)
     .bind(&day)
     .bind(t)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await?;
+    tx.commit().await?;
     let count: i64 = match &admitted {
         Some(row) => row.try_get(0)?,
         None => sqlx::query("SELECT count FROM login_attempts WHERE username = $1")

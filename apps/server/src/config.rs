@@ -194,6 +194,9 @@ pub struct AppConfig {
     pub secrets: Secrets,
     #[serde(skip)]
     pub controls: ControlSeeds,
+    /// `DATABASE_LIGHT_COMMITS`.
+    #[serde(skip)]
+    pub light_commits: crate::db::LightCommits,
     #[serde(skip)]
     pub swagger_ui: Option<String>,
     /// The PeerJS port the web build dials on the page's host (`NEXT_PUBLIC_PEERJS_PORT` without
@@ -342,6 +345,8 @@ impl AppConfig {
         };
         config.controls = ControlSeeds::load(&|name| lookup(&env, name))?;
         config.swagger_ui = lookup(&env, "SWAGGER_UI");
+        config.light_commits =
+            crate::db::LightCommits::parse(lookup(&env, "DATABASE_LIGHT_COMMITS").as_deref())?;
         let set = |name: &str| lookup(&env, name).filter(|v| !v.trim().is_empty());
         config.web_peerjs_port = match set("NEXT_PUBLIC_PEERJS_HOST") {
             Some(_) => None,
@@ -400,6 +405,7 @@ impl AppConfig {
             limits: self.limits.clone(),
             pepper: self.secrets.password_pepper.clone(),
             controls: Some(self.controls.clone()),
+            light_commits: self.light_commits,
         }
     }
 
