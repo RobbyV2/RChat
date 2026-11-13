@@ -397,6 +397,8 @@ Put settings in `.env.local`. Refer to `.env.local.example` for all settings and
 
 A proxy in front of the instance needs only one domain and port 443. It sends every path, `/peerjs` included, to `SERVER_PORT` and passes the WebSocket upgrade for `/api/ws` and `/peerjs`. Calls and P2P files (WebRTC) go between browsers, not through the proxy.
 
+Other instances accept this instance's identity assertions only from a public HTTPS address on port 443.
+
 An instance that sets `PEERJS_PORT` or `PUBLIC_PEERJS_URL`, or whose web build was given `NEXT_PUBLIC_PEERJS_HOST` or `NEXT_PUBLIC_PEERJS_PORT`, keeps its separate PeerJS server (`deploy/peer/server.mjs`): browsers dial that address, and `just src dev`, `just src prod` and the Docker image (built with those two build args, if any) start that server. To use `/peerjs` on the public port, remove those settings, rebuild the web app without the two build settings, and remove any proxy route that sends `/peerjs` to the separate server.
 
 When you raise `UPLOAD_MAX_MIB`, keep `UPLOAD_BUFFER_MIB` (256 by default) at least twice as large.
