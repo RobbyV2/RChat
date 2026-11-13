@@ -1,0 +1,8158 @@
+{
+  "engine": "ironcalc 0.9.1",
+  "column": 6,
+  "grid": [
+    [1, 1, "1"],
+    [1, 2, "8"],
+    [1, 3, "-4"],
+    [1, 4, "21"],
+    [1, 5, "6"],
+    [2, 1, "2"],
+    [2, 2, "8"],
+    [2, 3, ""],
+    [2, 4, "=A2*2"],
+    [2, 5, "=A2*2"],
+    [3, 1, "3"],
+    [3, 2, "18"],
+    [3, 3, "8"],
+    [3, 4, "14"],
+    [3, 5, "13"],
+    [4, 1, "4"],
+    [4, 2, "28"],
+    [4, 3, "26"],
+    [4, 4, "32"],
+    [4, 5, "26"],
+    [5, 1, "5"],
+    [5, 2, "32"],
+    [5, 3, "12"],
+    [5, 4, "=A5*2"],
+    [5, 5, "28"],
+    [6, 1, "6"],
+    [6, 2, "9"],
+    [6, 3, "2"],
+    [6, 4, "34"],
+    [6, 5, "11"],
+    [7, 1, "7"],
+    [7, 2, "w3"],
+    [7, 3, "w3"],
+    [7, 4, "=1/0"],
+    [7, 5, "w3"],
+    [8, 1, "8"],
+    [8, 2, "16"],
+    [8, 3, "28"],
+    [8, 4, "31"],
+    [8, 5, "21"],
+    [9, 1, "9"],
+    [9, 2, "-4"],
+    [9, 3, "12"],
+    [9, 4, "TRUE"],
+    [9, 5, "w1"],
+    [10, 1, "10"],
+    [10, 2, "19"],
+    [10, 3, "=UPPER(\"w2\")"],
+    [10, 4, "-4"],
+    [10, 5, "26"],
+    [11, 1, "11"],
+    [11, 2, "0"],
+    [11, 3, "=UPPER(\"w3\")"],
+    [11, 4, "4.565"],
+    [11, 5, "30"],
+    [12, 1, "12"],
+    [12, 2, "w0"],
+    [12, 3, "w0"],
+    [12, 4, "3"],
+    [12, 5, ""],
+    [13, 1, "13"],
+    [13, 2, "27"],
+    [13, 3, "22"],
+    [13, 4, "=UPPER(\"w1\")"],
+    [13, 5, "30"],
+    [14, 1, "14"],
+    [14, 2, "6"],
+    [14, 3, "10"],
+    [14, 4, "12"],
+    [14, 5, "2"],
+    [15, 1, "15"],
+    [15, 2, "27"],
+    [15, 3, "26"],
+    [15, 4, ""],
+    [15, 5, "11"],
+    [16, 1, "16"],
+    [16, 2, "23"],
+    [16, 3, "w0"],
+    [16, 4, "25"],
+    [16, 5, "33"],
+    [17, 1, "17"],
+    [17, 2, ""],
+    [17, 3, "13"],
+    [17, 4, "24"],
+    [17, 5, "32"],
+    [18, 1, "18"],
+    [18, 2, "12"],
+    [18, 3, "21"],
+    [18, 4, "28"],
+    [18, 5, "-5"],
+    [19, 1, "19"],
+    [19, 2, ""],
+    [19, 3, "w3"],
+    [19, 4, "33"],
+    [19, 5, "=A19*2"],
+    [20, 1, "20"],
+    [20, 2, "=A20*2"],
+    [20, 3, ""],
+    [20, 4, "13"],
+    [20, 5, "=1/0"],
+    [21, 1, "21"],
+    [21, 2, "20"],
+    [21, 3, "13"],
+    [21, 4, ""],
+    [21, 5, "30"],
+    [22, 1, "22"],
+    [22, 2, "9"],
+    [22, 3, "3"],
+    [22, 4, "-4"],
+    [22, 5, "8"],
+    [23, 1, "23"],
+    [23, 2, "TRUE"],
+    [23, 3, "3"],
+    [23, 4, "5"],
+    [23, 5, "w3"],
+    [24, 1, "24"],
+    [24, 2, "16"],
+    [24, 3, "17"],
+    [24, 4, "19"],
+    [24, 5, "22"],
+    [25, 1, "25"],
+    [25, 2, "w1"],
+    [25, 3, "3"],
+    [25, 4, ""],
+    [25, 5, "-3"],
+    [26, 1, "26"],
+    [26, 2, "10"],
+    [26, 3, "8"],
+    [26, 4, "34"],
+    [26, 5, "-1"],
+    [27, 1, "27"],
+    [27, 2, "TRUE"],
+    [27, 3, "=A27*2"],
+    [27, 4, "w3"],
+    [27, 5, "w3"],
+    [28, 1, "28"],
+    [28, 2, ""],
+    [28, 3, "=1/0"],
+    [28, 4, ""],
+    [28, 5, "14"],
+    [29, 1, "29"],
+    [29, 2, "21"],
+    [29, 3, "15"],
+    [29, 4, "3"],
+    [29, 5, "2"],
+    [30, 1, "30"],
+    [30, 2, ""],
+    [30, 3, "24"],
+    [30, 4, "22"],
+    [30, 5, "w2"]
+  ],
+  "cases": [
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=AND(C7:D22, $B$15)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(C2:C18, SUMIF(D7:D17, $B8, E7:E17), B2:B18)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(C3:E13, A$3)",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=Z$30",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IF(SUM(\"=3\", E$8)%, IF(E19, VLOOKUP(C23, B1:E30, B17, 0), COUNT(C4:E17, D30)))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=11",
+      "ironcalc": "11"
+    },
+    {
+      "formula": "=SUMIF(C7:E21, \"=7\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(SUM(ABS($B3), AND(B31, C$9)), SUM(0, $B31))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=(Z27)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=CONCAT(ROUND(E$3, C22), A5:E16)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=UPPER(-AVERAGE(A2:C25))",
+      "ironcalc": "-14.637931034482758"
+    },
+    {
+      "formula": "=(A$6)",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=$B$16",
+      "ironcalc": "23"
+    },
+    {
+      "formula": "=Z15",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LOWER(Z27)",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=ROUND(NOT($B$4), LOWER(Z$17))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=B$10",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=a23",
+      "ironcalc": "23"
+    },
+    {
+      "formula": "=A$22",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=VLOOKUP(CONCAT(Z$25, B5:D21), B1:E30, a$22, 0)%",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=ROUND(D$27, SUMIF(C7:D25, \"0\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=COUNT(C7:D11, IFERROR(ABS(E23), COUNTA(B8:D28, $B9)))",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=SUMIF(B4:C13, $B$1, C7:D12)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=a$26",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=ROUND(SUMIF(C1:C25, SUM(6.58, E$14), A9:C18), IF(OR(\"W1\", C5:C26), OR(\"true\", A2:E19), \"=3\"))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(\"12\", B4:C26)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUMIF(A8:A17, TRUE, D8:D17)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=$B$6",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=$B$32",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(B1:D25, \">w0\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(ROUND(LEN(a21), -3), B9:E11)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=(\">w1\")",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=VLOOKUP(AVERAGE(B1:C27), A1:E30, 0, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=B$7",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=C28 <= 0",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUM(\"=3\", SUM(1e3, \">w1\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUM(CONCAT(C$22, C4:E20), IF(\"W1\" > \"x\", IFERROR(Z30, C$16), SUM(A8:C14)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(B6:D23, 0)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(B$19, (50%))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AND(Z13, AVERAGE(AND(B3:C15, Z32)))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=C29 & C$4",
+      "ironcalc": "1526"
+    },
+    {
+      "formula": "=Z26",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(Z$9, a5)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=A24",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=UPPER(ABS(Z$6))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(C2:C29, ROUND(Z$17 ^ A5, -1))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=-4",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=D$16",
+      "ironcalc": "25"
+    },
+    {
+      "formula": "=SUMIF(B9:E17, E$1)",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=IFERROR(FALSE, TRUE)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=ROUND(SUMIF(B3:C29, \"0\"), CONCAT(C24, A2:D28))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=E$14",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=OR(6, C5:E26)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=50%",
+      "ironcalc": "0.5"
+    },
+    {
+      "formula": "=LEN(ABS(C$20))%",
+      "ironcalc": "0.01"
+    },
+    {
+      "formula": "=SUMIF(A7:C29, A$3)",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=C$15",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=OR(VLOOKUP(VLOOKUP(a$24, B1:E30, C$20, 0), A1:E30, 1, FALSE), a30)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=AVERAGE(Z$32)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=COUNTA(C10:D14, B9)",
+      "ironcalc": "11"
+    },
+    {
+      "formula": "=UPPER(MIN(B6:C23, $B$11))",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=5.21",
+      "ironcalc": "5.21"
+    },
+    {
+      "formula": "=B$13",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=CONCAT(\"true\", B6:E21)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=COUNTA(C8:C12, 1e3)",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=LEN(AVERAGE(a$4))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=E$27",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=SUMIF(A4:E13, \"<\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"<5\"",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=C24",
+      "ironcalc": "17"
+    },
+    {
+      "formula": "=B28",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=$B25",
+      "ironcalc": "w1"
+    },
+    {
+      "formula": "=NOT(VLOOKUP(OR(A$22, C5:D22), A1:E30, 5, FALSE))",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=MIN(B5:C27, B$6)",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=MAX((Z4), IFERROR(0, MIN(A1:D21, \"\")))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=0%",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=$B25",
+      "ironcalc": "w1"
+    },
+    {
+      "formula": "=IF(VLOOKUP(UPPER(A$24), A1:E30, 5, FALSE), C21, COUNT(B1:D28, CONCAT($B$4, B1:C26)))",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=ABS(Z$21)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=MAX(LOWER(\"12\"%), LOWER(ROUND(E$25, E$23)))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=ROUND($B$21, 2)",
+      "ironcalc": "20"
+    },
+    {
+      "formula": "=OR(ABS(C27), A9:D28)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=(A7% & a$18)",
+      "ironcalc": "0.0718"
+    },
+    {
+      "formula": "=a18",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=CONCAT(UPPER(A10), C2:D13)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=Z20",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(A9:C17, B$32)",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=COUNTA(A8:D26, 13)",
+      "ironcalc": "71"
+    },
+    {
+      "formula": "=OR(OR(D24, C6:C28), A1:E11)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=a10",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=ABS(AND(C1:C24, A$4))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=A$14",
+      "ironcalc": "14"
+    },
+    {
+      "formula": "=IFERROR(C$14, $B$14)",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=IF(\">w1\", OR(\"<5\", 6.55))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=AND(A1:D28, B$12)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IF($B$3%, A$22)",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=AVERAGE(B5:D15)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=-6",
+      "ironcalc": "-6"
+    },
+    {
+      "formula": "=CONCAT(SUMIF(A3:E20, \"<5\", B6:E28), C8:D20)",
+      "ironcalc": "93283112TRUEW2-4W34.565w0322W1101226w02513242128w33313"
+    },
+    {
+      "formula": "=+SUMIF(A2:D28, SUMIF(C8:C13, Z22, E8:E13), A9:D29)",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=C$17",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=AND(OR(A$2, A3), AND(D6, \"12\"))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=MIN(B4:D20, \"<5\")",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=COUNTA(B7:C26, \">w1\")",
+      "ironcalc": "38"
+    },
+    {
+      "formula": "=SUM(A5:C22)",
+      "ironcalc": "641"
+    },
+    {
+      "formula": "=UPPER(5.11)",
+      "ironcalc": "5.11"
+    },
+    {
+      "formula": "=UPPER(a$30)",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=AVERAGE(NOT(A$3))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(A4:D23)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=VLOOKUP(FALSE, B1:E30, A17, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=LOWER(MIN(A7:E29, E26))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=NOT(AND(B10:D22, 0)) - MIN(A3:E12, OR(C$27, \"x\"))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IF(a16, D$15)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(\">w1\", AND(A$31, A$4))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=AND(C10:D25, A$10)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=VLOOKUP(AVERAGE(A6:E25), A1:E30, 1, FALSE)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=A$22",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=MAX((FALSE), 9.74 & $B26)",
+      "ironcalc": "9.741"
+    },
+    {
+      "formula": "=IF(AND(\"\", ROUND(B$3, $B14)), CONCAT(AND(B1:C20, D2), B3:D27), a2 >= Z$27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IF(E14, a$15)",
+      "ironcalc": "15"
+    },
+    {
+      "formula": "=C$15",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=NOT(SUMIF(A6:C11, \">w1\"))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUMIF(A2:E25, \"<>true\")",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=MIN(C5:C13, Z6)",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=OR(C25, C2:C24)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=(\"true\")",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=SUM(A3:E23)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=UPPER(C23)",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=$B$17",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(A2:E25, SUMIF(C9:E23, B29, C1:E12)%)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=E$6",
+      "ironcalc": "11"
+    },
+    {
+      "formula": "=AVERAGE(B9:E25)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=OR(SUM(A2:C13), A10:D21)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AND(\"true\", \"true\")",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AVERAGE(MIN(C9:D19, 1.51))",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=AND(C9:C25, AVERAGE(Z21))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=C20 <= 50%",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=CONCAT(\"true\" <> \"true\", A1:C17)",
+      "ironcalc": "FALSE18-428318842826532126927w3w3816289-4121019W2110W312w0w0132722146101527261623w01713"
+    },
+    {
+      "formula": "=ABS(C8)",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=\"true\" > A31",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AND(SUMIF(C3:C16, C$5, B9:E15), SUMIF(A9:D13, C6, C1:D22))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=SUMIF(A7:D27, \"12\", A5:C21)",
+      "ironcalc": "33"
+    },
+    {
+      "formula": "=ROUND(C$22, 1)",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=LEN(\"x\")",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=MAX(\"true\", 27)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=OR($B14, B8:C13)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUMIF(C9:E24, a$20, A2:D17)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(D2)",
+      "ironcalc": "4"
+    },
+    {
+      "formula": "=LEN(Z5)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ROUND(IFERROR(E$9, \"x\"), C29%)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=IFERROR(IF(IF(a$7, E12), AND(C9:D21, \"W1\"), A21 >= A$26), SUM(AND(C10:C15, E12), SUM(C8:D26)))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=IF(B28, D$28, 1e3)",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=AND(A4:C22, LOWER(B$15))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=C$14",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=OR(IFERROR(\"W1\", B1), COUNTA(C2:D29, Z7))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AVERAGE(COUNT(C10:C23, \"<5\"))",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=D9",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=LOWER(LEN(a30))",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=IF(NOT(a13), SUMIF(A9:E28, E18))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=MIN(A4:D13, A$1)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(D6:D25, NOT(B15), B6:B25)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=(C$30)",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=SUMIF(B2:C12, \"<>true\")",
+      "ironcalc": "214"
+    },
+    {
+      "formula": "=B6",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=A6%",
+      "ironcalc": "0.06"
+    },
+    {
+      "formula": "=SUMIF(B5:B15, $B$26, D5:D15)%",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=Z21",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=A18 = \"true\"",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=50%",
+      "ironcalc": "0.5"
+    },
+    {
+      "formula": "=a$7",
+      "ironcalc": "7"
+    },
+    {
+      "formula": "=COUNTA(C8:D20, -2)",
+      "ironcalc": "25"
+    },
+    {
+      "formula": "=AND(C5:E12, OR(\"x\", A6:D20))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(\"W1\")",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=AND(A4:D13, \"12\")",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=COUNTA(B2:C20, UPPER(Z11))",
+      "ironcalc": "35"
+    },
+    {
+      "formula": "=COUNTA(A4:E17, -MIN(B7:C28, D24))",
+      "ironcalc": "68"
+    },
+    {
+      "formula": "=19",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=ROUND(COUNTA(C8:C12, SUMIF(C7:C29, a$10, C6:D24)), -1)",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=AND(C7:C28, 1.77)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=C20",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(SUMIF(B6:D21, \">w0\"), COUNTA(C9:E27, IFERROR(\"12\", FALSE)))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=AND(A4:D18, a$12)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=COUNTA(B7:C21, C$32)",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=COUNT(C10:D17, AND(LEN(\"=3\"), IFERROR(B4, Z25)))",
+      "ironcalc": "11"
+    },
+    {
+      "formula": "=LEN(\"<5\")",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=E17",
+      "ironcalc": "32"
+    },
+    {
+      "formula": "=VLOOKUP(NOT(SUM(B2:D12)), B1:E30, a21, 0)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(B8:C14, Z31)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=50%%",
+      "ironcalc": "0.005"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=LEN(C$28)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(AVERAGE(B8:C19))",
+      "ironcalc": "16.125"
+    },
+    {
+      "formula": "=SUM(VLOOKUP(a1, B1:E30, a$4, 0), SUMIF(B4:C14, \"\"))",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=$B16%",
+      "ironcalc": "0.23"
+    },
+    {
+      "formula": "=COUNTA(A10:E15, COUNT(B7:E28, B28))",
+      "ironcalc": "29"
+    },
+    {
+      "formula": "=LEN(AND(B2:C19, IF(D5, \"<5\")))",
+      "ironcalc": "5"
+    },
+    {
+      "formula": "=D$25",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=COUNTA(C6:D18, LEN(D6))",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=ROUND(AVERAGE(50%), 2)",
+      "ironcalc": "0.5"
+    },
+    {
+      "formula": "=NOT(\"\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUMIF(C9:C17, \"<>5\")",
+      "ironcalc": "83"
+    },
+    {
+      "formula": "=VLOOKUP(OR(COUNT(A5:D23, A$2), C5:E22), A1:E30, 5, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=VLOOKUP(A11, B1:E30, 6.85, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=IF(0, ABS(A$9))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=ABS(OR(($B$18), D$20 * 0))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=COUNT(A4:C21, FALSE)",
+      "ironcalc": "44"
+    },
+    {
+      "formula": "=A$19",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=E$10",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=MIN(C9:C27, 34)",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=LEN(A15)",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=IF(D$7, a14)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=21",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=a23",
+      "ironcalc": "23"
+    },
+    {
+      "formula": "=AND(ROUND(MIN(C5:C17, FALSE), 3), LOWER(\"\"))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=LEN(C$12)",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=$B$4%",
+      "ironcalc": "0.28"
+    },
+    {
+      "formula": "=E1",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=$B6",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=SUM(A5:E12)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AND(A$25, a$13)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=6.62",
+      "ironcalc": "6.62"
+    },
+    {
+      "formula": "=B24",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=AVERAGE(OR(D$8, A2:C22))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=VLOOKUP(C19, A1:E30, 3, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=COUNT(A7:E21, MIN(C4:E25, \"x\"))",
+      "ironcalc": "55"
+    },
+    {
+      "formula": "=B$4",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=Z20",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(\"\" <= 50%, SUM(C4:C27))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=AND(B2:E17, C27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUM(IF(Z$10, \"<5\", $B16), 50%)",
+      "ironcalc": "23.5"
+    },
+    {
+      "formula": "=AND(C9:E24, A6)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(A3:D18, \"12\")",
+      "ironcalc": "60"
+    },
+    {
+      "formula": "=LOWER(-$B31)",
+      "ironcalc": "-0"
+    },
+    {
+      "formula": "=$B$20",
+      "ironcalc": "40"
+    },
+    {
+      "formula": "=COUNT(A7:C26, 7.46)",
+      "ironcalc": "48"
+    },
+    {
+      "formula": "=A9",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=VLOOKUP(Z$20, B1:E30, a$27, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=\"true\" + 0",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=COUNTA(A10:C29, E2)",
+      "ironcalc": "57"
+    },
+    {
+      "formula": "=+D21",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(A1:C17, \"\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=0",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=NOT(\"\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=VLOOKUP(AND(50%, FALSE), B1:E30, B32, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=MAX(COUNTA(B9:E28, \"<5\") - $B17, 31)",
+      "ironcalc": "72"
+    },
+    {
+      "formula": "=B20",
+      "ironcalc": "40"
+    },
+    {
+      "formula": "=$B7",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=CONCAT(ROUND(D$31, 0), C1:C22)",
+      "ironcalc": "0-4826122w32812W2W3w0221026w01321w3133"
+    },
+    {
+      "formula": "=SUMIF(A4:A9, $B$11, C4:C9)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(E3:E17, A$20%, C3:C17)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(IF(MIN(A3:D26, A$12), OR($B$11, C4:C23)), (AND(a3, a13)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IF(B6, \"W1\")",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=0",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(C1:C12, AND(\"\", SUM(A3:E27)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(B$7)",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=IFERROR(B$8, E7)",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=AVERAGE(B7:C26)",
+      "ironcalc": "14.814814815"
+    },
+    {
+      "formula": "=Z19",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=NOT((E2))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=SUMIF(A10:D17, IFERROR(IFERROR(C5, $B$11), SUMIF(A2:E20, \"\", B1:D27)))",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=$B15%",
+      "ironcalc": "0.27"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=Z13",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=$B$28",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IFERROR(1e3, \"true\")",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=MAX(ABS($B28), VLOOKUP(TRUE, B1:E30, \"\", 0))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=CONCAT(NOT(SUMIF(A4:C20, \"<\")), C4:E22)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=VLOOKUP(a12, A1:E30, 2, FALSE)",
+      "ironcalc": "w0"
+    },
+    {
+      "formula": "=OR(MIN(B7:D20, TRUE), UPPER(\"x\"))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=MAX(IF(B$9%, VLOOKUP(Z11, A1:E30, 3, FALSE), $B13), NOT((0)))",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=LOWER(E11)",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=ROUND(AND(\"x\", Z$12), C10)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=ABS(ROUND(IF(\"x\", B31, E17), COUNTA(B7:C21, \"<5\")))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=B$1",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=SUMIF(A5:E25, -C23, B8:E28)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(A5:C18)",
+      "ironcalc": "13.941176471"
+    },
+    {
+      "formula": "=E$31",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IF($B25, COUNTA(B10:C12, \"<5\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUMIF(B7:E13, CONCAT(0, B5:C12))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(B1:D12, \"=7\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LEN(AVERAGE(A$22))",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=a24",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=NOT(TRUE)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=SUMIF(B9:E22, a24)",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=NOT(IFERROR(MIN(B5:E29, $B20), CONCAT(4.74, C10:D21)))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=B$13%",
+      "ironcalc": "0.27"
+    },
+    {
+      "formula": "=$B$18",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=B$15",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=SUMIF(B9:D27, a32, C3:E27)",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=1e3%",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=NOT(COUNTA(B9:E17, D28%))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=(A$10)",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=VLOOKUP(SUMIF(B5:C26, \"<>true\"), B1:E30, Z$28, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=ABS(NOT(A32))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=\"<5\"",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=Z$4",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(C9:C25, SUMIF(C2:C28, \">10\"), C9:C25) - Z20",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=CONCAT(D22, B2:D20)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=OR(SUMIF(A7:E11, \"=\"), SUMIF(C1:C15, \"0\"))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=LEN(OR(IF(Z$32, D26), SUM(A7:C29)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AND(1e3, \"=3\")",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=LEN(D29)",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=MAX(LEN(a12), $B$6 / B$20)%",
+      "ironcalc": "0.02"
+    },
+    {
+      "formula": "=OR(a11, A7:D11)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=+\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=D8 * VLOOKUP((A$29), A1:E30, 5, FALSE)",
+      "ironcalc": "62"
+    },
+    {
+      "formula": "=OR(D$5, B1:E22)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=NOT(SUM(C6:D12))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=NOT($B$19)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AVERAGE(C1:C16)",
+      "ironcalc": "14.2"
+    },
+    {
+      "formula": "=B$30",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MAX(B27, \">w1\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=E16",
+      "ironcalc": "33"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=AND(-6, \">w1\")",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=8.04",
+      "ironcalc": "8.04"
+    },
+    {
+      "formula": "=($B$17)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"<5\"",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=\"\"",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=C$10",
+      "ironcalc": "W2"
+    },
+    {
+      "formula": "=E$28",
+      "ironcalc": "14"
+    },
+    {
+      "formula": "=ABS(AND(LOWER(C16), AND(E$12, a11)))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=IFERROR(D32, E2)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=NOT(AND(A7:D12, 1e3))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=OR(ROUND(MAX(E24, Z$16), Z$17), \"true\")",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=D$27",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=-A11 >= \"x\"",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=E24",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=AVERAGE($B$20)",
+      "ironcalc": "40"
+    },
+    {
+      "formula": "=MAX($B7, SUMIF(C6:C23, \"W1\"))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=IF(\"\", B$23)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=AVERAGE(AVERAGE(A1:D19))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=LEN(9.00)",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=A31",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(C9:D19)",
+      "ironcalc": "229.565"
+    },
+    {
+      "formula": "=VLOOKUP(E25, A1:E30, 5, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=AND(OR(\"=3\", C10:C18), A7)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUM(\"<5\", AVERAGE(OR(\"<5\", C18)))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=UPPER(FALSE)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=0",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(B1:C12, COUNTA(A1:C29, E2))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=a$16",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=SUMIF(B7:D28, (\"true\"), B6:C22)",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=E25",
+      "ironcalc": "-3"
+    },
+    {
+      "formula": "=$B29",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=ROUND(SUMIF(C10:E29, \"<>w1\"), 1)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(ROUND(UPPER(\">w1\"), IFERROR(A31, Z$20)))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=B4",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=50%",
+      "ironcalc": "0.5"
+    },
+    {
+      "formula": "=a14",
+      "ironcalc": "14"
+    },
+    {
+      "formula": "=ROUND(C$17, 3)",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=COUNT(C1:C27, ROUND(TRUE, $B2))",
+      "ironcalc": "20"
+    },
+    {
+      "formula": "=D$17",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=Z$31",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=CONCAT(MAX(FALSE, E14), B2:C15)",
+      "ironcalc": "281882826321292w3w31628-41219W20W3w0w027226102726"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AND(TRUE, A$13)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=E21",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=D8",
+      "ironcalc": "31"
+    },
+    {
+      "formula": "=AVERAGE($B$25)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IF(CONCAT($B18, C5:E29), OR(C$18, B5:E27))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=D$25 <= C$16",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=D26",
+      "ironcalc": "34"
+    },
+    {
+      "formula": "=AVERAGE(B10:D16)",
+      "ironcalc": "14.326071429"
+    },
+    {
+      "formula": "=E$14",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=E25",
+      "ironcalc": "-3"
+    },
+    {
+      "formula": "=Z$17",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=D$13",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=AVERAGE(B1:D29)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=E12",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(SUMIF(A3:A15, AND($B$29, \"true\"), C3:C15), SUMIF(B1:D24, SUMIF(B3:D20, C13, C5:C13), B10:C26))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=Z25",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(MIN(B7:D13, C16))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(C10)",
+      "ironcalc": "W2"
+    },
+    {
+      "formula": "=OR(Z$7, \"=3\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=C$7",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=AVERAGE(A2:C23)",
+      "ironcalc": "14.41509434"
+    },
+    {
+      "formula": "=VLOOKUP(C8, B1:E30, \"\", 0)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=D8",
+      "ironcalc": "31"
+    },
+    {
+      "formula": "=-AVERAGE(A2:D25)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=B8",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=AND(B10:C17, VLOOKUP(C$5, B1:E30, Z11, 0))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=$B22%",
+      "ironcalc": "0.09"
+    },
+    {
+      "formula": "=LOWER(0)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=COUNTA(A7:C12, ROUND(\"x\", E6))",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=C7",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=LEN($B$2)",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=VLOOKUP(AVERAGE(A8:E17), B1:E30, Z$27, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=SUM(D30, B14)",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=MAX(AVERAGE(B30), \"W1\"%)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=NOT(+MIN(B9:E23, B$22))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=VLOOKUP(E$18, A1:E30, 4, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=+MIN(B6:D21, 1e3)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IF(SUMIF(C9:C21, \"12\"), LOWER(VLOOKUP(D11, B1:E30, FALSE, 0)))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=\">w1\" - A$17",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AND(C5:D15, SUM(A3, FALSE))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=LEN(IF(B$20, OR(\"W1\", \"<5\"), 7.66))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AVERAGE(\">w1\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=COUNT(C10:D15, OR(6, \"=3\"))",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=NOT(VLOOKUP(TRUE%, B1:E30, SUMIF(C9:E27, \">w1\"), 0))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=LOWER(A$12)",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=A12%",
+      "ironcalc": "0.12"
+    },
+    {
+      "formula": "=OR(+ROUND(C$23, \"12\"), C10:E22)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=E17",
+      "ironcalc": "32"
+    },
+    {
+      "formula": "=COUNT(B1:D24, C2)",
+      "ironcalc": "54"
+    },
+    {
+      "formula": "=MIN(A2:C12, CONCAT(a13, C7:C20))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AND(\"x\", \"x\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=ROUND(\"<5\", -1)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUMIF(A8:A16, UPPER(\"true\"), C8:C16)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=E27",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=IF(LOWER(C21), SUMIF(B4:E22, TRUE), AND($B21, FALSE))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=VLOOKUP(SUMIF(B4:C13, A$15, B6:D21), A1:E30, 6, FALSE) ^ 50%",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=D18",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=MIN(A2:E17, LOWER(\"<5\"))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(A10:D24, \"=7\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=E$7",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=SUMIF(C8:E19, \"<>\")",
+      "ironcalc": "506.565"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=AND(IFERROR(E15, $B21), IFERROR(B4, E17))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=D$13",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=0",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=D$12",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=SUMIF(C8:E12, \"TRUE\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(A2:D29, LOWER($B$23))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(D$8)",
+      "ironcalc": "31"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=ABS((TRUE))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=SUMIF(A2:E13, \"<>\")",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=VLOOKUP(a$15, A1:E30, 1, FALSE)",
+      "ironcalc": "15"
+    },
+    {
+      "formula": "=B$26",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=MIN(C3:D21, SUMIF(B6:C22, a$21, C9:D21))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IFERROR(\"<5\", 1e3)",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=D$6",
+      "ironcalc": "34"
+    },
+    {
+      "formula": "=C3",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=SUM(A12, D7)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=a$3",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=E17",
+      "ironcalc": "32"
+    },
+    {
+      "formula": "=MIN(B8:C20, E$28)",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=$B1",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=IF(E$21, AND(IF(\"W1\", a$7, \"12\"), A$14))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=D28",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(A9:D25, (\"=3\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=++B$6",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=MIN(A6:E11, B$11)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=B17",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=a27",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=COUNTA(C2:E17, E$15)",
+      "ironcalc": "46"
+    },
+    {
+      "formula": "=CONCAT(SUMIF(B2:B8, a$30, C2:C8), A7:E29)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=UPPER(\"<5\")",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=CONCAT(50%, C3:E28)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(C1:E25, B$19)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=+-\"W1\"",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AVERAGE(B10:C18)",
+      "ironcalc": "17.166666667"
+    },
+    {
+      "formula": "=(COUNTA(A3:C27, COUNTA(A6:C27, Z21)))",
+      "ironcalc": "73"
+    },
+    {
+      "formula": "=AND(A9:D25, \"true\")",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=Z$28 / a$20",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=22",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=Z4",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ABS(\">w1\"%)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=OR(MAX(IF(D$13, $B27), +0), A4:D13)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=AVERAGE(8)",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=LEN(SUM(CONCAT(D$30, B10:D17), UPPER($B3)))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=(\"=3\")",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=\"<5\"",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=LOWER(IF($B1, Z$20, a$9))%",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=AVERAGE(SUM(\"=3\", B22)) <= C$1",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=C$16",
+      "ironcalc": "w0"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=MIN(B9:D20, \"=3\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=NOT(\"=3\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AVERAGE(A8:C24)",
+      "ironcalc": "15.87804878"
+    },
+    {
+      "formula": "=SUMIF(B3:C21, \"<>true\")",
+      "ironcalc": "466"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=a$21",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=SUMIF(C10:C19, ROUND((\"\"), 0), C10:C19)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MAX(C$11, B25)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=UPPER(LOWER($B2))",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=AND(MAX(IF(a$15, \"W1\"), +B23), VLOOKUP(VLOOKUP(E32, A1:E30, 2, FALSE), B1:E30, UPPER(\"W1\"), 0))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AVERAGE(a$11)",
+      "ironcalc": "11"
+    },
+    {
+      "formula": "=OR(SUMIF(B3:B12, \"x\", A3:A12), LOWER(1e3))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=C$11",
+      "ironcalc": "W3"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=E7",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=AVERAGE(C3:E18)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUM(B9:D20)",
+      "ironcalc": "392.565"
+    },
+    {
+      "formula": "=OR(ROUND(\"true\", Z$11), Z30)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUMIF(A5:A23, (AND(A1:D14, B27)), E5:E23)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=COUNTA(C5:C14, 0)",
+      "ironcalc": "11"
+    },
+    {
+      "formula": "=SUM(MAX(E$10, B30), -\"<5\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=CONCAT(\"W1\", C3:E25)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=COUNT(B3:D25, A13) - D$10",
+      "ironcalc": "55"
+    },
+    {
+      "formula": "=A$2",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=E22",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=SUMIF(C5:C17, IFERROR(COUNTA(C8:E11, C$7), IF(Z$21, a5)), A3:E11)",
+      "ironcalc": "#CIRC!"
+    },
+    {
+      "formula": "=SUMIF(E1:E7, E$10, E1:E7)",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=COUNT(B2:D26, SUMIF(B5:B10, A5, C5:C10))",
+      "ironcalc": "56"
+    },
+    {
+      "formula": "=IFERROR(+E8, SUMIF(B2:C16, NOT(E3)))",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=OR(B$28, B4:C14)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=ABS(E$20)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AND(AND(D25, -\"=3\"), a24)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=OR(C6, C2:C16)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AND(C9:C13, AND(A1:C14, a$21))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=IF((0), SUMIF(B4:B15, \"\", B4:B15))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=$B26",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=Z12",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=D16",
+      "ironcalc": "25"
+    },
+    {
+      "formula": "=OR(D$15, C$16)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=\"<5\"",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=VLOOKUP(SUMIF(A10:D25, COUNT(B3:D25, E$21), C9:C19), A1:E30, 1, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=a$1",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=MIN(A2:C28, LEN(E$18))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AVERAGE(\"12\")",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=MIN(C1:C18, -6)",
+      "ironcalc": "-6"
+    },
+    {
+      "formula": "=SUM(A5:E27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AND(OR(\"=3\", A10:D18), IFERROR(\">w1\", 7.10))%",
+      "ironcalc": "0.01"
+    },
+    {
+      "formula": "=+A$12",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=AVERAGE(ROUND(Z25, -1))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=Z4",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ABS(50%)",
+      "ironcalc": "0.5"
+    },
+    {
+      "formula": "=18",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=LEN(\"12\")",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=SUMIF(C8:E24, \">w1\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=Z26",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=D29",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=E$14",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=AVERAGE(\"<5\")%",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=MIN(C2:E16, E28)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=CONCAT(Z$5, C10:C26)",
+      "ironcalc": "W2W3w0221026w01321w313331738"
+    },
+    {
+      "formula": "=NOT(NOT(Z$12))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=AND($B$12, D6)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=UPPER(1e3)",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=Z25",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=COUNT(C6:C16, +OR(E16, A4:C25))",
+      "ironcalc": "7"
+    },
+    {
+      "formula": "=SUMIF(C9:C21, \"<=3\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IF(AVERAGE(1e3), SUMIF(A10:C24, D$5))",
+      "ironcalc": "20"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=(a$12)",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=VLOOKUP(\"\", B1:E30, $B28, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=SUMIF(C3:C16, C2, E3:E16)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(C4:D22, a1)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=NOT(UPPER(a28))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AVERAGE(B7:D21)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=a20 < B21",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=$B$8",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=MIN(B1:D17, (UPPER(1e3)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=VLOOKUP(B6, B1:E30, \"<5\", 0)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=a$30",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=OR(A8, B7:E22)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=(a29)",
+      "ironcalc": "29"
+    },
+    {
+      "formula": "=SUMIF(C4:C12, \"=w3\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(C4:E22, Z$31)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(A1:D15, C$26)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(C10:D26, \"x\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(A5:D15)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ABS(A22)",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=B$8",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=IF(IFERROR(\"x\", IF(B17, B$29)), SUMIF(C1:D13, \"<5\", C7:D19), C3)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=MAX(a29, FALSE)",
+      "ironcalc": "29"
+    },
+    {
+      "formula": "=SUMIF(A5:D17, AVERAGE(A10:C25))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IFERROR(D$7, E$1)",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=1.98",
+      "ironcalc": "1.98"
+    },
+    {
+      "formula": "=COUNT(A8:E23, OR($B25, C4:C24))",
+      "ironcalc": "63"
+    },
+    {
+      "formula": "=IF(ABS(AND(E$11, A26)), LOWER(SUMIF(D3:D18, B$31, B3:B18)))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(Z$16, B$20)",
+      "ironcalc": "40"
+    },
+    {
+      "formula": "=CONCAT(AND(A8:E27, E21), C8:E13)",
+      "ironcalc": "FALSE28312112TRUEw1W2-426W34.56530w0322W130"
+    },
+    {
+      "formula": "=SUMIF(A6:D23, AND(B3:D17, B$29))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=Z$2",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=8",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=OR(Z10, C10:E26)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=CONCAT(1e3, B3:C29)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AND(A7:C15, CONCAT(\"<5\", B1:E13))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=SUMIF(C8:C28, A30)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(a2, C6:D14)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=C$30",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=UPPER(VLOOKUP(a26, B1:E30, AND(B9:D19, D30), 0))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=SUM(\"\", Z10)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AVERAGE(E$7)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=MAX(\"x\", IFERROR(ABS(2.85), D32))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=IF(B8, E6)",
+      "ironcalc": "11"
+    },
+    {
+      "formula": "=E$7",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=SUMIF(A7:C15, IFERROR(SUMIF(E2:E7, C$29, A2:A7), 0), B9:D18)",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=A10 & 50%",
+      "ironcalc": "100.5"
+    },
+    {
+      "formula": "=AND(C7:D22, $B5)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=4.92",
+      "ironcalc": "4.92"
+    },
+    {
+      "formula": "=COUNT(A1:D16, $B$28)",
+      "ironcalc": "52"
+    },
+    {
+      "formula": "=SUMIF(A9:D20, $B32)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=C15",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=a$32",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=D$27",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=UPPER(CONCAT(NOT(\"\"), C3:C27))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AND(A1:D25, B5)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=E14",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=IF(COUNT(C7:E14, 5.80), AND(FALSE, E$31))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=MIN(A5:C25, \"12\")",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=OR(D17, E$18)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=ABS(MIN(A7:E20, COUNTA(A2:C21, a2)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"<5\"",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=VLOOKUP(A2, A1:E30, 0, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=AVERAGE(C$28) < COUNTA(C1:D14, MAX(E$21, FALSE))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=D$4",
+      "ironcalc": "32"
+    },
+    {
+      "formula": "=ROUND(LEN(\">w1\"), AVERAGE(C2:D21))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUM(C8:D14)",
+      "ironcalc": "118.565"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=IFERROR(SUM(\"x\", Z10), IF(\"=3\", D$29, A$9))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AND(SUMIF(B6:C11, A$15), OR(C$16, a25))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=$B15",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=IF($B28, B23)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=SUMIF(B2:C20, SUMIF(B6:D24, SUMIF(E4:E10, a7, C4:C10)))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=CONCAT(a3, B4:C25)",
+      "ironcalc": "32826321292w3w31628-41219W20W3w0w02722610272623w0131221w340201393TRUE31617w13"
+    },
+    {
+      "formula": "=SUM(C10:C27)",
+      "ironcalc": "193"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=C$4%",
+      "ironcalc": "0.26"
+    },
+    {
+      "formula": "=-OR(SUMIF(B8:C22, a$3), VLOOKUP(\">w1\", B1:E30, B$24, 0))",
+      "ironcalc": "-1"
+    },
+    {
+      "formula": "=D14 * B$11",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ABS(SUMIF(C5:D11, \"w2\"))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(B2:D17, AND(SUMIF(A6:A22, a$6, C6:C22), \"x\"), C5:E21)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(C7:C23)",
+      "ironcalc": "151"
+    },
+    {
+      "formula": "=COUNT(B4:D19, \"=3\"%)",
+      "ironcalc": "34"
+    },
+    {
+      "formula": "=SUMIF(C4:C15, UPPER(MIN(C3:C20, B31)), A4:A15)",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=SUMIF(A10:C11, \"w2\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=-ROUND(Z25, E$2)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(COUNTA(A9:E14, SUMIF(A7:C18, \"=3\", B6:D23)), B6:C16)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUM(A10:D26)",
+      "ironcalc": "846.565"
+    },
+    {
+      "formula": "=IF(IF(B9, A5), IFERROR(Z$17, a7), (Z5))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(B7:E18)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=A13",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=a$16",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=D$11 <> E$25",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=OR(TRUE, \"=3\")",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=A$21",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=CONCAT(Z3, C9:C27)",
+      "ironcalc": "12W2W3w0221026w01321w31333173854"
+    },
+    {
+      "formula": "=AND(A4:D28, (C32))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=Z18",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=C$13",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=$B$26",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=AND(A9:E29, ABS(AVERAGE(C7:C12)))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=0%",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=UPPER(COUNTA(C2:E21, TRUE))",
+      "ironcalc": "56"
+    },
+    {
+      "formula": "=NOT(C$25)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=\"W1\" * $B$18",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=LEN(D15%)",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=a$32",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LEN(A23)",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=UPPER($B$12)",
+      "ironcalc": "W0"
+    },
+    {
+      "formula": "=AND(NOT(SUMIF(A5:A12, 0, D5:D12)), OR(Z7, COUNTA(A10:C23, E$23)))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=Z$1",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ABS(SUMIF(A8:D24, a$4))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=CONCAT(AVERAGE(\"W1\"), C5:C29)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=LEN(1e3)",
+      "ironcalc": "4"
+    },
+    {
+      "formula": "=COUNTA(B3:C12, \"=3\")",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=Z$2",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(B6:C13, $B$22, A4:D24)",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=CONCAT((B$8), B6:D29)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AVERAGE(C3:D23)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ROUND(B11, 0)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=SUMIF(A1:A8, VLOOKUP(MIN(C10:C19, E16), B1:E30, LOWER(0), 0), C1:C8)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=A$25",
+      "ironcalc": "25"
+    },
+    {
+      "formula": "=COUNT(A9:C18, MAX(FALSE, a$6))",
+      "ironcalc": "25"
+    },
+    {
+      "formula": "=SUMIF(C6:E12, ($B21))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IFERROR(B$19, E6)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(50%, UPPER(E10))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUM(2.65, LEN(OR(1e3, C3:C25)))",
+      "ironcalc": "6.65"
+    },
+    {
+      "formula": "=MAX(A$19, Z19)",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=OR(SUM(B32, 0), A4:D16)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUM(C1:E20)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=E$17",
+      "ironcalc": "32"
+    },
+    {
+      "formula": "=SUMIF(C4:C10, \"=3\", E4:E10)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=COUNTA(A10:E15, SUM(AVERAGE(C10:E28), C28))",
+      "ironcalc": "29"
+    },
+    {
+      "formula": "=$B29",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=SUMIF(B9:C24, VLOOKUP(B$10, A1:E30, 1, FALSE))",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=C$15",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=IFERROR(\"x\", C$16)",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=IF(SUMIF(A8:A21, \"x\", B8:B21), SUM(B17, A24), B$30%)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=C$7",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=VLOOKUP(MIN(C10:D27, A$21), B1:E30, Z29, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=SUM(VLOOKUP(C$4, B1:E30, Z$2, 0) >= SUMIF(B8:C15, E14), NOT(SUMIF(B9:D27, B30, A2:E12)))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=\"\"",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=A$13",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=SUM(B$4, NOT(B$8))",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=AVERAGE(A6:E14)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=C21",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=ROUND(IF(C27, COUNTA(A3:D22, \"x\")), 0)",
+      "ironcalc": "76"
+    },
+    {
+      "formula": "=IF(0, A21, A10)",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=LEN(ABS(C20))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=NOT(14)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=CONCAT(AVERAGE(B8:D14), B5:D18)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ABS(\"<5\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=A19",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=VLOOKUP(AVERAGE(B1:E17), B1:E30, COUNTA(C8:C29, $B28), 0)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUM(B9:D23)",
+      "ironcalc": "441.565"
+    },
+    {
+      "formula": "=IF(TRUE, $B$3, E$26)",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=7.27",
+      "ironcalc": "7.27"
+    },
+    {
+      "formula": "=MIN(A1:C17, AND(LEN(Z$31), 4.60))",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AND(MIN(C3:C29, D$19), E26)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=VLOOKUP(IF(AVERAGE(A4:E18), VLOOKUP(E$9, B1:E30, Z$14, 0)), B1:E30, \"<5\", 0)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(B8:D21, E$13)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(E10:E19, OR(Z24, \"x\"), E10:E19)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=VLOOKUP(UPPER(E24), A1:E30, 6, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=IF(a$31, Z20)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=A14",
+      "ironcalc": "14"
+    },
+    {
+      "formula": "=ROUND(AND(A8:D28, SUMIF(A5:A12, B11, D5:D12)), SUMIF(B9:E19, \"w2\"))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=VLOOKUP(\"=3\", A1:E30, 4, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=$B$21",
+      "ironcalc": "20"
+    },
+    {
+      "formula": "=IF($B18, A2, AND(A8:D29, D3))",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=E$25",
+      "ironcalc": "-3"
+    },
+    {
+      "formula": "=SUMIF(A3:D22, IF(E$8, Z$18, \"12\"), A4:D15)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(B7:D24, ROUND(UPPER(FALSE), ABS(Z$9)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"<5\"",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=Z$5",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"\"",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=MAX(LEN(VLOOKUP(\"12\", A1:E30, 4, FALSE)), \"<5\")",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=50%",
+      "ironcalc": "0.5"
+    },
+    {
+      "formula": "=ABS($B$21)",
+      "ironcalc": "20"
+    },
+    {
+      "formula": "=CONCAT(AVERAGE(Z$19), C1:D22)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=AVERAGE(B4:C13)",
+      "ironcalc": "16.357142857"
+    },
+    {
+      "formula": "=D5",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=MIN(A8:C24, a$4)",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=a$9",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=LOWER(SUM(a29, COUNTA(C7:C27, Z25)))",
+      "ironcalc": "49"
+    },
+    {
+      "formula": "=ROUND(D30, a$18)",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=LEN(AND(A8:D17, 6.66))",
+      "ironcalc": "5"
+    },
+    {
+      "formula": "=E25",
+      "ironcalc": "-3"
+    },
+    {
+      "formula": "=VLOOKUP(C14, B1:E30, C20, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=D17",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=-\"W1\"",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=COUNTA(A4:D20, SUMIF(B9:C27, C23, C3:C17))",
+      "ironcalc": "65"
+    },
+    {
+      "formula": "=(VLOOKUP(FALSE, A1:E30, 1, FALSE) = AVERAGE(C4:D22))",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=E$6",
+      "ironcalc": "11"
+    },
+    {
+      "formula": "=E23",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=COUNT(B4:C26, $B31)",
+      "ironcalc": "33"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUMIF(E10:E29, -\"=3\", B10:B29)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=UPPER(\">w1\")",
+      "ironcalc": ">W1"
+    },
+    {
+      "formula": "=SUM(C4:C25)",
+      "ironcalc": "211"
+    },
+    {
+      "formula": "=SUMIF(B1:B6, D1, C1:C6)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=E$1",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=AND(B3:C15, IF($B$27, C$20, -10))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=IFERROR(COUNTA(A7:C22, AND(A4:C20, 1e3)), SUMIF(B9:E28, \"=\"))",
+      "ironcalc": "46"
+    },
+    {
+      "formula": "=IFERROR(A27, D$8)",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=AVERAGE(IF(0, \"x\", E19))",
+      "ironcalc": "38"
+    },
+    {
+      "formula": "=\"\"",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=SUMIF(B5:B11, a15, D5:D11)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=A21",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=IFERROR($B23, MIN(B10:E20, Z10))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=IFERROR(E$24, \"<5\")",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=OR(C32, AND(B3:E22, \">w1\"))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=E$2",
+      "ironcalc": "4"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=A23",
+      "ironcalc": "23"
+    },
+    {
+      "formula": "=SUMIF(B3:C27, \"w2\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(B8:C22, \">w1\")",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=B28",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ROUND(\"=3\", CONCAT(LEN(A18), A9:D24))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=ROUND(\">w1\", \"\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=MAX(\"\", E24)%",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUMIF(C5:D25, VLOOKUP(OR(E28, C32), A1:E30, 6, FALSE), C10:D16)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(A6:E24, B26)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ROUND(\"W1\", MIN(B10:D15, \"x\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=OR(NOT(AVERAGE(D$16)), SUMIF(B6:E27, \"<=3\"))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=a$22",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=AND(CONCAT(E22, B10:D22), OR(a$26, 1e3))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=8.73",
+      "ironcalc": "8.73"
+    },
+    {
+      "formula": "=AND(B4:D29, C$31)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IF(\"x\", SUMIF(B6:D29, D$4), IFERROR(0, TRUE))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=E$31",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(D11, \"true\")",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=OR(COUNT(A8:E17, E14), SUMIF(C2:D20, FALSE))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=C2",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IF(D$14, $B$18)",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=D17",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=UPPER(\"\")",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=B$6",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=SUM(C7:E20)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=CONCAT(\"=3\", C1:E11)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(A1:C17, UPPER(\">w1\"), B7:D16)",
+      "ironcalc": "47"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=-E7",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUM(C8:D20)",
+      "ironcalc": "301.565"
+    },
+    {
+      "formula": "=MIN(A3:E19, AND(OR(D$3, C6:C27), SUM(\"W1\", Z$5)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=a30",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=\"=3\" <> Z28%",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=LEN(SUMIF(B1:C17, LEN(\"\"), A4:D25))",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=SUM(C9:C28)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ROUND(OR(SUM(\"12\", E22), C3:C26), 2)",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=a$1",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=\"=3\" + E$22%",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=ROUND(SUMIF(B2:D17, FALSE, C7:C23), OR(IFERROR(Z17, D$30), C3:D14))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=$B25",
+      "ironcalc": "w1"
+    },
+    {
+      "formula": "=VLOOKUP(\"true\", B1:E30, LEN(FALSE), 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=VLOOKUP((OR(C17, B2:D24)), A1:E30, 5, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=AND(COUNTA(B9:D14, C15), C11)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=$B3",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=OR(a7, B3:D23)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=UPPER(\"x\")",
+      "ironcalc": "X"
+    },
+    {
+      "formula": "=ROUND(D$17, Z$32)",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=SUMIF(E6:E13, D13, B6:B13)",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=0",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LEN(VLOOKUP(ROUND(A8, 1), A1:E30, 4, FALSE))",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=ROUND(a$17, -2)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(C1:E28, ROUND(\"true\", 3), A9:D22)",
+      "ironcalc": "#CIRC!"
+    },
+    {
+      "formula": "=ROUND(B27, COUNT(C2:D17, $B2))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=E$14",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=SUM(B1:D29)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=OR(SUMIF(C7:C14, ABS(\"true\"), D7:D14), +$B10)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=C$19",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=MAX(IFERROR($B$3, A$17), OR($B$26, SUM(a$13, $B9)))",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=-9.03",
+      "ironcalc": "-9.03"
+    },
+    {
+      "formula": "=AVERAGE(B2:C26)",
+      "ironcalc": "15.083333333"
+    },
+    {
+      "formula": "=SUMIF(D1:D19, SUMIF(C7:C25, C$1, B7:B25), A1:A19)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(A9:C17)",
+      "ironcalc": "14.19047619"
+    },
+    {
+      "formula": "=AND(C5:E12, E$14)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=A$2",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=COUNTA(A10:E19, D24)",
+      "ironcalc": "47"
+    },
+    {
+      "formula": "=MAX(\"true\", SUMIF(B6:E13, 1e3))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=IF(SUM(ABS($B26), 1e3), AVERAGE(VLOOKUP(E22, B1:E30, \"<5\", 0)))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=VLOOKUP($B$21, B1:E30, 1e3, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=NOT(AVERAGE(D$3))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=IF(E$31, IF(Z$7, IF(1e3, B27)), D14)",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=VLOOKUP($B$7, B1:E30, D$27, 0)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=LEN(NOT(30))",
+      "ironcalc": "5"
+    },
+    {
+      "formula": "=IF((B26), a25)",
+      "ironcalc": "25"
+    },
+    {
+      "formula": "=AVERAGE(B9:E26)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=C13",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=MAX(Z$21, NOT(VLOOKUP(D$20, B1:E30, C20, 0)))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=COUNT(A10:C11, \"12\")",
+      "ironcalc": "5"
+    },
+    {
+      "formula": "=50%%",
+      "ironcalc": "0.005"
+    },
+    {
+      "formula": "=ROUND(IF(IF(a$14, D$2), CONCAT(1e3, A2:D25), E25), 2)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=+\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=COUNTA(A10:D23, SUMIF(D6:D19, E22, C6:C19))",
+      "ironcalc": "52"
+    },
+    {
+      "formula": "=LEN(SUM(SUM(A9:C11), D$17))",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=a24",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=E$6",
+      "ironcalc": "11"
+    },
+    {
+      "formula": "=ABS(AVERAGE(B3:C24))",
+      "ironcalc": "16.0625"
+    },
+    {
+      "formula": "=OR(\"\", B7:E24)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=a$9",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=UPPER(AVERAGE(C5:D12))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=C$20",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(C7:D24, CONCAT(CONCAT(B$9, C6:D22), A8:E13))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=LEN(Z4)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(FALSE, D29) >= ($B$12)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=COUNT(B1:E21, a$28)",
+      "ironcalc": "64"
+    },
+    {
+      "formula": "=C22",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=NOT(SUM(B4:D15))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(50%)",
+      "ironcalc": "0.5"
+    },
+    {
+      "formula": "=SUMIF(E9:E25, \"=3\", A9:A25)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(C10:E12)",
+      "ironcalc": "59.565"
+    },
+    {
+      "formula": "=IF((AVERAGE(B2:D27)), COUNT(C5:D23, SUM(A9:E11)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=A$24",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=OR(LOWER(IF(Z13, \"W1\")), A6:C28)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUM(a$27, a$31)",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=IF(E21, C29)",
+      "ironcalc": "15"
+    },
+    {
+      "formula": "=SUMIF(A3:E11, Z17)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LOWER(LOWER(5.70))",
+      "ironcalc": "5.7"
+    },
+    {
+      "formula": "=50%",
+      "ironcalc": "0.5"
+    },
+    {
+      "formula": "=AVERAGE(E27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(C1:D22, \"<=3\")",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=MAX(ABS(MAX(TRUE, B3)), 0)",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=COUNT(B1:C23, 0)",
+      "ironcalc": "34"
+    },
+    {
+      "formula": "=AVERAGE(SUMIF(B5:B20, C$7, A5:A20))",
+      "ironcalc": "7"
+    },
+    {
+      "formula": "=IFERROR(SUMIF(D5:D10, SUMIF(E8:E13, A$24, B8:B13), D5:D10), \"12\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=E19",
+      "ironcalc": "38"
+    },
+    {
+      "formula": "=AVERAGE(B10:D23)",
+      "ironcalc": "14.950517241"
+    },
+    {
+      "formula": "=MIN(A7:E18, LOWER(ROUND(D$6, Z8)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(A6:A15, \"W1\", D6:D15)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LEN(E25)",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=MIN(B3:D15, IF(SUMIF(A10:E28, a$11), 0))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ROUND($B$27, -2)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(A2:D22)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=MIN(A4:D27, \"\")",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=ABS(A$5)",
+      "ironcalc": "5"
+    },
+    {
+      "formula": "=SUM(C5:E16)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=NOT(1e3)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=MIN(C6:D13, D12)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=UPPER(COUNT(A8:C19, E25) >= SUM(1, FALSE))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUM(\"W1\", E30)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=IF(SUM(MIN(C9:C19, \"12\"), ROUND(C23, B24)), A10, AND(B2:E15, A$25 + $B$21))",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=Z$20",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=COUNT(B2:D11, 1e3) > OR(E10, A5:D28)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=0",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=Z13",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=0",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(B1:E11, $B$17)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ROUND(Z19, -3)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(A5:E16)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(B3:D14, Z$9)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(A2:C14, A21, B4:C15)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=COUNT(B1:C15, AND(C1:D26, \"x\"))",
+      "ironcalc": "23"
+    },
+    {
+      "formula": "=IFERROR(IF(IFERROR(\"W1\", \"W1\"), B$7), B11)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(Z$22)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=COUNTA(C8:D14, TRUE)",
+      "ironcalc": "15"
+    },
+    {
+      "formula": "=NOT(AND(A8:E17, AND(C10:C13, D$7)))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=E$20",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=VLOOKUP(SUMIF(C9:C25, LEN(B$4), C7:E24), A1:E30, 5, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=IF(18, D$2, \"x\")",
+      "ironcalc": "4"
+    },
+    {
+      "formula": "=SUMIF(A8:A20, COUNT(A3:E13, E12), C8:C20)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=D26",
+      "ironcalc": "34"
+    },
+    {
+      "formula": "=D$10 & C$17",
+      "ironcalc": "-413"
+    },
+    {
+      "formula": "=C$17",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=COUNT(B5:C20, SUM(A6:D11))",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=ROUND($B4, 3)",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=E19",
+      "ironcalc": "38"
+    },
+    {
+      "formula": "=VLOOKUP(SUM(C1:C15), B1:E30, IF(SUMIF(C6:C24, 6, A6:A24), $B$11, ROUND($B20, 11)), 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=OR(B19, C4:E29)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=IF(C24, -OR(A15, B5:E12))",
+      "ironcalc": "-1"
+    },
+    {
+      "formula": "=IFERROR(E14, 1e3)",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=+D$30",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=LOWER(SUM(C7:E24))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(C8:C15, C14)",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=OR(ROUND(B25, -3), C9:C12)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=B10",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=E25",
+      "ironcalc": "-3"
+    },
+    {
+      "formula": "=C$1",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=AND(A2:E25, a18)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(2.56)",
+      "ironcalc": "2.56"
+    },
+    {
+      "formula": "=ABS(E10)",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=AVERAGE(CONCAT(COUNT(B10:C20, D21), C3:D23))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=LOWER(\"12\")",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=ROUND(VLOOKUP(A24, A1:E30, 4, FALSE), 1)",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=18",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=SUMIF(B6:D20, CONCAT(AND(B7:C17, E$9), A2:E11))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=MAX(\"true\", 0)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AND(OR(4.63, \"12\"), SUMIF(B8:C28, \"<>true\"))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(ABS(a8))",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=A$19",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=AND(A6:C29, $B7) <= AVERAGE(B5:C28)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=D16 ^ ABS(B$3)",
+      "ironcalc": "1.45519E+25"
+    },
+    {
+      "formula": "=a30",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=AVERAGE($B5) / FALSE",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=COUNTA(A10:D19, a18)",
+      "ironcalc": "38"
+    },
+    {
+      "formula": "=SUMIF(C4:C29, (E$21), B3:D21)",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=CONCAT(C28, C4:C26)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(A9:A26, TRUE, D9:D26)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IF(LOWER(a18), MIN(C10:C23, E$28), \"true\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=$B$28",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ROUND(\"\", FALSE)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=LEN(ABS(\"<5\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUM(C7:D14)%",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AVERAGE(C5:C19)",
+      "ironcalc": "16.222222222"
+    },
+    {
+      "formula": "=E23",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=D$20",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=OR(\"x\", 6.18)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=OR(CONCAT(D7, C4:C23), C6:E17)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AND(A1:C29, AVERAGE(A3:D27))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=VLOOKUP(TRUE, B1:E30, \"<5\", 0)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=ROUND(B$5 <> C$7, OR(D16, \">w1\"))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=E20 < AVERAGE(C5:D12)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=MIN(C4:D12, $B$10)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ABS(ROUND($B$7, 1))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=MAX(SUMIF(C1:C26, \"<\"), AVERAGE(SUMIF(A9:E20, \"=w3\")))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LOWER(\"true\")",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=ABS(ABS(\"true\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=33",
+      "ironcalc": "33"
+    },
+    {
+      "formula": "=VLOOKUP(A12, B1:E30, COUNTA(A9:C29, \"W1\"), 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=D12",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=SUMIF(A1:D12, 50%)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(B6:C27, \">10\")",
+      "ironcalc": "406"
+    },
+    {
+      "formula": "=NOT(NOT(CONCAT(TRUE, C10:C12)))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=$B31",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(A2:E15, (D$29))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AVERAGE(C4:E14)% + SUM(B4:D20)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(A5:D16, \"\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(B2:D23, AND(A3:D28, A$16))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(SUMIF(B6:B23, 32 / \"\", D6:D23))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ROUND(TRUE, B$23)",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=UPPER(A$1)",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=Z$21",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(A5:C18)",
+      "ironcalc": "13.941176471"
+    },
+    {
+      "formula": "=OR(SUM(A6:E27), B6:E27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(C9:C24, 0, E9:E24)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(C6:C23, a$11, E6:E23)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=A28",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=SUMIF(A2:E29, $B4, C8:C11)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=$B$8",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=OR(C$22, B10:E27)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUMIF(B6:B17, AND(B3:C19, \">w1\"), B6:B17)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=D21",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(D7:D25, Z7, A7:A25)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=B2%",
+      "ironcalc": "0.08"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=E$20",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(E17)",
+      "ironcalc": "32"
+    },
+    {
+      "formula": "=VLOOKUP(SUM(D$4, $B29), A1:E30, 0, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=IF(SUMIF(B8:C20, \"<\"), SUMIF(A2:C23, \"<>w1\"))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=LEN(\"x\")",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=AND(SUMIF(A9:E14, \"12\", C4:D29), NOT(8.06))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=AND(B1:E19, NOT(\"\"))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(C2:D11, B12, C6:D15)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(IFERROR(B$6, E$8), Z27)",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=MAX($B16, E26)",
+      "ironcalc": "23"
+    },
+    {
+      "formula": "=IF(COUNT(C2:D19, B21), \"W1\")",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=VLOOKUP(AND(Z$6, ROUND(a$13, A31)), B1:E30, TRUE, 0)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUMIF(A9:A27, Z$31, A9:A27)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=$B6",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=D$11",
+      "ironcalc": "4.565"
+    },
+    {
+      "formula": "=A18",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=SUMIF(B5:C17, ($B$15))",
+      "ironcalc": "54"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=IF(\"<5\", D$4)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=LEN(LEN(50%))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=a$5",
+      "ironcalc": "5"
+    },
+    {
+      "formula": "=E32",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(ABS(UPPER(Z11)), B8:D17)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AND(C9:C29, D2)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=$B8",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=MAX(MIN(B7:C29, B32), $B$32)%",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUM(a4, C$21)",
+      "ironcalc": "17"
+    },
+    {
+      "formula": "=IF(a$14, ROUND(Z$32, -2), SUMIF(C4:E22, FALSE, A1:E28))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=+MIN(C3:E24, COUNT(B8:D17, a$17))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=COUNTA(B1:D25, C$30)",
+      "ironcalc": "69"
+    },
+    {
+      "formula": "=SUMIF(A3:C22, \">10\")",
+      "ironcalc": "633"
+    },
+    {
+      "formula": "=ROUND(OR(A14, A2:C24), -2)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=E$28",
+      "ironcalc": "14"
+    },
+    {
+      "formula": "=Z$22",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ROUND(ROUND(SUMIF(C6:D19, \"<>\"), -2), IF(IFERROR(A$8, E$7), AVERAGE(\"W1\"), -0))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IF(C22, \"\")",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=C24",
+      "ironcalc": "17"
+    },
+    {
+      "formula": "=COUNTA(C2:E24, SUMIF(B7:E23, \"<>true\"))",
+      "ironcalc": "65"
+    },
+    {
+      "formula": "=LOWER(D10)",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=$B12",
+      "ironcalc": "w0"
+    },
+    {
+      "formula": "=E28",
+      "ironcalc": "14"
+    },
+    {
+      "formula": "=SUMIF(B8:E17, TRUE)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=-(8.77)",
+      "ironcalc": "-8.77"
+    },
+    {
+      "formula": "=VLOOKUP(AVERAGE(A9:D22), A1:E30, 4, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=D$11 / B22",
+      "ironcalc": "0.507222222"
+    },
+    {
+      "formula": "=OR(NOT(FALSE), Z3)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AVERAGE(A5:E17)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=LOWER(\"<5\")",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=$B$23",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUMIF(B4:B13, SUMIF(A3:D23, (a10)), D4:D13)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=C24 + Z$17",
+      "ironcalc": "17"
+    },
+    {
+      "formula": "=OR(SUMIF(A2:E16, \"w2\"), AVERAGE(C3:C28))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ABS(+AND(B5:E24, B24))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=AVERAGE(D16)",
+      "ironcalc": "25"
+    },
+    {
+      "formula": "=NOT(OR(B9, B9:C16)%)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=MAX(AVERAGE(A4:E23), AVERAGE(A5))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AVERAGE(CONCAT(NOT(Z$7), C3:C16))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=IFERROR(50%, 9.33)",
+      "ironcalc": "0.5"
+    },
+    {
+      "formula": "=AVERAGE(C9:D28)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AVERAGE(A4:E11)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=VLOOKUP(\"<5\", A1:E30, 0, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=OR(SUMIF(B7:B26, D$4, D7:D26), B7:D25)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=ROUND($B27, 0)",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=D24",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=D30",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=B$32",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=VLOOKUP(C$31, A1:E30, 5, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=OR(ROUND(50%, A12), SUMIF(A8:E13, \"\", B5:C29))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=E3",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=AND(A5:D14, AND(A8:D29, $B$21))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IF(COUNTA(B2:E12, VLOOKUP(a$26, B1:E30, \"x\", 0)), ROUND(NOT(D6), $B$2))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LEN(a$20)",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=D$25",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ROUND(SUMIF(B6:D16, \"TRUE\"), 2)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ROUND(a$2, 1)",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=OR(OR(FALSE, 1e3), AVERAGE(a29))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AVERAGE(C1:E13)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AND(\"12\", 1e3)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=COUNTA(A1:E13, OR(D$31, B5:D11))",
+      "ironcalc": "64"
+    },
+    {
+      "formula": "=$B$12",
+      "ironcalc": "w0"
+    },
+    {
+      "formula": "=NOT(FALSE)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=IFERROR(SUMIF(A5:A13, \"12\", C5:C13), TRUE)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=D26",
+      "ironcalc": "34"
+    },
+    {
+      "formula": "=MAX(E6, a17)",
+      "ironcalc": "17"
+    },
+    {
+      "formula": "=B21",
+      "ironcalc": "20"
+    },
+    {
+      "formula": "=SUMIF(B5:D24, SUMIF(E1:E9, D$32, B1:B9))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LOWER(B$3)",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=Z15",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LEN(AND(FALSE, SUMIF(B9:C18, \"=\")))",
+      "ironcalc": "5"
+    },
+    {
+      "formula": "=B$13",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=$B28",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=E$31",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=B9",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=LEN(VLOOKUP(D$10, A1:E30, 4, FALSE))",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=MIN(B8:C26, \"\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=MAX(+B$30, \"x\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=VLOOKUP(0, B1:E30, 1e3, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=VLOOKUP(Z$23, A1:E30, 1, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=AND(C10:C15, A$2)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=MIN(A5:E29, VLOOKUP(IF($B25, 50%, C7), B1:E30, MIN(C8:D13, 1e3), 0))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=a$21",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=OR(\"W1\", B7:D24)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=IF(D4, C$30)",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=$B25",
+      "ironcalc": "w1"
+    },
+    {
+      "formula": "=AND(C2:D28, IF(SUMIF(A3:E26, \"<\"), COUNT(B9:D12, \"W1\"), ROUND(C$25, $B$7)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=VLOOKUP(D$13, A1:E30, 0, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=ROUND(LOWER($B$14), AND(A8:C17, D$2))",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=a23",
+      "ironcalc": "23"
+    },
+    {
+      "formula": "=D26",
+      "ironcalc": "34"
+    },
+    {
+      "formula": "=LEN(ABS(\"true\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=6.38",
+      "ironcalc": "6.38"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=SUM(B1:D14) <= MAX(A$27, \"x\")",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=$B32",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(C5:D12)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ROUND(D$19, 2)",
+      "ironcalc": "33"
+    },
+    {
+      "formula": "=a$1",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=E$9 = \"=3\"",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=-B$22",
+      "ironcalc": "-9"
+    },
+    {
+      "formula": "=IFERROR(LEN(SUMIF(B4:C28, a20)), AND(B4:D26, C22))",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=LOWER(0)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(IF(8.13, E12), D$10 / E23)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=ROUND(E$9, SUMIF(B7:D24, VLOOKUP(A14, A1:E30, 6, FALSE)))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=MIN(C10:D15, TRUE)",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=C24",
+      "ironcalc": "17"
+    },
+    {
+      "formula": "=C28",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AVERAGE(C3:E16)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=-COUNT(C9:D21, VLOOKUP(D11, A1:E30, 5, FALSE))",
+      "ironcalc": "-16"
+    },
+    {
+      "formula": "=SUM(B5:C24)",
+      "ironcalc": "434"
+    },
+    {
+      "formula": "=AVERAGE(B9:D21)",
+      "ironcalc": "16.367884615"
+    },
+    {
+      "formula": "=LEN(SUM(Z1, CONCAT($B$13, B6:D20)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(1.65)",
+      "ironcalc": "1.65"
+    },
+    {
+      "formula": "=IFERROR(OR(A32, $B24), MAX(C$12, a6))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=ROUND(SUMIF(D2:D18, ABS(B15), B2:B18), 2)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(B$18, FALSE)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=-UPPER($B24)",
+      "ironcalc": "-16"
+    },
+    {
+      "formula": "=C10",
+      "ironcalc": "W2"
+    },
+    {
+      "formula": "=Z19",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=B9 / OR($B$8, A22)",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=IFERROR(A$31, AND(COUNT(B1:D23, \">w1\"), COUNTA(B7:E19, a15)))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(B6:E16, a$14)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=NOT(C10)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=(SUM(C3:E22))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(A1:D20, \"=7\")",
+      "ironcalc": "7"
+    },
+    {
+      "formula": "=MAX(8.08, VLOOKUP(\"\", B1:E30, 0, 0))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=MIN(A4:C18, VLOOKUP(B$31, A1:E30, 6, FALSE))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=IF($B9, Z$11, 35)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=0",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=D$22",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=7.54",
+      "ironcalc": "7.54"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=COUNT(C8:C27, E25)",
+      "ironcalc": "15"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=IF(D15, a4)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=COUNTA(B8:D29, B25)",
+      "ironcalc": "59"
+    },
+    {
+      "formula": "=$B17",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LEN(LEN(Z$12))%",
+      "ironcalc": "0.01"
+    },
+    {
+      "formula": "=SUMIF(A7:C17, \">w0\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(A5:E12)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ROUND(COUNT(A9:E29, A$17), 0)%",
+      "ironcalc": "0.8"
+    },
+    {
+      "formula": "=SUMIF(A7:D29, \"0\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=Z$10",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(B9:D19, \"=7\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=C$30",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=LOWER(SUMIF(D5:D16, a$8, D5:D16))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(A7:A20, TRUE, D7:D20)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=A13",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=$B$4",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=MIN(B5:E23, VLOOKUP(ABS(A$5), A1:E30, 4, FALSE))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=ROUND(VLOOKUP(\"\", A1:E30, 6, FALSE), -2)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=SUMIF(B2:C19, a$26 / C26%)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(A3:E25, D$27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=C$28",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ROUND(VLOOKUP(FALSE, A1:E30, 0, FALSE), VLOOKUP(D32, B1:E30, Z9, 0))%",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=0",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IF(D$25, AND(A$6, B27))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=a25",
+      "ironcalc": "25"
+    },
+    {
+      "formula": "=SUMIF(C9:C15, \"0\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=UPPER(FALSE)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=D$1",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=C$20",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(AVERAGE(B8:D27), C4:E15)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AND(A1:C12, \">w1\")",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=COUNTA(C9:C12, CONCAT(\"=3\", B6:D20))",
+      "ironcalc": "5"
+    },
+    {
+      "formula": "=AVERAGE(C3:D29)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=$B27",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AVERAGE(C7:C19)",
+      "ironcalc": "18.857142857"
+    },
+    {
+      "formula": "=LOWER(COUNT(B2:D15, IF(D7, A$7, a$5)))",
+      "ironcalc": "31"
+    },
+    {
+      "formula": "=COUNT(A4:E28, B$30)",
+      "ironcalc": "95"
+    },
+    {
+      "formula": "=CONCAT(A19, A5:E16)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=VLOOKUP(D31, A1:E30, 0, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=SUMIF(E10:E23, MAX(\"true\", a$31), E10:E23)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=CONCAT(AND(A8:E29, \"<5\"%), C10:C17)",
+      "ironcalc": "FALSEW2W3w0221026w013"
+    },
+    {
+      "formula": "=A$14",
+      "ironcalc": "14"
+    },
+    {
+      "formula": "=SUMIF(B5:C29, COUNT(C10:C11, D$32), A2:C15)",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=0",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=Z9",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=IF(a$27, TRUE)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=\"\"",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=COUNTA(A6:C15, a$31)",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=-Z16",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=UPPER(C$9)",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=NOT(AND(MIN(C7:C13, 1.50), D22))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=IF(D$8, C19)",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=SUM(B9:D14)",
+      "ironcalc": "107.565"
+    },
+    {
+      "formula": "=\"W1\" = IF(1e3, E2, C$27) * COUNTA(B7:C14, 2) & C$30",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=ROUND($B$4, 50%)",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=a21",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=B30",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=30",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=SUMIF(A3:C20, (D24), C6:D21)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=B17",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=A$16",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=C$19",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=IF(E$21, Z11)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MAX(E31, D1)",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=A27",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=C$24",
+      "ironcalc": "17"
+    },
+    {
+      "formula": "=$B10",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=LOWER(D$27)",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=SUMIF(C9:C27, 1.50, C9:C27)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=a21",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=Z$29",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM($B15, Z$13)",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=+Z14",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(B10:E24, A$31)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=UPPER(a$3)",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=COUNT(A4:D15, ROUND(\"<5\", B6))",
+      "ironcalc": "38"
+    },
+    {
+      "formula": "=MAX((ABS(C$16)), B20)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=E4",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=AND(B9:D29, a7%)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=CONCAT(MAX(C$7, $B28)%, A2:D16)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=E11",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=$B$3",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=\"12\"%",
+      "ironcalc": "0.12"
+    },
+    {
+      "formula": "=a$32",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LOWER(COUNT(A9:C11, ABS(D18)))",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=C$18",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=AVERAGE(A6:C25)",
+      "ironcalc": "14.957446809"
+    },
+    {
+      "formula": "=SUMIF(C1:D18, ABS(UPPER(\"\")), A8:C29)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=E26",
+      "ironcalc": "-1"
+    },
+    {
+      "formula": "=ROUND(\"W1\" & \"=3\", ROUND(a4, C$32))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=IF(COUNT(A10:E14, SUMIF(D1:D19, Z28, E1:E19)), 0, Z$5)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=C$16",
+      "ironcalc": "w0"
+    },
+    {
+      "formula": "=COUNTA(C9:D17, CONCAT(B$32, B10:D27))",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=VLOOKUP($B$10, A1:E30, 0, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=COUNTA(B3:E27, OR(\">w1\", A5:C28))",
+      "ironcalc": "94"
+    },
+    {
+      "formula": "=AND(MIN(C6:D16, C13), ROUND(A14%, -3))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUM(\"W1\", a10)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=a$4",
+      "ironcalc": "4"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=$B$24",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=CONCAT(Z13, B7:C29)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=D$7",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=+\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=A2",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=MIN(B4:E27, E$25)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AND(9, A28)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=a2",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=IF(COUNT(C10:D19, OR(B$25, Z$8)), CONCAT(A8, A1:D27), TRUE)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"\"",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=AND(NOT(32), SUM(B1:D24))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=VLOOKUP(a$12, B1:E30, CONCAT(a12, B2:D27), 0)%",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=OR(Z$12, A3:D28)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=COUNTA(A5:E15, ROUND(a12, -1))",
+      "ironcalc": "54"
+    },
+    {
+      "formula": "=COUNTA(A3:E29, CONCAT(C5, B1:D13))",
+      "ironcalc": "127"
+    },
+    {
+      "formula": "=SUMIF(B7:C20, \"<>5\")",
+      "ironcalc": "298"
+    },
+    {
+      "formula": "=a$8",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=AVERAGE(B2:E22) < MAX(IF($B$1, Z$20, Z28), A14)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=VLOOKUP(E$13, A1:E30, 6, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=LEN(IFERROR(E$1, a$23))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=ROUND(CONCAT(17%, C10:C21), 0)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUMIF(C4:E12, \"W1\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=C18",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=(ROUND($B6, -2))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LOWER(E9)",
+      "ironcalc": "w1"
+    },
+    {
+      "formula": "=MAX(A4, CONCAT(E$15, C9:D22))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=1e3%",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=ROUND(\">w1\", 2)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=MAX(D26, ABS(0))",
+      "ironcalc": "34"
+    },
+    {
+      "formula": "=C$22",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=AND(B1:D15, a$25) / LEN(C$32)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AND(LEN(AVERAGE(D17)), +ROUND(a1, -1))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=VLOOKUP(\"\", B1:E30, E1, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=CONCAT((Z$15), C8:D11)",
+      "ironcalc": "283112TRUEW2-4W34.565"
+    },
+    {
+      "formula": "=SUM(C23, COUNT(C3:E14, ABS(a$31)))",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=CONCAT(a23, A2:C24)",
+      "ironcalc": "2328318842826532126927w3w3816289-4121019W2110W312w0w0132722146101527261623w0171318122119w32040212013229323TRUE3241617"
+    },
+    {
+      "formula": "=C$24",
+      "ironcalc": "17"
+    },
+    {
+      "formula": "=ROUND(AVERAGE(VLOOKUP(Z$29, B1:E30, C3, 0)), ROUND($B$4, D14%))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=AVERAGE(A10:C20)",
+      "ironcalc": "17.125"
+    },
+    {
+      "formula": "=$B1",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=SUMIF(C7:E26, \"TRUE\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IF(C$11, 50%, \"\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=MIN(A3:C28, SUM(A1:E14))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IF($B13, E8)",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=ABS(IF(\"x\", a$2))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUMIF(A3:E21, \"<>\")",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ROUND(0, C24)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=-OR(2.01, B30)",
+      "ironcalc": "-1"
+    },
+    {
+      "formula": "=7.66",
+      "ironcalc": "7.66"
+    },
+    {
+      "formula": "=MAX(\"<5\", a18)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUM(C9:E27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUM(C9:D28)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=COUNTA(B2:C26, $B8)",
+      "ironcalc": "47"
+    },
+    {
+      "formula": "=UPPER(AND(0, D$28))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=ABS(B$7)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=UPPER(\"x\"%)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=+SUM(A10:D16)",
+      "ironcalc": "291.565"
+    },
+    {
+      "formula": "=MIN(C9:E29, Z6)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=A24",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=C$22",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=COUNTA(C8:E24, B$20)%",
+      "ironcalc": "0.48"
+    },
+    {
+      "formula": "=VLOOKUP(SUMIF(B1:B6, \"12\", A1:A6), A1:E30, 6, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=SUMIF(B7:D13, B$8)",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=IF(OR($B$13, E$32), MAX(\">w1\", Z$15))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AVERAGE(C6:D26)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=A6%",
+      "ironcalc": "0.06"
+    },
+    {
+      "formula": "=B24",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=LEN(AND(B9:E22, E24) & IFERROR($B10, 1e3))",
+      "ironcalc": "7"
+    },
+    {
+      "formula": "=E$22",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=ROUND(\"<5\", 3)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=OR(Z1, AND(CONCAT(Z$19, A10:C11), C1))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUM(50%, 1e3)",
+      "ironcalc": "1000.5"
+    },
+    {
+      "formula": "=E$22",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=LOWER(\"12\")",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=AND(A1:E15, C$16)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=E3",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=COUNT(C2:C16, A$27)",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=SUM(0, C8)",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=VLOOKUP(B13%, B1:E30, (\"12\"), 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=(\">w1\")",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=AND(C7:C19, SUMIF(C6:D14, A$24, B10:E28))",
+      "ironcalc": "#CIRC!"
+    },
+    {
+      "formula": "=E29",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=IF(0, A6)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=D19",
+      "ironcalc": "33"
+    },
+    {
+      "formula": "=SUMIF(B6:C18, \"=\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(A2:E23, \"0\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=(LEN($B$11))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=VLOOKUP(CONCAT(COUNTA(A8:C17, a4), A10:D12), B1:E30, E$24, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=VLOOKUP(50%, A1:E30, 6, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=SUM(E21, MIN(A2:E21, SUM(A2:C25)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AND(B4:C23, \"x\")",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=D$16",
+      "ironcalc": "25"
+    },
+    {
+      "formula": "=IF(\"true\", COUNT(A10:C13, E20), AND(B6:C20, VLOOKUP(B$24, A1:E30, 0, FALSE)))",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=$B$8",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=MAX(NOT(A29), ROUND(C30, \"=3\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=COUNTA(B9:D27, SUMIF(A7:D15, ROUND(\"true\", 3), A1:C17))",
+      "ironcalc": "52"
+    },
+    {
+      "formula": "=VLOOKUP($B30, B1:E30, C13, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=OR(VLOOKUP(E15, A1:E30, 3, FALSE), C3:C16)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=IF(VLOOKUP(MAX(30, D28), A1:E30, 1, FALSE), LEN(ABS($B31)), LEN(IF(E7, \">w1\", B30)))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=LOWER(B$27)",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=ROUND(NOT(E$15), -3)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MAX(VLOOKUP(\"x\", B1:E30, AVERAGE(A1:C17), 0), SUMIF(B8:E21, \"=7\"))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=IF(C14, \"<5\", $B$28)",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=a22",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=a$3%",
+      "ironcalc": "0.03"
+    },
+    {
+      "formula": "=a29%%",
+      "ironcalc": "0.0029"
+    },
+    {
+      "formula": "=a$24",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=B$11 * \"=3\"",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AVERAGE(SUM(C10, 0))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(A6:E11, C15)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=$B$18 / E28",
+      "ironcalc": "0.857142857"
+    },
+    {
+      "formula": "=C22",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=VLOOKUP(C24, B1:E30, \"W1\", 0)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=VLOOKUP(a$8, A1:E30, 0, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=E$22",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=VLOOKUP(a$6, A1:E30, 6, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=COUNTA(A7:D11, TRUE)",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=UPPER(VLOOKUP(COUNT(A5:D11, 8.76), A1:E30, 0, FALSE))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=AVERAGE(\"x\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=B$17",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(B6:E24, \"=\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LOWER(1.02)",
+      "ironcalc": "1.02"
+    },
+    {
+      "formula": "=UPPER(Z$6)",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=SUMIF(B8:C27, $B$28)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=E31",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=COUNT(A2:C26, AND(B$23, B12))",
+      "ironcalc": "62"
+    },
+    {
+      "formula": "=ROUND(IF(\"\", 4.87), C$32)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUMIF(B7:C16, A19, C9:E19)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=-$B$23",
+      "ironcalc": "-1"
+    },
+    {
+      "formula": "=ROUND(\"W1\", 1)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=50%",
+      "ironcalc": "0.5"
+    },
+    {
+      "formula": "=SUMIF(C7:E20, SUMIF(A4:A12, IF(Z$12, 1e3), C4:C12))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=ROUND((UPPER(D18)), E3)",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=(\"true\")",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=ROUND(D$30, Z31 >= E$21)",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=+$B$16",
+      "ironcalc": "23"
+    },
+    {
+      "formula": "=\"\"",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=ROUND(VLOOKUP(A$9, A1:E30, 0, FALSE), AVERAGE(B6:D29))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=LEN(SUMIF(B7:B19, SUMIF(A1:E16, D2, A2:D19), B7:B19))",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=SUMIF(A3:D23, \"<>w1\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(B4:E17)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AVERAGE(+COUNTA(C2:C16, A$32))",
+      "ironcalc": "14"
+    },
+    {
+      "formula": "=AVERAGE(D$6)",
+      "ironcalc": "34"
+    },
+    {
+      "formula": "=ROUND(SUMIF(C5:E28, \"<>5\"), SUM(a25, 50%))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=IF(\"W1\", E11)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=IF(SUMIF(A3:C27, \"W1\"), MAX(E$8, \"true\"))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=AVERAGE(C7:C19)",
+      "ironcalc": "18.857142857"
+    },
+    {
+      "formula": "=SUMIF(A3:D20, \"<>5\")",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=MIN(A1:D12, IFERROR(C4, $B5))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ABS(VLOOKUP(COUNT(A3:E13, 1e3), B1:E30, LEN(\"\"), 0))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=Z28 = Z$18",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AVERAGE(1.20)",
+      "ironcalc": "1.2"
+    },
+    {
+      "formula": "=50%",
+      "ironcalc": "0.5"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=AND(LEN(\"true\"), VLOOKUP(Z1, A1:E30, 6, FALSE))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=IF(B27, \"=3\", a$27)",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=VLOOKUP(a17, B1:E30, E$31, 0) + Z$8",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=VLOOKUP(AND(VLOOKUP(Z18, A1:E30, 1, FALSE), LOWER(Z$22)), B1:E30, LEN(OR(C$15, A8:C12)), 0)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=A26",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=B$30",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=a26",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=UPPER(C31)",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=SUMIF(E2:E17, E$17, D2:D17)",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=Z$10",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ABS(a22)",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=AVERAGE(A9:C14)",
+      "ironcalc": "11.5"
+    },
+    {
+      "formula": "=CONCAT(IF(SUMIF(B2:B13, 9.85, D2:D13), SUM(\">w1\", FALSE), LEN(FALSE)), C4:D27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=+a$6",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=COUNTA(C10:E11, -4)",
+      "ironcalc": "7"
+    },
+    {
+      "formula": "=B$4",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=ROUND(Z$1, $B$18)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=SUM(A8:C21)",
+      "ironcalc": "534"
+    },
+    {
+      "formula": "=B28",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ABS(D17%)",
+      "ironcalc": "0.24"
+    },
+    {
+      "formula": "=SUM(Z10, SUM(A4:C14))",
+      "ironcalc": "344"
+    },
+    {
+      "formula": "=-50%",
+      "ironcalc": "-0.5"
+    },
+    {
+      "formula": "=ROUND(AND(a17, B$28), A10)",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=SUM(B3:E29)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ROUND(B$17, -2)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=-SUMIF(B9:D22, Z29, C2:C13)",
+      "ironcalc": "-26"
+    },
+    {
+      "formula": "=SUMIF(B6:E17, \"0\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(A1:E26)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"\"",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=ROUND(a$2, NOT(SUM(A6:E24)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=a30",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=COUNTA(C1:C25, LEN($B1))",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=SUM(C6:E17)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=D$10",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=ABS(MIN(C4:C21, D13))",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=VLOOKUP(IF(\"x\", COUNTA(C10:C19, Z31), COUNT(A8:E18, E$8)), B1:E30, E15, 0)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=D$3",
+      "ironcalc": "14"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=AVERAGE(AND(AVERAGE(D$11), AND(FALSE, A$8)))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(A4:E18, A21)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUM(A2:D18)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=LOWER(NOT($B2)%)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=UPPER(a$29)",
+      "ironcalc": "29"
+    },
+    {
+      "formula": "=ROUND(Z$24, 2)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"\"",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=OR(A17, C4:C29)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=NOT(SUMIF(B10:C14, $B24, B10:E29))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=B$3",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=a$11",
+      "ironcalc": "11"
+    },
+    {
+      "formula": "=SUMIF(A1:A15, SUM(C3:D13), C1:C15)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MIN(C2:D11, IFERROR(SUMIF(A4:C27, \"w2\"), SUM(B10:E26)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=CONCAT(\"12\", C9:D16)",
+      "ironcalc": "1212TRUEW2-4W34.565w0322W1101226w025"
+    },
+    {
+      "formula": "=AND(UPPER(\"=3\"), \"x\"%)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=(NOT(E$13))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=LEN(\"12\")",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=CONCAT((C8), B9:E11)",
+      "ironcalc": "28-412TRUEw119W2-4260W34.56530"
+    },
+    {
+      "formula": "=OR(AND(A6:E18, LOWER(A26)), A7:C18)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=OR(D$7, A1:E27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=B28",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LEN(\"true\")",
+      "ironcalc": "4"
+    },
+    {
+      "formula": "=ROUND(MIN(C2:E16, D$6), 0)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(B1:E23, SUM(A1:D28), B9:C23)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=E23 - 37",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=ABS($B$23)",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=MIN(B7:E24, $B31)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=A$9",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=C30",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=SUMIF(B10:B23, MAX((TRUE), SUMIF(B2:C13, \"=\")), D10:D23)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=3",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=$B$32",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"<5\"%",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=MAX(MAX(a18, a$9), COUNTA(B7:E29, \"true\"))",
+      "ironcalc": "84"
+    },
+    {
+      "formula": "=LEN(ABS(SUMIF(A5:E21, C17, B6:D29)))",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=ABS(OR($B$18, B9:C27))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=IF(OR(\"true\", A7:D19), $B31, OR(CONCAT(Z$23, A6:C15), C10:D18))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(B2:D24)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ROUND(IF(a25, \"x\"), IFERROR(A$23, A$29))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUMIF(B2:C26, A8)",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=IFERROR(NOT($B14), ($B$4))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=SUMIF(B6:C20, \"=7\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(Z$21)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(AVERAGE(\"=3\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=UPPER(SUMIF(C1:E29, +C9))",
+      "ironcalc": "36"
+    },
+    {
+      "formula": "=COUNT(B6:C14, E$13)",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=A$29",
+      "ironcalc": "29"
+    },
+    {
+      "formula": "=ROUND(\">w1\", -2)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=C11",
+      "ironcalc": "W3"
+    },
+    {
+      "formula": "=SUM(B10:D19)",
+      "ironcalc": "331.565"
+    },
+    {
+      "formula": "=E$14",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=SUMIF(C3:D26, \"\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=5.66",
+      "ironcalc": "5.66"
+    },
+    {
+      "formula": "=$B1",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=COUNTA(B3:C15, 50%)",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=ROUND(COUNT(B8:C21, 28), \"\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=SUM(C10:C23)",
+      "ironcalc": "111"
+    },
+    {
+      "formula": "=B5",
+      "ironcalc": "32"
+    },
+    {
+      "formula": "=A$6",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=AND(A5:C26, A$16)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=$B13",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=IF(SUM(C6:E16), C24)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=4.49",
+      "ironcalc": "4.49"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=AVERAGE(A30)",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=IF(1.90, 2.34, \"12\")",
+      "ironcalc": "2.34"
+    },
+    {
+      "formula": "=1.15",
+      "ironcalc": "1.15"
+    },
+    {
+      "formula": "=IF(\"\", AND(a32, \"<5\"), IF(\"=3\", A$5, C19)) - VLOOKUP($B3, B1:E30, MIN(C3:D21, 6.03), 0)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=2.69",
+      "ironcalc": "2.69"
+    },
+    {
+      "formula": "=LEN(AND(TRUE, $B3))",
+      "ironcalc": "4"
+    },
+    {
+      "formula": "=ABS(CONCAT(E13, B3:E29))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"\"",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=VLOOKUP(ABS(Z$17), B1:E30, a$12, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=AVERAGE(ABS(SUMIF(A1:A11, E$17, A1:A11)))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=D27",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=B20",
+      "ironcalc": "40"
+    },
+    {
+      "formula": "=E$26 = VLOOKUP(C11, B1:E30, TRUE, 0) = OR(\"x\", MAX(E28, a$28))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=Z7",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=D$20",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=ROUND(VLOOKUP(23, B1:E30, ROUND(E30, D23), 0), MAX(\"\", E$12))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=Z26",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=19",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=VLOOKUP(1e3, B1:E30, AND(SUMIF(C9:E22, D30, C8:D26), 1.94), 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=(4.50)",
+      "ironcalc": "4.5"
+    },
+    {
+      "formula": "=SUMIF(A1:C19, \"TRUE\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(C3:D12, MIN(C4:C12, IFERROR(TRUE, Z4)))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=$B$17",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IF(D15, Z17)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=COUNTA(B5:D28, 0)",
+      "ironcalc": "65"
+    },
+    {
+      "formula": "=LOWER(SUMIF(C3:C22, \"true\", C3:C22))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=CONCAT(SUMIF(C2:C16, \">10\"), A9:E26)%",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=COUNTA(C2:E23, \"12\")",
+      "ironcalc": "62"
+    },
+    {
+      "formula": "=$B22",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=ROUND(ABS(ROUND(D29, a$21)), A$10)",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=A$6",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=OR(\"12\", A10:C11)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=ROUND(A6, -1)",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=IFERROR(\">w1\", E$29)",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=SUMIF(D4:D22, Z2, B4:B22)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(ROUND(36, -3), UPPER(a20))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=VLOOKUP(MAX((D$16), VLOOKUP($B$17, A1:E30, 1, FALSE)), A1:E30, 6, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=NOT(0)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=ABS(LOWER(5.01))",
+      "ironcalc": "5.01"
+    },
+    {
+      "formula": "=$B10",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=IFERROR(a$16, \"12\")",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=MIN(C3:D17, ROUND(D5, -3))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=B$24",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=IF(B2, \"<5\")",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=A$25",
+      "ironcalc": "25"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=AND(C9:D14, \"x\")",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=VLOOKUP(AND(FALSE, \"\"), B1:E30, TRUE, 0)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR(VLOOKUP(UPPER(\">w1\"), B1:E30, ROUND(a$15, -1), 0), E$10)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=SUMIF(A5:D27, 0)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=$B$1",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=IF(LEN(\"\"), B6, 1e3)",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=D21",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(C1:E13)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=(a$30)%",
+      "ironcalc": "0.3"
+    },
+    {
+      "formula": "=B12",
+      "ironcalc": "w0"
+    },
+    {
+      "formula": "=AVERAGE(B5:C23)",
+      "ironcalc": "15.423076923"
+    },
+    {
+      "formula": "=SUMIF(B9:C21, -UPPER(\"12\"))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=E27",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=IFERROR(IF(B$2, B$24, C16), OR($B9, B1:E25))",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=a$24",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=ABS(8.94)",
+      "ironcalc": "8.94"
+    },
+    {
+      "formula": "=a19%",
+      "ironcalc": "0.19"
+    },
+    {
+      "formula": "=(SUMIF(E3:E9, SUMIF(C9:D18, Z18, C2:E15), B3:B9))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IF(a$3, a$32, \"true\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(C1:C15, OR(Z$25, C7:E21), B4:C27)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=CONCAT(SUMIF(B4:B15, B$14, A4:A15), A9:C17)",
+      "ironcalc": "149-4121019W2110W312w0w0132722146101527261623w01713"
+    },
+    {
+      "formula": "=SUMIF(C5:C12, Z18)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(B7:B20, 1e3, E7:E20)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LOWER(SUM(C9:E15))",
+      "ironcalc": "184.565"
+    },
+    {
+      "formula": "=SUMIF(A5:E26, \">w0\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=COUNT(A10:E25, \"W1\")",
+      "ironcalc": "62"
+    },
+    {
+      "formula": "=AVERAGE(COUNTA(A1:D19, IF(D14, C31, C$25)))",
+      "ironcalc": "72"
+    },
+    {
+      "formula": "=a18",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=COUNT(B8:C13, IF(A7, \"x\", TRUE))",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=ROUND(\"12\", -2)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=(Z9)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=1e3",
+      "ironcalc": "1000"
+    },
+    {
+      "formula": "=E$4",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=SUMIF(B9:E15, C$26)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(E4:E10, TRUE, D4:D10)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=D22",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=AVERAGE(A8:C18)",
+      "ironcalc": "14.851851852"
+    },
+    {
+      "formula": "=LEN(UPPER(E$9))",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=a$19",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=COUNTA(C8:C19, 0)",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=SUM(B6:E21)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=LEN((ROUND(C26, 0)))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=OR(C$14, A4:D11)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=COUNTA(C7:C24, E26)",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=MAX(AVERAGE(AND(C10:C25, $B$3)), OR(\"x\", B6:C28))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=UPPER(0)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=B$8",
+      "ironcalc": "16"
+    },
+    {
+      "formula": "=C$32",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IF($B20, 5.40)",
+      "ironcalc": "5.4"
+    },
+    {
+      "formula": "=Z31",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(C9:C11, SUMIF(B10:E19, \"\"))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"\"",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=SUMIF(D8:D24, C24, D8:D24)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=NOT(a16)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=a19",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=AVERAGE(Z27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=MIN(C2:E24, LOWER(A$29))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(C1:D17, ROUND(MAX(A$31, a$11), -3), A4:C24)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MAX(\"\", \"<5\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=Z$16",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"<5\"",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=IF(C$1, E$12, E12)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(a$26)",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=COUNT(A1:E13, COUNTA(A8:C21, +B$10))",
+      "ironcalc": "53"
+    },
+    {
+      "formula": "=MIN(A8:C25, \"x\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=VLOOKUP(OR(A$24, \"true\"), B1:E30, \"x\", 0)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=IF(+D$27 <= B$25, OR(SUMIF(B6:E17, \"<>\"), SUMIF(B7:D23, \"<>w1\")))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=VLOOKUP(B31, B1:E30, C$30, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=ROUND(UPPER(D$26) + LOWER(\"\"), E20)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=Z7",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(SUM(a17, \"x\"), AVERAGE(\"12\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=$B$15",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=ROUND(A$10, B$19)",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=SUMIF(B5:E16, (\"W1\"), A1:D15)",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=LOWER(OR(ABS(E$5), LOWER(Z$4)))",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=COUNT(A9:E18, A$31)",
+      "ironcalc": "39"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=SUMIF(A1:E14, \"=7\")",
+      "ironcalc": "7"
+    },
+    {
+      "formula": "=SUMIF(B1:C23, C$17)",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=AVERAGE(C10:D18)",
+      "ironcalc": "15.380416667"
+    },
+    {
+      "formula": "=CONCAT(B22, A5:E27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ROUND(Z$24, C11)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AND(B8:C13, SUM(A9:E29))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=C18",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=SUMIF(A10:D17, \"\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IFERROR($B27%, MAX(E$10, E$8))",
+      "ironcalc": "0.01"
+    },
+    {
+      "formula": "=+LEN(ROUND(E$5, \"x\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=\"\"%",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=COUNT(A5:D11, COUNTA(C2:C27, TRUE))",
+      "ironcalc": "23"
+    },
+    {
+      "formula": "=MAX(B27, SUMIF(C1:C14, OR(50%, B4:D23), C1:C14))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MAX(TRUE, D$10)",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=$B17",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ABS(SUM(C9:D12))",
+      "ironcalc": "15.565"
+    },
+    {
+      "formula": "=LOWER(\"12\")",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=E$11",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=SUM(TRUE, \">w1\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=0",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=$B$3",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=Z$30",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=CONCAT(OR(C9, C7:C11), C2:D20)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=A32",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=UPPER(B$30)",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=$B$18",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=SUMIF(B7:B13, ROUND(A11, IFERROR(C$21, 7.34)), C7:C13)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=CONCAT(B$13, B6:E22)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUM(C2:D24)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=NOT(E18)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=D$13",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=SUM(C10:D27)",
+      "ironcalc": "385.565"
+    },
+    {
+      "formula": "=AVERAGE(SUMIF(A8:E26, SUMIF(C4:C12, \"=3\", D4:D12), A9:D18))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(\"12\", E$1)",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=SUM(A10:C29)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ABS(SUMIF(B10:D28, \"=\"))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=(Z19)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(A6:A15, MAX(50%, TRUE), D6:D15)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=Z$21",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"W1\"",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=Z$26",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(C7:C21, OR(C29, A4))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=ROUND(C24, -1)",
+      "ironcalc": "20"
+    },
+    {
+      "formula": "=IF(SUMIF(B1:B13, a$31, E1:E13), ROUND(\"<5\", 2))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=D21",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LOWER(C8)",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=VLOOKUP(LOWER(TRUE), B1:E30, Z$4, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=ROUND(ROUND(MAX($B18, D$28), -3), IF(AND(C9:C15, E19), SUMIF(B3:B10, 0, A3:A10)))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=a31",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=VLOOKUP(MAX(a16, D8), A1:E30, 1, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=OR(A$9, A9:D15)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=\"<5\"",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=COUNTA(B5:C25, SUMIF(C5:D14, \"\", C10:D13)) <> OR(OR(A15, a6), A9:C21)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=TRUE",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=COUNT(B9:C14, MAX(\">w1\", A6))",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=AND(\"=3\", SUMIF(B10:B27, IF(a2, E$9), C10:C27))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=\">w1\"",
+      "ironcalc": ">w1"
+    },
+    {
+      "formula": "=Z28",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=UPPER(\"W1\")",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=MAX(D$10, 3.79)",
+      "ironcalc": "3.79"
+    },
+    {
+      "formula": "=\"\"",
+      "ironcalc": ""
+    },
+    {
+      "formula": "=SUMIF(B2:C20, \">10\")",
+      "ironcalc": "402"
+    },
+    {
+      "formula": "=E$3",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=C$29",
+      "ironcalc": "15"
+    },
+    {
+      "formula": "=COUNT(A6:C17, MAX(ROUND($B$32, E7), a18))",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=SUMIF(B3:C19, $B24, A7:D28)",
+      "ironcalc": "40"
+    },
+    {
+      "formula": "=ROUND(-E6, 0)",
+      "ironcalc": "-11"
+    },
+    {
+      "formula": "=B$31",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(\"W1\", 50%)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=E$28",
+      "ironcalc": "14"
+    },
+    {
+      "formula": "=a14",
+      "ironcalc": "14"
+    },
+    {
+      "formula": "=ROUND(B$26, 0)",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=CONCAT(OR(A32, A24), B5:E21)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=MIN(A8:C29, MAX(AND(Z$14, C6), CONCAT(\"W1\", C1:D24)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IF(Z29, $B$30)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=AND(NOT(50%), TRUE%)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=IF(a21, MIN(C6:E26, IF(E27, C$7, \"=3\")))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=MAX(C4, \"\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=\"<5\"",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=(AVERAGE(OR($B$18, C9:D24)))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=VLOOKUP(a20, B1:E30, \">w1\", 0)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=+a7",
+      "ironcalc": "7"
+    },
+    {
+      "formula": "=+OR(COUNTA(A4:C25, 1e3), C4:D22)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUM(E$3, A9)",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=SUMIF(A2:C16, VLOOKUP(E18, A1:E30, 0, FALSE), C2:E21)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IFERROR(SUM(C6:E26), \"<5\")",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=9.91",
+      "ironcalc": "9.91"
+    },
+    {
+      "formula": "=OR(ABS(Z22), C12)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=VLOOKUP(SUMIF(A2:C20, OR(TRUE, B4:C12)), A1:E30, 2, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=(E$10)",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=AND(C6:D23, LEN(D23))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=LEN(OR(SUMIF(A7:C20, \"true\"), A1:C20))",
+      "ironcalc": "4"
+    },
+    {
+      "formula": "=OR(A$2, D24)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=AVERAGE(A1:E27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(B9:D12, A$21)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=a17",
+      "ironcalc": "17"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=SUMIF(C10:C27, LEN(C$26), E10:E27)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=E$22",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=VLOOKUP(LOWER(Z1), B1:E30, IF(1e3, \"=3\"), 0)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUMIF(B7:B15, B$18, D7:D15)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(C1:C16, A$12)",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=SUM(COUNTA(A4:C28, A$11), \"x\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=(A15)",
+      "ironcalc": "15"
+    },
+    {
+      "formula": "=a$27",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=D27",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=33",
+      "ironcalc": "33"
+    },
+    {
+      "formula": "=SUM(\"W1\", \">w1\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=ROUND(\"x\" * E10, D$19)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=MAX(COUNTA(A10:C20, 1e3), B14)",
+      "ironcalc": "31"
+    },
+    {
+      "formula": "=MAX(Z9, C$14)",
+      "ironcalc": "10"
+    },
+    {
+      "formula": "=SUMIF(A8:D23, \"<>w1\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=VLOOKUP(E26, A1:E30, 1, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=SUM($B$10, $B$12)",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=AND(C4:D14, TRUE)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=OR(COUNTA(A4:D21, COUNT(B7:C16, \"12\")), A1:D19)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=D20",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=ABS(ABS(E13))",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=(SUMIF(D8:D20, D$30, A8:A20))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AVERAGE(A1:D16)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=OR(E27, B$3)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=E15",
+      "ironcalc": "11"
+    },
+    {
+      "formula": "=SUMIF(A7:E23, \"w2\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LEN(a$8)",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=VLOOKUP($B13, B1:E30, LEN(\"\")%, 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=SUM(B5:C15)",
+      "ironcalc": "244"
+    },
+    {
+      "formula": "=SUMIF(C3:C25, COUNT(B7:E28, $B16))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=8.85",
+      "ironcalc": "8.85"
+    },
+    {
+      "formula": "=AND(A2:C20, B$15)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=SUMIF(B3:C26, Z3 > \"12\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=Z$7",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=MAX(50%, C15)",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=CONCAT(\"12\", C9:D29)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=SUMIF(A7:C21, \"\", B7:C27)",
+      "ironcalc": "13"
+    },
+    {
+      "formula": "=a3",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=MIN(B7:D20, CONCAT(a13, C4:D18))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=B5",
+      "ironcalc": "32"
+    },
+    {
+      "formula": "=ABS(E$31)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LEN(IF(B8, TRUE, Z$29))",
+      "ironcalc": "4"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=COUNT(A6:D21, $B$3)",
+      "ironcalc": "49"
+    },
+    {
+      "formula": "=\"=3\"",
+      "ironcalc": "=3"
+    },
+    {
+      "formula": "=CONCAT(LEN(LEN(Z$8)), A5:C16)",
+      "ironcalc": "1532126927w3w3816289-4121019W2110W312w0w0132722146101527261623w0"
+    },
+    {
+      "formula": "=VLOOKUP($B$3, A1:E30, 3, FALSE)",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=Z$15",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=$B$30",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(B8:D22, E$21, B4:D23)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUM(SUMIF(C5:E26, \"<>\"), ABS(A$32))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=LEN(FALSE)",
+      "ironcalc": "5"
+    },
+    {
+      "formula": "=SUMIF(B9:C17, SUM(A5:E18), C3:E23)",
+      "ironcalc": "-4"
+    },
+    {
+      "formula": "=OR(B$20, C2:E20)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUM(B6:E29)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=LEN(ROUND(A31, 1))",
+      "ironcalc": "1"
+    },
+    {
+      "formula": "=IF(COUNTA(A3:D18, LOWER(33)), SUMIF(E5:E24, 50%, C5:C24))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(A3:C22, B$2, A3:E26)",
+      "ironcalc": "32"
+    },
+    {
+      "formula": "=CONCAT(A6, A9:E29)%",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=A$3",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=LOWER(E$8)",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=-SUMIF(B4:E27, \"<>\")",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=C$19",
+      "ironcalc": "w3"
+    },
+    {
+      "formula": "=D23",
+      "ironcalc": "5"
+    },
+    {
+      "formula": "=OR(\">w1\", A1:D25)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=UPPER(UPPER(MIN(B7:D12, \">w1\")))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=ABS(\"true\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=UPPER(IF(\">w1\", B7))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=COUNT(B3:E21, SUMIF(D2:D21, ROUND(\"12\", $B$4), B2:B21))",
+      "ironcalc": "57"
+    },
+    {
+      "formula": "=C5",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=FALSE",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=AND(A6:E14, 0)%",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=9.17",
+      "ironcalc": "9.17"
+    },
+    {
+      "formula": "=ABS(C$3)",
+      "ironcalc": "8"
+    },
+    {
+      "formula": "=B$10",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=A$4",
+      "ironcalc": "4"
+    },
+    {
+      "formula": "=LEN((B$10))",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=NOT(OR(SUM($B19, E$31), A6:E13))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=SUMIF(B10:C25, $B$6)",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=Z$32",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LEN(D$19)",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=+E21",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=UPPER(AND(C10:E23, D4))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=IF(SUMIF(A6:D27, Z$17 ^ D$15, A3:C20), SUMIF(A10:E18, \"<>5\"), OR(A$6, A3:E15))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=a$26",
+      "ironcalc": "26"
+    },
+    {
+      "formula": "=B$10",
+      "ironcalc": "19"
+    },
+    {
+      "formula": "=AND(Z$15, D$9)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=C$11",
+      "ironcalc": "W3"
+    },
+    {
+      "formula": "=LOWER(SUMIF(C4:C16, SUMIF(B7:E13, D11, B2:D29)))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=VLOOKUP(50%, A1:E30, 3, FALSE)",
+      "ironcalc": "#N/A"
+    },
+    {
+      "formula": "=MAX(ROUND(FALSE, 0), $B22)",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=+LEN(NOT(A$32))",
+      "ironcalc": "4"
+    },
+    {
+      "formula": "=ROUND(Z4, -3)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=COUNTA(C2:C16, Z30)",
+      "ironcalc": "14"
+    },
+    {
+      "formula": "=ROUND(IFERROR(SUM(A9:C17), VLOOKUP(D$32, A1:E30, 3, FALSE)), 1)",
+      "ironcalc": "298"
+    },
+    {
+      "formula": "=SUMIF(A9:A26, D24, B9:B26)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=VLOOKUP(IFERROR(Z$2, $B30), B1:E30, ABS(D$5), 0)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=SUMIF(B2:D24, \">10\")",
+      "ironcalc": "733"
+    },
+    {
+      "formula": "=SUMIF(C6:E26, $B31, C8:D14)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=OR((Z17), A8:E11)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=ABS(SUMIF(A1:D26, NOT(A$28), C2:C29))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=C6",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=SUMIF(B3:C22, D$16%, B9:D22)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(A9:A18, ABS((B17)), D9:D18)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=B31",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=AVERAGE(A1:E27)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=COUNT(B5:C19, SUM(a$21, a$5))",
+      "ironcalc": "21"
+    },
+    {
+      "formula": "=1.90",
+      "ironcalc": "1.9"
+    },
+    {
+      "formula": "=MAX(a18, \"\")",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=LOWER(SUMIF(A10:E23, E$32, A3:C27))",
+      "ironcalc": "28"
+    },
+    {
+      "formula": "=NOT(ROUND($B31, 3))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=\"x\"",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=MAX(+\"12\", AND(C10:C29, B27))%",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=B$16 / E24",
+      "ironcalc": "1.045454545"
+    },
+    {
+      "formula": "=ROUND(NOT(C29), SUM($B30, Z$19))",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ROUND(SUM(7.48, MIN(A4:D29, Z7)), COUNT(A3:D21, NOT(D$2)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=LEN(A$32)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=LEN(C9%)",
+      "ironcalc": "4"
+    },
+    {
+      "formula": "=VLOOKUP(AND(SUM(E4, Z$32), VLOOKUP(\"<5\", B1:E30, D$4, 0)), A1:E30, 2, FALSE)",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=IFERROR(a$18, \"x\")",
+      "ironcalc": "18"
+    },
+    {
+      "formula": "=SUMIF(A7:E22, COUNT(B8:E12, B25), B9:C17)",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=AND(TRUE, AND(C2:E17, TRUE))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=\"=3\" - \">w1\"",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUMIF(C4:C16, AVERAGE(1e3), E4:E16)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ABS(ROUND(ABS(50%), ROUND(\">w1\", -3)))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUM(\"12\", $B26)",
+      "ironcalc": "22"
+    },
+    {
+      "formula": "=LOWER((A$24))",
+      "ironcalc": "24"
+    },
+    {
+      "formula": "=IF(SUMIF(A10:D15, \"=7\"), AVERAGE(C1:E19))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=B$17",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=IFERROR(OR(Z30, A2:C18), MAX(\"\", Z$25))",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=B30",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=UPPER(\"W1\")",
+      "ironcalc": "W1"
+    },
+    {
+      "formula": "=E$32",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ROUND(NOT(SUM(C1:C29)), SUM(B6:C22))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=$B$21",
+      "ironcalc": "20"
+    },
+    {
+      "formula": "=MAX(\"=3\", IF(a$6, \"12\"))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=ABS(UPPER($B$13)) + SUMIF(E7:E16, A18, B7:B16)",
+      "ironcalc": "27"
+    },
+    {
+      "formula": "=OR(B$30, TRUE)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=\"<5\"",
+      "ironcalc": "<5"
+    },
+    {
+      "formula": "=NOT(OR(1e3, B7:E23))",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=SUMIF(B1:E26, \">10\")",
+      "ironcalc": "1139"
+    },
+    {
+      "formula": "=Z$8",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=COUNTA(A9:E21, NOT(SUM(A8:E24)))",
+      "ironcalc": "60"
+    },
+    {
+      "formula": "=COUNT(B6:E16, A14)",
+      "ironcalc": "31"
+    },
+    {
+      "formula": "=MIN(B4:D26, SUM(B1:C20))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=AVERAGE(A3:C28)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=OR(a19, A3:D16)",
+      "ironcalc": "TRUE"
+    },
+    {
+      "formula": "=SUMIF(A2:E18, COUNT(A8:C21, E6), C7:C11)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(D10:D29, LOWER(C17), C10:C29)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=SUMIF(B3:C28, C2)",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=ROUND(CONCAT(B$13, B6:C11), 2)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=AVERAGE(C8:D16)",
+      "ironcalc": "15.415"
+    },
+    {
+      "formula": "=SUMIF(C6:C28, \"<>\")",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=4.19",
+      "ironcalc": "4.19"
+    },
+    {
+      "formula": "=D$8",
+      "ironcalc": "31"
+    },
+    {
+      "formula": "=\"true\"",
+      "ironcalc": "true"
+    },
+    {
+      "formula": "=A23",
+      "ironcalc": "23"
+    },
+    {
+      "formula": "=AVERAGE(A1:C19)",
+      "ironcalc": "12.934782609"
+    },
+    {
+      "formula": "=(B6)",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=SUMIF(A1:E12, B2, A3:D11)",
+      "ironcalc": "68"
+    },
+    {
+      "formula": "=SUM(A9:D22)",
+      "ironcalc": "650.565"
+    },
+    {
+      "formula": "=NOT(B7)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=OR(AVERAGE(B1:D13), C10:E20)",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=A$20",
+      "ironcalc": "20"
+    },
+    {
+      "formula": "=AVERAGE(C9:D25)",
+      "ironcalc": "13.111521739"
+    },
+    {
+      "formula": "=(\"x\")",
+      "ironcalc": "x"
+    },
+    {
+      "formula": "=IF(C$26, AND(B6:D14, NOT(TRUE)))",
+      "ironcalc": "#DIV/0!"
+    },
+    {
+      "formula": "=MAX(E$13, B$1)",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=IFERROR(FALSE, A9)",
+      "ironcalc": "FALSE"
+    },
+    {
+      "formula": "=E14",
+      "ironcalc": "2"
+    },
+    {
+      "formula": "=B6",
+      "ironcalc": "9"
+    },
+    {
+      "formula": "=SUMIF(B6:C16, \"<>w1\")",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=AND(C3:C22, AND(UPPER(B26), a$32))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=SUM(\"x\", 20)",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=CONCAT(LEN(a$16), C5:C17)",
+      "ironcalc": "2122w32812W2W3w0221026w013"
+    },
+    {
+      "formula": "=AND(VLOOKUP(VLOOKUP(0, B1:E30, $B$22, 0), B1:E30, B12, 0), AVERAGE(C4:D13))",
+      "ironcalc": "#REF!"
+    },
+    {
+      "formula": "=50%%",
+      "ironcalc": "0.005"
+    },
+    {
+      "formula": "=E1",
+      "ironcalc": "6"
+    },
+    {
+      "formula": "=C$9",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=+\"12\"",
+      "ironcalc": "12"
+    },
+    {
+      "formula": "=OR(VLOOKUP(Z$27, B1:E30, \"=3\", 0), AND(B$20, E14))",
+      "ironcalc": "#VALUE!"
+    },
+    {
+      "formula": "=B19",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=A$22 ^ A25",
+      "ironcalc": "3.63552E+33"
+    },
+    {
+      "formula": "=$B$11",
+      "ironcalc": "0"
+    },
+    {
+      "formula": "=A3",
+      "ironcalc": "3"
+    },
+    {
+      "formula": "=A30",
+      "ironcalc": "30"
+    },
+    {
+      "formula": "=IF(a$6, E$29 / $B$8, COUNT(C9:D11, D$26))",
+      "ironcalc": "0.125"
+    }
+  ]
+}
