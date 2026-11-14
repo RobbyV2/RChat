@@ -37,12 +37,14 @@ pub enum Rare {
     ConfigLink,
     /// An uploaded P2P backup version.
     P2pBackup,
+    /// A stored P2P identity record.
+    P2pIdentity,
     /// A P2P identity binding.
     P2pBinding,
 }
 
 impl Rare {
-    pub const ALL: [Rare; 13] = [
+    pub const ALL: [Rare; 14] = [
         Rare::DisplayName,
         Rare::SignUp,
         Rare::Password,
@@ -55,6 +57,7 @@ impl Rare {
         Rare::Webhook,
         Rare::ConfigLink,
         Rare::P2pBackup,
+        Rare::P2pIdentity,
         Rare::P2pBinding,
     ];
 
@@ -73,6 +76,7 @@ impl Rare {
             Rare::Webhook => "webhook",
             Rare::ConfigLink => "config_link",
             Rare::P2pBackup => "p2p_backup",
+            Rare::P2pIdentity => "p2p_identity",
             Rare::P2pBinding => "p2p_binding",
         }
     }
@@ -113,6 +117,7 @@ impl Rare {
             ],
             Rare::ConfigLink => &[("post", "/api/v1/config_shares")],
             Rare::P2pBackup => &[("put", "/api/v1/me/p2p_backup/{ik}")],
+            Rare::P2pIdentity => &[("put", "/api/v1/me/p2p_identity/{ik}")],
             Rare::P2pBinding => &[("post", "/api/v1/identity/p2p_binding")],
         }
     }

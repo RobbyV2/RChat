@@ -24,6 +24,7 @@ pub mod messages;
 pub mod names;
 pub mod openapi;
 pub mod p2p_backup;
+pub mod p2p_identity;
 pub mod passwords;
 pub mod pings;
 pub mod pins;
@@ -1886,6 +1887,10 @@ pub fn routes(
                 "/me/p2p_backup/{ik}/versions/{version}",
                 delete(p2p_backup::delete_version),
             )
+            .route(
+                "/me/p2p_identity/{ik}",
+                put(p2p_identity::put_identity).delete(p2p_identity::delete_identity),
+            )
             .route("/servers/{name}/guest_access", post(servers::guest_access))
             .route("/servers", post(servers::create_server))
             .route("/admin/servers", post(admin::create_server_for))
@@ -1984,6 +1989,8 @@ fn api_routes(
             "/me/p2p_backup/{ik}/versions/{version}",
             get(p2p_backup::get_version),
         )
+        .route("/me/p2p_identity", get(p2p_identity::list_identities))
+        .route("/me/p2p_identity/{ik}", get(p2p_identity::get_identity))
         .route("/auth/logout", post(auth::logout))
         .route("/me/servers", get(servers::list_my_servers))
         .route("/users/{username}/profile", get(users::profile))

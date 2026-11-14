@@ -283,7 +283,7 @@ async fn send(
 
 /// On Postgres, holds the account's backups until the transaction ends, so uploads and deletes
 /// of one account run one after another (SQLite has one writer).
-async fn lock(conn: &mut AnyConnection, username: &str) -> sqlx::Result<()> {
+pub(crate) async fn lock(conn: &mut AnyConnection, username: &str) -> sqlx::Result<()> {
     if conn.backend_name() == "PostgreSQL" {
         sqlx::query("SELECT COUNT(*) FROM pg_advisory_xact_lock(hashtextextended($1, 0))")
             .bind(format!("p2p backup:{username}"))
@@ -295,7 +295,7 @@ async fn lock(conn: &mut AnyConnection, username: &str) -> sqlx::Result<()> {
 
 /// Whether the account of `user` still exists and is not being deleted. On Postgres this holds
 /// its row until the transaction ends, so deleting the account waits for it.
-async fn live(conn: &mut AnyConnection, user: &User) -> sqlx::Result<bool> {
+pub(crate) async fn live(conn: &mut AnyConnection, user: &User) -> sqlx::Result<bool> {
     let changed = sqlx::query("UPDATE users SET username = username WHERE username = $1 AND created_at = $2 AND password_hash <> $3")
         .bind(&user.username)
         .bind(user.created_at)

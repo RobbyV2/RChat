@@ -4020,6 +4020,111 @@ async fn p2p_backups_tables_are_added_to_an_old_database() {
     }
 }
 
+async fn old_p2p_identities_db(db: &Db) {
+    for stmt in [
+        "DROP TABLE p2p_identities".to_string(),
+        "UPDATE settings SET value = '30' WHERE key = 'schema_version'".to_string(),
+        format!("{OLD_USER}('alice', 'Alice', 'a-hash', 'text', 'identicon', 7)"),
+        "INSERT INTO p2p_backups(username, ik, version, size, updated_at, data) VALUES('alice', 'k', 1, 3, 101, 'abc')".to_string(),
+        "INSERT INTO p2p_backup_seq(username, ik, latest) VALUES('alice', 'k', 1)".to_string(),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(db)
+            .await
+            .expect(&stmt);
+    }
+}
+
+async fn upgraded_p2p_identities_db(db: &Db, round: i64) {
+    let alice = sqlx::query("SELECT u.display_name, u.password_hash, u.created_at, b.size, b.updated_at, s.latest FROM users u JOIN p2p_backups b ON b.username = u.username JOIN p2p_backup_seq s ON s.username = u.username AND s.ik = b.ik WHERE u.username = 'alice'")
+        .fetch_one(db)
+        .await
+        .expect("alice");
+    let kept: (String, String, i64, i64, i64, i64) = (
+        alice.try_get(0).expect("display_name"),
+        alice.try_get(1).expect("password_hash"),
+        alice.try_get(2).expect("created_at"),
+        alice.try_get(3).expect("size"),
+        alice.try_get(4).expect("updated_at"),
+        alice.try_get(5).expect("latest"),
+    );
+    assert_eq!(
+        kept,
+        ("Alice".to_string(), "a-hash".to_string(), 7, 3, 101, 1)
+    );
+    assert_eq!(
+        count(db, "SELECT COUNT(*) FROM p2p_identities").await,
+        round
+    );
+    let ik = format!("k{round}");
+    let record = format!(r#"{{"cr":{{"n":0}},"chain":[{round}]}}"#);
+    sqlx::query(
+        "INSERT INTO p2p_identities(username, ik, record, updated_at) VALUES('alice', $1, $2, $3)",
+    )
+    .bind(&ik)
+    .bind(&record)
+    .bind(200 + round)
+    .execute(db)
+    .await
+    .expect("a record");
+    let again = sqlx::query(
+        "INSERT INTO p2p_identities(username, ik, record, updated_at) VALUES('alice', $1, 'x', 1)",
+    )
+    .bind(&ik)
+    .execute(db)
+    .await;
+    assert!(again.is_err(), "one record per account and identity");
+    let row = sqlx::query(
+        "SELECT record, updated_at FROM p2p_identities WHERE username = 'alice' AND ik = $1",
+    )
+    .bind(&ik)
+    .fetch_one(db)
+    .await
+    .expect("stored");
+    let got: (String, i64) = (
+        row.try_get(0).expect("record"),
+        row.try_get(1).expect("updated_at"),
+    );
+    assert_eq!(got, (record, 200 + round));
+    assert_eq!(
+        count(
+            db,
+            "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+        )
+        .await,
+        SCHEMA_VERSION
+    );
+}
+
+async fn p2p_identities_upgrade(url: &str) {
+    let db = open(Some(url)).await.expect("open");
+    old_p2p_identities_db(&db).await;
+    close(&db).await;
+    for round in 0..2 {
+        let db = open(Some(url)).await.expect("upgrade");
+        upgraded_p2p_identities_db(&db, round).await;
+        close(&db).await;
+    }
+}
+
+#[tokio::test]
+async fn the_p2p_identities_table_is_added_to_an_old_database() {
+    const { assert!(SCHEMA_VERSION >= 31) };
+    let path = crate::db::temp_db_path("p2p_identities_upgrade");
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    p2p_identities_upgrade(path.to_str().expect("path")).await;
+    wipe();
+    if let Some(pg) = crate::api::test_util::pg_temp("p2p_identities_upgrade").await {
+        p2p_identities_upgrade(&pg.url).await;
+        drop(pg);
+    }
+}
+
 #[tokio::test]
 async fn open_with_uses_the_configured_options() {
     let path = temp_db_path("open_with");

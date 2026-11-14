@@ -22,6 +22,7 @@ use crate::api::budget::as_client;
 use crate::api::config_shares::create_share;
 use crate::api::instance::{Peer, p2p_binding};
 use crate::api::p2p_backup::{PutError, put_backup};
+use crate::api::p2p_identity::put_identity;
 use crate::api::passwords::create_password;
 use crate::api::reauth::{AuthedSession, Session};
 use crate::api::recovery::{challenge, recover, remove_phrase, set_phrase};
@@ -223,11 +224,12 @@ enum Route {
     OutgoingTest,
     ConfigLink,
     P2pBackup,
+    P2pIdentity,
     P2pBinding,
 }
 
 impl Route {
-    const ALL: [Route; 21] = [
+    const ALL: [Route; 22] = [
         Route::DisplayName,
         Route::SignUp,
         Route::Password,
@@ -248,6 +250,7 @@ impl Route {
         Route::OutgoingTest,
         Route::ConfigLink,
         Route::P2pBackup,
+        Route::P2pIdentity,
         Route::P2pBinding,
     ];
 
@@ -294,6 +297,7 @@ impl Route {
             ),
             Route::ConfigLink => (Rare::ConfigLink, "post", "/api/v1/config_shares"),
             Route::P2pBackup => (Rare::P2pBackup, "put", "/api/v1/me/p2p_backup/{ik}"),
+            Route::P2pIdentity => (Rare::P2pIdentity, "put", "/api/v1/me/p2p_identity/{ik}"),
             Route::P2pBinding => (Rare::P2pBinding, "post", "/api/v1/identity/p2p_binding"),
         }
     }
@@ -465,6 +469,15 @@ impl Route {
                 )
                 .await,
             )),
+            Route::P2pIdentity => answer(
+                put_identity(
+                    state(),
+                    w.session(&who, n).await,
+                    Path(ik(i as u8 + 1)),
+                    Body::from("{}"),
+                )
+                .await,
+            ),
             Route::P2pBinding => answer(
                 p2p_binding(
                     state(),

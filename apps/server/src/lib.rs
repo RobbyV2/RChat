@@ -9,6 +9,7 @@ pub mod instance;
 pub mod limits;
 pub mod net_guard;
 pub mod p2p;
+pub mod p2p_chain;
 pub mod peerjs;
 pub mod relay;
 pub mod run;
