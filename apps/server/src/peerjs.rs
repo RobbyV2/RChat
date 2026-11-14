@@ -12,7 +12,7 @@ use axum::routing::get;
 use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
 
 use crate::server::client_ip::ClientIp;
@@ -130,6 +130,8 @@ struct Backlog {
     own: AtomicUsize,
     addr: Arc<AtomicUsize>,
     all: Arc<AtomicUsize>,
+    /// Told once the connection no longer holds its id.
+    gone: Notify,
 }
 
 impl Backlog {
@@ -216,6 +218,14 @@ struct Peer {
     addr: IpAddr,
     out: mpsc::Sender<Queued>,
     backlog: Arc<Backlog>,
+}
+
+/// A connection that no longer holds its id (taken over, left, stalled, or every connection
+/// closed) stops writing at once, so it gives its queue back then.
+impl Drop for Peer {
+    fn drop(&mut self) {
+        self.backlog.gone.notify_one();
+    }
 }
 
 impl Peer {
@@ -337,6 +347,7 @@ impl Realm {
             own: AtomicUsize::new(0),
             addr: Arc::clone(&client.queued),
             all: Arc::clone(&self.queued),
+            gone: Notify::new(),
         });
         self.conns += 1;
         let peer = Peer {
@@ -393,7 +404,7 @@ impl Realm {
         if !self.holds(id, conn) {
             return;
         }
-        let Some(peer) = self.peers.remove(id) else {
+        let Some(mut peer) = self.peers.remove(id) else {
             return;
         };
         let now = Instant::now();
@@ -401,8 +412,9 @@ impl Realm {
             self.reserved.retain(|_, (_, until)| now < *until);
         }
         if self.reserved.len() < RESERVED_MAX {
+            let token = std::mem::take(&mut peer.token);
             self.reserved
-                .insert(id.to_string(), (peer.token, now + RESERVED));
+                .insert(id.to_string(), (token, now + RESERVED));
         }
     }
 
@@ -842,9 +854,16 @@ async fn serve(peers: Peers, mut socket: WebSocket, hello: Hello, slot: Slot) {
                 let Some(Queued { at, frame }) = queued else {
                     break;
                 };
+                if frames.is_closed() {
+                    break;
+                }
                 let bytes = frame.len();
                 let wrote = match write_by(at, Instant::now(), stale) {
-                    Some(by) => write(&mut socket, frame, by).await,
+                    Some(by) => tokio::select! {
+                        biased;
+                        wrote = write(&mut socket, frame, by) => wrote,
+                        () = backlog.gone.notified() => Wrote::Closed,
+                    },
                     None => Wrote::Late,
                 };
                 backlog.give(bytes);
@@ -1651,6 +1670,7 @@ mod tests {
             own: AtomicUsize::new(0),
             addr: Arc::clone(&addr),
             all: Arc::clone(&all),
+            gone: Notify::new(),
         };
         let small = OUT_BYTES_FLOOR / 4;
         for n in 0..4 {
@@ -2408,6 +2428,100 @@ mod tests {
         }
         assert!(queued(&served.peers) > OUT_BYTES_TOTAL_MAX - FRAME_MAX);
         flooding.abort();
+    }
+
+    /// Frames still queued for a connection when another one takes its id over with the same
+    /// token are not written to it: it gets nothing more and is closed.
+    #[tokio::test]
+    async fn a_connection_taken_over_gets_nothing_more() {
+        let served = serve(Settings::default()).await;
+        let mut old = join(&served, "x").await;
+        let one = client("198.51.100.8");
+        {
+            let mut realm = served.peers.realm();
+            let _sender = member_of(&mut realm, "sender", &one);
+            for n in 0..3 {
+                realm.relay(OFFER, "sender", "x", Some(&Value::from(n)));
+            }
+            let _taken = realm.join("x", "t-x", usize::MAX, &one).expect("takeover");
+        }
+        assert_eq!(next(&mut old).await, None);
+    }
+
+    /// The join limit is 2 and the shared budget is full, so only floors take frames. Each
+    /// round a new connection takes `x` over with the same token and reads nothing, and a
+    /// sender keeps `x`'s floor full until writes to it wait. Every replaced connection gives
+    /// back what it held at once, write waiting or not, so what is queued over the total stays
+    /// within the limit's floors.
+    #[tokio::test]
+    async fn a_connection_taken_over_gives_its_queue_back_at_once() {
+        let limit = 2;
+        let served = serve(Settings {
+            concurrent_limit: limit,
+            ..Settings::default()
+        })
+        .await;
+        let peers = &served.peers;
+        let one = client("198.51.100.7");
+        let mut sender = member_of(&mut peers.realm(), "sender", &one);
+        assert_eq!(sender.next().as_deref(), Some(OPEN));
+        peers
+            .realm()
+            .queued
+            .fetch_add(OUT_BYTES_TOTAL_MAX, Ordering::Relaxed);
+        let held = |id: &str| {
+            peers
+                .realm()
+                .peers
+                .get(id)
+                .map_or(0, |peer| peer.backlog.own.load(Ordering::Relaxed))
+        };
+        let over = || {
+            let all = queued(&peers.realm());
+            all.saturating_sub(OUT_BYTES_TOTAL_MAX + held("sender"))
+        };
+        let conn = || peers.realm().peers.get("x").map(|peer| peer.conn);
+        let payload = Value::String("p".repeat(OUT_BYTES_FLOOR - 200));
+        let mut sockets = Vec::new();
+        let mut most = 0;
+        for round in 0..6 {
+            let before = conn();
+            let ws = dial(served.addr, "key=peerjs&id=x&token=t-x", "203.0.113.9")
+                .await
+                .expect("dial");
+            sockets.push(ws);
+            until("the new connection holds x", || conn() != before).await;
+            let by = Instant::now() + Duration::from_secs(2);
+            while over() > OPEN.len() {
+                assert!(
+                    Instant::now() < by,
+                    "round {round}: the replaced connection still holds {} bytes",
+                    over()
+                );
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let mut full = 0;
+            for _ in 0..100_000 {
+                peers.realm().relay(OFFER, "sender", "x", Some(&payload));
+                while sender.next().is_some() {}
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                full = if held("x") > OUT_BYTES_FLOOR / 2 {
+                    full + 1
+                } else {
+                    0
+                };
+                if full == 20 {
+                    break;
+                }
+            }
+            assert_eq!(full, 20, "round {round}: writes to x wait");
+            most = most.max(over());
+        }
+        assert!(most > OUT_BYTES_FLOOR / 2);
+        assert!(
+            most <= limit * OUT_BYTES_FLOOR,
+            "{most} bytes over the total"
+        );
     }
 
     #[tokio::test]
