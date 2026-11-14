@@ -1,4 +1,5 @@
-use crate::db::Db;
+use crate::api::NAME_MAX;
+use crate::db::{Db, PURGING_HASH, User, user_row};
 
 pub(crate) const STAFF_NAME: &str = "instance staff";
 
@@ -221,6 +222,58 @@ pub(crate) const TAKEN_SQL: &str = "SELECT 1 FROM users WHERE username = $7 UNIO
 
 /// `TAKEN_SQL` for the banned usernames.
 pub(crate) const BANNED_SQL: &str = "SELECT 1 FROM banned_usernames WHERE username = $7 UNION ALL SELECT 1 FROM banned_usernames WHERE username_key IN ($1, $2, $3, $4, $5, $6) UNION ALL SELECT 1 FROM banned_usernames WHERE username_key_alt IN ($1, $2, $3, $4, $5, $6) LIMIT 1";
+
+/// The accounts, not being deleted, whose username passes for the keys `$1` to `$3`. An account
+/// can match through both stored keys, so three rows tell one account from several.
+pub(crate) const SIGN_IN_SQL: &str = "SELECT * FROM users WHERE username_key IN ($1, $2, $3) AND password_hash <> '!purging' UNION ALL SELECT * FROM users WHERE username_key_alt IN ($1, $2, $3) AND password_hash <> '!purging' LIMIT 3";
+
+/// The account a sign-in as `name` is for: the account with that username in any case, else the
+/// one account, not being deleted, whose username `name` passes for (`name_keys` through the
+/// stored keys). None when the account with that username is being deleted, when there is none,
+/// or when `name` passes for several. A name over `NAME_MAX` characters reaches none, with no
+/// lookup and no keys; every other name costs the same two lookups.
+pub(crate) async fn sign_in_account(db: &Db, name: &str) -> sqlx::Result<Option<User>> {
+    if name.chars().count() > NAME_MAX {
+        return Ok(None);
+    }
+    let exact = user_row(db, name).await?;
+    let [a, b, c] = name_keys(name);
+    let alike = sqlx::query(SIGN_IN_SQL)
+        .bind(a)
+        .bind(b)
+        .bind(c)
+        .fetch_all(db)
+        .await?
+        .iter()
+        .map(User::from_row)
+        .collect::<sqlx::Result<Vec<_>>>()?;
+    let one = match alike.as_slice() {
+        [first, rest @ ..] if rest.iter().all(|user| user.username == first.username) => {
+            Some(first.clone())
+        }
+        _ => None,
+    };
+    Ok(match exact {
+        Some(user) => Some(user).filter(|user| user.password_hash != PURGING_HASH),
+        None => one,
+    })
+}
+
+/// The `login_attempts` rows a sign-in as `name` is paced and counted under, sorted (the order
+/// they are locked in): the account it reaches, and each look-alike key of `name` behind an `@`,
+/// which no username holds. A spelling reaches an account through a key the account's username
+/// is stored under, so two spellings that reach it through one key share a pace whether or not
+/// the account exists, and a name that passes for several accounts counts against none of them.
+pub(crate) fn pace_keys(account: Option<&User>, name: &str) -> Vec<String> {
+    let mut rows: Vec<String> = name_keys(name)
+        .iter()
+        .map(|key| format!("@{key}"))
+        .chain(account.map(|user| user.username.clone()))
+        .collect();
+    rows.sort_unstable();
+    rows.dedup();
+    rows
+}
 
 /// Whether a username holds a character that shows as nothing: a hidden character
 /// (`hidden_char`), a variation selector, a space other than U+0020, or a space at either end.
@@ -790,8 +843,12 @@ mod tests {
         }
     }
 
-    async fn refusals_are_looked_up_by_key(db: &Db) {
-        for (sql, table) in [(TAKEN_SQL, "users"), (BANNED_SQL, "banned_usernames")] {
+    async fn names_are_looked_up_by_key(db: &Db) {
+        for (sql, table) in [
+            (TAKEN_SQL, "users"),
+            (BANNED_SQL, "banned_usernames"),
+            (SIGN_IN_SQL, "users"),
+        ] {
             let plan = plan_of(db, sql).await;
             let key = format!("idx_{table}_username_key");
             let alt = format!("idx_{table}_username_key_alt");
@@ -805,12 +862,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn names_are_refused_through_the_key_indexes() {
+    async fn names_are_matched_through_the_key_indexes() {
         let (state, path) = temp_state("names_refusal_plan").await;
-        refusals_are_looked_up_by_key(&state.db).await;
+        names_are_looked_up_by_key(&state.db).await;
         done(state, path).await;
         if let Some((state, pg)) = pg_state("names_refusal_plan").await {
-            refusals_are_looked_up_by_key(&state.db).await;
+            names_are_looked_up_by_key(&state.db).await;
             pg_done(state, pg).await;
         }
     }

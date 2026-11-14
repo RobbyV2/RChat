@@ -4146,6 +4146,15 @@ async fn upgraded_banned_keys_db(db: &Db, extra: &[&str]) {
         1,
         "an account with three looks keeps its key and its look as shown"
     );
+    let shown = crate::api::names::sign_in_account(db, "\u{13a4}lIvia")
+        .await
+        .expect("load")
+        .map(|user| user.username);
+    assert_eq!(
+        shown.as_deref(),
+        Some("\u{ab74}livia"),
+        "an account with three looks signs in by the name as shown"
+    );
     for index in [
         "idx_banned_usernames_username_key",
         "idx_banned_usernames_username_key_alt",

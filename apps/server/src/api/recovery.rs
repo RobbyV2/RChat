@@ -6,15 +6,17 @@ use utoipa::ToSchema;
 
 use crate::api::access::not_found;
 use crate::api::auth::{
-    AuthResp, Secret, hash_password, me_payload, new_token, secret_from, throttle_attempt,
+    AuthResp, PICK_WORDS, Secret, hash_password, in_word_set, me_payload, new_token, secret_from,
+    throttle_attempt,
 };
+use crate::api::names::{pace_keys, sign_in_account};
 use crate::api::rare::{self, Rare};
 use crate::api::reauth::{
     AuthedSession, NONCE_TTL_SECS, Purpose, RECOVER, ReAuth, ReAuthBody, Session, check_at,
     issue_nonce, phrase_sig_ok, take_nonce,
 };
 use crate::api::{ApiError, ApiErrorBody, NAME_MAX, Settings, bad, check_len, unauthorized};
-use crate::db::{User, get_user, now, secret_key};
+use crate::db::{User, now, secret_key};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -80,7 +82,8 @@ async fn challenge_at(
 /// A recovery sign-in: a backup phrase signature over a fresh challenge, and a new password.
 #[derive(Deserialize, ToSchema)]
 pub struct RecoverReq {
-    /// The username the challenge was issued for, case-insensitive.
+    /// The username the challenge was issued for, case-insensitive. A name that passes for
+    /// exactly one account's username in look-alike characters recovers that account.
     #[schema(example = "alice")]
     pub username: String,
     /// The nonce from `POST /api/v1/auth/recovery/challenge` for this username.
@@ -107,16 +110,21 @@ fn wrong_phrase() -> ApiError {
 /// Proves the account's backup phrase with a signature over a challenge from
 /// `POST /api/v1/auth/recovery/challenge` (purpose `recover`, empty context), replaces the password
 /// or words, and returns a new session token. Every other session of the account is revoked and
-/// its WebSocket connections close. The backup phrase stays set. An unknown account, one without
+/// its WebSocket connections close. The backup phrase stays set. The account is found as by
+/// `POST /api/v1/auth/login`, look-alike names included; the signature covers the name as the
+/// challenge returned it. An unknown account, a name that passes for several accounts, one without
 /// a backup phrase, a used, expired or foreign nonce and a wrong signature all answer the same
-/// 401. Recovery and login share each username's pace: one attempt every 3 seconds and at most
-/// 1000 a UTC day. An invalid new password answers 400 and leaves the nonce unused. No
-/// authentication. Strict and general rate-limit buckets.
+/// 401. Recovery and login share each account's pace: one attempt every 3 seconds and at most
+/// 1000 a UTC day, for the account and every look-alike key of the name given. An
+/// invalid new password answers 400 and leaves the nonce unused. New words come from the word
+/// set of the name given and of the account; words outside the account's set answer 400 only
+/// after the signature is checked, with the nonce used up. No authentication. Strict and general
+/// rate-limit buckets.
 /// Recovery challenges and recovery sign-ins are rare requests of one kind: at most
 /// `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per client address
 /// (an IPv6 /64 counts as one) by default, whatever the username. A sign-in refused by the pace or
-/// the daily lock of its username (429, 423) does not count.
-#[utoipa::path(post, path = "/api/v1/auth/recovery", tag = "Auth", request_body = RecoverReq, responses((status = 200, description = "Recovered: the password is replaced, every other session of the account is revoked and its live connections close, and the new session token is returned. The backup phrase stays set", body = AuthResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, or not exactly one of `password` and `words` in `new`; the nonce stays unused. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "`Wrong username or backup phrase`: an unknown account, one without a backup phrase, a used, expired or foreign nonce, or a wrong signature. The nonce is used up", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login and recovery attempts for this username today (UTC); locked until the next day", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Less than 3 seconds since the last login or recovery attempt for this username (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
+/// the daily lock (429, 423) does not count.
+#[utoipa::path(post, path = "/api/v1/auth/recovery", tag = "Auth", request_body = RecoverReq, responses((status = 200, description = "Recovered: the password is replaced, every other session of the account is revoked and its live connections close, and the new session token is returned. The backup phrase stays set", body = AuthResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set of the name given, or not exactly one of `password` and `words` in `new`; the nonce stays unused. Also new words outside the account's word set, after the signature is checked; the nonce is used up. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "`Wrong username or backup phrase`: an unknown account, a name that passes for several accounts, one without a backup phrase, a used, expired or foreign nonce, or a wrong signature. The nonce is used up", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login and recovery attempts today (UTC) for this account or a look-alike key of the name given; locked until the next day", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Less than 3 seconds since the last login or recovery attempt for this account or a look-alike key of the name given (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn recover(
     State(state): State<AppState>,
     Json(req): Json<RecoverReq>,
@@ -141,20 +149,25 @@ pub(crate) async fn recover_at(
     }
     let key = username.to_lowercase();
     let db = &state.db;
-    throttle_attempt(db, &key, t).await?;
+    let account = sign_in_account(db, &username).await?;
+    throttle_attempt(db, &pace_keys(account.as_ref(), &username), t).await?;
     if password.as_deref() == Some("") {
         return Err(bad("Password required"));
     }
     let (secret, password_kind) = secret_from(&key, password, words, true)?;
     let fresh = take_nonce(db, &key, &nonce, t).await?;
-    let user = get_user(db, &key).await?;
-    let phrase = user.as_ref().and_then(|user| user.recovery_pub.as_deref());
+    let phrase = account
+        .as_ref()
+        .and_then(|user| user.recovery_pub.as_deref());
     let signed =
         fresh && phrase_sig_ok(phrase.unwrap_or(NO_PHRASE), RECOVER, &key, &nonce, "", &sig);
-    let user = match (signed && phrase.is_some(), user) {
+    let user = match (signed && phrase.is_some(), account) {
         (true, Some(user)) => user,
         (_, _) => return Err(wrong_phrase()),
     };
+    if password_kind == "words" && !in_word_set(&user.username, &secret) {
+        return Err(bad(PICK_WORDS));
+    }
     let password_hash = hash_password(&secret).await?;
     let token = new_token();
     let mut tx = db.begin().await?;
@@ -163,7 +176,7 @@ pub(crate) async fn recover_at(
     )
     .bind(&password_hash)
     .bind(password_kind)
-    .bind(&key)
+    .bind(&user.username)
     .bind(&user.password_hash)
     .bind(&user.recovery_pub)
     .execute(&mut *tx)
@@ -173,19 +186,19 @@ pub(crate) async fn recover_at(
         return Err(wrong_phrase());
     }
     sqlx::query("DELETE FROM tokens WHERE username = $1")
-        .bind(&key)
+        .bind(&user.username)
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, $3)")
         .bind(secret_key(&token))
-        .bind(&key)
+        .bind(&user.username)
         .bind(t)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    state
-        .hub
-        .broadcast(WsEvent::TokensRevoked { username: key });
+    state.hub.broadcast(WsEvent::TokensRevoked {
+        username: user.username.clone(),
+    });
     let user = User {
         password_hash,
         password_kind: password_kind.to_string(),
@@ -771,6 +784,7 @@ mod tests {
             T,
             0,
         ));
+        let mut long_names = Vec::new();
         for (case, len) in [
             ("101 characters", 101),
             ("2816 characters", 2816),
@@ -782,6 +796,7 @@ mod tests {
             let name = &hex[..len];
             let sig = sign(RECOVER, name, &made_up);
             tries.push((case, recovery(name, &made_up, &sig, text("x")), T, 0));
+            long_names.push(name.to_string());
         }
         let nonce = nonce_for(state, "alice", T).await;
         let sig = sign(RECOVER, "alice", &nonce);
@@ -810,23 +825,26 @@ mod tests {
             assert_eq!(answer, wrong(), "{case}");
             assert_eq!(checked, checks, "{case}: signature checks");
         }
-        let long_keys: i64 =
-            sqlx::query("SELECT COUNT(*) FROM login_attempts WHERE LENGTH(username) > 100")
-                .fetch_one(&state.db)
-                .await
-                .expect("count")
-                .try_get(0)
-                .expect("count value");
-        assert_eq!(long_keys, 0, "names over 100 characters are not paced");
-        let longest_paced: i64 =
-            sqlx::query("SELECT COUNT(*) FROM login_attempts WHERE username = $1")
-                .bind(&longest)
-                .fetch_one(&state.db)
-                .await
-                .expect("count")
-                .try_get(0)
-                .expect("count value");
-        assert_eq!(longest_paced, 1);
+        let paced: Vec<String> = sqlx::query("SELECT username FROM login_attempts")
+            .fetch_all(&state.db)
+            .await
+            .expect("attempts")
+            .iter()
+            .map(|r| r.try_get(0).expect("name"))
+            .collect();
+        let rows_under = |name: &str| {
+            let mut rows = crate::api::names::pace_keys(None, name);
+            rows.push(name.to_lowercase());
+            paced.iter().filter(|row| rows.contains(row)).count()
+        };
+        for name in &long_names {
+            assert_eq!(
+                rows_under(name),
+                0,
+                "names over 100 characters are not paced"
+            );
+        }
+        assert_eq!(rows_under(&longest), 1);
         let user = get_user(&state.db, "alice")
             .await
             .expect("load")
@@ -843,6 +861,148 @@ mod tests {
         done(state, path).await;
         if let Some((state, pg)) = pg_state("recovery_uniform").await {
             failures_look_the_same(&state).await;
+            pg_done(state, pg).await;
+        }
+    }
+
+    async fn paced(state: &AppState) -> Vec<(String, i64)> {
+        let mut rows = sqlx::query("SELECT username, count FROM login_attempts")
+            .fetch_all(&state.db)
+            .await
+            .expect("attempts")
+            .iter()
+            .map(|r| (r.try_get(0).expect("name"), r.try_get(1).expect("count")))
+            .collect::<Vec<_>>();
+        rows.sort();
+        rows
+    }
+
+    async fn look_alikes_recover_one_account(state: &AppState) {
+        add_user(state, "mom", "a", Some(KEY)).await;
+        add_user(state, "bob", "b", Some(KEY)).await;
+        add_user(state, "b\u{43e}b", "b", Some(KEY)).await;
+        add_token(state, "mom", "laptop").await;
+        let mut rx = state.hub.subscribe();
+        let wait = (
+            StatusCode::TOO_MANY_REQUESTS,
+            "Wait 3 seconds between attempts".to_string(),
+        );
+        let pick = (
+            StatusCode::BAD_REQUEST,
+            "Pick 7 words from your word set".to_string(),
+        );
+        let one = |name: &str, n: i64| (name.to_string(), n);
+
+        let nonce = nonce_for(state, "RN0M", T).await;
+        let sig = sign(RECOVER, "rn0m", &nonce);
+        let Json(AuthResp { token, user }) =
+            recover_at(state, recovery("RN0M", &nonce, &sig, text("new pass")), T)
+                .await
+                .expect("recovered by a look-alike");
+        assert_eq!(user.username, "mom");
+        assert_eq!(tokens_of(state, "mom").await, vec![secret_key(&token)]);
+        assert!(tokens_of(state, "rn0m").await.is_empty());
+        assert_eq!(revoked(&mut rx), ["mom"]);
+        assert_eq!(
+            refusal(login_with(state, "mom", json!({"password": "new pass"}), T + 1).await),
+            wait,
+            "one pace for the account"
+        );
+        let Json(AuthResp { user, .. }) =
+            login_with(state, "m\u{43e}m", json!({"password": "new pass"}), T + 3)
+                .await
+                .expect("the new password");
+        assert_eq!(user.username, "mom");
+        assert_eq!(paced(state).await, vec![one("@rnorn", 2), one("mom", 2)]);
+
+        let nonce = nonce_for(state, "rnom", T + 6).await;
+        let sig = sign(RECOVER, "mom", &nonce);
+        let res = recover_at(state, recovery("rnom", &nonce, &sig, text("x")), T + 6).await;
+        assert_eq!(
+            refusal(res),
+            wrong(),
+            "the signature covers the name asked for"
+        );
+
+        let set = |name: &str| crate::api::auth::words(axum::extract::Path(name.to_string()));
+        let Json(WordsResp { words: typed }) = set("rnom").await;
+        let Json(WordsResp { words: own }) = set("mom").await;
+        let only = |of: &[String], not: &[String]| -> Vec<String> {
+            of.iter()
+                .filter(|w| !not.contains(w))
+                .take(7)
+                .cloned()
+                .collect()
+        };
+        let (only_own, only_typed) = (only(&own, &typed), only(&typed, &own));
+        assert_eq!((only_own.len(), only_typed.len()), (7, 7));
+        let nonce = nonce_for(state, "rnom", T + 9).await;
+        let sig = sign(RECOVER, "rnom", &nonce);
+        let words = |w: &[String]| secret(json!({ "words": w }));
+        let res = recover_at(
+            state,
+            recovery("rnom", &nonce, &sig, words(&only_own)),
+            T + 9,
+        )
+        .await;
+        assert_eq!(refusal(res), pick, "checked first against the name typed");
+        let res = recover_at(
+            state,
+            recovery("rnom", &nonce, &sig, words(&only_typed)),
+            T + 12,
+        )
+        .await;
+        assert_eq!(refusal(res), pick, "then against the account's word set");
+        let res = recover_at(state, recovery("rnom", &nonce, &sig, text("y")), T + 15).await;
+        assert_eq!(refusal(res), wrong(), "the proof used the nonce");
+        let _ = login_with(state, "mom", json!({"password": "new pass"}), T + 18)
+            .await
+            .expect("the password stays");
+        assert_eq!(paced(state).await, vec![one("@rnorn", 7), one("mom", 7)]);
+
+        for (n, name) in (0i64..).zip(["B0B", "b\u{3bf}b"]) {
+            let at = T + 30 + 3 * n;
+            let nonce = nonce_for(state, name, at).await;
+            let sig = sign(RECOVER, &name.to_lowercase(), &nonce);
+            let checks = phrase_checks();
+            let res = recover_at(state, recovery(name, &nonce, &sig, text("x")), at).await;
+            assert_eq!(refusal(res), wrong(), "{name:?} passes for two accounts");
+            assert_eq!(
+                phrase_checks() - checks,
+                1,
+                "{name:?}: one check, like any name"
+            );
+        }
+        for (n, name) in (0i64..).zip(["bob", "b\u{43e}b"]) {
+            let at = T + 40 + 3 * n;
+            let nonce = nonce_for(state, name, at).await;
+            let sig = sign(RECOVER, name, &nonce);
+            let Json(AuthResp { user, .. }) =
+                recover_at(state, recovery(name, &nonce, &sig, text("z")), at)
+                    .await
+                    .expect(name);
+            assert_eq!(user.username, name);
+        }
+        assert_eq!(
+            paced(state).await,
+            vec![
+                one("@bob", 4),
+                one("@rnorn", 7),
+                one("bob", 1),
+                one("b\u{43e}b", 1),
+                one("mom", 7),
+            ]
+        );
+        assert_eq!(revoked(&mut rx), ["bob", "b\u{43e}b"]);
+    }
+
+    #[tokio::test]
+    async fn a_look_alike_recovers_its_one_account() {
+        let (state, path) = temp_state("recovery_lookalike").await;
+        look_alikes_recover_one_account(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("recovery_lookalike").await {
+            look_alikes_recover_one_account(&state).await;
             pg_done(state, pg).await;
         }
     }

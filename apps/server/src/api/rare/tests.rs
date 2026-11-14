@@ -952,14 +952,17 @@ async fn refusals_by_other_limits_and_for_capacity_give_the_count_back() {
     let db = &state.db;
     quiet(db).await;
     let day = now() / 86400;
-    exec(
-        db,
-        &format!(
-            "INSERT INTO login_attempts(username, day, count, last_at) VALUES('paced', '{day}', 1, {}), ('locked', '{day}', 1001, 0)",
-            now() + 1000
-        ),
-    )
-    .await;
+    for (name, count, last_at) in [("paced", 1, now() + 1000), ("locked", 1001, 0)] {
+        for row in crate::api::names::pace_keys(None, name) {
+            exec(
+                db,
+                &format!(
+                    "INSERT INTO login_attempts(username, day, count, last_at) VALUES('{row}', '{day}', {count}, {last_at})"
+                ),
+            )
+            .await;
+        }
+    }
     let from = "198.51.100.9";
     let recovered = |name: &'static str| {
         as_client(

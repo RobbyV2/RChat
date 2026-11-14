@@ -129,7 +129,8 @@ pub struct RegisterReq {
 /// Login credentials. Give exactly one of `password` or `words`.
 #[derive(Deserialize, ToSchema)]
 pub struct LoginReq {
-    /// Username, case-insensitive.
+    /// Username, case-insensitive. A name that passes for exactly one account's username in
+    /// look-alike characters signs in to that account.
     #[schema(example = "alice")]
     username: String,
     /// The text password. Omit when using `words`.
@@ -395,6 +396,14 @@ fn check_avatar(
     }
 }
 
+pub(crate) const PICK_WORDS: &str = "Pick 7 words from your word set";
+
+/// Whether every word of a `words` secret from `secret_from` is in the word set of `username`.
+pub(crate) fn in_word_set(username: &str, secret: &str) -> bool {
+    let set = word_set(username);
+    secret.split(' ').all(|w| set.iter().any(|s| s == w))
+}
+
 pub(crate) fn secret_from(
     username: &str,
     password: Option<String>,
@@ -408,7 +417,7 @@ pub(crate) fn secret_from(
             if validate_words {
                 let set = word_set(username);
                 if words.len() != 7 || words.iter().any(|w| !set.contains(w)) {
-                    return Err(bad("Pick 7 words from your word set"));
+                    return Err(bad(PICK_WORDS));
                 }
             }
             Ok((words.join(" "), "words"))
@@ -485,7 +494,7 @@ fn lock_order(defaults: &[String]) -> Vec<&str> {
 /// Sign-ups are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
 /// `RARE_REQUESTS_PER_DAY` (100) a day per client address (an IPv6 /64 counts as one) by default,
 /// whatever the username.
-#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank (also a name of only marks or variation selectors), too long (over 100 characters), NUL-containing, `@`-containing or profanity-filtered username; a username that holds control, format or invisible characters (`Username has invalid characters`); one that holds a variation selector or a space other than U+0020, starts or ends with a space, or is or passes for another account's username in another case or in look-alike characters, or mixes letters so that it would pass for more names than an account stores (a capital that passes for l next to a Cherokee letter, for example) (`Username is taken`); one that is or passes for a banned username (`Username is banned`); empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; a missing or invalid avatar color for `color` avatars; or an invalid background color for `identicon` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
+#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank (also a name of only marks or variation selectors), too long (over 100 characters, also in lower case), NUL-containing, `@`-containing or profanity-filtered username; a username that holds control, format or invisible characters (`Username has invalid characters`); one that holds a variation selector or a space other than U+0020, starts or ends with a space, or is or passes for another account's username in another case or in look-alike characters, or mixes letters so that it would pass for more names than an account stores (a capital that passes for l next to a Cherokee letter, for example) (`Username is taken`); one that is or passes for a banned username (`Username is banned`); empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; a missing or invalid avatar color for `color` avatars; or an invalid background color for `identicon` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
@@ -505,6 +514,8 @@ pub(crate) async fn register(
         return Err(bad("Username required"));
     }
     check_len(&username, NAME_MAX, "Username")?;
+    let key = username.to_lowercase();
+    check_len(&key, NAME_MAX, "Username")?;
     if username.contains('@') {
         return Err(bad("Usernames can't contain @"));
     }
@@ -517,7 +528,6 @@ pub(crate) async fn register(
     if password.as_deref() == Some("") {
         return Err(bad("Password required"));
     }
-    let key = username.to_lowercase();
     let (secret, password_kind) = secret_from(&username, password, words, true)?;
     let avatar_color = check_avatar(avatar_kind, avatar_color)?;
     check_profanity(&state.db, ProfanityTarget::Usernames, &username).await?;
@@ -607,28 +617,43 @@ pub(crate) async fn register(
     Ok(Json(AuthResp { token, user: me }))
 }
 
-pub(crate) async fn throttle_attempt(db: &Db, key: &str, t: i64) -> Result<(), ApiError> {
+/// Paces and counts one login or recovery attempt under each of `rows`, in that order, in one
+/// transaction: admitted only when every row had no attempt in the last 3 seconds, so a refused
+/// attempt counts nowhere. Over 1000 attempts today in any row answers 423.
+pub(crate) async fn throttle_attempt(
+    db: &Db,
+    rows: &[impl AsRef<str>],
+    t: i64,
+) -> Result<(), ApiError> {
     let day = (t / 86400).to_string();
     let mut tx = db.begin().await?;
     crate::db::light(db, &mut tx).await?;
-    let admitted = sqlx::query(
-        "INSERT INTO login_attempts(username, day, count, last_at) VALUES($1, $2, 1, $3) ON CONFLICT(username) DO UPDATE SET count = CASE WHEN login_attempts.day = excluded.day THEN login_attempts.count + 1 ELSE 1 END, day = excluded.day, last_at = excluded.last_at WHERE login_attempts.day <> excluded.day OR excluded.last_at - login_attempts.last_at >= 3 RETURNING count",
-    )
-    .bind(key)
-    .bind(&day)
-    .bind(t)
-    .fetch_optional(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    let count: i64 = match &admitted {
-        Some(row) => row.try_get(0)?,
-        None => sqlx::query("SELECT count FROM login_attempts WHERE username = $1")
-            .bind(key)
-            .fetch_one(db)
-            .await?
-            .try_get(0)?,
-    };
-    match (count > 1000, admitted.is_some()) {
+    let (mut admitted, mut locked) = (true, false);
+    for row in rows {
+        let counted = sqlx::query(
+            "INSERT INTO login_attempts(username, day, count, last_at) VALUES($1, $2, 1, $3) ON CONFLICT(username) DO UPDATE SET count = CASE WHEN login_attempts.day = excluded.day THEN login_attempts.count + 1 ELSE 1 END, day = excluded.day, last_at = excluded.last_at WHERE login_attempts.day <> excluded.day OR excluded.last_at - login_attempts.last_at >= 3 RETURNING count",
+        )
+        .bind(row.as_ref())
+        .bind(&day)
+        .bind(t)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let count: i64 = match &counted {
+            Some(r) => r.try_get(0)?,
+            None => sqlx::query("SELECT count FROM login_attempts WHERE username = $1")
+                .bind(row.as_ref())
+                .fetch_one(&mut *tx)
+                .await?
+                .try_get(0)?,
+        };
+        admitted &= counted.is_some();
+        locked |= count > 1000;
+    }
+    match admitted {
+        true => tx.commit().await?,
+        false => tx.rollback().await?,
+    }
+    match (locked, admitted) {
         (true, _) => Err(ApiError(
             StatusCode::LOCKED,
             "Account locked for the day".to_string(),
@@ -716,11 +741,15 @@ fn wrong_password() -> ApiError {
 /// Log in
 ///
 /// Checks the username and password (or words) and returns a new session token; existing
-/// sessions stay valid. Each username, existing or not, admits one login or recovery attempt
-/// every 3 seconds and at most 1000 login and recovery attempts per UTC day (successful ones
-/// included); after that it is locked until the next UTC day. Throttled attempts are not
-/// checked. No authentication. Strict and general rate-limit buckets.
-#[utoipa::path(post, path = "/api/v1/auth/login", tag = "Auth", request_body = LoginReq, responses((status = 200, description = "Credentials accepted; returns a new session token and the user's profile", body = AuthResp), (status = 400, description = "Not exactly one of `password` and `words`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Unknown username or wrong password (`Invalid credentials`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login and recovery attempts for this username today (UTC); locked until the next day", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since the last login or recovery attempt for this username (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
+/// sessions stay valid. The account is the one with that username in any case, else the one
+/// account whose username the name passes for in look-alike characters; a name that passes for
+/// several accounts fails like a wrong password. Each account, whatever name reaches it, admits
+/// one login or recovery attempt every 3 seconds and at most 1000 login and recovery attempts
+/// per UTC day (successful ones included); after that it is locked until the next UTC day. Each
+/// look-alike key of the name given is paced and counted the same way, and an attempt is admitted
+/// only when the account and every key admit it. Names over 100 characters answer 401 at once.
+/// Throttled attempts are not checked. No authentication. Strict and general rate-limit buckets.
+#[utoipa::path(post, path = "/api/v1/auth/login", tag = "Auth", request_body = LoginReq, responses((status = 200, description = "Credentials accepted; returns a new session token and the user's profile", body = AuthResp), (status = 400, description = "Not exactly one of `password` and `words`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Unknown username, a name that passes for several accounts, a name over 100 characters, or wrong password (`Invalid credentials`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login and recovery attempts today (UTC) for this account or a look-alike key of the name given; locked until the next day", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since the last login or recovery attempt for this account or a look-alike key of the name given (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginReq>,
@@ -738,16 +767,20 @@ pub(crate) async fn login_at(
         password,
         words,
     } = req;
-    if username.contains('\0') {
+    if username.contains('\0') || username.chars().count() > NAME_MAX {
         return Err(invalid_credentials());
     }
-    let key = username.to_lowercase();
     let db = &state.db;
-    throttle_attempt(db, &key, t).await?;
+    let account = names::sign_in_account(db, &username).await?;
+    throttle_attempt(db, &names::pace_keys(account.as_ref(), &username), t).await?;
     let (secret, _) = secret_from(&username, password, words, false)?;
-    let user = match get_user(db, &key).await? {
-        Some(user) if verify_password(&secret, &user.password_hash).await => user,
-        _ => return Err(invalid_credentials()),
+    let hash = match &account {
+        Some(user) => user.password_hash.as_str(),
+        None => dummy_hash().await,
+    };
+    let user = match (verify_password(&secret, hash).await, account) {
+        (true, Some(user)) => user,
+        (_, _) => return Err(invalid_credentials()),
     };
     let token = issue_token(db, &user, t).await?;
     let me = me_payload(db, &user).await?;
@@ -1538,7 +1571,7 @@ mod tests {
         let (state, path) = temp_state("username_hidden_stored").await;
         let state = crate::api::rare::tests::unlimited(state);
         let hash = hash_password("pw").await.expect("hash");
-        let t = now();
+        let mut t = now();
         let stored = [
             ("word joiner", '\u{2060}'),
             ("zero width space", '\u{200b}'),
@@ -1553,6 +1586,8 @@ mod tests {
                 .at(1)
                 .add(&state.db)
                 .await;
+            // The names share a look-alike key, and with it the pace of sign-ins.
+            t += 10;
             let Json(AuthResp { token, user }) = login_at(
                 &state,
                 LoginReq {
@@ -2241,7 +2276,7 @@ mod tests {
         let tries: Vec<_> = (0..12)
             .map(|_| {
                 let db = state.db.clone();
-                tokio::spawn(async move { throttle_attempt(&db, "zed", t).await })
+                tokio::spawn(async move { throttle_attempt(&db, &["zed"], t).await })
             })
             .collect();
         let mut admitted = 0;
@@ -2253,9 +2288,9 @@ mod tests {
         }
         assert_eq!(admitted, 1);
         assert_eq!(attempts(&state, "zed").await, 1);
-        assert!(throttle_attempt(&state.db, "zed", t + 3).await.is_ok());
+        assert!(throttle_attempt(&state.db, &["zed"], t + 3).await.is_ok());
         assert!(matches!(
-            throttle_attempt(&state.db, "zed", t + 86400 * 2).await,
+            throttle_attempt(&state.db, &["zed"], t + 86400 * 2).await,
             Ok(())
         ));
         assert_eq!(attempts(&state, "zed").await, 1);
@@ -2272,7 +2307,7 @@ mod tests {
             .token;
         add_token(&state, "ann", "thief").await;
         for n in 0..1001 {
-            let _ = throttle_attempt(&state.db, "ann", CLOCK + 3 * n).await;
+            let _ = throttle_attempt(&state.db, &["ann"], CLOCK + 3 * n).await;
         }
         let locked = login_at(
             &state,
@@ -2296,10 +2331,10 @@ mod tests {
     async fn gap_rejected_logins_are_not_counted() {
         let (state, path) = temp_state("gap_uncounted").await;
         let t = now();
-        assert!(throttle_attempt(&state.db, "gus", t).await.is_ok());
+        assert!(throttle_attempt(&state.db, &["gus"], t).await.is_ok());
         for _ in 0..50 {
             assert!(matches!(
-                throttle_attempt(&state.db, "gus", t).await,
+                throttle_attempt(&state.db, &["gus"], t).await,
                 Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, _))
             ));
         }
@@ -3490,7 +3525,16 @@ mod tests {
                 .add(&state.db)
                 .await;
         }
+        let mut t = CLOCK;
         for (shown, username) in accounts {
+            for typed in [shown, username] {
+                t += 10;
+                assert_eq!(
+                    sign_in(state, typed, "old", t).await,
+                    Ok(username.to_string()),
+                    "{typed:?}"
+                );
+            }
             assert_eq!(
                 name_of(patch_as(state, username, named(shown)).await),
                 Ok(shown.to_string()),
@@ -3614,6 +3658,563 @@ mod tests {
         if let Some((state, pg)) = pg_state("display_capitals").await {
             let state = crate::api::rare::tests::unlimited(state);
             display_name_capitals_count(&state).await;
+            pg_done(state, pg).await;
+        }
+    }
+
+    async fn sign_in(
+        state: &AppState,
+        username: &str,
+        password: &str,
+        t: i64,
+    ) -> Result<String, (StatusCode, String)> {
+        let req = LoginReq {
+            username: username.to_string(),
+            password: Some(password.to_string()),
+            words: None,
+        };
+        login_at(state, req, t)
+            .await
+            .map(|Json(AuthResp { user, .. })| user.username)
+            .map_err(|ApiError(code, msg, _)| (code, msg))
+    }
+
+    async fn counts(state: &AppState, sql: &'static str) -> Vec<(String, i64)> {
+        let mut rows = sqlx::query(sql)
+            .fetch_all(&state.db)
+            .await
+            .expect(sql)
+            .iter()
+            .map(|r| (r.try_get(0).expect("name"), r.try_get(1).expect("count")))
+            .collect::<Vec<_>>();
+        rows.sort();
+        rows
+    }
+
+    async fn look_alikes_sign_in_to_one_account(state: &AppState) {
+        for name in ["Root", "mom", "Mike", "Ian", "\u{392}en"] {
+            let _ = register_text(state, name).await.expect(name);
+        }
+        sqlx::query("DELETE FROM tokens")
+            .execute(&state.db)
+            .await
+            .expect("no sign-up sessions");
+        let hash = hash_password("old").await.expect("hash");
+        for name in [
+            "bob",
+            "b\u{43e}b",
+            "gone",
+            "g0ne",
+            "zed\u{200b}",
+            "kay\u{1d159}",
+        ] {
+            crate::db::NewUser::plain(name)
+                .hash(&hash)
+                .at(1)
+                .add(&state.db)
+                .await;
+        }
+        sqlx::query("UPDATE users SET password_hash = '!purging' WHERE username = 'gone'")
+            .execute(&state.db)
+            .await
+            .expect("an account being deleted");
+        let attempts = || counts(state, "SELECT username, count FROM login_attempts");
+        let sessions = || {
+            counts(
+                state,
+                "SELECT username, COUNT(*) FROM tokens GROUP BY username",
+            )
+        };
+        let wait = || {
+            Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                "Wait 3 seconds between attempts".to_string(),
+            ))
+        };
+        let wrong = || Err((StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
+        let locked = || Err((StatusCode::LOCKED, "Account locked for the day".to_string()));
+        let ok = |name: &str| Ok(name.to_string());
+        let one = |name: &str, n: i64| (name.to_string(), n);
+
+        let t = CLOCK;
+        assert_eq!(sign_in(state, "rnom", "a", t).await, ok("mom"));
+        assert_eq!(sign_in(state, "M0M", "a", t + 1).await, wait());
+        assert_eq!(sign_in(state, "m\u{43e}m", "b", t + 3).await, wrong());
+        assert_eq!(
+            sign_in(state, "\u{ff4d}\u{ff4f}\u{ff4d}", "a", t + 6).await,
+            ok("mom")
+        );
+        assert_eq!(
+            attempts().await,
+            vec![one("@rnorn", 3), one("mom", 3)],
+            "every spelling counts against the account and its look-alike key"
+        );
+        assert_eq!(sessions().await, vec![one("mom", 2)]);
+        sqlx::query("UPDATE login_attempts SET count = 1000 WHERE username = 'mom'")
+            .execute(&state.db)
+            .await
+            .expect("the day's budget");
+        for (n, name) in (3i64..).zip(["rnom", "MOM", "mom", "m\u{43e}m"]) {
+            assert_eq!(
+                sign_in(state, name, "a", t + 3 * n).await,
+                locked(),
+                "{name:?}"
+            );
+        }
+        assert_eq!(
+            attempts().await,
+            vec![one("@rnorn", 7), one("mom", 1004)],
+            "one lockout"
+        );
+
+        let t = t + 100;
+        for (n, name) in (0i64..).zip(["B0B", "b\u{3bf}b", "Bo\u{301}b"]) {
+            assert_eq!(
+                sign_in(state, name, "old", t + 3 * n).await,
+                wrong(),
+                "{name:?} passes for two accounts"
+            );
+        }
+        for (n, (name, account)) in
+            (0i64..).zip([("bob", "bob"), ("BOB", "bob"), ("b\u{43e}b", "b\u{43e}b")])
+        {
+            assert_eq!(
+                sign_in(state, name, "old", t + 20 + 3 * n).await,
+                ok(account),
+                "{name:?}: the exact username is that account"
+            );
+        }
+        assert_eq!(
+            attempts().await,
+            vec![
+                one("@bob", 6),
+                one("@rnorn", 7),
+                one("bob", 2),
+                one("b\u{43e}b", 1),
+                one("mom", 1004),
+            ],
+            "a name that passes for several accounts counts under its look-alike key only"
+        );
+        assert_eq!(
+            sessions().await,
+            vec![one("bob", 2), one("b\u{43e}b", 1), one("mom", 2)]
+        );
+
+        let t = t + 100;
+        let admin = login_at(
+            state,
+            LoginReq {
+                username: "R00T".to_string(),
+                password: Some("a".to_string()),
+                words: None,
+            },
+            t,
+        )
+        .await
+        .expect("the admin signs in like anyone");
+        assert_eq!(
+            (admin.user.username.as_str(), admin.user.is_site_admin),
+            ("root", true)
+        );
+        assert_eq!(sign_in(state, "R0OT", "b", t + 3).await, wrong());
+        crate::db::NewUser::plain("r\u{43e}\u{43e}t")
+            .hash(&hash)
+            .at(1)
+            .add(&state.db)
+            .await;
+        assert_eq!(
+            sign_in(state, "R00T", "a", t + 6).await,
+            wrong(),
+            "two accounts pass for it now"
+        );
+        assert_eq!(sign_in(state, "root", "a", t + 9).await, ok("root"));
+        assert_eq!(
+            sign_in(state, "r\u{43e}\u{43e}t", "old", t + 12).await,
+            ok("r\u{43e}\u{43e}t")
+        );
+
+        let t = t + 100;
+        for (n, name) in (0i64..).zip(["zed", "ZED", "z\u{435}d", "zed\u{200b}"]) {
+            assert_eq!(
+                sign_in(state, name, "old", t + 3 * n).await,
+                ok("zed\u{200b}"),
+                "{name:?}: the visible spelling of a username that hides a character"
+            );
+        }
+        let zed = counts(
+            state,
+            "SELECT username, count FROM login_attempts WHERE username LIKE 'z%'",
+        )
+        .await;
+        assert_eq!(zed, vec![one("zed\u{200b}", 4)]);
+        for (n, name) in (0i64..).zip(["kay", "KAY"]) {
+            assert_eq!(
+                sign_in(state, name, "old", t + 3 * n).await,
+                ok("kay\u{1d159}"),
+                "{name:?}: a username that ends in a blank symbol"
+            );
+        }
+        for (n, name) in (0i64..).zip(["\u{a4df}ike", "\u{39c}IKE", "\u{41c}ike"]) {
+            assert_eq!(
+                sign_in(state, name, "a", t + 20 + 3 * n).await,
+                ok("mike"),
+                "{name:?}: a capital that passes for M"
+            );
+        }
+        for (n, (name, account)) in (0i64..).zip([
+            ("lan", "ian"),
+            ("LAN", "ian"),
+            ("1an", "ian"),
+            ("Ben", "\u{3b2}en"),
+            ("BEN", "\u{3b2}en"),
+        ]) {
+            assert_eq!(
+                sign_in(state, name, "a", t + 40 + 3 * n).await,
+                ok(account),
+                "{name:?}: the capitals of the name it signed up with"
+            );
+        }
+
+        let t = t + 100;
+        let long = "m".repeat(NAME_MAX + 1);
+        for (n, (name, password, answer)) in (0i64..).zip([
+            ("mom", "a", locked()),
+            ("rnom", "a", locked()),
+            ("bob", "old", ok("bob")),
+            ("b\u{43e}b", "wrong", wrong()),
+            ("r00t", "a", wrong()),
+            ("root", "wrong", wrong()),
+            ("R0OT", "wrong", wrong()),
+            ("nobody", "a", wrong()),
+            ("n0b0dy", "a", wrong()),
+            ("B0B", "old", wrong()),
+            ("gone", "old", wrong()),
+            ("g0ne", "old", ok("g0ne")),
+            ("g\u{43e}ne", "old", ok("g0ne")),
+        ]) {
+            let runs = verify_runs();
+            let got = sign_in(state, name, password, t + 3 * n).await;
+            let checks = verify_runs() - runs;
+            let want = match answer == locked() {
+                true => 0,
+                false => 1,
+            };
+            assert_eq!(got, answer, "{name:?}");
+            assert_eq!(checks, want, "{name:?}: one password check, like any name");
+        }
+        let paced = attempts().await;
+        let hidden = format!("mom{}", "\u{200b}".repeat(NAME_MAX - 2));
+        for name in [long.as_str(), hidden.as_str()] {
+            let runs = verify_runs();
+            assert_eq!(sign_in(state, name, "a", t + 60).await, wrong(), "{name:?}");
+            assert_eq!(verify_runs() - runs, 0, "over 100 characters: no account");
+        }
+        assert_eq!(
+            attempts().await,
+            paced,
+            "names over 100 characters are not paced"
+        );
+        let stretched = format!("{}\u{130}", "a".repeat(NAME_MAX - 1));
+        assert_eq!(
+            register_text(state, &stretched)
+                .await
+                .err()
+                .map(|ApiError(code, msg, _)| (code, msg)),
+            Some((
+                StatusCode::BAD_REQUEST,
+                "Username must be at most 100 characters".to_string()
+            )),
+            "its lowercase is longer, and only names up to 100 characters sign in"
+        );
+        let stored = stretched.to_lowercase();
+        crate::db::NewUser::plain(&stored)
+            .hash(&hash)
+            .at(1)
+            .add(&state.db)
+            .await;
+        let found = names::sign_in_account(&state.db, &stored)
+            .await
+            .expect("lookup")
+            .map(|user| user.username);
+        assert_eq!(found, None, "over 100 characters: no lookup");
+        assert_eq!(
+            sign_in(state, &stretched, "old", t + 70).await,
+            Ok(stored),
+            "an account from before the length rule, by the name it signed up with"
+        );
+    }
+
+    #[tokio::test]
+    async fn sign_in_with_a_look_alike_reaches_one_account() {
+        let (state, path) = temp_state("signin_lookalike").await;
+        look_alikes_sign_in_to_one_account(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("signin_lookalike").await {
+            look_alikes_sign_in_to_one_account(&state).await;
+            pg_done(state, pg).await;
+        }
+    }
+
+    async fn sign_in_words_as(
+        state: &AppState,
+        name: &str,
+        picked: &[String],
+        t: i64,
+    ) -> Result<String, (StatusCode, String)> {
+        let req = LoginReq {
+            username: name.to_string(),
+            password: None,
+            words: Some(picked.iter().map(|w| w.to_uppercase()).collect()),
+        };
+        login_at(state, req, t)
+            .await
+            .map(|Json(AuthResp { user, .. })| user.username)
+            .map_err(|ApiError(code, msg, _)| (code, msg))
+    }
+
+    async fn word_sets_are_those_of_the_name_typed(state: &AppState) {
+        let set = |name: &str| words(Path(name.to_string()));
+        let new = set("Sam").await.0.words;
+        assert_eq!(new, word_set("sam"));
+        let picked = new[3..10].to_vec();
+        let _ = register(
+            State(state.clone()),
+            Json(RegisterReq {
+                username: "Sam".to_string(),
+                password: None,
+                words: Some(picked.clone()),
+                avatar_kind: AvatarKind::Identicon,
+                avatar_color: None,
+            }),
+        )
+        .await
+        .expect("sign-up with the words of the name");
+        let spellings = [
+            "Sam",
+            "sam",
+            "Sarn",
+            "s\u{430}m",
+            "sa\u{200b}m",
+            "\u{ff53}\u{ff41}\u{ff4d}",
+        ];
+        for (n, name) in (0i64..).zip(spellings) {
+            assert_eq!(
+                set(name).await.0.words,
+                word_set(name),
+                "{name:?}: the set of the name typed, whatever account it reaches"
+            );
+            assert_eq!(
+                sign_in_words_as(state, name, &picked, CLOCK + 3 * n).await,
+                Ok("sam".to_string()),
+                "{name:?}: the account's words sign in through the API"
+            );
+        }
+        let long = "\u{fdfa}".repeat(7000);
+        assert_eq!(
+            set(&long).await.0.words,
+            word_set(&long),
+            "no lookup and no keys"
+        );
+    }
+
+    #[tokio::test]
+    async fn word_sets_show_no_account() {
+        let (state, path) = temp_state("words_typed").await;
+        word_sets_are_those_of_the_name_typed(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("words_typed").await {
+            word_sets_are_those_of_the_name_typed(&state).await;
+            pg_done(state, pg).await;
+        }
+    }
+
+    async fn every_row_or_none(state: &AppState) {
+        let rows = || counts(state, "SELECT username, count FROM login_attempts");
+        let code = |r: Result<(), ApiError>| r.map_err(|ApiError(code, _, _)| code);
+        let wait = Err(StatusCode::TOO_MANY_REQUESTS);
+        let locked = Err(StatusCode::LOCKED);
+        let one = |name: &str, n: i64| (name.to_string(), n);
+        let t = CLOCK;
+        assert_eq!(
+            code(throttle_attempt(&state.db, &["@a", "b"], t).await),
+            Ok(())
+        );
+        assert_eq!(
+            code(throttle_attempt(&state.db, &["b", "c"], t + 1).await),
+            wait
+        );
+        assert_eq!(
+            code(throttle_attempt(&state.db, &["@a", "c"], t + 2).await),
+            wait
+        );
+        assert_eq!(
+            rows().await,
+            vec![one("@a", 1), one("b", 1)],
+            "a refused attempt counts nowhere"
+        );
+        assert_eq!(
+            code(throttle_attempt(&state.db, &["c"], t + 2).await),
+            Ok(())
+        );
+        sqlx::query("UPDATE login_attempts SET count = 1000 WHERE username = 'c'")
+            .execute(&state.db)
+            .await
+            .expect("the day of c");
+        assert_eq!(
+            code(throttle_attempt(&state.db, &["b", "c"], t + 5).await),
+            locked,
+            "over the day in one row"
+        );
+        assert_eq!(
+            code(throttle_attempt(&state.db, &["b", "d"], t + 6).await),
+            wait
+        );
+        assert_eq!(
+            code(throttle_attempt(&state.db, &["c", "e"], t + 6).await),
+            locked,
+            "a locked row answers locked, also when it is too soon"
+        );
+        assert_eq!(
+            rows().await,
+            vec![one("@a", 1), one("b", 2), one("c", 1001)]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_attempt_counts_under_every_row_or_none() {
+        let (state, path) = temp_state("throttle_rows").await;
+        every_row_or_none(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("throttle_rows").await {
+            every_row_or_none(&state).await;
+            pg_done(state, pg).await;
+        }
+    }
+
+    async fn pace_shows_no_account(state: &AppState) {
+        let _ = register_text(state, "mom").await.expect("mom");
+        let wait = || {
+            Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                "Wait 3 seconds between attempts".to_string(),
+            ))
+        };
+        let wrong = || Err((StatusCode::UNAUTHORIZED, "Invalid credentials".to_string()));
+        let pairs = [
+            ("xyz", "xyz\u{200b}", wait()),
+            ("mom", "rn0m", wait()),
+            ("sue", "SU\u{435}", wait()),
+            ("\u{13b7}o\u{13b7}", "mom", wait()),
+            ("mom", "\u{13b7}o\u{13b7}", wait()),
+            ("\u{13b7}e\u{13b7}", "mem", wait()),
+        ];
+        for (n, (first, then, answer)) in (0i64..).zip(pairs) {
+            let t = CLOCK + 10 * n;
+            assert_eq!(sign_in(state, first, "x", t).await, wrong(), "{first:?}");
+            assert_eq!(
+                sign_in(state, then, "x", t + 1).await,
+                answer,
+                "{first:?} then {then:?}"
+            );
+        }
+        let mut rows = sqlx::query("SELECT username, count FROM login_attempts")
+            .fetch_all(&state.db)
+            .await
+            .expect("attempts")
+            .iter()
+            .map(|r| {
+                let name: String = r.try_get(0).expect("name");
+                (name, r.try_get::<i64, _>(1).expect("count"))
+            })
+            .collect::<Vec<_>>();
+        rows.sort();
+        assert_eq!(
+            rows,
+            [
+                ("@rnern", 1),
+                ("@rnorn", 3),
+                ("@sue", 1),
+                ("@xyz", 1),
+                ("mom", 3)
+            ]
+            .map(|(name, count)| (name.to_string(), count)),
+            "a name counts under its keys, and under the account it reaches"
+        );
+
+        let capitals = [
+            ("bob", "\u{392}ob"),
+            ("\u{392}ob", "bob"),
+            ("alice", "AIice"),
+            ("AIice", "alice"),
+            ("max", "\u{39c}ax"),
+            ("tom", "\u{422}om"),
+            ("kate", "\u{39a}ate"),
+            ("hank", "\u{397}ank"),
+            ("nina", "\u{39d}ina"),
+        ];
+        for accounts in [false, true] {
+            if accounts {
+                for name in ["bob", "alice", "max", "tom", "kate", "hank", "nina"] {
+                    let _ = register_text(state, name).await.expect(name);
+                }
+            }
+            for (n, (first, then)) in (0i64..).zip(capitals) {
+                let t = CLOCK + 1000 * (1 + i64::from(accounts)) + 10 * n;
+                assert_eq!(sign_in(state, first, "x", t).await, wrong(), "{first:?}");
+                assert_eq!(
+                    sign_in(state, then, "x", t + 1).await,
+                    wait(),
+                    "{first:?} then {then:?}, with the accounts: {accounts}"
+                );
+            }
+        }
+
+        let _ = register_text(state, "dan").await.expect("dan");
+        let spellings = [
+            "dan",
+            "DAN",
+            "d\u{430}n",
+            "dan\u{200b}",
+            "\u{ff44}\u{ff41}\u{ff4e}",
+            "da\u{301}n",
+            "Dan",
+            "\u{111}an",
+        ];
+        let at_once = |t: i64| {
+            spellings.map(|name| {
+                let state = state.clone();
+                tokio::spawn(async move { sign_in(&state, name, "x", t).await })
+            })
+        };
+        let mut answers = Vec::new();
+        for task in at_once(CLOCK + 5000) {
+            answers.push(task.await.expect("join"));
+        }
+        assert_eq!(
+            (
+                answers.iter().filter(|a| **a == wrong()).count(),
+                answers.iter().filter(|a| **a == wait()).count()
+            ),
+            (1, 7),
+            "one of every spelling at once: {answers:?}"
+        );
+        sqlx::query("UPDATE login_attempts SET count = 1000 WHERE username = 'dan'")
+            .execute(&state.db)
+            .await
+            .expect("the day of dan");
+        let locked = Err((StatusCode::LOCKED, "Account locked for the day".to_string()));
+        for task in at_once(CLOCK + 5010) {
+            assert_eq!(task.await.expect("join"), locked);
+        }
+    }
+
+    #[tokio::test]
+    async fn the_pace_shows_no_account() {
+        let (state, path) = temp_state("pace_no_account").await;
+        pace_shows_no_account(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("pace_no_account").await {
+            pace_shows_no_account(&state).await;
             pg_done(state, pg).await;
         }
     }
