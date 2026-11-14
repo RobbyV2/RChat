@@ -1,0 +1,668 @@
+{
+  "format": 3,
+  "seed": 12087,
+  "equivocation": false,
+  "template": null,
+  "note": "revision-3 generator; see spec §7.7",
+  "events": [
+    {
+      "id": "g0",
+      "t": "genesis",
+      "a": "O",
+      "dev": "O1",
+      "seq": 0,
+      "ap": [],
+      "ts": 0,
+      "c": { "owners": ["O"], "everyone": 8 }
+    },
+    {
+      "id": "device_add.O2.1",
+      "t": "device_add",
+      "a": "O",
+      "dev": "O2",
+      "seq": 1,
+      "ap": ["g0"],
+      "ts": 2,
+      "c": {},
+      "iprev": "g0"
+    },
+    {
+      "id": "role_create.O1.2",
+      "t": "role_create",
+      "a": "O",
+      "dev": "O1",
+      "seq": 1,
+      "ap": ["device_add.O2.1"],
+      "ts": 4,
+      "c": { "pos": 9, "bits": 21 },
+      "aprev": "g0"
+    },
+    {
+      "id": "add.O1.3",
+      "t": "add",
+      "a": "O",
+      "dev": "O1",
+      "seq": 2,
+      "ap": ["role_create.O1.2"],
+      "ts": 6,
+      "c": { "to": "A" },
+      "aprev": "role_create.O1.2"
+    },
+    {
+      "id": "join.A1.4",
+      "t": "join",
+      "a": "A",
+      "dev": "A1",
+      "seq": 1,
+      "ap": ["add.O1.3"],
+      "ts": 8,
+      "c": {}
+    },
+    {
+      "id": "revoke.N1.5",
+      "t": "revoke",
+      "a": "N",
+      "dev": "N1",
+      "seq": 1,
+      "ap": ["join.A1.4"],
+      "ts": 9,
+      "c": { "to": "O", "role": "role_create.O1.2" }
+    },
+    {
+      "id": "uninvite.Z1.6",
+      "t": "uninvite",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["role_create.O1.2", "join.A1.4"],
+      "ts": 9,
+      "c": { "to": "O" }
+    },
+    {
+      "id": "unban.N1.7",
+      "t": "unban",
+      "a": "N",
+      "dev": "N1",
+      "seq": 1,
+      "ap": ["join.A1.4"],
+      "ts": 9,
+      "c": { "to": "O" }
+    },
+    {
+      "id": "ban.V1.8",
+      "t": "ban",
+      "a": "V",
+      "dev": "V1",
+      "seq": 1,
+      "ap": ["join.A1.4"],
+      "ts": 9,
+      "c": { "to": "O" }
+    },
+    {
+      "id": "code.Z1.9",
+      "t": "code",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["role_create.O1.2"],
+      "ts": 5,
+      "c": { "h": "h1" }
+    },
+    {
+      "id": "add.A1.10",
+      "t": "add",
+      "a": "A",
+      "dev": "A1",
+      "seq": 2,
+      "ap": ["join.A1.4"],
+      "ts": 9,
+      "c": { "to": "N" },
+      "aprev": "join.A1.4"
+    },
+    {
+      "id": "add.M1.11",
+      "t": "add",
+      "a": "M",
+      "dev": "M1",
+      "seq": 1,
+      "ap": ["add.O1.3", "role_create.O1.2"],
+      "ts": 7,
+      "c": { "to": "M" }
+    },
+    {
+      "id": "code.V1.12",
+      "t": "code",
+      "a": "V",
+      "dev": "V1",
+      "seq": 1,
+      "ap": ["role_create.O1.2"],
+      "ts": 5,
+      "c": { "h": "h1" }
+    },
+    {
+      "id": "role_create.M1.13",
+      "t": "role_create",
+      "a": "M",
+      "dev": "M1",
+      "seq": 1,
+      "ap": ["role_create.O1.2", "g0"],
+      "ts": 5,
+      "c": { "pos": 2, "bits": 16 }
+    },
+    {
+      "id": "uninvite.Z1.14",
+      "t": "uninvite",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["add.A1.10"],
+      "ts": 10,
+      "c": { "to": "A" }
+    },
+    {
+      "id": "join.O2.15",
+      "t": "join",
+      "a": "O",
+      "dev": "O2",
+      "seq": 2,
+      "ap": ["add.A1.10", "device_add.O2.1"],
+      "ts": 1033,
+      "c": {},
+      "aprev": "device_add.O2.1"
+    },
+    {
+      "id": "profile.Z1.16",
+      "t": "profile",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["add.A1.10"],
+      "ts": 10,
+      "c": { "name": 1 }
+    },
+    {
+      "id": "revoke.O2.17",
+      "t": "revoke",
+      "a": "O",
+      "dev": "O2",
+      "seq": 2,
+      "ap": ["add.A1.10"],
+      "ts": 10,
+      "c": { "to": "O", "role": "@e" },
+      "aprev": "device_add.O2.1"
+    },
+    {
+      "id": "device_revoke.O1.18",
+      "t": "device_revoke",
+      "a": "O",
+      "dev": "O1",
+      "seq": 3,
+      "ap": ["add.A1.10", "join.A1.4", "device_add.O2.1"],
+      "ts": 10,
+      "c": { "dev": "O2", "seen": 1 },
+      "aprev": "add.O1.3"
+    },
+    {
+      "id": "assign.A1.19",
+      "t": "assign",
+      "a": "A",
+      "dev": "A1",
+      "seq": 3,
+      "ap": ["role_create.O1.2", "add.A1.10"],
+      "ts": 10,
+      "c": { "to": "A", "role": "@e" },
+      "aprev": "add.A1.10"
+    },
+    {
+      "id": "uninvite.Z1.20",
+      "t": "uninvite",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "to": "O" }
+    },
+    {
+      "id": "code.V1.21",
+      "t": "code",
+      "a": "V",
+      "dev": "V1",
+      "seq": 1,
+      "ap": ["g0", "device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "h": "h0" }
+    },
+    {
+      "id": "code.V1.22",
+      "t": "code",
+      "a": "V",
+      "dev": "V1",
+      "seq": 1,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "h": "h1" }
+    },
+    {
+      "id": "code.A1.23",
+      "t": "code",
+      "a": "A",
+      "dev": "A1",
+      "seq": 1,
+      "ap": ["g0"],
+      "ts": 1,
+      "c": { "h": "h2" }
+    },
+    {
+      "id": "role_move.Z1.24",
+      "t": "role_move",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "role": "role_create.O1.2", "pos": 2 }
+    },
+    {
+      "id": "assign.Z1.25",
+      "t": "assign",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["role_create.O1.2"],
+      "ts": 5,
+      "c": { "to": "N", "role": "@e" }
+    },
+    {
+      "id": "code_revoke.N1.26",
+      "t": "code_revoke",
+      "a": "N",
+      "dev": "N1",
+      "seq": 1,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "code": "none", "h": "h0" }
+    },
+    {
+      "id": "code_revoke.A1.27",
+      "t": "code_revoke",
+      "a": "A",
+      "dev": "A1",
+      "seq": 3,
+      "ap": ["g0", "join.A1.4", "add.A1.10"],
+      "ts": 10,
+      "c": { "code": "none", "h": "h0" },
+      "aprev": "add.A1.10"
+    },
+    {
+      "id": "kick.N1.28",
+      "t": "kick",
+      "a": "N",
+      "dev": "N1",
+      "seq": 1,
+      "ap": ["device_revoke.O1.18", "join.A1.4"],
+      "ts": 11,
+      "c": { "to": "N" }
+    },
+    {
+      "id": "device_revoke.M1.29",
+      "t": "device_revoke",
+      "a": "M",
+      "dev": "M1",
+      "seq": 1,
+      "ap": ["add.A1.10"],
+      "ts": 10,
+      "c": { "dev": "M1", "seen": -1 }
+    },
+    {
+      "id": "code.Z1.30",
+      "t": "code",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["device_add.O2.1"],
+      "ts": 1010,
+      "c": { "h": "h0" }
+    },
+    {
+      "id": "leave.N1.31",
+      "t": "leave",
+      "a": "N",
+      "dev": "N1",
+      "seq": 1,
+      "ap": ["join.A1.4", "device_add.O2.1", "add.A1.10"],
+      "ts": 10,
+      "c": {}
+    },
+    {
+      "id": "revoke.O2.32",
+      "t": "revoke",
+      "a": "O",
+      "dev": "O2",
+      "seq": 2,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "to": "O", "role": "@e" },
+      "aprev": "device_add.O2.1"
+    },
+    {
+      "id": "role_del.M1.33",
+      "t": "role_del",
+      "a": "M",
+      "dev": "M1",
+      "seq": 1,
+      "ap": ["device_add.O2.1", "role_create.O1.2", "add.O1.3"],
+      "ts": 7,
+      "c": { "role": "role_create.O1.2" }
+    },
+    {
+      "id": "uninvite.M1.34",
+      "t": "uninvite",
+      "a": "M",
+      "dev": "M1",
+      "seq": 1,
+      "ap": ["device_add.O2.1", "role_create.O1.2"],
+      "ts": 5,
+      "c": { "to": "O" }
+    },
+    {
+      "id": "role_bits.O2.35",
+      "t": "role_bits",
+      "a": "O",
+      "dev": "O2",
+      "seq": 2,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "role": "@e", "bit": 1, "on": true },
+      "aprev": "device_add.O2.1"
+    },
+    {
+      "id": "add.A1.36",
+      "t": "add",
+      "a": "A",
+      "dev": "A1",
+      "seq": 3,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "to": "A" },
+      "aprev": "add.A1.10"
+    },
+    {
+      "id": "x_future.M1.37",
+      "t": "x_future",
+      "a": "M",
+      "dev": "M1",
+      "seq": 1,
+      "ap": ["join.A1.4", "role_create.O1.2", "add.A1.10"],
+      "ts": 10,
+      "c": {}
+    },
+    {
+      "id": "code.M1.38",
+      "t": "code",
+      "a": "M",
+      "dev": "M1",
+      "seq": 1,
+      "ap": ["join.A1.4", "device_revoke.O1.18", "role_create.O1.2"],
+      "ts": 11,
+      "c": { "h": "h0" }
+    },
+    {
+      "id": "device_revoke.Z1.39",
+      "t": "device_revoke",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "dev": "Z1", "seen": -1 }
+    },
+    {
+      "id": "role_move.V1.40",
+      "t": "role_move",
+      "a": "V",
+      "dev": "V1",
+      "seq": 1,
+      "ap": ["device_revoke.O1.18", "g0"],
+      "ts": 11,
+      "c": { "role": "role_create.O1.2", "pos": 8 }
+    },
+    {
+      "id": "revoke.A1.41",
+      "t": "revoke",
+      "a": "A",
+      "dev": "A1",
+      "seq": 3,
+      "ap": ["device_revoke.O1.18", "device_add.O2.1"],
+      "ts": 11,
+      "c": { "to": "O", "role": "role_create.O1.2" },
+      "aprev": "add.A1.10"
+    },
+    {
+      "id": "upgrade.N1.42",
+      "t": "upgrade",
+      "a": "N",
+      "dev": "N1",
+      "seq": 1,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "g": "G1", "sigs": ["O"] }
+    },
+    {
+      "id": "x_future.N1.43",
+      "t": "x_future",
+      "a": "N",
+      "dev": "N1",
+      "seq": 1,
+      "ap": ["g0", "add.A1.10", "device_add.O2.1"],
+      "ts": 10,
+      "c": {}
+    },
+    {
+      "id": "mark.Z1.44",
+      "t": "mark",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["add.O1.3", "role_create.O1.2"],
+      "ts": 7,
+      "c": {}
+    },
+    {
+      "id": "device_add.Z1.45",
+      "t": "device_add",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["add.O1.3", "device_add.O2.1"],
+      "ts": 7,
+      "c": {}
+    },
+    {
+      "id": "role_del.N1.46",
+      "t": "role_del",
+      "a": "N",
+      "dev": "N1",
+      "seq": 1,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "role": "role_create.O1.2" }
+    },
+    {
+      "id": "x_future.Z1.47",
+      "t": "x_future",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["join.A1.4", "add.A1.10", "add.O1.3"],
+      "ts": 10,
+      "c": {}
+    },
+    {
+      "id": "assign.A1.48",
+      "t": "assign",
+      "a": "A",
+      "dev": "A1",
+      "seq": 3,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "to": "M", "role": "@e" },
+      "aprev": "add.A1.10"
+    },
+    {
+      "id": "code_revoke.V1.49",
+      "t": "code_revoke",
+      "a": "V",
+      "dev": "V1",
+      "seq": 1,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "code": "none", "h": "h0" }
+    },
+    {
+      "id": "role_del.A1.50",
+      "t": "role_del",
+      "a": "A",
+      "dev": "A1",
+      "seq": 3,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "role": "role_create.O1.2" },
+      "aprev": "add.A1.10"
+    },
+    {
+      "id": "unban.M1.51",
+      "t": "unban",
+      "a": "M",
+      "dev": "M1",
+      "seq": 1,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "to": "N" }
+    },
+    {
+      "id": "revoke.O1.52",
+      "t": "revoke",
+      "a": "O",
+      "dev": "O1",
+      "seq": 4,
+      "ap": ["add.O1.3", "join.A1.4", "device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "to": "M", "role": "@e" },
+      "aprev": "device_revoke.O1.18"
+    },
+    {
+      "id": "mark.N1.53",
+      "t": "mark",
+      "a": "N",
+      "dev": "N1",
+      "seq": 1,
+      "ap": ["role_create.O1.2"],
+      "ts": 5,
+      "c": {}
+    },
+    {
+      "id": "add.O2.54",
+      "t": "add",
+      "a": "O",
+      "dev": "O2",
+      "seq": 2,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "to": "A" },
+      "aprev": "device_add.O2.1"
+    },
+    {
+      "id": "uninvite.A1.55",
+      "t": "uninvite",
+      "a": "A",
+      "dev": "A1",
+      "seq": 3,
+      "ap": ["device_revoke.O1.18"],
+      "ts": 11,
+      "c": { "to": "N" },
+      "aprev": "add.A1.10"
+    },
+    {
+      "id": "join.M1.56",
+      "t": "join",
+      "a": "M",
+      "dev": "M1",
+      "seq": 1,
+      "ap": ["uninvite.A1.55"],
+      "ts": 1019,
+      "c": {}
+    },
+    {
+      "id": "role_move.O2.57",
+      "t": "role_move",
+      "a": "O",
+      "dev": "O2",
+      "seq": 2,
+      "ap": ["add.A1.10", "device_add.O2.1", "add.O1.3"],
+      "ts": 10,
+      "c": { "role": "role_create.O1.2", "pos": 9 },
+      "aprev": "device_add.O2.1"
+    },
+    {
+      "id": "profile.N1.58",
+      "t": "profile",
+      "a": "N",
+      "dev": "N1",
+      "seq": 1,
+      "ap": ["uninvite.A1.55"],
+      "ts": 12,
+      "c": { "name": 0 }
+    },
+    {
+      "id": "role_del.Z1.59",
+      "t": "role_del",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["uninvite.A1.55"],
+      "ts": 12,
+      "c": { "role": "role_create.O1.2" }
+    },
+    {
+      "id": "assign.V1.60",
+      "t": "assign",
+      "a": "V",
+      "dev": "V1",
+      "seq": 1,
+      "ap": ["uninvite.A1.55"],
+      "ts": 1035,
+      "c": { "to": "V", "role": "@e" }
+    },
+    {
+      "id": "x_future.V1.61",
+      "t": "x_future",
+      "a": "V",
+      "dev": "V1",
+      "seq": 1,
+      "ap": ["uninvite.A1.55", "add.O1.3"],
+      "ts": 12,
+      "c": {}
+    },
+    {
+      "id": "join.N1.62",
+      "t": "join",
+      "a": "N",
+      "dev": "N1",
+      "seq": 1,
+      "ap": ["device_revoke.O1.18", "add.O1.3"],
+      "ts": 11,
+      "c": {}
+    },
+    {
+      "id": "x_future.Z1.63",
+      "t": "x_future",
+      "a": "Z",
+      "dev": "Z1",
+      "seq": 1,
+      "ap": ["role_create.O1.2", "g0"],
+      "ts": 5,
+      "c": {}
+    }
+  ]
+}
