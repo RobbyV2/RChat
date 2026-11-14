@@ -9,14 +9,18 @@ use ed25519_dalek::pkcs8::DecodePrivateKey;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use url::{Host, Url};
+
+use crate::p2p_chain::{Head, canonical};
 
 pub const ASSERTION_TTL_SECS: i64 = 300;
 pub const BINDING_AUD: &str = "rchat-p2p-bind";
 pub const BINDING_TTL_SECS: i64 = 7 * 24 * 60 * 60;
 pub const BINDING_SKEW_SECS: u64 = 300;
 const BINDING_TAG: &[u8] = b"rchat-p2p-bind1\0";
+const BINDING2_TAG: &[u8] = b"rchat-p2p-bind2\0";
 pub const JWKS_PATH: &str = "/.well-known/jwks.json";
 pub const ALG: &str = "EdDSA";
 const TYP: &str = "JWT";
@@ -253,6 +257,10 @@ pub struct BindingClaims {
     pub ik: String,
     pub iat: i64,
     pub exp: i64,
+    /// The record of the identity's key chain the binding was issued for. None for an identity
+    /// without a chain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<Head>,
 }
 
 /// What a binding proof signs: the domain tag, the account, a zero byte and the time in decimal.
@@ -264,6 +272,14 @@ pub fn binding_message(sub: &str, ts: i64) -> Vec<u8> {
         ts.to_string().as_bytes(),
     ]
     .concat()
+}
+
+/// What the binding proof of an identity with a key chain signs: the domain tag and the
+/// canonical JSON of `{sub, ik, head: {n, d}, ts}`. `None` when `sub` has no canonical form.
+pub fn binding2_message(sub: &str, ik: &str, head: &Head, ts: u64) -> Option<Vec<u8>> {
+    let Head { n, d } = head;
+    let body = canonical(&json!({"sub": sub, "ik": ik, "head": {"n": n, "d": d}, "ts": ts}))?;
+    Some([BINDING2_TAG, body.as_bytes()].concat())
 }
 
 /// A P2P identity key: base64url Ed25519, a canonical encoding and not of small order.
@@ -291,6 +307,19 @@ pub fn sig_ok(key: &VerifyingKey, msg: &[u8], sig: &str) -> bool {
 /// Whether `proof` is a signature by the key `ik` over the binding of `sub` at `ts`.
 pub fn binding_proof_ok(key: &VerifyingKey, sub: &str, ts: i64, proof: &str) -> bool {
     sig_ok(key, &binding_message(sub, ts), proof)
+}
+
+/// Whether `proof` is a signature by `key`, the primary after the record `head` of the chain of
+/// `ik`, over the binding of `sub` to `ik` at that head and `ts`.
+pub fn binding2_proof_ok(
+    key: &VerifyingKey,
+    sub: &str,
+    ik: &str,
+    head: &Head,
+    ts: u64,
+    proof: &str,
+) -> bool {
+    binding2_message(sub, ik, head, ts).is_some_and(|msg| sig_ok(key, &msg, proof))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -873,9 +902,45 @@ mod tests {
                 ik: BIND_IK.to_string(),
                 iat: 1793056306,
                 exp: 1793056306 + BINDING_TTL_SECS,
+                head: None,
             })
             .unwrap();
         assert_eq!(token, BIND_TOKEN);
+    }
+
+    // The bytes are the client's: `rchat-p2p-bind2`, a zero byte and the canonical JSON of
+    // `bindingBody2` in p2p/chain.ts.
+    #[test]
+    fn a_binding_with_a_chain_signs_the_head_and_its_token_names_it() {
+        let head = Head {
+            n: 1,
+            d: "QI2KH0aQi2-Q1L1kGhuL_qF3WTTIrmat336pAzcJIlI".to_string(),
+        };
+        assert_eq!(
+            binding2_message("vera@chat.example.org", BIND_IK, &head, 5).unwrap(),
+            format!(
+                "rchat-p2p-bind2\0{{\"head\":{{\"d\":\"{}\",\"n\":1}},\"ik\":\"{BIND_IK}\",\"sub\":\"vera@chat.example.org\",\"ts\":5}}",
+                head.d
+            )
+            .into_bytes()
+        );
+        assert_eq!(binding2_message("e\u{301}@x", BIND_IK, &head, 5), None);
+        let claims = BindingClaims {
+            iss: "http://127.0.0.1:3821".to_string(),
+            sub: "alice@127.0.0.1:3821".to_string(),
+            aud: BINDING_AUD.to_string(),
+            ik: BIND_IK.to_string(),
+            iat: 7,
+            exp: 8,
+            head: Some(head.clone()),
+        };
+        let text = serde_json::to_value(&claims).unwrap();
+        assert_eq!(text["head"], serde_json::json!({"n": 1, "d": head.d}));
+        let old =
+            serde_json::json!({"iss": "i", "sub": "s", "aud": "a", "ik": "k", "iat": 1, "exp": 2});
+        let read: BindingClaims = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(read.head, None);
+        assert_eq!(serde_json::to_value(&read).unwrap(), old);
     }
 
     #[test]

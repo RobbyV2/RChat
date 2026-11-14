@@ -452,7 +452,7 @@ describe('P2P chain records', () => {
     )
     expect(card(0, { succ: { ...succ, chain }, succ_cr: crW })).toBeGreaterThan(CARD_MAX)
     const keys = keysOf(view)
-    expect(len(keys)).toBeLessThanOrEqual(KEYS_BYTES)
+    expect(len(keys)).toBeLessThanOrEqual(6 * 1024)
     expect(readKeys(keys)).toEqual(keys)
     expect([len(crV), len(certs2(1)[0])].every(n => n > 300 && n < 420)).toBe(true)
   })
@@ -841,6 +841,60 @@ describe('P2P chain records', () => {
     expect(bindingHead2(sub, null)).toBeNull()
   })
 
+  test('a badge request holds at most 9 records and 7 KiB (review n-p2p-ahead r2 M3, review n-k-server r1 owner question 1): more is refused before a record is read, and the largest valid chain fits', () => {
+    const sub = 'vera@chat.example.org'
+    const siblings = Array.from({ length: CHAIN_MAX + 1 }, (_, i) =>
+      makeRecovery(I, rkV, h0, id(`s${i}`), [id('D2')], AT)
+    )
+    const eight = siblings.slice(0, CHAIN_MAX)
+    const view = readChain(crV, siblings)
+    expect(view.heads.length).toBe(CHAIN_MAX + 1)
+    const head = headOf(siblings[0])
+    const nine = bindingRequest2(K('s0'), sub, { cr: crV, chain: siblings }, head, 7)
+    expect(bindingHead2(sub, nine)).toBeNull()
+    expect(readKeys({ cr: crV, chain: siblings })).toBeNull()
+    const fits = bindingRequest2(K('s0'), sub, { cr: crV, chain: eight }, head, 7)
+    expect(bindingHead2(sub, fits)).toEqual(head)
+    // nothing of an over-long chain is read: not a field, so not a signature
+    let reads = 0
+    const watched = siblings.map(
+      r => new Proxy(r, { get: (o, k) => ((reads += 1), Reflect.get(o, k)) })
+    )
+    expect(bindingHead2(sub, { ...nine, chain: watched })).toBeNull()
+    expect(readKeys({ cr: crV, chain: watched })).toBeNull()
+    expect(reads).toBe(0)
+
+    // The largest valid {cr, chain}: 8 resets that keep 8 devices each, every at at its largest
+    expect(KEYS_BYTES).toBe(7 * 1024)
+    const crMax = makeCreation(V, rkV, keyId(p0.pk), Number.MAX_SAFE_INTEGER)
+    const resets: ChainRecord[] = []
+    for (let n = 1, prev = headOf(crMax), rk = rkV; n <= CHAIN_MAX; n += 1) {
+      const next = K(`rk${n}`)
+      const keep = Array.from({ length: 8 }, (_, i) => id(`dev ${n}.${i}`))
+      const r = makeReset(I, rk, next, prev, id(`q${n}`), keep, Number.MAX_SAFE_INTEGER)
+      resets.push(r)
+      prev = headOf(r)
+      rk = next
+    }
+    const top = headOf(resets[CHAIN_MAX - 1])
+    const wide = readChain(crMax, resets)
+    expect([wide.heads, resets.every(r => wide.verifies(r))]).toEqual([[top], true])
+    const keys = { cr: crMax, chain: resets }
+    expect(canonicalBytes(keys).length).toBe(6913)
+    const big = bindingRequest2(K(`q${CHAIN_MAX}`), sub, keys, top, 7)
+    expect(bindingHead2(sub, big)).toEqual(top)
+    expect(readKeys(keys)).toEqual(keys)
+    // nothing valid is larger, so a request one byte over holds a record that isn't valid
+    const pad = 'x'.repeat(KEYS_BYTES + 1 - canonicalBytes(keys).length - ',"pad":""'.length)
+    const over = { cr: { ...crMax, pad }, chain: resets }
+    expect(canonicalBytes(over).length).toBe(KEYS_BYTES + 1)
+    expect(bindingHead2(sub, { ...big, cr: over.cr })).toBeNull()
+    expect(readKeys(over)).toBeNull()
+    // a request whose records canonical JSON refuses is refused, not thrown
+    expect(bindingHead2(sub, { ...fits, chain: [{ ...eight[0], at: 0.5 }] })).toBeNull()
+    expect(bindingHead2(sub, { ...fits, chain: 'x' })).toBeNull()
+  })
+
   test('assets/p2p_chain_vectors.json is what the generator writes', () => {
     const made = chainVectors()
     expect(JSON.parse(readFileSync(ASSET, 'utf8'))).toEqual(JSON.parse(JSON.stringify(made)))
@@ -850,7 +904,19 @@ describe('P2P chain records', () => {
     expect(made.cases.filter(c => c.expect.refused.length).map(c => c.name)).toContain(
       'a ninth record is refused'
     )
-    expect(made.bind2.filter(c => c.expect.ok).length).toBe(3)
+    expect(made.bind2.filter(c => c.expect.ok).length).toBe(5)
+    const refusedBind = made.bind2.filter(c => !c.expect.ok).map(c => c.name)
+    expect(refusedBind).toContain('a chain of 9 records is refused')
+    expect(refusedBind).toContain('a request over 7 KiB is refused')
+    const size = (name: string) => {
+      const c = made.bind2.find(b => b.name === name)!
+      return canonicalBytes({ cr: c.cr, chain: c.chain }).length
+    }
+    expect(
+      size('the largest valid chain: 8 resets that keep 8 devices each, every at at its largest')
+    ).toBe(6913)
+    expect(size('a request over 7 KiB is refused')).toBe(KEYS_BYTES + 1)
+    expect(new Set(made.bind2.map(c => c.name)).size).toBe(made.bind2.length)
     expect(new Set(made.cases.map(c => c.name)).size).toBe(made.cases.length)
   })
 })

@@ -160,8 +160,27 @@ struct Case {
 }
 
 #[derive(Deserialize)]
+struct BindExpect {
+    ok: bool,
+    head: Option<Head>,
+}
+
+#[derive(Deserialize)]
+struct BindCase {
+    name: String,
+    sub: String,
+    ik: String,
+    ts: i64,
+    proof: String,
+    cr: Value,
+    chain: Vec<Value>,
+    expect: BindExpect,
+}
+
+#[derive(Deserialize)]
 struct Vectors {
     cases: Vec<Case>,
+    bind2: Vec<BindCase>,
 }
 
 const VECTORS: &str = include_str!("../../../../assets/p2p_chain_vectors.json");
@@ -170,7 +189,7 @@ const VECTORS: &str = include_str!("../../../../assets/p2p_chain_vectors.json");
 // (apps/web/scripts/p2p_chain_vectors.ts): both readings of a chain agree on every case.
 #[test]
 fn every_chain_vector_reads_as_the_client_reads_it() {
-    let Vectors { cases } = serde_json::from_str(VECTORS).expect("vectors");
+    let Vectors { cases, bind2: _ } = serde_json::from_str(VECTORS).expect("vectors");
     assert!(cases.len() >= 32, "{}", cases.len());
     for Case {
         name,
@@ -208,9 +227,170 @@ fn every_chain_vector_reads_as_the_client_reads_it() {
     }
 }
 
+/// The proof of a badge request: `key` signs the binding of `sub` to `ik` at `head` and `ts`.
+pub(crate) fn bind_proof(key: &SigningKey, sub: &str, ik: &str, head: &Head, ts: u64) -> String {
+    let msg = crate::identity::binding2_message(sub, ik, head, ts).expect("message");
+    URL_SAFE_NO_PAD.encode(key.sign(&msg).to_bytes())
+}
+
+// The badge requests of the same file: the instance finds the head the client's `bindingHead2`
+// finds, and refuses what it refuses.
+#[test]
+fn every_badge_vector_reads_as_the_client_reads_it() {
+    let Vectors { cases: _, bind2 } = serde_json::from_str(VECTORS).expect("vectors");
+    assert!(bind2.len() >= 16, "{}", bind2.len());
+    let size = |name: &str| {
+        let case = bind2.iter().find(|c| c.name == name).expect(name);
+        canonical(&json!({"cr": case.cr, "chain": case.chain}))
+            .expect("canonical")
+            .len()
+    };
+    let largest =
+        "the largest valid chain: 8 resets that keep 8 devices each, every at at its largest";
+    assert_eq!(size(largest), 6913);
+    assert_eq!(size("a request over 7 KiB is refused"), KEYS_BYTES + 1);
+    let mut refused = vec![];
+    let mut found = vec![];
+    for BindCase {
+        name,
+        sub,
+        ik,
+        ts,
+        proof,
+        cr,
+        chain,
+        expect,
+    } in bind2
+    {
+        let got = binding_head(&sub, &ik, ts, &proof, &cr, &chain);
+        assert_eq!(got.is_ok(), expect.ok, "{name}: {got:?}");
+        assert_eq!(got.as_ref().ok(), expect.head.as_ref(), "{name}");
+        match got {
+            Ok(head) => found.push((name, head)),
+            Err(e) => refused.push((name, e)),
+        }
+    }
+    assert!(found.iter().any(|(n, h)| n == largest && h.n == CHAIN_MAX));
+    let why = |name: &str| refused.iter().find(|(n, _)| n == name).map(|(_, e)| *e);
+    assert_eq!(
+        why("a chain of 9 records is refused"),
+        Some(BindingError::Size)
+    );
+    assert_eq!(
+        why("a request over 7 KiB is refused"),
+        Some(BindingError::Size)
+    );
+    assert_eq!(why("rival resets are refused"), Some(BindingError::Frozen));
+    assert_eq!(
+        why("a chain record that does not attach is refused"),
+        Some(BindingError::Chain(ChainError::Record(0)))
+    );
+    assert_eq!(
+        why("an older primary while the chain holds a later record is refused"),
+        Some(BindingError::Proof)
+    );
+}
+
+#[test]
+fn a_badge_request_is_bounded_before_any_signature_is_checked() {
+    let Vera { ik, rk, cr, r1, .. } = vera();
+    assert_eq!(KEYS_BYTES, 7 * 1024);
+    let sub = "vera@chat.example.org";
+    let h0 = head_of(&cr);
+    let siblings: Vec<Value> = (0..9)
+        .map(|i| make_recovery(&ik, &rk, &h0, &id(&format!("s{i}")), &[], AT))
+        .collect();
+    let head = head_of(&siblings[0]);
+    let proof = bind_proof(&pair("s0"), sub, &ik, &head, 7);
+    assert!(keys_fit(&cr, &siblings[..8]) && !keys_fit(&cr, &siblings));
+    assert_eq!(
+        binding_head(sub, &ik, 7, &proof, &cr, &siblings[..8]),
+        Ok(head.clone())
+    );
+    assert_eq!(
+        binding_head(sub, &ik, 7, &proof, &cr, &siblings),
+        Err(BindingError::Size)
+    );
+    // The bound comes first: a request that is too long and holds nothing valid answers the same.
+    let junk = vec![json!({"n": 1}); 9];
+    for cr in [json!(null), json!({"v": 1}), cr.clone()] {
+        assert_eq!(
+            binding_head(sub, &ik, 7, "x", &cr, &junk),
+            Err(BindingError::Size)
+        );
+    }
+    let fat = json!({"pad": "x".repeat(KEYS_BYTES)});
+    assert_eq!(
+        binding_head(sub, &ik, 7, &proof, &cr, &[fat]),
+        Err(BindingError::Size)
+    );
+    let float = json!({"at": 0.5});
+    assert_eq!(
+        binding_head(sub, &ik, 7, &proof, &cr, &[float]),
+        Err(BindingError::Size),
+        "no canonical form"
+    );
+    assert_eq!(
+        binding_head(sub, &ik, 7, &proof, &json!({"v": 1}), &[]),
+        Err(BindingError::Chain(ChainError::Creation))
+    );
+
+    // The canonical size is the client's: KEYS_BYTES fits and one byte more doesn't.
+    let size = |chain: &[Value]| {
+        canonical(&json!({"cr": cr, "chain": chain}))
+            .expect("canonical")
+            .len()
+    };
+    let pad = |len: usize| json!({ "p": "x".repeat(len) });
+    let base = size(&[pad(0)]);
+    assert!(keys_fit(&cr, &[pad(KEYS_BYTES - base)]));
+    assert!(!keys_fit(&cr, &[pad(KEYS_BYTES - base + 1)]));
+
+    // The proof: a head's primary, this account, this identity, this head and this time.
+    let h1 = head_of(&r1);
+    let chain = [r1.clone()];
+    let by = |key: &str, sub: &str, head: &Head, ts: u64| {
+        let proof = bind_proof(&pair(key), sub, &ik, head, ts);
+        binding_head("vera@chat.example.org", &ik, 7, &proof, &cr, &chain)
+    };
+    assert_eq!(by("pk1", sub, &h1, 7), Ok(h1.clone()));
+    for (key, signed_sub, head, ts, why) in [
+        ("pk0", sub, &h0, 7, "an older primary"),
+        ("pk1", sub, &h0, 7, "an older head"),
+        ("pk1", "mallory@chat.example.org", &h1, 7, "another account"),
+        ("pk1", sub, &h1, 8, "another time"),
+        ("rk", sub, &h1, 7, "the recovery key"),
+        ("ik", sub, &h1, 7, "the identity key"),
+    ] {
+        assert_eq!(
+            by(key, signed_sub, head, ts),
+            Err(BindingError::Proof),
+            "{why}"
+        );
+    }
+    let v1 = {
+        let msg = crate::identity::binding_message(sub, 7);
+        URL_SAFE_NO_PAD.encode(pair("pk1").sign(&msg).to_bytes())
+    };
+    assert_eq!(
+        binding_head(sub, &ik, 7, &v1, &cr, &chain),
+        Err(BindingError::Proof),
+        "a bind1 proof"
+    );
+    assert_eq!(
+        binding_head(sub, &ik, -7, &proof, &cr, &chain),
+        Err(BindingError::Proof)
+    );
+    assert_eq!(
+        binding_head(sub, &id("other ik"), 7, &proof, &cr, &chain),
+        Err(BindingError::Chain(ChainError::Creation)),
+        "another identity's chain"
+    );
+}
+
 #[test]
 fn the_test_keys_are_the_generators() {
-    let Vectors { cases } = serde_json::from_str(VECTORS).expect("vectors");
+    let Vectors { cases, bind2: _ } = serde_json::from_str(VECTORS).expect("vectors");
     let Vera {
         ik, cr, r1, reset2, ..
     } = vera();

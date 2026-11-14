@@ -18,6 +18,7 @@ use crate::identity::{
     binding_proof_ok, p2p_key, random_id, split_qualified,
 };
 use crate::instance::{Features, InstanceInfo};
+use crate::p2p_chain::{BindingError, ChainError, Head, binding_head};
 use crate::relay::IceServer;
 use crate::state::AppState;
 
@@ -240,10 +241,22 @@ pub struct BindingRequest {
     pub ik: String,
     /// Unix seconds when the proof was made. It must be within 5 minutes of the server clock.
     pub ts: i64,
-    /// Ed25519 signature by `ik`, base64url without padding (86 characters), over the bytes
-    /// `rchat-p2p-bind1`, a zero byte, `sub`, a zero byte and `ts` in decimal. `sub` is the
-    /// caller as `username@host`, with `host` from `GET /api/v1/instance`.
+    /// Ed25519 signature, base64url without padding (86 characters). `sub` is the caller as
+    /// `username@host`, with `host` from `GET /api/v1/instance`. Without `cr`: by `ik`, over the
+    /// bytes `rchat-p2p-bind1`, a zero byte, `sub`, a zero byte and `ts` in decimal. With `cr`:
+    /// by the primary key of a head of the chain, over the bytes `rchat-p2p-bind2`, a zero byte
+    /// and the canonical JSON (RFC 8785) of `{sub, ik, head: {n, d}, ts}` for that head.
     pub proof: String,
+    /// For an identity made with a backup phrase: its creation record
+    /// `{v, ik, n, rk, pk, at, sig_ik, sig_rk}`. Send it with `chain`.
+    #[serde(default)]
+    #[schema(value_type = Option<Object>)]
+    pub cr: Option<serde_json::Value>,
+    /// With `cr`: every chain record of the identity, at most 8. `cr` and `chain` together are
+    /// at most 7 KiB as canonical JSON.
+    #[serde(default)]
+    #[schema(value_type = Option<Vec<Object>>)]
+    pub chain: Option<Vec<serde_json::Value>>,
 }
 
 /// A signed P2P identity binding.
@@ -262,6 +275,10 @@ pub struct Binding {
     pub ik: String,
     /// Unix seconds when the token expires, 7 days after issue.
     pub expires_at: i64,
+    /// For a request with `cr`: the record of the chain whose primary signed the proof. The
+    /// token names it in its `head` claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<Head>,
 }
 
 /// Bind a P2P identity key to your account
@@ -269,13 +286,17 @@ pub struct Binding {
 /// Signs a JWT (7 days) stating that the caller, `username@host` on this instance, holds the P2P
 /// identity key `ik`. Peers show it as an account badge after checking it against the keys at
 /// `/.well-known/jwks.json`. The proof is a signature by `ik` itself, so nobody can bind a key
-/// they don't hold. Stateless: nothing is stored, and a binding can't be revoked before it
-/// expires (clients ask for a new one every day while the badge is on). Requires a bearer token;
-/// guests can't call it. Answers 404 while the `p2p` switch of `GET /api/v1/settings` is off.
-/// Strict rate-limit bucket.
+/// they don't hold. An identity made with a backup phrase sends its creation record `cr` and its
+/// `chain` instead: the chain is checked from `ik` (as `PUT /api/v1/me/p2p_identity/{ik}` checks
+/// it), the proof is a signature by the primary key of one of its heads, the deepest records
+/// that count, and the token names that head in a `head: {n, d}` claim. A chain that holds two
+/// resets or removals by one key beside each other is refused. Stateless: nothing is stored, and
+/// a binding can't be revoked before it expires (clients ask for a new one every day while the
+/// badge is on). Requires a bearer token; guests can't call it. Answers 404 while the `p2p`
+/// switch of `GET /api/v1/settings` is off. Strict rate-limit bucket.
 /// Bindings are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
 /// `RARE_REQUESTS_PER_DAY` (100) a day per account by default.
-#[utoipa::path(post, path = "/api/v1/identity/p2p_binding", tag = "Instance", request_body = BindingRequest, responses((status = 200, description = "EdDSA JWT binding ik to sub = user@host for 7 days", body = Binding), (status = 400, description = "ik is not a valid Ed25519 key, ts is more than 5 minutes from the server clock, or proof is not a signature by ik over this account and ts", body = ApiErrorBody), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 404, description = "`Not found` with reason `off_site` and control `p2p`: the `p2p` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/identity/p2p_binding", tag = "Instance", request_body = BindingRequest, responses((status = 200, description = "EdDSA JWT binding ik to sub = user@host for 7 days; with `cr`, its `head` claim names the head", body = Binding), (status = 400, description = "ik is not a valid Ed25519 key, ts is more than 5 minutes from the server clock, or proof is not a signature by ik over this account and ts. With `cr` (each with reason `invalid` and the `field`): `cr and chain go together`, `cr and chain must be at most 9 records and 7 KiB`, `cr and chain are not a valid key chain of ik`, `The key chain holds two resets by one key`, or `proof is not a signature by a head's primary over this account, ik, head and ts`", body = ApiErrorBody), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 404, description = "`Not found` with reason `off_site` and control `p2p`: the `p2p` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn p2p_binding(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -283,7 +304,13 @@ pub(crate) async fn p2p_binding(
     headers: HeaderMap,
     Json(req): Json<BindingRequest>,
 ) -> Result<Json<Binding>, ApiError> {
-    let BindingRequest { ik, ts, proof } = req;
+    let BindingRequest {
+        ik,
+        ts,
+        proof,
+        cr,
+        chain,
+    } = req;
     if !crate::api::policy::effective(&state.db, Some(&user))
         .await
         .p2p()
@@ -309,11 +336,22 @@ pub(crate) async fn p2p_binding(
     }
     let iss = state.instance.origin(peer, &headers);
     let sub = format!("{}@{}", user.username, state.instance.host(&iss));
-    if !binding_proof_ok(&key, &sub, ts, &proof) {
-        return Err(bad(
-            "proof is not a signature by ik over this account and ts",
-        ));
-    }
+    let head = match (cr, chain) {
+        (None, None) => {
+            if !binding_proof_ok(&key, &sub, ts, &proof) {
+                return Err(bad(
+                    "proof is not a signature by ik over this account and ts",
+                ));
+            }
+            None
+        }
+        (Some(cr), Some(chain)) => {
+            Some(binding_head(&sub, &ik, ts, &proof, &cr, &chain).map_err(chain_refused)?)
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(ApiError::invalid("cr and chain go together", "chain"));
+        }
+    };
     let claims = BindingClaims {
         iss: iss.clone(),
         sub: sub.clone(),
@@ -321,6 +359,7 @@ pub(crate) async fn p2p_binding(
         ik: ik.clone(),
         iat,
         exp: iat + BINDING_TTL_SECS,
+        head: head.clone(),
     };
     let token = state.instance.keys.sign(&claims)?;
     Ok(Json(Binding {
@@ -329,6 +368,7 @@ pub(crate) async fn p2p_binding(
         sub,
         ik,
         expires_at: claims.exp,
+        head,
     }))
 }
 
@@ -342,12 +382,35 @@ pub(crate) fn verify_binding(state: &AppState, token: &str) -> Option<(String, S
         ik: _,
         iat,
         exp,
+        head: _,
     } = state.instance.keys.signed(token)?;
     let lasts = exp > now() && iat <= exp && exp - iat <= BINDING_TTL_SECS;
     let (name, host) = split_qualified(&sub)?;
     let here = state.instance.host(&iss).eq_ignore_ascii_case(host);
     (aud == BINDING_AUD && lasts && here && !name.contains('@'))
         .then(|| (name.to_string(), host.to_string()))
+}
+
+/// The answer to a badge request whose chain or proof is refused.
+fn chain_refused(e: BindingError) -> ApiError {
+    match e {
+        BindingError::Size => {
+            ApiError::invalid("cr and chain must be at most 9 records and 7 KiB", "chain")
+        }
+        BindingError::Chain(ChainError::Creation) => {
+            ApiError::invalid("cr and chain are not a valid key chain of ik", "cr")
+        }
+        BindingError::Chain(ChainError::Record(_)) => {
+            ApiError::invalid("cr and chain are not a valid key chain of ik", "chain")
+        }
+        BindingError::Frozen => {
+            ApiError::invalid("The key chain holds two resets by one key", "chain")
+        }
+        BindingError::Proof => ApiError::invalid(
+            "proof is not a signature by a head's primary over this account, ik, head and ts",
+            "proof",
+        ),
+    }
 }
 
 /// ICE servers with short-lived TURN credentials.
@@ -858,6 +921,239 @@ mod tests {
         done(state, path).await;
     }
 
+    // R8-badge and R8-badge-stale, the instance's half: a request with the chain, signed by the
+    // head's primary, gives a token naming ik and the head; the instance keeps nothing, so the
+    // creation record alone is issued for head 0, whatever came after it.
+    #[tokio::test]
+    async fn p2p_binding_with_a_chain_names_the_head_its_primary_signed() {
+        use crate::p2p_chain::KEYS_BYTES;
+        use crate::p2p_chain::tests::{
+            AT, Vera, bind_proof, head_of, id, make_recovery, make_reset, pair, vera,
+        };
+        const MAX: u64 = (1 << 53) - 1;
+        use serde_json::{Value, json};
+        let (state, path) = temp_state("instance_binding_chain").await;
+        let state = crate::api::rare::tests::unlimited(state);
+        let (addr, server) = serve(state.clone()).await;
+        let base = format!("http://{addr}");
+        let client = reqwest::Client::new();
+        let token = register(&client, &base, "Alice").await;
+        let sub = format!("alice@{addr}");
+        let Vera {
+            ik,
+            rk,
+            cr,
+            r1,
+            reset2,
+            ..
+        } = vera();
+        let bind = |body: Value| {
+            client
+                .post(format!("{base}/api/v1/identity/p2p_binding"))
+                .header("content-type", "application/json")
+                .bearer_auth(&token)
+                .body(body.to_string())
+                .send()
+        };
+        let request = |key: &str, sub: &str, chain: &[&Value], head: &Value, ts: i64| {
+            let head = head_of(head);
+            let proof = bind_proof(&pair(key), sub, &ik, &head, ts as u64);
+            json!({"ik": ik, "ts": ts, "proof": proof, "cr": cr, "chain": chain})
+        };
+        let jwks = json(
+            client
+                .get(format!("{base}/.well-known/jwks.json"))
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+
+        for (key, chain, head) in [
+            ("pk0", vec![], &cr),
+            ("pk1", vec![&r1], &r1),
+            ("pk2", vec![&reset2, &r1], &reset2),
+        ] {
+            let before = now();
+            let res = bind(request(key, &sub, &chain, head, before))
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::OK, "{key}");
+            let answer = json(res).await;
+            let named = serde_json::to_value(head_of(head)).unwrap();
+            assert_eq!(named, json!({"n": chain.len(), "d": head_of(head).d}));
+            assert_eq!(
+                (&answer["sub"], &answer["ik"], &answer["head"]),
+                (&json!(sub), &json!(ik), &named),
+                "{key}"
+            );
+            let claims = verified_payload(answer["token"].as_str().unwrap(), &jwks);
+            let iat = claims["iat"].as_i64().unwrap();
+            assert!((before..=now()).contains(&iat));
+            assert_eq!(
+                claims,
+                json!({
+                    "iss": base,
+                    "sub": sub,
+                    "aud": "rchat-p2p-bind",
+                    "ik": ik,
+                    "iat": iat,
+                    "exp": iat + 7 * 24 * 60 * 60,
+                    "head": named,
+                }),
+                "{key}"
+            );
+            assert_eq!(answer["expires_at"], json!(iat + 7 * 24 * 60 * 60));
+        }
+
+        let refused = |res: reqwest::Response, error: &'static str, field: &'static str| async move {
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{error}");
+            assert_eq!(
+                json(res).await,
+                json!({"error": error, "reason": {"kind": "invalid", "field": field}})
+            );
+        };
+        const PROOF: &str =
+            "proof is not a signature by a head's primary over this account, ik, head and ts";
+        const CHAIN: &str = "cr and chain are not a valid key chain of ik";
+        const SIZE: &str = "cr and chain must be at most 9 records and 7 KiB";
+        let t = now();
+        let h0 = head_of(&cr);
+        // r8c completeness I3 and the older epoch's primary: the chain holds a later record.
+        for (key, head, why) in [
+            ("pk0", &cr, "the old primary, the old head"),
+            ("pk1", &cr, "the head's primary, an older head"),
+            ("pk0", &r1, "the old primary, the head"),
+            ("rk", &r1, "the recovery key"),
+            ("ik", &r1, "the identity key"),
+        ] {
+            let res = bind(request(key, &sub, &[&r1], head, t)).await.unwrap();
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{why}");
+            assert_eq!(json(res).await["error"], PROOF, "{why}");
+        }
+        // r8d completeness I4: sub is username@host, ts is Unix seconds within 5 minutes.
+        for other in [
+            format!("bob@{addr}"),
+            "alice".to_string(),
+            format!("Alice@{addr}"),
+        ] {
+            let res = bind(request("pk1", &other, &[&r1], &r1, t)).await.unwrap();
+            refused(res, PROOF, "proof").await;
+        }
+        for off in [-301, 301] {
+            let res = bind(request("pk1", &sub, &[&r1], &r1, now() + off))
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(
+                json(res).await["error"],
+                "ts must be within 5 minutes of the server clock"
+            );
+        }
+        for off in [-290, 290] {
+            let res = bind(request("pk1", &sub, &[&r1], &r1, now() + off))
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::OK, "{off}");
+        }
+        let mut millis = request("pk1", &sub, &[&r1], &r1, t);
+        millis["ts"] = json!(t * 1000);
+        assert_eq!(
+            bind(millis).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+        // a bind1 proof by the identity key beside the chain
+        let mut v1: Value = serde_json::from_str(&bind_body(&pair("ik"), &ik, &sub, t)).unwrap();
+        (v1["cr"], v1["chain"]) = (cr.clone(), json!([]));
+        refused(bind(v1).await.unwrap(), PROOF, "proof").await;
+
+        // a chain that doesn't verify
+        let after_reset = make_recovery(&ik, &rk, &head_of(&reset2), &id("pk3"), &[], AT);
+        let res = bind(request(
+            "pk2",
+            &sub,
+            &[&r1, &reset2, &after_reset],
+            &reset2,
+            t,
+        ))
+        .await
+        .unwrap();
+        refused(res, CHAIN, "chain").await;
+        refused(
+            bind(request("pk2", &sub, &[&reset2], &reset2, t))
+                .await
+                .unwrap(),
+            CHAIN,
+            "chain",
+        )
+        .await;
+        let mut no_sig = request("pk0", &sub, &[], &cr, t);
+        no_sig["cr"].as_object_mut().unwrap().remove("sig_rk");
+        refused(bind(no_sig).await.unwrap(), CHAIN, "cr").await;
+        let mut other_ik = request("pk0", &sub, &[], &cr, t);
+        other_ik["ik"] = json!(id("other ik"));
+        refused(bind(other_ik).await.unwrap(), CHAIN, "cr").await;
+        let rival = make_reset(&ik, &rk, &pair("thief rk"), &h0, &id("pkz"), &[], AT);
+        let mine = make_reset(&ik, &rk, &pair("rk2"), &h0, &id("pkm"), &[], AT);
+        let res = bind(request("pk0", &sub, &[&mine, &rival], &cr, t))
+            .await
+            .unwrap();
+        refused(res, "The key chain holds two resets by one key", "chain").await;
+
+        // the bounds, before anything is checked
+        let siblings: Vec<Value> = (0..9)
+            .map(|i| make_recovery(&ik, &rk, &h0, &id(&format!("s{i}")), &[], AT))
+            .collect();
+        let nine: Vec<&Value> = siblings.iter().collect();
+        refused(
+            bind(request("s0", &sub, &nine, &siblings[0], t))
+                .await
+                .unwrap(),
+            SIZE,
+            "chain",
+        )
+        .await;
+        let res = bind(request("s0", &sub, &nine[..8], &siblings[0], t))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "eight records");
+        // 8 resets that keep 8 devices each, every at at its largest: past 6 KiB, within 7 KiB
+        let mut resets: Vec<Value> = vec![];
+        let (mut prev, mut by) = (h0.clone(), pair("rk"));
+        for n in 1..=8 {
+            let next = pair(&format!("big rk{n}"));
+            let keep: Vec<String> = (0..8).map(|i| id(&format!("big dev {n}.{i}"))).collect();
+            let r = make_reset(&ik, &by, &next, &prev, &id(&format!("big{n}")), &keep, MAX);
+            prev = head_of(&r);
+            resets.push(r);
+            by = next;
+        }
+        let wide: Vec<&Value> = resets.iter().collect();
+        let res = bind(request("big8", &sub, &wide, &resets[7], t))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "the widest chain");
+        assert_eq!(json(res).await["head"], json!(prev));
+        let junk = json!({"ik": ik, "ts": t, "proof": "x", "cr": 1, "chain": vec![json!(1); 3000]});
+        refused(bind(junk).await.unwrap(), SIZE, "chain").await;
+        let fat = json!({"ik": ik, "ts": t, "proof": "x", "cr": cr, "chain": [{"pad": "x".repeat(KEYS_BYTES)}]});
+        refused(bind(fat).await.unwrap(), SIZE, "chain").await;
+        for half in [
+            json!({"ik": ik, "ts": t, "proof": "x", "cr": cr}),
+            json!({"ik": ik, "ts": t, "proof": "x", "chain": []}),
+        ] {
+            refused(
+                bind(half).await.unwrap(),
+                "cr and chain go together",
+                "chain",
+            )
+            .await;
+        }
+
+        server.abort();
+        done(state, path).await;
+    }
+
     #[tokio::test]
     async fn p2p_binding_needs_the_identity_key_a_fresh_ts_and_an_account() {
         let (state, path) = temp_state("instance_binding").await;
@@ -884,13 +1180,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+        let bytes = res.bytes().await.unwrap();
+        let answer: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(answer.get("head").is_none(), "no head without a chain");
         let Binding {
             token: jwt,
             iss,
             sub: got,
             ik: bound,
             expires_at,
-        } = serde_json::from_slice(&res.bytes().await.unwrap()).unwrap();
+            head: _,
+        } = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             (iss.as_str(), got.as_str(), bound.as_str()),
             (base.as_str(), sub.as_str(), ik.as_str())

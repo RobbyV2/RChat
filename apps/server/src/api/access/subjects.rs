@@ -767,6 +767,7 @@ mod tests {
             ik: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo".to_string(),
             iat,
             exp: iat + ttl,
+            head: None,
         })
         .expect("sign")
     }

@@ -491,6 +491,7 @@ mod tests {
                 ik: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo".to_string(),
                 iat,
                 exp: iat + crate::identity::BINDING_TTL_SECS,
+                head: None,
             })
             .expect("sign")
     }

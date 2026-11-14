@@ -21,7 +21,7 @@ import {
 export const CHAIN_MAX = 8
 export const KEEP_MAX = 8
 export const KEYS_RECORDS = CHAIN_MAX + 1
-export const KEYS_BYTES = 6 * 1024
+export const KEYS_BYTES = 7 * 1024
 
 export const TAG2 = {
   create: 'rchat-p2p-create1\0',
@@ -371,19 +371,29 @@ export const readChain = (cr: CreationRecord, recs: Iterable<ChainRecord>): Chai
   }
 }
 
+// The bounds of a `{cr, chain}`: at most KEYS_RECORDS records and KEYS_BYTES of canonical JSON.
+// Checked before any signature, and a chain with too many records is not read at all.
+const keysFit = (cr: unknown, chain: unknown[]) => {
+  if (chain.length > KEYS_RECORDS - 1) return false
+  try {
+    return canonicalBytes({ cr, chain }).length <= KEYS_BYTES
+  } catch {
+    return false
+  }
+}
+
 // The `{cr, chain}` shape of a hello's `keys`, `keys_old` and `yours`, of `redeem` and of the
 // account's identity record: the creation record and the chain records in order of n.
 export const readKeys = (x: unknown): Keys | null => {
   if (!isRecord(x)) return null
   const { cr, chain } = x
-  if (!isCreation(cr) || !Array.isArray(chain) || chain.length > KEYS_RECORDS - 1) return null
+  if (!Array.isArray(chain) || !keysFit(cr, chain) || !isCreation(cr)) return null
   let n = 1
   for (const r of chain) {
     if (!isChainRecord(r) || r.ik !== cr.ik || r.n < n) return null
     n = r.n
   }
-  const keys = { cr, chain: chain as ChainRecord[] }
-  return canonicalBytes(keys).length <= KEYS_BYTES ? keys : null
+  return { cr, chain: chain as ChainRecord[] }
 }
 
 export const keysOf = (view: ChainView): Keys => ({ cr: view.cr, chain: view.records() })
@@ -795,13 +805,14 @@ export const bindingRequest2 = (
   chain: keys.chain,
 })
 
-// The head a proof was signed for: a head of the chain whose primary signed it. None when a
-// record of the request doesn't attach, or after rival resets.
+// The head a proof was signed for: a head of the chain whose primary signed it. None when the
+// request is over the bounds of a `{cr, chain}`, when a record of it doesn't attach, or after
+// rival resets.
 export const bindingHead2 = (sub: string, req: unknown): Head | null => {
   if (!isRecord(req)) return null
   const { ik, ts, proof, cr, chain } = req
-  if (!isCreation(cr) || cr.ik !== ik || !int(ts) || !isSig(proof) || !Array.isArray(chain))
-    return null
+  if (!Array.isArray(chain) || !keysFit(cr, chain)) return null
+  if (!isCreation(cr) || cr.ik !== ik || !int(ts) || !isSig(proof)) return null
   if (!chain.every(r => isChainRecord(r) && r.ik === ik)) return null
   const view = readChain(cr, chain as ChainRecord[])
   if (view.frozen || !(chain as ChainRecord[]).every(r => view.verifies(r))) return null

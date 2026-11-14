@@ -12,22 +12,30 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value, json};
 use sha2::{Digest, Sha256};
 use unicode_normalization::is_nfc;
+use utoipa::ToSchema;
 
-use crate::identity::{p2p_key, sig_ok};
+use crate::identity::{binding2_proof_ok, p2p_key, sig_ok};
 
 /// Most records that follow a creation record on one line.
 pub const CHAIN_MAX: u64 = 8;
 /// Most device keys a chain record keeps.
 pub const KEEP_MAX: usize = 8;
+/// Most records of a `{cr, chain}` that travels in a request: the creation record and the chain.
+pub const KEYS_RECORDS: usize = CHAIN_MAX as usize + 1;
+/// Most bytes of the canonical JSON of a `{cr, chain}` that travels in a request.
+pub const KEYS_BYTES: usize = 7 * 1024;
 
 const CREATE_TAG: &[u8] = b"rchat-p2p-create1\0";
 const CHAIN_TAG: &[u8] = b"rchat-p2p-chain1\0";
 const MAX_SAFE: i64 = (1 << 53) - 1;
 
-/// A record of a chain: its number and its identity, base64url.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A record of a key chain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Head {
+    /// Its number: 0 for the creation record.
     pub n: u64,
+    /// Its identity: the SHA-256 of its canonical JSON without its signatures, base64url without
+    /// padding (43 characters).
     pub d: String,
 }
 
@@ -377,6 +385,51 @@ pub fn verify(ik: &str, cr: &Value, chain: &[Value]) -> Result<Chain, ChainError
         Some(i) => Err(ChainError::Record(i)),
         None => Ok(read),
     }
+}
+
+/// Whether `{cr, chain}` is within the bounds of a request: at most `KEYS_RECORDS` records and
+/// `KEYS_BYTES` of canonical JSON. No signature is checked.
+pub fn keys_fit(cr: &Value, chain: &[Value]) -> bool {
+    chain.len() < KEYS_RECORDS
+        && canonical(&json!({"cr": cr, "chain": chain})).is_some_and(|c| c.len() <= KEYS_BYTES)
+}
+
+/// Why a badge request with a chain was refused: it is over the bounds of a request, its chain
+/// doesn't verify, its chain holds rival resets, or no head's primary signed the proof.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingError {
+    Size,
+    Chain(ChainError),
+    Frozen,
+    Proof,
+}
+
+/// The head a badge proof was signed for: a head of the chain of `ik` whose primary signed the
+/// binding of `sub` to `ik` at that head and `ts`. The bounds are checked before any signature.
+pub fn binding_head(
+    sub: &str,
+    ik: &str,
+    ts: i64,
+    proof: &str,
+    cr: &Value,
+    chain: &[Value],
+) -> Result<Head, BindingError> {
+    if !keys_fit(cr, chain) {
+        return Err(BindingError::Size);
+    }
+    let read = verify(ik, cr, chain).map_err(BindingError::Chain)?;
+    if read.frozen() {
+        return Err(BindingError::Frozen);
+    }
+    let ts = u64::try_from(ts).map_err(|_| BindingError::Proof)?;
+    let signed = |h: &Head| {
+        read.primary(h)
+            .is_some_and(|key| binding2_proof_ok(&key, sub, ik, h, ts, proof))
+    };
+    read.heads()
+        .into_iter()
+        .find(signed)
+        .ok_or(BindingError::Proof)
 }
 
 impl Chain {

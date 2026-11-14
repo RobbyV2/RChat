@@ -5,7 +5,7 @@ import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { format, resolveConfig } from 'prettier'
-import { utf8 } from '../app/lib/p2p/canonical'
+import { canonicalBytes, utf8 } from '../app/lib/p2p/canonical'
 import {
   bindingBody2,
   bindingHead2,
@@ -14,6 +14,7 @@ import {
   headOf,
   isChainRecord,
   isCreation,
+  KEYS_BYTES,
   makeCreation,
   makeRecovery,
   makeRemoval,
@@ -253,6 +254,26 @@ export const chainVectors = () => {
   }
   const pk0 = vectorKey('pk0')
   const pk1 = vectorKey('pk1')
+  // Valid records past the bounds of a request: 9 recoveries beside each other. The largest
+  // valid {cr, chain} is 8 resets that keep 8 devices each, every at at its largest (6,913
+  // bytes), so a request over 7 KiB holds a record that isn't valid: here a padded creation
+  // record, one byte over.
+  const siblings = Array.from({ length: CHAIN_MAX + 1 }, (_, i) =>
+    makeRecovery(I, rk, h0, id(`sib${i}`), [id('d2')], AT + 1)
+  )
+  const crMax = makeCreation(ik, rk, id('pk0'), Number.MAX_SAFE_INTEGER)
+  const resets: ChainRecord[] = []
+  for (let n = 1, prev = headOf(crMax), by = rk; n <= CHAIN_MAX; n += 1) {
+    const next = vectorKey(`reset rk${n}`)
+    const keep = Array.from({ length: 8 }, (_, i) => id(`reset dev ${n}.${i}`))
+    const r = makeReset(I, by, next, prev, id(`rpk${n}`), keep, Number.MAX_SAFE_INTEGER)
+    resets.push(r)
+    prev = headOf(r)
+    by = next
+  }
+  const pad = 'x'.repeat(
+    KEYS_BYTES + 1 - canonicalBytes({ cr: crMax, chain: resets }).length - ',"pad":""'.length
+  )
   const bind2: BindCase[] = [
     bind('the creation record only: head 0', pk0, [], h0),
     bind('a chain: the head primary signs', pk1, [r1], headOf(r1)),
@@ -279,6 +300,27 @@ export const chainVectors = () => {
       chain: [r1, forged],
     })),
     bind('either head of two recoveries with the same n', vectorKey('pkb'), [ra, rb], headOf(rb)),
+    bind(
+      'a full chain of 8 records that keep 8 devices each',
+      vectorKey(`pk${CHAIN_MAX}`),
+      full.slice(0, CHAIN_MAX),
+      headOf(full[CHAIN_MAX - 1])
+    ),
+    bind('a chain of 9 records is refused', vectorKey('sib0'), siblings, headOf(siblings[0])),
+    bind(
+      'the largest valid chain: 8 resets that keep 8 devices each, every at at its largest',
+      vectorKey(`rpk${CHAIN_MAX}`),
+      resets,
+      headOf(resets[CHAIN_MAX - 1]),
+      r => ({ ...r, cr: crMax })
+    ),
+    bind(
+      'a request over 7 KiB is refused',
+      vectorKey(`rpk${CHAIN_MAX}`),
+      resets,
+      headOf(resets[CHAIN_MAX - 1]),
+      r => ({ ...r, cr: { ...crMax, pad } })
+    ),
   ]
   return { v: 1, cases: chainCases, bind2 }
 }
