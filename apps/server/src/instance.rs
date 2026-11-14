@@ -448,6 +448,9 @@ pub struct Features {
     /// Backup phrases (`/api/v1/me/recovery` and `POST /api/v1/auth/recovery`) are supported.
     /// Whether new phrases can be set is the `backup_phrase` switch of `GET /api/v1/settings`.
     pub backup_phrase: bool,
+    /// P2P backups (`/api/v1/me/p2p_backup`) are kept, up to `limits.p2p_backup_bytes` per version.
+    /// Whether new ones can be uploaded is the `p2p_backup` switch of `GET /api/v1/settings`.
+    pub p2p_backup: bool,
 }
 
 /// Limits of this instance.
@@ -476,6 +479,14 @@ pub struct Limits {
     /// Seconds an identity assertion stays valid.
     #[schema(example = 300)]
     pub assertion_ttl_secs: i64,
+    /// Largest P2P backup version, in bytes: by default 64 MiB (`P2P_BACKUP_MAX_MIB`, at most
+    /// `UPLOAD_BUFFER_MIB`); 0 when the instance keeps no P2P backups.
+    #[schema(example = 67108864)]
+    pub p2p_backup_bytes: u64,
+    /// Most bytes of P2P backup versions one account keeps over all its identities: by default
+    /// 256 MiB (`P2P_BACKUP_TOTAL_MIB`); 0 for no total.
+    #[schema(example = 268435456)]
+    pub p2p_backup_total_bytes: u64,
 }
 
 impl Limits {
@@ -489,6 +500,8 @@ impl Limits {
                 || limits.upload_owner_kept_bytes() > 0,
             page_size: crate::api::LIST_PAGE,
             assertion_ttl_secs: crate::identity::ASSERTION_TTL_SECS,
+            p2p_backup_bytes: limits.p2p_backup_bytes(),
+            p2p_backup_total_bytes: limits.p2p_backup_total_bytes(),
         }
     }
 }

@@ -397,6 +397,8 @@ Put settings in `.env.local`. Refer to `.env.local.example` for all settings and
 | `UPLOAD_MAX_MIB`         | `25`        | The largest upload in MiB. Raise your proxy's body size limit to match.                                                         |
 | `UPLOAD_SERVER_KEPT_MIB` | `8192`      | The most MiB of files one server keeps longer than a day. `0` means no limit.                                                   |
 | `UPLOAD_OWNER_KEPT_MIB`  | `16384`     | The most MiB of such files across the servers whose file expiry one account set. `0` means no limit.                            |
+| `P2P_BACKUP_MAX_MIB`     | `64`        | The largest P2P backup version in MiB, up to `UPLOAD_BUFFER_MIB`. `0` turns them off. Raise your proxy's body limit to match.   |
+| `P2P_BACKUP_TOTAL_MIB`   | `256`       | The most MiB of P2P backups one account keeps. `0` means no limit. Keep it at least 35 times the typical backup.                |
 | `MESSAGE_MAX_CHARS`      | `4000`      | The longest message in characters.                                                                                              |
 
 A proxy in front of the instance needs only one domain and port 443. It sends every path, `/peerjs` included, to `SERVER_PORT` and passes the WebSocket upgrade for `/api/ws` and `/peerjs`. Calls and P2P files (WebRTC) go between browsers, not through the proxy.

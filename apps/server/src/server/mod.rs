@@ -160,7 +160,8 @@ mod tests {
                 "x-trust-remaining",
                 "x-trust-renew",
                 "date",
-                "etag"
+                "etag",
+                "x-backup-version"
             ],
             "{exposed:?}"
         );

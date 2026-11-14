@@ -90,6 +90,13 @@ impl Modify for Bearer {
         super::recovery::status,
         super::recovery::set_phrase,
         super::recovery::remove_phrase,
+        super::p2p_backup::list_backups,
+        super::p2p_backup::get_backup,
+        super::p2p_backup::list_versions,
+        super::p2p_backup::get_version,
+        super::p2p_backup::put_backup,
+        super::p2p_backup::delete_version,
+        super::p2p_backup::delete_backup,
         super::auth::logout,
         super::config_shares::create_share,
         super::config_shares::list_shares,
@@ -260,7 +267,7 @@ impl Modify for Bearer {
 
 **Pagination.** List endpoints return a JSON array. When more items follow, the `X-Next-Cursor` response header holds an opaque cursor; pass it back as the `cursor` query parameter for the next page. The header is absent on the last page. Each endpoint lists its page size and limits.
 
-**Rate limits.** Every `/api` route except `/api/v1/health` and `/api/v1/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, word hints, recovery challenges, recovery sign-in, password change, backup phrase changes, guest access, server name checks, config links, P2P identity bindings and media upload also share a strict per-IP bucket (2 per second, burst 30). Invite previews and joining a server each have their own bucket of the same size. Exceeding a bucket answers 429 with a plain-text body.
+**Rate limits.** Every `/api` route except `/api/v1/health` and `/api/v1/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, word hints, recovery challenges, recovery sign-in, password change, backup phrase changes, guest access, server name checks, config links, P2P identity bindings, P2P backup uploads and deletes, and media upload also share a strict per-IP bucket (2 per second, burst 30). Invite previews and joining a server each have their own bucket of the same size. Exceeding a bucket answers 429 with a plain-text body.
 
 **Errors.** Errors raised by the API come as JSON `{\"error\": \"...\"}` (`ApiErrorBody`). Many also carry `reason`, an object for programs: `kind` says what happened (`off_site`: turned off for this site; `off_account`: turned off for your account; `off_server`: turned off in this server; `off_app` and `app`: an app's setting or rule; `limit`: you reached a limit; `capacity`: the site is full right now; `invalid`: a value is wrong; `rate`: too many requests; `conflict`: someone else changed it or the name is taken; `sign_in`: the session ended; `unavailable`: the server can't do it right now), `control` names the setting or limit, `retry_after` is the wait in seconds (also sent as the `Retry-After` header) and `field` names the wrong value. Status codes and `error` texts are the same with and without it. An error without `reason` is a denial about a server, channel or message you cannot open, or an error that has no kind yet. When the database does not answer in time, an endpoint answers `503 {\"error\": \"Server busy, try again in a moment\", \"reason\": {\"kind\": \"unavailable\", \"retry_after\": 1}}` with `Retry-After: 1`: retry the request. Any other server error is `500 {\"error\": \"Something went wrong\"}`. Malformed JSON bodies are rejected by the framework with a plain-text 400, 415 or 422.
 

@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NOT NULL, count INTEGER NOT NULL, last_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NOT NULL, failures INTEGER NOT NULL, last_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS recovery_challenges(nonce TEXT PRIMARY KEY, username TEXT NOT NULL, expires_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS p2p_backups(username TEXT NOT NULL, ik TEXT NOT NULL, version INTEGER NOT NULL, size INTEGER NOT NULL, updated_at INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(username, ik, version));
+CREATE TABLE IF NOT EXISTS p2p_backup_seq(username TEXT NOT NULL, ik TEXT NOT NULL, latest INTEGER NOT NULL, PRIMARY KEY(username, ik));
 CREATE TABLE IF NOT EXISTS instance_audit(id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor TEXT, action TEXT NOT NULL, target TEXT, detail TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at INTEGER NOT NULL, claimed_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
@@ -82,6 +84,7 @@ CREATE INDEX IF NOT EXISTS idx_server_passwords_server ON server_passwords(serve
 CREATE INDEX IF NOT EXISTS idx_login_attempts_last ON login_attempts(last_at);
 CREATE INDEX IF NOT EXISTS idx_change_attempts_last ON change_attempts(last_at);
 CREATE INDEX IF NOT EXISTS idx_recovery_challenges_expires ON recovery_challenges(expires_at);
+CREATE INDEX IF NOT EXISTS idx_p2p_backups_updated ON p2p_backups(updated_at, username, ik);
 CREATE INDEX IF NOT EXISTS idx_instance_audit_actor ON instance_audit(actor);
 CREATE INDEX IF NOT EXISTS idx_instance_audit_target ON instance_audit(target);
 CREATE INDEX IF NOT EXISTS idx_reports_scope ON reports(kind, server, status, created_at, id);
@@ -159,6 +162,8 @@ CREATE TABLE IF NOT EXISTS tokens(token TEXT PRIMARY KEY, username TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS login_attempts(username TEXT PRIMARY KEY, day TEXT NOT NULL, count BIGINT NOT NULL, last_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS change_attempts(session TEXT PRIMARY KEY, day TEXT NOT NULL, failures BIGINT NOT NULL, last_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS recovery_challenges(nonce TEXT PRIMARY KEY, username TEXT NOT NULL, expires_at BIGINT NOT NULL);
+CREATE TABLE IF NOT EXISTS p2p_backups(username TEXT NOT NULL, ik TEXT NOT NULL, version BIGINT NOT NULL, size BIGINT NOT NULL, updated_at BIGINT NOT NULL, data BYTEA NOT NULL, PRIMARY KEY(username, ik, version));
+CREATE TABLE IF NOT EXISTS p2p_backup_seq(username TEXT NOT NULL, ik TEXT NOT NULL, latest BIGINT NOT NULL, PRIMARY KEY(username, ik));
 CREATE TABLE IF NOT EXISTS instance_audit(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, at BIGINT NOT NULL, actor TEXT, action TEXT NOT NULL, target TEXT, detail TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at BIGINT NOT NULL, claimed_at BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
@@ -228,6 +233,7 @@ CREATE INDEX IF NOT EXISTS idx_server_passwords_server ON server_passwords(serve
 CREATE INDEX IF NOT EXISTS idx_login_attempts_last ON login_attempts(last_at);
 CREATE INDEX IF NOT EXISTS idx_change_attempts_last ON change_attempts(last_at);
 CREATE INDEX IF NOT EXISTS idx_recovery_challenges_expires ON recovery_challenges(expires_at);
+CREATE INDEX IF NOT EXISTS idx_p2p_backups_updated ON p2p_backups(updated_at, username, ik);
 CREATE INDEX IF NOT EXISTS idx_instance_audit_actor ON instance_audit(actor);
 CREATE INDEX IF NOT EXISTS idx_instance_audit_target ON instance_audit(target);
 CREATE INDEX IF NOT EXISTS idx_reports_scope ON reports(kind, server, status, created_at, id);

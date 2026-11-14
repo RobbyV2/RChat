@@ -29,13 +29,13 @@ pub use schema::has_fts;
 #[cfg(test)]
 pub(crate) use schema::set_fts;
 pub use secrets::{pepper, secret_key};
-#[cfg(test)]
-pub(crate) use sweep::KEPT_USERS_SQL;
 pub(crate) use sweep::delete_batched;
 pub use sweep::{
     AUDIT_KEEP, PING_KEEP, PINGS_KEPT, PURGE_BATCH, SERVER_PASSWORD_KEEP, Swept, TIMEOUT_KEEP,
     purge_messages, sweep_stale,
 };
+#[cfg(test)]
+pub(crate) use sweep::{KEPT_USERS_SQL, sweep_stale_at};
 #[cfg(test)]
 pub(crate) use touch::grant_touch_queued;
 pub use touch::{

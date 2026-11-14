@@ -3143,6 +3143,7 @@ async fn stale_rows_are_swept() {
             webhook_deliveries: 0,
             recovery_challenges: 1,
             reports: 0,
+            p2p_backups: 0,
             member_counts: 0,
         }
     );
@@ -3899,6 +3900,122 @@ async fn username_keys_are_added_to_an_old_database() {
     wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("username_keys_upgrade").await {
         username_keys_upgrade(&pg.url).await;
+        drop(pg);
+    }
+}
+
+async fn old_p2p_backups_db(db: &Db) {
+    for stmt in [
+        "DROP INDEX idx_p2p_backups_updated".to_string(),
+        "DROP TABLE p2p_backups".to_string(),
+        "DROP TABLE p2p_backup_seq".to_string(),
+        "UPDATE settings SET value = '27' WHERE key = 'schema_version'".to_string(),
+        format!("{OLD_USER}('alice', 'Alice', 'a-hash', 'text', 'identicon', 7)"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(db)
+            .await
+            .expect(&stmt);
+    }
+}
+
+async fn upgraded_p2p_backups_db(db: &Db, round: i64) {
+    let alice = sqlx::query("SELECT username, display_name, password_hash, password_kind, created_at, recovery_pub FROM users WHERE username = 'alice'")
+        .fetch_one(db)
+        .await
+        .expect("alice");
+    let kept: (String, String, String, String, i64, Option<String>) = (
+        alice.try_get(0).expect("username"),
+        alice.try_get(1).expect("display_name"),
+        alice.try_get(2).expect("password_hash"),
+        alice.try_get(3).expect("password_kind"),
+        alice.try_get(4).expect("created_at"),
+        alice.try_get(5).expect("recovery_pub"),
+    );
+    let s = |v: &str| v.to_string();
+    assert_eq!(
+        kept,
+        (s("alice"), s("Alice"), s("a-hash"), s("text"), 7, None)
+    );
+    let index = match is_sqlite(db) {
+        true => {
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_p2p_backups_updated'"
+        }
+        false => {
+            "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_p2p_backups_updated'"
+        }
+    };
+    assert_eq!(count(db, index).await, 1);
+    for table in ["p2p_backups", "p2p_backup_seq"] {
+        assert_eq!(
+            count(db, &format!("SELECT COUNT(*) FROM {table}")).await,
+            round,
+            "{table}"
+        );
+    }
+    let version = round + 1;
+    sqlx::query("INSERT INTO p2p_backups(username, ik, version, size, updated_at, data) VALUES('alice', 'k', $1, 3, $2, $3)")
+        .bind(version)
+        .bind(100 + version)
+        .bind(vec![0u8, 255, version as u8])
+        .execute(db)
+        .await
+        .expect("a version");
+    sqlx::query("INSERT INTO p2p_backup_seq(username, ik, latest) VALUES('alice', 'k', $1) ON CONFLICT(username, ik) DO UPDATE SET latest = excluded.latest")
+        .bind(version)
+        .execute(db)
+        .await
+        .expect("its number");
+    let row = sqlx::query("SELECT b.data, b.size, b.updated_at, s.latest FROM p2p_backups b JOIN p2p_backup_seq s ON s.username = b.username AND s.ik = b.ik WHERE b.version = $1")
+        .bind(version)
+        .fetch_one(db)
+        .await
+        .expect("stored");
+    let got: (Vec<u8>, i64, i64, i64) = (
+        row.try_get(0).expect("data"),
+        row.try_get(1).expect("size"),
+        row.try_get(2).expect("updated_at"),
+        row.try_get(3).expect("latest"),
+    );
+    assert_eq!(
+        got,
+        (vec![0, 255, version as u8], 3, 100 + version, version)
+    );
+    assert_eq!(
+        count(
+            db,
+            "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+        )
+        .await,
+        SCHEMA_VERSION
+    );
+}
+
+async fn p2p_backups_upgrade(url: &str) {
+    let db = open(Some(url)).await.expect("open");
+    old_p2p_backups_db(&db).await;
+    close(&db).await;
+    for round in 0..2 {
+        let db = open(Some(url)).await.expect("upgrade");
+        upgraded_p2p_backups_db(&db, round).await;
+        close(&db).await;
+    }
+}
+
+#[tokio::test]
+async fn p2p_backups_tables_are_added_to_an_old_database() {
+    const { assert!(SCHEMA_VERSION >= 28) };
+    let path = crate::db::temp_db_path("p2p_backups_upgrade");
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    p2p_backups_upgrade(path.to_str().expect("path")).await;
+    wipe();
+    if let Some(pg) = crate::api::test_util::pg_temp("p2p_backups_upgrade").await {
+        p2p_backups_upgrade(&pg.url).await;
         drop(pg);
     }
 }
@@ -6170,7 +6287,7 @@ async fn public_read_upgrade(url: &str) {
     for round in 0..2 {
         let db = open_started(Some(url)).await.expect("upgrade");
         assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
-        assert_eq!(SCHEMA_VERSION, 27);
+        const { assert!(SCHEMA_VERSION >= 27) };
         assert_eq!(
             count(
                 &db,

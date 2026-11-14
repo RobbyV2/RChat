@@ -11,7 +11,7 @@ const MIB: usize = 1024 * 1024;
 pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 44] = [
+const RANGES: [(&str, i64, i64); 45] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("WS_CONNECTIONS_PER_USER", 1, 10_000),
@@ -51,6 +51,7 @@ const RANGES: [(&str, i64, i64); 44] = [
     ("SFU_MAX_STREAMS", 1, 1_000_000),
     ("SFU_USER_KIB_PER_SEC", 1, 1_048_576),
     ("P2P_BACKUP_MAX_MIB", 0, 512),
+    ("P2P_BACKUP_TOTAL_MIB", 0, 1_048_576),
     ("WIDGET_QUICK_JOINS_PER_HOUR", 1, 10_000),
     ("WIDGET_VIEWERS_MAX", 0, 1_000_000),
     ("WIDGET_BRIDGE_SERVERS_MAX", 1, 10_000),
@@ -101,6 +102,7 @@ pub struct Limits {
     pub sfu_max_streams: u32,
     pub sfu_user_kib_per_sec: u32,
     pub p2p_backup_max_mib: u32,
+    pub p2p_backup_total_mib: u32,
     pub widget_quick_joins_per_hour: u32,
     pub widget_viewers_max: u32,
     pub widget_bridge_servers_max: u32,
@@ -152,6 +154,7 @@ impl Default for Limits {
             sfu_max_streams: 2000,
             sfu_user_kib_per_sec: 4096,
             p2p_backup_max_mib: 64,
+            p2p_backup_total_mib: 256,
             widget_quick_joins_per_hour: 10,
             widget_viewers_max: 5000,
             widget_bridge_servers_max: 50,
@@ -255,6 +258,7 @@ impl Limits {
             sfu_max_streams: e.num("SFU_MAX_STREAMS", d.sfu_max_streams)?,
             sfu_user_kib_per_sec: e.num("SFU_USER_KIB_PER_SEC", d.sfu_user_kib_per_sec)?,
             p2p_backup_max_mib: e.num("P2P_BACKUP_MAX_MIB", d.p2p_backup_max_mib)?,
+            p2p_backup_total_mib: e.num("P2P_BACKUP_TOTAL_MIB", d.p2p_backup_total_mib)?,
             widget_quick_joins_per_hour: e
                 .num("WIDGET_QUICK_JOINS_PER_HOUR", d.widget_quick_joins_per_hour)?,
             widget_viewers_max: e.num("WIDGET_VIEWERS_MAX", d.widget_viewers_max)?,
@@ -312,6 +316,7 @@ impl Limits {
             sfu_max_streams,
             sfu_user_kib_per_sec,
             p2p_backup_max_mib,
+            p2p_backup_total_mib,
             widget_quick_joins_per_hour,
             widget_viewers_max,
             widget_bridge_servers_max,
@@ -371,6 +376,7 @@ impl Limits {
             ("SFU_MAX_STREAMS", set(sfu_max_streams)),
             ("SFU_USER_KIB_PER_SEC", set(sfu_user_kib_per_sec)),
             ("P2P_BACKUP_MAX_MIB", set(p2p_backup_max_mib)),
+            ("P2P_BACKUP_TOTAL_MIB", set(p2p_backup_total_mib)),
             (
                 "WIDGET_QUICK_JOINS_PER_HOUR",
                 set(widget_quick_joins_per_hour),
@@ -420,6 +426,28 @@ impl Limits {
             .unwrap_or(DEFAULT_ACQUIRE_TIMEOUT_SECS)
     }
 
+    /// The warning to log at start when `P2P_BACKUP_MAX_MIB` is over `UPLOAD_BUFFER_MIB`.
+    pub fn p2p_backup_buffer_warning(&self) -> Option<String> {
+        let (max, buffer) = (u64::from(self.p2p_backup_max_mib), self.upload_buffer_mib);
+        match max > buffer {
+            true => Some(format!(
+                "P2P_BACKUP_MAX_MIB is {max}, over UPLOAD_BUFFER_MIB ({buffer}): backup versions over {buffer} MiB are refused. Set UPLOAD_BUFFER_MIB to at least {max}."
+            )),
+            false => None,
+        }
+    }
+
+    /// The warning to log at start when a P2P backup total is set under the largest version.
+    pub fn p2p_backup_total_warning(&self) -> Option<String> {
+        let (max, total) = (self.p2p_backup_max_mib, self.p2p_backup_total_mib);
+        match total > 0 && total < max {
+            true => Some(format!(
+                "P2P_BACKUP_TOTAL_MIB is {total}, under P2P_BACKUP_MAX_MIB ({max}): backups over {total} MiB are refused as storage full. Keep it at least 35 times the typical backup."
+            )),
+            false => None,
+        }
+    }
+
     /// The realtime limits the hub enforces.
     pub fn ws_limits(&self) -> crate::hub::Limits {
         crate::hub::Limits {
@@ -457,6 +485,18 @@ impl Limits {
         self.upload_owner_kept_mib
             .saturating_mul(MIB as u64)
             .min(i64::MAX as u64) as i64
+    }
+
+    /// Most bytes of one P2P backup version (`P2P_BACKUP_MAX_MIB`, at most `UPLOAD_BUFFER_MIB`); 0
+    /// when the instance keeps no P2P backups.
+    pub fn p2p_backup_bytes(&self) -> u64 {
+        u64::from(self.p2p_backup_max_mib).min(self.upload_buffer_mib) * MIB as u64
+    }
+
+    /// Most bytes of P2P backup versions one account keeps over all its identities
+    /// (`P2P_BACKUP_TOTAL_MIB`); 0 for no total.
+    pub fn p2p_backup_total_bytes(&self) -> u64 {
+        u64::from(self.p2p_backup_total_mib) * MIB as u64
     }
 
     /// Seconds an unused guest grant lives (`GUEST_GRANT_DAYS`, at least one day).
@@ -618,6 +658,82 @@ mod tests {
                 format!("UPLOAD_OWNER_KEPT_MIB: expected 0 to 1048576, got {bad}")
             );
         }
+    }
+
+    #[test]
+    fn the_p2p_backup_limits_bound_a_version_and_an_accounts_total() {
+        let d = load(&[]).expect("defaults");
+        assert_eq!(
+            (d.p2p_backup_bytes(), d.p2p_backup_total_bytes()),
+            (64 << 20, 256 << 20)
+        );
+        assert_eq!(d.p2p_backup_total_warning(), None);
+        let off = load(&[
+            ("P2P_BACKUP_MAX_MIB", "0".to_string()),
+            ("P2P_BACKUP_TOTAL_MIB", "0".to_string()),
+        ])
+        .expect("off");
+        assert_eq!(
+            (off.p2p_backup_bytes(), off.p2p_backup_total_bytes()),
+            (0, 0)
+        );
+        let most = load(&[("P2P_BACKUP_TOTAL_MIB", "1048576".to_string())]).expect("most");
+        assert_eq!(most.p2p_backup_total_bytes(), 1 << 40);
+        for (max, total, warned) in [
+            ("512", None, true),
+            ("64", Some("63"), true),
+            ("64", Some("64"), false),
+            ("64", Some("0"), false),
+            ("0", Some("1"), false),
+        ] {
+            let mut pairs = vec![("P2P_BACKUP_MAX_MIB", max.to_string())];
+            if let Some(total) = total {
+                pairs.push(("P2P_BACKUP_TOTAL_MIB", total.to_string()));
+            }
+            let l = load(&pairs).unwrap_or_else(|e| panic!("{max}/{total:?} starts: {e}"));
+            let warning = l.p2p_backup_total_warning();
+            assert_eq!(warning.is_some(), warned, "{max}/{total:?}");
+            if let Some(w) = warning {
+                assert!(
+                    w.starts_with("P2P_BACKUP_TOTAL_MIB is ") && w.is_ascii(),
+                    "{w}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_p2p_backup_version_fits_the_upload_buffer() {
+        let set = |max: &str, buffer: &str| {
+            load(&[
+                ("P2P_BACKUP_MAX_MIB", max.to_string()),
+                ("UPLOAD_BUFFER_MIB", buffer.to_string()),
+            ])
+            .unwrap_or_else(|e| panic!("{max}/{buffer} starts: {e}"))
+        };
+        let over = set("512", "256");
+        assert_eq!(over.p2p_backup_bytes(), 256 << 20);
+        let warning = over.p2p_backup_buffer_warning().expect("a warning");
+        assert!(
+            warning.starts_with("P2P_BACKUP_MAX_MIB is 512, over UPLOAD_BUFFER_MIB (256)")
+                && warning.is_ascii(),
+            "{warning}"
+        );
+        for (max, buffer, bytes) in [("512", "512", 512u64 << 20), ("64", "32", 32 << 20)] {
+            let l = set(max, buffer);
+            assert_eq!(l.p2p_backup_bytes(), bytes, "{max}/{buffer}");
+            assert_eq!(
+                l.p2p_backup_buffer_warning().is_some(),
+                max != buffer,
+                "{max}/{buffer}"
+            );
+        }
+        assert_eq!(set("0", "32").p2p_backup_bytes(), 0);
+        assert_eq!(set("0", "32").p2p_backup_buffer_warning(), None);
+        assert_eq!(
+            load(&[]).expect("defaults").p2p_backup_buffer_warning(),
+            None
+        );
     }
 
     #[test]

@@ -21,6 +21,7 @@ pub mod media;
 pub mod messages;
 pub mod names;
 pub mod openapi;
+pub mod p2p_backup;
 pub mod passwords;
 pub mod pings;
 pub mod pins;
@@ -244,7 +245,7 @@ pub const CORS_REQUEST_HEADERS: [&str; 13] = [
     "if-none-match",
 ];
 
-pub const CORS_RESPONSE_HEADERS: [&str; 7] = [
+pub const CORS_RESPONSE_HEADERS: [&str; 8] = [
     NEXT_CURSOR,
     "retry-after",
     "x-trust-required",
@@ -252,6 +253,7 @@ pub const CORS_RESPONSE_HEADERS: [&str; 7] = [
     "x-trust-renew",
     "date",
     "etag",
+    "x-backup-version",
 ];
 
 pub(crate) fn encode_cursor(parts: &[&str]) -> String {
@@ -1191,7 +1193,8 @@ pub struct Settings {
     /// Setting and resetting backup phrases.
     #[serde(default = "yes")]
     pub backup_phrase: bool,
-    /// P2P backups stored on the instance.
+    /// Uploads of P2P backups (`PUT /api/v1/me/p2p_backup/{ik}`). Off: uploads answer 404; stored
+    /// backups can still be read and deleted.
     #[serde(default = "yes")]
     pub p2p_backup: bool,
     /// Changing display names.
@@ -1209,7 +1212,8 @@ pub struct Settings {
     #[serde(default)]
     pub sfu: bool,
     /// Peer-to-peer servers and conversations in the app this instance serves. Off: the app
-    /// hides them and `POST /api/v1/identity/p2p_binding` answers 404. Data on devices is kept.
+    /// hides them, and `POST /api/v1/identity/p2p_binding` and P2P backup uploads answer 404.
+    /// Data on devices and stored backups are kept.
     #[serde(default = "yes")]
     pub p2p: bool,
     /// Adding other instances in the web app this instance serves. Only that app reads it:
@@ -1815,6 +1819,14 @@ pub fn routes(
                 "/me/recovery",
                 put(recovery::set_phrase).delete(recovery::remove_phrase),
             )
+            .route(
+                "/me/p2p_backup/{ik}",
+                put(p2p_backup::put_backup).delete(p2p_backup::delete_backup),
+            )
+            .route(
+                "/me/p2p_backup/{ik}/versions/{version}",
+                delete(p2p_backup::delete_version),
+            )
             .route("/servers/{name}/guest_access", post(servers::guest_access))
             .route("/servers", post(servers::create_server))
             .route("/admin/servers", post(admin::create_server_for))
@@ -1903,6 +1915,16 @@ fn api_routes(
     Router::new()
         .route("/me", get(auth::me).patch(auth::patch_me))
         .route("/me/recovery", get(recovery::status))
+        .route("/me/p2p_backup", get(p2p_backup::list_backups))
+        .route("/me/p2p_backup/{ik}", get(p2p_backup::get_backup))
+        .route(
+            "/me/p2p_backup/{ik}/versions",
+            get(p2p_backup::list_versions),
+        )
+        .route(
+            "/me/p2p_backup/{ik}/versions/{version}",
+            get(p2p_backup::get_version),
+        )
         .route("/auth/logout", post(auth::logout))
         .route("/me/servers", get(servers::list_my_servers))
         .route("/users/{username}/profile", get(users::profile))

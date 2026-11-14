@@ -202,7 +202,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 26: reports (`reports`, `report_events`, `report_mutes`, `instance_report_mutes`,
 /// `report_pace`).
 /// 27: `servers.public_read`, the per-server "anyone can read this server" option.
-pub const SCHEMA_VERSION: i64 = 27;
+/// 28: P2P backup versions (`p2p_backups`, `p2p_backup_seq`).
+pub const SCHEMA_VERSION: i64 = 28;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 14] {

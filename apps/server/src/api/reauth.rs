@@ -136,6 +136,7 @@ impl TryFrom<ReAuthBody> for ReAuth {
 pub enum Purpose {
     SetPhrase { key: String },
     RemovePhrase,
+    P2pData { ik: String },
 }
 
 impl Purpose {
@@ -143,6 +144,7 @@ impl Purpose {
         match self {
             Purpose::SetPhrase { .. } => "set",
             Purpose::RemovePhrase => "remove",
+            Purpose::P2pData { .. } => "p2p-data",
         }
     }
 
@@ -150,12 +152,13 @@ impl Purpose {
         match self {
             Purpose::SetPhrase { key } => key,
             Purpose::RemovePhrase => "",
+            Purpose::P2pData { ik } => ik,
         }
     }
 
     pub fn fresh_session_ok(&self, _user: &User) -> bool {
         match self {
-            Purpose::SetPhrase { .. } | Purpose::RemovePhrase => false,
+            Purpose::SetPhrase { .. } | Purpose::RemovePhrase | Purpose::P2pData { .. } => false,
         }
     }
 }

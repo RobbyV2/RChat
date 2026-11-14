@@ -155,7 +155,14 @@ type Booted = (
 
 async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::Result<Booted> {
     let RunOptions { frontend } = opts;
-    if let Some(warning) = config.limits.upload_buffer_warning() {
+    for warning in [
+        config.limits.upload_buffer_warning(),
+        config.limits.p2p_backup_buffer_warning(),
+        config.limits.p2p_backup_total_warning(),
+    ]
+    .into_iter()
+    .flatten()
+    {
         tracing::warn!("{warning}");
     }
 

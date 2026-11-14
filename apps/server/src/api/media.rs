@@ -222,6 +222,34 @@ const WAITS: Waits = Waits {
     body: BODY_WAIT,
 };
 
+#[cfg(test)]
+tokio::task_local! {
+    static TEST_WAITS: Waits;
+}
+
+/// Runs `f` with `idle` and `body` as the waits of upload bodies and downloads.
+#[cfg(test)]
+pub(crate) async fn with_waits<T>(
+    idle: std::time::Duration,
+    body: std::time::Duration,
+    f: impl std::future::Future<Output = T>,
+) -> T {
+    let waits = Waits {
+        room: BUFFER_WAIT,
+        idle,
+        body,
+    };
+    TEST_WAITS.scope(waits, f).await
+}
+
+fn waits() -> Waits {
+    #[cfg(test)]
+    if let Ok(waits) = TEST_WAITS.try_with(|waits| *waits) {
+        return waits;
+    }
+    WAITS
+}
+
 /// One of the `UPLOADS_PER_ACCOUNT` places of the account an upload is charged to, held while
 /// its body is read and stored. 429 when the account already reads that many.
 pub(crate) fn reading_slot(db: &Db, account: &str) -> Result<crate::api::budget::Slot, ApiError> {
@@ -288,7 +316,7 @@ pub(crate) async fn reserve(
         share: share_kib(limits().buffer, body),
     };
     let wait = match wait {
-        true => WAITS.room,
+        true => waits().room,
         false => std::time::Duration::ZERO,
     };
     take_room(slot, declared, body, room, wait).await
@@ -380,6 +408,53 @@ where
     Ok(Buffered { data, _held: held })
 }
 
+/// Reads a raw upload body of at most `max` bytes in the room `held` took for it, with the waits
+/// of an upload body: `over()` past `max`, 408 when it stalls.
+pub(crate) async fn read_raw(
+    body: Body,
+    max: usize,
+    held: Held,
+    over: fn() -> ApiError,
+) -> Result<Buffered, ApiError> {
+    let watch = Watch::default();
+    let most = held.most.min(max);
+    let stream = paced(body.into_data_stream(), most, waits(), watch.clone());
+    let data = collect(stream, most).await.map_err(|stop| match stop {
+        Stop::Over => over(),
+        Stop::Failed(e) => watch.error(over, bad(&e)),
+    })?;
+    Ok(Buffered { data, _held: held })
+}
+
+/// A response body of `data`, sent in `MEDIA_CHUNK` pieces copied out of it, that holds `held`
+/// until its last piece is taken. With the waits of an upload body: once nothing is taken for 30
+/// seconds, or the whole takes over 10 minutes, the body ends short and `data` and `held` go.
+pub(crate) fn send_held(data: Vec<u8>, held: Held) -> Body {
+    let waits = waits();
+    let (pieces, taken) = tokio::sync::mpsc::channel(1);
+    tokio::spawn(async move {
+        let end = tokio::time::Instant::now() + waits.body;
+        for piece in data.chunks(MEDIA_CHUNK) {
+            let next = (tokio::time::Instant::now() + waits.idle).min(end);
+            let piece = axum::body::Bytes::copy_from_slice(piece);
+            if !matches!(
+                tokio::time::timeout_at(next, pieces.send(piece)).await,
+                Ok(Ok(()))
+            ) {
+                break;
+            }
+        }
+        drop((data, held));
+    });
+    Body::from_stream(futures_util::stream::unfold(
+        taken,
+        |mut taken| async move {
+            let piece = taken.recv().await?;
+            Some((Ok::<_, std::convert::Infallible>(piece), taken))
+        },
+    ))
+}
+
 /// Reads a JSON body of at most `max` bytes, of which `declared` were announced, with the waits
 /// of an upload body but outside the upload buffer: 413 past `max` (before reading when the
 /// declared length is already past it), 408 when it stalls.
@@ -392,7 +467,7 @@ where
     S: futures_util::Stream<Item = Result<axum::body::Bytes, E>> + Send + 'static,
     E: Into<BoxError>,
 {
-    read_small(stream, declared, max, WAITS).await
+    read_small(stream, declared, max, waits()).await
 }
 
 async fn read_small<S, E>(
@@ -515,7 +590,7 @@ pub(crate) async fn form(
     req: Request,
     most: usize,
 ) -> Result<(Multipart, Watch), MultipartRejection> {
-    form_within(req, most, WAITS).await
+    form_within(req, most, waits()).await
 }
 
 async fn form_within(

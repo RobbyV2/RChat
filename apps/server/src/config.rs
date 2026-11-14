@@ -1409,6 +1409,7 @@ mod tests {
             "REPORT_MAX_PER_WEEK",
             "REPORT_RETENTION_DAYS",
             "P2P_BACKUP_MAX_MIB",
+            "P2P_BACKUP_TOTAL_MIB",
             "WIDGET_VIEWERS_MAX",
             "E2EE_GUESTS_PER_GROUP",
             "VOICE_ROOM_MAX",
@@ -1445,7 +1446,7 @@ mod tests {
             ),
             (false, 100, 2000, 4096)
         );
-        assert_eq!(l.p2p_backup_max_mib, 64);
+        assert_eq!((l.p2p_backup_max_mib, l.p2p_backup_total_mib), (64, 256));
         assert_eq!(
             (
                 l.widget_quick_joins_per_hour,
@@ -1465,6 +1466,7 @@ mod tests {
             ("SFU_ENABLED", "yes"),
             ("SFU_MAX_STREAMS", "9000"),
             ("P2P_BACKUP_MAX_MIB", "0"),
+            ("P2P_BACKUP_TOTAL_MIB", "0"),
             ("WIDGETS", "off"),
             ("WIDGET_BRIDGE_SERVERS_MAX", "7"),
             ("MESSAGE_MAX_CHARS", "500"),
@@ -1478,11 +1480,12 @@ mod tests {
                 l.sfu_enabled,
                 l.sfu_max_streams,
                 l.p2p_backup_max_mib,
+                l.p2p_backup_total_mib,
                 l.widget_bridge_servers_max,
                 l.message_max_chars,
                 l.upload_bytes()
             ),
-            (0, true, 9000, 0, 7, 500, 10 * 1024 * 1024)
+            (0, true, 9000, 0, 0, 7, 500, 10 * 1024 * 1024)
         );
         let c = &config.controls;
         assert_eq!(
