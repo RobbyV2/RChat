@@ -373,24 +373,43 @@ export class Contact {
       return
     }
     if (this.held.some(x => recD(x) === recD(r))) return
-    const byD = new Map(this.held.map(x => [recD(x), x] as const))
-    byD.set(recD(r), r)
-    const rootOf = (x: Rec) => {
-      let d = x.prev
-      for (let i = 0; i <= CHAIN_MAX && byD.has(d); i++) d = byD.get(d)!.prev
-      return d
-    }
+    // amendment (review n-p2p-ahead r2 M1, M2): counted after the newcomer is placed (a record moves to a claim's bucket
+    // when its parent arrives); over the cap a claim's bucket drops a record that doesn't attach under that claim, the
+    // newcomer first and then the oldest, with what then reaches no claim; when every one attaches, the newcomer is dropped
     const roots = new Set(this.claims.map(c => crD(c.cr)))
-    const bucket = (x: Rec) => {
-      const d = rootOf(x)
-      return roots.has(d) ? d : ''
+    const bucketsOf = (recs: Rec[]) => {
+      const byD = new Map(recs.map(x => [recD(x), x] as const))
+      return (x: Rec) => {
+        let d = x.prev
+        for (let i = 0; i <= CHAIN_MAX && byD.has(d); i++) d = byD.get(d)!.prev
+        return roots.has(d) ? d : ''
+      }
     }
-    const b = bucket(r)
-    if ([...byD.values()].filter(x => bucket(x) === b).length > CHAIN_MAX + 1) {
-      this.log.push('chain record dropped: too many held')
-      return
+    const before = bucketsOf(this.held)
+    const loose = new Set(this.held.filter(x => before(x) === ''))
+    let recs = [...this.held, r]
+    for (;;) {
+      const bucket = bucketsOf(recs)
+      const counts = new Map<string, number>()
+      for (const x of recs) counts.set(bucket(x), (counts.get(bucket(x)) ?? 0) + 1)
+      const over = [...counts].find(([, n]) => n > CHAIN_MAX + 1)?.[0]
+      if (over === undefined) break
+      const mine = recs.filter(x => bucket(x) === over)
+      const claim = this.claims.find(c => crD(c.cr) === over)
+      const C = claim && chainOf(claim.cr, recs)
+      const ok = (x: Rec) => recOk(x) && C!.at.has(recD(x))
+      const gone = C
+        ? mine.includes(r) && !ok(r)
+          ? r
+          : mine.find(x => !ok(x))
+        : mine.find(x => x !== r && !loose.has(x))
+      if (!gone || gone === r) {
+        this.log.push('chain record dropped: too many held')
+        return
+      }
+      recs = recs.filter(x => x !== gone)
     }
-    this.held.push(r)
+    this.held = recs
   }
   /** the user's Accept or Verify of a pending creation-record claim: possible only while it is the only one */
   accept(c: CR) {

@@ -55,6 +55,8 @@ export type Src = 'card' | 'hello' | 'qr' | 'safety' | 'server' | 'carried'
 export const CLAIMS_MAX = 4
 export const HELD_MS = 30 * 86_400_000
 export const HELD_RECORDS = CHAIN_MAX + 1
+// Most stored records a contact is read from.
+const STORED_RECORDS = 256
 export const CERTS2_MAX = 32
 export const REVS2_MAX = 32
 export const PROFILES2_MAX = 8
@@ -180,6 +182,64 @@ const v1Ok = (kind: 'cert' | 'revoke' | 'profile', ik: string, x: unknown): bool
 
 const cut = <T>(xs: T[], max: number) => {
   while (xs.length > max) xs.shift()
+}
+
+// The claim a held record is for: the creation record its `prev` path reaches through the held
+// records, or '' when it reaches none.
+const bucketsOf = (claims: readonly CreationRecord[], recs: readonly ChainRecord[]) => {
+  const roots = new Set(claims.map(recordId))
+  const byD = new Map(recs.map(x => [recordId(x), x] as const))
+  return (x: ChainRecord) => {
+    let p = x.prev
+    for (let i = 0; i <= CHAIN_MAX && byD.has(p); i += 1) p = byD.get(p)!.prev
+    return roots.has(p) ? p : ''
+  }
+}
+
+// What an unknown contact holds once `r` is placed, or null when `r` is refused. At most
+// HELD_RECORDS chain records per pending claim and as many again that reach no claim, counting
+// copies, counted after `r` is placed: a record moves to a claim when its parent arrives. Over
+// the cap a claim drops a record that doesn't verify under it, `r` first and then the oldest,
+// with what then reaches no claim; when every one verifies, `r` is refused.
+const placeHeld = (
+  claims: readonly CreationRecord[],
+  held: readonly ChainRecord[],
+  r: ChainRecord
+): ChainRecord[] | null => {
+  const before = bucketsOf(claims, held)
+  const loose = new Set(held.filter(x => before(x) === ''))
+  let recs = [...held, r]
+  for (;;) {
+    const bucket = bucketsOf(claims, recs)
+    const counts = new Map<string, number>()
+    for (const x of recs) counts.set(bucket(x), (counts.get(bucket(x)) ?? 0) + 1)
+    const over = [...counts].find(([, n]) => n > HELD_RECORDS)?.[0]
+    if (over === undefined) return recs
+    const mine = recs.filter(x => bucket(x) === over)
+    const claim = claims.find(c => recordId(c) === over)
+    const C = claim && readChain(claim, recs)
+    const gone = C
+      ? mine.includes(r) && !C.verifies(r)
+        ? r
+        : mine.find(x => !C.verifies(x))
+      : mine.find(x => x !== r && !loose.has(x))
+    if (!gone || gone === r) return null
+    recs = recs.filter(x => x !== gone)
+  }
+}
+
+// Stored held records in an order that places each after the held record its `prev` names.
+const parentsFirst = (recs: readonly ChainRecord[]) => {
+  const byD = new Map(recs.map(x => [recordId(x), x] as const))
+  const depth = (x: ChainRecord) => {
+    let n = 0
+    for (let p = x.prev; n <= CHAIN_MAX && byD.has(p); n += 1) p = byD.get(p)!.prev
+    return n
+  }
+  return recs
+    .map((r, i) => ({ r, i, d: depth(r) }))
+    .sort((a, b) => a.d - b.d || a.i - b.i)
+    .map(x => x.r)
 }
 
 export class ContactClaims {
@@ -342,40 +402,20 @@ export class ContactClaims {
     this.view = undefined
     const held = this.heldRecs
     this.heldRecs = []
-    for (const r of held) this.addRec(r)
+    // What attaches goes in first, so the slots for records that don't attach yet never push
+    // it out.
+    const C = readChain(c, held)
+    for (const r of held) if (C.verifies(r)) this.addRec(r)
+    for (const r of held) if (!C.verifies(r)) this.addRec(r)
     if (this.chain()!.frozen) this.warning = 'phrase'
     this.retrySucc()
   }
 
-  // An unknown contact holds at most HELD_RECORDS chain records per pending claim (those whose
-  // `prev` path reaches that claim's creation record) and as many again that attach to none,
-  // counting copies. When a claim's are full, a copy that verifies under it takes the place of
-  // one that doesn't.
   private hold(r: ChainRecord) {
     const copy = copyOf(r)
     if (this.heldRecs.some(x => copyOf(x) === copy)) return
-    const byD = new Map(this.heldRecs.map(x => [recordId(x), x] as const))
-    byD.set(recordId(r), r)
-    const rootOf = (x: ChainRecord) => {
-      let p = x.prev
-      for (let i = 0; i <= CHAIN_MAX && byD.has(p); i += 1) p = byD.get(p)!.prev
-      return p
-    }
-    const roots = new Set(this.pending.map(recordId))
-    const bucket = (x: ChainRecord) => {
-      const p = rootOf(x)
-      return roots.has(p) ? p : ''
-    }
-    const b = bucket(r)
-    const mine = this.heldRecs.filter(x => bucket(x) === b)
-    if (mine.length >= HELD_RECORDS) {
-      const claim = this.pending.find(c => recordId(c) === b)
-      const C = claim && readChain(claim, [...this.heldRecs, r])
-      const junk = C && C.verifies(r) ? mine.find(x => !C.verifies(x)) : undefined
-      if (!junk) return
-      this.heldRecs = this.heldRecs.filter(x => x !== junk)
-    }
-    this.heldRecs.push(r)
+    const placed = placeHeld(this.pending, this.heldRecs, r)
+    if (placed) this.heldRecs = placed
   }
 
   // A known contact keeps every record that attaches, and the newest HELD_RECORDS that don't yet.
@@ -464,7 +504,7 @@ export class ContactClaims {
   // Past its cap a list drops, oldest first, what counts at no head of the chain (while unknown,
   // of a pending claim's), then the oldest of the rest.
   private prune<T>(xs: T[], max: number, counts: (C: ChainView, x: T) => boolean) {
-    const views = this.views().filter(C => !C.frozen)
+    const views = this.views()
     for (let i = 0; i < xs.length && xs.length > max;)
       if (!views.some(C => counts(C, xs[i]))) xs.splice(i, 1)
       else i += 1
@@ -749,10 +789,13 @@ export class ContactClaims {
     c.certs2 = list(x.certs2, (y): y is CertV2 => verifyCertV2(y, c.ik), CERTS2_MAX)
     c.revs2 = list(x.revs2, (y): y is RevocationV2 => isRevocationV2(y, c.ik), REVS2_MAX)
     c.profiles2 = list(x.profiles2, (y): y is ProfileV2 => verifyProfileV2(y, c.ik), PROFILES2_MAX)
-    if (st === 'known') for (const r of list(x.recs, recOk, 256)) c.addRec(r)
+    if (st === 'known') for (const r of list(x.recs, recOk, STORED_RECORDS)) c.addRec(r)
     if (st === 'unknown') {
       c.pending = list(x.pending, crOk, CLAIMS_MAX + 1)
-      c.heldRecs = list(x.heldRecs, recOk, 2 * HELD_RECORDS)
+      const held = list(x.heldRecs, recOk, STORED_RECORDS)
+      for (const r of parentsFirst(held)) c.hold(r)
+      const kept = new Set(c.heldRecs)
+      c.heldRecs = held.filter(r => kept.has(r))
       c.crOverflow = flag(x.crOverflow)
     }
     c.succOverflow = flag(x.succOverflow)

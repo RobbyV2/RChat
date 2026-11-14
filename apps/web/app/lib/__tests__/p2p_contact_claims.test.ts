@@ -2254,4 +2254,214 @@ describe('contact claims over real records', () => {
     expect(u.accept({ kind: 'cr', id: crId })).toBe(true)
     expect(u.claims()).toMatchObject([{ kind: 'succ', new: ikOf('W'), v: 2 }])
   })
+
+  // Review n-p2p-ahead r2, M1 and M2: what an unknown contact holds is bounded at every step.
+  // The most records held for one pending claim, or reaching none.
+  const fullest = (u: ContactClaims) => {
+    const byD = new Map(u.heldRecs.map(x => [recordId(x), x] as const))
+    const roots = new Set(u.pending.map(recordId))
+    const counts = new Map<string, number>()
+    for (const x of u.heldRecs) {
+      let p = x.prev
+      for (let i = 0; i <= CHAIN_MAX && byD.has(p); i++) p = byD.get(p)!.prev
+      const b = roots.has(p) ? p : ''
+      counts.set(b, (counts.get(b) ?? 0) + 1)
+    }
+    return Math.max(0, ...counts.values())
+  }
+  const holds = (u: ContactClaims, r: Rec) => u.heldRecs.some(x => x.sig === record(r).sig)
+  const line = (len: number): Rec[] => {
+    const out: Rec[] = []
+    for (let n = 1, prev = crD(crV); n <= len; n++) {
+      out.push({ ik: 'V', n, prev, by: 'rkV', pk: `pk${n}`, keep: n === 1 ? ['D1', 'D2'] : ['D2'] })
+      prev = recD(out[n - 1])
+    }
+    return out
+  }
+  const under = (r: Rec, j: number): Rec => ({
+    ik: 'V',
+    n: Math.min(r.n + 1, CHAIN_MAX),
+    prev: recD(r),
+    by: 'rkX',
+    pk: `pX${j}`,
+    keep: [],
+  })
+
+  test("held_migrate: junk parked under each of the user's records before the record comes never takes an unknown contact past 9 records for its claim and 9 that reach none, at any step or after a reload, and every record of the user stays", () => {
+    const chain = line(CHAIN_MAX)
+    const u = carried()
+    u.receive(realMsg({ k: 'cr', cr: crV }), 'hello')
+    const sent: ChainRecord[] = []
+    const send = (r: Rec) => {
+      sent.push(record(r))
+      u.receive(realMsg({ k: 'rec', rec: r }), 'hello')
+      expect(fullest(u)).toBeLessThanOrEqual(HELD_RECORDS)
+    }
+    let j = 0
+    for (const r of chain) {
+      for (let i = 0; i < HELD_RECORDS; i++) send(under(r, j++))
+      send(r)
+      expect(holds(u, r)).toBe(true)
+    }
+    expect(u.heldRecs.length).toBeLessThanOrEqual(2 * HELD_RECORDS)
+    for (const r of chain) expect(holds(u, r)).toBe(true)
+    const stored = JSON.parse(JSON.stringify(u))
+    const back = ContactClaims.parse(stored)!
+    expect(JSON.stringify(back)).toBe(JSON.stringify(u))
+    // a store that holds every record sent, the junk first
+    const flooded = ContactClaims.parse({ ...stored, heldRecs: sent })!
+    expect(sent.length).toBe(CHAIN_MAX * (HELD_RECORDS + 1))
+    expect(fullest(flooded)).toBeLessThanOrEqual(HELD_RECORDS)
+    expect(flooded.heldRecs.length).toBeLessThanOrEqual(2 * HELD_RECORDS)
+    for (const c of [back, flooded]) {
+      for (const r of chain) expect(holds(c, r)).toBe(true)
+      expect(c.accept({ kind: 'cr', id: crId })).toBe(true)
+      expect([c.chain()!.top, c.trusted()]).toEqual([CHAIN_MAX, [dkOf('D2')]])
+    }
+  })
+
+  test('held_migrate on the model: it holds what production holds at every step', () => {
+    const chain = line(CHAIN_MAX)
+    const c = new Contact('V', 'carried', stripped())
+    c.recv({ k: 'cr', cr: crV }, 'hello')
+    let j = 0
+    for (const r of chain) {
+      for (let i = 0; i <= CHAIN_MAX; i++) c.recv({ k: 'rec', rec: under(r, j++) }, 'hello')
+      c.recv({ k: 'rec', rec: r }, 'hello')
+    }
+    expect(c.held.length).toBe(CHAIN_MAX + 1)
+    expect(c.accept(crV)).toBe(true)
+    expect([c.chain()!.top, c.trusted()]).toEqual([CHAIN_MAX, ['D2']])
+  })
+
+  test('pin_evict: records held before their parent go in first at the pin, so junk that came between them never pushes them out', () => {
+    const [s1, s2, s3] = line(3)
+    const u = carried()
+    u.receive(realMsg({ k: 'cr', cr: crV }), 'hello')
+    u.receive(realMsg({ k: 'rec', rec: s3 }), 'hello')
+    u.receive(realMsg({ k: 'rec', rec: s2 }), 'hello')
+    for (let i = 0; i < 7; i++) {
+      const loose: Rec = { ik: 'V', n: 1, prev: `cZ${i}`, by: 'rkX', pk: `pZ${i}`, keep: [] }
+      u.receive(realMsg({ k: 'rec', rec: loose }), 'hello')
+    }
+    for (let i = 0; i < 8; i++)
+      u.receive({ k: 'rec', rec: { ...record(s1), sig: junkSig(i) } }, 'hello')
+    u.receive(realMsg({ k: 'rec', rec: s1 }), 'hello')
+    expect(fullest(u)).toBeLessThanOrEqual(HELD_RECORDS)
+    for (const r of [s1, s2, s3]) expect(holds(u, r)).toBe(true)
+    expect(u.accept({ kind: 'cr', id: crId })).toBe(true)
+    expect([u.chain()!.top, u.trusted()]).toEqual([3, [dkOf('D2')]])
+  })
+
+  test("a claim's held records full of junk beside the user's record 1: record 2 takes the place of junk, never of record 1, and junk takes no place", () => {
+    const [s1, s2, s3] = line(3)
+    const u = carried()
+    u.receive(realMsg({ k: 'cr', cr: crV }), 'hello')
+    u.receive(realMsg({ k: 'rec', rec: s1 }), 'hello')
+    for (let i = 0; i < CHAIN_MAX; i++)
+      u.receive({ k: 'rec', rec: { ...record(s1), sig: junkSig(i) } }, 'hello')
+    expect(u.heldRecs.length).toBe(HELD_RECORDS)
+    u.receive(realMsg({ k: 'rec', rec: s2 }), 'hello')
+    expect(u.heldRecs.length).toBe(HELD_RECORDS)
+    expect(holds(u, s1)).toBe(true)
+    expect(holds(u, s2)).toBe(true)
+    const before = JSON.stringify(u)
+    u.receive(realMsg({ k: 'rec', rec: under(s2, 0) }), 'hello')
+    u.receive({ k: 'rec', rec: { ...record(s3), sig: junkSig(99) } }, 'hello')
+    expect(JSON.stringify(u)).toBe(before)
+    u.receive(realMsg({ k: 'rec', rec: s3 }), 'hello')
+    expect(u.accept({ kind: 'cr', id: crId })).toBe(true)
+    expect([u.chain()!.top, u.trusted()]).toEqual([3, [dkOf('D2')]])
+  })
+
+  test('when every held record of a claim verifies, one more is refused: nine records with the phrase fill a claim', () => {
+    const sibling = (i: number): Rec => ({
+      ik: 'V',
+      n: 1,
+      prev: crD(crV),
+      by: 'rkV',
+      pk: `pS${i}`,
+      keep: [],
+    })
+    const u = carried()
+    u.receive(realMsg({ k: 'cr', cr: crV }), 'hello')
+    for (let i = 0; i <= HELD_RECORDS; i++)
+      u.receive(realMsg({ k: 'rec', rec: sibling(i) }), 'hello')
+    expect(u.heldRecs.length).toBe(HELD_RECORDS)
+    expect(holds(u, sibling(HELD_RECORDS))).toBe(false)
+    const v = carried()
+    v.receive(realMsg({ k: 'cr', cr: crV }), 'hello')
+    const child = (i: number): Rec => ({ ...sibling(i), n: 2, prev: recD(r1) })
+    for (let i = 0; i < HELD_RECORDS; i++) v.receive(realMsg({ k: 'rec', rec: child(i) }), 'hello')
+    v.receive(realMsg({ k: 'rec', rec: r1 }), 'hello')
+    expect([v.heldRecs.length, fullest(v)]).toEqual([HELD_RECORDS, HELD_RECORDS])
+    expect(holds(v, r1)).toBe(false)
+  })
+
+  test('a bad copy that alone ties records to a claim takes them with it when it goes, and a contact reads back as it was stored', () => {
+    const [s1, s2, s3] = line(3)
+    const loose = (i: number): Rec => ({
+      ik: 'V',
+      n: 1,
+      prev: `cW${i}`,
+      by: 'rkX',
+      pk: `pW${i}`,
+      keep: [],
+    })
+    const u = carried()
+    u.receive(realMsg({ k: 'cr', cr: crV }), 'hello')
+    // a bad copy of record 2 ties record 3 to the claim once record 1 is there
+    u.receive({ k: 'rec', rec: { ...record(s2), sig: junkSig(0) } }, 'hello')
+    u.receive(realMsg({ k: 'rec', rec: s1 }), 'hello')
+    u.receive(realMsg({ k: 'rec', rec: s3 }), 'hello')
+    for (let i = 1; i <= 6; i++)
+      u.receive({ k: 'rec', rec: { ...record(s1), sig: junkSig(i) } }, 'hello')
+    for (let i = 0; i < HELD_RECORDS; i++) u.receive(realMsg({ k: 'rec', rec: loose(i) }), 'hello')
+    expect([u.heldRecs.length, fullest(u)]).toEqual([2 * HELD_RECORDS, HELD_RECORDS])
+    const sibling: Rec = { ik: 'V', n: 1, prev: crD(crV), by: 'rkV', pk: 'pS', keep: [] }
+    u.receive(realMsg({ k: 'rec', rec: sibling }), 'hello')
+    expect(fullest(u)).toBeLessThanOrEqual(HELD_RECORDS)
+    expect(holds(u, sibling)).toBe(true)
+    expect(holds(u, s1)).toBe(true)
+    expect(holds(u, s3)).toBe(false)
+    for (let i = 0; i < HELD_RECORDS; i++) expect(holds(u, loose(i))).toBe(true)
+
+    // records that came before the record that ties them to the claim read back in their places
+    const v = carried()
+    v.receive(realMsg({ k: 'cr', cr: crV }), 'hello')
+    for (let i = 0; i < 5; i++) v.receive(realMsg({ k: 'rec', rec: loose(i) }), 'hello')
+    v.receive({ k: 'rec', rec: { ...record(s1), sig: junkSig(0) } }, 'hello')
+    for (let i = 0; i < CHAIN_MAX; i++) v.receive(realMsg({ k: 'rec', rec: under(s1, i) }), 'hello')
+    v.receive(realMsg({ k: 'rec', rec: s1 }), 'hello')
+    expect([v.heldRecs.length, fullest(v)]).toEqual([5 + HELD_RECORDS, HELD_RECORDS])
+    const back = ContactClaims.parse(JSON.parse(JSON.stringify(v)))!
+    expect(JSON.stringify(back)).toBe(JSON.stringify(v))
+  })
+
+  test("frozen_name: after rival resets, strangers' profiles never push out the profile at the head", () => {
+    const a: Rec = { ik: 'V', n: 1, prev: crD(crV), by: 'rkV', rk: 'rkA', pk: 'pA', keep: ['D2'] }
+    const b: Rec = { ik: 'V', n: 1, prev: crD(crV), by: 'rkV', rk: 'rkB', pk: 'pB', keep: ['D2'] }
+    const c = knownReal()
+    c.receive(
+      realMsg({ k: 'profile2', ik: 'V', n: 0, pk: 'p0', by: 'p0', name: 'Vera', updated: 5 }),
+      'hello'
+    )
+    c.receive(realMsg({ k: 'rec', rec: a }), 'hello')
+    c.receive(realMsg({ k: 'rec', rec: b }), 'hello')
+    expect([c.chain()!.frozen, c.name('card name')]).toEqual([true, 'Vera'])
+    for (let i = 0; i < PROFILES2_MAX; i++)
+      c.receive(
+        realMsg({
+          k: 'profile2',
+          ik: 'V',
+          n: 0,
+          pk: `qF${i}`,
+          by: `qF${i}`,
+          name: 'Mallory',
+          updated: 9,
+        }),
+        'hello'
+      )
+    expect([c.profiles2.length, c.name('card name')]).toEqual([PROFILES2_MAX, 'Vera'])
+  })
 })
