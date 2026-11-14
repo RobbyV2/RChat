@@ -47,7 +47,15 @@ describe('servers reducers', () => {
       banner_color: '#222222',
       name_color: '#333333',
       public_read: null,
+      guest_voice: true,
     })
+    for (const guest_voice of [true, false]) {
+      const voice = applyServerChange(s, {
+        type: 'server_updated',
+        server: { ...lite(), guest_voice },
+      })
+      expect(voice.servers!.s.guest_voice).toBe(guest_voice)
+    }
     for (const public_read of [true, false, null]) {
       const read = applyServerChange(s, {
         type: 'server_updated',

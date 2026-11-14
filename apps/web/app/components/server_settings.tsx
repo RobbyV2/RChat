@@ -55,7 +55,7 @@ import {
   RoleNameForm,
   SlowmodeField,
 } from './settings_fields'
-import { ServerAccessSection, passwordName } from './server_access'
+import { GuestVoiceSwitch, ServerAccessSection, passwordName } from './server_access'
 import { ColorField } from './color_field'
 import { ServerHeader } from './server_header'
 import { ServerSystemMessages } from './system_messages'
@@ -1218,6 +1218,7 @@ function Settings({ server }: { server: string }) {
             hasPassword={detail.has_password}
             canRemove={hasPerm(perms, Perm.Kick)}
             publicRead={detail.public_read ?? null}
+            guestVoice={detail.guest_voice !== false}
           />
           <p className={sectionCls}>Delete Server</p>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -1249,6 +1250,8 @@ function Settings({ server }: { server: string }) {
           <ServerAppearance server={server} />
           <ServerSystemMessages server={server} />
           <ServerUploadExpiry server={server} />
+          <p className={sectionCls}>Access</p>
+          <GuestVoiceSwitch server={server} on={detail.guest_voice !== false} />
         </>
       )}
       {hasPerm(perms, Perm.ManageAdmins) && (

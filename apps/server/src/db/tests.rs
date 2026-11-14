@@ -6655,3 +6655,122 @@ async fn the_strict_file_names_control_is_added_to_an_old_database() {
     )
     .await;
 }
+
+/// A database as schema 29 left it: no `servers.guest_voice`, with a server without a password,
+/// one with a password and public reading on, their members, a voice channel and a message.
+async fn old_guest_voice_db(db: &Db) {
+    for stmt in [
+        "ALTER TABLE servers DROP COLUMN guest_voice",
+        "UPDATE settings SET value = '29' WHERE key = 'schema_version'",
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 5)",
+        "INSERT INTO servers(name, display_name, creator, member_count, created_at) VALUES('club', 'Club', 'alice', 1, 7)",
+        "INSERT INTO servers(name, display_name, creator, password_hash, member_count, public_read, created_at) VALUES('vault', 'Vault', 'alice', 'hash', 1, 1, 8)",
+        "INSERT INTO members(server, username, is_admin, joined_at) VALUES('club', 'alice', 1, 7), ('vault', 'alice', 1, 8)",
+        "INSERT INTO channels(server, name, created_at) VALUES('club', 'general', 7)",
+        "INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'talk', 'voice', 7)",
+        "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'kept', 9 FROM channels WHERE server = 'club' AND kind = 'text'",
+    ] {
+        sqlx::query(stmt).execute(db).await.expect(stmt);
+    }
+}
+
+/// A server row as the schema before `guest_voice` kept it.
+type OldVoiceServer = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    Option<i64>,
+);
+
+async fn old_voice_servers(db: &Db) -> Vec<OldVoiceServer> {
+    sqlx::query("SELECT name, display_name, creator, password_hash, member_count, public_read FROM servers ORDER BY name")
+        .fetch_all(db)
+        .await
+        .expect("servers")
+        .iter()
+        .map(|r| {
+            (
+                r.try_get(0).expect("name"),
+                r.try_get(1).expect("display"),
+                r.try_get(2).expect("creator"),
+                r.try_get(3).expect("hash"),
+                r.try_get(4).expect("count"),
+                r.try_get(5).expect("reading"),
+            )
+        })
+        .collect()
+}
+
+async fn guest_voice_upgrade(url: &str) {
+    let db = open_started(Some(url)).await.expect("open");
+    old_guest_voice_db(&db).await;
+    assert_eq!(count(&db, STORED_SCHEMA).await, 29);
+    let before = old_voice_servers(&db).await;
+    assert_eq!(before.len(), 3, "the built-in server and the two old ones");
+    close(&db).await;
+    for round in 0..2 {
+        let db = open_started(Some(url)).await.expect("upgrade");
+        assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+        const { assert!(SCHEMA_VERSION >= 30) };
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM servers WHERE guest_voice = 1").await,
+            3,
+            "start {round}: guests keep voice in every old server"
+        );
+        assert_eq!(
+            old_voice_servers(&db).await,
+            before,
+            "start {round}: the old rows are as they were"
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM messages WHERE content = 'kept' AND author = 'alice'"
+            )
+            .await,
+            1
+        );
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM members").await, 2);
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM channels WHERE kind = 'voice'").await,
+            1
+        );
+        close(&db).await;
+    }
+    let db = open_started(Some(url)).await.expect("open");
+    sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('fresh', 'Fresh', 'alice', 10)")
+        .execute(&db)
+        .await
+        .expect("a new server");
+    assert_eq!(
+        count(&db, "SELECT guest_voice FROM servers WHERE name = 'fresh'").await,
+        1,
+        "on by default for new servers"
+    );
+    sqlx::query("UPDATE servers SET guest_voice = 0 WHERE name = 'club'")
+        .execute(&db)
+        .await
+        .expect("an owner turns it off");
+    close(&db).await;
+    let db = open_started(Some(url)).await.expect("restart");
+    assert_eq!(
+        count(&db, "SELECT guest_voice FROM servers WHERE name = 'club'").await,
+        0,
+        "a set option survives a restart"
+    );
+    assert_eq!(
+        count(&db, "SELECT guest_voice FROM servers WHERE name = 'vault'").await,
+        1
+    );
+    close(&db).await;
+}
+
+#[tokio::test]
+async fn guest_voice_is_added_to_an_old_database() {
+    on_each_database("guest_voice_upgrade", |url| async move {
+        guest_voice_upgrade(&url).await;
+    })
+    .await;
+}

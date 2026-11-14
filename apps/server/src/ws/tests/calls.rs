@@ -9,6 +9,7 @@ use crate::db::now;
 use crate::hub::VOICE_EVERY;
 use crate::ws::access::{Access, still_held};
 use crate::ws::calls::{VoiceWait, call_peer_id, in_call, in_voice, voice_msg};
+use crate::ws::guests::GUESTS_NO_VOICE;
 use crate::ws::p2p::CALLING_TOO_OFTEN;
 use crate::ws::protocol::ClientMsg;
 
@@ -689,6 +690,146 @@ async fn a_guest_removed_by_staff_waits_before_using_that_servers_voice() {
     voice_msg(&state, "alice", 1, join(room("lobby")))
         .await
         .expect("members are not blocked");
+    crate::api::test_util::done(state, path).await;
+}
+
+async fn set_guest_voice(
+    state: &AppState,
+    by: &str,
+    server: &str,
+    on: bool,
+) -> Result<bool, (u16, String)> {
+    let patch = serde_json::from_value(serde_json::json!({ "guest_voice": on })).expect("patch");
+    crate::api::servers::update_server(
+        State(state.clone()),
+        crate::api::Authed(crate::api::test_util::mem_user(by, false)),
+        axum::extract::Path(s(server)),
+        axum::Json(patch),
+    )
+    .await
+    .map(|axum::Json(updated)| updated.server.guest_voice)
+    .map_err(|crate::api::ApiError(code, msg, _)| (code.as_u16(), msg))
+}
+
+#[tokio::test]
+async fn guests_use_a_servers_voice_only_while_it_lets_them() {
+    let (state, path) = crate::api::test_util::temp_state("guest_voice_switch").await;
+    let db = &state.db;
+    let rooms = reading_world(db).await;
+    let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
+    add_user_row(db, "carol").await;
+    crate::api::test_util::add_member(db, "lobby", "carol", 0, 0, 0).await;
+    let join = |channel_id| ClientMsg::VoiceJoin { channel_id };
+    let guest = guest_at(&["lobby", "open"], &[]);
+    as_guest(&state, &guest, join(room("lobby")))
+        .await
+        .expect("on by default");
+    for user in ["alice", "carol", "eve"] {
+        voice_msg(&state, user, 1, join(room("lobby")))
+            .await
+            .unwrap_or_else(|e| panic!("{user}: {e:?}"));
+    }
+    assert_eq!(
+        set_guest_voice(&state, "carol", "lobby", false).await,
+        Err((403, s("Missing permission"))),
+        "only staff who can edit the server"
+    );
+    let mut rx = state.hub.subscribe();
+    assert_eq!(
+        set_guest_voice(&state, "alice", "lobby", false).await,
+        Ok(false)
+    );
+    let names = |state: &AppState| {
+        state
+            .hub
+            .rooms_in("lobby", None)
+            .into_iter()
+            .flat_map(|(_, users)| users)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        names(&state),
+        vec![s("alice"), s("carol"), s("eve")],
+        "the guest is taken out at once; members and signed-in readers stay"
+    );
+    let mut told = false;
+    while let Ok(ev) = rx.try_recv() {
+        if let WsEvent::VoiceEnded {
+            server: None,
+            channel_id: Some(_),
+            dm_id: None,
+            dm_users: Some(users),
+            reason,
+        } = ev
+        {
+            told |= users == [s(GUEST)] && reason == GUESTS_NO_VOICE;
+        }
+    }
+    assert!(told, "the guest is told why");
+    let read = |state: AppState| async move {
+        crate::api::servers::get_server(
+            State(state),
+            crate::api::MaybeAuthed(None),
+            axum::http::HeaderMap::new(),
+            axum::extract::Path(s("lobby")),
+        )
+        .await
+        .expect("a guest reads lobby")
+        .0
+        .guest_voice
+    };
+    assert!(!read(state.clone()).await, "the server read carries it");
+    let logged: String = sqlx::query("SELECT details FROM audit_log WHERE server = 'lobby' AND action = 'server.update' ORDER BY id DESC")
+        .fetch_one(db)
+        .await
+        .expect("audit")
+        .try_get(0)
+        .expect("details");
+    let logged: serde_json::Value = serde_json::from_str(&logged).expect("json");
+    assert_eq!(
+        logged["changes"],
+        serde_json::json!([{ "field": "guest_voice", "before": "on", "after": "off" }])
+    );
+    let refused = Err(GUESTS_NO_VOICE.into());
+    assert_eq!(as_guest(&state, &guest, join(room("lobby"))).await, refused);
+    as_guest(&state, &guest, join(room("open")))
+        .await
+        .expect("another server's voice");
+    voice_msg(&state, "eve", 1, join(room("lobby")))
+        .await
+        .expect("a signed-in reader still may");
+    assert_eq!(
+        set_guest_voice(&state, "alice", "lobby", true).await,
+        Ok(true)
+    );
+    as_guest(&state, &guest, join(room("lobby")))
+        .await
+        .expect("on again lets guests in");
+    assert!(read(state.clone()).await);
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn a_guest_join_that_raced_the_switch_going_off_is_undone() {
+    let (state, path) = crate::api::test_util::temp_state("guest_voice_race").await;
+    let (replica, replica_path) = crate::api::test_util::temp_state("guest_voice_lag").await;
+    let rooms = reading_world(&state.db).await;
+    assert_eq!(reading_world(&replica.db).await, rooms);
+    let lobby = rooms.iter().find(|(s, _)| *s == "lobby").expect("room").1;
+    exec(
+        &state.db,
+        "UPDATE servers SET guest_voice = 0 WHERE name = 'lobby'",
+    )
+    .await;
+    let lagging = state.clone().with_reader(replica.db.clone());
+    let guest = guest_at(&["lobby"], &[]);
+    assert_eq!(
+        as_guest(&lagging, &guest, ClientMsg::VoiceJoin { channel_id: lobby }).await,
+        Err(GUESTS_NO_VOICE.into()),
+        "the replica has not seen the switch yet"
+    );
+    assert!(state.hub.rooms_in("lobby", None).is_empty());
+    crate::api::test_util::done(replica, replica_path).await;
     crate::api::test_util::done(state, path).await;
 }
 

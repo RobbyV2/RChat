@@ -48,6 +48,8 @@ export interface ServerSummaryLite {
   name_color?: string | null
   // "Anyone can read this server": on, off, or null or absent to follow the site.
   public_read?: boolean | null
+  // "Guests can use voice": absent from older servers means on.
+  guest_voice?: boolean
 }
 
 export type PasswordMembers = 'keep' | 'remove'
@@ -210,6 +212,8 @@ export interface ServerDetail {
   name_color: string | null
   // "Anyone can read this server": on, off, or null or absent to follow the site.
   public_read?: boolean | null
+  // "Guests can use voice": absent from older servers means on.
+  guest_voice?: boolean
   channels: Channel[]
   categories?: Category[]
   layout_version?: number

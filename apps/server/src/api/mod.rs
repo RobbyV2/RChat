@@ -361,6 +361,10 @@ pub struct ServerSummaryLite {
     /// `public_reading` is off.
     #[serde(default)]
     pub public_read: Option<bool>,
+    /// "Guests can use voice": `false` keeps people without an account out of the server's
+    /// voice channels. Accounts are not affected.
+    #[serde(default = "yes")]
+    pub guest_voice: bool,
 }
 
 /// A channel in a server.
@@ -559,6 +563,10 @@ pub struct ServerDetail {
     /// password and `server_joining` is `everyone`). Nobody reads it while the instance's
     /// `public_reading` is off. Set with `PATCH /api/v1/servers/{name}`.
     pub public_read: Option<bool>,
+    /// "Guests can use voice": `false` keeps people without an account out of the server's
+    /// voice channels; accounts are not affected. `true` for new servers. Set with
+    /// `PATCH /api/v1/servers/{name}`.
+    pub guest_voice: bool,
     /// Channels the caller can see, in list order (see `category_id` and `position`). Channels
     /// with permission rules that do not grant the caller `can_view` are left out.
     pub channels: Vec<Channel>,

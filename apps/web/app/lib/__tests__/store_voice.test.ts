@@ -5,7 +5,7 @@ import { useStore, resetSessionCaches } from '../store'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from '../voice_layout'
 import type { VoiceMsg } from '../types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE } from '../timeouts'
-import { me } from './fixtures'
+import { me, serverDetail } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -525,6 +525,20 @@ describe('guests muted by staff', () => {
     await Promise.resolve()
     expect(rtc.videoTrack).not.toBeNull()
     live.videoTrack = null
+  })
+
+  test("a guest can't join voice where the server keeps guests out", async () => {
+    useStore.setState({
+      me: null,
+      guest: true,
+      guestVoiceName: guestName,
+      servers: { lounge: serverDetail('lounge', { guest_voice: false }) },
+    })
+    await st().joinVoice('lounge', 1)
+    expect(st().error).toBe("Guests can't use voice in this server")
+    expect(st().voice).toBeNull()
+    expect(sent.some(m => m.type === 'voice_join')).toBe(false)
+    useStore.setState({ error: null, servers: {} })
   })
 
   test('the mark is kept per room and forgotten when the guest leaves it', () => {

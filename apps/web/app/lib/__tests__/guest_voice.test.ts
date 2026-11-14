@@ -1,16 +1,18 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { maskedName, showsUsername } from '../display_name'
 import {
+  GUESTS_NO_VOICE,
   STAFF_MUTED,
   audibleStreams,
   guestLabel,
   guestRef,
   guestVoiceActions,
+  guestVoiceOff,
   isGuestName,
   voiceSelf,
 } from '../guest_voice'
 import { resetSessionCaches, userRefFor, useStore } from '../store'
-import { me } from './fixtures'
+import { me, serverDetail } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -85,5 +87,23 @@ describe('staff and guests in voice', () => {
 
   test('a staff mute says so', () => {
     expect(STAFF_MUTED).toBe('Muted by staff')
+  })
+})
+
+describe('servers that keep guests out of voice', () => {
+  const servers = {
+    lounge: serverDetail('lounge', { guest_voice: false }),
+    open: serverDetail('open', { guest_voice: true }),
+    old: serverDetail('old'),
+  }
+
+  test('only a guest in a server with the option off is kept out, with the reason', () => {
+    const guest = { me: null, guest: true, servers }
+    expect(guestVoiceOff(guest, 'lounge')).toBe(GUESTS_NO_VOICE)
+    expect(guestVoiceOff(guest, 'open')).toBeNull()
+    expect(guestVoiceOff(guest, 'old')).toBeNull()
+    expect(guestVoiceOff(guest, 'missing')).toBeNull()
+    expect(guestVoiceOff({ me: me('alice'), guest: false, servers }, 'lounge')).toBeNull()
+    expect(GUESTS_NO_VOICE).toBe("Guests can't use voice in this server")
   })
 })

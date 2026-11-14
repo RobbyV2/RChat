@@ -927,6 +927,7 @@ mod tests {
                 banner_color: None,
                 name_color: None,
                 public_read: None,
+                guest_voice: true,
             },
         });
         router.deliver(WsEvent::PresenceChanged {
@@ -965,6 +966,7 @@ mod tests {
                 banner_color: None,
                 name_color: None,
                 public_read: None,
+                guest_voice: true,
             },
         });
         router.deliver(WsEvent::ChannelUpdated {

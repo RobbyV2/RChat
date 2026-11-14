@@ -755,7 +755,7 @@ pub(crate) async fn list_servers(
     let fuzzy = is_fuzzy(&q);
     let (rows, next) = name_page(
         &state.read(),
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging'",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging'",
         "name",
         &page,
     )
@@ -775,6 +775,7 @@ pub(crate) async fn list_servers(
             banner_color: r.try_get(4)?,
             name_color: r.try_get(5)?,
             public_read: crate::api::access::public_read(r, 6)?,
+            guest_voice: r.try_get::<i64, _>(7)? != 0,
         });
     }
     Ok(Paged(servers, next))
@@ -1395,7 +1396,7 @@ pub(crate) async fn user_servers(
     require_site_admin(&user)?;
     let page = query.page()?;
     let rows = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read FROM servers WHERE creator = $1 AND name > $2 AND COALESCE(password_hash, '') <> '!purging' ORDER BY name LIMIT $3 OFFSET $4",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice FROM servers WHERE creator = $1 AND name > $2 AND COALESCE(password_hash, '') <> '!purging' ORDER BY name LIMIT $3 OFFSET $4",
     )
     .bind(username.to_lowercase())
     .bind(page.after.clone().unwrap_or_default())
@@ -1417,6 +1418,7 @@ pub(crate) async fn user_servers(
             banner_color: r.try_get(4)?,
             name_color: r.try_get(5)?,
             public_read: crate::api::access::public_read(r, 6)?,
+            guest_voice: r.try_get::<i64, _>(7)? != 0,
         });
     }
     servers.truncate(page.limit as usize);

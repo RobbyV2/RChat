@@ -1,9 +1,11 @@
+use std::time::Duration;
+
 use super::CallKind;
 use super::access::Access;
 use super::calls::{finalize_call_log, relay_signal, still_on, switched_on};
 use super::protocol::{ClientMsg, Refused};
 
-use crate::api::access::{ws_channel_now, ws_guest_voice_channel};
+use crate::api::access::{ws_channel_now, ws_guest_voice_channel, ws_server_lite};
 use crate::db::ChannelKind;
 use crate::hub::Hub;
 use crate::state::AppState;
@@ -18,7 +20,10 @@ pub(crate) const REMOVED_BY_STAFF: &str = "Removed from voice by staff";
 
 /// How long a guest staff took out of a server's voice stays out of it, by its connection and
 /// its address.
-pub(crate) const GUEST_VOICE_BLOCK: std::time::Duration = std::time::Duration::from_secs(600);
+pub(crate) const GUEST_VOICE_BLOCK: Duration = Duration::from_secs(600);
+
+/// Why a guest can't use the voice of a server whose "Guests can use voice" option is off.
+pub(crate) const GUESTS_NO_VOICE: &str = "Guests can't use voice in this server";
 
 /// The name a new guest connection has in voice rooms.
 pub(super) fn guest_name() -> String {
@@ -57,6 +62,9 @@ pub(super) async fn guest_voice(
             if !channel.member_rights(&state.read()).await?.view {
                 return Err(gone());
             }
+            if !channel.server().lite().guest_voice {
+                return Err(GUESTS_NO_VOICE.into());
+            }
             let ends = state
                 .hub
                 .guest_voice_join(
@@ -71,7 +79,17 @@ pub(super) async fn guest_voice(
             for end in ends {
                 finalize_call_log(state, end, false).await;
             }
-            still_on(state, CallKind::Rtc).await
+            still_on(state, CallKind::Rtc).await?;
+            let open = ws_server_lite(&state.db, &server)
+                .await?
+                .is_some_and(|lite| lite.guest_voice);
+            if !open {
+                state
+                    .hub
+                    .kick_from_voice(name, &server, None, GUESTS_NO_VOICE, Duration::ZERO);
+                return Err(GUESTS_NO_VOICE.into());
+            }
+            Ok(())
         }
         ClientMsg::VoiceLeave => {
             state.hub.voice_leave(name).await;
@@ -122,6 +140,15 @@ pub(super) async fn guest_voice(
         | ClientMsg::P2pWho { hosters: _ }
         | ClientMsg::Typing { scope: _ }
         | ClientMsg::TypingStop { scope: _ } => Ok(()),
+    }
+}
+
+/// Takes every guest out of the voice of `server`, whose option now keeps guests out.
+pub(crate) fn guests_out_of_voice(hub: &Hub, server: &str) {
+    for (_, users) in hub.rooms_in(server, None) {
+        for user in users.iter().filter(|u| is_guest(u)) {
+            hub.kick_from_voice(user, server, None, GUESTS_NO_VOICE, Duration::ZERO);
+        }
     }
 }
 

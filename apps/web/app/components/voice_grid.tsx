@@ -44,7 +44,13 @@ import { P2pBadge } from './p2p/p2p_badge'
 import { useMask, userRefFor, useStore, voiceMutedIn } from '../lib/store'
 import { voiceHushedIn } from '../lib/selectors'
 import { accountPrompt } from '../lib/features'
-import { STAFF_MUTED, audibleStreams, isGuestName, voiceSelf } from '../lib/guest_voice'
+import {
+  STAFF_MUTED,
+  audibleStreams,
+  guestVoiceOff,
+  isGuestName,
+  voiceSelf,
+} from '../lib/guest_voice'
 import { useGuestMenu, useGuestMenuOpen } from './guest_voice_menu'
 import { bannerColor, cachedProfile, profileKey } from '../lib/profile'
 import {
@@ -901,6 +907,7 @@ export function VoiceGrid({
       ? s.servers[server]?.channels.find(c => c.id === channelId)
       : undefined
   )
+  const shut = useStore(s => (server === null ? null : guestVoiceOff(s, server)))
   const coarse = useMedia(COARSE_QUERY)
   const contactCall = useP2p(s => s.call)
   const myIk = useP2p(s => s.me)
@@ -1213,9 +1220,11 @@ export function VoiceGrid({
             <p className="text-sm text-on-surface-variant">
               {mine === null && !forVoice
                 ? `${ask} to join voice.`
-                : forVoice && p2pElsewhere
-                  ? 'P2P is open in another tab.'
-                  : 'Join to start talking.'}
+                : shut !== null && !forVoice
+                  ? `${shut}.`
+                  : forVoice && p2pElsewhere
+                    ? 'P2P is open in another tab.'
+                    : 'Join to start talking.'}
             </p>
           </div>
         )}
@@ -1241,7 +1250,14 @@ export function VoiceGrid({
             )
           ) : (
             channelId !== undefined &&
-            mine !== null && (
+            mine !== null &&
+            (shut !== null ? (
+              tiles.length > 0 && (
+                <p className="rounded-full bg-surface-container-high px-4 py-2 text-sm text-on-surface-variant shadow-elevation-1">
+                  {shut}
+                </p>
+              )
+            ) : (
               <button
                 onClick={() => {
                   if (view?.kind === 'channel') void joinVoice(view.server, channelId)
@@ -1251,7 +1267,7 @@ export function VoiceGrid({
                 <Phone size={18} />
                 Join voice
               </button>
-            )
+            ))
           )}
         </div>
       </div>

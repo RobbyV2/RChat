@@ -24,7 +24,7 @@ pub(crate) use access::LogGate;
 pub(crate) use calls::{end_dm_call, end_switched_off};
 pub use conn::{__path_handler, handler};
 pub use event::{CallPeer, CallRelays, EditStub, Updated, UserScope, WsEvent, to_bus_json};
-pub(crate) use guests::{GUEST_VOICE_BLOCK, REMOVED_BY_STAFF, is_guest};
+pub(crate) use guests::{GUEST_VOICE_BLOCK, REMOVED_BY_STAFF, guests_out_of_voice, is_guest};
 pub use protocol::{
     CLOSE_NO_AUTH, CLOSE_TOO_MANY, CLOSE_TOO_MANY_ADDR, CLOSE_TOO_MANY_GUESTS, CLOSE_TOO_OFTEN,
 };

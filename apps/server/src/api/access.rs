@@ -510,7 +510,7 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
         Slot::Open(None) | Slot::Closed => None,
     };
     let row = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
     )
     .bind(&key)
     .fetch_optional(db)
@@ -570,6 +570,7 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
         banner_color: row.try_get(4)?,
         name_color: row.try_get(5)?,
         public_read: public_read(&row, 6)?,
+        guest_voice: row.try_get::<i64, _>(7)? != 0,
     };
     let mut ticket = None;
     let readable = reading.reads(&lite);
@@ -1031,7 +1032,7 @@ pub async fn resolve_channel(
 /// channels and servers being deleted get `not_found`.
 pub(crate) async fn webhook_channel(db: &Db, id: i64) -> Result<ResolvedChannel, ApiError> {
     let r = sqlx::query(
-        "SELECT c.server, c.kind, c.name, c.slowmode_seconds, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
+        "SELECT c.server, c.kind, c.name, c.slowmode_seconds, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
     )
     .bind(id)
     .fetch_optional(db)
@@ -1047,6 +1048,7 @@ pub(crate) async fn webhook_channel(db: &Db, id: i64) -> Result<ResolvedChannel,
                 banner_color: r.try_get(7)?,
                 name_color: r.try_get(8)?,
                 public_read: public_read(&r, 9)?,
+                guest_voice: r.try_get::<i64, _>(10)? != 0,
             },
             via: Via::Public,
             user: None,
@@ -2053,7 +2055,7 @@ pub(crate) async fn ws_server_password_hash(
 /// Never answers a client.
 pub(crate) async fn ws_server_lite(db: &Db, name: &str) -> sqlx::Result<Option<ServerSummaryLite>> {
     let row = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
     )
     .bind(name)
     .fetch_optional(db)
@@ -2067,6 +2069,7 @@ pub(crate) async fn ws_server_lite(db: &Db, name: &str) -> sqlx::Result<Option<S
             banner_color: r.try_get(4)?,
             name_color: r.try_get(5)?,
             public_read: public_read(&r, 6)?,
+            guest_voice: r.try_get::<i64, _>(7)? != 0,
         })),
         None => Ok(None),
     }

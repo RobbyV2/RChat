@@ -116,6 +116,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("users", "username_key_alt TEXT"),
     ("servers", "public_read {INT}"),
     ("privacy", "profile TEXT"),
+    ("servers", "guest_voice {INT} NOT NULL DEFAULT 1"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -206,7 +207,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 28: P2P backup versions (`p2p_backups`, `p2p_backup_seq`).
 /// 29: the profile visibility choice (`privacy.profile`) and the `messages(author, dm_id)` index
 /// of DM messages (`idx_messages_dm_author`).
-pub const SCHEMA_VERSION: i64 = 29;
+/// 30: `servers.guest_voice`, the per-server "guests can use voice" option.
+pub const SCHEMA_VERSION: i64 = 30;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 14] {

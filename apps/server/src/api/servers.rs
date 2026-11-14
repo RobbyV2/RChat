@@ -142,6 +142,11 @@ pub struct ServerPatch {
     #[serde(default, deserialize_with = "crate::api::auth::present")]
     #[schema(value_type = Option<bool>)]
     public_read: Option<Option<bool>>,
+    /// "Guests can use voice": `false` keeps people without an account out of the server's
+    /// voice channels and takes the guests in them out at once; `true` lets guests who can open
+    /// the server use them again. Accounts are not affected. Omit to leave it unchanged.
+    #[serde(default)]
+    guest_voice: Option<bool>,
 }
 
 /// The server after an update, plus how many members a password change removed.
@@ -947,6 +952,7 @@ async fn server_detail(
         banner_color,
         name_color,
         public_read,
+        guest_voice,
     } = access.lite().clone();
     let rows = sqlx::query(
         "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position FROM channels WHERE server = $1 ORDER BY position, id",
@@ -991,6 +997,7 @@ async fn server_detail(
         banner_color,
         name_color,
         public_read,
+        guest_voice,
         channels,
         categories,
         layout_version,
@@ -1551,6 +1558,7 @@ async fn found_server(
             banner_color: None,
             name_color: None,
             public_read: None,
+            guest_voice: true,
         },
     });
     Ok(key)
@@ -2220,11 +2228,12 @@ pub(crate) async fn leave_server(
 ///
 /// Renames the server, switches it between public and password protected, sets, changes or
 /// clears its permanent password, changes its header colors, and sets whether people who
-/// aren't members can read it (`public_read`); every field is optional.
+/// aren't members can read it (`public_read`) and whether guests can use its voice channels
+/// (`guest_voice`); every field is optional.
 /// Requires the Delete server permission; `members: remove` together with `password` also
 /// requires Kick. The built-in rchat server can't be given a password and keeps its key
-/// `rchat` (a new name changes only its display name); its colors and `public_read` may
-/// change.
+/// `rchat` (a new name changes only its display name); its colors, `public_read` and
+/// `guest_voice` may change.
 ///
 /// When `password` is present, `members: remove` removes every other member whose server
 /// permissions are a strict subset of yours (their roles are dropped, as if kicked) and existing
@@ -2236,7 +2245,8 @@ pub(crate) async fn leave_server(
 /// Emits `server_renamed` (with `old_name`) to the server when the name or display name changed,
 /// otherwise `server_updated` with the new state (password flag and colors), and
 /// `members_purged` to the server and the removed members. Voice users who can no longer open
-/// the server leave their call. Strict and general rate-limit buckets.
+/// the server leave their call, and with `guest_voice: false` every guest in its voice gets
+/// `voice_ended` (`Guests can't use voice in this server`). Strict and general rate-limit buckets.
 /// A new `name` counts with the name checks of `GET /api/v1/servers/{name}/available`, and a new
 /// `password` with new server passwords, as rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an
 /// hour and `RARE_REQUESTS_PER_DAY` (100) a day per account and kind by default. A password refused
@@ -2275,6 +2285,7 @@ pub(crate) async fn update_server(
         banner_color,
         name_color,
         public_read,
+        guest_voice,
     } = req;
     let builtin = is_builtin(&state.db, &key).await;
     if password.is_some() || protected.is_some() {
@@ -2361,6 +2372,13 @@ pub(crate) async fn update_server(
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(on) = guest_voice {
+        sqlx::query("UPDATE servers SET guest_voice = $1 WHERE name = $2")
+            .bind(i64::from(on))
+            .bind(&new_key)
+            .execute(&mut *tx)
+            .await?;
+    }
     let (removed, kept, bypassed) = match purge {
         true => purge_members(&mut tx, &new_key, &user, mine, own).await?,
         false => (
@@ -2398,6 +2416,11 @@ pub(crate) async fn update_server(
             "public_read",
             reading_word(lite.public_read),
             reading_word(public_read.unwrap_or(lite.public_read)),
+        )
+        .change(
+            "guest_voice",
+            on_word(lite.guest_voice),
+            on_word(guest_voice.unwrap_or(lite.guest_voice)),
         );
     if changed.has_changes() {
         let changed = match passwords_revoked && password_hash.is_none() {
@@ -2456,6 +2479,7 @@ pub(crate) async fn update_server(
         banner_color: banner_color.unwrap_or(lite.banner_color),
         name_color: name_color.unwrap_or(lite.name_color),
         public_read: public_read.unwrap_or(lite.public_read),
+        guest_voice: guest_voice.unwrap_or(lite.guest_voice),
     };
     state.hub.broadcast(match renamed {
         true => WsEvent::ServerRenamed {
@@ -2470,6 +2494,9 @@ pub(crate) async fn update_server(
     if password_hash.is_some() || public_read.is_some() {
         evict_unviewable(&state, &server.name, None).await;
     }
+    if guest_voice == Some(false) {
+        crate::ws::guests_out_of_voice(&state.hub, &server.name);
+    }
     Ok(Json(ServerUpdated {
         server,
         removed: removed.len() as i64,
@@ -2479,6 +2506,14 @@ pub(crate) async fn update_server(
 
 /// The refusal of `public_read: true` while the instance has public reading off.
 pub const PUBLIC_READING_OFF: &str = "Public reading is turned off on this site";
+
+/// A server's on or off option as the audit log words it.
+fn on_word(on: bool) -> &'static str {
+    match on {
+        true => "on",
+        false => "off",
+    }
+}
 
 /// A server's `public_read` option as the audit log words it.
 fn reading_word(option: Option<bool>) -> &'static str {
@@ -5025,6 +5060,7 @@ mod tests {
                 banner_color: None,
                 name_color: None,
                 public_read: None,
+                guest_voice: None,
             }),
         )
         .await
@@ -6140,6 +6176,7 @@ mod tests {
                 banner_color: None,
                 name_color: None,
                 public_read: None,
+                guest_voice: None,
             }),
         )
         .await
@@ -6532,6 +6569,7 @@ mod tests {
                 banner_color: None,
                 name_color: None,
                 public_read: None,
+                guest_voice: None,
             }),
         )
         .await
@@ -9229,6 +9267,7 @@ mod tests {
                 banner_color: None,
                 name_color: None,
                 public_read: None,
+                guest_voice: None,
             }),
         )
         .await

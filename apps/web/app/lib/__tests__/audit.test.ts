@@ -4,6 +4,7 @@ import {
   auditQuery,
   dayBound,
   factsOf,
+  fieldLabel,
   groupOf,
   isNameValue,
   permNames,
@@ -364,5 +365,28 @@ describe('guest voice entries', () => {
     expect(sentenceText(guest('member.voice_unmute'))).toBe('Alice unmuted Guest 3f9a in #talk')
     expect(sentence(guest('member.voice_mute'))[2]).toEqual({ text: 'Guest 3f9a' })
     expect(groupOf('member.voice_disconnect')).toBe('member')
+  })
+})
+
+describe('the guest voice option', () => {
+  test('a change says whether guests may use voice', () => {
+    const turned = (before: string, after: string) =>
+      sentenceText(
+        entry({
+          action: 'server.update',
+          target: {
+            kind: 'server',
+            id: null,
+            name: 'Club',
+            user: null,
+            staff: false,
+            deleted: false,
+          },
+          details: { changes: [{ field: 'guest_voice', before, after }] },
+        })
+      )
+    expect(turned('on', 'off')).toBe('Alice turned voice off for guests')
+    expect(turned('off', 'on')).toBe('Alice turned voice on for guests')
+    expect(fieldLabel('guest_voice')).toBe('Guests can use voice')
   })
 })

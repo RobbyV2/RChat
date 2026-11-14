@@ -51,6 +51,8 @@ import type {
   ServerPasswords,
 } from '../lib/types'
 import { WITH_OPTION, keepGuestsChoices } from './server_settings'
+import { SettingSwitch } from './admin_panel'
+import { GUEST_VOICE_OFF, GUEST_VOICE_ON } from '../lib/guest_voice'
 import {
   Chips,
   Dialog,
@@ -580,16 +582,41 @@ function PublicReading({
   )
 }
 
+// "Guests can use voice": whether people without an account may talk in the server's voice.
+export function GuestVoiceSwitch({ server, on }: { server: string; on: boolean }) {
+  const [error, setError] = useState<string | null>(null)
+  const pick = (next: boolean) =>
+    void api.updateServer(server, { guest_voice: next }).then(
+      () => setError(null),
+      (err: unknown) => setError(errorText(err))
+    )
+  return (
+    <div className="pt-3">
+      <div className="-mx-2">
+        <SettingSwitch
+          label="Guests can use voice"
+          hint={on ? GUEST_VOICE_ON : GUEST_VOICE_OFF}
+          value={on}
+          onChange={pick}
+        />
+      </div>
+      <FieldError message={error} />
+    </div>
+  )
+}
+
 export function ServerAccessSection({
   server,
   hasPassword,
   canRemove,
   publicRead,
+  guestVoice,
 }: {
   server: string
   hasPassword: boolean
   canRemove: boolean
   publicRead: PublicRead
+  guestVoice: boolean
 }) {
   const username = useStore(s => s.me?.username ?? null)
   const askConfirm = useStore(s => s.askConfirm)
@@ -762,6 +789,7 @@ export function ServerAccessSection({
             </>
           )}
           <PublicReading server={server} hasPassword={data.protected} option={publicRead} />
+          <GuestVoiceSwitch server={server} on={guestVoice} />
           <FieldError message={error} />
         </>
       )}

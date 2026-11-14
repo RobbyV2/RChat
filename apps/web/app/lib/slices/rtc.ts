@@ -2,7 +2,7 @@
 
 import type { CallRoute } from '../call_choice'
 import { accountPrompt } from '../features'
-import { voiceSelf } from '../guest_voice'
+import { guestVoiceOff, voiceSelf } from '../guest_voice'
 import { home } from '../instances'
 import { JoinTracker } from '../negotiation'
 import { p2p } from '../p2p'
@@ -266,6 +266,8 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
         if (ends !== null) throw new Error(timedOutLine(ends))
         home.ws.ensureConnected()
         await get().openChannel(server, channelId)
+        const shut = guestVoiceOff(get(), server)
+        if (shut !== null) throw new Error(shut)
         if (voice?.channelId === channelId) return
         const at = sessionMark()
         try {

@@ -66,6 +66,7 @@ const FIELD_LABELS: Record<string, string> = {
   protected: 'Password protected',
   kind: 'Type',
   was_member: 'Was a member',
+  guest_voice: 'Guests can use voice',
   members_removed: 'Members removed',
   guests_revoked: 'Guest access ended',
   passwords_revoked: 'Extra passwords revoked',
@@ -356,6 +357,8 @@ export function sentence(entry: AuditEntry): Part[] {
       const only = list.length === 1 ? list[0] : null
       if (only?.field === 'name')
         return [...actor, t(' renamed the server to '), { text: String(only.after), name: true }]
+      if (only?.field === 'guest_voice')
+        return [...actor, t(` turned voice ${only.after === 'off' ? 'off' : 'on'} for guests`)]
       if (only) return [...actor, t(` changed the server ${fieldLabel(only.field).toLowerCase()}`)]
       return [...actor, t(' updated the server settings')]
     }
