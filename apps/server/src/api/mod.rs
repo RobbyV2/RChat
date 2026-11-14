@@ -51,7 +51,9 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
-pub(crate) use rchat_profanity::{is_profane, is_profane_file_name};
+pub(crate) use rchat_profanity::{
+    is_profane, is_profane_file_name, is_profane_file_name_strict, is_profane_strict,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::any::AnyRow;
@@ -1028,6 +1030,9 @@ impl ProfanitySwitch {
     }
 }
 
+/// The `settings` row of `Settings::profanity_strict_file_names`.
+pub(crate) const STRICT_FILE_NAMES: &str = "profanity_strict_file_names";
+
 pub(crate) const DEPRECATED_DISPLAY_NAMES: &str = "display_names";
 
 static DISPLAY_NAMES_WARNED: std::sync::Once = std::sync::Once::new();
@@ -1153,6 +1158,11 @@ pub struct Settings {
     /// Which texts the filter checks while `profanity_filter` is on.
     #[serde(default)]
     pub profanity_targets: ProfanityTargets,
+    /// While the filter checks `file_names`: file names, and file names in the paths of links in
+    /// any checked text, are also read whole, like message text. Off by default
+    /// (`PROFANITY_STRICT_FILE_NAMES`): a known extension is read apart from the name before it.
+    #[serde(default)]
+    pub profanity_strict_file_names: bool,
     /// Link previews: the server fetches page metadata for links in messages.
     pub asset_previews: bool,
     /// File uploads through `POST /api/v1/media`.
@@ -1352,6 +1362,7 @@ impl Settings {
     pub const DENY: Settings = Settings {
         profanity_filter: true,
         profanity_targets: ProfanityTargets::ALL,
+        profanity_strict_file_names: true,
         asset_previews: false,
         asset_uploads: false,
         p2p_attachments: false,
@@ -1425,6 +1436,7 @@ impl Settings {
             profanity_targets: ProfanityTargets::from_fn(|t| {
                 value(t.key()).is_none_or(|v| v == "1")
             }),
+            profanity_strict_file_names: on(STRICT_FILE_NAMES),
             asset_previews: on("asset_previews"),
             asset_uploads: on("asset_uploads"),
             p2p_attachments: on("p2p_attachments"),
@@ -1499,6 +1511,7 @@ impl Settings {
         let Settings {
             profanity_filter: _,
             profanity_targets: _,
+            profanity_strict_file_names: _,
             asset_previews: _,
             asset_uploads: _,
             p2p_attachments: _,
@@ -1653,16 +1666,24 @@ pub fn valid_color(color: &str) -> bool {
 impl Settings {
     pub fn blocks(&self, target: ProfanityTarget, text: &str) -> bool {
         let targets = self.profanity_targets;
+        let strict = self.profanity_strict_file_names && targets.file_names;
+        let read = |links: bool| match strict {
+            true => is_profane_strict(text, links),
+            false => is_profane(text, links),
+        };
         let profane = || match target {
-            ProfanityTarget::Messages => is_profane(text, targets.links),
-            ProfanityTarget::FileNames => is_profane_file_name(text),
+            ProfanityTarget::Messages => read(targets.links),
+            ProfanityTarget::FileNames => match strict {
+                true => is_profane_file_name_strict(text),
+                false => is_profane_file_name(text),
+            },
             ProfanityTarget::Usernames
             | ProfanityTarget::ServerNames
             | ProfanityTarget::ChannelNames
             | ProfanityTarget::RoleNames
             | ProfanityTarget::Bios
             | ProfanityTarget::ChannelTopics
-            | ProfanityTarget::CategoryNames => is_profane(text, true),
+            | ProfanityTarget::CategoryNames => read(true),
         };
         self.profanity_filter && targets.get(target.switch()) && off_worker(profane)
     }
@@ -2488,7 +2509,68 @@ mod tests {
         Settings {
             profanity_filter: filter,
             profanity_targets: targets,
+            profanity_strict_file_names: false,
             ..Settings::DENY
+        }
+    }
+
+    #[test]
+    fn strict_file_names_also_read_names_and_link_paths_whole() {
+        let strict = |filter: bool, targets: ProfanityTargets| Settings {
+            profanity_strict_file_names: true,
+            ..settings_with(filter, targets)
+        };
+        let all = settings_with(true, ProfanityTargets::ALL);
+        let on = strict(true, ProfanityTargets::ALL);
+        let link = "see https://x.org/src/cun.ts";
+        for (target, text) in [
+            (ProfanityTarget::FileNames, "cun.ts"),
+            (ProfanityTarget::FileNames, "test.js"),
+            (ProfanityTarget::Messages, link),
+            (ProfanityTarget::Bios, link),
+            (ProfanityTarget::ChannelTopics, link),
+        ] {
+            assert!(!all.blocks(target, text), "{target:?} {text}");
+            assert!(on.blocks(target, text), "strict: {target:?} {text}");
+        }
+        let joined = "https://x.org/fu.txt ck you";
+        for (target, text) in [
+            (ProfanityTarget::FileNames, "fu.txt ck.png"),
+            (ProfanityTarget::FileNames, "f.js u.js c.js k.js"),
+            (ProfanityTarget::FileNames, "sh.txt-it.txt"),
+            (ProfanityTarget::Messages, joined),
+            (ProfanityTarget::Messages, "see https://x.org/sh.txt it"),
+            (ProfanityTarget::Bios, joined),
+            (ProfanityTarget::ChannelTopics, joined),
+        ] {
+            assert!(all.blocks(target, text), "{target:?} {text}");
+            assert!(on.blocks(target, text), "strict: {target:?} {text}");
+        }
+        for name in [
+            "kept.txt",
+            "attachment-from-alice.txt",
+            "note.txt",
+            "p2p.txt",
+        ] {
+            assert!(!on.blocks(ProfanityTarget::FileNames, name), "{name}");
+        }
+        for target in ProfanityTarget::ALL {
+            assert!(
+                !on.blocks(target, "a p2p attachment for the channel"),
+                "{target:?}"
+            );
+            assert!(on.blocks(target, "fuck.txt"), "{target:?}");
+        }
+        let no_files = strict(
+            true,
+            ProfanityTargets::from_fn(|t| t != ProfanitySwitch::FileNames),
+        );
+        assert!(!no_files.blocks(ProfanityTarget::FileNames, "fuck.txt"));
+        assert!(!no_files.blocks(ProfanityTarget::Messages, link));
+        assert!(no_files.blocks(ProfanityTarget::Messages, "cun.ts"));
+        let off = strict(false, ProfanityTargets::ALL);
+        for target in ProfanityTarget::ALL {
+            assert!(!off.blocks(target, "cun.ts"), "{target:?}");
         }
     }
 
@@ -2605,6 +2687,7 @@ mod tests {
         let fresh = Settings::load(&db).await;
         assert!(!fresh.profanity_filter);
         assert_eq!(fresh.profanity_targets, ProfanityTargets::ALL);
+        assert!(!fresh.profanity_strict_file_names);
         for target in ProfanityTarget::ALL {
             assert!(!fresh.blocks(target, "fuck"), "{target:?}");
         }
@@ -2702,6 +2785,7 @@ mod tests {
         let denied = Settings::cached(&db).await;
         assert!(denied.profanity_filter);
         assert_eq!(denied.profanity_targets, ProfanityTargets::ALL);
+        assert!(denied.profanity_strict_file_names);
         for target in ProfanityTarget::ALL {
             assert!(denied.blocks(target, "fuck"), "{target:?}");
         }

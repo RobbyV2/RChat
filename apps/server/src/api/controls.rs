@@ -10,7 +10,9 @@ use crate::api::policy::{
     PUBLIC_READING, SERVER_CREATORS, SERVER_SEARCH, ServerCreation, ServerJoining,
 };
 use crate::api::reports::forms::{self, ReportForms};
-use crate::api::{ProfanitySwitch, ProfanityTargets, PublicSettings, upload_expiry};
+use crate::api::{
+    ProfanitySwitch, ProfanityTargets, PublicSettings, STRICT_FILE_NAMES, upload_expiry,
+};
 use crate::db::{ConfigStart, Db};
 use crate::limits::Env;
 use crate::state::AppState;
@@ -77,6 +79,7 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
             default: "all",
             public: true,
         },
+        switch(STRICT_FILE_NAMES, "PROFANITY_STRICT_FILE_NAMES", false),
         switch("asset_previews", "FEATURE_LINK_PREVIEWS", true),
         switch("asset_uploads", "FEATURE_FILE_UPLOADS", true),
         switch("p2p_attachments", "P2P_ATTACHMENTS", true),
@@ -637,10 +640,15 @@ mod tests {
             .map(|c| (c.key, c.env, c.default))
             .collect();
         assert_eq!(
-            table[..7],
+            table[..8],
             [
                 ("profanity_filter", "PROFANITY_FILTER", "0"),
                 ("profanity_targets", "PROFANITY_TARGETS", "all"),
+                (
+                    "profanity_strict_file_names",
+                    "PROFANITY_STRICT_FILE_NAMES",
+                    "0"
+                ),
                 ("asset_previews", "FEATURE_LINK_PREVIEWS", "1"),
                 ("asset_uploads", "FEATURE_FILE_UPLOADS", "1"),
                 ("p2p_attachments", "P2P_ATTACHMENTS", "1"),
@@ -707,6 +715,7 @@ mod tests {
         assert_eq!(registration.kind, Kind::Choice(&["open", "sso", "closed"]));
         assert_eq!(registration.default, Registration::default().as_str());
         assert_eq!(control("profanity_targets").kind, Kind::Targets);
+        assert_eq!(control("profanity_strict_file_names").kind, Kind::Switch);
         let mut keys: Vec<&str> = Control::all().iter().map(|c| c.key).collect();
         let mut envs: Vec<&str> = Control::all().iter().map(|c| c.env).collect();
         let n = keys.len();

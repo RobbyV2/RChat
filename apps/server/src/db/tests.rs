@@ -6644,3 +6644,14 @@ async fn the_dm_author_index_is_added_to_an_old_database() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn the_strict_file_names_control_is_added_to_an_old_database() {
+    controls_reach_an_old_database(
+        "strict_names_control",
+        &["profanity_strict_file_names"],
+        &["0"],
+        &[("PROFANITY_STRICT_FILE_NAMES", "on", "1")],
+    )
+    .await;
+}

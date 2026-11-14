@@ -62,6 +62,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         p2p_attachments,
         profanity_filter: _,
         profanity_targets: _,
+        profanity_strict_file_names: _,
         outgoing_webhooks: _,
         server_reports: _,
         instance_reports: _,

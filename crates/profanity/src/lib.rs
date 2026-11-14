@@ -142,6 +142,8 @@ fn stems(text: &str) -> String {
 // Where a file name is read as its stem.
 #[derive(Clone, Copy)]
 enum Stems {
+    // Nowhere: the whole reading, which strict file names add.
+    Nowhere,
     // In the paths of links.
     Paths,
     // In the whole text, a file name.
@@ -151,7 +153,7 @@ enum Stems {
 impl Stems {
     fn read(self, text: &str, path: bool) -> String {
         match (self, path) {
-            (Stems::Paths, false) => text.to_owned(),
+            (Stems::Nowhere, _) | (Stems::Paths, false) => text.to_owned(),
             (Stems::Paths, true) | (Stems::Everywhere, _) => stems(text),
         }
     }
@@ -385,29 +387,44 @@ fn gap(c: char) -> bool {
     c.is_whitespace() || matches!(c, '.' | ',' | ':' | ';' | '…' | '(' | ')' | '_' | '-')
 }
 
-fn profane(text: &str, links: bool, stems: Stems) -> bool {
-    let text = read_text(text, false, stems);
-    let left = budget(&text);
+// Whether any of the readings of `text` is profane. They share one budget, and a phrase two of
+// them read alike is read once.
+fn profane(text: &str, links: bool, readings: &[Stems]) -> bool {
+    let left = budget(text);
     let mut read = HashSet::new();
-    [false, true]
-        .into_iter()
-        .flat_map(|bridge| phrases(&text, bridge, links, stems))
-        .filter(|p| read.insert(p.clone()))
-        .any(|p| {
-            let (censored, analysis) = censor(&p);
-            analysis.is(THRESHOLD)
-                && matches(&p, &censored, &left).is_none_or(|m| m.contains(&true))
-        })
+    readings.iter().any(|&stems| {
+        let text = read_text(text, false, stems);
+        [false, true]
+            .into_iter()
+            .flat_map(|bridge| phrases(&text, bridge, links, stems))
+            .filter(|p| read.insert(p.clone()))
+            .any(|p| {
+                let (censored, analysis) = censor(&p);
+                analysis.is(THRESHOLD)
+                    && matches(&p, &censored, &left).is_none_or(|m| m.contains(&true))
+            })
+    })
 }
 
 // Whether the site filter blocks `text`. `links`: the host of a link is read too.
 pub fn is_profane(text: &str, links: bool) -> bool {
-    profane(text, links, Stems::Paths)
+    profane(text, links, &[Stems::Paths])
 }
 
 // Whether the site filter blocks the name of an uploaded file.
 pub fn is_profane_file_name(name: &str) -> bool {
-    profane(name, true, Stems::Everywhere)
+    profane(name, true, &[Stems::Everywhere])
+}
+
+// `is_profane`, or the same with file names in the paths of links read whole, extension
+// included: the site filter with strict file names.
+pub fn is_profane_strict(text: &str, links: bool) -> bool {
+    profane(text, links, &[Stems::Paths, Stems::Nowhere])
+}
+
+// `is_profane_file_name`, or the name read whole like message text.
+pub fn is_profane_file_name_strict(name: &str) -> bool {
+    profane(name, true, &[Stems::Everywhere, Stems::Nowhere])
 }
 
 // Texts the server and the wasm build are checked against, in Rust and in bun.
@@ -1065,6 +1082,88 @@ mod tests {
         assert_eq!(mask("you are a cun.ts"), "you are a ***.**");
     }
 
+    // The strict reading reads a file name in the path of a link with its extension, like the
+    // rest of the text.
+    #[test]
+    fn the_strict_reading_keeps_extensions_in_link_paths() {
+        for text in [
+            "https://x.org/src/cun.ts",
+            "see https://x.org/feti.sh",
+            "https://example.com/test.js",
+        ] {
+            for links in [true, false] {
+                assert!(!is_profane(text, links), "{text} links={links}");
+                assert!(is_profane_strict(text, links), "{text} links={links}");
+            }
+        }
+        for text in [
+            "a p2p attachment for the channel",
+            "kept.txt",
+            "https://x.org/kept.txt",
+            "https://github.com/a/b/blob/main/README.md",
+        ] {
+            for links in [true, false] {
+                assert!(!is_profane_strict(text, links), "{text} links={links}");
+            }
+        }
+        for text in ["cun.ts", "fuck", "https://x.org/fuck", "kept.fuck"] {
+            for links in [true, false] {
+                assert!(is_profane_strict(text, links), "{text} links={links}");
+            }
+        }
+        assert!(is_profane_strict("https://fuck.co/", true));
+        assert!(!is_profane_strict("https://fuck.co/", false));
+    }
+
+    // The strict reading adds the whole reading to the default one: a known extension read apart
+    // can join the words around it ("fu.txt ck"), so the whole reading alone misses those.
+    #[test]
+    fn the_strict_reading_adds_to_the_default_one() {
+        let names = [
+            "fu.txt ck.png",
+            "f.js u.js c.js k.js",
+            "sh.txt-it.txt",
+            "my fu.txt ck you.pdf",
+        ];
+        for name in names {
+            assert!(is_profane_file_name(name), "{name}");
+            assert!(!profane(name, true, &[Stems::Nowhere]), "{name}");
+            assert!(is_profane_file_name_strict(name), "{name}");
+        }
+        let links = ["https://x.org/fu.txt ck you", "see https://x.org/sh.txt it"];
+        for text in links {
+            for links in [true, false] {
+                assert!(is_profane(text, links), "{text} links={links}");
+                assert!(is_profane_strict(text, links), "{text} links={links}");
+            }
+        }
+        for name in ["cun.ts", "test.js", "https://x.org/src/cun.ts"] {
+            assert!(!is_profane_file_name(name), "{name}");
+            assert!(is_profane_file_name_strict(name), "{name}");
+        }
+        for name in [
+            "kept.txt",
+            "attachment-from-alice.txt",
+            "note.txt",
+            "p2p.txt",
+        ] {
+            assert!(!is_profane_file_name_strict(name), "{name}");
+        }
+        for text in SAMPLES.lines().chain(names).chain(links) {
+            for links in [true, false] {
+                let strict = is_profane_strict(text, links);
+                assert!(!is_profane(text, links) || strict, "{text} links={links}");
+                assert!(
+                    !profane(text, links, &[Stems::Nowhere]) || strict,
+                    "{text} links={links}"
+                );
+            }
+            let strict = is_profane_file_name_strict(text);
+            assert!(!is_profane_file_name(text) || strict, "{text}");
+            assert!(!profane(text, true, &[Stems::Nowhere]) || strict, "{text}");
+        }
+    }
+
     fn leaks(text: &str) -> bool {
         mask(text).contains(['f', 'u', 'c', 'k'])
     }
@@ -1220,19 +1319,20 @@ mod tests {
         };
         let eights = sea(&["xxx8", "xxx8", "xxx8", "xx8", "x"], 8);
         let xs = sea(&["xxxxxxxx"], 10);
-        for text in [
-            "f1u1c1k1".repeat(500),
-            "fuck1".repeat(800),
-            format!("{}fuck", "x1".repeat(1998)),
-            "a9s5 ".repeat(800),
-            mixed,
-            eights,
-            xs,
+        for (text, caught) in [
+            ("f1u1c1k1".repeat(500), true),
+            ("fuck1".repeat(800), true),
+            (format!("{}fuck", "x1".repeat(1998)), true),
+            ("a9s5 ".repeat(800), true),
+            (mixed, true),
+            (eights, true),
+            (xs, true),
+            ("p2p.js-".repeat(560), false),
         ] {
             let bound = 5 * (text.len() + REACH);
             let read = |check: &dyn Fn(&str) -> bool| {
                 READ.set(0);
-                assert!(check(&text), "{}", &text[..12]);
+                assert_eq!(check(&text), caught, "{}", &text[..12]);
                 assert!(READ.get() <= bound, "{} {}", &text[..12], READ.get());
             };
             read(&|t| mask(t) != t);
@@ -1240,6 +1340,9 @@ mod tests {
             read(&|t| is_profane(t, true));
             read(&|t| is_profane(t, false));
             read(&|t| is_profane_file_name(t));
+            read(&|t| is_profane_strict(t, true));
+            read(&|t| is_profane_strict(t, false));
+            read(&|t| is_profane_file_name_strict(t));
         }
     }
 

@@ -544,6 +544,8 @@ export type ProfanityTarget = keyof ProfanityTargets
 export interface SiteSettings {
   profanity_filter: boolean
   profanity_targets: ProfanityTargets
+  // File names and link paths read like message text. Absent on older servers: off.
+  profanity_strict_file_names?: boolean
   asset_previews: boolean
   asset_uploads: boolean
   // Absent on servers before 0.3.0, where P2P attachments are always on.

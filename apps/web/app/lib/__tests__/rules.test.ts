@@ -23,6 +23,7 @@ import {
   passwordPrompt,
   profanityTargetLocked,
   profanityTargetOn,
+  strictFileNamesLocked,
   sameOriginImage,
   serverInitial,
 } from '../rules'
@@ -393,5 +394,17 @@ describe('profanity targets', () => {
     expect(profanityTargetLocked(noMessages, 'links')).toBe(true)
     expect(profanityTargetLocked(noMessages, 'messages')).toBe(false)
     expect(profanityTargetLocked(noMessages, 'usernames')).toBe(false)
+  })
+
+  test('strict file names matter only while the filter checks file names', () => {
+    expect(strictFileNamesLocked({ profanity_filter: true, profanity_targets: all })).toBe(false)
+    expect(strictFileNamesLocked({ profanity_filter: true })).toBe(false)
+    expect(strictFileNamesLocked({ profanity_filter: false, profanity_targets: all })).toBe(true)
+    expect(
+      strictFileNamesLocked({
+        profanity_filter: true,
+        profanity_targets: { ...all, file_names: false },
+      })
+    ).toBe(true)
   })
 })

@@ -11,6 +11,7 @@ import {
   canDeleteChannel,
   profanityTargetLocked,
   profanityTargetOn,
+  strictFileNamesLocked,
 } from '../lib/rules'
 import { UserAvatar } from './user_avatar'
 import {
@@ -268,7 +269,18 @@ function FeatureSwitches() {
               value={settings[key] ?? false}
               onChange={v => void updateSettings({ [key]: v })}
             />
-            {key === 'profanity_filter' && <ProfanityTargetChecks />}
+            {key === 'profanity_filter' && (
+              <>
+                <ProfanityTargetChecks />
+                <SettingSwitch
+                  label="Strict file names"
+                  hint="Also checks file names and the paths of links like messages, extension included. Only while the filter checks file names."
+                  value={settings.profanity_strict_file_names ?? false}
+                  disabled={strictFileNamesLocked(settings)}
+                  onChange={v => void updateSettings({ profanity_strict_file_names: v })}
+                />
+              </>
+            )}
             {key === 'asset_uploads' && <UploadExpiryCap />}
             {key === 'p2p_attachments' && !settings.asset_uploads && !settings.p2p_attachments && (
               <p className="px-2 pb-1 text-xs text-on-surface-variant">
