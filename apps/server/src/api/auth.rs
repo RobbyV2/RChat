@@ -16,6 +16,7 @@ use utoipa::ToSchema;
 
 use crate::api::access::not_found;
 use crate::api::dms::{DmOrder, dm_page};
+use crate::api::names::Refusal;
 use crate::api::rare::{self, Rare};
 use crate::api::servers::{Page, my_servers_page};
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
@@ -24,7 +25,9 @@ use crate::api::{
     ProfanityTarget, ServerSummary, Settings, UserRef, bad, check_len, check_profanity, names, ok,
     request_token, valid_color,
 };
-use crate::db::{AvatarKind, Db, User, get_user, lock_server, now, secret_key, shift_member_count};
+use crate::db::{
+    AvatarKind, Db, NotAdded, User, get_user, lock_server, now, secret_key, shift_member_count,
+};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -102,9 +105,11 @@ pub struct WordsResp {
 /// A new account. Give exactly one of `password` or `words`.
 #[derive(Deserialize, ToSchema)]
 pub struct RegisterReq {
-    /// 1 to 100 characters, not blank, without `@` and without control, format or invisible
-    /// characters. Unique case-insensitively; the given case becomes the display name. Checked
-    /// by the profanity filter (`usernames` target).
+    /// 1 to 100 characters, not blank, without `@`, control, format or invisible characters,
+    /// variation selectors, spaces other than U+0020 or spaces at either end. Unique
+    /// case-insensitively and in look-alike characters: a name that passes for another account's
+    /// username or a banned one is refused. The given case becomes the display name. Checked by
+    /// the profanity filter (`usernames` target).
     #[schema(example = "Alice")]
     username: String,
     /// A non-empty text password. Omit when using `words`.
@@ -283,7 +288,19 @@ pub(crate) async fn hash_password(secret: &str) -> Result<String, ApiError> {
     hash_in(Work::Account, secret).await
 }
 
+#[cfg(test)]
+thread_local! {
+    static HASH_RUNS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn hash_runs() -> u64 {
+    HASH_RUNS.with(|c| c.get())
+}
+
 pub(crate) async fn hash_in(work: Work, secret: &str) -> Result<String, ApiError> {
+    #[cfg(test)]
+    HASH_RUNS.with(|c| c.set(c.get() + 1));
     let secret = secret.to_string();
     off_runtime(work, move || hash_now(&secret)).await?
 }
@@ -468,7 +485,7 @@ fn lock_order(defaults: &[String]) -> Vec<&str> {
 /// Sign-ups are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
 /// `RARE_REQUESTS_PER_DAY` (100) a day per client address (an IPv6 /64 counts as one) by default,
 /// whatever the username.
-#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), NUL-containing, `@`-containing, banned, taken or profanity-filtered username; a username that holds control, format or invisible characters (`Username has invalid characters`); empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; a missing or invalid avatar color for `color` avatars; or an invalid background color for `identicon` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
+#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank (also a name of only marks or variation selectors), too long (over 100 characters), NUL-containing, `@`-containing or profanity-filtered username; a username that holds control, format or invisible characters (`Username has invalid characters`); one that holds a variation selector or a space other than U+0020, starts or ends with a space, or is or passes for another account's username in another case or in look-alike characters, or mixes letters so that it would pass for more names than an account stores (a capital that passes for l next to a Cherokee letter, for example) (`Username is taken`); one that is or passes for a banned username (`Username is banned`); empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; a missing or invalid avatar color for `color` avatars; or an invalid background color for `identicon` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
@@ -494,6 +511,9 @@ pub(crate) async fn register(
     if username.chars().any(names::hidden_char) {
         return Err(bad("Username has invalid characters"));
     }
+    if names::name_keys(&username).iter().any(String::is_empty) {
+        return Err(bad("Username required"));
+    }
     if password.as_deref() == Some("") {
         return Err(bad("Password required"));
     }
@@ -510,24 +530,13 @@ pub(crate) async fn register(
     for server in lock_order(&defaults) {
         lock_server(&mut tx, server).await?;
     }
-    let banned = sqlx::query("SELECT 1 FROM banned_usernames WHERE username = $1")
-        .bind(&key)
-        .fetch_optional(&mut *tx)
-        .await?
-        .is_some();
-    if banned {
-        return Err(bad("Username is banned"));
-    }
-    if crate::db::user_row(&mut *tx, &key).await?.is_some() {
-        return Err(bad(USERNAME_TAKEN));
-    }
     let user_count: i64 = sqlx::query("SELECT COUNT(*) FROM (SELECT 1 FROM users LIMIT 1) t")
         .fetch_one(&mut *tx)
         .await?
         .try_get(0)?;
     let t = now();
     crate::db::insert_user(
-        &mut *tx,
+        &mut tx,
         crate::db::NewUser {
             username: &key,
             display_name: &username,
@@ -927,11 +936,25 @@ pub const DISPLAY_NAME_MAX: usize = 32;
 
 const USERNAME_TAKEN: &str = "Username is taken";
 
+const USERNAME_BANNED: &str = "Username is banned";
+
+impl From<NotAdded> for ApiError {
+    fn from(e: NotAdded) -> ApiError {
+        match e {
+            NotAdded::Refused(Refusal::Taken) => bad(USERNAME_TAKEN),
+            NotAdded::Refused(Refusal::Banned) => bad(USERNAME_BANNED),
+            NotAdded::Db(e) => e.into(),
+        }
+    }
+}
+
 /// A display name as stored: trimmed, 1 to `DISPLAY_NAME_MAX` characters, no control, format or
 /// invisible characters, not passing for the instance staff, through the name profanity filter.
 /// A new name can not pass for another account's username (`names::name_keys`); the user's own
-/// username in any case and the name they already have are theirs to keep. Checking a new name
-/// is a rare request.
+/// username in any case and the name they already have are theirs to keep, unless that case
+/// gives the username three looks (`names::three_looks`) or its capitals add a key to the
+/// username's own keys that passes for another account's username
+/// (`names::capitals_pass_for_another`). Checking any other new name is a rare request.
 pub(crate) async fn clean_display_name(
     state: &AppState,
     user: &User,
@@ -939,10 +962,10 @@ pub(crate) async fn clean_display_name(
 ) -> Result<String, ApiError> {
     let db = &state.db;
     let name = raw.trim().to_string();
+    check_len(&name, DISPLAY_NAME_MAX, "Display name")?;
     if names::name_keys(&name).iter().any(String::is_empty) {
         return Err(bad("Display name required"));
     }
-    check_len(&name, DISPLAY_NAME_MAX, "Display name")?;
     if name.chars().any(names::hidden_char) {
         return Err(bad("Display name has invalid characters"));
     }
@@ -950,12 +973,22 @@ pub(crate) async fn clean_display_name(
         return Err(bad("That name is reserved"));
     }
     check_profanity(db, ProfanityTarget::Usernames, &name).await?;
-    let own = name == user.display_name || name.to_lowercase() == user.username;
-    if !own {
-        rare::take(state, Rare::DisplayName, Some(user))?;
-        if names::passes_for_another(db, &name, &user.username).await? {
-            return Err(bad(USERNAME_TAKEN));
+    let refused = match (
+        name == user.display_name,
+        name.to_lowercase() == user.username,
+    ) {
+        (true, _) => false,
+        (false, false) => {
+            rare::take(state, Rare::DisplayName, Some(user))?;
+            names::passes_for_another(db, &name, &user.username).await?
         }
+        (false, true) => {
+            names::three_looks(&user.username, &name)
+                || names::capitals_pass_for_another(db, &name, &user.username).await?
+        }
+    };
+    if refused {
+        return Err(bad(USERNAME_TAKEN));
     }
     Ok(name)
 }
@@ -1007,7 +1040,7 @@ fn check_banner(color: Option<String>) -> Result<Option<String>, ApiError> {
 /// A new `display_name` is a rare request: each account may try at most `RARE_REQUESTS_PER_HOUR`
 /// (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day by default, taken or free; your own
 /// username and the name you have don't count.
-#[utoipa::path(patch, path = "/api/v1/me", tag = "Account", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `avatar_color` is only read together with `avatar_kind`: the color of a `color` avatar, or the background of an `identicon` (left out or `null`: the default background). `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar. `bio` is the profile description: trimmed, control characters other than newlines removed, 3 or more newlines in a row collapsed to 2, at most 190 characters; empty or `null` clears it. It is checked by the profanity filter (`bios` target). `display_name` is trimmed, 1 to 32 characters, and checked by the profanity filter (`usernames` target)"), responses((status = 200, description = "Display name, avatar, banner color, description and/or appear-offline preference updated; returns the user's public profile plus their banner color, description and appear-offline flag", body = MeUpdated), (status = 400, description = "Invalid or missing avatar color for a `color` avatar, invalid background color for an `identicon`, invalid banner color, description over 190 characters, description blocked by the profanity filter, or a display name that is blank, over 32 characters, holds control, format or invisible characters (`Display name has invalid characters`), passes for the instance staff (`That name is reserved`), is blocked by the profanity filter, or is new and passes for another account's username, also in another case or in look-alike characters (`Username is taken`; your own username and the name you already have are accepted). Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: `display_name` was sent while the `display_names` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the general bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/v1/me", tag = "Account", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `avatar_color` is only read together with `avatar_kind`: the color of a `color` avatar, or the background of an `identicon` (left out or `null`: the default background). `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar. `bio` is the profile description: trimmed, control characters other than newlines removed, 3 or more newlines in a row collapsed to 2, at most 190 characters; empty or `null` clears it. It is checked by the profanity filter (`bios` target). `display_name` is trimmed, 1 to 32 characters, and checked by the profanity filter (`usernames` target)"), responses((status = 200, description = "Display name, avatar, banner color, description and/or appear-offline preference updated; returns the user's public profile plus their banner color, description and appear-offline flag", body = MeUpdated), (status = 400, description = "Invalid or missing avatar color for a `color` avatar, invalid background color for an `identicon`, invalid banner color, description over 190 characters, description blocked by the profanity filter, or a display name that is blank, over 32 characters, holds control, format or invisible characters (`Display name has invalid characters`), passes for the instance staff (`That name is reserved`), is blocked by the profanity filter, or is new and passes for another account's username, also in another case or in look-alike characters (`Username is taken`; your own username in another case is accepted unless its capitals pass for another account's username or make it pass for more names than an account stores; the name you already have is accepted). Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: `display_name` was sent while the `display_names` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the general bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn patch_me(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1061,11 +1094,16 @@ pub(crate) async fn patch_me(
             .await?;
     }
     if let Some(name) = &display_name {
-        sqlx::query("UPDATE users SET display_name = $1 WHERE username = $2")
-            .bind(name)
-            .bind(&user.username)
-            .execute(&mut *tx)
-            .await?;
+        let (key, alt) = names::username_keys(&user.username, name);
+        sqlx::query(
+            "UPDATE users SET display_name = $1, username_key = $2, username_key_alt = $3 WHERE username = $4",
+        )
+        .bind(name)
+        .bind(key)
+        .bind(alt)
+        .bind(&user.username)
+        .execute(&mut *tx)
+        .await?;
     }
     if let Some(text) = &bio {
         sqlx::query("UPDATE users SET bio = $1 WHERE username = $2")
@@ -1485,7 +1523,7 @@ mod tests {
             "o\u{301}k",
             "a b",
             "\u{1f642}",
-            "\u{2615}\u{fe0f}",
+            "\u{2615}",
         ] {
             let made = register_text(&state, name)
                 .await
@@ -2777,8 +2815,13 @@ mod tests {
                 named(&"a".repeat(33)),
                 "Display name must be at most 32 characters",
             ),
+            (
+                named(&"\u{301}".repeat(33)),
+                "Display name must be at most 32 characters",
+            ),
             (named("a\u{200b}b"), "Display name has invalid characters"),
             (named("a\nb"), "Display name has invalid characters"),
+            (named("Bob\u{1d159}"), "Display name has invalid characters"),
             (
                 named("ali\u{202e}ce"),
                 "Display name has invalid characters",
@@ -2909,6 +2952,9 @@ mod tests {
             "bo\u{301}b",
             "MOM",
             "rnorn",
+            "\u{39c}om",
+            "\u{13b7}o\u{13b7}",
+            "\u{a4df}OM",
             "alice",
             "ALICE",
             "AIice",
@@ -3002,7 +3048,10 @@ mod tests {
         );
         assert_eq!(shown("carol").await, "bob");
 
-        let _ = register_text(state, "car0l").await.expect("a look-alike");
+        crate::db::NewUser::plain("car0l")
+            .at(1)
+            .add(&state.db)
+            .await;
         assert_eq!(
             name_of(patch_as(state, "carol", named("Carol")).await),
             Ok("Carol".to_string()),
@@ -3016,6 +3065,16 @@ mod tests {
             name_of(patch_as(state, "car0l", named("Carol")).await),
             taken()
         );
+
+        crate::db::NewUser::plain("zed\u{200b}")
+            .at(1)
+            .add(&state.db)
+            .await;
+        assert_eq!(
+            name_of(patch_as(state, "carol", named("Zed")).await),
+            taken(),
+            "a username that hides a character passes for its visible spelling"
+        );
     }
 
     #[tokio::test]
@@ -3027,6 +3086,534 @@ mod tests {
         if let Some((state, pg)) = pg_state("display_clash").await {
             let state = crate::api::rare::tests::unlimited(state);
             display_names_keep_off_other_usernames(&state).await;
+            pg_done(state, pg).await;
+        }
+    }
+
+    type AccountRow = (String, String, String, Option<String>, Option<String>);
+
+    async fn account_rows(state: &AppState) -> Vec<AccountRow> {
+        sqlx::query("SELECT username, display_name, password_hash, username_key, username_key_alt FROM users WHERE username <> 'eve' ORDER BY username")
+            .fetch_all(&state.db)
+            .await
+            .expect("accounts")
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get(0).expect("username"),
+                    r.try_get(1).expect("display_name"),
+                    r.try_get(2).expect("password_hash"),
+                    r.try_get(3).expect("username_key"),
+                    r.try_get(4).expect("username_key_alt"),
+                )
+            })
+            .collect()
+    }
+
+    async fn look_alike_usernames_are_refused(state: &AppState) {
+        for name in [
+            "Root", "mom", "bob", "alice", "lan", "Eve", "Mike", "SAM", "Max",
+        ] {
+            let _ = register_text(state, name).await.expect(name);
+        }
+        let root = get_user(&state.db, "root")
+            .await
+            .expect("load")
+            .expect("root");
+        assert!(root.is_site_admin, "the first account is the hidden admin");
+        let ban = serde_json::from_value(serde_json::json!({ "username": "eve" })).expect("ban");
+        let _ = crate::api::admin::ban_user(State(state.clone()), Authed(root), Json(ban))
+            .await
+            .expect("ban eve");
+        let hash = hash_password("old").await.expect("hash");
+        for name in [
+            "b\u{43e}b",
+            "zed\u{200b}",
+            "\u{200f}amy",
+            "bea\u{2060}",
+            "cy\u{ad}d",
+            "kay\u{1d159}",
+        ] {
+            crate::db::NewUser::plain(name)
+                .hash(&hash)
+                .at(1)
+                .add(&state.db)
+                .await;
+        }
+        let before = account_rows(state).await;
+        let taken = (StatusCode::BAD_REQUEST, USERNAME_TAKEN.to_string());
+        let banned = (StatusCode::BAD_REQUEST, "Username is banned".to_string());
+        let invalid = (StatusCode::BAD_REQUEST, HIDDEN_REFUSED.to_string());
+        for (name, answer) in [
+            ("mom", &taken),
+            ("MOM", &taken),
+            ("Bob", &taken),
+            ("b\u{43e}b", &taken),
+            ("rnom", &taken),
+            ("RNOM", &taken),
+            ("b0b", &taken),
+            ("B0B", &taken),
+            ("AIice", &taken),
+            ("Ian", &taken),
+            ("\u{ff4d}\u{ff4f}\u{ff4d}", &taken),
+            ("\u{ff22}\u{ff2f}\u{ff22}", &taken),
+            ("b\u{3bf}b", &taken),
+            ("\u{391}lice", &taken),
+            ("\u{430}lice", &taken),
+            ("B\u{41e}B", &taken),
+            ("bo\u{301}b", &taken),
+            ("a\u{308}lice", &taken),
+            ("bo\u{200b}b", &invalid),
+            ("bob\u{2060}", &invalid),
+            ("\u{200f}bob", &invalid),
+            ("bob\u{202e}", &invalid),
+            ("zara\u{200d}", &invalid),
+            ("\u{200e}zara", &invalid),
+            ("zara\u{ad}", &invalid),
+            ("zed", &taken),
+            ("ZED", &taken),
+            ("z\u{435}d", &taken),
+            ("amy", &taken),
+            ("bea", &taken),
+            ("cyd", &taken),
+            ("kay", &taken),
+            ("bob\u{1d159}", &invalid),
+            ("\u{1d159}bob", &invalid),
+            ("b\u{1d159}ob", &invalid),
+            ("bo\u{200a}b", &taken),
+            ("bo\u{2009}b", &taken),
+            ("bo\u{202f}b", &taken),
+            ("bo\u{2006}b", &taken),
+            ("bo\u{a0}b", &taken),
+            ("zara\u{fe0f}", &taken),
+            ("kim\u{e0100}", &taken),
+            ("lee\u{2003}", &taken),
+            ("joe ", &taken),
+            ("\u{3000}ann", &taken),
+            ("\u{a0}ann", &taken),
+            ("Root", &taken),
+            ("R00T", &taken),
+            ("\u{39c}ike", &taken),
+            ("\u{41c}ike", &taken),
+            ("\u{a4df}ike", &taken),
+            ("\u{39c}IKE", &taken),
+            ("\u{39c}om", &taken),
+            ("\u{13b7}o\u{13b7}", &taken),
+            ("SA\u{39c}", &taken),
+            ("\u{41c}ax", &taken),
+            ("b\u{f8}b", &taken),
+            ("eve", &banned),
+            ("EVE", &banned),
+            ("\u{435}ve", &banned),
+            ("Ev\u{435}", &banned),
+            ("e\u{301}ve", &banned),
+            ("e\u{200b}ve", &invalid),
+        ] {
+            let hashes = hash_runs();
+            let refused = register_text(state, name)
+                .await
+                .err()
+                .map(|ApiError(code, msg, _)| (code, msg));
+            assert_eq!(refused.as_ref(), Some(answer), "{name:?}");
+            let cost = match answer == &invalid {
+                true => 0,
+                false => 1,
+            };
+            assert_eq!(
+                hash_runs() - hashes,
+                cost,
+                "{name:?} costs what a free name costs, or nothing when its characters refuse it"
+            );
+        }
+        assert_eq!(
+            account_rows(state).await,
+            before,
+            "no account is added, and collisions from before stay as they are"
+        );
+        for name in ["zara", "Bobby", "momo", "Alicia", "Ivan", "Bo B"] {
+            let hashes = hash_runs();
+            let Json(AuthResp { user, .. }) = register_text(state, name).await.expect(name);
+            assert_eq!(hash_runs() - hashes, 1, "{name:?}");
+            assert_eq!(user.username, name.to_lowercase());
+        }
+        for (name, answer) in [
+            ("\u{301}", "Username required"),
+            ("\u{301}\u{fe0f}", "Username required"),
+            (" \u{20dd} ", "Username required"),
+            ("\u{200b}", HIDDEN_REFUSED),
+            ("\u{3164}\u{2060}", HIDDEN_REFUSED),
+        ] {
+            assert_eq!(
+                register_text(state, name)
+                    .await
+                    .err()
+                    .map(|ApiError(code, msg, _)| (code, msg)),
+                Some((StatusCode::BAD_REQUEST, answer.to_string())),
+                "{name:?} looks like no name"
+            );
+        }
+        for name in ["ZARA", "z\u{430}ra", "zar\u{430}\u{301}"] {
+            assert_eq!(
+                register_text(state, name)
+                    .await
+                    .err()
+                    .map(|ApiError(code, msg, _)| (code, msg)),
+                Some(taken.clone()),
+                "{name:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn sign_up_refuses_look_alike_usernames() {
+        let (state, path) = temp_state("signup_lookalike").await;
+        let state = crate::api::rare::tests::unlimited(state);
+        look_alike_usernames_are_refused(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("signup_lookalike").await {
+            let state = crate::api::rare::tests::unlimited(state);
+            look_alike_usernames_are_refused(&state).await;
+            pg_done(state, pg).await;
+        }
+    }
+
+    /// Look-alike pairs whose look comes from the capitals of one of them: a capital I passes
+    /// for l, and Greek and Cyrillic capitals pass for Latin ones only before case folding.
+    const CAPITAL_PAIRS: [(&str, &str); 9] = [
+        ("Ian", "lan"),
+        ("AIice", "Alice"),
+        ("\u{392}ob", "Bob"),
+        ("\u{39c}ike", "Mike"),
+        ("\u{412}en", "Ben"),
+        ("\u{422}om", "Tom"),
+        ("\u{41d}ank", "Hank"),
+        ("\u{39a}ate", "Kate"),
+        ("\u{39d}ina", "Nina"),
+    ];
+
+    /// Look-alike pairs whose look comes from the lower case of one of them: a Cherokee capital
+    /// passes for a Latin letter only as a small letter (U+13A4 for o, U+13B1 for r).
+    const SMALL_LETTER_PAIRS: [(&str, &str); 10] = [
+        ("B\u{13a4}B", "Bob"),
+        ("\u{13b1}ose", "rose"),
+        ("D\u{13a4}N", "Don"),
+        ("\u{13aa}nn", "\u{1d00}nn"),
+        ("\u{13b7}ia", "\u{28d}ia"),
+        ("ab\u{13a0}", "ab\u{1d05}"),
+        ("ab\u{13a1}", "ab\u{280}"),
+        ("ab\u{13a2}", "ab\u{442}"),
+        ("cd\u{13a2}", "cd\u{3c4}"),
+        ("ef\u{13a2}", "ef\u{4ad}"),
+    ];
+
+    /// Look-alike pairs whose look compatibility normalization would hide: a long s is an f, and
+    /// the lunate sigmas (U+03F2, U+03F9) are c and C.
+    const OWN_LOOK_PAIRS: [(&str, &str); 5] = [
+        ("\u{3f2}arol", "Carol"),
+        ("\u{3f9}hris", "Chris"),
+        ("Mar\u{3f2}", "Marc"),
+        ("\u{17f}red", "Fred"),
+        ("je\u{17f}\u{17f}", "JEFF"),
+    ];
+
+    /// A banned account and its look-alike, for each set of pairs, with both in capitals.
+    const BANNED_PAIRS: [(&str, &str, [&str; 2]); 3] = [
+        ("\u{412}ic", "Bic", ["BIC", "\u{412}IC"]),
+        ("\u{13b1}ic", "ric", ["RIC", "\u{13b1}IC"]),
+        ("\u{3f9}ole", "Cole", ["COLE", "\u{3f9}OLE"]),
+    ];
+
+    fn refused(r: Result<Json<AuthResp>, ApiError>) -> Option<(StatusCode, String)> {
+        r.err().map(|ApiError(code, msg, _)| (code, msg))
+    }
+
+    async fn either_spelling_first_is_refused(
+        state: &AppState,
+        pairs: &[(&'static str, &'static str)],
+        (who, twin, capitals): (&str, &str, [&str; 2]),
+        first_is_capital: bool,
+    ) {
+        let taken = (StatusCode::BAD_REQUEST, USERNAME_TAKEN.to_string());
+        let banned = (StatusCode::BAD_REQUEST, USERNAME_BANNED.to_string());
+        let _ = register_text(state, "Root").await.expect("root");
+        let order = |(capital, plain): &(&'static str, &'static str)| match first_is_capital {
+            true => (*capital, *plain),
+            false => (*plain, *capital),
+        };
+        for (first, _) in pairs.iter().map(order) {
+            let _ = register_text(state, first).await.expect(first);
+        }
+        for (first, then) in pairs.iter().map(order) {
+            let hashes = hash_runs();
+            assert_eq!(
+                refused(register_text(state, then).await),
+                Some(taken.clone()),
+                "{first:?} then {then:?}"
+            );
+            assert_eq!(
+                hash_runs() - hashes,
+                1,
+                "{then:?} costs what a free name costs"
+            );
+        }
+
+        let root = get_user(&state.db, "root")
+            .await
+            .expect("load")
+            .expect("root");
+        let (who, twin) = match first_is_capital {
+            true => (who, twin),
+            false => (twin, who),
+        };
+        let _ = register_text(state, who).await.expect(who);
+        let ban = serde_json::json!({ "username": who.to_lowercase() });
+        let ban = serde_json::from_value(ban).expect("ban");
+        let _ = crate::api::admin::ban_user(State(state.clone()), Authed(root), Json(ban))
+            .await
+            .expect("ban");
+        for name in [who, twin].into_iter().chain(capitals) {
+            assert_eq!(
+                refused(register_text(state, name).await),
+                Some(banned.clone()),
+                "{name:?} after a ban of {who:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn refusal_does_not_depend_on_which_spelling_came_first() {
+        let sets: [&[(&str, &str)]; 3] = [&CAPITAL_PAIRS, &SMALL_LETTER_PAIRS, &OWN_LOOK_PAIRS];
+        for (pairs, ban) in sets.into_iter().zip(BANNED_PAIRS) {
+            for first_is_capital in [true, false] {
+                let (state, path) = temp_state("signup_either_first").await;
+                let state = crate::api::rare::tests::unlimited(state);
+                either_spelling_first_is_refused(&state, pairs, ban, first_is_capital).await;
+                done(state, path).await;
+                if let Some((state, pg)) = pg_state("signup_either_first").await {
+                    let state = crate::api::rare::tests::unlimited(state);
+                    either_spelling_first_is_refused(&state, pairs, ban, first_is_capital).await;
+                    pg_done(state, pg).await;
+                }
+            }
+        }
+    }
+
+    async fn a_long_s_is_not_an_s(state: &AppState) {
+        let taken = Some((StatusCode::BAD_REQUEST, USERNAME_TAKEN.to_string()));
+        for name in ["sam", "\u{17f}am", "\u{17f}ue", "Sue"] {
+            let _ = register_text(state, name).await.expect(name);
+        }
+        for name in ["fam", "FUE"] {
+            assert_eq!(refused(register_text(state, name).await), taken, "{name:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_long_s_signs_up_next_to_an_s() {
+        let (state, path) = temp_state("signup_long_s").await;
+        let state = crate::api::rare::tests::unlimited(state);
+        a_long_s_is_not_an_s(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("signup_long_s").await {
+            let state = crate::api::rare::tests::unlimited(state);
+            a_long_s_is_not_an_s(&state).await;
+            pg_done(state, pg).await;
+        }
+    }
+
+    /// Names with three looks (as typed, in lower case and case-folded), each with a plain twin
+    /// of its lowercase username.
+    const THREE_LOOK_PAIRS: [(&str, &str); 3] = [
+        ("\u{13a4}lIvia", "olivia"),
+        ("\u{13b1}Iley", "riley"),
+        ("\u{3d2}Iq", "Yiq"),
+    ];
+
+    async fn three_looks_are_refused(state: &AppState, plain_first: bool) {
+        let taken = Some((StatusCode::BAD_REQUEST, USERNAME_TAKEN.to_string()));
+        let _ = register_text(state, "Root").await.expect("root");
+        for (three, plain) in THREE_LOOK_PAIRS {
+            if plain_first {
+                let _ = register_text(state, plain).await.expect(plain);
+            }
+            let hashes = hash_runs();
+            assert_eq!(
+                refused(register_text(state, three).await),
+                taken,
+                "{three:?}, after {plain:?}: {plain_first}"
+            );
+            assert_eq!(
+                hash_runs() - hashes,
+                1,
+                "{three:?} costs what a free name costs"
+            );
+            assert!(
+                get_user(&state.db, three).await.expect("load").is_none(),
+                "{three:?}"
+            );
+            if !plain_first {
+                let _ = register_text(state, plain).await.expect(plain);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn names_with_three_looks_can_not_sign_up() {
+        for plain_first in [false, true] {
+            let (state, path) = temp_state("signup_three_looks").await;
+            let state = crate::api::rare::tests::unlimited(state);
+            three_looks_are_refused(&state, plain_first).await;
+            done(state, path).await;
+            if let Some((state, pg)) = pg_state("signup_three_looks").await {
+                let state = crate::api::rare::tests::unlimited(state);
+                three_looks_are_refused(&state, plain_first).await;
+                pg_done(state, pg).await;
+            }
+        }
+    }
+
+    async fn three_look_accounts_stay(state: &AppState) {
+        let taken = || Err((StatusCode::BAD_REQUEST, USERNAME_TAKEN.to_string()));
+        let named = |name: &str| serde_json::json!({ "display_name": name });
+        let name_of = |r: Result<MeUpdated, (StatusCode, String)>| r.map(|u| u.user.display_name);
+        let hash = hash_password("old").await.expect("hash");
+        let accounts = [
+            ("\u{13a4}lIve", "\u{ab74}live"),
+            ("\u{13b1}Ivy", "\u{ab81}ivy"),
+            ("\u{3d2}Iz", "\u{3d2}iz"),
+        ];
+        for (shown, username) in accounts {
+            crate::db::NewUser::plain(username)
+                .shown(shown)
+                .hash(&hash)
+                .at(1)
+                .add(&state.db)
+                .await;
+        }
+        for (shown, username) in accounts {
+            assert_eq!(
+                name_of(patch_as(state, username, named(shown)).await),
+                Ok(shown.to_string()),
+                "{shown:?} keeps its name"
+            );
+        }
+
+        let _ = register_text(state, "\u{ab74}lin")
+            .await
+            .expect("a Cherokee small letter");
+        assert_eq!(
+            name_of(patch_as(state, "\u{ab74}lin", named("\u{13a4}lIn")).await),
+            taken(),
+            "capitals that give the username three looks"
+        );
+        assert_eq!(
+            refused(register_text(state, "olin").await),
+            Some((StatusCode::BAD_REQUEST, USERNAME_TAKEN.to_string())),
+            "the look of its lower case stays stored"
+        );
+        assert_eq!(
+            name_of(patch_as(state, "\u{ab74}lin", named("\u{13a4}lin")).await),
+            Ok("\u{13a4}lin".to_string()),
+            "a Cherokee capital alone"
+        );
+    }
+
+    #[tokio::test]
+    async fn accounts_with_three_looks_stay() {
+        let (state, path) = temp_state("three_look_accounts").await;
+        let state = crate::api::rare::tests::unlimited(state);
+        three_look_accounts_stay(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("three_look_accounts").await {
+            let state = crate::api::rare::tests::unlimited(state);
+            three_look_accounts_stay(&state).await;
+            pg_done(state, pg).await;
+        }
+    }
+
+    async fn display_name_capitals_count(state: &AppState) {
+        let taken = || Err((StatusCode::BAD_REQUEST, USERNAME_TAKEN.to_string()));
+        let named = |name: &str| serde_json::json!({ "display_name": name });
+        let name_of = |r: Result<MeUpdated, (StatusCode, String)>| r.map(|u| u.user.display_name);
+        for name in ["ida", "lan", "ian"] {
+            let _ = register_text(state, name).await.expect(name);
+        }
+        assert_eq!(
+            name_of(patch_as(state, "ida", named("Ida")).await),
+            Ok("Ida".to_string())
+        );
+        assert_eq!(
+            refused(register_text(state, "lda").await),
+            Some((StatusCode::BAD_REQUEST, USERNAME_TAKEN.to_string())),
+            "the username shown as Ida passes for lda"
+        );
+        assert_eq!(
+            name_of(patch_as(state, "ida", named("Ida B")).await),
+            Ok("Ida B".to_string())
+        );
+        let _ = register_text(state, "lda")
+            .await
+            .expect("not shown as Ida any more");
+        assert_eq!(
+            name_of(patch_as(state, "ida", named("Ida")).await),
+            taken(),
+            "its capitals pass for lda now"
+        );
+        assert_eq!(
+            name_of(patch_as(state, "ian", named("Ian")).await),
+            taken(),
+            "Ian passes for lan"
+        );
+        assert_eq!(name_of(patch_as(state, "ian", named("IAN")).await), taken());
+        assert_eq!(
+            name_of(patch_as(state, "lan", named("LAN")).await),
+            Ok("LAN".to_string()),
+            "the username in capitals that pass for nobody else"
+        );
+
+        let _ = register_text(state, "carol").await.expect("carol");
+        for name in ["\u{456}an", "car0l"] {
+            crate::db::NewUser::plain(name).at(1).add(&state.db).await;
+        }
+        assert_eq!(
+            name_of(patch_as(state, "ian", named("Ian")).await),
+            taken(),
+            "Ian passes for lan, whatever else ian passes for"
+        );
+        assert_eq!(
+            name_of(patch_as(state, "\u{456}an", named("\u{406}an")).await),
+            taken(),
+            "a Cyrillic capital that passes for l"
+        );
+        assert_eq!(
+            name_of(patch_as(state, "carol", named("Carol")).await),
+            Ok("Carol".to_string()),
+            "capitals that add no look"
+        );
+        let keys =
+            sqlx::query("SELECT username_key, username_key_alt FROM users WHERE username = 'ian'")
+                .fetch_one(&state.db)
+                .await
+                .expect("ian");
+        assert_eq!(
+            (
+                keys.try_get::<String, _>(0).expect("key"),
+                keys.try_get::<Option<String>, _>(1).expect("alt")
+            ),
+            ("ian".to_string(), None),
+            "a refused name leaves the keys as they are"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_display_name_in_capitals_keys_the_username() {
+        let (state, path) = temp_state("display_capitals").await;
+        let state = crate::api::rare::tests::unlimited(state);
+        display_name_capitals_count(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("display_capitals").await {
+            let state = crate::api::rare::tests::unlimited(state);
+            display_name_capitals_count(&state).await;
             pg_done(state, pg).await;
         }
     }

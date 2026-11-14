@@ -118,6 +118,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("privacy", "profile TEXT"),
     ("servers", "guest_voice {INT} NOT NULL DEFAULT 1"),
     ("servers", "members_visible {INT} NOT NULL DEFAULT 1"),
+    ("banned_usernames", "username_key TEXT"),
+    ("banned_usernames", "username_key_alt TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -212,13 +214,17 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 31: P2P identity records (`p2p_identities`).
 /// 32: `servers.members_visible`, the per-server "Members can be seen by people outside this
 /// server" option.
-pub const SCHEMA_VERSION: i64 = 32;
+/// 33: the look-alike keys of banned usernames (`banned_usernames.username_key`,
+/// `banned_usernames.username_key_alt`).
+pub const SCHEMA_VERSION: i64 = 33;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 14] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 16] {
     [
         "CREATE INDEX IF NOT EXISTS idx_users_username_key ON users(username_key)",
         "CREATE INDEX IF NOT EXISTS idx_users_username_key_alt ON users(username_key_alt)",
+        "CREATE INDEX IF NOT EXISTS idx_banned_usernames_username_key ON banned_usernames(username_key)",
+        "CREATE INDEX IF NOT EXISTS idx_banned_usernames_username_key_alt ON banned_usernames(username_key_alt)",
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_revoked ON server_passwords(revoked_at) WHERE revoked_at IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_expires ON server_passwords(expires_at) WHERE expires_at IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_used_up ON server_passwords(used_up_at) WHERE used_up_at IS NOT NULL",
@@ -311,48 +317,65 @@ async fn hash_stored_secrets(conn: &mut AnyConnection) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Stores the look-alike keys (`names::username_keys`) of usernames that have none: accounts
-/// from before the columns existed. Keyed on the stored form, so an account that was written
-/// without keys gets them on the next start. Keys made by another `names::KEY_VERSION` are all
-/// made again.
+/// Stores the look-alike keys (`names::username_keys`) of usernames and banned usernames that
+/// have none: rows from before the columns existed. Keyed on the stored form and the display
+/// name (of the banned account while its row is still there), so a row that was written without
+/// keys gets them on the next start. Keys made by another `names::KEY_VERSION` are all made
+/// again.
 async fn key_usernames(conn: &mut AnyConnection) -> anyhow::Result<()> {
     const VERSION: &str = "username_key_version";
+    const TABLES: [(&str, &str, &str); 2] = [
+        (
+            "users",
+            "usernames",
+            "SELECT username, display_name FROM users WHERE username_key IS NULL LIMIT 500",
+        ),
+        (
+            "banned_usernames",
+            "banned usernames",
+            "SELECT b.username, u.display_name FROM banned_usernames b LEFT JOIN users u ON u.username = b.username WHERE b.username_key IS NULL LIMIT 500",
+        ),
+    ];
     let current = crate::api::names::KEY_VERSION.to_string();
     if stored_setting(conn, VERSION).await?.as_deref() != Some(current.as_str()) {
-        sqlx::query(
-            "UPDATE users SET username_key = NULL, username_key_alt = NULL WHERE username_key IS NOT NULL",
-        )
-        .execute(&mut *conn)
-        .await?;
-        store_setting(conn, VERSION, &current).await?;
-    }
-    let mut total = 0;
-    loop {
-        let names: Vec<String> =
-            sqlx::query("SELECT username FROM users WHERE username_key IS NULL LIMIT 500")
-                .fetch_all(&mut *conn)
-                .await?
-                .iter()
-                .map(|r| r.try_get(0))
-                .collect::<Result<_, _>>()?;
-        if names.is_empty() {
-            break;
-        }
-        for name in &names {
-            let (key, alt) = crate::api::names::username_keys(name);
-            sqlx::query(
-                "UPDATE users SET username_key = $1, username_key_alt = $2 WHERE username = $3",
-            )
-            .bind(key)
-            .bind(alt)
-            .bind(name)
+        for (table, _, _) in TABLES {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {table} SET username_key = NULL, username_key_alt = NULL WHERE username_key IS NOT NULL"
+            )))
             .execute(&mut *conn)
             .await?;
         }
-        total += names.len();
+        store_setting(conn, VERSION, &current).await?;
     }
-    if total > 0 {
-        tracing::info!("stored the name keys of {total} usernames");
+    for (table, what, unkeyed) in TABLES {
+        let mut total = 0;
+        loop {
+            let names: Vec<(String, Option<String>)> = sqlx::query(unkeyed)
+                .fetch_all(&mut *conn)
+                .await?
+                .iter()
+                .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
+                .collect::<sqlx::Result<_>>()?;
+            if names.is_empty() {
+                break;
+            }
+            for (name, shown) in &names {
+                let shown = shown.as_deref().unwrap_or(name);
+                let (key, alt) = crate::api::names::username_keys(name, shown);
+                sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "UPDATE {table} SET username_key = $1, username_key_alt = $2 WHERE username = $3"
+                )))
+                .bind(key)
+                .bind(alt)
+                .bind(name)
+                .execute(&mut *conn)
+                .await?;
+            }
+            total += names.len();
+        }
+        if total > 0 {
+            tracing::info!("stored the name keys of {total} {what}");
+        }
     }
     Ok(())
 }

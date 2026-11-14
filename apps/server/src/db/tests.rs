@@ -3883,12 +3883,118 @@ async fn username_keys_upgrade(url: &str) {
     let db = open(Some(url)).await.expect("another version");
     assert_eq!((count(&db, made).await, count(&db, &version).await), (1, 1));
     upgraded_username_keys_db(&db).await;
+    // Keys of version 1 hold hidden characters.
+    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, username_key) VALUES('zed\u{200b}', 'Zed', 'z-hash', 'text', 'identicon', 12, 'zed\u{200b}')")
+        .execute(&db)
+        .await
+        .expect("an account keyed by version 1");
+    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, username_key) VALUES('kay\u{1d159}', 'Kay', 'k-hash', 'text', 'identicon', 13, 'kay\u{1d159}')")
+        .execute(&db)
+        .await
+        .expect("a blank symbol kept by version 1");
+    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, username_key, username_key_alt) VALUES('\u{ab87}ia', 'Mia', 'm-hash', 'text', 'identicon', 14, 'mia', '\u{28d}ia')")
+        .execute(&db)
+        .await
+        .expect("a key of version 1 that is not its own key");
+    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, username_key) VALUES('\u{3b2}en', '\u{392}en', 'b-hash', 'text', 'identicon', 15, 'ssen')")
+        .execute(&db)
+        .await
+        .expect("a Greek capital Beta, keyed by version 1 in lower case");
+    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, username_key) VALUES('tia', 'TIA', 't-hash', 'text', 'identicon', 16, 'tia')")
+        .execute(&db)
+        .await
+        .expect("a capital I, keyed by version 1 in lower case");
+    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, username_key, username_key_alt) VALUES('d\u{ab74}n', 'D\u{13a4}N', 'd-hash', 'text', 'identicon', 17, 'do''n', 'don')")
+        .execute(&db)
+        .await
+        .expect("a Cherokee capital, keyed by version 1 in lower case");
+    sqlx::query("UPDATE settings SET value = '1' WHERE key = 'username_key_version'")
+        .execute(&db)
+        .await
+        .expect("version 1");
+    for name in ["Zed", "Mia", "\u{39c}IA", "Ben", "tla"] {
+        assert!(
+            !crate::api::names::passes_for_another(&db, name, "carol")
+                .await
+                .expect("lookup"),
+            "{name}"
+        );
+    }
+    close(&db).await;
+    let db = open(Some(url)).await.expect("version 1 keys");
+    assert_eq!(
+        (
+            count(&db, "SELECT COUNT(*) FROM users WHERE username = 'zed\u{200b}' AND username_key = 'zed' AND username_key_alt IS NULL").await,
+            count(&db, "SELECT COUNT(*) FROM users WHERE username = 'kay\u{1d159}' AND username_key = 'kay' AND username_key_alt IS NULL").await,
+            count(&db, "SELECT COUNT(*) FROM users WHERE username = '\u{ab87}ia' AND username_key = 'rnia' AND username_key_alt = '\u{28d}ia'").await,
+            count(&db, &version).await
+        ),
+        (1, 1, 1, 1)
+    );
+    let capitals = "SELECT COUNT(*) FROM users WHERE username IN ('\u{3b2}en', 'tia') AND username_key_alt IN ('ben', 'tla')";
+    assert_eq!(count(&db, capitals).await, 2, "keyed by the name as shown");
+    let small = "SELECT COUNT(*) FROM users WHERE username = 'd\u{ab74}n' AND username_key = 'do''n' AND username_key_alt = 'don'";
+    assert_eq!(count(&db, small).await, 1, "and by its lower case");
+    for name in ["Zed", "Mia", "\u{39c}IA", "Ben", "tla", "Don"] {
+        assert!(
+            crate::api::names::passes_for_another(&db, name, "carol")
+                .await
+                .expect("lookup"),
+            "{name}: its visible spelling"
+        );
+    }
+    upgraded_username_keys_db(&db).await;
+    // Keys of version 2 read a long s as s and a lunate sigma as a sigma.
+    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, username_key) VALUES('\u{17f}red', '\u{17f}red', 'f-hash', 'text', 'identicon', 18, 'sred')")
+        .execute(&db)
+        .await
+        .expect("a long s, keyed by version 2");
+    sqlx::query("INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, username_key, username_key_alt) VALUES('\u{3f2}hris', '\u{3f9}hris', 'c-hash', 'text', 'identicon', 19, 'ohris', '\u{283}hris')")
+        .execute(&db)
+        .await
+        .expect("a lunate sigma, keyed by version 2");
+    sqlx::query("UPDATE settings SET value = '2' WHERE key = 'username_key_version'")
+        .execute(&db)
+        .await
+        .expect("version 2");
+    close(&db).await;
+    let db = open(Some(url)).await.expect("version 2 keys");
+    assert_eq!(
+        (
+            count(&db, "SELECT COUNT(*) FROM users WHERE username = '\u{17f}red' AND username_key = 'fred' AND username_key_alt IS NULL").await,
+            count(&db, "SELECT COUNT(*) FROM users WHERE username = '\u{3f2}hris' AND username_key = 'chris' AND username_key_alt IS NULL").await,
+            count(&db, &version).await
+        ),
+        (1, 1, 1),
+        "a long s is an f, a lunate sigma a c"
+    );
+    for (name, alike) in [
+        ("Fred", true),
+        ("Chris", true),
+        ("sred", false),
+        ("ohris", false),
+    ] {
+        assert_eq!(
+            crate::api::names::passes_for_another(&db, name, "carol")
+                .await
+                .expect("lookup"),
+            alike,
+            "{name}"
+        );
+    }
+    let fred = get_user(&db, "\u{17f}red")
+        .await
+        .expect("load")
+        .expect("a long s");
+    assert_eq!(fred.password_hash, "f-hash", "the account stays as it is");
+    upgraded_username_keys_db(&db).await;
     close(&db).await;
 }
 
 #[tokio::test]
 async fn username_keys_are_added_to_an_old_database() {
     const { assert!(SCHEMA_VERSION >= 23) };
+    const { assert!(crate::api::names::KEY_VERSION >= 3) };
     let path = crate::db::temp_db_path("username_keys_upgrade");
     let wipe = || {
         for suffix in ["", "-wal", "-shm"] {
@@ -3900,6 +4006,292 @@ async fn username_keys_are_added_to_an_old_database() {
     wipe();
     if let Some(pg) = crate::api::test_util::pg_temp("username_keys_upgrade").await {
         username_keys_upgrade(&pg.url).await;
+        drop(pg);
+    }
+}
+
+async fn old_banned_keys_db(db: &Db) {
+    for stmt in [
+        "DROP INDEX idx_banned_usernames_username_key".to_string(),
+        "DROP INDEX idx_banned_usernames_username_key_alt".to_string(),
+        "ALTER TABLE banned_usernames DROP COLUMN username_key".to_string(),
+        "ALTER TABLE banned_usernames DROP COLUMN username_key_alt".to_string(),
+        "UPDATE settings SET value = '32' WHERE key = 'schema_version'".to_string(),
+        "UPDATE settings SET value = '1' WHERE key = 'username_key_version'".to_string(),
+        "INSERT INTO servers(name, display_name, creator, member_count, created_at, members_visible) VALUES('club', 'Club', 'mallory', 0, 7, 0)".to_string(),
+        "INSERT INTO banned_usernames(username) VALUES('eve')".to_string(),
+        "INSERT INTO banned_usernames(username) VALUES('m\u{430}llory')".to_string(),
+        "INSERT INTO banned_usernames(username) VALUES('\u{2110}an')".to_string(),
+        "INSERT INTO banned_usernames(username) VALUES('\u{432}ic')".to_string(),
+        "INSERT INTO banned_usernames(username) VALUES('\u{ab81}ose')".to_string(),
+        format!("{OLD_USER}('mallory', 'Mallory', 'm-hash', 'text', 'identicon', 7)"),
+        format!("{OLD_USER}('\u{432}ic', '\u{412}ic', '!purging', 'text', 'identicon', 8)"),
+        format!("{OLD_USER}('\u{ab81}ose', '\u{13b1}ose', '!purging', 'text', 'identicon', 9)"),
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, username_key, username_key_alt) VALUES('d\u{ab74}n', 'D\u{13a4}N', 'd-hash', 'text', 'identicon', 10, 'do''n', 'don')".to_string(),
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, username_key, username_key_alt) VALUES('\u{ab74}livia', '\u{13a4}lIvia', 'o-hash', 'text', 'identicon', 11, 'o''livia', 'olivia')".to_string(),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(db)
+            .await
+            .expect(&stmt);
+    }
+}
+
+async fn banned_keys(db: &Db) -> Vec<(String, Option<String>, Option<String>)> {
+    let mut rows: Vec<_> =
+        sqlx::query("SELECT username, username_key, username_key_alt FROM banned_usernames")
+            .fetch_all(db)
+            .await
+            .expect("banned names")
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get(0).expect("username"),
+                    r.try_get(1).expect("username_key"),
+                    r.try_get(2).expect("username_key_alt"),
+                )
+            })
+            .collect();
+    rows.sort();
+    rows
+}
+
+async fn upgraded_banned_keys_db(db: &Db, extra: &[&str]) {
+    let old = [
+        "eve",
+        "m\u{430}llory",
+        "\u{2110}an",
+        "\u{432}ic",
+        "\u{ab81}ose",
+    ];
+    let mut want: Vec<_> = old
+        .iter()
+        .chain(extra)
+        .map(|name| {
+            let shown = match *name {
+                "\u{432}ic" => "\u{412}ic",
+                "\u{ab81}ose" => "\u{13b1}ose",
+                name => name,
+            };
+            let (key, alt) = crate::api::names::username_keys(name, shown);
+            (name.to_string(), Some(key), alt)
+        })
+        .collect();
+    want.sort();
+    assert_eq!(banned_keys(db).await, want);
+    let s = |v: &str| Some(v.to_string());
+    assert_eq!(
+        (want[0].1.clone(), want[0].2.clone()),
+        (s("eve"), None),
+        "{want:?}"
+    );
+    assert_eq!(
+        want.iter()
+            .find(|(name, _, _)| name == "\u{2110}an")
+            .map(|(_, key, alt)| (key.clone(), alt.clone())),
+        Some((s("ian"), s("lan")))
+    );
+    assert_eq!(
+        want.iter()
+            .find(|(name, _, _)| name == "\u{ab81}ose")
+            .and_then(|(_, _, alt)| alt.clone()),
+        s("rose"),
+        "the lower case of a Cherokee capital"
+    );
+    let mallory = get_user(db, "mallory")
+        .await
+        .expect("load")
+        .expect("mallory");
+    assert_eq!(
+        (
+            mallory.display_name.as_str(),
+            mallory.password_hash.as_str()
+        ),
+        ("Mallory", "m-hash"),
+        "an account that passes for a banned name stays as it is"
+    );
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM users WHERE username = 'd\u{ab74}n' AND username_key = 'do''n' AND username_key_alt = 'don'"
+        )
+        .await,
+        1,
+        "an account typed with a Cherokee capital keeps the look of its lower case"
+    );
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM servers WHERE name = 'club' AND members_visible = 0"
+        )
+        .await,
+        1,
+        "a server keeps its member privacy"
+    );
+    let olivia = get_user(db, "\u{ab74}livia")
+        .await
+        .expect("load")
+        .expect("an account with three looks");
+    assert_eq!(
+        (olivia.display_name.as_str(), olivia.password_hash.as_str()),
+        ("\u{13a4}lIvia", "o-hash"),
+        "an account with three looks stays as it is"
+    );
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM users WHERE username = '\u{ab74}livia' AND username_key = 'o''livia' AND username_key_alt = 'o''llvia'"
+        )
+        .await,
+        1,
+        "an account with three looks keeps its key and its look as shown"
+    );
+    for index in [
+        "idx_banned_usernames_username_key",
+        "idx_banned_usernames_username_key_alt",
+    ] {
+        let sql = match is_sqlite(db) {
+            true => format!(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = '{index}'"
+            ),
+            false => format!(
+                "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = '{index}'"
+            ),
+        };
+        assert_eq!(count(db, &sql).await, 1, "{index}");
+    }
+    use crate::api::names::{Refusal, refusal};
+    let mut conn = db.acquire().await.expect("connection");
+    for (name, answer) in [
+        ("EVE", Some(Refusal::Banned)),
+        ("\u{435}ve", Some(Refusal::Banned)),
+        ("Ian", Some(Refusal::Banned)),
+        ("lan", Some(Refusal::Banned)),
+        ("MALLORY", Some(Refusal::Banned)),
+        ("Mall0ry", Some(Refusal::Banned)),
+        ("Bic", Some(Refusal::Banned)),
+        ("rose", Some(Refusal::Banned)),
+        ("ROSE", Some(Refusal::Banned)),
+        ("Don", Some(Refusal::Taken)),
+        ("Evan", None),
+    ] {
+        assert_eq!(
+            refusal(&mut conn, &name.to_lowercase(), name)
+                .await
+                .expect("lookup"),
+            answer,
+            "{name}"
+        );
+    }
+    drop(conn);
+    assert_eq!(
+        count(
+            db,
+            "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'"
+        )
+        .await,
+        SCHEMA_VERSION
+    );
+}
+
+async fn banned_keys_upgrade(url: &str) {
+    let db = open(Some(url)).await.expect("open");
+    old_banned_keys_db(&db).await;
+    close(&db).await;
+    for _ in 0..2 {
+        let db = open(Some(url)).await.expect("upgrade");
+        upgraded_banned_keys_db(&db, &[]).await;
+        close(&db).await;
+    }
+    let db = open(Some(url)).await.expect("open");
+    sqlx::query("INSERT INTO banned_usernames(username) VALUES('trent')")
+        .execute(&db)
+        .await
+        .expect("a name banned without keys");
+    sqlx::query("UPDATE banned_usernames SET username_key = 'stale', username_key_alt = 'stale' WHERE username = 'eve'")
+        .execute(&db)
+        .await
+        .expect("keys of another version");
+    sqlx::query("UPDATE settings SET value = '0' WHERE key = 'username_key_version'")
+        .execute(&db)
+        .await
+        .expect("an older version");
+    close(&db).await;
+    let db = open(Some(url)).await.expect("restart");
+    upgraded_banned_keys_db(&db, &["trent"]).await;
+    sqlx::query(
+        "INSERT INTO banned_usernames(username, username_key) VALUES('ned\u{200b}', 'ned\u{200b}')",
+    )
+    .execute(&db)
+    .await
+    .expect("a name keyed by version 1");
+    sqlx::query("UPDATE settings SET value = '1' WHERE key = 'username_key_version'")
+        .execute(&db)
+        .await
+        .expect("version 1");
+    close(&db).await;
+    let db = open(Some(url)).await.expect("version 1 keys");
+    upgraded_banned_keys_db(&db, &["trent", "ned\u{200b}"]).await;
+    let mut conn = db.acquire().await.expect("connection");
+    assert_eq!(
+        crate::api::names::refusal(&mut conn, "ned", "Ned")
+            .await
+            .expect("lookup"),
+        Some(crate::api::names::Refusal::Banned),
+        "the visible spelling of a banned name"
+    );
+    drop(conn);
+    sqlx::query("INSERT INTO banned_usernames(username, username_key) VALUES('\u{17f}ue', 'sue')")
+        .execute(&db)
+        .await
+        .expect("a long s, keyed by version 2");
+    sqlx::query("UPDATE settings SET value = '2' WHERE key = 'username_key_version'")
+        .execute(&db)
+        .await
+        .expect("version 2");
+    close(&db).await;
+    let db = open(Some(url)).await.expect("version 2 keys");
+    assert_eq!(
+        count(
+            &db,
+            "SELECT COUNT(*) FROM banned_usernames WHERE username = '\u{17f}ue' AND username_key = 'fue' AND username_key_alt IS NULL"
+        )
+        .await,
+        1,
+        "a long s is an f"
+    );
+    upgraded_banned_keys_db(&db, &["trent", "ned\u{200b}", "\u{17f}ue"]).await;
+    let mut conn = db.acquire().await.expect("connection");
+    for (name, answer) in [
+        ("FUE", Some(crate::api::names::Refusal::Banned)),
+        ("Sue", None),
+    ] {
+        assert_eq!(
+            crate::api::names::refusal(&mut conn, &name.to_lowercase(), name)
+                .await
+                .expect("lookup"),
+            answer,
+            "{name}"
+        );
+    }
+    drop(conn);
+    close(&db).await;
+}
+
+#[tokio::test]
+async fn banned_name_keys_are_added_to_an_old_database() {
+    const { assert!(SCHEMA_VERSION >= 33) };
+    let path = crate::db::temp_db_path("banned_keys_upgrade");
+    let wipe = || {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    };
+    wipe();
+    banned_keys_upgrade(path.to_str().expect("path")).await;
+    wipe();
+    if let Some(pg) = crate::api::test_util::pg_temp("banned_keys_upgrade").await {
+        banned_keys_upgrade(&pg.url).await;
         drop(pg);
     }
 }

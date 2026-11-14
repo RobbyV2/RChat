@@ -1203,12 +1203,20 @@ async fn hide_user_in(
     })
 }
 
-/// Bans the name `key`. `false` when it was banned before.
+/// Bans the name `key` with its look-alike keys (`names::username_keys`, also of the account's
+/// display name), so new accounts can not pass for it either. `false` when it was banned before.
 async fn ban_name(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) -> sqlx::Result<bool> {
+    let shown = user_row(&mut **tx, key)
+        .await?
+        .map(|user| user.display_name);
+    let (username_key, alt) =
+        crate::api::names::username_keys(key, shown.as_deref().unwrap_or(key));
     sqlx::query(
-        "INSERT INTO banned_usernames(username) VALUES($1) ON CONFLICT(username) DO NOTHING",
+        "INSERT INTO banned_usernames(username, username_key, username_key_alt) VALUES($1, $2, $3) ON CONFLICT(username) DO NOTHING",
     )
     .bind(key)
+    .bind(username_key)
+    .bind(alt)
     .execute(&mut **tx)
     .await
     .map(|done| done.rows_affected() > 0)

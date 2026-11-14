@@ -220,10 +220,45 @@ pub struct NewUser<'a> {
     pub created_at: i64,
 }
 
-/// Inserts an account. Every account creation goes through here: it also stores the look-alike
-/// keys of the username (`names::username_keys`) that display names are checked against. A test
-/// (`accounts_are_only_inserted_with_their_keys`) fails on any other insert into `users`.
-pub async fn insert_user<'e, E>(ex: E, user: NewUser<'_>) -> sqlx::Result<()>
+/// Why `insert_user` added no account.
+#[derive(Debug)]
+pub enum NotAdded {
+    Refused(crate::api::names::Refusal),
+    Db(sqlx::Error),
+}
+
+impl From<sqlx::Error> for NotAdded {
+    fn from(e: sqlx::Error) -> NotAdded {
+        NotAdded::Db(e)
+    }
+}
+
+/// Adds an account in the caller's transaction. Every account creation goes through here. It
+/// refuses a username or display name that holds a hidden character or passes for a taken or
+/// banned username (`names::refusal`), and stores the look-alike keys of the username
+/// (`names::username_keys`) that later names are checked against. On Postgres it holds the lock
+/// on new usernames until the transaction ends, so two look-alikes can not be added at once; a
+/// caller that also locks a server takes that lock first, as `register` does.
+pub async fn insert_user(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    user: NewUser<'_>,
+) -> Result<(), NotAdded> {
+    if tx.backend_name() == "PostgreSQL" {
+        sqlx::query("SELECT COUNT(*) FROM pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind("new usernames")
+            .execute(&mut **tx)
+            .await?;
+    }
+    if let Some(refusal) = crate::api::names::refusal(tx, user.username, user.display_name).await? {
+        return Err(NotAdded::Refused(refusal));
+    }
+    write_user(&mut **tx, user).await?;
+    Ok(())
+}
+
+/// The one insert into `users`, with the keys of the username. A test
+/// (`accounts_are_only_inserted_with_their_keys`) fails on any other.
+async fn write_user<'e, E>(ex: E, user: NewUser<'_>) -> sqlx::Result<()>
 where
     E: sqlx::Executor<'e, Database = sqlx::Any>,
 {
@@ -237,7 +272,7 @@ where
         is_site_admin,
         created_at,
     } = user;
-    let (key, alt) = crate::api::names::username_keys(username);
+    let (key, alt) = crate::api::names::username_keys(username, display_name);
     sqlx::query(
         "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, avatar_color, is_site_admin, created_at, username_key, username_key_alt) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
     )
@@ -256,7 +291,8 @@ where
     Ok(())
 }
 
-/// Accounts for tests, written the way every account is.
+/// Accounts for tests, written the way every account is but without `insert_user`'s refusals, so
+/// tests can hold accounts from before the look-alike rule.
 #[cfg(test)]
 impl<'a> NewUser<'a> {
     /// `username` shown as itself, with no password and an identicon, created at 0.
@@ -317,7 +353,7 @@ impl<'a> NewUser<'a> {
     where
         E: sqlx::Executor<'e, Database = sqlx::Any>,
     {
-        insert_user(ex, self).await.expect("user");
+        write_user(ex, self).await.expect("user");
     }
 
     /// Adds the account with a recovery key, which the app sets through its own endpoint.
