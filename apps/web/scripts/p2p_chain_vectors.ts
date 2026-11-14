@@ -1,0 +1,289 @@
+// Writes assets/p2p_chain_vectors.json from p2p/chain.ts with fixed test keys, for the instance
+// to check its own chain and badge code against. Run with
+// `bun apps/web/scripts/p2p_chain_vectors.ts` and commit the result.
+import { writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { format, resolveConfig } from 'prettier'
+import { utf8 } from '../app/lib/p2p/canonical'
+import {
+  bindingBody2,
+  bindingHead2,
+  bindingRequest2,
+  CHAIN_MAX,
+  headOf,
+  isChainRecord,
+  isCreation,
+  makeCreation,
+  makeRecovery,
+  makeRemoval,
+  makeReset,
+  readChain,
+  recordId,
+  TAG2,
+  type ChainRecord,
+  type CreationRecord,
+  type Head,
+} from '../app/lib/p2p/chain'
+import { keyId, publicOf, signTagged, TAG, type KeyPair } from '../app/lib/p2p/keys'
+
+const OUT = fileURLToPath(new URL('../../../assets/p2p_chain_vectors.json', import.meta.url))
+
+export const vectorKey = (name: string): KeyPair => {
+  const sk = sha256(utf8(`rchat-p2p-chain-vector ${name}`))
+  return { sk, pk: publicOf(sk) }
+}
+
+const id = (name: string) => keyId(vectorKey(name).pk)
+
+const AT = 1_762_400_000_000
+const SUB = 'vera@chat.example.org'
+const TS = 1_762_400_000
+
+interface Expect {
+  cr: boolean
+  heads: Head[]
+  primary: string[]
+  in_force: string[]
+  frozen: boolean
+  refused: number[]
+  dead: number[]
+}
+
+export interface ChainCase {
+  name: string
+  cr: unknown
+  chain: unknown[]
+  expect: Expect
+}
+
+export interface BindCase {
+  name: string
+  sub: string
+  ik: string
+  ts: number
+  proof: string
+  cr: unknown
+  chain: unknown[]
+  expect: { ok: boolean; head?: Head }
+}
+
+const expectOf = (cr: unknown, chain: unknown[]): Expect => {
+  if (!isCreation(cr))
+    return { cr: false, heads: [], primary: [], in_force: [], frozen: false, refused: [], dead: [] }
+  const good = chain.filter((r): r is ChainRecord => isChainRecord(r))
+  const view = readChain(cr, good)
+  const at = (ok: (r: unknown) => boolean) => chain.flatMap((r, i) => (ok(r) ? [i] : []))
+  return {
+    cr: true,
+    heads: view.heads,
+    primary: view.heads.map(h => view.primary(h)),
+    in_force: view.heads.map(h => view.inForce(h)),
+    frozen: view.frozen,
+    refused: at(r => !isChainRecord(r) || !view.verifies(r)),
+    dead: at(r => isChainRecord(r) && view.verifies(r) && view.dead(recordId(r))),
+  }
+}
+
+export const chainVectors = () => {
+  const ik = vectorKey('ik')
+  const rk = vectorKey('rk')
+  const rk2 = vectorKey('rk2')
+  const thief = vectorKey('thief rk')
+  const I = keyId(ik.pk)
+  const cr = makeCreation(ik, rk, id('pk0'), AT)
+  const h0 = headOf(cr)
+  const r1 = makeRecovery(I, rk, h0, id('pk1'), [id('d2')], AT + 1)
+  const reset2 = makeReset(I, rk, rk2, headOf(r1), id('pk2'), [id('d2')], AT + 2)
+  const reset1 = makeReset(I, rk, rk2, h0, id('pk1r'), [id('d2'), id('d3')], AT + 1)
+  const removal1 = makeRemoval(I, rk, h0, id('pkx'), [id('d2')], AT + 1)
+  const ra = makeRecovery(I, rk, h0, id('pka'), [id('da')], AT + 1)
+  const rb = makeRecovery(I, rk, h0, id('pkb'), [id('db')], AT + 1)
+  const rival = makeReset(I, rk, thief, h0, id('pkz'), [id('z1')], AT + 1)
+  const other = vectorKey('other ik')
+  const otherCr = makeCreation(other, vectorKey('other rk'), id('other pk'), AT)
+  const full: ChainRecord[] = []
+  for (let n = 1, prev = h0; n <= CHAIN_MAX + 1; n += 1) {
+    const keep = Array.from({ length: 8 }, (_, i) => id(`dev ${n}.${i}`))
+    const body = {
+      v: 1 as const,
+      ik: I,
+      n,
+      prev: prev.d,
+      pk: id(`pk${n}`),
+      keep: keep.sort(),
+      at: AT,
+    }
+    const r = { ...body, sig: signTagged(rk.sk, TAG2.chain, body) }
+    full.push(r)
+    prev = headOf(r)
+  }
+  const underTag = (tag: string) => {
+    const { sig, ...body } = r1
+    void sig
+    return { ...body, sig: signTagged(rk.sk, tag, body) }
+  }
+  const crBody = ({ sig_ik, sig_rk, ...body }: CreationRecord) => {
+    void sig_ik
+    void sig_rk
+    return body
+  }
+  const noSigRk = Object.fromEntries(Object.entries(cr).filter(([k]) => k !== 'sig_rk'))
+  const pkIsIk = (() => {
+    const body = { ...crBody(cr), pk: I }
+    return {
+      ...body,
+      sig_ik: signTagged(ik.sk, TAG2.create, body),
+      sig_rk: signTagged(rk.sk, TAG2.create, body),
+    }
+  })()
+  const { sig_next, ...resetNoNext } = reset1
+  const forged = { ...r1, sig: makeRecovery(I, thief, h0, id('pk1'), [id('d2')], AT + 1).sig }
+  const cases: [string, unknown, unknown[]][] = [
+    ['a creation record', cr, []],
+    ['a recovery', cr, [r1]],
+    ['a recovery and a reset', cr, [r1, reset2]],
+    ['records in any order', cr, [reset2, r1]],
+    ['a removal: its primary plays recovery', cr, [removal1]],
+    [
+      'a record after a removal is signed by its primary',
+      cr,
+      [removal1, makeRecovery(I, vectorKey('pkx'), headOf(removal1), id('pk2'), [], AT + 2)],
+    ],
+    [
+      'a record after a removal signed by the old recovery key is refused',
+      cr,
+      [removal1, makeRecovery(I, rk, headOf(removal1), id('pk2'), [], AT + 2)],
+    ],
+    [
+      'a record signed by the old recovery key after a reset is refused',
+      cr,
+      [reset1, makeRecovery(I, rk, headOf(reset1), id('pk2'), [], AT + 2)],
+    ],
+    [
+      'a record after a reset is signed by the next key',
+      cr,
+      [reset1, makeRecovery(I, rk2, headOf(reset1), id('pk2'), [], AT + 2)],
+    ],
+    [
+      'a prev that does not match is refused',
+      cr,
+      [makeRecovery(I, rk, { n: 0, d: recordId(otherCr) }, id('pk1'), [], AT + 1)],
+    ],
+    [
+      'an n that does not follow is refused',
+      cr,
+      [makeRecovery(I, rk, { n: 1, d: h0.d }, id('pk1'), [], AT + 1)],
+    ],
+    ['a record with an unknown field is refused', cr, [{ ...r1, note: 1 }]],
+    [
+      'a record signed by another key is refused',
+      cr,
+      [makeRecovery(I, thief, h0, id('pk1'), [], AT)],
+    ],
+    ['a record signed under another tag is refused', cr, [underTag(TAG2.create)]],
+    [
+      "another identity's record is refused",
+      cr,
+      [makeRecovery(id('other ik'), rk, h0, id('pk1'), [], AT)],
+    ],
+    ['a reset without the next key signature is refused', cr, [resetNoNext]],
+    [
+      'a reset whose next key signature is by another key is refused',
+      cr,
+      [{ ...reset1, sig_next: rival.sig_next }],
+    ],
+    ['a recovery with a next key signature is refused', cr, [{ ...r1, sig_next }]],
+    ['a copy with a bad signature after the record is refused alone', cr, [r1, forged]],
+    ['a copy with a bad signature before the record is refused alone', cr, [forged, r1]],
+    ['two recoveries with the same n both count', cr, [ra, rb]],
+    [
+      'a record after two recoveries with the same n may cite either',
+      cr,
+      [ra, rb, makeRecovery(I, rk, headOf(rb), id('pk2'), [id('da'), id('db')], AT + 2)],
+    ],
+    ['a reset kills another record signed by its key', cr, [r1, reset1]],
+    ['rival resets freeze the identity', cr, [reset1, rival]],
+    ['rival reset and removal freeze the identity', cr, [removal1, rival]],
+    ['a chain at its cap', cr, full.slice(0, CHAIN_MAX)],
+    ['a ninth record is refused', cr, full],
+    ['a creation record without the recovery key signature', noSigRk, []],
+    ['a creation record with an unknown field', { ...cr, note: 1 }, []],
+    ['a creation record naming the identity key as its primary', pkIsIk, []],
+    [
+      'a creation record signed under the chain tag',
+      (() => {
+        const body = crBody(cr)
+        return {
+          ...body,
+          sig_ik: signTagged(ik.sk, TAG2.chain, body),
+          sig_rk: signTagged(rk.sk, TAG2.chain, body),
+        }
+      })(),
+      [],
+    ],
+    [
+      'a creation record whose signatures are swapped',
+      { ...cr, sig_ik: cr.sig_rk, sig_rk: cr.sig_ik },
+      [],
+    ],
+  ]
+  const chainCases: ChainCase[] = cases.map(([name, c, chain]) => ({
+    name,
+    cr: c,
+    chain,
+    expect: expectOf(c, chain),
+  }))
+
+  const bind = (
+    name: string,
+    signer: KeyPair,
+    chain: ChainRecord[],
+    head: Head,
+    change: (r: Record<string, unknown>) => Record<string, unknown> = r => r
+  ): BindCase => {
+    const req = change({ ...bindingRequest2(signer, SUB, { cr, chain }, head, TS) })
+    const found = bindingHead2(SUB, req)
+    return {
+      name,
+      sub: SUB,
+      ...(req as { ik: string; ts: number; proof: string; cr: unknown; chain: unknown[] }),
+      expect: found ? { ok: true, head: found } : { ok: false },
+    }
+  }
+  const pk0 = vectorKey('pk0')
+  const pk1 = vectorKey('pk1')
+  const bind2: BindCase[] = [
+    bind('the creation record only: head 0', pk0, [], h0),
+    bind('a chain: the head primary signs', pk1, [r1], headOf(r1)),
+    bind('an older primary while the chain holds a later record is refused', pk0, [r1], h0),
+    bind('the head primary naming an older head is refused', pk1, [r1], h0),
+    bind('a proof for another account is refused', pk1, [r1], headOf(r1), r => ({
+      ...r,
+      proof: signTagged(
+        pk1.sk,
+        TAG2.bind,
+        bindingBody2('mallory@chat.example.org', I, headOf(r1), TS)
+      ),
+    })),
+    bind('a proof for another time is refused', pk1, [r1], headOf(r1), r => ({ ...r, ts: TS + 1 })),
+    bind('a proof under the v1 tag is refused', pk1, [r1], headOf(r1), r => ({
+      ...r,
+      proof: signTagged(pk1.sk, TAG.bind, bindingBody2(SUB, I, headOf(r1), TS)),
+    })),
+    bind('a proof by the recovery key is refused', rk, [r1], headOf(r1)),
+    bind('a chain record that does not attach is refused', pk0, [reset2], h0),
+    bind('rival resets are refused', pk0, [reset1, rival], h0),
+    bind('a copy with a bad signature beside the record is refused', pk1, [r1], headOf(r1), r => ({
+      ...r,
+      chain: [r1, forged],
+    })),
+    bind('either head of two recoveries with the same n', vectorKey('pkb'), [ra, rb], headOf(rb)),
+  ]
+  return { v: 1, cases: chainCases, bind2 }
+}
+
+if (import.meta.main) {
+  const config = await resolveConfig(OUT)
+  writeFileSync(OUT, await format(JSON.stringify(chainVectors()), { ...config, parser: 'json' }))
+}
