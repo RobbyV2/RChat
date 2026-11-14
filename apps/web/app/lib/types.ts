@@ -867,7 +867,15 @@ export type WsEvent =
   | ({ type: 'ping_count'; username: string; scope: string } & PingSummary)
   | { type: 'group_pings_seen'; username: string; scope: string; message_ids: number[] }
   | { type: 'voice_state'; server: string; channel_id: number; users: string[] }
-  | { type: 'voice_muted'; server: string; channel_id: number; username: string; muted: boolean }
+  | {
+      type: 'voice_muted'
+      server: string
+      channel_id: number
+      username: string
+      muted: boolean
+      // A guest staff muted for everyone, not a timeout.
+      staff?: boolean
+    }
   | {
       type: 'member_timeout'
       server: string

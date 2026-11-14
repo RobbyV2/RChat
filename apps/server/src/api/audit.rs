@@ -29,6 +29,9 @@ pub enum Action {
     MemberUnban,
     MemberTimeout,
     MemberUntimeout,
+    VoiceDisconnect,
+    VoiceMute,
+    VoiceUnmute,
     AdminGrant,
     AdminRevoke,
     AdminTransfer,
@@ -75,6 +78,9 @@ pub const ACTIONS: &[Action] = &[
     Action::MemberUnban,
     Action::MemberTimeout,
     Action::MemberUntimeout,
+    Action::VoiceDisconnect,
+    Action::VoiceMute,
+    Action::VoiceUnmute,
     Action::AdminGrant,
     Action::AdminRevoke,
     Action::AdminTransfer,
@@ -128,6 +134,9 @@ impl Action {
             Action::MemberUnban => "member.unban",
             Action::MemberTimeout => "member.timeout",
             Action::MemberUntimeout => "member.untimeout",
+            Action::VoiceDisconnect => "member.voice_disconnect",
+            Action::VoiceMute => "member.voice_mute",
+            Action::VoiceUnmute => "member.voice_unmute",
             Action::AdminGrant => "member.admin_grant",
             Action::AdminRevoke => "member.admin_revoke",
             Action::AdminTransfer => "member.admin_transfer",
@@ -208,6 +217,7 @@ pub enum TargetKind {
     Password,
     Server,
     Webhook,
+    Guest,
 }
 
 impl TargetKind {
@@ -221,13 +231,15 @@ impl TargetKind {
             TargetKind::Password => "password",
             TargetKind::Server => "server",
             TargetKind::Webhook => "webhook",
+            TargetKind::Guest => "guest",
         }
     }
 }
 
 /// What the action was done to: a user (`name` is the username), a role, channel or category
 /// (`id` and name at the time), a message (`id`, `name` is its author), an extra password
-/// (`id`, `name` is its label) or the server itself (`name` is its display name).
+/// (`id`, `name` is its label), the server itself (`name` is its display name) or a guest in
+/// voice (`name` is its voice name).
 #[derive(Clone, Debug)]
 pub struct Target {
     pub kind: TargetKind,
@@ -249,6 +261,14 @@ impl Target {
             kind,
             id: Some(id),
             name: name.map(str::to_string),
+        }
+    }
+
+    pub fn guest(voice_name: &str) -> Target {
+        Target {
+            kind: TargetKind::Guest,
+            id: None,
+            name: Some(voice_name.to_string()),
         }
     }
 
@@ -596,14 +616,15 @@ pub(crate) async fn purge_server(db: &Db, server: &str) -> sqlx::Result<u64> {
 /// What an entry was done to.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuditTarget {
-    /// `user`, `role`, `channel`, `category`, `message`, `password` or `server`.
+    /// `user`, `role`, `channel`, `category`, `message`, `password`, `server` or `guest`.
     #[schema(example = "user")]
     pub kind: String,
-    /// Id of the role, channel, category, message or password; `null` for users and the server.
+    /// Id of the role, channel, category, message or password; `null` for users, guests and the
+    /// server.
     pub id: Option<i64>,
     /// Name at the time: the username for users, the author's username for messages, the
-    /// label for passwords (`null` without one), the display name for the server. `null` when
-    /// hidden.
+    /// label for passwords (`null` without one), the display name for the server, the voice
+    /// name (`@guest:` and 16 hex digits) for guests. `null` when hidden.
     pub name: Option<String>,
     /// The user, for `user` targets and message authors.
     pub user: Option<UserRef>,
@@ -619,7 +640,8 @@ pub struct AuditEntry {
     /// Entry id.
     pub id: i64,
     /// Dotted action name; the part before the dot is its group. `member`: `kick`, `ban`,
-    /// `unban`, `admin_grant`, `admin_revoke`, `admin_transfer`, `admin_perms`. `role`: `create`,
+    /// `unban`, `timeout`, `untimeout`, `voice_disconnect`, `voice_mute`, `voice_unmute` (of a
+    /// guest in voice), `admin_grant`, `admin_revoke`, `admin_transfer`, `admin_perms`. `role`: `create`,
     /// `update`, `delete`, `assign`, `unassign`. `channel`: `create`, `update` (name, topic, slow
     /// mode, restrictions), `delete`, `perm_set`, `perm_clear`, `reorder`, `category_create`,
     /// `category_update`, `category_delete`. `server`: `update` (name and colors),

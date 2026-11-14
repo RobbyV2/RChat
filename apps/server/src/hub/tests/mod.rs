@@ -497,3 +497,94 @@ async fn voice_snapshot_covers_only_held_servers() {
     assert!(calls_of(&hub.voice_snapshot_for(held.iter(), Some("erin"))).is_empty());
     assert_eq!(hub.voice_snapshot().len(), 3);
 }
+
+#[tokio::test]
+async fn a_guest_kick_and_mute_hold_on_every_instance() {
+    let bus = MemBus::new();
+    let (a, b) = (bus.join(), bus.join());
+    let guest = "@guest:00000000000000aa";
+    let addr: IpAddr = "2001:db8::7".parse().unwrap();
+    let conn = b.next_conn();
+    b.guest_voice_join(guest, conn, "club", 5, 0, Some(addr))
+        .await
+        .expect("in");
+    a.flush().await;
+    let seat = a.voice_seat(guest, "club").expect("seated");
+    assert_eq!(
+        (seat.channel_id, seat.addr.as_deref(), seat.hushed),
+        (5, Some("2001:db8::"), false),
+        "the /64 it came from"
+    );
+    a.hush_voice(guest, "club", seat.addr.as_deref(), true);
+    a.flush().await;
+    b.flush().await;
+    assert!(b.hushed(guest, "club") && a.hushed(guest, "club"));
+    b.voice_leave(guest).await;
+    a.kick_from_voice(
+        guest,
+        "club",
+        seat.addr.as_deref(),
+        "Removed from voice by staff",
+        Duration::from_secs(600),
+    );
+    a.flush().await;
+    b.flush().await;
+    assert_eq!(b.room_in(guest, "club"), None);
+    assert!(b.hushed(guest, "club"), "the mute outlives the kick");
+    bus.advance(30_000);
+    let other: IpAddr = "2001:db8::9".parse().unwrap();
+    let reload = "@guest:00000000000000bb";
+    for (name, from) in [(guest, addr), (reload, other)] {
+        assert_eq!(
+            b.guest_voice_join(name, conn, "club", 6, 0, Some(from))
+                .await
+                .err(),
+            Some("Removed from voice by staff. Try again in 10 minutes".to_string()),
+            "{name}: the same /64 is the same address, read before the guest left"
+        );
+    }
+    bus.advance(540_000);
+    let conn = a.next_conn();
+    assert_eq!(
+        a.guest_voice_join(guest, conn, "club", 6, 0, Some(addr))
+            .await
+            .err(),
+        Some("Removed from voice by staff. Try again in 30 seconds".to_string())
+    );
+    bus.advance(30_000);
+    a.guest_voice_join(reload, conn, "club", 6, 0, Some(other))
+        .await
+        .expect("the block ended");
+    b.flush().await;
+    assert!(
+        a.hushed(reload, "club") && b.hushed(reload, "club"),
+        "a reload from that address is still muted"
+    );
+    bus.advance(24 * 60 * 60 * 1000);
+    a.flush().await;
+    b.flush().await;
+    assert!(
+        !a.hushed(reload, "club") && !b.hushed(reload, "club"),
+        "the mute ends after a day"
+    );
+}
+
+#[test]
+fn block_refusals_say_how_long_is_left() {
+    for (ms, text) in [
+        (600_000, "10 minutes"),
+        (540_001, "10 minutes"),
+        (60_001, "2 minutes"),
+        (60_000, "1 minute"),
+        (59_001, "1 minute"),
+        (59_000, "59 seconds"),
+        (1_001, "2 seconds"),
+        (1_000, "1 second"),
+        (1, "1 second"),
+    ] {
+        assert_eq!(
+            voice_blocked_text(ms),
+            format!("Removed from voice by staff. Try again in {text}")
+        );
+    }
+}

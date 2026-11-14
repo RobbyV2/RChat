@@ -279,6 +279,8 @@ export interface RChatState {
   voiceUsers: Record<number, string[]>
   // users muted by a timeout in each voice channel
   voiceMuted: Record<number, string[]>
+  // guests staff muted for everyone in each voice channel
+  voiceHushed: Record<number, string[]>
   // running timeouts by server and username, as moderators see them
   timeouts: Record<string, Record<string, Timeout>>
   p2pAvailability: Record<string, P2pAvailability>
@@ -572,6 +574,8 @@ export interface RChatState {
     reason: string
   ) => Promise<boolean>
   removeTimeout: (server: string, username: string) => Promise<void>
+  disconnectGuest: (server: string, name: string) => Promise<void>
+  muteGuest: (server: string, name: string, muted: boolean) => Promise<void>
   unbanMember: (server: string, username: string) => Promise<void>
   loadBans: (server: string, reset?: boolean) => Promise<void>
   grantAdmin: (server: string, username: string) => Promise<void>

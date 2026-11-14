@@ -3011,7 +3011,8 @@ mod tests {
                     .replace("{username}", "alice")
                     .replace("{emoji}", "x")
                     .replace("{ord}", "0")
-                    .replace("{subject}", "u:alice");
+                    .replace("{subject}", "u:alice")
+                    .replace("{guest}", "@guest:00000000000000aa");
                 assert!(!filled.contains('{'), "{route}: an unfilled part");
                 let body = matches!(method.as_str(), "post" | "put" | "patch").then_some("{}");
                 for token in viewers {

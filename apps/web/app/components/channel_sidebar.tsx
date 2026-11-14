@@ -25,7 +25,8 @@ import {
 } from '../lib/store'
 import { openActionMenu } from '../lib/actions/menu'
 import { useChannelEdit, type Editing } from '../lib/channel_edit'
-import { isGuestName, voiceSelf } from '../lib/guest_voice'
+import { STAFF_MUTED, isGuestName, voiceSelf } from '../lib/guest_voice'
+import { useGuestMenu } from './guest_voice_menu'
 import { dmSections } from '../lib/nav_layout'
 import { enterKey } from '../lib/keys'
 import { rtc } from '../lib/rtc'
@@ -183,14 +184,18 @@ function VoiceMemberRow({
   const user = userRefFor(useStore.getState(), username)
   const self = mine === username
   const silenced = useStore(s => Object.values(s.voiceMuted).some(l => l.includes(username)))
-  const speaking = inRoom && rtc.isSpeaking(username) && !silenced
+  const hushed = useStore(s => Object.values(s.voiceHushed).some(l => l.includes(username)))
+  const menu = useGuestMenu(server, username)
+  const speaking = inRoom && rtc.isSpeaking(username) && !silenced && !hushed
   const muted =
-    silenced || (inRoom && (self ? selfAudio.muted : (rtc.peer(username)?.muted ?? false)))
+    silenced ||
+    hushed ||
+    (inRoom && (self ? selfAudio.muted : (rtc.peer(username)?.muted ?? false)))
   const deafened = inRoom && self && selfAudio.deafened
   const live = inRoom && (self ? rtc.sharing : shownMedia(rtc.peer(username), silenced).screen)
   return (
     <div
-      {...(isGuestName(username) ? {} : profileTrigger(user, server))}
+      {...(isGuestName(username) ? (menu ? longPress(menu) : {}) : profileTrigger(user, server))}
       className={`mr-2 ml-7 flex items-center gap-2 rounded-md px-2 py-1 text-sm text-on-surface-variant outline-offset-[-2px] ${
         isGuestName(username)
           ? ''
@@ -216,7 +221,7 @@ function VoiceMemberRow({
         <LiveBadge size="sm" title={self ? "You're sharing your screen" : 'Sharing their screen'} />
       )}
       {muted && !deafened && (
-        <span title="Muted" className="flex shrink-0 text-mute-fg">
+        <span title={hushed ? STAFF_MUTED : 'Muted'} className="flex shrink-0 text-mute-fg">
           <MicOff size={14} />
         </span>
       )}

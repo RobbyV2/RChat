@@ -747,6 +747,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'kickMember'
     | 'timeoutMember'
     | 'removeTimeout'
+    | 'disconnectGuest'
+    | 'muteGuest'
     | 'banMember'
     | 'unbanMember'
     | 'loadBans'
@@ -890,6 +892,10 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         await live(api.removeTimeout(server, username))
         noteTimeout(server, username, undefined)
       }),
+    disconnectGuest: (server, name) =>
+      act(async () => void (await api.disconnectGuest(server, name))),
+    muteGuest: (server, name, muted) =>
+      act(async () => void (await api.muteGuest(server, name, muted))),
     banMember: (server, username) =>
       act(async () => {
         await live(api.banMember(server, username))

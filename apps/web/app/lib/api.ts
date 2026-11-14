@@ -592,6 +592,10 @@ export const endpoints = (c: ApiClient) => ({
     }),
   removeTimeout: (server: string, username: string) =>
     c.req<unknown>('DELETE', `/servers/${seg(server)}/timeouts/${seg(username)}`),
+  disconnectGuest: (server: string, name: string) =>
+    c.req<unknown>('POST', `/servers/${seg(server)}/voice/${seg(name)}/disconnect`),
+  muteGuest: (server: string, name: string, muted: boolean) =>
+    c.req<unknown>(muted ? 'PUT' : 'DELETE', `/servers/${seg(server)}/voice/${seg(name)}/mute`),
   unbanMember: (server: string, username: string) =>
     c.req<unknown>('DELETE', `/servers/${seg(server)}/bans/${seg(username)}`),
   listBans: (server: string, cursor: string | null) =>

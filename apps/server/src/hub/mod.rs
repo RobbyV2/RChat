@@ -66,6 +66,29 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// A voice room someone is in: the address a guest came from (`budget::group`), and whether
+/// staff muted it there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VoiceSeat {
+    pub channel_id: i64,
+    pub addr: Option<String>,
+    pub hushed: bool,
+}
+
+/// Why a guest can't join a server's voice for `left_ms` more: staff took it out.
+pub fn voice_blocked_text(left_ms: i64) -> String {
+    let secs = (left_ms.max(1) + 999) / 1000;
+    let left = match secs {
+        1 => "1 second".to_string(),
+        2..60 => format!("{secs} seconds"),
+        _ => match (secs + 59) / 60 {
+            1 => "1 minute".to_string(),
+            mins => format!("{mins} minutes"),
+        },
+    };
+    format!("{}. Try again in {left}", crate::ws::REMOVED_BY_STAFF)
+}
+
 pub fn stream_pos(id: &str) -> (u64, u64) {
     let (ms, seq) = id.split_once('-').unwrap_or((id, "0"));
     (ms.parse().unwrap_or(0), seq.parse().unwrap_or(0))
@@ -795,16 +818,47 @@ impl Hub {
         channel_id: i64,
         cap: usize,
     ) -> Result<Vec<CallEnd>, String> {
+        self.join_room(user, conn, server, channel_id, cap, None)
+            .await
+    }
+
+    /// `voice_join_capped` for the guest connection named `name`, from `addr`: refused while
+    /// staff keep that name or address out of the server's voice.
+    pub async fn guest_voice_join(
+        &self,
+        name: &str,
+        conn: u64,
+        server: &str,
+        channel_id: i64,
+        cap: usize,
+        addr: Option<IpAddr>,
+    ) -> Result<Vec<CallEnd>, String> {
+        let addr = addr.map(|a| crate::api::budget::group(a).to_string());
+        self.join_room(name, conn, server, channel_id, cap, addr)
+            .await
+    }
+
+    async fn join_room(
+        &self,
+        user: &str,
+        conn: u64,
+        server: &str,
+        channel_id: i64,
+        cap: usize,
+        addr: Option<String>,
+    ) -> Result<Vec<CallEnd>, String> {
         let op = Op::VoiceJoin {
             user: user.to_string(),
             conn,
             server: server.to_string(),
             channel_id,
             cap,
+            addr,
         };
         match self.ask(op).await {
             Outcome::Ends(ends) => Ok(ends),
             Outcome::Full => Err(format!("This voice channel is full ({cap} people)")),
+            Outcome::Blocked(left) => Err(voice_blocked_text(left)),
             Outcome::Lost => Err("Realtime service unavailable".to_string()),
             _ => Ok(Vec::new()),
         }
@@ -1331,6 +1385,59 @@ impl Hub {
             channel_id,
             reason: Some(reason.to_string()),
         });
+    }
+
+    /// Takes `user` out of the voice of `server`, telling them `reason`. With a `block` (none
+    /// when zero), every guest from the address it came from (`addr`, read while it was in
+    /// voice; else the one it is in voice from) goes too, and those names and that address stay
+    /// out of that server's voice for `block`.
+    pub fn kick_from_voice(
+        &self,
+        user: &str,
+        server: &str,
+        addr: Option<&str>,
+        reason: &str,
+        block: Duration,
+    ) {
+        self.post(Op::VoiceKick {
+            user: user.to_string(),
+            server: server.to_string(),
+            reason: reason.to_string(),
+            block_ms: i64::try_from(block.as_millis()).unwrap_or(i64::MAX),
+            addr: addr.map(str::to_string),
+        });
+    }
+
+    /// Mutes the guest `user`, and every guest from the address it came from (`addr`, as for
+    /// `kick_from_voice`), for everyone in the voice of `server`; or ends every mute covering it.
+    pub fn hush_voice(&self, user: &str, server: &str, addr: Option<&str>, muted: bool) {
+        self.post(Op::VoiceHush {
+            user: user.to_string(),
+            server: server.to_string(),
+            muted,
+            addr: addr.map(str::to_string),
+        });
+    }
+
+    /// Whether staff muted `user` for everyone in the voice of `server`.
+    pub fn hushed(&self, user: &str, server: &str) -> bool {
+        self.replica(|r| r.hushed(user, server))
+    }
+
+    /// The voice room `user` is in inside `server`.
+    pub fn room_in(&self, user: &str, server: &str) -> Option<i64> {
+        self.voice_seat(user, server).map(|seat| seat.channel_id)
+    }
+
+    /// Where `user` is in the voice of `server`, read at once.
+    pub fn voice_seat(&self, user: &str, server: &str) -> Option<VoiceSeat> {
+        self.replica(|r| {
+            r.room_in(user, server).map(|channel_id| VoiceSeat {
+                channel_id,
+                addr: r.voice_addrs.get(user).cloned(),
+                hushed: r.hushed(user, server),
+            })
+        })
     }
 
     /// Every voice room with the users in it.

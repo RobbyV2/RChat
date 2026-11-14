@@ -1,6 +1,14 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { maskedName, showsUsername } from '../display_name'
-import { guestLabel, guestRef, isGuestName, voiceSelf } from '../guest_voice'
+import {
+  STAFF_MUTED,
+  audibleStreams,
+  guestLabel,
+  guestRef,
+  guestVoiceActions,
+  isGuestName,
+  voiceSelf,
+} from '../guest_voice'
 import { resetSessionCaches, userRefFor, useStore } from '../store'
 import { me } from './fixtures'
 
@@ -36,5 +44,46 @@ describe('guests in voice', () => {
     expect(voiceSelf({ me: null, guest: true, guestVoiceName: name })).toBe(name)
     expect(voiceSelf({ me: null, guest: true, guestVoiceName: null })).toBeNull()
     expect(voiceSelf({ me: null, guest: false, guestVoiceName: name })).toBeNull()
+  })
+})
+
+describe('staff and guests in voice', () => {
+  const Kick = 4
+  const Timeout = 128
+
+  test('staff get only the actions their permissions allow, on guests only', () => {
+    expect(guestVoiceActions(name, 0, false)).toEqual([])
+    expect(guestVoiceActions(name, Kick, false)).toEqual(['disconnect'])
+    expect(guestVoiceActions(name, Timeout, false)).toEqual(['mute'])
+    expect(guestVoiceActions(name, Timeout, true)).toEqual(['unmute'])
+    expect(guestVoiceActions(name, Kick | Timeout, true)).toEqual(['unmute', 'disconnect'])
+    expect(guestVoiceActions('bob', 1023, false)).toEqual([])
+  })
+
+  test('a staff-muted peer is never played, whatever it sends', () => {
+    const mic = { id: 'mic' } as unknown as MediaStream
+    const screen = { id: 'screen' } as unknown as MediaStream
+    const bob = { id: 'bob' } as unknown as MediaStream
+    const streams: [string, MediaStream][] = [
+      [name, mic],
+      [`${name}:screen`, screen],
+      ['bob', bob],
+    ]
+    expect(audibleStreams(streams, [name], false)).toEqual([
+      { key: 'bob', stream: bob, muted: false },
+    ])
+    expect(audibleStreams(streams, [], true)).toEqual([
+      { key: name, stream: mic, muted: true },
+      { key: `${name}:screen`, stream: screen, muted: true },
+      { key: 'bob', stream: bob, muted: true },
+    ])
+    expect(audibleStreams(streams, ['bob'], false).map(a => a.key)).toEqual([
+      name,
+      `${name}:screen`,
+    ])
+  })
+
+  test('a staff mute says so', () => {
+    expect(STAFF_MUTED).toBe('Muted by staff')
   })
 })

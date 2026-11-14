@@ -221,6 +221,7 @@ pub(super) async fn voice_msg(
                     channel_id,
                     username: user.to_string(),
                     muted: true,
+                    staff: false,
                 });
             }
             Ok(touch_interaction(&state.db, &server, user).await?)
@@ -451,6 +452,7 @@ pub(super) async fn send_voice_snapshot(state: &AppState, out: &Out, access: &mu
                     channel_id: *channel_id,
                     username: username.clone(),
                     muted: true,
+                    staff: false,
                 };
                 if !sent(access, out.event(&ev)) {
                     return false;

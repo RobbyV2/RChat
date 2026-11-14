@@ -405,4 +405,8 @@ export const memberTimeout = (
 export const voiceMutedIn = (s: Pick<RChatState, 'voiceMuted'>, channelId: number | null) =>
   channelId === null ? EMPTY_NAMES : (s.voiceMuted[channelId] ?? EMPTY_NAMES)
 
+// Guests staff muted for everyone in voice channel `channelId`.
+export const voiceHushedIn = (s: Pick<RChatState, 'voiceHushed'>, channelId: number | null) =>
+  channelId === null ? EMPTY_NAMES : (s.voiceHushed[channelId] ?? EMPTY_NAMES)
+
 const EMPTY_NAMES: string[] = []

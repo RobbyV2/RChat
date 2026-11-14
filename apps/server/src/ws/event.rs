@@ -334,13 +334,16 @@ pub enum WsEvent {
         channel_id: i64,
         users: Vec<String>,
     },
-    /// A user in a voice channel was muted there by a timeout, or the timeout ended. Apps stop
+    /// A user in a voice channel was muted there by a timeout, or the timeout ended; or, with
+    /// `staff`, staff muted a guest for everyone in the server's voice, or ended that. Apps stop
     /// sending and playing a muted user's audio.
     VoiceMuted {
         server: String,
         channel_id: i64,
         username: String,
         muted: bool,
+        #[serde(default)]
+        staff: bool,
     },
     /// A timeout of `username` in `server` started or changed (`until`, `remaining` seconds and
     /// the reason) or ended (`until` null). Only to that user and to members with the Timeout

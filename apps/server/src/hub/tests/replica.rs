@@ -42,6 +42,7 @@ fn script() -> Vec<(u32, Op, i64)> {
                 server: s("rchat"),
                 channel_id: 5,
                 cap: 0,
+                addr: None,
             },
             T0 + 20,
         ),
@@ -53,6 +54,7 @@ fn script() -> Vec<(u32, Op, i64)> {
                 server: s("other"),
                 channel_id: 6,
                 cap: 0,
+                addr: None,
             },
             T0 + 25,
         ),
@@ -143,6 +145,7 @@ fn sweep_uses_op_time() {
         server: "rchat".to_string(),
         channel_id: 5,
         cap: 0,
+        addr: None,
     };
     replica.apply(1, join, T0);
     let early = replica.apply(1, Op::SweepVoice { idle: 60 }, T0 + 59_999);
@@ -727,6 +730,7 @@ fn indexes_follow_every_op() {
             server: s("two"),
             channel_id: 11,
             cap: 0,
+            addr: None,
         },
         Op::VoiceJoin {
             user: s("erin"),
@@ -734,6 +738,7 @@ fn indexes_follow_every_op() {
             server: s("two"),
             channel_id: 11,
             cap: 0,
+            addr: None,
         },
         Op::Broadcast {
             event: WsEvent::ServerRenamed {
@@ -774,6 +779,7 @@ fn indexes_follow_every_op() {
             server: s("deux"),
             channel_id: 11,
             cap: 0,
+            addr: None,
         },
         Op::Broadcast {
             event: WsEvent::MembersPurged {
@@ -822,6 +828,7 @@ fn full_voice_rooms_turn_joins_away() {
         server: "rchat".to_string(),
         channel_id,
         cap: 2,
+        addr: None,
     };
     for (user, conn) in [("a", 1), ("b", 2)] {
         let applied = replica.apply(1, join(user, conn, 5), T0);
@@ -847,6 +854,7 @@ fn signals_for_a_left_room_are_dropped() {
         server: "rchat".to_string(),
         channel_id,
         cap: 0,
+        addr: None,
     };
     let signal = |channel_id: i64| Op::Broadcast {
         event: WsEvent::RtcSignal {
@@ -891,6 +899,7 @@ fn rejoin_from_another_connection_restates_the_room() {
         server: "rchat".to_string(),
         channel_id: 5,
         cap: 0,
+        addr: None,
     };
     replica.apply(1, join(1), T0);
     let moved = replica.apply(1, join(9), T0);
@@ -974,6 +983,7 @@ fn purge_event_removes_members_in_one_op() {
                 server: s("club"),
                 channel_id: 3,
                 cap: 0,
+                addr: None,
             },
             T0,
         );
@@ -1000,4 +1010,584 @@ fn purge_event_removes_members_in_one_op() {
         replica.index.presence["club"].iter().collect::<Vec<_>>(),
         ["dave"]
     );
+}
+
+fn guest_join(user: &str, conn: u64, server: &str, channel_id: i64, addr: &str) -> Op {
+    Op::VoiceJoin {
+        user: user.to_string(),
+        conn,
+        server: server.to_string(),
+        channel_id,
+        cap: 0,
+        addr: Some(addr.to_string()),
+    }
+}
+
+fn account_join(user: &str, conn: u64, server: &str, channel_id: i64) -> Op {
+    Op::VoiceJoin {
+        user: user.to_string(),
+        conn,
+        server: server.to_string(),
+        channel_id,
+        cap: 0,
+        addr: None,
+    }
+}
+
+const STAFF: &str = "Removed from voice by staff";
+const BLOCK_MS: i64 = 600_000;
+
+fn kick(user: &str, server: &str, reason: &str, block_ms: i64) -> Op {
+    Op::VoiceKick {
+        user: user.to_string(),
+        server: server.to_string(),
+        reason: reason.to_string(),
+        block_ms,
+        addr: None,
+    }
+}
+
+fn hush(user: &str, server: &str, muted: bool) -> Op {
+    Op::VoiceHush {
+        user: user.to_string(),
+        server: server.to_string(),
+        muted,
+        addr: None,
+    }
+}
+
+fn blocked_for(applied: &Applied) -> Option<i64> {
+    match applied.outcome {
+        Outcome::Blocked(left) => Some(left),
+        _ => None,
+    }
+}
+
+fn joined(applied: &Applied) -> bool {
+    matches!(applied.outcome, Outcome::Ends(_))
+}
+
+fn hushed_of(evs: &[WsEvent]) -> Vec<(i64, String, bool, bool)> {
+    evs.iter()
+        .filter_map(|ev| match ev {
+            WsEvent::VoiceMuted {
+                server: _,
+                channel_id,
+                username,
+                muted,
+                staff,
+            } => Some((*channel_id, username.clone(), *muted, *staff)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn ended_of(evs: &[WsEvent]) -> Vec<(i64, String, String)> {
+    evs.iter()
+        .filter_map(|ev| match ev {
+            WsEvent::VoiceEnded {
+                server: None,
+                channel_id: Some(cid),
+                dm_id: None,
+                dm_users: Some(users),
+                reason,
+            } => Some((*cid, users.join(","), reason.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn round_trip(replica: &Replica) -> Replica {
+    let json = serde_json::to_string(replica).unwrap();
+    let reloaded: Replica = serde_json::from_str(&json).unwrap();
+    assert_eq!(serde_json::to_string(&reloaded).unwrap(), json);
+    reloaded
+}
+
+#[test]
+fn a_kicked_guest_stays_out_of_that_servers_voice_for_the_block() {
+    let s = |v: &str| v.to_string();
+    let a = "@guest:00000000000000aa";
+    let b = "@guest:00000000000000bb";
+    let mut replica = Replica::default();
+    replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0);
+    replica.apply(1, account_join("alice", 2, "club", 5), T0);
+    let applied = replica.apply(1, kick(a, "club", STAFF, BLOCK_MS), T0 + 1_000);
+    assert_eq!(voice_of(&applied.events), vec![(5, vec![s("alice")])]);
+    assert_eq!(ended_of(&applied.events), vec![(5, s(a), s(STAFF))]);
+
+    let again = replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0 + 61_000);
+    assert_eq!(blocked_for(&again), Some(540_000), "the same connection");
+    assert!(again.events.is_empty());
+    let other_room = replica.apply(1, guest_join(a, 1, "club", 6, "10.0.0.1"), T0 + 61_000);
+    assert_eq!(
+        blocked_for(&other_room),
+        Some(540_000),
+        "every channel of it"
+    );
+    let reload = replica.apply(1, guest_join(b, 3, "club", 5, "10.0.0.1"), T0 + 61_000);
+    assert_eq!(
+        blocked_for(&reload),
+        Some(540_000),
+        "a new connection from the same address"
+    );
+    assert!(replica.rooms[&5].users.iter().all(|(u, _)| u == "alice"));
+    let elsewhere = replica.apply(1, guest_join(a, 1, "other", 7, "10.0.0.1"), T0 + 61_000);
+    assert!(joined(&elsewhere), "another server is not blocked");
+    let other_addr = replica.apply(1, guest_join(b, 3, "club", 5, "10.0.0.2"), T0 + 61_000);
+    assert!(joined(&other_addr), "another address");
+
+    let late = replica.apply(1, guest_join(a, 1, "club", 6, "10.0.0.1"), T0 + 600_999);
+    assert_eq!(
+        blocked_for(&late),
+        Some(1),
+        "the block lasts its whole window"
+    );
+    let after = replica.apply(1, guest_join(a, 1, "club", 6, "10.0.0.1"), T0 + 601_000);
+    assert!(joined(&after), "the block ends by itself");
+    assert!(replica.voice_blocks.is_empty(), "ended blocks are dropped");
+    round_trip(&replica);
+}
+
+#[test]
+fn a_kick_without_a_block_only_takes_the_guest_out() {
+    let s = |v: &str| v.to_string();
+    let a = "@guest:00000000000000aa";
+    let b = "@guest:00000000000000bb";
+    let mut replica = Replica::default();
+    replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0);
+    replica.apply(1, guest_join(b, 2, "club", 5, "10.0.0.1"), T0);
+    let reason = "Guests can't use voice in this server";
+    let applied = replica.apply(1, kick(a, "club", reason, 0), T0);
+    assert_eq!(ended_of(&applied.events), vec![(5, s(a), s(reason))]);
+    assert_eq!(
+        voice_of(&applied.events),
+        vec![(5, vec![s(b)])],
+        "a guest from the same address stays"
+    );
+    assert!(replica.voice_blocks.is_empty());
+    assert_eq!(replica.voice_addrs.keys().collect::<Vec<_>>(), vec![b]);
+    let back = replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0 + 1);
+    assert!(joined(&back));
+}
+
+#[test]
+fn a_disconnect_takes_out_every_guest_from_that_address() {
+    let s = |v: &str| v.to_string();
+    let (a, b, c, d) = (
+        "@guest:00000000000000aa",
+        "@guest:00000000000000bb",
+        "@guest:00000000000000cc",
+        "@guest:00000000000000dd",
+    );
+    let mut replica = Replica::default();
+    replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0);
+    replica.apply(1, guest_join(b, 2, "club", 6, "10.0.0.1"), T0);
+    replica.apply(1, guest_join(c, 3, "other", 7, "10.0.0.1"), T0);
+    replica.apply(1, guest_join(d, 4, "club", 5, "10.0.0.2"), T0);
+    replica.apply(1, account_join("alice", 5, "club", 5), T0);
+    replica.apply(1, account_join("10.0.0.1", 6, "club", 6), T0);
+    let applied = replica.apply(1, kick(a, "club", STAFF, BLOCK_MS), T0 + 1);
+    assert_eq!(
+        voice_of(&applied.events),
+        vec![(5, vec![s(d), s("alice")]), (6, vec![s("10.0.0.1")])],
+        "one state per room"
+    );
+    assert_eq!(
+        ended_of(&applied.events),
+        vec![(5, s(a), s(STAFF)), (6, s(b), s(STAFF))],
+        "each guest taken out is told"
+    );
+    assert_eq!(
+        replica.room_in(c, "other"),
+        Some(7),
+        "another server's voice"
+    );
+    for (name, addr) in [(b, "10.0.0.9"), (b, "10.0.0.1"), (a, "10.0.0.9")] {
+        let back = replica.apply(1, guest_join(name, 9, "club", 5, addr), T0 + 2);
+        assert_eq!(blocked_for(&back), Some(599_999), "{name} from {addr}");
+    }
+    let fresh = replica.apply(
+        1,
+        guest_join("@guest:00000000000000ee", 9, "club", 5, "10.0.0.1"),
+        T0 + 2,
+    );
+    assert_eq!(blocked_for(&fresh), Some(599_999), "the address");
+    assert!(joined(&replica.apply(
+        1,
+        account_join("10.0.0.1", 6, "club", 5),
+        T0 + 2
+    )));
+}
+
+#[test]
+fn a_disconnect_racing_the_guests_reload_still_covers_its_address() {
+    let s = |v: &str| v.to_string();
+    let (a, b, c) = (
+        "@guest:00000000000000aa",
+        "@guest:00000000000000bb",
+        "@guest:00000000000000cc",
+    );
+    let at_check = |replica: &Replica| replica.voice_addrs.get(a).cloned();
+    let closed = |replica: &mut Replica| {
+        replica.apply(
+            1,
+            Op::DropConn {
+                user: s(a),
+                conn: 1,
+            },
+            T0 + 1,
+        )
+    };
+    let staff_kick = |addr: Option<String>| Op::VoiceKick {
+        user: s(a),
+        server: s("club"),
+        reason: s(STAFF),
+        block_ms: BLOCK_MS,
+        addr,
+    };
+
+    let mut replica = Replica::default();
+    replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0);
+    let addr = at_check(&replica);
+    closed(&mut replica);
+    assert!(replica.voice_addrs.is_empty());
+    replica.apply(1, staff_kick(addr), T0 + 2);
+    let reload = replica.apply(1, guest_join(c, 3, "club", 5, "10.0.0.1"), T0 + 3);
+    assert_eq!(
+        blocked_for(&reload),
+        Some(599_999),
+        "the address read at the check is blocked"
+    );
+
+    let mut replica = Replica::default();
+    replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0);
+    let addr = at_check(&replica);
+    closed(&mut replica);
+    assert!(joined(&replica.apply(
+        1,
+        guest_join(b, 2, "club", 5, "10.0.0.1"),
+        T0 + 1
+    )));
+    let applied = replica.apply(1, staff_kick(addr), T0 + 2);
+    assert_eq!(
+        ended_of(&applied.events),
+        vec![(5, s(b), s(STAFF))],
+        "the reloaded tab that came back first goes too"
+    );
+    assert!(replica.rooms.is_empty());
+    for name in [b, c] {
+        let back = replica.apply(1, guest_join(name, 3, "club", 5, "10.0.0.1"), T0 + 3);
+        assert_eq!(blocked_for(&back), Some(599_999), "{name}");
+    }
+}
+
+#[test]
+fn a_staff_mute_holds_for_the_guest_and_its_address_in_that_server() {
+    let s = |v: &str| v.to_string();
+    let (a, b, c, d, e) = (
+        "@guest:00000000000000aa",
+        "@guest:00000000000000bb",
+        "@guest:00000000000000cc",
+        "@guest:00000000000000dd",
+        "@guest:00000000000000ee",
+    );
+    let mut replica = Replica::default();
+    replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0);
+    replica.apply(1, guest_join(b, 2, "club", 6, "10.0.0.1"), T0);
+    replica.apply(1, guest_join(c, 3, "club", 5, "10.0.0.2"), T0);
+    replica.apply(1, guest_join(d, 4, "other", 7, "10.0.0.1"), T0);
+    replica.apply(1, account_join("10.0.0.1", 5, "club", 5), T0);
+    let muted = replica.apply(1, hush(a, "club", true), T0);
+    assert_eq!(
+        hushed_of(&muted.events),
+        vec![(5, s(a), true, true), (6, s(b), true, true)],
+        "the guest and every guest from its address in that server"
+    );
+    assert!(
+        replica
+            .apply(1, hush(a, "club", true), T0)
+            .events
+            .is_empty(),
+        "muting twice says nothing"
+    );
+    assert!(
+        replica
+            .apply(1, hush(b, "club", true), T0)
+            .events
+            .is_empty(),
+        "nor does muting a guest the mute covers"
+    );
+    for (name, server) in [(c, "club"), ("10.0.0.1", "club"), (d, "other")] {
+        assert!(!replica.hushed(name, server), "{name} in {server}");
+    }
+
+    let moved = replica.apply(1, guest_join(a, 1, "club", 6, "10.0.0.1"), T0 + 1);
+    assert_eq!(
+        hushed_of(&moved.events),
+        vec![(6, s(a), true, true)],
+        "a move inside the server keeps the mute"
+    );
+    let held = [s("club")];
+    let listed = vec![(6, s(b), true, true), (6, s(a), true, true)];
+    assert_eq!(
+        hushed_of(&replica.voice_snapshot_for(held.iter(), None)),
+        listed,
+        "a new listener learns it"
+    );
+    assert_eq!(
+        hushed_of(&round_trip(&replica).voice_snapshot_for(held.iter(), None)),
+        listed
+    );
+
+    replica.apply(1, Op::VoiceLeave { user: s(a) }, T0 + 2);
+    let rejoin = replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0 + 3);
+    assert_eq!(
+        hushed_of(&rejoin.events),
+        vec![(5, s(a), true, true)],
+        "a leave and a rejoin keep it"
+    );
+    replica.apply(
+        1,
+        Op::DropConn {
+            user: s(a),
+            conn: 1,
+        },
+        T0 + 4,
+    );
+    let reload = replica.apply(1, guest_join(e, 8, "club", 5, "10.0.0.1"), T0 + 5);
+    assert_eq!(
+        hushed_of(&reload.events),
+        vec![(5, s(e), true, true)],
+        "a reload from that address keeps it"
+    );
+    replica.apply(
+        1,
+        kick(b, "club", "Guests can't use voice in this server", 0),
+        T0 + 6,
+    );
+    let back = replica.apply(1, guest_join(b, 2, "club", 6, "10.0.0.1"), T0 + 7);
+    assert_eq!(hushed_of(&back.events), vec![(6, s(b), true, true)]);
+    let away = replica.apply(1, guest_join(e, 8, "other", 7, "10.0.0.1"), T0 + 8);
+    assert!(hushed_of(&away.events).is_empty(), "another server");
+    replica.apply(1, guest_join(e, 8, "club", 5, "10.0.0.1"), T0 + 9);
+
+    let unmuted = replica.apply(1, hush(e, "club", false), T0 + 10);
+    assert_eq!(
+        hushed_of(&unmuted.events),
+        vec![(5, s(e), false, true), (6, s(b), false, true)],
+        "unmuting any guest it covers ends it for all of them"
+    );
+    assert!(replica.voice_mutes.is_empty());
+    assert!(
+        replica
+            .apply(1, hush(e, "club", false), T0 + 10)
+            .events
+            .is_empty()
+    );
+    let rejoin = replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0 + 11);
+    assert!(hushed_of(&rejoin.events).is_empty());
+}
+
+#[test]
+fn a_staff_mute_ends_after_a_day_and_forgets_the_address() {
+    let s = |v: &str| v.to_string();
+    let a = "@guest:00000000000000aa";
+    let b = "@guest:00000000000000bb";
+    let day = 24 * 60 * 60 * 1000;
+    let mut replica = Replica::default();
+    replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0);
+    replica.apply(1, hush(a, "club", true), T0);
+    let before = replica.apply(1, Op::Heartbeat, T0 + day - 1);
+    assert!(before.events.is_empty());
+    assert!(replica.hushed(a, "club"));
+    let ended = replica.apply(1, Op::Heartbeat, T0 + day);
+    assert_eq!(
+        hushed_of(&ended.events),
+        vec![(5, s(a), false, true)],
+        "listeners hear it again"
+    );
+    assert!(replica.voice_mutes.is_empty() && !replica.hushed(a, "club"));
+    let reload = replica.apply(1, guest_join(b, 2, "club", 5, "10.0.0.1"), T0 + day + 1);
+    assert!(hushed_of(&reload.events).is_empty());
+
+    replica.apply(1, hush(b, "club", true), T0 + day + 2);
+    replica.apply(1, kick(b, "club", STAFF, BLOCK_MS), T0 + day + 3);
+    replica.apply(1, Op::VoiceLeave { user: s(a) }, T0 + day + 4);
+    assert!(
+        serde_json::to_string(&replica)
+            .unwrap()
+            .contains("10.0.0.1")
+    );
+    replica.apply(1, Op::Heartbeat, T0 + 2 * day + 2);
+    assert!(
+        !serde_json::to_string(&replica)
+            .unwrap()
+            .contains("10.0.0.1"),
+        "no address is kept once the block and the mute ended"
+    );
+}
+
+#[test]
+fn an_address_block_never_keeps_an_account_out() {
+    let s = |v: &str| v.to_string();
+    let a = "@guest:00000000000000aa";
+    let mut replica = Replica::default();
+    for (guest, addr) in [(a, "10.0.0.1"), ("@guest:00000000000000bb", "2001:db8::")] {
+        replica.apply(1, guest_join(guest, 1, "club", 5, addr), T0);
+        replica.apply(1, kick(guest, "club", STAFF, BLOCK_MS), T0);
+        let account = replica.apply(1, account_join(addr, 2, "club", 5), T0 + 1);
+        assert!(joined(&account), "an account named {addr} joins");
+        let reload = guest_join("@guest:00000000000000cc", 3, "club", 5, addr);
+        assert_eq!(
+            blocked_for(&replica.apply(1, reload, T0 + 1)),
+            Some(599_999),
+            "a guest from {addr} is still out"
+        );
+        replica.apply(1, Op::VoiceLeave { user: s(addr) }, T0 + 1);
+    }
+    let named = replica.apply(1, guest_join(a, 4, "club", 5, "10.9.9.9"), T0 + 1);
+    assert_eq!(
+        blocked_for(&named),
+        Some(599_999),
+        "the guest's name is out from any address"
+    );
+    let addr_named = replica.apply(
+        1,
+        guest_join("@guest:00000000000000dd", 5, "club", 5, a),
+        T0 + 1,
+    );
+    assert!(joined(&addr_named), "a name block is not an address block");
+}
+
+fn renamed(old_name: &str, name: &str) -> Op {
+    let s = |v: &str| v.to_string();
+    Op::Broadcast {
+        event: WsEvent::ServerRenamed {
+            old_name: s(old_name),
+            server: crate::api::ServerSummaryLite {
+                name: s(name),
+                display_name: s(name),
+                creator: None,
+                has_password: false,
+                banner_color: None,
+                name_color: None,
+                public_read: None,
+            },
+        },
+    }
+}
+
+#[test]
+fn a_rename_keeps_staff_mutes_and_blocks() {
+    let s = |v: &str| v.to_string();
+    let a = "@guest:00000000000000aa";
+    let b = "@guest:00000000000000bb";
+    let mut replica = Replica::default();
+    replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0);
+    replica.apply(1, guest_join(b, 2, "club", 5, "10.0.0.2"), T0);
+    replica.apply(1, hush(a, "club", true), T0);
+    replica.apply(1, kick(b, "club", STAFF, BLOCK_MS), T0);
+    replica.apply(1, renamed("club", "club2"), T0 + 1);
+    let held = [s("club2")];
+    assert_eq!(
+        hushed_of(&replica.voice_snapshot_for(held.iter(), None)),
+        vec![(5, s(a), true, true)],
+        "a new listener still learns the mute"
+    );
+    let moved = replica.apply(1, guest_join(a, 1, "club2", 6, "10.0.0.1"), T0 + 2);
+    assert_eq!(hushed_of(&moved.events), vec![(6, s(a), true, true)]);
+    let back = replica.apply(1, guest_join(b, 2, "club2", 5, "10.0.0.2"), T0 + 2);
+    assert_eq!(blocked_for(&back), Some(599_998), "the same connection");
+    let reload = replica.apply(1, guest_join(b, 3, "club2", 5, "10.0.0.2"), T0 + 2);
+    assert!(blocked_for(&reload).is_some(), "the same address");
+    let unmuted = replica.apply(1, hush(a, "club2", false), T0 + 3);
+    assert_eq!(hushed_of(&unmuted.events), vec![(6, s(a), false, true)]);
+    assert!(replica.voice_mutes.is_empty());
+}
+
+#[test]
+fn every_way_out_of_voice_forgets_the_address_and_keeps_the_mute() {
+    let s = |v: &str| v.to_string();
+    let a = "@guest:00000000000000aa";
+    let b = "@guest:00000000000000bb";
+    let ways = [
+        Op::EvictVoice {
+            user: s(a),
+            channel_id: 5,
+            reason: None,
+        },
+        Op::Broadcast {
+            event: WsEvent::ChannelDeleted {
+                server: s("club"),
+                channel_id: 5,
+                rules: None,
+            },
+        },
+        Op::SweepVoice { idle: 1 },
+        kick(a, "club", "Guests can't use voice in this server", 0),
+        Op::VoiceLeave { user: s(a) },
+        Op::DropConn {
+            user: s(a),
+            conn: 1,
+        },
+    ];
+    for (n, way) in ways.into_iter().enumerate() {
+        let mut replica = Replica::default();
+        replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0);
+        replica.apply(1, hush(a, "club", true), T0);
+        replica.apply(1, way, T0 + 5_000);
+        assert!(replica.rooms.is_empty(), "{n}");
+        assert!(replica.voice_addrs.is_empty(), "{n}");
+        let reload = replica.apply(1, guest_join(b, 2, "club", 5, "10.0.0.1"), T0 + 5_001);
+        assert_eq!(
+            hushed_of(&reload.events),
+            vec![(5, s(b), true, true)],
+            "{n}"
+        );
+    }
+    let mut replica = Replica::default();
+    replica.apply(2, guest_join(a, 2 << 32, "club", 5, "10.0.0.1"), T0);
+    replica.apply(2, hush(a, "club", true), T0);
+    replica.apply(2, Op::Depart, T0 + 1);
+    assert!(replica.rooms.is_empty());
+    assert!(replica.voice_addrs.is_empty(), "a departing copy's guests");
+    assert_eq!(replica.voice_mutes.len(), 1);
+
+    replica.apply(1, guest_join(b, 2, "club", 5, "10.0.0.2"), T0 + 2);
+    replica.apply(1, kick(b, "club", STAFF, BLOCK_MS), T0 + 2);
+    assert!(!replica.voice_blocks.is_empty());
+    let deleted = Op::Broadcast {
+        event: WsEvent::ServerDeleted { name: s("club") },
+    };
+    replica.apply(1, deleted, T0 + 3);
+    assert!(
+        replica.voice_mutes.is_empty() && replica.voice_blocks.is_empty(),
+        "a deleted server's mutes and blocks go with it"
+    );
+}
+
+#[test]
+fn ops_cost_nothing_per_guest_in_voice() {
+    let mut replica = Replica::default();
+    for n in 0..2_000u64 {
+        let user = format!("@guest:{n:016x}");
+        let addr = format!("10.0.{}.{}", n / 256, n % 256);
+        replica.apply(1, guest_join(&user, n + 1, "club", 5, &addr), T0);
+        if n % 20 == 0 {
+            replica.apply(1, hush(&user, "club", true), T0);
+        }
+    }
+    assert_eq!(replica.voice_addrs.len(), 2_000);
+    assert_eq!(replica.voice_mutes.len(), 100);
+    let started = std::time::Instant::now();
+    for n in 0..10_000 {
+        replica.apply(1, Op::Heartbeat, T0 + n);
+    }
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(replica.voice_addrs.len(), 2_000);
 }

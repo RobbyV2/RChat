@@ -102,6 +102,7 @@ pub(crate) fn announce_voice_mute(hub: &Hub, server: &str, username: &str, muted
                 channel_id,
                 username: username.to_string(),
                 muted,
+                staff: false,
             });
         }
     }
@@ -1151,6 +1152,7 @@ mod tests {
                         channel_id,
                         username,
                         muted,
+                        staff: _,
                     } => got.push(format!("muted {username} {channel_id} {muted}")),
                     _ => {}
                 }

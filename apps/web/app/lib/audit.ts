@@ -1,3 +1,4 @@
+import { guestLabel } from './guest_voice'
 import { PERM_ITEMS } from './rules'
 import { slowLabel } from './slowmode'
 import { durationText } from './timeouts'
@@ -180,6 +181,7 @@ const actorParts = (entry: AuditEntry): Part[] => {
 const userParts = (entry: AuditEntry): Part[] => {
   const t = entry.target
   if (!t || entry.hidden) return [{ text: 'someone' }]
+  if (t.kind === 'guest') return [{ text: t.name ? guestLabel(t.name) : 'a guest' }]
   if (t.staff) return [{ text: 'Instance staff' }]
   if (t.deleted) return [{ text: 'Deleted user' }]
   const name = t.user?.display_name ?? t.name
@@ -298,6 +300,12 @@ export function sentence(entry: AuditEntry): Part[] {
     }
     case 'member.untimeout':
       return [...actor, t(' removed the timeout of '), ...user]
+    case 'member.voice_disconnect':
+      return [...actor, t(' disconnected '), ...user, t(` from voice in ${ch()}`)]
+    case 'member.voice_mute':
+      return [...actor, t(' muted '), ...user, t(` for everyone in ${ch()}`)]
+    case 'member.voice_unmute':
+      return [...actor, t(' unmuted '), ...user, t(` in ${ch()}`)]
     case 'member.admin_grant':
       return [...actor, t(' made '), ...user, t(' an admin')]
     case 'member.admin_revoke':

@@ -338,3 +338,31 @@ describe('timeout entries', () => {
     expect(valueText('until', 0)).toBe(new Date(0).toLocaleString())
   })
 })
+
+describe('guest voice entries', () => {
+  const guest = (action: string) =>
+    entry({
+      action,
+      target: {
+        kind: 'guest',
+        id: null,
+        name: '@guest:3f9a1c2b00000000',
+        user: null,
+        staff: false,
+        deleted: false,
+      },
+      details: { channel: { id: 5, name: 'talk', private: false } },
+    })
+
+  test('sentences name the guest as the voice grid does, and the channel', () => {
+    expect(sentenceText(guest('member.voice_disconnect'))).toBe(
+      'Alice disconnected Guest 3f9a from voice in #talk'
+    )
+    expect(sentenceText(guest('member.voice_mute'))).toBe(
+      'Alice muted Guest 3f9a for everyone in #talk'
+    )
+    expect(sentenceText(guest('member.voice_unmute'))).toBe('Alice unmuted Guest 3f9a in #talk')
+    expect(sentence(guest('member.voice_mute'))[2]).toEqual({ text: 'Guest 3f9a' })
+    expect(groupOf('member.voice_disconnect')).toBe('member')
+  })
+})

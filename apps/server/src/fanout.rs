@@ -268,6 +268,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             channel_id: _,
             username: _,
             muted: _,
+            staff: _,
         } => to(vec![Target::Server(server)]),
         WsEvent::MemberTimeout {
             server,

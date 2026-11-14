@@ -9,6 +9,7 @@ import {
   Mic,
   MicOff,
   Monitor,
+  MoreVertical,
   Phone,
   PhoneOff,
   ScreenShare,
@@ -41,8 +42,10 @@ import { displayName } from '../lib/p2p/contacts'
 import type { CallView } from '../lib/p2p/calls'
 import { P2pBadge } from './p2p/p2p_badge'
 import { useMask, userRefFor, useStore, voiceMutedIn } from '../lib/store'
+import { voiceHushedIn } from '../lib/selectors'
 import { accountPrompt } from '../lib/features'
-import { isGuestName, voiceSelf } from '../lib/guest_voice'
+import { STAFF_MUTED, audibleStreams, isGuestName, voiceSelf } from '../lib/guest_voice'
+import { useGuestMenu, useGuestMenuOpen } from './guest_voice_menu'
 import { bannerColor, cachedProfile, profileKey } from '../lib/profile'
 import {
   autoFocus,
@@ -59,7 +62,7 @@ import type { UserRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
 import { CallDuration, CallType, DirectBadge } from './call_buttons'
-import { COARSE_QUERY, useMedia } from './context_menu'
+import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { Masked, useEscape, useOwn } from './ui'
 import { NameWithUsername } from './display_name'
 import { maskedName } from '../lib/display_name'
@@ -221,9 +224,17 @@ function useForcedMute(): boolean {
   return useMyTimeoutEnds(voice?.server) !== null || listed
 }
 
+// Whether staff muted you for everyone in the voice channel you are in, as a guest.
+function useStaffMuted(): boolean {
+  const voice = useStore(s => s.voice)
+  const self = useStore(voiceSelf)
+  return useStore(s => self !== null && voiceHushedIn(s, voice?.channelId ?? null).includes(self))
+}
+
 function VoiceAudio() {
   const { connected, p2pCall, roomCall, roomVoice, deafened, voice } = useCallMedia()
   const silenced = useStore(s => voiceMutedIn(s, voice?.channelId ?? null))
+  const hushed = useStore(s => voiceHushedIn(s, voice?.channelId ?? null))
   useEffect(() => {
     if (!connected) useAudioGate.setState({ blocked: false })
   }, [connected])
@@ -242,12 +253,8 @@ function VoiceAudio() {
   return (
     <>
       <div hidden>
-        {streams.map(([key, stream]) => (
-          <RemoteAudio
-            key={key}
-            stream={stream}
-            muted={deafened || silenced.includes(key.split(':')[0])}
-          />
+        {audibleStreams(streams, [...silenced, ...hushed], deafened).map(a => (
+          <RemoteAudio key={a.key} stream={a.stream} muted={a.muted} />
         ))}
       </div>
       <AudioUnblock />
@@ -268,6 +275,8 @@ interface TileData {
   tint: string
   screen: boolean
   shareId: string | null
+  // A guest staff muted for everyone.
+  staffMuted?: boolean
   // A P2P contact (or this side of a P2P call): no instance profile to open.
   local?: boolean
   // In a P2P call, whether the tile is your own: people there go by their P2P identity.
@@ -296,17 +305,20 @@ export function LiveBadge({
 function StateIcons({
   muted,
   deafened,
+  staffMuted = false,
   size,
 }: {
   muted: boolean
   deafened: boolean
+  staffMuted?: boolean
   size: number
 }) {
   const badge = 'flex shrink-0 rounded-full bg-mute p-0.5 text-on-mute'
+  const label = staffMuted ? STAFF_MUTED : 'Muted'
   return (
     <>
       {muted && !deafened && (
-        <span title="Muted" aria-label="Muted" role="img" className={badge}>
+        <span title={label} aria-label={label} role="img" className={badge}>
           <MicOff size={size} strokeWidth={2.5} />
         </span>
       )}
@@ -355,8 +367,11 @@ export function Tile({
   const mask = useMask(tile.own ?? mine)
   const name = maskedName(user, mask)
   const label = screen ? `${name}'s screen` : name
+  const menu = useGuestMenu(tile.local || screen || pending ? null : server, user.username)
+  const menuOpen = useGuestMenuOpen(user.username)
   return (
     <div
+      {...(menu ? longPress(menu) : {})}
       style={{
         width,
         height,
@@ -440,13 +455,38 @@ export function Tile({
         {screen ? (
           <Monitor size={compact ? 11 : 13} className="shrink-0" aria-hidden />
         ) : (
-          <StateIcons muted={muted} deafened={deafened} size={compact ? 10 : 12} />
+          <StateIcons
+            muted={muted}
+            deafened={deafened}
+            staffMuted={tile.staffMuted}
+            size={compact ? 10 : 12}
+          />
         )}
         <span className="streamer truncate">
           <NameWithUsername user={user} own={tile.own} />
         </span>
         {pending && <span className="shrink-0 opacity-75">Ringing…</span>}
+        {tile.staffMuted && !screen && !compact && (
+          <span className="shrink-0 opacity-75">{STAFF_MUTED}</span>
+        )}
       </span>
+      {menu && (
+        <button
+          title="More"
+          aria-label={`More for ${name}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={e => {
+            const r = e.currentTarget.getBoundingClientRect()
+            menu(r.right, r.bottom + 4)
+          }}
+          className={`absolute top-1.5 right-1.5 flex cursor-pointer items-center justify-center rounded-full bg-scrim/70 text-white outline-offset-2 hover:bg-scrim/85 focus-visible:outline-2 focus-visible:outline-primary ${
+            compact ? 'p-0.5' : 'p-1'
+          }`}
+        >
+          <MoreVertical size={compact ? 12 : 16} />
+        </button>
+      )}
     </div>
   )
 }
@@ -466,7 +506,8 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
     sharing,
   } = useCallMedia()
   const forced = useForcedMute() && voice !== null
-  const muted = selfMuted || forced
+  const hushed = useStaffMuted() && voice !== null
+  const muted = selfMuted || forced || hushed
   const toggleMute = useStore(s => s.toggleMute)
   const toggleDeafen = useStore(s => s.toggleDeafen)
   const toggleCamera = useStore(s => s.toggleCamera)
@@ -491,10 +532,10 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
   return (
     <div className={`flex items-center ${lg ? 'gap-2 sm:gap-3' : 'w-full gap-1.5'}`}>
       <button
-        title={forced ? TIMED_OUT_MIC : muted ? 'Unmute' : 'Mute'}
-        aria-label={forced ? TIMED_OUT_MIC : muted ? 'Unmute' : 'Mute'}
+        title={forced ? TIMED_OUT_MIC : hushed ? STAFF_MUTED : muted ? 'Unmute' : 'Mute'}
+        aria-label={forced ? TIMED_OUT_MIC : hushed ? STAFF_MUTED : muted ? 'Unmute' : 'Mute'}
         aria-pressed={muted}
-        disabled={forced}
+        disabled={forced || hushed}
         onClick={toggleMute}
         className={`${btn(muted ? 'off' : 'idle')} disabled:cursor-not-allowed disabled:opacity-60`}
       >
@@ -851,6 +892,7 @@ export function VoiceGrid({
   const { muted: selfMuted, deafened } = useStore(s => s.selfAudio)
   const roomUsers = useStore(s => (channelId !== undefined ? s.voiceUsers[channelId] : undefined))
   const silenced = useStore(s => voiceMutedIn(s, channelId ?? null))
+  const hushed = useStore(s => voiceHushedIn(s, channelId ?? null))
   const view = useStore(s => s.view)
   const joinVoice = useStore(s => s.joinVoice)
   const server = channelId !== undefined && view?.kind === 'channel' ? view.server : null
@@ -946,15 +988,17 @@ export function VoiceGrid({
       shareId: null,
       local: p2pIdentity,
       own: p2pIdentity ? u === self : undefined,
+      staffMuted: hushed.includes(u),
     }
+    const quiet = silenced.includes(u) || hushed.includes(u)
     if (joined && u === self)
       return {
         ...base,
         stream: p2pKind ? p2p.camView : mgr.local,
         hasVideo: p2pKind ? p2p.camOn : mgr.videoTrack !== null,
-        muted: selfMuted || silenced.includes(u),
+        muted: selfMuted || quiet,
         deafened,
-        speaking: p2pKind ? p2p.localSpeaking : mgr.isSpeaking(u) && !silenced.includes(u),
+        speaking: p2pKind ? p2p.localSpeaking : mgr.isSpeaking(u) && !quiet,
         mirror: p2pKind ? p2p.camOn : mgr.videoTrack !== null,
       }
     if (p2pKind)
@@ -972,9 +1016,9 @@ export function VoiceGrid({
       ...base,
       stream: peer?.stream ?? null,
       hasVideo: shownMedia(peer, silenced.includes(u)).cam,
-      muted: (peer?.muted ?? false) || silenced.includes(u),
+      muted: (peer?.muted ?? false) || quiet,
       deafened: false,
-      speaking: joined && mgr.isSpeaking(u) && !silenced.includes(u),
+      speaking: joined && mgr.isSpeaking(u) && !quiet,
       mirror: false,
     }
   })

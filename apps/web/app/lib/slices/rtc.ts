@@ -9,7 +9,7 @@ import { p2p } from '../p2p'
 import { callRtc, p2pCall, p2pVoice } from '../p2p/app'
 import { DENIED_CALL, hidesIp, relayBook } from '../relays'
 import { JoinAborted, rtc } from '../rtc'
-import { myTimeoutEnds, voiceMutedIn } from '../selectors'
+import { myTimeoutEnds, voiceHushedIn, voiceMutedIn } from '../selectors'
 import type { RChatState } from '../store_types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE, timedOutLine } from '../timeouts'
 import type { CallKind, VoiceMsg, WsEvent } from '../types'
@@ -22,6 +22,29 @@ export interface RtcDeps {
   saveCallRoute: (route: CallRoute) => void
 }
 
+type MuteMarks = Record<number, string[]>
+
+// The marks of a channel with `username` marked or not.
+const marked = (marks: MuteMarks, channelId: number, username: string, on: boolean) => {
+  const list = (marks[channelId] ?? []).filter(u => u !== username)
+  if (on) list.push(username)
+  const next = { ...marks }
+  if (list.length) next[channelId] = list
+  else delete next[channelId]
+  return next
+}
+
+// The marks of a channel kept only for `users`, or null when none went.
+const keptFor = (marks: MuteMarks, channelId: number, users: string[]): MuteMarks | null => {
+  const list = marks[channelId]
+  const kept = list?.filter(u => users.includes(u))
+  if (!list || kept?.length === list.length) return null
+  const next = { ...marks }
+  if (kept?.length) next[channelId] = kept
+  else delete next[channelId]
+  return next
+}
+
 // A channel's voice members, replaced by the server's list; muted marks go with members who left.
 export const applyVoiceState = (
   s: RChatState,
@@ -30,13 +53,13 @@ export const applyVoiceState = (
   const voiceUsers = { ...s.voiceUsers }
   if (ev.users.length) voiceUsers[ev.channel_id] = ev.users
   else delete voiceUsers[ev.channel_id]
-  const muted = s.voiceMuted[ev.channel_id]
-  const kept = muted?.filter(u => ev.users.includes(u))
-  if (!muted || kept?.length === muted.length) return { voiceUsers }
-  const voiceMuted = { ...s.voiceMuted }
-  if (kept?.length) voiceMuted[ev.channel_id] = kept
-  else delete voiceMuted[ev.channel_id]
-  return { voiceUsers, voiceMuted }
+  const voiceMuted = keptFor(s.voiceMuted, ev.channel_id, ev.users)
+  const voiceHushed = keptFor(s.voiceHushed, ev.channel_id, ev.users)
+  return {
+    voiceUsers,
+    ...(voiceMuted ? { voiceMuted } : {}),
+    ...(voiceHushed ? { voiceHushed } : {}),
+  }
 }
 
 // The call a call_state names: cleared when it ended, else its phase, with the answer time kept.
@@ -127,10 +150,17 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     )
   }
 
+  // Muted for everyone by staff in the voice channel you are in, as a guest.
+  const staffMuted = () => {
+    const s = get()
+    const self = voiceSelf(s)
+    return s.voice !== null && self !== null && voiceHushedIn(s, s.voice.channelId).includes(self)
+  }
+
   // Also stops your camera and screen share while a timeout mutes you in voice.
   const applyMic = () => {
     const forced = forcedMute()
-    const muted = get().selfAudio.muted || forced
+    const muted = get().selfAudio.muted || forced || staffMuted()
     if (rtc.active() && rtc.muted !== muted) rtc.setMuted(muted)
     if (p2p.mediaActive() && p2p.muted !== muted) p2p.setMuted(muted)
     if (callRtc.active() && callRtc.muted !== muted) callRtc.setMuted(muted)
@@ -418,15 +448,11 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     },
 
     voice_muted: ev => {
-      set(s => {
-        const was = s.voiceMuted[ev.channel_id] ?? []
-        const list = was.filter(u => u !== ev.username)
-        if (ev.muted) list.push(ev.username)
-        const voiceMuted = { ...s.voiceMuted }
-        if (list.length) voiceMuted[ev.channel_id] = list
-        else delete voiceMuted[ev.channel_id]
-        return { voiceMuted }
-      })
+      set(s =>
+        ev.staff === true
+          ? { voiceHushed: marked(s.voiceHushed, ev.channel_id, ev.username, ev.muted) }
+          : { voiceMuted: marked(s.voiceMuted, ev.channel_id, ev.username, ev.muted) }
+      )
       applyMic()
     },
 

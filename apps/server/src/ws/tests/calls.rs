@@ -638,6 +638,60 @@ async fn a_guest_leaves_voice_when_its_server_closes_to_it() {
     crate::api::test_util::done(state, path).await;
 }
 
+#[tokio::test]
+async fn a_guest_removed_by_staff_waits_before_using_that_servers_voice() {
+    let (state, path) = crate::api::test_util::temp_state("guest_voice_kick").await;
+    let db = &state.db;
+    let rooms = reading_world(db).await;
+    add_user_row(db, "10.1.2.3").await;
+    crate::api::test_util::add_member(db, "lobby", "10.1.2.3", 0, 0, 0).await;
+    let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
+    let join = |channel_id| ClientMsg::VoiceJoin { channel_id };
+    let mut guest = guest_at(&["lobby", "open"], &[]);
+    guest.addr = Some("10.1.2.3".parse().expect("addr"));
+    as_guest(&state, &guest, join(room("lobby")))
+        .await
+        .expect("in");
+    voice_msg(&state, "alice", 1, join(room("lobby")))
+        .await
+        .expect("alice too");
+    state.hub.kick_from_voice(
+        GUEST,
+        "lobby",
+        None,
+        crate::ws::REMOVED_BY_STAFF,
+        crate::ws::GUEST_VOICE_BLOCK,
+    );
+    assert_eq!(
+        state.hub.rooms_in("lobby", None),
+        vec![(room("lobby"), vec![s("alice")])]
+    );
+    let refused = Err("Removed from voice by staff. Try again in 10 minutes".into());
+    assert_eq!(
+        as_guest(&state, &guest, join(room("lobby"))).await,
+        refused,
+        "the same connection"
+    );
+    let mut reload = guest_at(&["lobby", "open"], &[]);
+    reload.guest = Some(s("@guest:00000000000000bb"));
+    reload.addr = guest.addr;
+    assert_eq!(
+        as_guest(&state, &reload, join(room("lobby"))).await,
+        refused,
+        "a new tab from the same address"
+    );
+    as_guest(&state, &guest, join(room("open")))
+        .await
+        .expect("another server is not blocked");
+    voice_msg(&state, "10.1.2.3", 2, join(room("lobby")))
+        .await
+        .expect("an account named like the address is not blocked");
+    voice_msg(&state, "alice", 1, join(room("lobby")))
+        .await
+        .expect("members are not blocked");
+    crate::api::test_util::done(state, path).await;
+}
+
 #[test]
 fn guests_get_only_their_own_voice_events() {
     let guest = guest_at(&["rchat"], &[]);
@@ -662,6 +716,16 @@ fn guests_get_only_their_own_voice_events() {
     };
     assert!(guest.wants(&signal(GUEST)));
     assert!(guest.wants(&ended(GUEST)));
+    assert!(
+        guest.wants(&WsEvent::VoiceMuted {
+            server: s("rchat"),
+            channel_id: 1,
+            username: s(GUEST),
+            muted: true,
+            staff: true,
+        }),
+        "a guest sees that staff muted it"
+    );
     assert!(!guest.wants(&signal("@guest:00000000000000bb")));
     assert!(!guest.wants(&ended("alice")));
     assert!(

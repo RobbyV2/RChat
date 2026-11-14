@@ -13,6 +13,13 @@ pub(crate) const GUEST_PREFIX: &str = "@guest:";
 
 pub(crate) const ACCOUNT_FOR_VOICE: &str = "Create an account to join voice";
 
+/// What a guest staff took out of voice is told.
+pub(crate) const REMOVED_BY_STAFF: &str = "Removed from voice by staff";
+
+/// How long a guest staff took out of a server's voice stays out of it, by its connection and
+/// its address.
+pub(crate) const GUEST_VOICE_BLOCK: std::time::Duration = std::time::Duration::from_secs(600);
+
 /// The name a new guest connection has in voice rooms.
 pub(super) fn guest_name() -> String {
     format!("{GUEST_PREFIX}{}", &crate::identity::random_id()[..16])
@@ -52,7 +59,14 @@ pub(super) async fn guest_voice(
             }
             let ends = state
                 .hub
-                .voice_join_capped(name, conn, &server, channel_id, state.limits.voice_room_max)
+                .guest_voice_join(
+                    name,
+                    conn,
+                    &server,
+                    channel_id,
+                    state.limits.voice_room_max,
+                    access.addr,
+                )
                 .await?;
             for end in ends {
                 finalize_call_log(state, end, false).await;

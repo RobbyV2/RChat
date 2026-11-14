@@ -482,3 +482,59 @@ describe('timeouts in voice', () => {
     expect(st().timeouts.lounge).toEqual({})
   })
 })
+
+describe('guests muted by staff', () => {
+  const guestName = '@guest:3f9a1c2b00000000'
+  const hush = (muted: boolean, channel_id = 1) =>
+    st().applyWsEvent({
+      type: 'voice_muted',
+      server: 'lounge',
+      channel_id,
+      username: guestName,
+      muted,
+      staff: true,
+    })
+
+  afterEach(() =>
+    useStore.setState({ guest: false, guestVoiceName: null, voiceHushed: {}, voiceUsers: {} })
+  )
+
+  test('the guest sees it is muted and cannot unmute itself until staff end it', async () => {
+    useStore.setState({ me: null, guest: true, guestVoiceName: guestName })
+    await st().joinVoice('lounge', 1)
+    expect(st().voice?.channelId).toBe(1)
+    expect(lastTrack().enabled).toBe(true)
+    hush(true)
+    expect(st().voiceHushed).toEqual({ 1: [guestName] })
+    expect(st().voiceMuted).toEqual({})
+    expect(lastTrack().enabled).toBe(false)
+    st().toggleMute()
+    st().toggleMute()
+    expect(lastTrack().enabled).toBe(false)
+    hush(false)
+    expect(st().voiceHushed).toEqual({})
+    expect(lastTrack().enabled).toBe(true)
+  })
+
+  test('a staff mute leaves the camera alone', async () => {
+    useStore.setState({ me: null, guest: true, guestVoiceName: guestName })
+    await st().joinVoice('lounge', 1)
+    const live = rtc as unknown as { videoTrack: unknown }
+    live.videoTrack = { kind: 'video', enabled: true, stop: () => {} }
+    hush(true)
+    await Promise.resolve()
+    expect(rtc.videoTrack).not.toBeNull()
+    live.videoTrack = null
+  })
+
+  test('the mark is kept per room and forgotten when the guest leaves it', () => {
+    useStore.setState({ voiceUsers: { 1: [guestName, 'bob'] } })
+    hush(true)
+    hush(true, 2)
+    expect(st().voiceHushed).toEqual({ 1: [guestName], 2: [guestName] })
+    st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 1, users: ['bob'] })
+    expect(st().voiceHushed).toEqual({ 2: [guestName] })
+    st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id: 2, users: [] })
+    expect(st().voiceHushed).toEqual({})
+  })
+})

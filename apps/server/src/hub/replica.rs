@@ -209,7 +209,53 @@ struct Wire {
     p2p: BTreeMap<String, BTreeMap<u64, P2pHost>>,
     peers: BTreeMap<u32, Peer>,
     clock: i64,
+    voice_mutes: BTreeSet<VoiceMute>,
+    voice_addrs: BTreeMap<String, String>,
+    voice_blocks: BTreeSet<VoiceBlock>,
 }
+
+/// Who staff took out of a server's voice, until when (ms). Ordered by when it ends.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub(super) struct VoiceBlock {
+    until: i64,
+    server: String,
+    who: Blocked,
+}
+
+/// A guest's voice name, or the address (`budget::group`) a guest connection came from.
+/// Accounts are never blocked.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Blocked {
+    Guest(String),
+    Addr(String),
+}
+
+const VOICE_BLOCKS_MAX: usize = 10_000;
+
+/// A guest connection staff muted for everyone in a server's voice, with the address
+/// (`budget::group`) it came from, until when (ms). Ordered by when it ends.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub(super) struct VoiceMute {
+    until: i64,
+    server: String,
+    guest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    addr: Option<String>,
+}
+
+impl VoiceMute {
+    // Whether it mutes `user`, in voice of `server` from `addr` (`None` for accounts).
+    fn covers(&self, server: &str, user: &str, addr: Option<&str>) -> bool {
+        self.server == server
+            && (self.guest == user || addr.is_some_and(|a| self.addr.as_deref() == Some(a)))
+    }
+}
+
+const VOICE_MUTES_MAX: usize = 10_000;
+
+/// How long a staff mute lasts unless staff end it.
+pub(super) const STAFF_MUTE_MS: i64 = 24 * 60 * 60 * 1000;
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(from = "Wire")]
@@ -220,6 +266,13 @@ pub struct Replica {
     pub(super) p2p: BTreeMap<String, BTreeMap<u64, P2pHost>>,
     pub(super) peers: BTreeMap<u32, Peer>,
     pub(super) clock: i64,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) voice_mutes: BTreeSet<VoiceMute>,
+    // The address each guest in voice came from.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) voice_addrs: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) voice_blocks: BTreeSet<VoiceBlock>,
     #[serde(skip)]
     pub(super) legacy: bool,
     #[serde(skip)]
@@ -236,6 +289,9 @@ impl From<Wire> for Replica {
             p2p,
             peers,
             clock,
+            voice_mutes,
+            voice_addrs,
+            voice_blocks,
         } = wire;
         let legacy = seen.is_none();
         let seen = seen.unwrap_or_else(|| {
@@ -259,6 +315,9 @@ impl From<Wire> for Replica {
             p2p,
             peers,
             clock,
+            voice_mutes,
+            voice_addrs,
+            voice_blocks,
             legacy,
             index: Index::default(),
         };
@@ -328,6 +387,9 @@ pub enum Op {
         channel_id: i64,
         #[serde(default, skip_serializing_if = "is_zero")]
         cap: usize,
+        /// The address a guest joins from (`budget::group`); `None` for accounts.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        addr: Option<String>,
     },
     VoiceLeave {
         user: String,
@@ -383,6 +445,29 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
+    /// Takes `user` out of the voice of `server`, telling them `reason`. With `block_ms`, every
+    /// other guest in that server's voice from the address `user` came from (`addr`, read while
+    /// it was in voice, or the one it is in voice from) goes too, and for `block_ms` after this
+    /// op those names and that address stay out of that server's voice.
+    VoiceKick {
+        user: String,
+        server: String,
+        reason: String,
+        #[serde(default, skip_serializing_if = "is_zero_ms")]
+        block_ms: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        addr: Option<String>,
+    },
+    /// Mutes the guest `user` and every guest from the address it came from (`addr`, or the one
+    /// it is in voice from) for everyone in the voice of `server`, for `STAFF_MUTE_MS`; or ends
+    /// every such mute that covers it.
+    VoiceHush {
+        user: String,
+        server: String,
+        muted: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        addr: Option<String>,
+    },
     Heartbeat,
     Depart,
 }
@@ -421,6 +506,19 @@ impl Op {
                 user: _,
                 channel_id: _,
                 reason: _,
+            }
+            | Op::VoiceKick {
+                user: _,
+                server: _,
+                reason: _,
+                block_ms: _,
+                addr: _,
+            }
+            | Op::VoiceHush {
+                user: _,
+                server: _,
+                muted: _,
+                addr: _,
             } => true,
             Op::Viewing {
                 user: _,
@@ -463,6 +561,7 @@ impl Op {
                 server: _,
                 channel_id: _,
                 cap: _,
+                addr: _,
             }
             | Op::VoiceLeave { user: _ }
             | Op::CallStart {
@@ -544,6 +643,8 @@ pub enum Outcome {
     Done,
     Lost,
     Full,
+    /// A join refused while staff keep the user out: the ms left.
+    Blocked(i64),
     Ends(Vec<CallEnd>),
     Started(Result<(), String>),
     Accepted(Result<(i64, Vec<String>), String>),
@@ -558,6 +659,16 @@ pub struct Applied {
     pub purge: Purge,
     pub purged: Vec<u32>,
     pub evicted: Vec<u64>,
+}
+
+fn hush_ev(server: &str, channel_id: i64, user: &str, muted: bool) -> WsEvent {
+    WsEvent::VoiceMuted {
+        server: server.to_string(),
+        channel_id,
+        username: user.to_string(),
+        muted,
+        staff: true,
+    }
 }
 
 fn room_state(channel_id: i64, room: &Room) -> WsEvent {
@@ -657,6 +768,9 @@ impl Replica {
             p2p: self.p2p.clone(),
             peers: self.peers.clone(),
             clock: self.clock,
+            voice_mutes: self.voice_mutes.clone(),
+            voice_addrs: self.voice_addrs.clone(),
+            voice_blocks: self.voice_blocks.clone(),
             legacy: self.legacy,
             index: Index::default(),
         }
@@ -700,6 +814,148 @@ impl Replica {
             .unwrap_or_default()
     }
 
+    // The voice room `user` is in inside `server`.
+    pub(super) fn room_in(&self, user: &str, server: &str) -> Option<i64> {
+        self.rooms_of(user)
+            .into_iter()
+            .find(|cid| self.rooms.get(cid).is_some_and(|r| r.server == server))
+    }
+
+    /// When the block on `user`, or on the address it joins from, in the voice of `server` ends,
+    /// while one runs at `t_ms`.
+    fn blocked_until(
+        &self,
+        server: &str,
+        user: &str,
+        addr: Option<&str>,
+        t_ms: i64,
+    ) -> Option<i64> {
+        self.voice_blocks
+            .iter()
+            .filter(|b| {
+                b.until > t_ms
+                    && b.server == server
+                    && match &b.who {
+                        Blocked::Guest(name) => name == user,
+                        Blocked::Addr(from) => Some(from.as_str()) == addr,
+                    }
+            })
+            .map(|b| b.until)
+            .max()
+    }
+
+    fn block(&mut self, server: &str, who: Blocked, until: i64) {
+        self.voice_blocks
+            .retain(|b| !(b.server == server && b.who == who));
+        if self.voice_blocks.len() >= VOICE_BLOCKS_MAX {
+            self.voice_blocks.pop_first();
+        }
+        self.voice_blocks.insert(VoiceBlock {
+            until,
+            server: server.to_string(),
+            who,
+        });
+    }
+
+    fn expire_blocks(&mut self, t_ms: i64) {
+        while self.voice_blocks.first().is_some_and(|b| b.until <= t_ms) {
+            self.voice_blocks.pop_first();
+        }
+    }
+
+    // After `user` left a room: forgets the address it came from once it is out of voice.
+    fn left_voice(&mut self, user: &str) {
+        if !self.index.user_rooms.contains_key(user) {
+            self.voice_addrs.remove(user);
+        }
+    }
+
+    /// Whether a staff mute covers `user`, from `addr`, in the voice of `server`.
+    fn hushed_at(&self, server: &str, user: &str, addr: Option<&str>) -> bool {
+        self.voice_mutes
+            .iter()
+            .any(|m| m.covers(server, user, addr))
+    }
+
+    /// Whether a staff mute covers `user` in the voice of `server`.
+    pub(super) fn hushed(&self, user: &str, server: &str) -> bool {
+        let addr = self.voice_addrs.get(user).map(String::as_str);
+        self.hushed_at(server, user, addr)
+    }
+
+    // Everyone in the voice of `server`: room, name, and the address a guest came from.
+    fn voice_in(&self, server: &str) -> Vec<(i64, &str, Option<&str>)> {
+        let cids = self.index.server_rooms.get(server).into_iter().flatten();
+        cids.filter_map(|cid| self.rooms.get(cid).map(|room| (*cid, room)))
+            .flat_map(|(cid, room)| {
+                room.users.iter().map(move |(user, _)| {
+                    let addr = self.voice_addrs.get(user).map(String::as_str);
+                    (cid, user.as_str(), addr)
+                })
+            })
+            .collect()
+    }
+
+    fn hush(&mut self, mute: VoiceMute, evs: &mut Vec<WsEvent>) {
+        if self.voice_mutes.len() >= VOICE_MUTES_MAX
+            && let Some(first) = self.voice_mutes.pop_first()
+        {
+            self.unhushed(&[first], evs);
+        }
+        let server = &mute.server;
+        let fresh: Vec<(i64, String)> = self
+            .voice_in(server)
+            .into_iter()
+            .filter(|(_, user, addr)| {
+                mute.covers(server, user, *addr) && !self.hushed_at(server, user, *addr)
+            })
+            .map(|(cid, user, _)| (cid, user.to_string()))
+            .collect();
+        for (cid, user) in fresh {
+            evs.push(hush_ev(server, cid, &user, true));
+        }
+        self.voice_mutes.insert(mute);
+    }
+
+    // Tells the listeners of each guest in voice that `ended` muted and no other mute covers.
+    fn unhushed(&self, ended: &[VoiceMute], evs: &mut Vec<WsEvent>) {
+        let mut told = BTreeSet::new();
+        let servers: BTreeSet<&str> = ended.iter().map(|m| m.server.as_str()).collect();
+        for server in servers {
+            for (cid, user, addr) in self.voice_in(server) {
+                if ended.iter().any(|m| m.covers(server, user, addr))
+                    && !self.hushed_at(server, user, addr)
+                    && told.insert((cid, user))
+                {
+                    evs.push(hush_ev(server, cid, user, false));
+                }
+            }
+        }
+    }
+
+    fn expire_mutes(&mut self, t_ms: i64, evs: &mut Vec<WsEvent>) {
+        let mut ended = Vec::new();
+        while self.voice_mutes.first().is_some_and(|m| m.until <= t_ms) {
+            ended.extend(self.voice_mutes.pop_first());
+        }
+        if !ended.is_empty() {
+            self.unhushed(&ended, evs);
+        }
+    }
+
+    // A room as a new listener learns it: who is in it and whom staff muted there.
+    fn room_events(&self, cid: i64, room: &Room, evs: &mut Vec<WsEvent>) {
+        evs.push(room_state(cid, room));
+        if self.voice_mutes.is_empty() {
+            return;
+        }
+        for (user, _) in &room.users {
+            if self.hushed(user, &room.server) {
+                evs.push(hush_ev(&room.server, cid, user, true));
+            }
+        }
+    }
+
     fn calls_of(&self, user: &str) -> Vec<i64> {
         self.index
             .user_calls
@@ -713,6 +969,7 @@ impl Replica {
         unlink(&mut self.index.server_rooms, room.server.as_str(), &cid);
         for (user, _) in &room.users {
             unlink(&mut self.index.user_rooms, user.as_str(), &cid);
+            self.left_voice(user);
         }
         Some(room)
     }
@@ -769,6 +1026,9 @@ impl Replica {
             evs.push(room_state(cid, room));
             if room.users.is_empty() {
                 self.take_room(cid);
+            }
+            for user in &left {
+                self.left_voice(user);
             }
         }
     }
@@ -1150,6 +1410,27 @@ impl Replica {
                 .or_default()
                 .extend(cids);
         }
+        self.voice_mutes = std::mem::take(&mut self.voice_mutes)
+            .into_iter()
+            .map(|mute| match mute.server == old_name {
+                true => VoiceMute {
+                    server: new_name.to_string(),
+                    ..mute
+                },
+                false => mute,
+            })
+            .collect();
+        self.voice_blocks = std::mem::take(&mut self.voice_blocks)
+            .into_iter()
+            .map(|VoiceBlock { until, server, who }| VoiceBlock {
+                until,
+                server: match server == old_name {
+                    true => new_name.to_string(),
+                    false => server,
+                },
+                who,
+            })
+            .collect();
     }
 
     fn side_effects(&mut self, ev: &WsEvent, t_ms: i64, extra: &mut Vec<WsEvent>) {
@@ -1174,6 +1455,8 @@ impl Replica {
                 for cid in cids {
                     self.take_room(cid);
                 }
+                self.voice_mutes.retain(|m| m.server != *name);
+                self.voice_blocks.retain(|b| b.server != *name);
             }
             WsEvent::ChannelDeleted {
                 server: _,
@@ -1398,6 +1681,7 @@ impl Replica {
             self.purge(*id, t_ms, false, &mut evs, &mut purge);
         }
         self.expire(self.clock, &mut evs);
+        self.expire_mutes(self.clock, &mut evs);
         let outcome = match op {
             Op::Broadcast { event } if stale_signal(self, &event) => Outcome::Done,
             Op::Broadcast { event } => {
@@ -1467,46 +1751,61 @@ impl Replica {
                 server,
                 channel_id,
                 cap,
-            } => {
-                let full = self
-                    .rooms
-                    .get(&channel_id)
-                    .is_some_and(|room| cap > 0 && room.users.len() >= cap);
-                let slot = self
-                    .rooms
-                    .get_mut(&channel_id)
-                    .and_then(|room| room.users.iter_mut().find(|(u, _)| *u == user));
-                match (slot, full) {
-                    (Some(slot), _) => {
-                        let moved = slot.1 != conn;
-                        slot.1 = conn;
-                        if moved && let Some(room) = self.rooms.get(&channel_id) {
+                addr,
+            } => match self.blocked_until(&server, &user, addr.as_deref(), t_ms) {
+                Some(until) => Outcome::Blocked(until - t_ms),
+                None => {
+                    let hushed = self.hushed_at(&server, &user, addr.as_deref());
+                    let full = self
+                        .rooms
+                        .get(&channel_id)
+                        .is_some_and(|room| cap > 0 && room.users.len() >= cap);
+                    let slot = self
+                        .rooms
+                        .get_mut(&channel_id)
+                        .and_then(|room| room.users.iter_mut().find(|(u, _)| *u == user));
+                    match (slot, full) {
+                        (Some(slot), _) => {
+                            let moved = slot.1 != conn;
+                            slot.1 = conn;
+                            if moved && let Some(room) = self.rooms.get(&channel_id) {
+                                evs.push(room_state(channel_id, room));
+                            }
+                            if let Some(addr) = addr {
+                                self.voice_addrs.insert(user, addr);
+                            }
+                            Outcome::Ends(Vec::new())
+                        }
+                        (None, true) => Outcome::Full,
+                        (None, false) => {
+                            let rooms = self.rooms_of(&user);
+                            self.leave_rooms(rooms, |_, u, _| u == user, t, &mut evs);
+                            let calls = self.calls_of(&user);
+                            let ends =
+                                self.end_calls(calls, |c| c.dm_users.contains(&user), &mut evs);
+                            if !self.rooms.contains_key(&channel_id) {
+                                link(&mut self.index.server_rooms, server.clone(), channel_id);
+                            }
+                            link(&mut self.index.user_rooms, user.clone(), channel_id);
+                            let room = self.rooms.entry(channel_id).or_insert_with(|| Room {
+                                server,
+                                users: Vec::new(),
+                                lone_since: 0,
+                            });
+                            room.users.push((user.clone(), conn));
+                            room.touch(t);
                             evs.push(room_state(channel_id, room));
+                            if hushed {
+                                evs.push(hush_ev(&room.server, channel_id, &user, true));
+                            }
+                            if let Some(addr) = addr {
+                                self.voice_addrs.insert(user, addr);
+                            }
+                            Outcome::Ends(ends)
                         }
-                        Outcome::Ends(Vec::new())
-                    }
-                    (None, true) => Outcome::Full,
-                    (None, false) => {
-                        let rooms = self.rooms_of(&user);
-                        self.leave_rooms(rooms, |_, u, _| u == user, t, &mut evs);
-                        let calls = self.calls_of(&user);
-                        let ends = self.end_calls(calls, |c| c.dm_users.contains(&user), &mut evs);
-                        if !self.rooms.contains_key(&channel_id) {
-                            link(&mut self.index.server_rooms, server.clone(), channel_id);
-                        }
-                        link(&mut self.index.user_rooms, user.clone(), channel_id);
-                        let room = self.rooms.entry(channel_id).or_insert_with(|| Room {
-                            server,
-                            users: Vec::new(),
-                            lone_since: 0,
-                        });
-                        room.users.push((user, conn));
-                        room.touch(t);
-                        evs.push(room_state(channel_id, room));
-                        Outcome::Ends(ends)
                     }
                 }
-            }
+            },
             Op::VoiceLeave { user } => {
                 let rooms = self.rooms_of(&user);
                 self.leave_rooms(rooms, |_, u, _| u == user, t, &mut evs);
@@ -1719,6 +2018,7 @@ impl Replica {
                     {
                         self.take_room(channel_id);
                     }
+                    self.left_voice(&user);
                     evs.push(WsEvent::VoiceEnded {
                         server: None,
                         channel_id: Some(channel_id),
@@ -1731,12 +2031,99 @@ impl Replica {
                 }
                 Outcome::Done
             }
+            Op::VoiceKick {
+                user,
+                server,
+                reason,
+                block_ms,
+                addr,
+            } => {
+                let addr = addr.or_else(|| self.voice_addrs.get(&user).cloned());
+                let mut out = BTreeSet::from([user]);
+                if block_ms > 0
+                    && let Some(addr) = &addr
+                {
+                    let same: Vec<String> = self
+                        .voice_in(&server)
+                        .into_iter()
+                        .filter(|(_, _, from)| *from == Some(addr.as_str()))
+                        .map(|(_, user, _)| user.to_string())
+                        .collect();
+                    out.extend(same);
+                }
+                let seats: Vec<(i64, &String)> = out
+                    .iter()
+                    .filter_map(|user| self.room_in(user, &server).map(|cid| (cid, user)))
+                    .collect();
+                let cids: BTreeSet<i64> = seats.iter().map(|(cid, _)| *cid).collect();
+                let ended: Vec<WsEvent> = seats
+                    .into_iter()
+                    .map(|(cid, user)| WsEvent::VoiceEnded {
+                        server: None,
+                        channel_id: Some(cid),
+                        dm_id: None,
+                        dm_users: Some(vec![user.clone()]),
+                        reason: reason.clone(),
+                    })
+                    .collect();
+                self.leave_rooms(
+                    cids.into_iter().collect(),
+                    |_, u, _| out.contains(u),
+                    t,
+                    &mut evs,
+                );
+                evs.extend(ended);
+                if block_ms > 0 {
+                    let until = t_ms.saturating_add(block_ms);
+                    if let Some(addr) = addr {
+                        self.block(&server, Blocked::Addr(addr), until);
+                    }
+                    for user in out {
+                        self.block(&server, Blocked::Guest(user), until);
+                    }
+                }
+                Outcome::Done
+            }
+            Op::VoiceHush {
+                user,
+                server,
+                muted,
+                addr,
+            } => {
+                let addr = addr.or_else(|| self.voice_addrs.get(&user).cloned());
+                match muted {
+                    true if self.hushed_at(&server, &user, addr.as_deref()) => {}
+                    true => {
+                        let until = t_ms.saturating_add(STAFF_MUTE_MS);
+                        let mute = VoiceMute {
+                            until,
+                            server,
+                            guest: user,
+                            addr,
+                        };
+                        self.hush(mute, &mut evs);
+                    }
+                    false => {
+                        let covers = |m: &VoiceMute| m.covers(&server, &user, addr.as_deref());
+                        let ended: Vec<VoiceMute> = self
+                            .voice_mutes
+                            .iter()
+                            .filter(|m| covers(m))
+                            .cloned()
+                            .collect();
+                        self.voice_mutes.retain(|m| !covers(m));
+                        self.unhushed(&ended, &mut evs);
+                    }
+                }
+                Outcome::Done
+            }
             Op::Heartbeat => Outcome::Done,
             Op::Depart => {
                 self.purge(origin, t_ms, true, &mut evs, &mut purge);
                 Outcome::Departed(std::mem::take(&mut purge))
             }
         };
+        self.expire_blocks(t_ms);
         Applied {
             events: evs,
             outcome,
@@ -1798,11 +2185,10 @@ impl Replica {
     }
 
     pub(super) fn voice_snapshot(&self) -> Vec<WsEvent> {
-        let mut evs: Vec<WsEvent> = self
-            .rooms
-            .iter()
-            .map(|(cid, room)| room_state(*cid, room))
-            .collect();
+        let mut evs = Vec::new();
+        for (cid, room) in &self.rooms {
+            self.room_events(*cid, room, &mut evs);
+        }
         for (id, call) in self.calls.iter() {
             evs.push(call_state(*id, call, call_phase(call)));
         }
@@ -1820,10 +2206,12 @@ impl Replica {
             .flatten()
             .copied()
             .collect();
-        let mut evs: Vec<WsEvent> = cids
-            .iter()
-            .filter_map(|cid| self.rooms.get(cid).map(|room| room_state(*cid, room)))
-            .collect();
+        let mut evs = Vec::new();
+        for cid in &cids {
+            if let Some(room) = self.rooms.get(cid) {
+                self.room_events(*cid, room, &mut evs);
+            }
+        }
         if let Some(user) = user {
             for id in self.calls_of(user) {
                 if let Some(call) = self.calls.get(&id) {

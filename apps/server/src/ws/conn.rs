@@ -256,6 +256,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
     let mut access = Access::new(username, is_site_admin, member_servers);
     if access.user.is_none() {
         access.guest = Some(guest_name());
+        access.addr = Some(slot.addr());
     }
     if let Some(mode) = mode {
         access.take_mode(mode);

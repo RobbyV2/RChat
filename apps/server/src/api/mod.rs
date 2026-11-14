@@ -13,6 +13,7 @@ pub mod embeds;
 pub mod error;
 pub mod features;
 pub mod friends;
+pub mod guest_voice;
 pub mod health;
 pub mod inbox;
 pub mod instance;
@@ -2014,6 +2015,14 @@ fn api_routes(
         .route(
             "/servers/{name}/timeouts/{username}",
             put(timeouts::set_timeout).delete(timeouts::remove_timeout),
+        )
+        .route(
+            "/servers/{name}/voice/{guest}/disconnect",
+            post(guest_voice::disconnect_guest),
+        )
+        .route(
+            "/servers/{name}/voice/{guest}/mute",
+            put(guest_voice::mute_guest).delete(guest_voice::unmute_guest),
         )
         .route("/servers/{name}/audit", get(audit::list_audit))
         .route("/servers/{name}/webhooks", get(webhooks::list_webhooks))

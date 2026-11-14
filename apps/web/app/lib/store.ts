@@ -388,6 +388,7 @@ export const useStore = create<RChatState>()((set, get) => {
     p2pCallFailed: {},
     voiceUsers: {},
     voiceMuted: {},
+    voiceHushed: {},
     timeouts: {},
     p2pAvailability: {},
     rtcTick: 0,

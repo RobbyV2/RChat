@@ -474,6 +474,25 @@ pub(crate) async fn repost(state: &AppState, op: Op) {
                 state.hub.evict_voice(&user, channel_id);
             }
         }
+        Op::VoiceKick {
+            user,
+            server,
+            reason,
+            block_ms,
+            addr,
+        } => state.hub.kick_from_voice(
+            &user,
+            &server,
+            addr.as_deref(),
+            &reason,
+            Duration::from_millis(u64::try_from(block_ms).unwrap_or(0)),
+        ),
+        Op::VoiceHush {
+            user,
+            server,
+            muted,
+            addr,
+        } => state.hub.hush_voice(&user, &server, addr.as_deref(), muted),
         _ => {}
     }
 }

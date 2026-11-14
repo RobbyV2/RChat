@@ -780,7 +780,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     resyncTimer = setTimeout(
       () => {
         resyncTimer = null
-        set({ p2pAvailability: {}, voiceUsers: {}, voiceMuted: {} })
+        set({ p2pAvailability: {}, voiceUsers: {}, voiceMuted: {}, voiceHushed: {} })
         home.ws.resubscribe()
         refreshMe()
         void loadBlocked()
@@ -874,7 +874,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }
       const outage = downSince === null ? 0 : Date.now() - downSince
       downSince = null
-      set({ p2pAvailability: {}, voiceUsers: {}, voiceMuted: {} })
+      set({ p2pAvailability: {}, voiceUsers: {}, voiceMuted: {}, voiceHushed: {} })
       if (get().me) p2p.announce()
       else if (get().token) void recoverMe()
       const { view } = get()
@@ -1443,6 +1443,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         selfAudio: SELF_AUDIO_IDLE,
         voiceUsers: {},
         voiceMuted: {},
+        voiceHushed: {},
         timeouts: {},
         servers: {},
         members: {},

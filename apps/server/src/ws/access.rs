@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -307,6 +308,8 @@ pub(super) struct Access {
     pub(super) user: Option<String>,
     /// The name a guest connection has in voice rooms (`guests::guest_name`).
     pub(super) guest: Option<String>,
+    /// Where a guest connection came from (`budget::group`), which a block from voice covers.
+    pub(super) addr: Option<IpAddr>,
     /// When the account was created (it keys anonymous poll votes).
     pub(super) since: Option<i64>,
     pub(super) token: Option<String>,
@@ -349,6 +352,7 @@ impl Access {
         Access {
             user,
             guest: None,
+            addr: None,
             since: None,
             token: None,
             site_admin,

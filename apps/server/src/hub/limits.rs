@@ -154,6 +154,11 @@ pub struct AddrSlot {
 }
 
 impl AddrSlot {
+    /// The address the socket came from, as it is counted (`budget::group`).
+    pub fn addr(&self) -> IpAddr {
+        self.addr
+    }
+
     /// Counts this socket as a guest too: false past the guests' share of the address or past
     /// the guest sockets of the whole instance.
     pub fn guest(&mut self) -> bool {

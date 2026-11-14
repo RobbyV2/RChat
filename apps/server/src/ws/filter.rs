@@ -438,6 +438,7 @@ pub(super) fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             channel_id,
             username: _,
             muted: _,
+            staff: _,
         } => Some((server.as_str(), *channel_id)),
         WsEvent::VoiceEnded {
             server,
@@ -733,6 +734,7 @@ pub(super) fn wants(
             channel_id: _,
             username: _,
             muted: _,
+            staff: _,
         } => in_server(server),
         WsEvent::MemberTimeout {
             server,
