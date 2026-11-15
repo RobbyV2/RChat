@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -12,10 +14,10 @@ use crate::api::messages::read_dm_latest;
 use crate::api::policy::DmCreation;
 use crate::api::servers::Page;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, DmSummary, OkResp, Paged, cursor_int, decode_cursor,
-    encode_cursor, ok, page_bounds, placeholders, split_list, user_from, user_ref, user_refs,
+    ApiError, ApiErrorBody, Authed, DmSummary, OkResp, Paged, bad, cursor_int, decode_cursor,
+    encode_cursor, ok, page_bounds, placeholders, split_list, user_from, user_refs,
 };
-use crate::db::{Db, LIVE_DM, User, get_user};
+use crate::db::{Db, LIVE_DM, User, get_user, is_sqlite};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -27,7 +29,90 @@ pub struct OpenDmReq {
     username: String,
 }
 
-/// Paging or selection for the DM list.
+/// How the DM list is ordered. The conversation with yourself always comes first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum DmSort {
+    /// Latest message or call first; DMs without messages last, newest first.
+    #[default]
+    Recent,
+    /// Least recent message or call first; DMs without messages first, oldest first.
+    Oldest,
+    /// By the other person's display name, then username, A to Z by code point (ASCII letters
+    /// ignore case).
+    Name,
+}
+
+/// The order and filter of a DM list page; a cursor only continues the one it came from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DmOrder {
+    pub(crate) sort: DmSort,
+    pub(crate) friends: bool,
+}
+
+enum DmKey {
+    Activity(i64, i64),
+    Name(String, String),
+}
+
+impl DmOrder {
+    fn tag(self) -> Option<&'static str> {
+        let DmOrder { sort, friends } = self;
+        match (sort, friends) {
+            (DmSort::Recent, false) => None,
+            (DmSort::Recent, true) => Some("rf"),
+            (DmSort::Oldest, false) => Some("o"),
+            (DmSort::Oldest, true) => Some("of"),
+            (DmSort::Name, false) => Some("n"),
+            (DmSort::Name, true) => Some("nf"),
+        }
+    }
+
+    fn start(self) -> DmKey {
+        match self.sort {
+            DmSort::Recent => DmKey::Activity(i64::MAX, i64::MAX),
+            DmSort::Oldest => DmKey::Activity(i64::MIN, i64::MIN),
+            DmSort::Name => DmKey::Name(String::new(), String::new()),
+        }
+    }
+
+    fn encode(self, key: &DmKey) -> String {
+        let (a, b) = match key {
+            DmKey::Activity(latest, id) => (latest.to_string(), id.to_string()),
+            DmKey::Name(name, partner) => (hex::encode(name), partner.clone()),
+        };
+        match self.tag() {
+            Some(tag) => encode_cursor(&[tag, &a, &b]),
+            None => encode_cursor(&[&a, &b]),
+        }
+    }
+
+    fn decode(self, raw: &str) -> Result<DmKey, ApiError> {
+        let invalid = || bad("Invalid cursor");
+        let parts = match self.tag() {
+            None => decode_cursor(raw, 2)?,
+            Some(tag) => match decode_cursor(raw, 3)? {
+                parts if parts[0] == tag => parts[1..].to_vec(),
+                _ => return Err(invalid()),
+            },
+        };
+        match self.sort {
+            DmSort::Recent | DmSort::Oldest => Ok(DmKey::Activity(
+                cursor_int(&parts[0])?,
+                cursor_int(&parts[1])?,
+            )),
+            DmSort::Name => {
+                let name = hex::decode(&parts[0]).map_err(|_| invalid())?;
+                Ok(DmKey::Name(
+                    String::from_utf8(name).map_err(|_| invalid())?,
+                    parts[1].clone(),
+                ))
+            }
+        }
+    }
+}
+
+/// Paging, order or selection for the DM list.
 #[derive(Deserialize, IntoParams)]
 pub struct DmListQuery {
     /// Legacy offset into the list, 0 to 1000000 (clamped), default 0. Ignored when `cursor` is
@@ -36,38 +121,97 @@ pub struct DmListQuery {
     /// Page size, 1 to 100 (clamped), default 50.
     limit: Option<i64>,
     /// Opaque cursor from the `X-Next-Cursor` header of the previous page (or `dms_cursor` from
-    /// `GET /api/v1/me`). Empty means the first page.
+    /// `GET /api/v1/me`, which is for the default order). Empty means the first page. A cursor
+    /// only works with the `sort` and `friends` it came from.
     cursor: Option<String>,
     /// Comma-separated DM ids to fetch instead of a page; up to 100 distinct ids, entries that
     /// are not integers or not your DMs are skipped. Paging parameters are then ignored.
     #[param(example = "12,40")]
     ids: Option<String>,
+    /// Order of the pages, default `recent`.
+    #[param(inline)]
+    sort: Option<DmSort>,
+    /// `true`: only DMs with accepted friends (and the one with yourself). Default `false`.
+    friends: Option<bool>,
 }
 
-fn dm_half(col: &str, keyset: bool, limit: usize) -> String {
-    let bound = match keyset {
-        true => " AND (last_message_id, id) < ($2, $3)",
-        false => "",
-    };
+fn dm_half(col: &str, order: DmOrder, keyset: bool, sqlite: bool, limit: usize) -> String {
+    let DmOrder { sort, friends } = order;
     let (partner, closed) = match col {
         "user_a" => ("user_b", "closed_a"),
         _ => ("user_a", "closed_b"),
     };
+    let collate = match sqlite {
+        true => "",
+        false => " COLLATE \"C\"",
+    };
+    let name = format!("lower(COALESCE(u.display_name, d.{partner}){collate})");
+    let who = format!("d.{partner}{collate}");
+    let (columns, join, by, bound) = match sort {
+        DmSort::Recent => (
+            String::new(),
+            String::new(),
+            "d.last_message_id DESC, d.id DESC".to_string(),
+            " AND (d.last_message_id, d.id) < ($2, $3)".to_string(),
+        ),
+        DmSort::Oldest => (
+            String::new(),
+            String::new(),
+            "d.last_message_id, d.id".to_string(),
+            " AND (d.last_message_id, d.id) > ($2, $3)".to_string(),
+        ),
+        DmSort::Name => (
+            format!(", {name} AS name_key, d.{partner} AS partner"),
+            format!(" LEFT JOIN users u ON u.username = d.{partner}"),
+            format!("{name}, {who}"),
+            format!(" AND ({name}, {who}) > ($2, $3)"),
+        ),
+    };
+    let bound = match keyset {
+        true => bound.as_str(),
+        false => "",
+    };
+    let friends = match friends {
+        true => format!(
+            " AND EXISTS(SELECT 1 FROM friends f WHERE f.username = $1 AND f.friend = d.{partner})"
+        ),
+        false => String::new(),
+    };
     format!(
-        "SELECT id, user_a, user_b, last_message_id FROM (SELECT id, user_a, user_b, last_message_id FROM dms WHERE {col} = $1 AND user_a <> user_b AND {closed} = 0{bound} AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username = dms.{partner} AND pu.password_hash = '!purging') ORDER BY last_message_id DESC, id DESC LIMIT ${limit}) h_{col}"
+        "SELECT * FROM (SELECT d.id, d.user_a, d.user_b, d.last_message_id{columns} FROM dms d{join} WHERE d.{col} = $1 AND d.user_a <> d.user_b AND d.{closed} = 0{bound} AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username = d.{partner} AND pu.password_hash = '!purging'){friends} ORDER BY {by} LIMIT ${limit}) h_{col}"
     )
 }
 
-fn dm_union(keyset: bool) -> String {
+fn dm_union(order: DmOrder, keyset: bool, sqlite: bool) -> String {
     let (limit, offset) = match keyset {
         true => (4, 5),
         false => (2, 3),
     };
+    let collate = match sqlite {
+        true => "",
+        false => " COLLATE \"C\"",
+    };
+    let (columns, by) = match order.sort {
+        DmSort::Recent => ("", "last_message_id DESC, id DESC".to_string()),
+        DmSort::Oldest => ("", "last_message_id, id".to_string()),
+        DmSort::Name => (
+            ", name_key, partner",
+            format!("name_key{collate}, partner{collate}"),
+        ),
+    };
     format!(
-        "SELECT id, user_a, user_b, last_message_id FROM ({} UNION ALL {}) x ORDER BY last_message_id DESC, id DESC LIMIT ${limit} OFFSET ${offset}",
-        dm_half("user_a", keyset, limit),
-        dm_half("user_b", keyset, limit),
+        "SELECT id, user_a, user_b, last_message_id{columns} FROM ({} UNION ALL {}) x ORDER BY {by} LIMIT ${limit} OFFSET ${offset}",
+        dm_half("user_a", order, keyset, sqlite, limit),
+        dm_half("user_b", order, keyset, sqlite, limit),
     )
+}
+
+struct DmRow {
+    id: i64,
+    other: String,
+    is_self: bool,
+    closed: bool,
+    latest: i64,
 }
 
 async fn summaries(
@@ -78,7 +222,8 @@ async fn summaries(
 ) -> Result<Vec<DmSummary>, ApiError> {
     let mut parsed = Vec::with_capacity(rows.len());
     for r in rows {
-        let (id, a, b): (i64, String, String) = (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?);
+        let (id, a, b, latest): (i64, String, String, i64) =
+            (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?, r.try_get(3)?);
         let closed = match closed_col {
             Some(col) => r.try_get::<i64, _>(col)? != 0,
             None => false,
@@ -88,46 +233,104 @@ async fn summaries(
             true => b,
             false => a,
         };
-        parsed.push((id, other, is_self, closed));
-    }
-    let names: Vec<String> = parsed
-        .iter()
-        .map(|(_, other, _, _)| other.clone())
-        .collect();
-    let refs = user_refs(db, &names).await;
-    Ok(parsed
-        .into_iter()
-        .map(|(id, other, is_self, closed)| DmSummary {
+        parsed.push(DmRow {
             id,
-            other: user_from(&refs, &other),
+            other,
             is_self,
             closed,
-        })
+            latest,
+        });
+    }
+    summaries_of(db, viewer, parsed).await
+}
+
+async fn summaries_of(
+    db: &Db,
+    viewer: &str,
+    parsed: Vec<DmRow>,
+) -> Result<Vec<DmSummary>, ApiError> {
+    let names: Vec<String> = parsed.iter().map(|d| d.other.clone()).collect();
+    let refs = user_refs(db, &names).await;
+    let latest: Vec<i64> = parsed
+        .iter()
+        .filter(|d| d.latest > 0)
+        .map(|d| d.latest)
+        .collect();
+    let mut sent_at: HashMap<i64, i64> = HashMap::with_capacity(latest.len());
+    if !latest.is_empty() {
+        let sql = format!(
+            "SELECT id, created_at FROM messages WHERE id IN ({})",
+            placeholders(1, latest.len())
+        );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for id in &latest {
+            query = query.bind(*id);
+        }
+        for r in query.fetch_all(db).await? {
+            sent_at.insert(r.try_get(0)?, r.try_get(1)?);
+        }
+    }
+    let others: Vec<&str> = parsed
+        .iter()
+        .filter(|d| !d.is_self)
+        .map(|d| d.other.as_str())
+        .collect();
+    let mut friends: HashSet<String> = HashSet::with_capacity(others.len());
+    if !others.is_empty() {
+        let sql = format!(
+            "SELECT friend FROM friends WHERE username = $1 AND friend IN ({})",
+            placeholders(2, others.len())
+        );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(viewer);
+        for name in &others {
+            query = query.bind(*name);
+        }
+        for r in query.fetch_all(db).await? {
+            friends.insert(r.try_get(0)?);
+        }
+    }
+    Ok(parsed
+        .into_iter()
+        .map(
+            |DmRow {
+                 id,
+                 other,
+                 is_self,
+                 closed,
+                 latest,
+             }| DmSummary {
+                id,
+                friend: !is_self && friends.contains(&other),
+                other: user_from(&refs, &other),
+                is_self,
+                closed,
+                last_message_id: (latest > 0).then_some(latest),
+                last_message_at: sent_at.get(&latest).copied(),
+            },
+        )
         .collect())
 }
 
 pub(crate) async fn dm_page(
     db: &Db,
     viewer: &str,
+    order: DmOrder,
     offset: i64,
     cursor: Option<&str>,
     limit: i64,
 ) -> Result<Page<DmSummary>, ApiError> {
+    let sqlite = is_sqlite(db);
     let mut rows: Vec<AnyRow> = Vec::with_capacity(limit as usize + 1);
     match cursor {
         Some(raw) => {
-            let parts = decode_cursor(raw, 2)?;
-            let sql = dm_union(true);
-            rows.extend(
-                sqlx::query(sqlx::AssertSqlSafe(sql))
-                    .bind(viewer)
-                    .bind(cursor_int(&parts[0])?)
-                    .bind(cursor_int(&parts[1])?)
-                    .bind(limit + 1)
-                    .bind(0i64)
-                    .fetch_all(db)
-                    .await?,
-            );
+            let sql = sqlx::AssertSqlSafe(dm_union(order, true, sqlite));
+            let query = match order.decode(raw)? {
+                DmKey::Activity(latest, id) => sqlx::query(sql).bind(viewer).bind(latest).bind(id),
+                DmKey::Name(name, partner) => {
+                    sqlx::query(sql).bind(viewer).bind(name).bind(partner)
+                }
+            };
+            rows.extend(query.bind(limit + 1).bind(0i64).fetch_all(db).await?);
         }
         None => {
             if offset == 0 {
@@ -140,7 +343,7 @@ pub(crate) async fn dm_page(
             }
             let skip = (offset - 1).max(0);
             let want = limit + 1 - rows.len() as i64;
-            let sql = dm_union(false);
+            let sql = dm_union(order, false, sqlite);
             rows.extend(
                 sqlx::query(sqlx::AssertSqlSafe(sql))
                     .bind(viewer)
@@ -159,10 +362,12 @@ pub(crate) async fn dm_page(
         (true, Some(r)) => {
             let (id, a, b, latest): (i64, String, String, i64) =
                 (r.try_get(0)?, r.try_get(1)?, r.try_get(2)?, r.try_get(3)?);
-            Some(match a == b {
-                true => encode_cursor(&[&i64::MAX.to_string(), &i64::MAX.to_string()]),
-                false => encode_cursor(&[&latest.to_string(), &id.to_string()]),
-            })
+            let key = match (a == b, order.sort) {
+                (true, _) => order.start(),
+                (false, DmSort::Recent | DmSort::Oldest) => DmKey::Activity(latest, id),
+                (false, DmSort::Name) => DmKey::Name(r.try_get(4)?, r.try_get(5)?),
+            };
+            Some(order.encode(&key))
         }
         _ => None,
     };
@@ -182,7 +387,7 @@ pub(crate) async fn dms_by_ids(
         return Ok(Vec::new());
     }
     let sql = format!(
-        "SELECT id, user_a, user_b, CASE WHEN user_a = $1 THEN closed_a ELSE closed_b END FROM dms WHERE (user_a = $1 OR user_b = $1) AND id IN ({}) AND {LIVE_DM} ORDER BY CASE WHEN user_a = user_b THEN 0 ELSE 1 END, last_message_id DESC, id DESC",
+        "SELECT id, user_a, user_b, last_message_id, CASE WHEN user_a = $1 THEN closed_a ELSE closed_b END FROM dms WHERE (user_a = $1 OR user_b = $1) AND id IN ({}) AND {LIVE_DM} ORDER BY CASE WHEN user_a = user_b THEN 0 ELSE 1 END, last_message_id DESC, id DESC",
         placeholders(2, ids.len())
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(viewer);
@@ -190,14 +395,14 @@ pub(crate) async fn dms_by_ids(
         query = query.bind(*id);
     }
     let rows = query.fetch_all(db).await?;
-    summaries(db, viewer, &rows, Some(3)).await
+    summaries(db, viewer, &rows, Some(4)).await
 }
 
 /// List your DMs
 ///
-/// Returns the signed-in user's DM conversations, a page at a time or selected by id. Requires
-/// a bearer token. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/dms", tag = "Direct messages", params(DmListQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default 50, max 100) of the signed-in user's DM conversations: the self DM first, then by latest message (call logs included) newest first, DMs without messages last by id newest first. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page (`dms_cursor` in `/api/v1/me` for the page after the first). DMs the user closed are left out of pages. With `ids` (comma-separated, max 100) returns just those DMs, self DM first, without `X-Next-Cursor`, skipping ones the user is not part of; closed ones are included with `closed: true`", body = Vec<DmSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON), or a non-integer `offset`/`limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// Returns the signed-in user's DM conversations, a page at a time (ordered by `sort`, optionally
+/// only friends) or selected by id. Requires a bearer token. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/dms", tag = "Direct messages", params(DmListQuery), responses((status = 200, description = "A page (`cursor` or legacy `offset`, `limit` default 50, max 100) of the signed-in user's DM conversations: the self DM first, then in the `sort` order. `recent` (default): by latest message (call logs included) newest first, DMs without messages last by id newest first. `oldest`: the reverse, DMs without messages first by id oldest first. `name`: by the other person's display name, then username, A to Z by code point (ASCII letters ignore case). `friends=true` leaves out DMs with people who are not accepted friends; the self DM stays. When more follow, the `X-Next-Cursor` response header holds the `cursor` for the next page (`dms_cursor` in `/api/v1/me` for the page after the first of the default order); a cursor only works with the `sort` and `friends` it came from. DMs the user closed are left out of pages. With `ids` (comma-separated, max 100) returns just those DMs, self DM first, without `X-Next-Cursor`, skipping ones the user is not part of; closed ones are included with `closed: true`", body = Vec<DmSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON): malformed, or from another `sort` or `friends`. Or a non-integer `offset`/`limit`, an unknown `sort` or a `friends` other than `true`/`false` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
 pub(crate) async fn list_dms(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -208,7 +413,13 @@ pub(crate) async fn list_dms(
         limit,
         cursor,
         ids,
+        sort,
+        friends,
     } = q;
+    let order = DmOrder {
+        sort: sort.unwrap_or_default(),
+        friends: friends.unwrap_or(false),
+    };
     let db = &state.read();
     match ids {
         Some(raw) => {
@@ -225,7 +436,7 @@ pub(crate) async fn list_dms(
                 items,
                 more: _,
                 next,
-            } = dm_page(db, &user.username, offset, cursor, limit).await?;
+            } = dm_page(db, &user.username, order, offset, cursor, limit).await?;
             Ok(Paged(items, next))
         }
     }
@@ -263,22 +474,22 @@ pub(crate) async fn open_dm(
         true => (user.username.clone(), target.clone()),
         false => (target.clone(), user.username.clone()),
     };
-    let existing: Option<i64> =
-        match sqlx::query("SELECT id FROM dms WHERE user_a = $1 AND user_b = $2")
+    let existing: Option<(i64, i64)> =
+        match sqlx::query("SELECT id, last_message_id FROM dms WHERE user_a = $1 AND user_b = $2")
             .bind(&a)
             .bind(&b)
             .fetch_optional(&state.db)
             .await?
         {
-            Some(r) => Some(r.try_get(0)?),
+            Some(r) => Some((r.try_get(0)?, r.try_get(1)?)),
             None => None,
         };
     if existing.is_none() && a != b {
         crate::api::lookup::contact(&state, &user)?;
     }
-    let (id, created) = match existing {
-        Some(id) => match get_user(&state.db, &target).await? {
-            Some(_) => (id, false),
+    let (id, latest, created) = match existing {
+        Some((id, latest)) => match get_user(&state.db, &target).await? {
+            Some(_) => (id, latest, false),
             None => return Err(unknown()),
         },
         None => {
@@ -320,7 +531,7 @@ pub(crate) async fn open_dm(
                     .fetch_one(&state.db)
                     .await?
                     .try_get(0)?;
-            (id, true)
+            (id, 0, true)
         }
     };
     if !created && set_closed(&state.db, id, &user.username, false).await? {
@@ -329,11 +540,18 @@ pub(crate) async fn open_dm(
             dm_id: id,
         });
     }
-    let dm = DmSummary {
+    let row = DmRow {
         id,
-        other: user_ref(&state.db, &target).await,
+        other: target,
         is_self: a == b,
         closed: false,
+        latest,
+    };
+    let Some(dm) = summaries_of(&state.db, &user.username, vec![row])
+        .await?
+        .pop()
+    else {
+        return Err(unknown());
     };
     if created {
         state.hub.broadcast(WsEvent::DmCreated {
@@ -449,8 +667,8 @@ pub(crate) async fn close_dm(
 mod tests {
     use super::*;
     use crate::api::auth::me_payload;
-    use crate::api::test_util::{done, mem_user, temp_state};
-    use crate::db::now;
+    use crate::api::test_util::{done, mem_user, pg_done, pg_state, temp_state};
+    use crate::db::{is_sqlite, now};
 
     async fn add_user(db: &Db, name: &str, display: &str) {
         crate::db::NewUser::plain(name)
@@ -473,13 +691,19 @@ mod tests {
     }
 
     async fn add_msg(db: &Db, dm: i64, kind: &str) {
-        sqlx::query("INSERT INTO messages(dm_id, author, content, kind, created_at) VALUES($1, 'alice', 'x', $2, $3)")
+        add_msg_at(db, dm, kind, now()).await;
+    }
+
+    async fn add_msg_at(db: &Db, dm: i64, kind: &str, at: i64) -> i64 {
+        sqlx::query("INSERT INTO messages(dm_id, author, content, kind, created_at) VALUES($1, 'alice', 'x', $2, $3) RETURNING id")
             .bind(dm)
             .bind(kind)
-            .bind(now())
-            .execute(db)
+            .bind(at)
+            .fetch_one(db)
             .await
-            .expect("insert message");
+            .expect("insert message")
+            .try_get(0)
+            .expect("message id")
     }
 
     async fn list(
@@ -496,6 +720,8 @@ mod tests {
                 limit,
                 cursor: None,
                 ids: ids.map(str::to_string),
+                sort: None,
+                friends: None,
             }),
         )
         .await
@@ -741,16 +967,20 @@ mod tests {
         assert_eq!(list(&state, Some(2), Some(2), None).await, order[2..4]);
         assert_eq!(list(&state, Some(4), Some(2), None).await, order[4..]);
         assert_eq!(list(&state, Some(-5), Some(0), None).await, order[..1]);
-        let first = dm_page(db, "alice", 0, None, 5).await.expect("page");
+        let first = dm_page(db, "alice", DmOrder::default(), 0, None, 5)
+            .await
+            .expect("page");
         assert_eq!(first.items.len(), 5);
         assert!(first.more);
-        let rest = dm_page(db, "alice", 5, None, 5).await.expect("page");
+        let rest = dm_page(db, "alice", DmOrder::default(), 5, None, 5)
+            .await
+            .expect("page");
         assert_eq!(rest.items.len(), 1);
         assert!(!rest.more);
         let mut walked = Vec::new();
         let mut cursor: Option<String> = None;
         loop {
-            let page = dm_page(db, "alice", 0, cursor.as_deref(), 2)
+            let page = dm_page(db, "alice", DmOrder::default(), 0, cursor.as_deref(), 2)
                 .await
                 .expect("cursor page");
             walked.extend(page.items.iter().map(|d| d.id));
@@ -807,13 +1037,22 @@ mod tests {
         assert!(me.servers.is_empty());
         assert!(!me.servers_more);
         let ids: Vec<i64> = me.dms.iter().map(|d| d.id).collect();
-        let next = dm_page(db, "alice", 50, None, 50).await.expect("next");
+        let next = dm_page(db, "alice", DmOrder::default(), 50, None, 50)
+            .await
+            .expect("next");
         assert_eq!(next.items.len(), 6);
         assert!(!next.more);
         assert!(next.items.iter().all(|d| !ids.contains(&d.id)));
-        let after = dm_page(db, "alice", 0, me.dms_cursor.as_deref(), 50)
-            .await
-            .expect("cursor");
+        let after = dm_page(
+            db,
+            "alice",
+            DmOrder::default(),
+            0,
+            me.dms_cursor.as_deref(),
+            50,
+        )
+        .await
+        .expect("cursor");
         let a: Vec<i64> = after.items.iter().map(|d| d.id).collect();
         let b: Vec<i64> = next.items.iter().map(|d| d.id).collect();
         assert_eq!(a, b);
@@ -859,7 +1098,7 @@ mod tests {
             let state = state.clone();
             let who = who.to_string();
             async move {
-                dm_page(&state.db, &who, 0, None, 50)
+                dm_page(&state.db, &who, DmOrder::default(), 0, None, 50)
                     .await
                     .expect("page")
                     .items
@@ -987,5 +1226,547 @@ mod tests {
         assert_eq!(open("bob").await.id, dm.id);
         assert!(rx.try_recv().is_err());
         done(state, path).await;
+    }
+
+    const ORDERS: [DmOrder; 6] = [
+        DmOrder {
+            sort: DmSort::Recent,
+            friends: false,
+        },
+        DmOrder {
+            sort: DmSort::Oldest,
+            friends: false,
+        },
+        DmOrder {
+            sort: DmSort::Name,
+            friends: false,
+        },
+        DmOrder {
+            sort: DmSort::Recent,
+            friends: true,
+        },
+        DmOrder {
+            sort: DmSort::Oldest,
+            friends: true,
+        },
+        DmOrder {
+            sort: DmSort::Name,
+            friends: true,
+        },
+    ];
+
+    async fn walk(db: &Db, order: DmOrder, size: i64) -> Vec<DmSummary> {
+        let mut walked = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = dm_page(db, "alice", order, 0, cursor.as_deref(), size)
+                .await
+                .expect("cursor page");
+            assert!(page.items.len() as i64 <= size);
+            walked.extend(page.items);
+            match page.next {
+                Some(next) => cursor = Some(next),
+                None => return walked,
+            }
+        }
+    }
+
+    async fn walk_offsets(db: &Db, order: DmOrder, size: i64) -> Vec<i64> {
+        let mut walked = Vec::new();
+        loop {
+            let got = dm_page(db, "alice", order, walked.len() as i64, None, size)
+                .await
+                .expect("offset page");
+            walked.extend(got.items.iter().map(|d| d.id));
+            if !got.more {
+                return walked;
+            }
+        }
+    }
+
+    async fn add_friends(db: &Db, pairs: &[(&str, &str)]) {
+        for (a, b) in pairs {
+            sqlx::query("INSERT INTO friends(username, friend, created_at) VALUES($1, $2, 1)")
+                .bind(a)
+                .bind(b)
+                .execute(db)
+                .await
+                .expect("friend");
+        }
+    }
+
+    async fn sorts_and_friends_filter(state: &AppState) {
+        let db = &state.db;
+        for (name, display) in [
+            ("alice", "Alice"),
+            ("aaron", "Mia"),
+            ("abe", "bea"),
+            ("bob", "Zoe"),
+            ("carol", "amy"),
+            ("dave", "Bea"),
+            ("frank", "Mia"),
+            ("gina", "Gina"),
+            ("hank", "Hank"),
+        ] {
+            add_user(db, name, display).await;
+        }
+        sqlx::query("UPDATE users SET password_hash = '!purging' WHERE username = 'hank'")
+            .execute(db)
+            .await
+            .expect("purging");
+        let me = add_dm(db, "alice", "alice").await;
+        let aaron = add_dm(db, "aaron", "alice").await;
+        let bob = add_dm(db, "alice", "bob").await;
+        let carol = add_dm(db, "alice", "carol").await;
+        let abe = add_dm(db, "abe", "alice").await;
+        let dave = add_dm(db, "alice", "dave").await;
+        let erin = add_dm(db, "alice", "erin").await;
+        let frank = add_dm(db, "alice", "frank").await;
+        let gina = add_dm(db, "alice", "gina").await;
+        let hank = add_dm(db, "alice", "hank").await;
+        let other = add_dm(db, "bob", "carol").await;
+        sqlx::query("UPDATE dms SET closed_a = 1 WHERE id = $1")
+            .bind(gina)
+            .execute(db)
+            .await
+            .expect("close");
+        add_msg_at(db, carol, "user", 100).await;
+        add_msg_at(db, other, "user", 110).await;
+        add_msg_at(db, aaron, "user", 120).await;
+        let call = add_msg_at(db, bob, "call", 130).await;
+        add_msg_at(db, frank, "user", 140).await;
+        let latest = add_msg_at(db, carol, "user", 150).await;
+        let closed = add_msg_at(db, gina, "user", 160).await;
+        add_msg_at(db, hank, "user", 170).await;
+        add_friends(
+            db,
+            &[
+                ("alice", "carol"),
+                ("carol", "alice"),
+                ("alice", "abe"),
+                ("abe", "alice"),
+                ("alice", "frank"),
+                ("frank", "alice"),
+                ("alice", "bob"),
+                ("bob", "alice"),
+                ("alice", "gina"),
+                ("alice", "hank"),
+                ("dave", "alice"),
+            ],
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO friend_requests(sender, recipient, created_at) VALUES('alice', 'erin', 1)",
+        )
+        .execute(db)
+        .await
+        .expect("request");
+        let expected: [Vec<i64>; 6] = [
+            vec![me, carol, frank, bob, aaron, erin, dave, abe],
+            vec![me, abe, dave, erin, aaron, bob, frank, carol],
+            vec![me, carol, abe, dave, erin, aaron, frank, bob],
+            vec![me, carol, frank, bob, abe],
+            vec![me, abe, bob, frank, carol],
+            vec![me, carol, abe, frank, bob],
+        ];
+        for (order, want) in ORDERS.iter().zip(&expected) {
+            for size in [1, 2, 3, 100] {
+                let ids: Vec<i64> = walk(db, *order, size).await.iter().map(|d| d.id).collect();
+                assert_eq!(&ids, want, "{order:?} by cursor, pages of {size}");
+            }
+            for size in [1, 2, 3] {
+                assert_eq!(
+                    &walk_offsets(db, *order, size).await,
+                    want,
+                    "{order:?} by offset, pages of {size}"
+                );
+            }
+        }
+
+        let listed = walk(db, DmOrder::default(), 50).await;
+        let find = |id: i64| listed.iter().find(|d| d.id == id).expect("listed");
+        let fields = |d: &DmSummary| (d.last_message_id, d.last_message_at, d.friend);
+        assert_eq!(fields(find(carol)), (Some(latest), Some(150), true));
+        assert_eq!(fields(find(bob)), (Some(call), Some(130), true));
+        assert_eq!(fields(find(abe)), (None, None, true));
+        assert_eq!(fields(find(dave)), (None, None, false));
+        assert_eq!(fields(find(erin)), (None, None, false));
+        assert_eq!(fields(find(me)), (None, None, false));
+        let json = serde_json::to_value(find(abe)).expect("json");
+        assert!(json["last_message_id"].is_null() && json["last_message_at"].is_null());
+        assert_eq!(json["friend"], true);
+        let by_id = dms_by_ids(db, "alice", &[gina, dave])
+            .await
+            .expect("by ids");
+        assert_eq!(
+            by_id
+                .iter()
+                .map(|d| (d.id, d.closed, d.last_message_id, d.friend))
+                .collect::<Vec<_>>(),
+            [(gina, true, Some(closed), true), (dave, false, None, false)]
+        );
+        let opened = open_dm(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Json(OpenDmReq {
+                username: "Carol".to_string(),
+            }),
+        )
+        .await
+        .expect("open")
+        .0;
+        assert_eq!(
+            (
+                opened.id,
+                opened.last_message_id,
+                opened.last_message_at,
+                opened.friend
+            ),
+            (carol, Some(latest), Some(150), true)
+        );
+        let fresh = open_dm(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Json(OpenDmReq {
+                username: "gina".to_string(),
+            }),
+        )
+        .await
+        .expect("reopen")
+        .0;
+        assert_eq!((fresh.id, fresh.last_message_at), (gina, Some(160)));
+
+        for from in ORDERS {
+            for size in [1, 2] {
+                let cursor = dm_page(db, "alice", from, 0, None, size)
+                    .await
+                    .expect("page")
+                    .next
+                    .expect("more");
+                for to in ORDERS.into_iter().filter(|o| *o != from) {
+                    let Err(ApiError(code, msg, _)) =
+                        dm_page(db, "alice", to, 0, Some(&cursor), size).await
+                    else {
+                        panic!("{from:?} cursor taken by {to:?}");
+                    };
+                    assert_eq!(
+                        (code, msg.as_str()),
+                        (StatusCode::BAD_REQUEST, "Invalid cursor")
+                    );
+                }
+            }
+        }
+
+        let page = |sort: DmSort, cursor: Option<String>| {
+            list_dms(
+                State(state.clone()),
+                Authed(mem_user("alice", false)),
+                Query(DmListQuery {
+                    offset: None,
+                    limit: Some(2),
+                    cursor,
+                    ids: None,
+                    sort: Some(sort),
+                    friends: Some(true),
+                }),
+            )
+        };
+        let Paged(first, next) = page(DmSort::Name, None).await.expect("first");
+        assert_eq!(first.iter().map(|d| d.id).collect::<Vec<_>>(), [me, carol]);
+        let Paged(second, _) = page(DmSort::Name, next.clone()).await.expect("second");
+        assert_eq!(second.iter().map(|d| d.id).collect::<Vec<_>>(), [abe, gina]);
+        assert!(matches!(
+            page(DmSort::Oldest, next).await,
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
+        ));
+    }
+
+    #[tokio::test]
+    async fn dm_list_sorts_and_friends_filter_page_without_gaps() {
+        let (state, path) = temp_state("dm_sorts").await;
+        sorts_and_friends_filter(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("dm_sorts").await {
+            sorts_and_friends_filter(&state).await;
+            pg_done(state, pg).await;
+        }
+    }
+
+    async fn names_fold_ascii_only(db: &Db) {
+        add_user(db, "alice", "Alice").await;
+        let mut dms = Vec::new();
+        for (name, display) in [
+            ("u1", "\u{0411}\u{043e}\u{0440}\u{0438}\u{0441}"),
+            ("u2", "\u{0430}\u{043d}\u{043d}\u{0430}"),
+            ("u3", "\u{00c9}zra"),
+            ("u4", "\u{00e9}a"),
+            ("u5", "bob"),
+            ("u6", "Zed"),
+            ("u7", "adam"),
+        ] {
+            add_user(db, name, display).await;
+            dms.push(add_dm(db, "alice", name).await);
+        }
+        let me = add_dm(db, "alice", "alice").await;
+        let [boris, anna, ezra, ea, bob, zed, adam] = dms[..] else {
+            panic!("seven dms");
+        };
+        let order = DmOrder {
+            sort: DmSort::Name,
+            friends: false,
+        };
+        for size in [1, 2, 100] {
+            let ids: Vec<i64> = walk(db, order, size).await.iter().map(|d| d.id).collect();
+            assert_eq!(
+                ids,
+                [me, adam, bob, zed, ezra, ea, boris, anna],
+                "pages of {size}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn name_order_folds_only_ascii_letters() {
+        let (state, path) = temp_state("dm_names").await;
+        names_fold_ascii_only(&state.db).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("dm_names").await {
+            names_fold_ascii_only(&state.db).await;
+            pg_done(state, pg).await;
+        }
+    }
+
+    async fn plan(db: &Db, sql: &str) -> String {
+        let mut tx = db.begin().await.expect("begin");
+        let (explain, column) = match is_sqlite(db) {
+            true => ("EXPLAIN QUERY PLAN", 3),
+            false => {
+                sqlx::query("SET LOCAL enable_seqscan = off")
+                    .execute(&mut *tx)
+                    .await
+                    .expect("no scans where an index works");
+                ("EXPLAIN", 0)
+            }
+        };
+        sqlx::query(sqlx::AssertSqlSafe(format!("{explain} {sql}")))
+            .fetch_all(&mut *tx)
+            .await
+            .expect("explain")
+            .iter()
+            .map(|r| r.try_get::<String, _>(column).expect("plan line"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    async fn big_account(db: &Db) {
+        let started = std::time::Instant::now();
+        let names: Vec<(String, String)> = (0..2000)
+            .map(|n| {
+                let side = match n % 2 {
+                    0 => "a",
+                    _ => "u",
+                };
+                (
+                    format!("{side}{n:04}"),
+                    format!("Name {:04}", (n * 7919) % 2000),
+                )
+            })
+            .collect();
+        let mut tx = db.begin().await.expect("begin");
+        crate::db::NewUser::plain("alice").add(&mut *tx).await;
+        for (name, display) in &names {
+            crate::db::NewUser::plain(name)
+                .shown(display)
+                .add(&mut *tx)
+                .await;
+        }
+        tx.commit().await.expect("users");
+        sqlx::query("INSERT INTO dms(user_a, user_b) SELECT CASE WHEN username < 'alice' THEN username ELSE 'alice' END, CASE WHEN username < 'alice' THEN 'alice' ELSE username END FROM users ORDER BY username")
+            .execute(db)
+            .await
+            .expect("dms");
+        sqlx::query("INSERT INTO dms(user_a, user_b) SELECT a.username, b.username FROM users a JOIN users b ON a.username < b.username AND substr(a.username, 4, 2) = substr(b.username, 4, 2) WHERE a.username <> 'alice' AND b.username <> 'alice'")
+            .execute(db)
+            .await
+            .expect("other dms");
+        sqlx::query("INSERT INTO friends(username, friend, created_at) SELECT 'alice', username, 1 FROM users WHERE username LIKE '%3' OR username LIKE '%6'")
+            .execute(db)
+            .await
+            .expect("friends");
+        sqlx::query("WITH RECURSIVE g(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM g WHERE n < 112) INSERT INTO messages(dm_id, author, content, created_at) SELECT d.id, 'alice', 'x', 1000 + g.n FROM dms d CROSS JOIN g WHERE d.id <= 2001 AND d.id % 10 <> 0 AND d.user_a <> d.user_b ORDER BY g.n, (d.id * 7919) % 2003")
+            .execute(db)
+            .await
+            .expect("messages");
+        let count: i64 = sqlx::query("SELECT COUNT(*) FROM messages WHERE dm_id IS NOT NULL")
+            .fetch_one(db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("count");
+        assert!(count >= 200_000, "{count} messages");
+        let analyze = match is_sqlite(db) {
+            true => "ANALYZE",
+            false => "VACUUM ANALYZE",
+        };
+        sqlx::query(analyze).execute(db).await.expect("analyze");
+        eprintln!("dm list speed: seeded in {:?}", started.elapsed());
+    }
+
+    async fn big_account_lists_fast(db: &Db) {
+        big_account(db).await;
+        let friends: i64 = sqlx::query("SELECT COUNT(*) FROM friends WHERE username = 'alice'")
+            .fetch_one(db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("count");
+        let sqlite = is_sqlite(db);
+        for order in ORDERS {
+            let all = walk(db, order, 100).await;
+            let ids: std::collections::HashSet<i64> = all.iter().map(|d| d.id).collect();
+            let want = match order.friends {
+                true => friends + 1,
+                false => 2001,
+            };
+            assert_eq!(
+                (all.len() as i64, ids.len() as i64),
+                (want, want),
+                "{order:?}"
+            );
+            assert!(all[0].is_self);
+            let keys: Vec<(i64, i64)> = all[1..]
+                .iter()
+                .map(|d| (d.last_message_id.unwrap_or(0), d.id))
+                .collect();
+            match order.sort {
+                DmSort::Recent => assert!(keys.windows(2).all(|w| w[0] > w[1]), "{order:?}"),
+                DmSort::Oldest => assert!(keys.windows(2).all(|w| w[0] < w[1]), "{order:?}"),
+                DmSort::Name => assert!(
+                    all[1..].windows(2).all(|w| (
+                        w[0].other.display_name.to_lowercase(),
+                        &w[0].other.username
+                    ) < (
+                        w[1].other.display_name.to_lowercase(),
+                        &w[1].other.username
+                    )),
+                    "{order:?}"
+                ),
+            }
+            assert!(all.iter().all(|d| !order.friends || d.friend || d.is_self));
+            let middle = dm_page(db, "alice", order, 0, None, 200)
+                .await
+                .expect("page")
+                .next
+                .expect("more");
+            let mut best = [std::time::Duration::MAX; 2];
+            for _ in 0..11 {
+                for (n, cursor) in [None, Some(middle.as_str())].into_iter().enumerate() {
+                    let started = std::time::Instant::now();
+                    let page = dm_page(db, "alice", order, 0, cursor, 50)
+                        .await
+                        .expect("page");
+                    best[n] = best[n].min(started.elapsed());
+                    assert_eq!(page.items.len(), 50);
+                }
+            }
+            eprintln!(
+                "dm list speed {}: {order:?} first page {:?}, later page {:?}",
+                match sqlite {
+                    true => "sqlite",
+                    false => "postgres",
+                },
+                best[0],
+                best[1]
+            );
+            assert!(
+                best.iter().all(|t| *t < std::time::Duration::from_secs(1)),
+                "{order:?}: {best:?}"
+            );
+            for keyset in [false, true] {
+                let key = match (order.sort, keyset) {
+                    (DmSort::Name, true) => ("'name 1000'", "'u0001'"),
+                    (_, true) => ("150000", "1000"),
+                    (_, false) => ("51", "0"),
+                };
+                let sql = dm_union(order, keyset, sqlite)
+                    .replace("$5", "0")
+                    .replace("$4", "51")
+                    .replace("$3", key.1)
+                    .replace("$2", key.0)
+                    .replace("$1", "'alice'");
+                let plan = plan(db, &sql).await;
+                let lines: Vec<&str> = plan.lines().map(str::trim).collect();
+                assert!(
+                    !lines.iter().any(|l| l.ends_with("SCAN d")
+                        || l.ends_with("SCAN u")
+                        || l.contains("Seq Scan on dms")
+                        || l.contains("Seq Scan on users")),
+                    "{order:?} keyset {keyset}:\n{plan}"
+                );
+                if order.sort != DmSort::Name {
+                    assert!(
+                        plan.contains("idx_dms_a_latest") && plan.contains("idx_dms_b_latest"),
+                        "{order:?} keyset {keyset}:\n{plan}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_list_documents_its_order_and_filter() {
+        use utoipa::OpenApi;
+        let doc = serde_json::to_value(crate::api::openapi::ApiDoc::openapi()).expect("doc");
+        let params = doc["paths"]["/api/v1/dms"]["get"]["parameters"]
+            .as_array()
+            .expect("params");
+        let param = |name: &str| {
+            params
+                .iter()
+                .find(|p| p["name"] == name)
+                .unwrap_or_else(|| panic!("{name}"))
+        };
+        assert!(
+            param("friends")["schema"]["type"]
+                .to_string()
+                .contains("boolean")
+        );
+        fn enums(v: &serde_json::Value, out: &mut Vec<String>) {
+            match v {
+                serde_json::Value::Object(map) => {
+                    for (key, value) in map {
+                        match (key.as_str(), value.as_array()) {
+                            ("enum", Some(list)) => {
+                                out.extend(list.iter().filter_map(|x| x.as_str().map(String::from)))
+                            }
+                            _ => enums(value, out),
+                        }
+                    }
+                }
+                serde_json::Value::Array(list) => list.iter().for_each(|x| enums(x, out)),
+                _ => {}
+            }
+        }
+        let schema = &param("sort")["schema"];
+        assert!(!schema.to_string().contains("$ref"), "{schema}");
+        let mut values = Vec::new();
+        enums(schema, &mut values);
+        assert_eq!(values, ["recent", "oldest", "name"], "{schema}");
+        let schemas = &doc["components"]["schemas"];
+        let summary = &schemas["DmSummary"]["properties"];
+        for field in ["last_message_id", "last_message_at", "friend"] {
+            assert!(summary[field]["description"].is_string(), "{field}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_big_dm_list_pages_in_a_few_ms() {
+        let (state, path) = temp_state("dm_speed").await;
+        big_account_lists_fast(&state.db).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("dm_speed").await {
+            big_account_lists_fast(&state.db).await;
+            pg_done(state, pg).await;
+        }
     }
 }

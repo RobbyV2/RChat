@@ -440,7 +440,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::api::dms::{close_dm, dm_page, open_dm};
+    use crate::api::dms::{DmOrder, close_dm, dm_page, open_dm};
     use crate::api::messages::{edit_message, send_channel_message, send_dm_message};
     use crate::api::pins::{pin_message, unpin_message};
     use crate::api::reactions::add_reaction;
@@ -696,7 +696,7 @@ mod tests {
             let state = state.clone();
             let who = who.to_string();
             async move {
-                dm_page(&state.db, &who, 0, None, 50)
+                dm_page(&state.db, &who, DmOrder::default(), 0, None, 50)
                     .await
                     .expect("page")
                     .items

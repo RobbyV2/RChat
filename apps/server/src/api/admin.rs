@@ -2154,7 +2154,7 @@ mod tests {
     async fn a_purging_user_is_hidden_everywhere() {
         use crate::api::MaybeAuthed;
         use crate::api::auth::{LoginReq, login};
-        use crate::api::dms::{dm_page, dms_by_ids, open_dm};
+        use crate::api::dms::{DmOrder, dm_page, dms_by_ids, open_dm};
         use crate::api::messages::{recent_channel_messages, search, unreads};
         use crate::api::users::profile;
         use axum::extract::RawQuery;
@@ -2265,7 +2265,10 @@ mod tests {
         )
         .await;
         assert!(matches!(opened, Err(ApiError(StatusCode::NOT_FOUND, _, _))));
-        let listed = dm_page(db, "alice", 0, None, 50).await.expect("dms").items;
+        let listed = dm_page(db, "alice", DmOrder::default(), 0, None, 50)
+            .await
+            .expect("dms")
+            .items;
         assert!(listed.iter().all(|d| d.other.username != "bob"));
         assert!(
             dms_by_ids(db, "alice", &[dm])

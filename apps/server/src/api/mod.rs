@@ -620,6 +620,13 @@ pub struct DmSummary {
     /// You closed it, so it is hidden from your DM list. Only `GET /api/v1/dms?ids=` returns
     /// closed DMs; a new message in it or opening it again reopens it.
     pub closed: bool,
+    /// Id of the newest message or call log; `null` without messages.
+    pub last_message_id: Option<i64>,
+    /// When the newest message or call log was sent, Unix seconds; `null` without messages.
+    pub last_message_at: Option<i64>,
+    /// Whether the other person is an accepted friend; `false` for the conversation with
+    /// yourself.
+    pub friend: bool,
 }
 
 /// A file attached to a message, stored on the server or shared peer to peer.

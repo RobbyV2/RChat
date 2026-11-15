@@ -15,7 +15,7 @@ use tokio::sync::Semaphore;
 use utoipa::ToSchema;
 
 use crate::api::access::not_found;
-use crate::api::dms::dm_page;
+use crate::api::dms::{DmOrder, dm_page};
 use crate::api::rare::{self, Rare};
 use crate::api::servers::{Page, my_servers_page};
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
@@ -409,7 +409,7 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
         items: dms,
         more: dms_more,
         next: dms_cursor,
-    } = dm_page(db, &user.username, 0, None, LIST_PAGE).await?;
+    } = dm_page(db, &user.username, DmOrder::default(), 0, None, LIST_PAGE).await?;
     Ok(Me {
         username: user.username.clone(),
         display_name: user.display_name.clone(),
