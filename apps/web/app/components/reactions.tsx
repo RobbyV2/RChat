@@ -20,6 +20,7 @@ import { EmojiPicker, useEmojiData, useTopEmojis } from './emoji_picker'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { UserAvatar } from './user_avatar'
 import { CloseButton, Masked, SheetGrip, useOwnCheck } from './ui'
+import { centerEmoji } from '../lib/emoji_center'
 import { useReactionActions } from './chat_source'
 
 const EMPTY: Reaction[] = []
@@ -40,6 +41,8 @@ const shield = {
 const chipCls =
   'flex h-7 items-center gap-1.5 rounded-lg border px-2 text-sm font-medium tabular-nums outline-offset-2 select-none focus-visible:outline-2 focus-visible:outline-primary'
 const blockedCls = 'cursor-not-allowed opacity-40'
+// The glyph moves by the emoji font's own offset (`centerEmoji`), so it sits in the pill's middle.
+const emojiCls = 'relative top-(--emoji-shift,0px) font-emoji text-base leading-none'
 const chipMineCls = 'border-primary bg-primary/15 text-primary hover:bg-primary/25'
 const chipOtherCls =
   'border-transparent bg-surface-container-high text-on-surface-variant hover:border-outline-variant hover:text-on-surface'
@@ -173,7 +176,7 @@ function ReactionChip({
         onBlur={() => setTip(false)}
         className={`${chipCls} ${r.me ? chipMineCls : chipOtherCls} ${active ? '' : 'cursor-default'}`}
       >
-        <span aria-hidden className="font-emoji text-base leading-none">
+        <span aria-hidden className={emojiCls}>
           {r.emoji}
         </span>
         <span aria-hidden>{r.count}</span>
@@ -238,6 +241,7 @@ export function ReactionBar({
 }) {
   const list = m.reactions ?? EMPTY
   const [sheet, setSheet] = useState<string | null>(null)
+  useEffect(centerEmoji, [])
   if (!list.length) return null
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1" data-reactions>
@@ -336,7 +340,7 @@ function ReactorsSheet({ m, start, onClose }: { m: Message; start: string; onClo
                 r.emoji === current.emoji ? chipMineCls : chipOtherCls
               }`}
             >
-              <span aria-hidden className="font-emoji text-base leading-none">
+              <span aria-hidden className={emojiCls}>
                 {r.emoji}
               </span>
               <span aria-hidden>{r.count}</span>
