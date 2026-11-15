@@ -4,6 +4,8 @@ mod links;
 mod smoke;
 #[cfg(desktop)]
 mod tray;
+#[cfg(desktop)]
+mod tray_smoke;
 
 use rchat_desktop_core::settings::{self, Settings};
 use std::path::PathBuf;
@@ -39,6 +41,21 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Shell {
+    fn new(dir: PathBuf, settings: Settings) -> Self {
+        Shell {
+            dir,
+            settings: Mutex::new(settings),
+            links: Mutex::new(Vec::new()),
+            saves: files::Saves::default(),
+            #[cfg(desktop)]
+            tray: Mutex::new(None),
+            #[cfg(desktop)]
+            reported: Mutex::default(),
+            #[cfg(desktop)]
+            update: Mutex::new(None),
+        }
+    }
+
     fn settings(&self) -> Settings {
         lock(&self.settings).clone()
     }
@@ -559,6 +576,11 @@ fn create_main(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    #[cfg(desktop)]
+    if std::env::args().any(|a| a == tray_smoke::FLAG) {
+        return tray_smoke::run(context);
+    }
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = {
@@ -621,18 +643,7 @@ pub fn run() {
             let loaded = settings::load(&dir);
             #[cfg(desktop)]
             let auto_update = loaded.auto_update;
-            app.manage(Shell {
-                dir,
-                settings: Mutex::new(loaded),
-                links: Mutex::new(Vec::new()),
-                saves: files::Saves::default(),
-                #[cfg(desktop)]
-                tray: Mutex::new(None),
-                #[cfg(desktop)]
-                reported: Mutex::default(),
-                #[cfg(desktop)]
-                update: Mutex::new(None),
-            });
+            app.manage(Shell::new(dir, loaded));
             #[cfg(any(windows, target_os = "linux"))]
             if cfg!(dev) || std::env::var_os("APPIMAGE").is_some() {
                 let _ = app.deep_link().register_all();
@@ -665,7 +676,7 @@ pub fn run() {
             #[cfg(mobile)]
             let _ = (window, event);
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to build the app")
         .run(|app, event| {
             #[cfg(target_os = "macos")]

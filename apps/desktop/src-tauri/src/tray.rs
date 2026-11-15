@@ -285,6 +285,46 @@ pub fn set_unread(app: &AppHandle, count: u32) -> tauri::Result<()> {
         .set_icon_with_as_template(Some(image.clone()), *template)
 }
 
+// Whether the menu bar draws the icon as a template (for `--tray-smoke`). Tauri has no getter, so
+// this asks AppKit.
+#[cfg(target_os = "macos")]
+pub fn template(app: &AppHandle) -> tauri::Result<Option<bool>> {
+    let shell = app.state::<Shell>();
+    let guard = lock(&shell.tray);
+    let Some(tray) = guard.as_ref() else {
+        return Ok(None);
+    };
+    tray.icon.with_inner_tray_icon(|inner| {
+        let main = objc2::MainThreadMarker::new()?;
+        let image = inner.ns_status_item()?.button(main)?.image()?;
+        Some(image.isTemplate())
+    })
+}
+
+// The check items as the menu shows them now (for `--tray-smoke`).
+pub fn checks(app: &AppHandle) -> tauri::Result<Vec<(Action, bool)>> {
+    let shell = app.state::<Shell>();
+    let guard = lock(&shell.tray);
+    let Some(tray) = guard.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let mut found = Vec::new();
+    for (handle, item) in tray.handles.iter().zip(&tray.shown) {
+        match (handle, item) {
+            (Handle::Check(check), Item::Check { action, .. }) => {
+                found.push((*action, check.is_checked()?));
+            }
+            (Handle::Choice(_, picks), Item::Choice { options, .. }) => {
+                for (pick, o) in picks.iter().zip(options) {
+                    found.push((o.action, pick.is_checked()?));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(found)
+}
+
 fn click(app: &AppHandle, event: TrayIconEvent) {
     if cfg!(target_os = "macos") {
         return;

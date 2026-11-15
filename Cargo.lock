@@ -4831,6 +4831,7 @@ dependencies = [
 name = "rchat-desktop"
 version = "0.3.0"
 dependencies = [
+ "objc2",
  "rchat-desktop-core",
  "serde",
  "serde_json",

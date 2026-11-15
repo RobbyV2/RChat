@@ -162,6 +162,34 @@ jobs:
           if [ -n "$TARGET" ]; then args+=(--target "$TARGET"); fi
           cargo tauri "${args[@]}"
 
+      # The built app puts up its tray, changes it once and exits (`--tray-smoke`).
+      - name: Tray smoke
+        if: matrix.os != 'linux'
+        timeout-minutes: 5
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          app=target/release/rchat.exe
+          if [ "$RUNNER_OS" = macOS ]; then app="target/$TARGET/release/bundle/macos/RChat.app/Contents/MacOS/rchat"; fi
+          "$app" --tray-smoke | tee "$RUNNER_TEMP/tray-smoke.log"
+          grep -q '^TRAY SMOKE PASS' "$RUNNER_TEMP/tray-smoke.log"
+      # Linux: under a session bus with a small StatusNotifierWatcher, which also clicks the tray.
+      # The .deb and the .rpm must not depend on a tray library.
+      - name: Tray smoke (Linux)
+        if: matrix.os == 'linux'
+        timeout-minutes: 5
+        env:
+          BUNDLES: ${{ inputs.linux-bundles }}
+        run: |
+          sudo apt-get install -y xvfb dbus python3-dbus python3-gi rpm
+          apps/desktop/scripts/tray-smoke.sh target/release/rchat
+          if dpkg-deb -f target/release/bundle/deb/*.deb Depends | grep -i indicator; then exit 1; fi
+          if [[ "$BUNDLES" == *rpm* ]]; then
+            rpm -qp --requires target/release/bundle/rpm/*.rpm > "$RUNNER_TEMP/rpm-requires.txt"
+            [ -s "$RUNNER_TEMP/rpm-requires.txt" ]
+            if grep -i indicator "$RUNNER_TEMP/rpm-requires.txt"; then exit 1; fi
+          fi
+
       # AppImage is best effort: linuxdeploy depends on the runner's libraries.
       - name: Build AppImage
         if: matrix.os == 'linux'
