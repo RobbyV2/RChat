@@ -6,7 +6,7 @@ use super::access::{Access, channel_gate, deleted_gate};
 use super::conn::{forget_server, join, leave};
 use super::event::WsEvent;
 
-use crate::api::access::{is_member, ws_sees_timeouts};
+use crate::api::access::{is_member, ws_sees_reports, ws_sees_timeouts};
 use crate::db::{MediaKind, now};
 use crate::state::AppState;
 
@@ -56,6 +56,20 @@ pub(super) async fn on_event(
     {
         let started = Instant::now();
         match ws_sees_timeouts(&state.read(), server, me, access.site_admin).await {
+            Ok(sees) => deliver = sees,
+            Err(e) => return access.hold(e, started).then_some(false),
+        }
+    }
+    if deliver
+        && let WsEvent::ReportsChanged {
+            server: Some(server),
+            about: _,
+            channel,
+        } = ev
+        && let Some(me) = access.user.as_deref()
+    {
+        let started = Instant::now();
+        match ws_sees_reports(&state.read(), server, me, *channel).await {
             Ok(sees) => deliver = sees,
             Err(e) => return access.hold(e, started).then_some(false),
         }
@@ -749,6 +763,16 @@ pub(super) fn wants(
             remaining: _,
             reason: _,
         } => Some(username.as_str()) == me || (me.is_some() && in_server(server)),
+        WsEvent::ReportsChanged {
+            server: Some(server),
+            about,
+            channel: _,
+        } => me.is_some() && about.as_deref() != me && member_servers.contains(server),
+        WsEvent::ReportsChanged {
+            server: None,
+            about,
+            channel: _,
+        } => is_site_admin && about.as_deref() != me,
         WsEvent::CallState {
             dm_id: _,
             dm_users,

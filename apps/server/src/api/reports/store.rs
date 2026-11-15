@@ -1,8 +1,144 @@
 use serde_json::{Value, json};
 use sqlx::{AnyConnection, Row};
 
+use super::forms::StoredAnswer;
+use super::limits::{Caps, Class, allowed};
+use super::{Placed, ReportKind};
+use crate::api::ApiError;
 use crate::api::audit::like_escape;
 use crate::db::{Db, PURGE_BATCH, delete_batched};
+
+/// How many reports `forget_user` reads at a time.
+const FORGET_BATCH: i64 = 200;
+
+/// A report about to be stored.
+pub(super) struct NewReport<'a> {
+    pub kind: ReportKind,
+    pub placed: &'a Placed,
+    pub reporter: &'a str,
+    pub form: &'a str,
+    pub form_label: &'a str,
+    pub form_rev: i64,
+    pub reason: &'a str,
+    pub reason_label: Option<&'a str>,
+    pub note: Option<&'a str>,
+    pub answers: &'a [StoredAnswer],
+}
+
+/// Whether the reports of `reporter` to `kind` (for `server`, in that server) are muted.
+async fn muted(
+    conn: &mut AnyConnection,
+    kind: ReportKind,
+    server: Option<&str>,
+    reporter: &str,
+) -> sqlx::Result<bool> {
+    let row = match (kind, server) {
+        (ReportKind::Server, Some(server)) => {
+            sqlx::query("SELECT 1 FROM report_mutes WHERE server = $1 AND username = $2")
+                .bind(server)
+                .bind(reporter)
+                .fetch_optional(&mut *conn)
+                .await?
+        }
+        (ReportKind::Server, None) => None,
+        (ReportKind::Instance, _) => {
+            sqlx::query("SELECT 1 FROM instance_report_mutes WHERE username = $1")
+                .bind(reporter)
+                .fetch_optional(&mut *conn)
+                .await?
+        }
+    };
+    Ok(row.is_some())
+}
+
+/// Stores `report` at `t` and answers its id, or `None` when the reporter is muted or past a
+/// cap of `caps`. One transaction: it writes the reporter's pace row first, so the reports an
+/// account sends at once, also through other copies of the server, are counted one after the
+/// other.
+pub(super) async fn insert(
+    db: &Db,
+    report: NewReport<'_>,
+    class: Class<'_>,
+    caps: Caps,
+    t: i64,
+) -> Result<Option<i64>, ApiError> {
+    let NewReport {
+        kind,
+        placed,
+        reporter,
+        form,
+        form_label,
+        form_rev,
+        reason,
+        reason_label,
+        note,
+        answers,
+    } = report;
+    let server = placed.server.as_ref().map(|(name, _)| name.as_str());
+    let mut tx = db.begin().await?;
+    sqlx::query("INSERT INTO report_pace(reporter, kind, last_at) VALUES($1, $2, $3) ON CONFLICT(reporter, kind) DO UPDATE SET last_at = excluded.last_at")
+        .bind(reporter)
+        .bind(kind.as_str())
+        .bind(t)
+        .execute(&mut *tx)
+        .await?;
+    if muted(&mut tx, kind, server, reporter).await?
+        || !allowed(&mut tx, reporter, kind, class, caps, t).await?
+    {
+        return Ok(None);
+    }
+    let snapshot = serde_json::to_string(&placed.snapshot).map_err(ApiError::internal)?;
+    let answers = serde_json::to_string(answers).map_err(ApiError::internal)?;
+    let id: i64 = sqlx::query("INSERT INTO reports(kind, server, server_name, target_kind, target_key, target_user, message_id, channel_id, channel_private, dm_id, role_id, role_name, reporter, form, form_label, form_rev, reason, reason_label, note, answers, snapshot, created_at, updated_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $22) RETURNING id")
+        .bind(kind.as_str())
+        .bind(server)
+        .bind(placed.server.as_ref().map(|(_, shown)| shown.as_str()))
+        .bind(placed.target_kind)
+        .bind(&placed.target_key)
+        .bind(placed.target_user.as_deref())
+        .bind(placed.message_id)
+        .bind(placed.channel_id)
+        .bind(i64::from(placed.channel_private))
+        .bind(placed.dm_id)
+        .bind(placed.role.as_ref().map(|(id, _)| *id))
+        .bind(placed.role.as_ref().map(|(_, name)| name.as_str()))
+        .bind(reporter)
+        .bind(form)
+        .bind(form_label)
+        .bind(form_rev)
+        .bind(reason)
+        .bind(reason_label)
+        .bind(note)
+        .bind(answers)
+        .bind(snapshot)
+        .bind(t)
+        .fetch_one(&mut *tx)
+        .await?
+        .try_get(0)?;
+    event(&mut tx, id, None, "created", json!({}), t).await?;
+    tx.commit().await?;
+    Ok(Some(id))
+}
+
+/// Adds a line to the history of report `id`.
+pub(super) async fn event(
+    conn: &mut AnyConnection,
+    id: i64,
+    actor: Option<&str>,
+    kind: &str,
+    detail: Value,
+    t: i64,
+) -> sqlx::Result<()> {
+    sqlx::query("INSERT INTO report_events(report_id, actor, kind, detail, created_at) VALUES($1, $2, $3, $4, $5)")
+        .bind(id)
+        .bind(actor)
+        .bind(kind)
+        .bind(detail.to_string())
+        .bind(t)
+        .execute(&mut *conn)
+        .await
+        .map(|_| ())
+}
 
 /// How long the pace row of an account that stopped reporting is kept.
 const PACE_KEEP: i64 = 7 * 86400;
@@ -62,26 +198,36 @@ fn forget_in(value: &mut Value, username: &str) -> bool {
 /// reporter), so a new account with the same username never inherits the history. What was
 /// written stays.
 pub(crate) async fn forget_user(conn: &mut AnyConnection, username: &str) -> sqlx::Result<()> {
-    let rows = sqlx::query("SELECT id, snapshot, answers FROM reports WHERE snapshot LIKE $1 ESCAPE '\\' OR answers LIKE $1 ESCAPE '\\'")
-        .bind(like_escape(&Value::from(username).to_string()))
-        .fetch_all(&mut *conn)
-        .await?;
-    for row in &rows {
-        let (id, snapshot, answers): (i64, String, String) =
-            (row.try_get(0)?, row.try_get(1)?, row.try_get(2)?);
-        for (column, text) in [("snapshot", snapshot), ("answers", answers)] {
-            let Ok(mut stored) = serde_json::from_str::<Value>(&text) else {
-                continue;
-            };
-            if forget_in(&mut stored, username) {
-                sqlx::query(sqlx::AssertSqlSafe(format!(
-                    "UPDATE reports SET {column} = $1 WHERE id = $2"
-                )))
-                .bind(stored.to_string())
-                .bind(id)
-                .execute(&mut *conn)
-                .await?;
+    let named = like_escape(&Value::from(username).to_string());
+    let mut after = 0i64;
+    loop {
+        let rows = sqlx::query("SELECT id, snapshot, answers FROM reports WHERE id > $2 AND (snapshot LIKE $1 ESCAPE '\\' OR answers LIKE $1 ESCAPE '\\') ORDER BY id LIMIT $3")
+            .bind(&named)
+            .bind(after)
+            .bind(FORGET_BATCH)
+            .fetch_all(&mut *conn)
+            .await?;
+        for row in &rows {
+            let (id, snapshot, answers): (i64, String, String) =
+                (row.try_get(0)?, row.try_get(1)?, row.try_get(2)?);
+            after = id;
+            for (column, text) in [("snapshot", snapshot), ("answers", answers)] {
+                let Ok(mut stored) = serde_json::from_str::<Value>(&text) else {
+                    continue;
+                };
+                if forget_in(&mut stored, username) {
+                    sqlx::query(sqlx::AssertSqlSafe(format!(
+                        "UPDATE reports SET {column} = $1 WHERE id = $2"
+                    )))
+                    .bind(stored.to_string())
+                    .bind(id)
+                    .execute(&mut *conn)
+                    .await?;
+                }
             }
+        }
+        if (rows.len() as i64) < FORGET_BATCH {
+            break;
         }
     }
     for sql in [
@@ -441,6 +587,49 @@ mod tests {
                 );
                 assert_eq!(json(2)[0]["value"], serde_json::json!({"deleted": true}), "{name}");
             }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn forgetting_reads_the_reports_in_batches() {
+        on_each_database("reports_forget_batches", |db| async move {
+            let n = super::FORGET_BATCH * 2 + 7;
+            for i in 0..n {
+                let name = match i % 2 {
+                    0 => "content",
+                    _ => "erin",
+                };
+                let snapshot = serde_json::json!({
+                    "user": {"username": name, "display_name": name},
+                    "message": {"content": "hi", "author": {"username": "erin"}},
+                });
+                sqlx::query("INSERT INTO reports(kind, target_kind, target_key, target_user, form, form_label, reason, snapshot, created_at, updated_at) VALUES('instance', 'user', $1, $2, 'user', 'Report a user', 'spam', $3, 10, 10)")
+                    .bind(format!("u:{name}"))
+                    .bind(name)
+                    .bind(snapshot.to_string())
+                    .execute(&db)
+                    .await
+                    .expect("report");
+            }
+            let mut conn = db.acquire().await.expect("conn");
+            forget_user(&mut conn, "content").await.expect("forget");
+            drop(conn);
+            let gone = (n + 1) / 2;
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM reports WHERE snapshot LIKE '%\"user\":{\"deleted\":true}%' AND target_user IS NULL").await,
+                gone,
+                "every report about the account, past the first batch too"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM reports WHERE snapshot LIKE '%\"username\":\"content\"%'").await,
+                0
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM reports WHERE target_user = 'erin' AND snapshot LIKE '%\"user\":{\"display_name\":\"erin\",\"username\":\"erin\"}%' AND snapshot LIKE '%\"content\":\"hi\"%'").await,
+                n - gone,
+                "what people wrote and other accounts stay"
+            );
         })
         .await;
     }

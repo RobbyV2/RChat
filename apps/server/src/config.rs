@@ -1407,6 +1407,7 @@ mod tests {
             "REPORT_SAME_TARGET_HOURS",
             "REPORT_TARGETS_PER_DAY",
             "REPORT_MAX_PER_WEEK",
+            "REPORT_FEEDBACK_PER_WEEK",
             "REPORT_RETENTION_DAYS",
             "P2P_BACKUP_MAX_MIB",
             "P2P_BACKUP_TOTAL_MIB",
@@ -1466,9 +1467,10 @@ mod tests {
                 l.report_same_target_hours,
                 l.report_targets_per_day,
                 l.report_max_per_week,
+                l.report_feedback_per_week,
                 l.report_retention_days
             ),
-            (72, 3, 10, 180)
+            (72, 3, 10, 10, 180)
         );
         assert_eq!(
             (l.e2ee_guests_per_group, l.e2ee_key_retention_days),

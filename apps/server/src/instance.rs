@@ -454,6 +454,12 @@ pub struct Features {
     /// `/api/v1/users/{username}/card`, `/api/v1/servers/{name}/mentions` and
     /// `/api/v1/users/search` are available.
     pub lookups: bool,
+    /// `POST /api/v1/reports` is available. Whether reports can be sent to servers and to the
+    /// instance are the `server_reports` and `instance_reports` switches of
+    /// `GET /api/v1/settings`.
+    pub reports: bool,
+    /// Reports take a `form` and `answers` (`GET /api/v1/report_forms`).
+    pub report_forms: bool,
 }
 
 /// Limits of this instance.

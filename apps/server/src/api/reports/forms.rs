@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
-use super::refused;
+use super::invalid;
 use crate::api::policy::Policy;
 use crate::api::{ApiError, Authed, NAME_MAX, Settings};
 use crate::state::AppState;
@@ -759,6 +759,7 @@ type Kept = (Value, Option<Vec<String>>);
 /// What the answer `value` to `field` is stored as, `None` when it is no answer (empty text, a
 /// text still equal to its template, no option, an unticked box).
 fn stored_answer(field: &Field, value: &Value) -> Result<Option<Kept>, ApiError> {
+    let refused = |msg: &str| invalid("answers", msg);
     let wrong = || refused("Answer of the wrong kind");
     let label_of = |id: &str| {
         field
@@ -798,8 +799,10 @@ fn stored_answer(field: &Field, value: &Value) -> Result<Option<Kept>, ApiError>
             if id.is_empty() {
                 return Ok(None);
             }
-            let is_reason = field.reason || field.id == "reason";
-            match (label_of(id), is_reason.then(|| label_of(OTHER)).flatten()) {
+            match (
+                label_of(id),
+                field.reason.then(|| label_of(OTHER)).flatten(),
+            ) {
                 (Some(label), _) => Ok(Some((Value::from(id), Some(vec![label])))),
                 (None, Some(other)) => Ok(Some((Value::from(OTHER), Some(vec![other])))),
                 (None, None) => Err(refused("Unknown option")),
@@ -878,10 +881,11 @@ pub fn validate_answers(
     form: &str,
     answers: &[Answer],
 ) -> Result<Vec<StoredAnswer>, ApiError> {
+    let refused = |msg: &str| invalid("answers", msg);
     let form = forms
         .find(form)
         .filter(|f| f.enabled)
-        .ok_or_else(|| refused("Unknown form"))?;
+        .ok_or_else(|| invalid("form", "Unknown form"))?;
     let size: usize = answers
         .iter()
         .map(|a| a.id.len() + a.value.to_string().len())
@@ -1775,6 +1779,29 @@ mod tests {
             ),
             "Answer too long"
         );
+        let mut doc = defaults();
+        let options = json!([{"id": "a", "label": "Apple"}, {"id": "other", "label": "Other"}]);
+        push(
+            &mut doc,
+            "/forms",
+            json!({"id": "appeal", "label": "Appeal", "base": "none", "fields": [
+                {"id": "reason", "kind": "single_choice", "label": "Reason", "options": options},
+                {"id": "pick", "kind": "single_choice", "label": "Pick", "options": options},
+            ]}),
+        );
+        let unmarked = ReportForms::parse(&doc.to_string()).expect("forms");
+        assert!(
+            unmarked
+                .find("appeal")
+                .is_some_and(|f| f.reason_field().is_none())
+        );
+        for id in ["reason", "pick"] {
+            assert_eq!(
+                refusal(&unmarked, "appeal", json!([{"id": id, "value": "zzz"}])),
+                "Unknown option",
+                "{id} is not the form's reason field"
+            );
+        }
         let user = validate_answers(
             &forms,
             "user",

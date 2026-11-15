@@ -1933,6 +1933,7 @@ pub fn routes(
                 post(passwords::create_password),
             )
             .route("/servers/{name}/available", get(servers::server_available))
+            .route("/reports", post(reports::create_report))
             .route("/identity/p2p_binding", post(instance::p2p_binding))
             .route(
                 "/config_shares",

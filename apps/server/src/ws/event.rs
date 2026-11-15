@@ -355,6 +355,19 @@ pub enum WsEvent {
         remaining: i64,
         reason: Option<String>,
     },
+    /// The reports of `server` changed, or without one the reports to the instance: ask for the
+    /// open count again. Only to the members of the server who hold Manage reports, or to
+    /// whoever handles the instance's reports. It never says what changed, and it never goes
+    /// to someone who can't see the report that changed: the account it is about (`about`),
+    /// or a moderator who can't view the channel of its message (`channel`: its id and
+    /// whether it was private).
+    ReportsChanged {
+        server: Option<String>,
+        #[serde(default, skip_serializing_if = "routing_only")]
+        about: Option<String>,
+        #[serde(default, skip_serializing_if = "routing_only")]
+        channel: Option<(i64, bool)>,
+    },
     CallState {
         dm_id: i64,
         dm_users: Vec<String>,

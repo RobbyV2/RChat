@@ -11,7 +11,7 @@ const MIB: usize = 1024 * 1024;
 pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 52] = [
+const RANGES: [(&str, i64, i64); 53] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("WS_CONNECTIONS_PER_USER", 1, 10_000),
@@ -44,6 +44,7 @@ const RANGES: [(&str, i64, i64); 52] = [
     ("REPORT_SAME_TARGET_HOURS", 0, 8_760),
     ("REPORT_TARGETS_PER_DAY", 0, 10_000),
     ("REPORT_MAX_PER_WEEK", 0, 100_000),
+    ("REPORT_FEEDBACK_PER_WEEK", 0, 100_000),
     ("REPORT_RETENTION_DAYS", 0, 3_650),
     ("E2EE_GUESTS_PER_GROUP", 0, 5_000),
     ("E2EE_KEY_RETENTION_DAYS", 1, 69),
@@ -101,6 +102,7 @@ pub struct Limits {
     pub report_same_target_hours: u32,
     pub report_targets_per_day: u32,
     pub report_max_per_week: u32,
+    pub report_feedback_per_week: u32,
     pub report_retention_days: u32,
     pub e2ee_guests_per_group: u32,
     pub e2ee_key_retention_days: u32,
@@ -160,6 +162,7 @@ impl Default for Limits {
             report_same_target_hours: 72,
             report_targets_per_day: 3,
             report_max_per_week: 10,
+            report_feedback_per_week: 10,
             report_retention_days: 180,
             e2ee_guests_per_group: 500,
             e2ee_key_retention_days: 30,
@@ -271,6 +274,8 @@ impl Limits {
                 .num("REPORT_SAME_TARGET_HOURS", d.report_same_target_hours)?,
             report_targets_per_day: e.num("REPORT_TARGETS_PER_DAY", d.report_targets_per_day)?,
             report_max_per_week: e.num("REPORT_MAX_PER_WEEK", d.report_max_per_week)?,
+            report_feedback_per_week: e
+                .num("REPORT_FEEDBACK_PER_WEEK", d.report_feedback_per_week)?,
             report_retention_days: e.num("REPORT_RETENTION_DAYS", d.report_retention_days)?,
             e2ee_guests_per_group: e.num("E2EE_GUESTS_PER_GROUP", d.e2ee_guests_per_group)?,
             e2ee_key_retention_days: e.num("E2EE_KEY_RETENTION_DAYS", d.e2ee_key_retention_days)?,
@@ -339,6 +344,7 @@ impl Limits {
             report_same_target_hours,
             report_targets_per_day,
             report_max_per_week,
+            report_feedback_per_week,
             report_retention_days,
             e2ee_guests_per_group,
             e2ee_key_retention_days,
@@ -407,6 +413,7 @@ impl Limits {
             ("REPORT_SAME_TARGET_HOURS", set(report_same_target_hours)),
             ("REPORT_TARGETS_PER_DAY", set(report_targets_per_day)),
             ("REPORT_MAX_PER_WEEK", set(report_max_per_week)),
+            ("REPORT_FEEDBACK_PER_WEEK", set(report_feedback_per_week)),
             ("REPORT_RETENTION_DAYS", set(report_retention_days)),
             ("E2EE_GUESTS_PER_GROUP", set(e2ee_guests_per_group)),
             ("E2EE_KEY_RETENTION_DAYS", set(e2ee_key_retention_days)),

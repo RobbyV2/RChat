@@ -277,6 +277,16 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             remaining: _,
             reason: _,
         } => to(vec![Target::Server(server), Target::User(username)]),
+        WsEvent::ReportsChanged {
+            server: Some(server),
+            about: _,
+            channel: _,
+        } => to(vec![Target::Server(server)]),
+        WsEvent::ReportsChanged {
+            server: None,
+            about: _,
+            channel: _,
+        } => to(vec![Target::Admins]),
         WsEvent::MemberJoined { server, member } => to(vec![
             Target::Server(server),
             Target::User(&member.user.username),

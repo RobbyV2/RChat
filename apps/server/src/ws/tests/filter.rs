@@ -317,6 +317,136 @@ fn server_ban_notice_goes_only_to_the_banned_user() {
     assert!(!wants(&ev, None, false, &none, &set(&["open"])));
 }
 
+#[tokio::test]
+async fn reports_changed_reaches_only_holders() {
+    let (state, path) = crate::api::test_util::temp_state("ws_reports_changed").await;
+    let db = &state.db;
+    for name in ["mo", "boss", "carol", "dave", "narrow"] {
+        add_user(db, name).await;
+    }
+    add_user_row(db, "root").await;
+    crate::api::test_util::add_member(db, "rchat", "mo", 0, 0, 0).await;
+    crate::api::test_util::add_member(db, "rchat", "carol", 0, 0, 0).await;
+    crate::api::test_util::add_member(db, "rchat", "boss", 1, 0, 0).await;
+    crate::api::test_util::add_member(db, "rchat", "narrow", 1, 4, 0).await;
+    crate::api::test_util::add_member(db, "rchat", "root", 0, 0, 0).await;
+    let role = insert_id(db, "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'mods', '#ffffff', 512) RETURNING id").await;
+    sqlx::query("INSERT INTO user_roles(server, username, role_id) VALUES('rchat', 'mo', $1)")
+        .bind(role)
+        .execute(db)
+        .await
+        .expect("role");
+    let changed = |server: Option<&str>, about: Option<&str>, channel: Option<(i64, bool)>| {
+        WsEvent::ReportsChanged {
+            server: server.map(s),
+            about: about.map(s),
+            channel,
+        }
+    };
+    let to_server = changed(Some("rchat"), Some("carol"), None);
+    let to_instance = changed(None, Some("carol"), None);
+    assert_eq!(
+        serde_json::to_value(&to_server).expect("json"),
+        serde_json::json!({"type": "reports_changed", "server": "rchat"})
+    );
+    assert_eq!(
+        serde_json::to_value(&to_instance).expect("json"),
+        serde_json::json!({"type": "reports_changed", "server": null})
+    );
+    let conn = state.hub.next_conn();
+    for (user, site_admin, member, server, instance) in [
+        ("mo", false, true, true, false),
+        ("boss", false, true, true, false),
+        ("narrow", false, true, false, false),
+        ("carol", false, true, false, false),
+        ("dave", false, false, false, false),
+        ("root", true, true, false, true),
+        ("root", true, false, false, true),
+    ] {
+        let servers = match member {
+            true => set(&["rchat"]),
+            false => set(&[]),
+        };
+        let mut access = Access::new(Some(s(user)), site_admin, servers);
+        access.subs = set(&["rchat"]);
+        assert_eq!(
+            on_event(&state, conn, &mut access, &to_server).await,
+            Some(server),
+            "{user}, member {member}: a server report"
+        );
+        assert_eq!(
+            on_event(&state, conn, &mut access, &to_instance).await,
+            Some(instance),
+            "{user}: an instance report"
+        );
+    }
+    let mut guest = Access::new(None, false, set(&[]));
+    guest.subs = set(&["rchat"]);
+    for ev in [&to_server, &to_instance] {
+        assert_eq!(on_event(&state, conn, &mut guest, ev).await, Some(false));
+    }
+
+    let member =
+        |user: &str, site_admin: bool| Access::new(Some(s(user)), site_admin, set(&["rchat"]));
+    for (about, mo, boss) in [("mo", false, true), ("boss", true, false)] {
+        let ev = changed(Some("rchat"), Some(about), None);
+        assert_eq!(
+            on_event(&state, conn, &mut member("mo", false), &ev).await,
+            Some(mo),
+            "a report about {about}, for mo"
+        );
+        assert_eq!(
+            on_event(&state, conn, &mut member("boss", false), &ev).await,
+            Some(boss),
+            "a report about {about}, for boss"
+        );
+    }
+    let about_root = changed(None, Some("root"), None);
+    assert_eq!(
+        on_event(&state, conn, &mut member("root", true), &about_root).await,
+        Some(false),
+        "nor a report to the instance about the one who handles them"
+    );
+
+    let open = insert_id(
+        db,
+        "INSERT INTO channels(server, name, created_at) VALUES('rchat', 'lounge', 0) RETURNING id",
+    )
+    .await;
+    let closed = insert_id(db, "INSERT INTO channels(server, name, restrict_view, created_at) VALUES('rchat', 'ops', 1, 0) RETURNING id").await;
+    let gone = closed + 1000;
+    for (channel, mo, boss, what) in [
+        ((open, false), true, true, "an open channel"),
+        ((closed, true), false, true, "a channel mo can't view"),
+        ((gone, true), false, true, "a private channel that is gone"),
+        ((gone, false), true, true, "an open channel that is gone"),
+    ] {
+        let ev = changed(Some("rchat"), Some("carol"), Some(channel));
+        assert_eq!(
+            on_event(&state, conn, &mut member("mo", false), &ev).await,
+            Some(mo),
+            "{what}, for mo"
+        );
+        assert_eq!(
+            on_event(&state, conn, &mut member("boss", false), &ev).await,
+            Some(boss),
+            "{what}, for someone who manages channels"
+        );
+    }
+    sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:mo', 1, 1, 1)")
+        .bind(closed)
+        .execute(db)
+        .await
+        .expect("rule");
+    let ev = changed(Some("rchat"), Some("carol"), Some((closed, true)));
+    assert_eq!(
+        on_event(&state, conn, &mut member("mo", false), &ev).await,
+        Some(true),
+        "once mo may view the channel"
+    );
+    crate::api::test_util::done(state, path).await;
+}
+
 fn every_event() -> Vec<WsEvent> {
     let dm = || Some(vec![s("alice"), s("bob")]);
     let chan = Channel {

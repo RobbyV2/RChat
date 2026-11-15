@@ -798,6 +798,13 @@ impl ServerAccess {
         self.user.as_ref()
     }
 
+    /// Whether `username` (lowercase) is a member of this server. Only answer a viewer who
+    /// may know who is in it: never one the gate let in to join (`Via::Joinable`), and only
+    /// one the server lists its members to (`subjects::lists_members`).
+    pub async fn has_member(&self, db: &Db, username: &str) -> Result<bool, ApiError> {
+        Ok(is_member(db, self.name(), username).await?)
+    }
+
     pub fn require_member(&self) -> Result<(), ApiError> {
         match self.is_member() {
             true => Ok(()),
@@ -1801,6 +1808,39 @@ pub(crate) async fn ws_sees_timeouts(
         return Ok(true);
     }
     Ok(member_perms(db, server, username).await? & Perm::TimeoutMembers as i64 != 0)
+}
+
+/// `reports_changed` fan-out: whether `username` handles the reports of `server`, which takes
+/// their own Manage reports permission as a member, and may see a report from `channel` (its
+/// id and whether it was private), as the report list decides it: a channel they can view, or
+/// one that is gone and was open to everyone, unless they manage channels. Being a site admin
+/// gives nothing here: the event would show who they are. Never answers a client.
+pub(crate) async fn ws_sees_reports(
+    db: &Db,
+    server: &str,
+    username: &str,
+    channel: Option<(i64, bool)>,
+) -> sqlx::Result<bool> {
+    let perms = member_perms(db, server, username).await?;
+    if perms & Perm::ManageReports as i64 == 0 {
+        return Ok(false);
+    }
+    let Some((channel, private)) = channel else {
+        return Ok(true);
+    };
+    if perms & Perm::ManageChannels as i64 != 0 {
+        return Ok(true);
+    }
+    let exists = sqlx::query("SELECT 1 FROM channels WHERE id = $1 AND server = $2")
+        .bind(channel)
+        .bind(server)
+        .fetch_optional(db)
+        .await?
+        .is_some();
+    Ok(match exists {
+        true => channel_viewable(db, server, channel, Some(username), true).await,
+        false => !private,
+    })
 }
 
 /// WS ban fan-out and `look`: whether `username` is banned from `server`. Only used to drop
