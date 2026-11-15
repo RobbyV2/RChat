@@ -6694,6 +6694,17 @@ async fn the_profile_visibility_control_reaches_an_old_database() {
     .await;
 }
 
+#[tokio::test]
+async fn the_profile_choices_control_reaches_an_old_database() {
+    controls_reach_an_old_database(
+        "profile_choices_control",
+        &["profile_choices"],
+        &["any"],
+        &[("PROFILE_CHOICES", "narrower", "narrower")],
+    )
+    .await;
+}
+
 async fn index_count(db: &Db, name: &str) -> i64 {
     let sql = match is_sqlite(db) {
         true => {

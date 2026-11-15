@@ -122,11 +122,15 @@ describe('friend helpers', () => {
     expect(parsePrivacy({ dms: 'friends', friend_requests: 'servers' })).toEqual({
       dms: 'friends',
       friend_requests: 'servers',
+      profile: 'default',
     })
-    expect(parsePrivacy({ dms: 'nobody' })).toEqual({
+    expect(parsePrivacy({ dms: 'nobody', profile: 'public' })).toEqual({
       dms: 'everyone',
       friend_requests: 'everyone',
+      profile: 'default',
     })
+    expect(parsePrivacy({ profile: 'everyone' }).profile).toBe('everyone')
+    expect(parsePrivacy({ profile: 'friends' }).profile).toBe('friends')
     expect(parsePrivacy(null).friend_requests).toBe('everyone')
   })
 
@@ -195,9 +199,9 @@ describe('friends in the store', () => {
     dispatch({
       type: 'privacy_changed',
       username: 'alice',
-      privacy: { dms: 'friends', friend_requests: 'nobody' },
+      privacy: { dms: 'friends', friend_requests: 'nobody', profile: 'everyone' },
     })
-    expect(st().privacy).toEqual({ dms: 'friends', friend_requests: 'nobody' })
+    expect(st().privacy).toEqual({ dms: 'friends', friend_requests: 'nobody', profile: 'everyone' })
   })
 
   test('a friend request pings, toasts and counts on the DM button', () => {
@@ -247,7 +251,11 @@ describe('friends in the store', () => {
   test('privacy changes are sent and rolled back on failure', async () => {
     routes = [[/\/api\/me\/privacy$/, { dms: 'everyone', friend_requests: 'everyone' }]]
     await st().loadPrivacy()
-    expect(st().privacy).toEqual({ dms: 'everyone', friend_requests: 'everyone' })
+    expect(st().privacy).toEqual({
+      dms: 'everyone',
+      friend_requests: 'everyone',
+      profile: 'default',
+    })
     routes = [[/\/api\/me\/privacy$/, { dms: 'friends', friend_requests: 'everyone' }]]
     await st().setPrivacy({ dms: 'friends' })
     expect(calls.at(-1)).toEqual({
@@ -258,7 +266,17 @@ describe('friends in the store', () => {
     expect(st().privacy?.dms).toBe('friends')
     routes = [[/\/api\/me\/privacy$/, { error: 'nope' }, 500]]
     await st().setPrivacy({ friend_requests: 'nobody' })
-    expect(st().privacy).toEqual({ dms: 'friends', friend_requests: 'everyone' })
+    expect(st().privacy).toEqual({
+      dms: 'friends',
+      friend_requests: 'everyone',
+      profile: 'default',
+    })
+    routes = [
+      [/\/api\/me\/privacy$/, { dms: 'friends', friend_requests: 'everyone', profile: 'everyone' }],
+    ]
+    await st().setPrivacy({ profile: 'everyone' })
+    expect(calls.at(-1)?.body).toBe('{"profile":"everyone"}')
+    expect(st().privacy?.profile).toBe('everyone')
   })
 
   test('"Add friend" is offered only when no relation is known', () => {

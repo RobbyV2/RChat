@@ -56,6 +56,40 @@ impl Level {
     }
 }
 
+/// What accounts may choose for themselves (`profile_choices`): `any` of the three choices,
+/// only a `narrower` one than the instance's level (a wider one acts as no choice), or nothing
+/// (`site`: every account follows the instance's level, and stored choices are kept).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileChoices {
+    Any,
+    Narrower,
+    Site,
+}
+
+impl ProfileChoices {
+    pub const KEY: &str = "profile_choices";
+    pub const ENV: &str = "PROFILE_CHOICES";
+    pub const WORDS: [&str; 3] = ["any", "narrower", "site"];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProfileChoices::Any => "any",
+            ProfileChoices::Narrower => "narrower",
+            ProfileChoices::Site => "site",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<ProfileChoices> {
+        match value {
+            "any" => Some(ProfileChoices::Any),
+            "narrower" => Some(ProfileChoices::Narrower),
+            "site" => Some(ProfileChoices::Site),
+            _ => None,
+        }
+    }
+}
+
 /// The relationship that lets a caller see an account. It stays in the server: no answer says
 /// which one was found.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,16 +147,71 @@ pub struct SeenUser {
     pub member: Option<ServerAccess>,
 }
 
-/// The level that applies to an account: the lower of the instance's level and the account's
-/// own choice.
+/// The level that applies to an account: the instance's level without a choice of its own,
+/// and otherwise as the instance's `profile_choices` allows: the choice (`any`), the lower of
+/// the two (`narrower`), or the instance's level (`site`).
 pub fn level_of(settings: &Settings, own: Option<ProfilePolicy>) -> Level {
+    let site = settings.profile_visibility;
     let own = match own {
-        None | Some(ProfilePolicy::Default) => Level::Everyone,
-        Some(ProfilePolicy::Shared) => Level::Shared,
+        None | Some(ProfilePolicy::Default) => return site,
         Some(ProfilePolicy::Friends) => Level::Friends,
+        Some(ProfilePolicy::Shared) => Level::Shared,
+        Some(ProfilePolicy::Everyone) => Level::Everyone,
     };
-    settings.profile_visibility.min(own)
+    match settings.profile_choices {
+        ProfileChoices::Any => own,
+        ProfileChoices::Narrower => site.min(own),
+        ProfileChoices::Site => site,
+    }
 }
+
+/// The level of an account for each instance level, `profile_choices` and own choice: a row
+/// per instance level (`everyone`, `public_servers`, `shared`), a column per choice (none,
+/// `friends`, `shared`, `everyone`), E, P, S and F for the levels.
+#[cfg(test)]
+pub(crate) fn wanted_level(site: Level, choices: ProfileChoices, own: Option<&str>) -> Level {
+    let rows = match choices {
+        ProfileChoices::Any => ["EFSE", "PFSE", "SFSE"],
+        ProfileChoices::Narrower => ["EFSE", "PFSP", "SFSS"],
+        ProfileChoices::Site => ["EEEE", "PPPP", "SSSS"],
+    };
+    let row = match site {
+        Level::Everyone => rows[0],
+        Level::PublicServers => rows[1],
+        Level::Shared | Level::Friends => rows[2],
+    };
+    let column = match own {
+        None => 0,
+        Some("friends") => 1,
+        Some("shared") => 2,
+        Some("everyone") => 3,
+        Some(other) => panic!("no choice {other}"),
+    };
+    match row.as_bytes()[column] {
+        b'E' => Level::Everyone,
+        b'P' => Level::PublicServers,
+        b'S' => Level::Shared,
+        _ => Level::Friends,
+    }
+}
+
+/// The instance levels and every `profile_choices` value, as stored.
+#[cfg(test)]
+pub(crate) const SITE_LEVELS: [(&str, Level); 3] = [
+    ("everyone", Level::Everyone),
+    ("public_servers", Level::PublicServers),
+    ("shared", Level::Shared),
+];
+#[cfg(test)]
+pub(crate) const ALL_CHOICES: [(&str, ProfileChoices); 3] = [
+    ("any", ProfileChoices::Any),
+    ("narrower", ProfileChoices::Narrower),
+    ("site", ProfileChoices::Site),
+];
+/// Every choice an account can store: none, and the three.
+#[cfg(test)]
+pub(crate) const OWN_CHOICES: [Option<&str>; 4] =
+    [None, Some("friends"), Some("shared"), Some("everyone")];
 
 #[cfg(test)]
 thread_local! {
@@ -159,6 +248,7 @@ fn own_choice(stored: Option<&str>) -> Option<ProfilePolicy> {
     match stored {
         Some("shared") => Some(ProfilePolicy::Shared),
         Some("friends") => Some(ProfilePolicy::Friends),
+        Some("everyone") => Some(ProfilePolicy::Everyone),
         _ => None,
     }
 }
@@ -750,6 +840,15 @@ mod tests {
         Settings::forget(db);
     }
 
+    async fn set_choices(db: &Db, choices: &str) {
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = 'profile_choices'")
+            .bind(choices)
+            .execute(db)
+            .await
+            .expect("choices");
+        Settings::forget(db);
+    }
+
     async fn choose(db: &Db, user: &str, choice: Option<&str>) {
         sqlx::query("INSERT INTO privacy(username, profile) VALUES($1, $2) ON CONFLICT(username) DO UPDATE SET profile = excluded.profile")
             .bind(user)
@@ -1092,69 +1191,64 @@ mod tests {
             "alice", "friend", "asker", "sent", "writer", "opened", "mate", "pubber", "local",
             "loner", "badger", "root",
         ];
-        for (word, instance) in [
-            ("everyone", Level::Everyone),
-            ("public_servers", Level::PublicServers),
-            ("shared", Level::Shared),
-        ] {
+        for (word, instance) in SITE_LEVELS {
             set_level(db, word).await;
-            for (choice, own) in [
-                (None, Level::Everyone),
-                (Some("shared"), Level::Shared),
-                (Some("friends"), Level::Friends),
-            ] {
-                for subject in subjects {
-                    choose(db, subject, choice).await;
-                }
-                let level = instance.min(own);
-                for (what, ask, name, want) in &cases {
-                    assert_eq!(
-                        seen(&state, *ask, name).await,
-                        want.at(level),
-                        "{what}: instance {word}, choice {choice:?}"
-                    );
+            for (allowed, choices) in ALL_CHOICES {
+                set_choices(db, allowed).await;
+                for choice in OWN_CHOICES {
+                    for subject in subjects {
+                        choose(db, subject, choice).await;
+                    }
+                    let level = wanted_level(instance, choices, choice);
+                    for (what, ask, name, want) in &cases {
+                        assert_eq!(
+                            seen(&state, *ask, name).await,
+                            want.at(level),
+                            "{what}: instance {word}, {allowed}, choice {choice:?}"
+                        );
+                    }
                 }
             }
         }
         done(state, path).await;
     }
 
-    #[tokio::test]
-    async fn the_effective_level_is_the_lower_one() {
-        let at = |level: Level| Settings {
-            profile_visibility: level,
+    #[test]
+    fn the_effective_level_follows_the_choices() {
+        for (_, site) in SITE_LEVELS {
+            for (_, choices) in ALL_CHOICES {
+                let settings = Settings {
+                    profile_visibility: site,
+                    profile_choices: choices,
+                    ..Settings::DENY
+                };
+                for choice in OWN_CHOICES {
+                    let want = wanted_level(site, choices, choice);
+                    assert_eq!(
+                        level_of(&settings, own_choice(choice)),
+                        want,
+                        "{site:?} {choices:?} {choice:?}"
+                    );
+                    if choice.is_none() {
+                        assert_eq!(
+                            level_of(&settings, Some(ProfilePolicy::Default)),
+                            want,
+                            "{site:?} {choices:?} default"
+                        );
+                    }
+                }
+            }
+        }
+        let wider = Settings {
+            profile_visibility: Level::Shared,
+            profile_choices: ProfileChoices::Any,
             ..Settings::DENY
         };
-        for (instance, own, want) in [
-            (Level::Everyone, None, Level::Everyone),
-            (
-                Level::Everyone,
-                Some(ProfilePolicy::Default),
-                Level::Everyone,
-            ),
-            (Level::Everyone, Some(ProfilePolicy::Shared), Level::Shared),
-            (
-                Level::Everyone,
-                Some(ProfilePolicy::Friends),
-                Level::Friends,
-            ),
-            (Level::PublicServers, None, Level::PublicServers),
-            (
-                Level::PublicServers,
-                Some(ProfilePolicy::Shared),
-                Level::Shared,
-            ),
-            (
-                Level::PublicServers,
-                Some(ProfilePolicy::Friends),
-                Level::Friends,
-            ),
-            (Level::Shared, Some(ProfilePolicy::Default), Level::Shared),
-            (Level::Shared, Some(ProfilePolicy::Shared), Level::Shared),
-            (Level::Shared, Some(ProfilePolicy::Friends), Level::Friends),
-        ] {
-            assert_eq!(level_of(&at(instance), own), want, "{instance:?} {own:?}");
-        }
+        assert_eq!(
+            level_of(&wider, Some(ProfilePolicy::Everyone)),
+            Level::Everyone,
+            "a choice may be wider than the instance's level"
+        );
     }
 
     #[tokio::test]
@@ -1592,7 +1686,7 @@ mod tests {
                 1 => add_member(db, "plaza", &name, 0, 0, 1).await,
                 2 => befriend(db, "alice", &name).await,
                 3 => choose(db, &name, Some("friends")).await,
-                _ => {}
+                _ => choose(db, &name, Some("everyone")).await,
             }
             if n % 7 == 0 {
                 choose(db, &name, Some("shared")).await;
@@ -1635,30 +1729,37 @@ mod tests {
         ];
         for word in ["shared", "public_servers", "everyone"] {
             set_level(db, word).await;
-            for ask in asks {
-                let user = ask.who.map(|who| mem_user(who, ask.admin));
-                let grants: Vec<String> = ask.grant.iter().map(|g| test_grant(g)).collect();
-                let proof = Proof::grants(grants, &state.limits);
-                let caller = Caller {
-                    user: user.as_ref(),
-                    proof: &proof,
-                    server: ask.server,
-                    badge: ask.badge,
-                };
-                let batch = seen_among(&state, &caller, &names).await.expect("batch");
-                let mut shown = std::collections::HashSet::new();
-                for name in &names {
-                    let single = seen(&state, ask, name).await;
-                    assert_eq!(
-                        batch.get(&name.to_lowercase()),
-                        single.as_ref(),
-                        "{name} from {ask:?} at {word}"
-                    );
-                    if single.is_some() {
-                        shown.insert(name.to_lowercase());
+            for (allowed, _) in ALL_CHOICES {
+                set_choices(db, allowed).await;
+                for ask in asks {
+                    let user = ask.who.map(|who| mem_user(who, ask.admin));
+                    let grants: Vec<String> = ask.grant.iter().map(|g| test_grant(g)).collect();
+                    let proof = Proof::grants(grants, &state.limits);
+                    let caller = Caller {
+                        user: user.as_ref(),
+                        proof: &proof,
+                        server: ask.server,
+                        badge: ask.badge,
+                    };
+                    let batch = seen_among(&state, &caller, &names).await.expect("batch");
+                    let mut shown = std::collections::HashSet::new();
+                    for name in &names {
+                        let single = seen(&state, ask, name).await;
+                        assert_eq!(
+                            batch.get(&name.to_lowercase()),
+                            single.as_ref(),
+                            "{name} from {ask:?} at {word}, {allowed}"
+                        );
+                        if single.is_some() {
+                            shown.insert(name.to_lowercase());
+                        }
                     }
+                    assert_eq!(
+                        batch.len(),
+                        shown.len(),
+                        "nobody else: {ask:?} at {word}, {allowed}"
+                    );
                 }
-                assert_eq!(batch.len(), shown.len(), "nobody else: {ask:?} at {word}");
             }
         }
         let proof = Proof::none();

@@ -2,6 +2,7 @@
 // palette and the add box share. The server owns everything; these helpers only keep the
 // loaded pages in order as events arrive.
 
+import { parseProfileChoice, type ProfileChoice } from './profile_choice'
 import type { Friend, FriendRequest, Profile, UserRef } from './types'
 
 export const FRIENDS_SCOPE = 'friends'
@@ -42,9 +43,14 @@ export type RequestPolicy = (typeof REQUEST_POLICIES)[number]['value']
 export interface Privacy {
   dms: DmPolicy
   friend_requests: RequestPolicy
+  profile: ProfileChoice
 }
 
-export const DEFAULT_PRIVACY: Privacy = { dms: 'everyone', friend_requests: 'everyone' }
+export const DEFAULT_PRIVACY: Privacy = {
+  dms: 'everyone',
+  friend_requests: 'everyone',
+  profile: 'default',
+}
 
 export const parsePrivacy = (raw: unknown): Privacy => {
   const r = (raw ?? {}) as Partial<Record<keyof Privacy, unknown>>
@@ -52,7 +58,7 @@ export const parsePrivacy = (raw: unknown): Privacy => {
   const friend_requests =
     REQUEST_POLICIES.find(p => p.value === r.friend_requests)?.value ??
     DEFAULT_PRIVACY.friend_requests
-  return { dms, friend_requests }
+  return { dms, friend_requests, profile: parseProfileChoice(r.profile) }
 }
 
 const NAME = /^[^\s@,]{1,64}$/

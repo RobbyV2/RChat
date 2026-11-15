@@ -1,5 +1,6 @@
 import type { UploadExpiry } from './upload_expiry'
 import type { TimeoutWire } from './timeouts'
+import type { ProfileChoices, ProfileLevel } from './profile_choice'
 
 export type AvatarKind = 'identicon' | 'color'
 
@@ -581,6 +582,11 @@ export interface SiteSettings {
   server_joining?: ServerJoining
   // Whether server owners can make servers publicly readable. Absent on older servers: on.
   public_reading?: boolean
+  // Who can see profiles. Absent on servers before it, which have no profile choice.
+  profile_visibility?: ProfileLevel
+  // What accounts may choose for their own profile; siteSettings fills it in once the level
+  // is there.
+  profile_choices?: ProfileChoices
 }
 
 export type Registration = 'open' | 'sso' | 'closed'

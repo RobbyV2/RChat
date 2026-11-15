@@ -64,7 +64,7 @@ use tower_governor::key_extractor::KeyExtractor;
 use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use utoipa::ToSchema;
 
-use crate::api::access::subjects::Level;
+use crate::api::access::subjects::{Level, ProfileChoices};
 use crate::api::controls::Control;
 pub use crate::api::error::{
     ApiError, ApiErrorBody, Reason, ReasonKind, SERVER_BUSY, SERVER_ERROR,
@@ -1312,6 +1312,12 @@ pub struct Settings {
     /// `GET /api/v1/me/privacy`).
     #[serde(default = "everyone")]
     pub profile_visibility: Level,
+    /// What an account's own `profile` choice does: `any` (it applies, wider or narrower than
+    /// `profile_visibility`), `narrower` (only a narrower one applies; a wider one acts as no
+    /// choice) or `site` (every account follows `profile_visibility`; choices are kept). `any` by
+    /// default (`PROFILE_CHOICES`).
+    #[serde(default = "narrower")]
+    pub profile_choices: ProfileChoices,
 }
 
 /// The public settings as `GET /api/v1/settings` and the `settings_changed` WebSocket event
@@ -1364,6 +1370,11 @@ fn everyone() -> Level {
     Level::Everyone
 }
 
+/// What an instance from before `profile_choices` does.
+fn narrower() -> ProfileChoices {
+    ProfileChoices::Narrower
+}
+
 pub(crate) const SETTINGS_TTL: Duration = Duration::from_secs(5);
 
 static SETTINGS_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Settings)>>> =
@@ -1407,6 +1418,7 @@ impl Settings {
         calls: false,
         incoming_webhooks: false,
         profile_visibility: Level::Shared,
+        profile_choices: ProfileChoices::Narrower,
     };
 
     pub async fn load(db: &Db) -> Settings {
@@ -1492,6 +1504,8 @@ impl Settings {
             calls: on(policy::CALLS),
             incoming_webhooks: on(policy::INCOMING_WEBHOOKS),
             profile_visibility: Level::parse(&stored(Level::KEY)).unwrap_or(Level::Shared),
+            profile_choices: ProfileChoices::parse(&stored(ProfileChoices::KEY))
+                .unwrap_or(ProfileChoices::Narrower),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1556,6 +1570,7 @@ impl Settings {
             calls: _,
             incoming_webhooks: _,
             profile_visibility: _,
+            profile_choices: _,
         } = *self;
         match feature {
             Feature::ServerReports => server_reports,

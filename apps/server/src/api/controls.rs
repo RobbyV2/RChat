@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use sqlx::Row;
 
-use crate::api::access::subjects::Level;
+use crate::api::access::subjects::{Level, ProfileChoices};
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
     CALLS, Creator, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, INCOMING_WEBHOOKS,
@@ -153,6 +153,13 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
         env: Level::ENV,
         kind: Kind::Choice(&Level::WORDS),
         default: "shared",
+        public: true,
+    });
+    all.push(Control {
+        key: ProfileChoices::KEY,
+        env: ProfileChoices::ENV,
+        kind: Kind::Choice(&ProfileChoices::WORDS),
+        default: "any",
         public: true,
     });
     all.push(Control {
@@ -662,7 +669,7 @@ mod tests {
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
         assert_eq!(
-            table[table.len() - 13..table.len() - 1],
+            table[table.len() - 14..table.len() - 1],
             [
                 ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
                 ("server_creation", "SERVER_CREATION", "everyone"),
@@ -676,6 +683,7 @@ mod tests {
                 ("calls", "FEATURE_CALLS", "1"),
                 ("incoming_webhooks", "FEATURE_INCOMING_WEBHOOKS", "1"),
                 ("profile_visibility", "PROFILE_VISIBILITY", "shared"),
+                ("profile_choices", "PROFILE_CHOICES", "any"),
             ]
         );
         assert_eq!(control("public_reading").kind, Kind::Switch);
@@ -687,6 +695,11 @@ mod tests {
         );
         assert!(control("profile_visibility").public);
         assert!(control("profile_visibility").parse("friends").is_err());
+        assert_eq!(
+            control("profile_choices").kind,
+            Kind::Choice(&["any", "narrower", "site"])
+        );
+        assert!(control("profile_choices").public);
         assert_eq!(
             control("upload_expiry_max_days").kind,
             Kind::Number { min: 0, max: 365 }
@@ -890,6 +903,7 @@ mod tests {
                     ["everyone", "public_servers", "shared"] => {
                         "expected everyone, public_servers or shared".to_string()
                     }
+                    ["any", "narrower", "site"] => "expected any, narrower or site".to_string(),
                     other => panic!("{other:?} has no expected text"),
                 },
                 Kind::Targets => format!(

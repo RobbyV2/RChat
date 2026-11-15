@@ -1513,6 +1513,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn profile_choices_are_public_and_change_live() {
+        use crate::api::access::subjects::ProfileChoices;
+        use crate::api::admin::get_settings;
+        use crate::api::test_util::temp_state_env;
+        let (state, path) = temp_state("profile_choices_setting").await;
+        let wire = || async {
+            serde_json::to_value(get_settings(State(state.clone())).await.0).expect("json")
+        };
+        assert_eq!(wire().await["profile_choices"], json!("any"));
+        assert_eq!(
+            Settings::cached(&state.db).await.profile_choices,
+            ProfileChoices::Any
+        );
+        let mut rx = state.hub.subscribe();
+        for (word, choices) in [
+            ("narrower", ProfileChoices::Narrower),
+            ("site", ProfileChoices::Site),
+            ("any", ProfileChoices::Any),
+        ] {
+            set(&state, json!({"profile_choices": word}))
+                .await
+                .expect("patch");
+            let event =
+                serde_json::to_value(rx.try_recv().expect("settings_changed")).expect("json");
+            assert_eq!(event["settings"]["profile_choices"], json!(word));
+            assert_eq!(wire().await["profile_choices"], json!(word));
+            assert_eq!(Settings::cached(&state.db).await.profile_choices, choices);
+        }
+        assert!(
+            serde_json::from_value::<SettingsPatch>(json!({"profile_choices": "wider"})).is_err()
+        );
+        assert_eq!(Settings::DENY.profile_choices, ProfileChoices::Narrower);
+        let older: Settings = serde_json::from_value(json!({
+            "profanity_filter": true,
+            "asset_previews": true,
+            "asset_uploads": true,
+            "guests_enabled": true,
+            "profile_visibility": "shared",
+        }))
+        .expect("a copy from before the setting");
+        assert_eq!(older.profile_choices, ProfileChoices::Narrower);
+        done(state, path).await;
+
+        let (state, path) =
+            temp_state_env("profile_choices_env", &[("PROFILE_CHOICES", " Site ")]).await;
+        assert_eq!(
+            Settings::cached(&state.db).await.profile_choices,
+            ProfileChoices::Site
+        );
+        done(state, path).await;
+        let stopped = crate::config::AppConfig::from_map(&[("PROFILE_CHOICES", "wider")])
+            .expect_err("a bad value stops the start")
+            .to_string();
+        assert_eq!(
+            stopped,
+            "PROFILE_CHOICES: expected any, narrower or site, got wider"
+        );
+    }
+
+    #[tokio::test]
     async fn switching_creation_off_keeps_existing_servers_working() {
         use crate::api::access::{Proof, resolve_server};
         let (state, path) = temp_state("server_creation_off").await;

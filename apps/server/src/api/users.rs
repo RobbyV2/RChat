@@ -260,8 +260,9 @@ async fn card_of(
 /// binding of the account in `X-Subject-Binding`. A guest that names no server is also shown
 /// members of the servers its grants open. The instance's `profile_visibility` in `GET
 /// /api/v1/settings` widens this to members of servers anyone can read (`public_servers`) or to
-/// every account (`everyone`), and an account may narrow it to friends (`profile` in `PATCH
-/// /api/v1/me/privacy`).
+/// every account (`everyone`). An account's own choice (`profile` in `PATCH
+/// /api/v1/me/privacy`) may narrow it to friends or widen it to everyone, as far as the
+/// instance's `profile_choices` lets it.
 ///
 /// `member` is the account's membership in `server`, set when the caller may view that server
 /// and the account is a member, whoever may see the profile. An account with neither part
@@ -745,6 +746,73 @@ mod tests {
         }
         assert!(view(&state, by("alice"), "bob").await.is_ok());
         assert!(card_for(&state, by("alice"), "bob").await.is_ok());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn cards_follow_the_profile_choices() {
+        use crate::api::access::subjects::{
+            ALL_CHOICES, Level, OWN_CHOICES, SITE_LEVELS, wanted_level,
+        };
+        let (state, path) = temp_state("card_choices").await;
+        let state = state.with_limits(std::sync::Arc::new(crate::limits::Limits {
+            lookup_profile_per_minute: 10_000,
+            lookup_misses_per_hour: 0,
+            ..crate::limits::Limits::default()
+        }));
+        let db = &state.db;
+        world(&state).await;
+        let guest = Ask::default();
+        for (site, instance) in SITE_LEVELS {
+            for (allowed, choices) in ALL_CHOICES {
+                for (key, value) in [("profile_visibility", site), ("profile_choices", allowed)] {
+                    sqlx::query("UPDATE settings SET value = $1 WHERE key = $2")
+                        .bind(value)
+                        .bind(key)
+                        .execute(db)
+                        .await
+                        .expect("setting");
+                }
+                crate::api::Settings::forget(db);
+                for choice in OWN_CHOICES {
+                    sqlx::query("INSERT INTO privacy(username, profile) VALUES('bob', $1) ON CONFLICT(username) DO UPDATE SET profile = excluded.profile")
+                        .bind(choice)
+                        .execute(db)
+                        .await
+                        .expect("choice");
+                    let level = wanted_level(instance, choices, choice);
+                    let what = format!("{site}, {allowed}, {choice:?}");
+                    let shown = |yes: bool| yes.then_some((true, false));
+                    for (who, ask) in [("carol", by("carol")), ("a guest", guest)] {
+                        assert_eq!(
+                            parts(&state, ask, "bob").await,
+                            shown(level >= Level::PublicServers),
+                            "{who} shares nothing with bob (bob is in rchat): {what}"
+                        );
+                        assert_eq!(
+                            view(&state, ask, "bob").await.is_ok(),
+                            level >= Level::PublicServers,
+                            "{who}, /profile: {what}"
+                        );
+                    }
+                    assert_eq!(
+                        parts(&state, by("alice"), "bob").await,
+                        shown(level >= Level::Shared),
+                        "alice shares vault: {what}"
+                    );
+                    assert_eq!(
+                        parts(&state, in_server(by("alice"), "vault"), "bob").await,
+                        Some((level >= Level::Shared, true)),
+                        "the membership shows whatever the choice: {what}"
+                    );
+                    assert_eq!(
+                        parts(&state, by("bob"), "bob").await,
+                        Some((true, false)),
+                        "bob sees his own: {what}"
+                    );
+                }
+            }
+        }
         done(state, path).await;
     }
 

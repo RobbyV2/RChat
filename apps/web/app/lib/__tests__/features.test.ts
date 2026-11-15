@@ -86,6 +86,28 @@ describe('feature switches', () => {
     expect(odd.server_joining).toBe('nobody')
   })
 
+  test('profile settings: none before the setting, only narrowing before the choices', () => {
+    const before = siteSettings(older)
+    expect([before.profile_visibility, before.profile_choices]).toEqual([undefined, undefined])
+    const narrowing = siteSettings({ ...older, profile_visibility: 'shared' } as SiteSettings)
+    expect([narrowing.profile_visibility, narrowing.profile_choices]).toEqual([
+      'shared',
+      'narrower',
+    ])
+    const sent = siteSettings({
+      ...older,
+      profile_visibility: 'public_servers',
+      profile_choices: 'any',
+    } as SiteSettings)
+    expect([sent.profile_visibility, sent.profile_choices]).toEqual(['public_servers', 'any'])
+    const odd = siteSettings({
+      ...older,
+      profile_visibility: 'friends',
+      profile_choices: 'wider',
+    } as unknown as SiteSettings)
+    expect([odd.profile_visibility, odd.profile_choices]).toEqual(['shared', 'site'])
+  })
+
   test('public reading reads as on when it is missing', () => {
     expect(siteSettings(older).public_reading).toBe(true)
     const off = siteSettings({ ...older, public_reading: false } as SiteSettings)

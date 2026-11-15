@@ -1,3 +1,4 @@
+import { parseProfileChoices, parseProfileLevel } from './profile_choice'
 import type { Registration, ServerJoining, SiteSettings } from './types'
 
 // The site-wide feature switches (`GET /api/settings`), each a plain on or off.
@@ -54,6 +55,15 @@ const joiningOf = (value: unknown): ServerJoining => {
   return value === 'everyone' || value === 'invites' || value === 'nobody' ? value : 'nobody'
 }
 
+// An instance from before profile visibility has neither; one from before the choices lets
+// accounts only narrow.
+const profileSettings = (sent: Record<string, unknown>) => {
+  const level = parseProfileLevel(sent.profile_visibility)
+  return level
+    ? { profile_visibility: level, profile_choices: parseProfileChoices(sent.profile_choices) }
+    : { profile_visibility: undefined, profile_choices: undefined }
+}
+
 // The settings as clients use them: missing or malformed switches read as an older instance's.
 // A server that sends no p2p_attachments has P2P attachments on.
 export const siteSettings = (s: SiteSettings): SiteSettings => {
@@ -71,6 +81,7 @@ export const siteSettings = (s: SiteSettings): SiteSettings => {
     registration: registrationOf(sent.registration),
     server_joining: joiningOf(sent.server_joining),
     public_reading: sent.public_reading !== false,
+    ...profileSettings(sent),
     upload_expiry_max_days:
       Number.isInteger(sent.upload_expiry_max_days) && (sent.upload_expiry_max_days as number) >= 0
         ? (sent.upload_expiry_max_days as number)

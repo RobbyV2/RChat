@@ -11,6 +11,7 @@ import { inSession, useStore } from '../lib/store'
 import { bannerColor } from '../lib/profile'
 import { scopePings } from '../lib/pings'
 import { badgePings } from '../lib/selectors'
+import { profileChoiceLine, profileOptions, shownProfileChoice } from '../lib/profile_choice'
 import {
   DM_POLICIES,
   FRIENDS_SCOPE,
@@ -709,7 +710,37 @@ export function Choice<T extends string>({
   )
 }
 
-// Settings > Privacy: who can DM you and who can send you friend requests.
+// Who can see your profile and find you by name, as far as the site lets you choose.
+function ProfileChoiceRow() {
+  const privacy = useStore(s => s.privacy)
+  const settings = useStore(s => s.settings)
+  const setPrivacy = useStore(s => s.setPrivacy)
+  const label = 'Who can see your profile and find you by name'
+  const options = profileOptions(settings)
+  const line = profileChoiceLine(settings)
+  if (!settings.profile_visibility) return null
+  return (
+    <div className="flex flex-col gap-2">
+      {options.length > 0 ? (
+        <Choice
+          label={label}
+          value={privacy ? shownProfileChoice(privacy.profile, settings) : undefined}
+          options={options}
+          onChange={profile => void setPrivacy({ profile })}
+        />
+      ) : (
+        <p className="text-sm text-on-surface">{label}</p>
+      )}
+      {line && <p className="text-sm text-on-surface-variant">{line}</p>}
+      <p className="text-xs text-on-surface-variant">
+        Your name still shows next to your messages.
+      </p>
+    </div>
+  )
+}
+
+// Settings > Privacy: who can DM you, who can send you friend requests and who can see your
+// profile.
 export function PrivacyChoices() {
   const privacy = useStore(s => s.privacy)
   const loadPrivacy = useStore(s => s.loadPrivacy)
@@ -735,6 +766,7 @@ export function PrivacyChoices() {
         With Friends only, only friends can DM you or write in a DM you already have, and you can
         only DM your friends.
       </p>
+      <ProfileChoiceRow />
     </div>
   )
 }
