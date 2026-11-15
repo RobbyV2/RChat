@@ -147,6 +147,21 @@ impl IntoResponse for Card {
     }
 }
 
+/// Accounts as mention suggestions and the user search list them: only what a row of names
+/// shows, kept by the client for 15 seconds.
+pub struct Names(pub Vec<UserRef>);
+
+impl IntoResponse for Names {
+    fn into_response(self) -> Response {
+        let Names(names) = self;
+        (
+            [(header::CACHE_CONTROL, "private, max-age=15")],
+            Json(names),
+        )
+            .into_response()
+    }
+}
+
 async fn member_roles(db: &Db, server: &str, username: &str) -> Result<Vec<Role>, ApiError> {
     let rows = sqlx::query(
         "SELECT r.id, r.name, r.color, r.perms, r.mentionable FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2 ORDER BY r.id",

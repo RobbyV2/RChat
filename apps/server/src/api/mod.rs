@@ -2027,6 +2027,7 @@ fn api_routes(
         )
         .route("/servers/{name}/members", get(servers::list_members))
         .route("/servers/{name}/interacted", get(servers::list_interacted))
+        .route("/servers/{name}/mentions", get(servers::mentions))
         .route("/servers/{name}/leave", post(servers::leave_server))
         .route("/servers/{name}/channels", post(servers::create_channel))
         .route(

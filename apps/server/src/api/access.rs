@@ -3056,6 +3056,11 @@ mod tests {
                     .replace("{subject}", "u:alice")
                     .replace("{guest}", "@guest:00000000000000aa");
                 assert!(!filled.contains('{'), "{route}: an unfilled part");
+                // The mention lookup checks its search text before it asks the gate.
+                let filled = match filled.ends_with("/mentions") {
+                    true => format!("{filled}?q=al"),
+                    false => filled,
+                };
                 let body = matches!(method.as_str(), "post" | "put" | "patch").then_some("{}");
                 for token in viewers {
                     let reply = client

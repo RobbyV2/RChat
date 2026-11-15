@@ -12,8 +12,9 @@ use crate::api::access::perms::{
     fold_access, perm_bits, perm_row, perm_subjects, rule_narrows,
 };
 use crate::api::access::{
-    BANNED, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, forbidden, is_member,
-    member_role, resolve_channel, resolve_invite, resolve_join, resolve_reading, resolve_server,
+    BANNED, Caller, InviteView, Proof, ResolvedChannel, ServerAccess, Via, acting_on, forbidden,
+    is_member, member_role, resolve_channel, resolve_invite, resolve_join, resolve_reading,
+    resolve_server, seen_among,
 };
 use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
@@ -29,6 +30,7 @@ use crate::api::policy::ServerCreation;
 use crate::api::rare::{self, Rare};
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::timeouts::{running_timeouts, timeout_event};
+use crate::api::users::Names;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
     NAME_MAX, OFFSET_MAX, OkResp, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX,
@@ -460,11 +462,9 @@ pub struct MemberListQuery {
     q: Option<String>,
     /// `1` or `true` returns only server admins, alphabetically; any other value is ignored.
     admins: Option<bool>,
-    /// `1` or `true` with a non-blank `q` (mention autocomplete): at most 10 members whose
-    /// username or display name starts with `q` (case-insensitive), username matches first,
-    /// each group alphabetical, unpaged. Only for signed-in members, or anyone signed in on a
-    /// server without a password; others get an empty list. Ignored without `q` and when
-    /// `usernames` is given.
+    /// `1` or `true` with a non-blank `q` (mention autocomplete): the members
+    /// `GET /api/v1/servers/{name}/mentions` suggests, as member rows, unpaged. Ignored without
+    /// `q` and when `usernames` is given.
     suggest: Option<bool>,
 }
 
@@ -511,40 +511,72 @@ impl MemberListQuery {
 }
 
 pub const SUGGEST_MAX: usize = 10;
+/// Rows each kind of match reads before the lookup rule leaves out who the caller may not find.
+const SUGGEST_ROWS: i64 = 50;
 
+/// Members of `server` whose username, then whose display name, starts with `q`, each
+/// alphabetical, at most `SUGGEST_ROWS` of each.
 async fn suggested_members(db: &Db, server: &str, q: &str) -> Result<Vec<MemberRow>, ApiError> {
     let (mut rows, _) =
-        filtered_members(db, server, Some(q), false, Some(SUGGEST_MAX as i64), None).await?;
-    if rows.len() < SUGGEST_MAX {
-        let col = match crate::db::is_sqlite(db) {
-            true => "lower(u.display_name)",
-            false => "(lower(u.display_name) COLLATE \"C\")",
-        };
-        let end = match prefix_end(q) {
-            Some(_) => format!(" AND {col} < $4"),
-            None => String::new(),
-        };
-        let sql = format!(
-            "SELECT m.username, m.is_admin, m.perms FROM users u JOIN members m ON m.username = u.username AND m.server = $1 WHERE {col} >= $2{end} ORDER BY {col}, m.username LIMIT $3"
-        );
-        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(server)
-            .bind(q)
-            .bind(2 * SUGGEST_MAX as i64);
-        if let Some(end) = prefix_end(q) {
-            query = query.bind(end);
-        }
-        let by_name = query.fetch_all(db).await?;
-        for row in member_rows(&by_name)? {
-            if rows.len() == SUGGEST_MAX {
-                break;
-            }
-            if !rows.iter().any(|(name, _, _)| *name == row.0) {
-                rows.push(row);
-            }
+        filtered_members(db, server, Some(q), false, Some(SUGGEST_ROWS), None).await?;
+    let col = match crate::db::is_sqlite(db) {
+        true => "lower(u.display_name)",
+        false => "(lower(u.display_name) COLLATE \"C\")",
+    };
+    let end = match prefix_end(q) {
+        Some(_) => format!(" AND {col} < $4"),
+        None => String::new(),
+    };
+    let sql = format!(
+        "SELECT m.username, m.is_admin, m.perms FROM users u JOIN members m ON m.username = u.username AND m.server = $1 WHERE {col} >= $2{end} ORDER BY {col}, m.username LIMIT $3"
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(server)
+        .bind(q)
+        .bind(SUGGEST_ROWS);
+    if let Some(end) = prefix_end(q) {
+        query = query.bind(end);
+    }
+    let by_name = query.fetch_all(db).await?;
+    for row in member_rows(&by_name)? {
+        if !rows.iter().any(|(name, _, _)| *name == row.0) {
+            rows.push(row);
         }
     }
     Ok(rows)
+}
+
+/// Mention suggestions in the server `access` opened: at most `SUGGEST_MAX` of its members
+/// whose username or display name starts with `q`, username matches first, only ones the
+/// caller may find by name (the lookup rule with the server named). Only signed-in members and
+/// signed-in readers of a server anyone can read get any, and the readers only while the server
+/// lists its members to them.
+async fn mentionable(
+    state: &AppState,
+    access: &ServerAccess,
+    viewer: Option<&User>,
+    proof: &Proof<'_>,
+    q: &str,
+) -> Result<Vec<MemberRow>, ApiError> {
+    match (viewer, access.via()) {
+        (Some(_), Via::Member | Via::Public)
+            if crate::api::access::subjects::lists_members(access) => {}
+        (_, _) => return Ok(Vec::new()),
+    }
+    let rows = suggested_members(&state.read(), access.name(), q).await?;
+    let names: Vec<String> = rows.iter().map(|(name, _, _)| name.clone()).collect();
+    let caller = Caller {
+        user: viewer,
+        proof,
+        server: Some(access.name()),
+        badge: None,
+    };
+    let seen = seen_among(state, &caller, &names).await?;
+    Ok(rows
+        .into_iter()
+        .filter(|(name, _, _)| seen.contains_key(name))
+        .take(SUGGEST_MAX)
+        .collect())
 }
 
 pub(crate) fn prefix_end(prefix: &str) -> Option<String> {
@@ -1198,8 +1230,8 @@ async fn members_page(
 /// Returns members as pages of `limit` (default and max 50): online members first, then offline
 /// ones, each alphabetical by username. Page with `cursor` from the `X-Next-Cursor` response header
 /// (or the legacy `offset`). With `q` (username prefix) and/or `admins=1` it returns matching
-/// members alphabetically, paged by `cursor` only. With `q` and `suggest=1` it returns at most
-/// 10 members whose username or display name starts with `q` (mention autocomplete). With
+/// members alphabetically, paged by `cursor` only. With `q` and `suggest=1` it returns the
+/// members `GET /api/v1/servers/{name}/mentions` suggests (mention autocomplete). With
 /// `usernames` it returns just those users that are members, alphabetical and unpaged.
 ///
 /// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
@@ -1269,13 +1301,17 @@ pub(crate) async fn list_members(
             .await?,
             None,
         ),
-        None if suggest == Some(true) && q.is_some() => match (&viewer, access.via()) {
-            (Some(_), Via::Member | Via::Public) => (
-                suggested_members(db, &key, q.as_deref().unwrap_or_default()).await?,
-                None,
-            ),
-            (_, _) => (Vec::new(), None),
-        },
+        None if suggest == Some(true) && q.is_some() => (
+            mentionable(
+                &state,
+                &access,
+                viewer.as_ref(),
+                &Proof::headers(&headers, &state.limits),
+                q.as_deref().unwrap_or_default(),
+            )
+            .await?,
+            None,
+        ),
         None if q.is_some() || admins == Some(true) => {
             filtered_members(
                 db,
@@ -1315,6 +1351,93 @@ pub(crate) async fn list_members(
         })
         .collect();
     Ok(Paged(members, next))
+}
+
+/// The most characters of the text a mention suggestion or a user search looks for.
+pub const LOOKUP_TEXT_MAX: usize = 32;
+
+/// The text a mention suggestion or a user search looks for: trimmed and lowercase, `min` to
+/// `LOOKUP_TEXT_MAX` characters, without NUL.
+pub(crate) fn lookup_text(raw: Option<&str>, min: usize) -> Result<String, ApiError> {
+    let text = raw.unwrap_or_default().trim().to_lowercase();
+    let len = text.chars().count();
+    let wrong = |error: String| Err(ApiError::invalid(error, "q"));
+    if len < min {
+        return wrong(match min {
+            1 => "Search text needs at least 1 character".to_string(),
+            _ => format!("Search text needs at least {min} characters"),
+        });
+    }
+    if len > LOOKUP_TEXT_MAX {
+        return wrong(format!(
+            "Search text must be at most {LOOKUP_TEXT_MAX} characters"
+        ));
+    }
+    if text.contains('\0') {
+        return wrong("Search text cannot contain NUL characters".to_string());
+    }
+    Ok(text)
+}
+
+/// Query for mention suggestions.
+#[derive(Deserialize, IntoParams)]
+pub struct MentionQuery {
+    /// The start of a username or display name, 1 to 32 characters after trimming,
+    /// case-insensitive.
+    #[param(example = "al")]
+    q: Option<String>,
+}
+
+/// Suggest mentions
+///
+/// At most 10 members of the server whose username or display name starts with `q`
+/// (case-insensitive), username matches first, each alphabetical, with only what a suggestion
+/// shows. Members the caller may not find by name are left out: members see each other, and
+/// people who read the server without being a member see its members while its
+/// `members_visible` is on; each member's own choice (`profile` in `PATCH
+/// /api/v1/me/privacy`) applies, so one who keeps their profile to friends is suggested only to
+/// friends, and one who chose `everyone` to everyone who gets suggestions here. For signed-in
+/// members, and anyone signed in on a server anyone can read while its `members_visible` is
+/// on; guests and everyone else get an empty list. Each call takes one of the caller's
+/// `typeahead` lookups
+/// (`LOOKUP_TYPEAHEAD_PER_MINUTE`, 300 a minute by default), counted per account, or per client
+/// address without one. General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/v1/servers/{name}/mentions",
+    tag = "Members",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), MentionQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
+    responses(
+        (status = 200, description = "The suggestions, best first", body = Vec<UserRef>, headers(("cache-control" = String, description = "`private, max-age=15`"))),
+        (status = 400, description = "`Search text needs at least 1 character`, `Search text must be at most 32 characters` or `Search text cannot contain NUL characters` (reason `invalid`, field `q`)", body = ApiErrorBody),
+        (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
+        (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `typeahead` lookups. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
+    ),
+    security((), ("bearer" = []))
+)]
+pub(crate) async fn mentions(
+    State(state): State<AppState>,
+    MaybeAuthed(viewer): MaybeAuthed,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    Query(query): Query<MentionQuery>,
+) -> Result<Names, ApiError> {
+    let db = &state.read();
+    require_guest_ok(db, viewer.as_ref()).await?;
+    let MentionQuery { q } = query;
+    let q = lookup_text(q.as_deref(), 1)?;
+    lookup::take(&state, LookupClass::Typeahead, viewer.as_ref())?;
+    let proof = Proof::headers(&headers, &state.limits);
+    let access = resolve_server(db, &name, viewer.as_ref(), &proof).await?;
+    let names: Vec<String> = mentionable(&state, &access, viewer.as_ref(), &proof, &q)
+        .await?
+        .into_iter()
+        .map(|(name, _, _)| name)
+        .collect();
+    let refs = user_refs(db, &names).await;
+    Ok(Names(names.iter().map(|n| user_from(&refs, n)).collect()))
 }
 
 fn pair_cursor(raw: Option<&str>) -> Result<Option<(i64, String)>, ApiError> {
@@ -4982,6 +5105,7 @@ mod tests {
     use super::*;
     use crate::api::access::{DENIED, PASSWORD_REQUIRED};
     use crate::api::test_util::{add_member, done, mem_user, temp_state};
+    use crate::api::{Reason, ReasonKind};
 
     async fn lite_opt(db: &Db, name: &str) -> Option<ServerSummaryLite> {
         resolve_server(db, name, Some(&mem_user("root", true)), &Proof::none())
@@ -7585,6 +7709,283 @@ mod tests {
                 .expect("member"),
             vec!["alice"]
         );
+        done(state, path).await;
+    }
+
+    /// The usernames `GET /servers/{server}/mentions?q=` answers `who`, with each row's keys.
+    async fn mentioned(
+        state: &AppState,
+        who: Option<&str>,
+        server: &str,
+        q: Option<&str>,
+    ) -> Result<Vec<String>, ApiError> {
+        let res = mentions(
+            State(state.clone()),
+            MaybeAuthed(who.map(|w| mem_user(w, false))),
+            HeaderMap::new(),
+            Path(server.to_string()),
+            Query(MentionQuery {
+                q: q.map(str::to_string),
+            }),
+        )
+        .await?;
+        let res = axum::response::IntoResponse::into_response(res);
+        assert_eq!(
+            res.headers()[axum::http::header::CACHE_CONTROL],
+            "private, max-age=15"
+        );
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("json");
+        for row in &rows {
+            let mut keys: Vec<&str> = row
+                .as_object()
+                .expect("object")
+                .keys()
+                .map(String::as_str)
+                .collect();
+            keys.sort();
+            assert_eq!(
+                keys,
+                ["avatar_color", "avatar_kind", "display_name", "username"],
+                "only what a suggestion shows"
+            );
+        }
+        Ok(rows
+            .iter()
+            .map(|r| r["username"].as_str().expect("name").to_string())
+            .collect())
+    }
+
+    /// A 400 whose reason says the request value `field` is wrong.
+    fn invalid(text: &str, field: &str) -> (StatusCode, String, Option<Reason>) {
+        let reason = Reason {
+            kind: ReasonKind::Invalid,
+            control: None,
+            retry_after: None,
+            field: Some(field.to_string()),
+        };
+        (StatusCode::BAD_REQUEST, text.to_string(), Some(reason))
+    }
+
+    /// The usernames `members?suggest=1` answers.
+    async fn suggested(state: &AppState, who: Option<&str>, server: &str, q: &str) -> Vec<String> {
+        let res = list_members(
+            State(state.clone()),
+            MaybeAuthed(who.map(|w| mem_user(w, false))),
+            HeaderMap::new(),
+            Path(server.to_string()),
+            RawQuery(Some(format!("suggest=1&q={q}"))),
+        )
+        .await
+        .expect("suggest");
+        let res = axum::response::IntoResponse::into_response(res);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let rows: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("json");
+        rows.iter()
+            .map(|r| r["username"].as_str().expect("name").to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn mentions_suggest_what_the_member_list_suggests() {
+        let (state, path) = temp_state("mentions").await;
+        let db = &state.db;
+        for (name, display) in [
+            ("alice", "Alice"),
+            ("albert", "Bertie"),
+            ("bob", "Alfie"),
+            ("carol", "ALma"),
+            ("dan", "Dan"),
+            ("al_x", "x"),
+            ("alzz", "z"),
+        ] {
+            add_user(db, name, display).await;
+            add_member(db, "rchat", name, 0, 0, 0).await;
+        }
+        for n in 0..12 {
+            add_user(db, &format!("zz{n:02}"), "Zed").await;
+            add_member(db, "rchat", &format!("zz{n:02}"), 0, 0, 0).await;
+        }
+        add_user(db, "alfred", "Alfred").await;
+        let dan = Some("dan");
+        let all = vec!["al_x", "albert", "alice", "alzz", "bob", "carol"];
+        assert_eq!(
+            mentioned(&state, dan, "rchat", Some("AL"))
+                .await
+                .expect("al"),
+            all
+        );
+        assert_eq!(
+            suggested(&state, dan, "rchat", "AL").await,
+            all,
+            "members?suggest=1 agrees"
+        );
+        assert_eq!(
+            mentioned(&state, dan, "rchat", Some(" al_ "))
+                .await
+                .expect("escaped"),
+            vec!["al_x"]
+        );
+        for q in ["zed", "zz"] {
+            assert_eq!(
+                mentioned(&state, dan, "rchat", Some(q))
+                    .await
+                    .expect(q)
+                    .len(),
+                SUGGEST_MAX
+            );
+        }
+        assert_eq!(
+            mentioned(&state, dan, "rchat", Some("ber"))
+                .await
+                .expect("ber"),
+            vec!["albert"]
+        );
+        assert_eq!(
+            mentioned(&state, None, "rchat", Some("al"))
+                .await
+                .expect("guest"),
+            Vec::<String>::new(),
+            "guests get no suggestions"
+        );
+        assert_eq!(
+            mentioned(&state, Some("alfred"), "rchat", Some("ber"))
+                .await
+                .expect("public server"),
+            vec!["albert"],
+            "anyone signed in may look in a server anyone can read"
+        );
+        let refused = |res: Result<Vec<String>, ApiError>| match res {
+            Ok(names) => panic!("answered {names:?}"),
+            Err(ApiError(code, text, reason)) => (code, text, reason),
+        };
+        for q in [None, Some(""), Some("   ")] {
+            assert_eq!(
+                refused(mentioned(&state, dan, "rchat", q).await),
+                invalid("Search text needs at least 1 character", "q"),
+                "{q:?}"
+            );
+        }
+        assert_eq!(
+            refused(mentioned(&state, dan, "rchat", Some(&"a".repeat(33))).await),
+            invalid("Search text must be at most 32 characters", "q")
+        );
+        assert!(
+            mentioned(&state, dan, "rchat", Some(&"a".repeat(32)))
+                .await
+                .expect("32 characters")
+                .is_empty()
+        );
+        for q in ["\0", "a\0", "\0al"] {
+            assert_eq!(
+                refused(mentioned(&state, dan, "rchat", Some(q)).await),
+                invalid("Search text cannot contain NUL characters", "q"),
+                "{q:?}"
+            );
+        }
+        let _ = make_server(&state, "club").await.expect("club");
+        sqlx::query("UPDATE servers SET password_hash = '!none' WHERE name = 'club'")
+            .execute(db)
+            .await
+            .expect("protect");
+        let missing = refused(mentioned(&state, Some("bob"), "nowhere", Some("al")).await);
+        assert_eq!(missing.0, StatusCode::NOT_FOUND);
+        for who in [Some("bob"), None] {
+            assert_eq!(
+                refused(mentioned(&state, who, "club", Some("al")).await),
+                missing,
+                "a password server you're not in is the uniform 404"
+            );
+        }
+        assert_eq!(
+            mentioned(&state, Some("alice"), "club", Some("al"))
+                .await
+                .expect("member"),
+            vec!["alice"]
+        );
+        done(state, path).await;
+    }
+
+    /// zed is in town with alice; carol reads town without being a member and dan is zed's
+    /// friend outside it.
+    #[tokio::test]
+    async fn mentions_follow_the_choices_and_the_server_option() {
+        use crate::api::access::subjects::{
+            ALL_CHOICES, Level, OWN_CHOICES, SITE_LEVELS, wanted_level,
+        };
+        let (state, path) = temp_state("mention_choices").await;
+        let state = state.with_limits(std::sync::Arc::new(crate::limits::Limits {
+            lookup_typeahead_per_minute: 10_000,
+            ..crate::limits::Limits::default()
+        }));
+        let db = &state.db;
+        for name in ["alice", "carol", "dan", "zed"] {
+            add_user(db, name, name).await;
+        }
+        sqlx::query(
+            "INSERT INTO servers(name, display_name, created_at) VALUES('town', 'Town', 0)",
+        )
+        .execute(db)
+        .await
+        .expect("town");
+        add_member(db, "town", "alice", 0, 0, 0).await;
+        add_member(db, "town", "zed", 0, 0, 0).await;
+        for (a, b) in [("dan", "zed"), ("zed", "dan")] {
+            sqlx::query("INSERT INTO friends(username, friend, created_at) VALUES($1, $2, 1)")
+                .bind(a)
+                .bind(b)
+                .execute(db)
+                .await
+                .expect("friends");
+        }
+        for (site, instance) in SITE_LEVELS {
+            for (allowed, choices) in ALL_CHOICES {
+                for (key, value) in [("profile_visibility", site), ("profile_choices", allowed)] {
+                    sqlx::query("UPDATE settings SET value = $1 WHERE key = $2")
+                        .bind(value)
+                        .bind(key)
+                        .execute(db)
+                        .await
+                        .expect("setting");
+                }
+                Settings::forget(db);
+                for choice in OWN_CHOICES {
+                    sqlx::query("INSERT INTO privacy(username, profile) VALUES('zed', $1) ON CONFLICT(username) DO UPDATE SET profile = excluded.profile")
+                        .bind(choice)
+                        .execute(db)
+                        .await
+                        .expect("choice");
+                    let level = wanted_level(instance, choices, choice);
+                    for visible in [true, false] {
+                        sqlx::query("UPDATE servers SET members_visible = $1 WHERE name = 'town'")
+                            .bind(i64::from(visible))
+                            .execute(db)
+                            .await
+                            .expect("option");
+                        let what = format!("{site}, {allowed}, {choice:?}, visible {visible}");
+                        for (who, want) in [
+                            ("alice", level >= Level::Shared),
+                            ("carol", visible && level >= Level::Shared),
+                            ("dan", visible),
+                        ] {
+                            let found = mentioned(&state, Some(who), "town", Some("ze"))
+                                .await
+                                .expect("mentions");
+                            assert_eq!(found.contains(&"zed".to_string()), want, "{who}: {what}");
+                            assert_eq!(
+                                suggested(&state, Some(who), "town", "ze").await,
+                                found,
+                                "{who}, members?suggest=1: {what}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
         done(state, path).await;
     }
 

@@ -77,6 +77,7 @@ pub fn class_of(method: &Method, path: &str) -> Option<LookupClass> {
             Some(MemberListQuery::parse(query).map_or(LookupClass::List, |query| query.class()))
         }
         ["servers", _, "interacted"] => Some(LookupClass::List),
+        ["servers", _, "mentions"] => Some(LookupClass::Typeahead),
         ["server_search"] => Some(LookupClass::Search),
         ["users", _, "card" | "profile"] => Some(LookupClass::Profile),
         _ => None,
@@ -284,6 +285,8 @@ mod tests {
                 Some(LookupClass::Typeahead),
             ),
             ("/servers/club/interacted", Some(LookupClass::List)),
+            ("/servers/club/mentions?q=al", Some(LookupClass::Typeahead)),
+            ("/servers/club/mentions", Some(LookupClass::Typeahead)),
             ("/server_search?q=club", Some(LookupClass::Search)),
             ("/server_search", Some(LookupClass::Search)),
             ("/users/bob/card", Some(LookupClass::Profile)),
@@ -599,10 +602,29 @@ mod tests {
         assert_eq!(members("usernames=alice").await, too_many());
         assert_eq!(members("admins=1").await, too_many());
         assert_eq!(interacted().await, too_many());
-        for n in 0..5 {
+        let mentions = || {
+            let state = state.clone();
+            async move {
+                status(
+                    crate::api::servers::mentions(
+                        State(state),
+                        alice(),
+                        HeaderMap::new(),
+                        Path("rchat".to_string()),
+                        Query(serde_json::from_value(json!({"q": "a"})).expect("query")),
+                    )
+                    .await,
+                )
+            }
+        };
+        for n in 0..3 {
             assert_eq!(members("suggest=1&q=a").await, ok, "typeahead {n}");
         }
+        for n in 0..2 {
+            assert_eq!(mentions().await, ok, "mentions share it: {n}");
+        }
         assert_eq!(members("suggest=1&q=a").await, too_many());
+        assert_eq!(mentions().await, too_many());
         for n in 0..5 {
             assert_eq!(search().await, ok, "search {n}");
         }
