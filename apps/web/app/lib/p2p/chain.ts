@@ -9,6 +9,7 @@ import {
   LABEL_MAX,
   signTagged,
   verifyTagged,
+  verifyTaggedStrict,
   type KeyPair,
 } from './keys'
 
@@ -80,8 +81,10 @@ const int = (x: unknown, min = 0): x is number => isInt(x, min) && !Object.is(x,
 
 const digestOf = (body: unknown) => b64u(sha256(canonicalBytes(body)))
 
-// Signature checks repeat for every reading of a chain, so their results are kept.
+// Signature checks repeat for every reading of a chain, so their results are kept. The records the
+// instance also verifies are checked as it checks them.
 const CHECKS_MAX = 8192
+const STRICT: ReadonlySet<string> = new Set([TAG2.create, TAG2.chain, TAG2.bind])
 const checks = new Map<string, boolean>()
 
 const checked = (pk: string, tag: string, body: unknown, sig: string) => {
@@ -93,7 +96,7 @@ const checked = (pk: string, tag: string, body: unknown, sig: string) => {
   }
   const hit = checks.get(key)
   if (hit !== undefined) return hit
-  const ok = verifyTagged(pk, tag, body, sig)
+  const ok = (STRICT.has(tag) ? verifyTaggedStrict : verifyTagged)(pk, tag, body, sig)
   if (checks.size >= CHECKS_MAX) checks.clear()
   checks.set(key, ok)
   return ok

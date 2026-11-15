@@ -3,9 +3,11 @@
 // `bun apps/web/scripts/p2p_chain_vectors.ts` and commit the result.
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { sha256 } from '@noble/hashes/sha2.js'
+import { ed25519, ED25519_TORSION_SUBGROUP } from '@noble/curves/ed25519.js'
+import { bytesToNumberLE, numberToBytesLE } from '@noble/curves/utils.js'
+import { sha256, sha512 } from '@noble/hashes/sha2.js'
 import { format, resolveConfig } from 'prettier'
-import { canonicalBytes, utf8 } from '../app/lib/p2p/canonical'
+import { b64u, canonicalBytes, concat, utf8 } from '../app/lib/p2p/canonical'
 import {
   bindingBody2,
   bindingHead2,
@@ -36,6 +38,43 @@ export const vectorKey = (name: string): KeyPair => {
 }
 
 const id = (name: string) => keyId(vectorKey(name).pk)
+
+// Signatures only the key's holder can make, with T a point of order 8: R = rB + jT under the
+// key A, or under A + T, a key with a torsion part that is still a valid key id. The first j and
+// nonce that `want` takes win, so the file is the same every time.
+const { Point } = ed25519
+const T8 = Point.fromHex(ED25519_TORSION_SUBGROUP[1])
+const scalarOf = (...parts: Uint8Array[]) =>
+  Point.Fn.create(bytesToNumberLE(sha512(concat(...parts))))
+const torsionKey = (name: string) => {
+  const { scalar } = ed25519.utils.getExtendedPublicKey(vectorKey(name).sk)
+  return Point.BASE.multiply(scalar).add(T8).toBytes()
+}
+const crafted = (
+  name: string,
+  tag: string,
+  body: unknown,
+  torsion: boolean,
+  want: (j: number, k: number) => boolean
+) => {
+  const { scalar: a, prefix, pointBytes } = ed25519.utils.getExtendedPublicKey(vectorKey(name).sk)
+  const pk = torsion ? torsionKey(name) : pointBytes
+  const msg = concat(utf8(tag), canonicalBytes(body))
+  for (let c = 0; ; c += 1) {
+    const r = scalarOf(prefix, msg, Uint8Array.of(c))
+    for (let j = 0; j < 8; j += 1) {
+      const R = Point.BASE.multiply(r)
+        .add(T8.multiplyUnsafe(BigInt(j)))
+        .toBytes()
+      const k = scalarOf(R, pk, msg)
+      if (want(j, Number(k % BigInt(8))))
+        return b64u(concat(R, numberToBytesLE((r + k * a) % Point.Fn.ORDER, 32)))
+    }
+  }
+}
+// R + T beside an honest R: a cofactored check accepts it, verify_strict refuses it.
+const withT = (name: string, tag: string, body: unknown) =>
+  crafted(name, tag, body, false, j => j === 1)
 
 const AT = 1_762_400_000_000
 const SUB = 'vera@chat.example.org'
@@ -140,6 +179,22 @@ export const chainVectors = () => {
   })()
   const { sig_next, ...resetNoNext } = reset1
   const forged = { ...r1, sig: makeRecovery(I, thief, h0, id('pk1'), [id('d2')], AT + 1).sig }
+  // After the user's reset, a thief with the old phrase signs a sibling with R + T (review
+  // n-k-server r1 m1).
+  const torsioned = (() => {
+    const { sig, ...body } = makeRecovery(I, rk, h0, id('pkT'), [id('dT')], AT + 1)
+    void sig
+    return { ...body, sig: withT('rk', TAG2.chain, body) }
+  })()
+  // A removal names a key with a torsion part; of two records it signs, the one whose equation
+  // holds without the cofactor counts, R torsion part and all, and the honest one doesn't.
+  const removalT = makeRemoval(I, rk, h0, keyId(torsionKey('pkt')), [id('d2')], AT + 1)
+  const underT = (pk: string, want: (j: number, k: number) => boolean) => {
+    const body = { v: 1, ik: I, n: 2, prev: headOf(removalT).d, pk, keep: [], at: AT + 2 }
+    return { ...body, sig: crafted('pkt', TAG2.chain, body, true, want) }
+  }
+  const exactT = underT(id('pke'), (j, k) => j !== 0 && (j + k) % 8 === 0)
+  const plainT = underT(id('pkp'), (j, k) => j === 0 && k !== 0)
   const cases: [string, unknown, unknown[]][] = [
     ['a creation record', cr, []],
     ['a recovery', cr, [r1]],
@@ -197,6 +252,12 @@ export const chainVectors = () => {
     ['a recovery with a next key signature is refused', cr, [{ ...r1, sig_next }]],
     ['a copy with a bad signature after the record is refused alone', cr, [r1, forged]],
     ['a copy with a bad signature before the record is refused alone', cr, [forged, r1]],
+    ['a signature whose R has a small-order part is refused', cr, [reset1, torsioned]],
+    [
+      'a key with a torsion part: what holds without the cofactor counts',
+      cr,
+      [removalT, exactT, plainT],
+    ],
     ['two recoveries with the same n both count', cr, [ra, rb]],
     [
       'a record after two recoveries with the same n may cite either',
@@ -226,6 +287,11 @@ export const chainVectors = () => {
     [
       'a creation record whose signatures are swapped',
       { ...cr, sig_ik: cr.sig_rk, sig_rk: cr.sig_ik },
+      [],
+    ],
+    [
+      'a creation record whose recovery key signature has an R with a small-order part is refused',
+      { ...cr, sig_rk: withT('rk', TAG2.create, crBody(cr)) },
       [],
     ],
   ]
@@ -298,6 +364,10 @@ export const chainVectors = () => {
     bind('a copy with a bad signature beside the record is refused', pk1, [r1], headOf(r1), r => ({
       ...r,
       chain: [r1, forged],
+    })),
+    bind('a proof whose R has a small-order part is refused', pk1, [r1], headOf(r1), r => ({
+      ...r,
+      proof: withT('pk1', TAG2.bind, bindingBody2(SUB, I, headOf(r1), TS)),
     })),
     bind('either head of two recoveries with the same n', vectorKey('pkb'), [ra, rb], headOf(rb)),
     bind(

@@ -1,5 +1,6 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
-import { sha256 } from '@noble/hashes/sha2.js'
+import { bytesToNumberLE } from '@noble/curves/utils.js'
+import { sha256, sha512 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
 import { b64u, bytesOf, canonicalBytes, concat, nfc, utf8, isInt } from './canonical'
 
@@ -72,6 +73,32 @@ export const verify = (pk: Uint8Array, msg: Uint8Array, sig: Uint8Array) => {
     return (
       sig.length === SIG_LEN && strongKey(pk) && ed25519.verify(sig, msg, pk, { zip215: false })
     )
+  } catch {
+    return false
+  }
+}
+
+// RFC 8032 as the instance's verify_strict checks it: canonical encodings, no small-order key or
+// R, s below the group order, and sB = R + kA without the cofactor. Only for the records the
+// instance also verifies (creation and chain records, bind2 proofs), so both give one answer; every
+// other signature verifies as 0.3.0 verifies it, so replicas of one server never disagree.
+const strictOk = (sig: Uint8Array, msg: Uint8Array, pk: Uint8Array) => {
+  const { Point } = ed25519
+  const A = Point.fromBytes(pk, false)
+  const r = sig.subarray(0, 32)
+  const R = Point.fromBytes(r, false)
+  const s = bytesToNumberLE(sig.subarray(32))
+  if (s >= Point.Fn.ORDER || A.isSmallOrder() || R.isSmallOrder()) return false
+  const k = Point.Fn.create(bytesToNumberLE(sha512(concat(r, pk, msg))))
+  return Point.BASE.multiplyUnsafe(s).equals(R.add(A.multiplyUnsafe(k)))
+}
+
+export const verifyTaggedStrict = (pk: string, tag: string, body: unknown, sig: unknown) => {
+  const key = keyBytes(pk)
+  const s = bytesOf(sig, SIG_LEN)
+  if (!key || !s) return false
+  try {
+    return strictOk(s, concat(utf8(tag), canonicalBytes(body)), key)
   } catch {
     return false
   }

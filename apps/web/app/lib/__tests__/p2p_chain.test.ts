@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { deflateRawSync } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
-import { ed25519 } from '@noble/curves/ed25519.js'
+import { ed25519, ED25519_TORSION_SUBGROUP } from '@noble/curves/ed25519.js'
+import { bytesToNumberLE, numberToBytesLE } from '@noble/curves/utils.js'
+import { sha512 } from '@noble/hashes/sha2.js'
 import { chainVectors, vectorKey } from '../../../scripts/p2p_chain_vectors'
 import { deviceCertOk, signDeviceCert2, TAG_DEVICE } from '../p2p/acl/binding'
 import { b64u, bytesOf, canonical, canonicalBytes, concat, utf8 } from '../p2p/canonical'
@@ -49,8 +51,10 @@ import {
   type ChainRecord,
   type CreationRecord,
 } from '../p2p/chain'
+import { AclRoom } from '../p2p/acl_room'
 import { TAG_SIG } from '../p2p/event_v1'
 import {
+  eventIdBytes2,
   signRevocation2,
   signRotation2,
   signUpgrade,
@@ -62,6 +66,7 @@ import {
 } from '../p2p/event_v2'
 import {
   bindingProof,
+  isKeyId,
   keyId,
   signCert,
   signProfile,
@@ -72,12 +77,15 @@ import {
   verifyCert,
   verifyProfile,
   verifyRevocation,
+  verify,
   verifySuccession,
   verifyTagged,
+  verifyTaggedStrict,
   type KeyPair,
 } from '../p2p/keys'
 import { safetyDigits } from '../p2p/safety'
 import { VOICE_TAG } from '../p2p/voice'
+import { ServerWorld } from './p2p_server_world'
 
 // Spec r8f 1.7: the key chain as real records. V is made with a recovery key (rkV, the epoch-0
 // primary p0, the creating device D1); a thief holds D1 and p0, never ik or rkV.
@@ -101,6 +109,63 @@ const r1 = makeRecovery(I, rkV, h0, id('pk1'), [id('D2')], AT)
 const cert1D1 = signCert(V, K('D1').pk, AT, 'Browser')
 const unsigned = <T extends object>(r: T) =>
   Object.fromEntries(Object.entries(r).filter(([k]) => !k.startsWith('sig')))
+
+// Signatures only a key's holder can make, with T a point of order 8: R = rB + jT under its key A,
+// or under A + T, a key with a torsion part that is still a valid key id (the first nonce and j
+// that `want` takes).
+const { Point } = ed25519
+const T8 = Point.fromHex(ED25519_TORSION_SUBGROUP[1])
+const scalarOf = (...parts: Uint8Array[]) =>
+  Point.Fn.create(bytesToNumberLE(sha512(concat(...parts))))
+const craft = (
+  key: KeyPair,
+  msg: Uint8Array,
+  torsion: boolean,
+  want: (j: number, k: number) => boolean
+) => {
+  const { scalar: a, prefix } = ed25519.utils.getExtendedPublicKey(key.sk)
+  const pk = (torsion ? Point.BASE.multiply(a).add(T8) : Point.BASE.multiply(a)).toBytes()
+  for (let c = 0; ; c += 1) {
+    const r = scalarOf(prefix, msg, Uint8Array.of(c))
+    for (let j = 0; j < 8; j += 1) {
+      const R = Point.BASE.multiply(r)
+        .add(T8.multiplyUnsafe(BigInt(j)))
+        .toBytes()
+      const k = scalarOf(R, pk, msg)
+      if (want(j, Number(k % BigInt(8))))
+        return { pk, sig: concat(R, numberToBytesLE((r + k * a) % Point.Fn.ORDER, 32)) }
+    }
+  }
+}
+const withT = (key: KeyPair, msg: Uint8Array) => craft(key, msg, false, j => j === 1).sig
+const smallR = (key: KeyPair, msg: Uint8Array, R: Uint8Array) => {
+  const { scalar: a } = ed25519.utils.getExtendedPublicKey(key.sk)
+  return concat(R, numberToBytesLE((scalarOf(R, key.pk, msg) * a) % Point.Fn.ORDER, 32))
+}
+// 0.3.0's rule: noble's cofactored check.
+const cofactored = (pk: Uint8Array, msg: Uint8Array, sig: Uint8Array) =>
+  ed25519.verify(sig, msg, pk, { zip215: false })
+const torsionCases = (key: KeyPair, msg: Uint8Array): [string, Uint8Array, Uint8Array][] => {
+  const exact = craft(key, msg, true, (j, k) => j !== 0 && (j + k) % 8 === 0)
+  const plain = craft(key, msg, true, (j, k) => j === 0 && k !== 0)
+  return [
+    ['honest', key.pk, ed25519.sign(msg, key.sk)],
+    ['R + T', key.pk, withT(key, msg)],
+    ['R = T', key.pk, smallR(key, msg, T8.toBytes())],
+    ['R = 0', key.pk, smallR(key, msg, Point.ZERO.toBytes())],
+    ['key A + T, the equation without the cofactor', exact.pk, exact.sig],
+    ['key A + T, an honest R', plain.pk, plain.sig],
+  ]
+}
+// verify_strict's answers on torsionCases
+const STRICT_ANSWERS: [string, boolean][] = [
+  ['honest', true],
+  ['R + T', false],
+  ['R = T', false],
+  ['R = 0', false],
+  ['key A + T, the equation without the cofactor', true],
+  ['key A + T, an honest R', false],
+]
 
 describe('P2P chain records', () => {
   test('R8-chain: a creation record, a recovery and a reset verify; dropping sig_rk, pk = ik, a record signed by the old rk after the reset, a prev that does not match, or a record with an unknown field: refused; a copy with an extra field has the same identity', () => {
@@ -895,11 +960,175 @@ describe('P2P chain records', () => {
     expect(bindingHead2(sub, { ...fits, chain: 'x' })).toBeNull()
   })
 
+  test('torsion_sig (review n-k-server r1 m1): creation records, chain records and bind2 proofs, which the instance also verifies, verify as its verify_strict does, so an old phrase can no longer hand the user a record the instance refuses', () => {
+    const body = { v: 1, x: 'y' }
+    for (const tag of [TAG2.create, TAG2.chain, TAG2.bind]) {
+      const msg = concat(utf8(tag), canonicalBytes(body))
+      expect(
+        torsionCases(V, msg).map(([name, pk, sig]) => [
+          tag,
+          name,
+          verifyTaggedStrict(keyId(pk), tag, body, b64u(sig)),
+        ])
+      ).toEqual(STRICT_ANSWERS.map(([name, ok]) => [tag, name, ok]))
+    }
+    // honest signatures and their bit flips: the same answers as the cofactored check
+    for (let i = 0; i < 64; i += 1) {
+      const key = K(`flip ${i}`)
+      const m = concat(utf8(TAG2.chain), canonicalBytes({ i }))
+      const sig = ed25519.sign(m, key.sk)
+      const bad = sig.slice()
+      bad[i] ^= 1 << (i % 8)
+      const strict = (s: Uint8Array) =>
+        verifyTaggedStrict(keyId(key.pk), TAG2.chain, { i }, b64u(s))
+      expect([i, strict(sig), strict(bad)]).toEqual([i, true, cofactored(key.pk, m, bad)])
+    }
+
+    // the probe: after the user's reset, a thief with the old phrase signs a sibling with R + T
+    const rk = K('torsion rk')
+    const rk2 = K('torsion rk2')
+    const ik = K('torsion ik')
+    const T0 = keyId(ik.pk)
+    const cr = makeCreation(ik, rk, id('torsion pk0'), AT)
+    const reset = makeReset(T0, rk, rk2, headOf(cr), id('torsion pk1'), [id('torsion d1')], AT + 1)
+    const sibling = makeRecovery(T0, rk, headOf(cr), id('torsion pkT'), [id('torsion dT')], AT + 2)
+    const { sig: _sig, ...rest } = sibling
+    void _sig
+    const thief = {
+      ...rest,
+      sig: b64u(withT(rk, concat(utf8(TAG2.chain), canonicalBytes(rest)))),
+    }
+    expect(readChain(cr, [reset, sibling]).verifies(sibling)).toBe(true)
+    expect(verifyTagged(keyId(rk.pk), TAG2.chain, rest, thief.sig)).toBe(true)
+    const view = readChain(cr, [reset, thief])
+    expect([view.verifies(thief), view.has(recordId(thief)), view.heads]).toEqual([
+      false,
+      false,
+      [headOf(reset)],
+    ])
+    const sub = 'vera@chat.example.org'
+    const mine = bindingRequest2(K('torsion pk1'), sub, { cr, chain: [reset] }, headOf(reset), 9)
+    expect(bindingHead2(sub, mine)).toEqual(headOf(reset))
+    expect(bindingHead2(sub, { ...mine, chain: [reset, thief] })).toBeNull()
+    const bound = bindingBody2(sub, T0, headOf(reset), 9)
+    const proof = b64u(withT(K('torsion pk1'), concat(utf8(TAG2.bind), canonicalBytes(bound))))
+    expect(verifyTagged(id('torsion pk1'), TAG2.bind, bound, proof)).toBe(true)
+    expect(bindingHead2(sub, { ...mine, proof })).toBeNull()
+
+    // the user's creation record re-signed with R + T by its own recovery key or identity key
+    const { sig_ik: _ik, sig_rk: _rk, ...crBody } = cr
+    void _ik
+    void _rk
+    const crMsg = concat(utf8(TAG2.create), canonicalBytes(crBody))
+    const tRk = { ...cr, sig_rk: b64u(withT(rk, crMsg)) }
+    const tIk = { ...cr, sig_ik: b64u(withT(ik, crMsg)) }
+    expect([
+      verifyTagged(keyId(rk.pk), TAG2.create, crBody, tRk.sig_rk),
+      verifyTagged(T0, TAG2.create, crBody, tIk.sig_ik),
+    ]).toEqual([true, true])
+    expect([isCreation(cr), isCreation(tRk), isCreation(tIk)]).toEqual([true, false, false])
+    expect([readKeys({ cr: tRk, chain: [reset] }), readKeys({ cr: tIk, chain: [] })]).toEqual([
+      null,
+      null,
+    ])
+    expect(bindingHead2(sub, { ...mine, cr: tRk })).toBeNull()
+  })
+
+  test('torsion_split (review n-k-server r2 I1): every other P2P signature verifies as 0.3.0 verifies it, so a replica of a rules-2 server admits an event and a device certificate signed with R + T as an older replica does', () => {
+    const msg = utf8('rchat torsion')
+    const cases = torsionCases(V, msg)
+    expect(cases.map(([name, pk, sig]) => [name, cofactored(pk, msg, sig)])).toEqual(
+      cases.map(([name]) => [name, true])
+    )
+    expect(cases.map(([name, pk, sig]) => [name, verify(pk, msg, sig)])).toEqual(
+      cases.map(([name]) => [name, true])
+    )
+    const body = { v: 1, x: 'y' }
+    for (const tag of [
+      TAG.profile,
+      TAG2.cert,
+      TAG2.profile,
+      TAG2.crevoke,
+      TAG2.succ1,
+      TAG2.succ2,
+    ]) {
+      const crafted = torsionCases(V, concat(utf8(tag), canonicalBytes(body)))
+      expect(
+        crafted.map(([name, pk, sig]) => [tag, name, verifyTagged(keyId(pk), tag, body, b64u(sig))])
+      ).toEqual(crafted.map(([name]) => [tag, name, true]))
+    }
+    // a v2 certificate signed with R + T verifies, as every record the instance never reads
+    const cert = signCertV2(p0, I, 0, id('torsion D'), AT, 'Browser')
+    const { sig: _c, ...certBody } = cert
+    void _c
+    const tCert = {
+      ...cert,
+      sig: b64u(withT(p0, concat(utf8(TAG2.cert), canonicalBytes(certBody)))),
+    }
+    expect([verifyCertV2(cert), verifyCertV2(tCert), tCert.sig === cert.sig]).toEqual([
+      true,
+      true,
+      false,
+    ])
+    expect(
+      cases.filter(([name]) => name.startsWith('key A + T')).map(([, pk]) => isKeyId(keyId(pk)))
+    ).toEqual([true, true])
+
+    // the probe: a rules-2 server; N joins with a device certificate signed with R + T, M leaves
+    // with its own leave signed with R + T, and the owner's next event cites it
+    const w = ServerWorld.create('O', { rules: 2 })
+    expect(w.sum.rules).toBe(2)
+    w.join('O', 'M')
+    const N = w.who('N')
+    w.ok('O', 'add', { to: N.a })
+    const join = w.post('N', 'join', p => ({
+      idb: {
+        ik: N.a,
+        dcert: b64u(
+          withT(
+            N.ik,
+            concat(
+              utf8(TAG_DEVICE),
+              utf8(w.srv),
+              utf8('\0'),
+              canonicalBytes({ ik: N.a, dk: N.dev, iprev: p.iprev ?? '' })
+            )
+          )
+        ),
+      },
+    }))
+    expect(join.out.s).toBe('A')
+    const e = w.build('M', 'leave', {})
+    const leave = {
+      ...e.wire,
+      sig: b64u(withT(w.who('M').dk, concat(utf8(TAG_SIG2), eventIdBytes2(e.wire.ev)))),
+    }
+    expect(w.receive(e.id, leave).s).toBe('A')
+    const later = w.post('O', 'channel', {
+      id: 'AAAAAAAAAAA',
+      name: 'general',
+      kind: 'text',
+      pos: 0,
+    })
+    expect([later.wire.ev.ap?.includes(e.id), later.out.s]).toEqual([true, 'A'])
+    // a second replica fed the same events in the same order admits every one
+    const other = new ServerWorld()
+    other.srv = w.srv
+    other.room = new AclRoom(w.srv, {})
+    const wires = [...w.wires]
+    expect(wires.map(([eid, wire]) => [wire.ev.t, other.receive(eid, wire).s])).toEqual(
+      wires.map(([, wire]) => [wire.ev.t, 'A'])
+    )
+    expect(Object.keys(other.sum.members ?? {}).sort()).toEqual(
+      Object.keys(w.sum.members ?? {}).sort()
+    )
+  })
+
   test('assets/p2p_chain_vectors.json is what the generator writes', () => {
     const made = chainVectors()
     expect(JSON.parse(readFileSync(ASSET, 'utf8'))).toEqual(JSON.parse(JSON.stringify(made)))
     expect(made.cases.length).toBeGreaterThanOrEqual(30)
-    expect(made.cases.filter(c => !c.expect.cr).length).toBe(5)
+    expect(made.cases.filter(c => !c.expect.cr).length).toBe(6)
     expect(made.cases.filter(c => c.expect.frozen).length).toBe(2)
     expect(made.cases.filter(c => c.expect.refused.length).map(c => c.name)).toContain(
       'a ninth record is refused'
@@ -916,6 +1145,17 @@ describe('P2P chain records', () => {
       size('the largest valid chain: 8 resets that keep 8 devices each, every at at its largest')
     ).toBe(6913)
     expect(size('a request over 7 KiB is refused')).toBe(KEYS_BYTES + 1)
+    const expected = (name: string) => made.cases.find(c => c.name === name)!.expect
+    const torsion = expected('a signature whose R has a small-order part is refused')
+    expect([torsion.refused, torsion.dead]).toEqual([[1], []])
+    const key = expected('a key with a torsion part: what holds without the cofactor counts')
+    expect([key.refused, key.heads.length]).toEqual([[2], 1])
+    expect(
+      expected(
+        'a creation record whose recovery key signature has an R with a small-order part is refused'
+      ).cr
+    ).toBe(false)
+    expect(refusedBind).toContain('a proof whose R has a small-order part is refused')
     expect(new Set(made.bind2.map(c => c.name)).size).toBe(made.bind2.length)
     expect(new Set(made.cases.map(c => c.name)).size).toBe(made.cases.length)
   })

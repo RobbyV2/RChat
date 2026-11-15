@@ -779,6 +779,110 @@
       }
     },
     {
+      "name": "a signature whose R has a small-order part is refused",
+      "cr": {
+        "v": 1,
+        "ik": "GQDdS_WECms6rcxIdQma1tCmh_MAiaOIt6uY58PMLAE",
+        "n": 0,
+        "rk": "OntnoOtM1b4R0b7yK_5-GeNEiiSpvnmPAM3mKTrJPYY",
+        "pk": "wBYERnt7DR4uJkxeIVFHKGihGOswUnzEp7pvb-lGSAI",
+        "at": 1762400000000,
+        "sig_ik": "BefrflbJGtwKRqyPIC9gy3tvCK5pAYVxYJENiNZuRpUVuh87GjYzqGLTHlvVTGt-9uBU49ai9mO8LgFn4iXFAw",
+        "sig_rk": "wYw9GaxWEZX54OFlzVuHdEMBZ0ynMr_MqpFWkYXULq1R9UikrpAXFqJLab27BKLlpAZCt4RPJQGU31OzkgcHAw"
+      },
+      "chain": [
+        {
+          "v": 1,
+          "ik": "GQDdS_WECms6rcxIdQma1tCmh_MAiaOIt6uY58PMLAE",
+          "n": 1,
+          "prev": "O06I5_lRLSxWzm47B6pECiiUYYsg9M5hxMLOXckH1dE",
+          "pk": "j3npN1Xlo9RcdqpXZSxpTYVBUu3sBBY4mG0IT6jWGHw",
+          "keep": [
+            "2dqhg8-z6gcPkkMaLTcK3ihvYkvW6NRYwWmYqs0VA1w",
+            "mDj_C1zJVYYSjnzptN1o5XOAB1CLRH_KyWyRGyzF8Nc"
+          ],
+          "rk": "YrrFHLvv9-cBMHa2BdgrfYeuyiHeYeBBOHVJHJyFEdk",
+          "at": 1762400000001,
+          "sig": "VMvOEbOqlwjZtS_o457fSPXwjCd7zvWIrgLt4RLct1w0v0j2woxtKalRyrGiXP4Yl91R1Aaa6tmiqVTlrDvZBQ",
+          "sig_next": "lssVtBhtDOLRRN5dL56hDYUXa_hcaHD4ADazzonjm03LW4t_tn5hGDKZu0cuR2kCK5BuTevrXUKQ6RaxmSzgAw"
+        },
+        {
+          "v": 1,
+          "ik": "GQDdS_WECms6rcxIdQma1tCmh_MAiaOIt6uY58PMLAE",
+          "n": 1,
+          "prev": "O06I5_lRLSxWzm47B6pECiiUYYsg9M5hxMLOXckH1dE",
+          "pk": "f4fbLgcsXElBgU5hNEUBpokBe-K-1TUq-B5UJYp51OQ",
+          "keep": ["UQzL1X9yOODbTyu7ocd4HI5nNxnvOICsLMMChRG-OmE"],
+          "at": 1762400000001,
+          "sig": "NGc1fZmigdhU4g2M5YwJhlKGohuHybfwZn7dNt4Gdcv7-0T6UXTDKHgnRDsgVvOxAm9phxpc1YhunuPiajSPCA"
+        }
+      ],
+      "expect": {
+        "cr": true,
+        "heads": [{ "n": 1, "d": "i-Y2RT424HlOwXmq8iBSQ-jPkHz-aibm08dF2NIKCVc" }],
+        "primary": ["j3npN1Xlo9RcdqpXZSxpTYVBUu3sBBY4mG0IT6jWGHw"],
+        "in_force": ["YrrFHLvv9-cBMHa2BdgrfYeuyiHeYeBBOHVJHJyFEdk"],
+        "frozen": false,
+        "refused": [1],
+        "dead": []
+      }
+    },
+    {
+      "name": "a key with a torsion part: what holds without the cofactor counts",
+      "cr": {
+        "v": 1,
+        "ik": "GQDdS_WECms6rcxIdQma1tCmh_MAiaOIt6uY58PMLAE",
+        "n": 0,
+        "rk": "OntnoOtM1b4R0b7yK_5-GeNEiiSpvnmPAM3mKTrJPYY",
+        "pk": "wBYERnt7DR4uJkxeIVFHKGihGOswUnzEp7pvb-lGSAI",
+        "at": 1762400000000,
+        "sig_ik": "BefrflbJGtwKRqyPIC9gy3tvCK5pAYVxYJENiNZuRpUVuh87GjYzqGLTHlvVTGt-9uBU49ai9mO8LgFn4iXFAw",
+        "sig_rk": "wYw9GaxWEZX54OFlzVuHdEMBZ0ynMr_MqpFWkYXULq1R9UikrpAXFqJLab27BKLlpAZCt4RPJQGU31OzkgcHAw"
+      },
+      "chain": [
+        {
+          "v": 1,
+          "ik": "GQDdS_WECms6rcxIdQma1tCmh_MAiaOIt6uY58PMLAE",
+          "n": 1,
+          "prev": "O06I5_lRLSxWzm47B6pECiiUYYsg9M5hxMLOXckH1dE",
+          "pk": "5PGtPceRUSQmhAvaI1rq0UJW3WvyHOjhqB0vK1pOP1Y",
+          "keep": ["2dqhg8-z6gcPkkMaLTcK3ihvYkvW6NRYwWmYqs0VA1w"],
+          "rk": "",
+          "at": 1762400000001,
+          "sig": "jlZ9beCg0qHgHO9ojTbtKnxXHZdQOFn5FA_qRWQN1VtDxU1Nwjym6mcerv3RRWt3Of4MooMqs4gkXLJqblS6BA"
+        },
+        {
+          "v": 1,
+          "ik": "GQDdS_WECms6rcxIdQma1tCmh_MAiaOIt6uY58PMLAE",
+          "n": 2,
+          "prev": "FjUx_8Q85mw4Bb9Y6TSLFMesVaeXffC0bitiedr19nw",
+          "pk": "-hrwhE3PvfQp_v0ihT363oIY49NXVnsI9ptAm0NaOXE",
+          "keep": [],
+          "at": 1762400000002,
+          "sig": "t2MrSZhvQiCIjMB5f3UptfQjP04bbBJPEXUULOtDtGPrQOTyN5WDEOXpp0DnOdCrgNxEsuF4aUk7ARbXzCcADA"
+        },
+        {
+          "v": 1,
+          "ik": "GQDdS_WECms6rcxIdQma1tCmh_MAiaOIt6uY58PMLAE",
+          "n": 2,
+          "prev": "FjUx_8Q85mw4Bb9Y6TSLFMesVaeXffC0bitiedr19nw",
+          "pk": "_hRAatEAeWFqnyvB5EFxoLxxA_-fIvcSjCm8nfEs1mQ",
+          "keep": [],
+          "at": 1762400000002,
+          "sig": "uKbNs8cRwvNBhnjxtg1JMdTcgGYqkddAIjaqZSlCOCGEaAE3oD59UvoIQ1taKGkKJOQqdHvGP_FlVxnMWgTPAw"
+        }
+      ],
+      "expect": {
+        "cr": true,
+        "heads": [{ "n": 2, "d": "xvBFTXRe--SIhTppH1TP9GcVHH_QtKEt1hvp6-cMIL8" }],
+        "primary": ["-hrwhE3PvfQp_v0ihT363oIY49NXVnsI9ptAm0NaOXE"],
+        "in_force": ["5PGtPceRUSQmhAvaI1rq0UJW3WvyHOjhqB0vK1pOP1Y"],
+        "frozen": false,
+        "refused": [2],
+        "dead": []
+      }
+    },
+    {
       "name": "two recoveries with the same n both count",
       "cr": {
         "v": 1,
@@ -1520,6 +1624,29 @@
         "refused": [],
         "dead": []
       }
+    },
+    {
+      "name": "a creation record whose recovery key signature has an R with a small-order part is refused",
+      "cr": {
+        "v": 1,
+        "ik": "GQDdS_WECms6rcxIdQma1tCmh_MAiaOIt6uY58PMLAE",
+        "n": 0,
+        "rk": "OntnoOtM1b4R0b7yK_5-GeNEiiSpvnmPAM3mKTrJPYY",
+        "pk": "wBYERnt7DR4uJkxeIVFHKGihGOswUnzEp7pvb-lGSAI",
+        "at": 1762400000000,
+        "sig_ik": "BefrflbJGtwKRqyPIC9gy3tvCK5pAYVxYJENiNZuRpUVuh87GjYzqGLTHlvVTGt-9uBU49ai9mO8LgFn4iXFAw",
+        "sig_rk": "7-xWFORC1vYEIIe6-Klq-AyrAPdoy3k9EFKOJBJuSbCmBOfzs4WRxdiMdVoaUnRx_fvRT7H8evSA5f437sxjBQ"
+      },
+      "chain": [],
+      "expect": {
+        "cr": false,
+        "heads": [],
+        "primary": [],
+        "in_force": [],
+        "frozen": false,
+        "refused": [],
+        "dead": []
+      }
     }
   ],
   "bind2": [
@@ -1873,6 +2000,36 @@
           "keep": ["2dqhg8-z6gcPkkMaLTcK3ihvYkvW6NRYwWmYqs0VA1w"],
           "at": 1762400000001,
           "sig": "nwog_zCivVj3tY9_bQjHWLoD8ITe5JiSM_cYdyPyVGVJepHazY1AnlhheVPC8O-3KoTgjq9EJIvoAfOQGo86Bw"
+        }
+      ],
+      "expect": { "ok": false }
+    },
+    {
+      "name": "a proof whose R has a small-order part is refused",
+      "sub": "vera@chat.example.org",
+      "ik": "GQDdS_WECms6rcxIdQma1tCmh_MAiaOIt6uY58PMLAE",
+      "ts": 1762400000,
+      "proof": "Ye2Ab8UtUl3pJErt1FZhjBWNVzz3fhuC5jYWzR79_yFJSJCy0vPpsZUkUG8ZJDvRRDoTs1XD5LNLGkF4eHLKCA",
+      "cr": {
+        "v": 1,
+        "ik": "GQDdS_WECms6rcxIdQma1tCmh_MAiaOIt6uY58PMLAE",
+        "n": 0,
+        "rk": "OntnoOtM1b4R0b7yK_5-GeNEiiSpvnmPAM3mKTrJPYY",
+        "pk": "wBYERnt7DR4uJkxeIVFHKGihGOswUnzEp7pvb-lGSAI",
+        "at": 1762400000000,
+        "sig_ik": "BefrflbJGtwKRqyPIC9gy3tvCK5pAYVxYJENiNZuRpUVuh87GjYzqGLTHlvVTGt-9uBU49ai9mO8LgFn4iXFAw",
+        "sig_rk": "wYw9GaxWEZX54OFlzVuHdEMBZ0ynMr_MqpFWkYXULq1R9UikrpAXFqJLab27BKLlpAZCt4RPJQGU31OzkgcHAw"
+      },
+      "chain": [
+        {
+          "v": 1,
+          "ik": "GQDdS_WECms6rcxIdQma1tCmh_MAiaOIt6uY58PMLAE",
+          "n": 1,
+          "prev": "O06I5_lRLSxWzm47B6pECiiUYYsg9M5hxMLOXckH1dE",
+          "pk": "i92ZTLRQdJQmMjRc65ak0XBLMhYNNzCQy9v3AuLr3wU",
+          "keep": ["2dqhg8-z6gcPkkMaLTcK3ihvYkvW6NRYwWmYqs0VA1w"],
+          "at": 1762400000001,
+          "sig": "g38De3ltcQq5MCZ0qzCspYd1wttq8eMB6CYCGzsP8wUMBx4NtiKOtMyYt06WIQWS3opBsuS9P47X6aSMydMWDw"
         }
       ],
       "expect": { "ok": false }

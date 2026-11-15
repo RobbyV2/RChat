@@ -190,7 +190,20 @@ const VECTORS: &str = include_str!("../../../../assets/p2p_chain_vectors.json");
 #[test]
 fn every_chain_vector_reads_as_the_client_reads_it() {
     let Vectors { cases, bind2: _ } = serde_json::from_str(VECTORS).expect("vectors");
-    assert!(cases.len() >= 32, "{}", cases.len());
+    assert!(cases.len() >= 35, "{}", cases.len());
+    // review n-k-server r1 m1: the instance's verify_strict and the client give one answer
+    let case = |name: &str| cases.iter().find(|c| c.name == name).expect(name);
+    let torsion = case("a signature whose R has a small-order part is refused");
+    assert_eq!(
+        (&torsion.expect.refused, &torsion.expect.dead),
+        (&vec![1], &vec![])
+    );
+    let key = case("a key with a torsion part: what holds without the cofactor counts");
+    assert_eq!((&key.expect.refused, key.expect.heads.len()), (&vec![2], 1));
+    let creation = case(
+        "a creation record whose recovery key signature has an R with a small-order part is refused",
+    );
+    assert!(!creation.expect.cr);
     for Case {
         name,
         cr,
@@ -238,7 +251,7 @@ pub(crate) fn bind_proof(key: &SigningKey, sub: &str, ik: &str, head: &Head, ts:
 #[test]
 fn every_badge_vector_reads_as_the_client_reads_it() {
     let Vectors { cases: _, bind2 } = serde_json::from_str(VECTORS).expect("vectors");
-    assert!(bind2.len() >= 16, "{}", bind2.len());
+    assert!(bind2.len() >= 17, "{}", bind2.len());
     let size = |name: &str| {
         let case = bind2.iter().find(|c| c.name == name).expect(name);
         canonical(&json!({"cr": case.cr, "chain": case.chain}))
@@ -281,6 +294,10 @@ fn every_badge_vector_reads_as_the_client_reads_it() {
         Some(BindingError::Size)
     );
     assert_eq!(why("rival resets are refused"), Some(BindingError::Frozen));
+    assert_eq!(
+        why("a proof whose R has a small-order part is refused"),
+        Some(BindingError::Proof)
+    );
     assert_eq!(
         why("a chain record that does not attach is refused"),
         Some(BindingError::Chain(ChainError::Record(0)))
