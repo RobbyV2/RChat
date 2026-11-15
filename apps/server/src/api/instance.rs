@@ -11,6 +11,7 @@ use utoipa::ToSchema;
 
 use super::access::not_found;
 use super::{ApiError, ApiErrorBody, Authed, Settings};
+use crate::api::rare::{self, Rare};
 use crate::db::now;
 use crate::identity::{
     ASSERTION_TTL_SECS, BINDING_AUD, BINDING_SKEW_SECS, BINDING_TTL_SECS, BindingClaims, Claims,
@@ -272,7 +273,9 @@ pub struct Binding {
 /// expires (clients ask for a new one every day while the badge is on). Requires a bearer token;
 /// guests can't call it. Answers 404 while the `p2p` switch of `GET /api/v1/settings` is off.
 /// Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/identity/p2p_binding", tag = "Instance", request_body = BindingRequest, responses((status = 200, description = "EdDSA JWT binding ik to sub = user@host for 7 days", body = Binding), (status = 400, description = "ik is not a valid Ed25519 key, ts is more than 5 minutes from the server clock, or proof is not a signature by ik over this account and ts", body = ApiErrorBody), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 404, description = "`Not found` with reason `off_site` and control `p2p`: the `p2p` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// Bindings are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
+/// `RARE_REQUESTS_PER_DAY` (100) a day per account by default.
+#[utoipa::path(post, path = "/api/v1/identity/p2p_binding", tag = "Instance", request_body = BindingRequest, responses((status = 200, description = "EdDSA JWT binding ik to sub = user@host for 7 days", body = Binding), (status = 400, description = "ik is not a valid Ed25519 key, ts is more than 5 minutes from the server clock, or proof is not a signature by ik over this account and ts", body = ApiErrorBody), (status = 401, description = "Not signed in (guests included)", body = ApiErrorBody), (status = 403, description = "The username contains '@' (allowed for older accounts) and so has no unambiguous user@host form", body = ApiErrorBody), (status = 404, description = "`Not found` with reason `off_site` and control `p2p`: the `p2p` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn p2p_binding(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -290,6 +293,7 @@ pub(crate) async fn p2p_binding(
             not_found(),
         ));
     }
+    rare::take(&state, Rare::P2pBinding, Some(&user))?;
     if user.username.contains('@') {
         return Err(ApiError(
             StatusCode::FORBIDDEN,

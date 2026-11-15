@@ -26,6 +26,7 @@ use crate::api::lookup::{self, LookupClass};
 use crate::api::messages::recent_channel_messages;
 use crate::api::pings::forget_server_pings;
 use crate::api::policy::ServerCreation;
+use crate::api::rare::{self, Rare};
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::timeouts::{running_timeouts, timeout_event};
 use crate::api::{
@@ -1426,6 +1427,9 @@ pub(crate) async fn list_interacted(
 /// accounts it leaves out get 404, and `can_create_servers` in `GET /api/v1/me` says which
 /// applies to the caller. Emits `server_created` to the creator. Strict and general rate-limit
 /// buckets.
+/// New servers are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
+/// `RARE_REQUESTS_PER_DAY` (100) a day per account by default. A request refused while the server
+/// is busy does not count.
 #[utoipa::path(
     post,
     path = "/api/v1/servers",
@@ -1438,7 +1442,7 @@ pub(crate) async fn list_interacted(
         (status = 404, description = "`Not found`: the instance does not let this account create servers", body = ApiErrorBody),
         (status = 409, description = "That name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the strict or the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))
     ),
     security(("bearer" = []))
 )]
@@ -1458,8 +1462,12 @@ pub(crate) async fn create_server(
         });
     }
     let CreateServerReq { name, password } = req;
+    let held = rare::hold(&state, Rare::NewServer, Some(&user))?;
     let founder = Founder::Creator(&user.username);
-    let key = found_server(&state, &name, password.as_deref(), founder).await?;
+    let key = rare::counted(
+        held,
+        found_server(&state, &name, password.as_deref(), founder).await,
+    )?;
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     Ok(Json(server_detail(&state.db, &state.hub, &access).await?))
 }
@@ -1632,6 +1640,9 @@ pub(crate) async fn get_server(
 /// a taken name is password-protected. The name goes through the same checks as when creating a
 /// server, so invalid names get 400. Requires a bearer token. Strict and general rate-limit
 /// buckets.
+/// Name checks and renames (`PATCH /api/v1/servers/{name}` with a new `name`) are rare requests of
+/// one kind: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day
+/// per account by default.
 #[utoipa::path(
     get,
     path = "/api/v1/servers/{name}/available",
@@ -1641,17 +1652,18 @@ pub(crate) async fn get_server(
         (status = 200, description = "Whether the name is free; `false` for every taken name, protected or not, and for names of deleted servers still being purged", body = ServerAvailable),
         (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter)", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the strict or the general bucket (plain text). Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket (plain text). Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
     ),
     security(("bearer" = []))
 )]
 pub(crate) async fn server_available(
     State(state): State<AppState>,
-    Authed(_user): Authed,
+    Authed(user): Authed,
     Path(name): Path<String>,
 ) -> Result<Json<ServerAvailable>, ApiError> {
     let display = name.trim().to_string();
     check_server_name(&state.db, &display).await?;
+    rare::take(&state, Rare::ServerName, Some(&user))?;
     let available = match name_free(&state.read(), &display.to_lowercase()).await {
         Ok(()) => true,
         Err(ApiError(StatusCode::BAD_REQUEST | StatusCode::CONFLICT, _, _)) => false,
@@ -2225,6 +2237,10 @@ pub(crate) async fn leave_server(
 /// otherwise `server_updated` with the new state (password flag and colors), and
 /// `members_purged` to the server and the removed members. Voice users who can no longer open
 /// the server leave their call. Strict and general rate-limit buckets.
+/// A new `name` counts with the name checks of `GET /api/v1/servers/{name}/available`, and a new
+/// `password` with new server passwords, as rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an
+/// hour and `RARE_REQUESTS_PER_DAY` (100) a day per account and kind by default. A password refused
+/// by its checks, or while the server is busy, does not count.
 #[utoipa::path(
     patch,
     path = "/api/v1/servers/{name}",
@@ -2239,7 +2255,7 @@ pub(crate) async fn leave_server(
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 409, description = "The new name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the strict or the general bucket (plain text), or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket (plain text), or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
     ),
     security(("bearer" = []))
 )]
@@ -2296,6 +2312,7 @@ pub(crate) async fn update_server(
             };
             check_server_name(&state.db, &display).await?;
             if new_key != key {
+                rare::take(&state, Rare::ServerName, Some(&user))?;
                 name_free(&state.db, &new_key).await?;
             }
             (new_key, display)
@@ -2306,11 +2323,14 @@ pub(crate) async fn update_server(
         (Some(""), Some(true)) => Some(Some(NO_PERMANENT_HASH.to_string())),
         (Some(""), _) | (None, Some(false)) => Some(None),
         (Some(p), _) => {
+            rare::check(&state, Rare::ServerPassword, Some(&user))?;
             crate::api::passwords::check_strength(p)?;
             if new_key == key && access.is_live_extra_password(&state.db, p).await? {
                 return Err(bad("That password is already in use for this server"));
             }
-            Some(Some(hash_in(Work::Server, p).await?))
+            let hash = hash_in(Work::Server, p).await?;
+            rare::take(&state, Rare::ServerPassword, Some(&user))?;
+            Some(Some(hash))
         }
         (None, Some(true)) if !lite.has_password => Some(Some(NO_PERMANENT_HASH.to_string())),
         (None, _) => None,
@@ -2651,6 +2671,8 @@ async fn purge_members(
 /// until that finishes its name can't be reused (409 on create). Requires the Delete server
 /// permission; the rchat server can't be deleted. Emits `server_deleted` to the server. General
 /// rate-limit bucket.
+/// Deleting a server is a rare request: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
+/// `RARE_REQUESTS_PER_DAY` (100) a day per account by default.
 #[utoipa::path(
     delete,
     path = "/api/v1/servers/{name}",
@@ -2661,7 +2683,7 @@ async fn purge_members(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Delete server permission, or the server is the protected rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the general bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))
     ),
     security(("bearer" = []))
 )]
@@ -2674,6 +2696,7 @@ pub(crate) async fn delete_server(
     guard_rchat(&state.db, &key).await?;
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::DeleteServer).await?;
+    rare::take(&state, Rare::DeletedServer, Some(&user))?;
     match crate::api::admin::remove_server(&state, access.name()).await? {
         true => Ok(ok()),
         false => Err(crate::api::access::denied()),

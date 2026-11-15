@@ -6,6 +6,7 @@ use sqlx::Row;
 use utoipa::ToSchema;
 
 use crate::api::access::not_found;
+use crate::api::rare::{self, Rare};
 use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, bad, ok};
 use crate::db::now;
 use crate::state::AppState;
@@ -98,6 +99,8 @@ pub fn check_expiry(expires_in: i64) -> Result<(), ApiError> {
 /// it. A link always expires (`expires_in`: 10 minutes, 1 hour, 1 day, 7 days or 30 days; there
 /// is no "never") and anyone with the link can read it until then. An account has at most 20
 /// active links. Guests cannot share. Strict rate-limit bucket.
+/// New config links are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
+/// `RARE_REQUESTS_PER_DAY` (100) a day per account by default.
 #[utoipa::path(
     post,
     path = "/api/v1/config_shares",
@@ -108,7 +111,7 @@ pub fn check_expiry(expires_in: i64) -> Result<(), ApiError> {
         (status = 400, description = "Not a config string, larger than 16384 bytes, an expiry that is not one of the choices, or already 20 active links. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token (guests cannot share)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))
     ),
     security(("bearer" = []))
 )]
@@ -118,6 +121,7 @@ pub(crate) async fn create_share(
     Json(req): Json<NewConfigShare>,
 ) -> Result<Json<ConfigShare>, ApiError> {
     let NewConfigShare { blob, expires_in } = req;
+    rare::take(&state, Rare::ConfigLink, Some(&user))?;
     check_blob(&blob)?;
     check_expiry(expires_in)?;
     let t = now();
@@ -403,6 +407,7 @@ mod tests {
     #[tokio::test]
     async fn links_expire_cap_at_20_and_only_the_owner_revokes() {
         let (state, path) = temp_state("config_shares").await;
+        let state = crate::api::rare::tests::unlimited(state);
         let db = &state.db;
         assert_eq!(
             status(share(&state, "alice", blob(8), 3600 * 24 * 365).await),

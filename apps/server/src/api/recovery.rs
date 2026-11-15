@@ -8,6 +8,7 @@ use crate::api::access::not_found;
 use crate::api::auth::{
     AuthResp, Secret, hash_password, me_payload, new_token, secret_from, throttle_attempt,
 };
+use crate::api::rare::{self, Rare};
 use crate::api::reauth::{
     AuthedSession, NONCE_TTL_SECS, Purpose, RECOVER, ReAuth, ReAuthBody, Session, check_at,
     issue_nonce, phrase_sig_ok, take_nonce,
@@ -45,11 +46,15 @@ pub struct Challenge {
 /// byte, the purpose, a zero byte, the returned `username`, a zero byte, the nonce, a zero byte
 /// and the context. Send the signature as base64url without padding. No authentication. Strict
 /// and general rate-limit buckets.
-#[utoipa::path(post, path = "/api/v1/auth/recovery/challenge", tag = "Auth", request_body = ChallengeReq, responses((status = 200, description = "A new nonce for this username, valid once until `expires_at`", body = Challenge), (status = 400, description = "Blank, too long (over 100 characters) or NUL-containing username. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict or general bucket", content_type = "text/plain", body = String)), security(()))]
+/// Recovery challenges and recovery sign-ins are rare requests of one kind: at most
+/// `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per client address
+/// (an IPv6 /64 counts as one) by default, whatever the username.
+#[utoipa::path(post, path = "/api/v1/auth/recovery/challenge", tag = "Auth", request_body = ChallengeReq, responses((status = 200, description = "A new nonce for this username, valid once until `expires_at`", body = Challenge), (status = 400, description = "Blank, too long (over 100 characters) or NUL-containing username. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or general bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn challenge(
     State(state): State<AppState>,
     Json(req): Json<ChallengeReq>,
 ) -> Result<Json<Challenge>, ApiError> {
+    rare::take(&state, Rare::Recovery, None)?;
     challenge_at(&state, req, now()).await
 }
 
@@ -107,12 +112,17 @@ fn wrong_phrase() -> ApiError {
 /// 401. Recovery and login share each username's pace: one attempt every 3 seconds and at most
 /// 1000 a UTC day. An invalid new password answers 400 and leaves the nonce unused. No
 /// authentication. Strict and general rate-limit buckets.
-#[utoipa::path(post, path = "/api/v1/auth/recovery", tag = "Auth", request_body = RecoverReq, responses((status = 200, description = "Recovered: the password is replaced, every other session of the account is revoked and its live connections close, and the new session token is returned. The backup phrase stays set", body = AuthResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, or not exactly one of `password` and `words` in `new`; the nonce stays unused. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "`Wrong username or backup phrase`: an unknown account, one without a backup phrase, a used, expired or foreign nonce, or a wrong signature. The nonce is used up", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login and recovery attempts for this username today (UTC); locked until the next day", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since the last login or recovery attempt for this username (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
+/// Recovery challenges and recovery sign-ins are rare requests of one kind: at most
+/// `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per client address
+/// (an IPv6 /64 counts as one) by default, whatever the username. A sign-in refused by the pace or
+/// the daily lock of its username (429, 423) does not count.
+#[utoipa::path(post, path = "/api/v1/auth/recovery", tag = "Auth", request_body = RecoverReq, responses((status = 200, description = "Recovered: the password is replaced, every other session of the account is revoked and its live connections close, and the new session token is returned. The backup phrase stays set", body = AuthResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, or not exactly one of `password` and `words` in `new`; the nonce stays unused. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "`Wrong username or backup phrase`: an unknown account, one without a backup phrase, a used, expired or foreign nonce, or a wrong signature. The nonce is used up", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login and recovery attempts for this username today (UTC); locked until the next day", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Less than 3 seconds since the last login or recovery attempt for this username (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn recover(
     State(state): State<AppState>,
     Json(req): Json<RecoverReq>,
 ) -> Result<Json<AuthResp>, ApiError> {
-    recover_at(&state, req, now()).await
+    let held = rare::hold(&state, Rare::Recovery, None)?;
+    rare::counted(held, recover_at(&state, req, now()).await)
 }
 
 pub(crate) async fn recover_at(
@@ -263,7 +273,11 @@ pub(crate) async fn status(AuthedSession(session): AuthedSession) -> Json<Recove
 /// tries share the pace of password changes: one every 3 seconds per session, and 50 wrong ones a
 /// UTC day. Answers 404 while the `backup_phrase` switch of `GET /api/v1/settings` is off. Requires
 /// a bearer token. Strict and general rate-limit buckets.
-#[utoipa::path(put, path = "/api/v1/me/recovery", tag = "Account", request_body = RecoverySet, responses((status = 200, description = "The new phrase is set. Every other session of the account is revoked and its live connections close", body = RecoveryStatus), (status = 400, description = "`key must be a base64url Ed25519 public key`, or not exactly one way to confirm in `reauth`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing, unknown or just revoked bearer token (`Unauthorized`), `Wrong password`, `Wrong backup phrase` (no phrase set, a used, expired or foreign nonce, or a wrong signature), or `Confirm with your password` (`fresh_session`)", body = ApiErrorBody), (status = 404, description = "`Not found`: the `backup_phrase` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Changes from this session locked for the day (UTC) after 50 wrong passwords or phrases", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since this session's last try (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "The token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
+/// Setting and removing the backup phrase are rare requests of one kind: at most
+/// `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per account by
+/// default. Only changes confirmed with the password or phrase count; past the limit every try
+/// is refused.
+#[utoipa::path(put, path = "/api/v1/me/recovery", tag = "Account", request_body = RecoverySet, responses((status = 200, description = "The new phrase is set. Every other session of the account is revoked and its live connections close", body = RecoveryStatus), (status = 400, description = "`key must be a base64url Ed25519 public key`, or not exactly one way to confirm in `reauth`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing, unknown or just revoked bearer token (`Unauthorized`), `Wrong password`, `Wrong backup phrase` (no phrase set, a used, expired or foreign nonce, or a wrong signature), or `Confirm with your password` (`fresh_session`)", body = ApiErrorBody), (status = 404, description = "`Not found`: the `backup_phrase` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Changes from this session locked for the day (UTC) after 50 wrong passwords or phrases", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Less than 3 seconds since this session's last try (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "The token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn set_phrase(
     State(state): State<AppState>,
     AuthedSession(session): AuthedSession,
@@ -287,7 +301,9 @@ pub(crate) async fn set_phrase_at(
     }
     let reauth = ReAuth::try_from(reauth)?;
     let purpose = Purpose::SetPhrase { key: key.clone() };
+    rare::check(state, Rare::Phrase, Some(&session.user))?;
     check_at(state, &session, reauth, purpose, t).await?;
+    rare::take(state, Rare::Phrase, Some(&session.user))?;
     let Session {
         user,
         token,
@@ -329,7 +345,11 @@ pub(crate) async fn set_phrase_at(
 /// refused. Other sessions stay signed in. Password and phrase tries share the pace of password
 /// changes. Works while the `backup_phrase` switch of `GET /api/v1/settings` is off. Requires a
 /// bearer token. Strict and general rate-limit buckets.
-#[utoipa::path(delete, path = "/api/v1/me/recovery", tag = "Account", request_body = RecoveryRemove, responses((status = 200, description = "No backup phrase is set now", body = RecoveryStatus), (status = 400, description = "Not exactly one way to confirm in `reauth`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing, unknown or just revoked bearer token (`Unauthorized`), `Wrong password`, `Wrong backup phrase`, or `Confirm with your password` (`fresh_session`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Changes from this session locked for the day (UTC) after 50 wrong passwords or phrases", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since this session's last try (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "The token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
+/// Setting and removing the backup phrase are rare requests of one kind: at most
+/// `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per account by
+/// default. Only changes confirmed with the password or phrase count; past the limit every try
+/// is refused.
+#[utoipa::path(delete, path = "/api/v1/me/recovery", tag = "Account", request_body = RecoveryRemove, responses((status = 200, description = "No backup phrase is set now", body = RecoveryStatus), (status = 400, description = "Not exactly one way to confirm in `reauth`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing, unknown or just revoked bearer token (`Unauthorized`), `Wrong password`, `Wrong backup phrase`, or `Confirm with your password` (`fresh_session`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Changes from this session locked for the day (UTC) after 50 wrong passwords or phrases", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Less than 3 seconds since this session's last try (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "The token could not be checked (the database is unavailable). The session is not ended; retry later", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn remove_phrase(
     State(state): State<AppState>,
     AuthedSession(session): AuthedSession,
@@ -346,7 +366,9 @@ pub(crate) async fn remove_phrase_at(
 ) -> Result<Json<RecoveryStatus>, ApiError> {
     let RecoveryRemove { reauth } = req;
     let reauth = ReAuth::try_from(reauth)?;
+    rare::check(state, Rare::Phrase, Some(&session.user))?;
     check_at(state, &session, reauth, Purpose::RemovePhrase, t).await?;
+    rare::take(state, Rare::Phrase, Some(&session.user))?;
     let Session {
         user,
         token,

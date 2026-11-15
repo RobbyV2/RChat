@@ -11,6 +11,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::not_found;
 use crate::api::media::{Held, declared_length, read_raw, reading_slot, reserve, send_held};
+use crate::api::rare::{self, Rare};
 use crate::api::reauth::{AuthedSession, Purpose, ReAuth, ReAuthBody, Session, check_at};
 use crate::api::{ApiError, ApiErrorBody, Authed, OkResp, Settings, bad, ok};
 use crate::db::{Db, PURGE_BATCH, PURGING_HASH, User, now};
@@ -584,7 +585,10 @@ pub(crate) async fn get_version_at(
 /// dropped with 408. Answers 404 while the `p2p_backup` or `p2p` switch of `GET /api/v1/settings`
 /// is off, when your account is being deleted, and when the instance keeps no P2P backups. Requires
 /// a bearer token; guests can't call it. Strict and general rate-limit buckets.
-#[utoipa::path(put, path = "/api/v1/me/p2p_backup/{ik}", tag = "Account", params(("ik" = String, Path, description = "The P2P identity key: an Ed25519 public key, base64url without padding (43 characters)"), PutParams), request_body(content = Vec<u8>, content_type = "application/octet-stream", description = "The sealed blob"), responses((status = 200, description = "Stored as the latest version", body = BackupEntry), (status = 400, description = "`ik must be a base64url Ed25519 public key`, or the body could not be read. A missing or non-numeric `version` gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the `p2p_backup` or `p2p` switch is off, your account is being deleted, or the instance keeps no P2P backups", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 409, description = "`Backup version must be {n}`: `version` is not the latest number plus 1, with the number it must be and the latest number in `X-Backup-Version`, or `Too many P2P backups`: your account keeps backups of 8 other identities", body = ApiErrorBody, headers(("x-backup-version" = i64, description = "With `Backup version must be {n}`: the latest number, n - 1"))), (status = 413, description = "`Backup too large`: over `limits.p2p_backup_bytes`, or `Backup storage full`: the versions your account keeps would pass `limits.p2p_backup_total_bytes`. Nothing is removed", body = ApiErrorBody), (status = 429, description = "3 of your uploads and backup downloads, or uploads holding your share of the upload buffer, are already being read (JSON `Too many uploads at once: ...`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`: the upload buffer is full, or the token could not be checked (the database is unavailable)", body = ApiErrorBody)), security(("bearer" = [])))]
+/// Uploads are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
+/// `RARE_REQUESTS_PER_DAY` (100) a day per account by default, over all its identities. An upload
+/// refused by another limit or while the server is busy (429, 503) does not count.
+#[utoipa::path(put, path = "/api/v1/me/p2p_backup/{ik}", tag = "Account", params(("ik" = String, Path, description = "The P2P identity key: an Ed25519 public key, base64url without padding (43 characters)"), PutParams), request_body(content = Vec<u8>, content_type = "application/octet-stream", description = "The sealed blob"), responses((status = 200, description = "Stored as the latest version", body = BackupEntry), (status = 400, description = "`ik must be a base64url Ed25519 public key`, or the body could not be read. A missing or non-numeric `version` gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: the `p2p_backup` or `p2p` switch is off, your account is being deleted, or the instance keeps no P2P backups", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 409, description = "`Backup version must be {n}`: `version` is not the latest number plus 1, with the number it must be and the latest number in `X-Backup-Version`, or `Too many P2P backups`: your account keeps backups of 8 other identities", body = ApiErrorBody, headers(("x-backup-version" = i64, description = "With `Backup version must be {n}`: the latest number, n - 1"))), (status = 413, description = "`Backup too large`: over `limits.p2p_backup_bytes`, or `Backup storage full`: the versions your account keeps would pass `limits.p2p_backup_total_bytes`. Nothing is removed", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. 3 of your uploads and backup downloads, or uploads holding your share of the upload buffer, are already being read (JSON `Too many uploads at once: ...`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`: the upload buffer is full, or the token could not be checked (the database is unavailable)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn put_backup(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -593,8 +597,14 @@ pub(crate) async fn put_backup(
     headers: HeaderMap,
     body: Body,
 ) -> Result<Json<BackupEntry>, PutError> {
+    let held = rare::hold(&state, Rare::P2pBackup, Some(&user))?;
     let declared = declared_length(&headers);
-    put_at(&state, &user, &ik, version, declared, body, now()).await
+    let answer = put_at(&state, &user, &ik, version, declared, body, now()).await;
+    held.answered(match &answer {
+        Err(PutError::Other(e)) => Some(e),
+        Ok(_) | Err(PutError::Stale(_)) => None,
+    });
+    answer
 }
 
 pub(crate) async fn put_at(

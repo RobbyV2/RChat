@@ -105,15 +105,15 @@ static BLOCKS: LazyLock<Budget> =
 
 /// The refusal of the limit `limit` (its env name, `contact` or `blocks`): 429 with the reason
 /// `rate` and the time to wait in whole seconds, rounded up and at least one, also as
-/// `Retry-After`. Every refusal of a lookup limit is built here.
-fn limited(limit: &'static str, text: &str, wait: Duration) -> ApiError {
+/// `Retry-After`. Every refusal of a lookup limit or of the rare requests (`rare`) is built here.
+pub(crate) fn limited(limit: &'static str, text: &str, wait: Duration) -> ApiError {
     tracing::debug!("refused by the {limit} limit");
     ApiError::rate(text, Some(wait.as_secs_f64().ceil().max(1.0) as u64))
 }
 
 /// Whose budget a lookup counts against: the account's, or the client address's for a caller
 /// without one.
-fn who(state: &AppState, caller: Option<&User>) -> String {
+pub(crate) fn who(state: &AppState, caller: Option<&User>) -> String {
     let who = match (caller, budget::client()) {
         (Some(user), _) => format!("u\n{}", user.username),
         (None, Some(ip)) => format!("a\n{}", budget::group(ip)),

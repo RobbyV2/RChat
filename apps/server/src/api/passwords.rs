@@ -10,6 +10,7 @@ use utoipa::ToSchema;
 use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, ServerAccess, password_lookup, resolve_server};
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
+use crate::api::rare::{self, Rare};
 use crate::api::servers::guard_rchat;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, JoinedVia, OkResp, bad, check_len, ok, placeholders,
@@ -270,6 +271,10 @@ fn expiry(
 /// has at most 50 live extra passwords and keeps at most 500 in all (dead ones are purged 30
 /// days after they stop working). Requires the Delete server permission. Not available on the
 /// rchat server. Strict and general rate-limit buckets.
+/// New server passwords (also a new permanent one through `PATCH /api/v1/servers/{name}`) are rare
+/// requests of one kind: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY`
+/// (100) a day per account by default. A password refused by its checks, or while the server is
+/// busy, does not count.
 #[utoipa::path(
     post,
     path = "/api/v1/servers/{name}/passwords",
@@ -283,7 +288,7 @@ fn expiry(
         (status = 403, description = "Missing the Delete server permission, or the rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the strict or the general bucket (plain text), or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket (plain text), or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
     ),
     security(("bearer" = []))
 )]
@@ -301,6 +306,7 @@ pub(crate) async fn create_password(
         max_uses,
     } = req;
     let access = manage(&state, &user, &name).await?;
+    rare::check(&state, Rare::ServerPassword, Some(&user))?;
     let db = &state.db;
     if !access.lite().has_password {
         return Err(bad("Make the server password protected first"));
@@ -342,6 +348,7 @@ pub(crate) async fn create_password(
     if taken {
         return Err(bad("That password was already used here. Pick another one"));
     }
+    rare::take(&state, Rare::ServerPassword, Some(&user))?;
     let actor = access.audit_actor(db, Perm::DeleteServer).await?;
     let created_by = match &actor {
         Actor::Staff => None,

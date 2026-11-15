@@ -11,7 +11,7 @@ const MIB: usize = 1024 * 1024;
 pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 50] = [
+const RANGES: [(&str, i64, i64); 52] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("WS_CONNECTIONS_PER_USER", 1, 10_000),
@@ -62,6 +62,8 @@ const RANGES: [(&str, i64, i64); 50] = [
     ("LOOKUP_SEARCH_PER_MINUTE", 1, 1_000),
     ("LOOKUP_PROFILE_PER_MINUTE", 10, 10_000),
     ("LOOKUP_MISSES_PER_HOUR", 0, 100_000),
+    ("RARE_REQUESTS_PER_HOUR", 0, 10_000),
+    ("RARE_REQUESTS_PER_DAY", 0, 100_000),
 ];
 
 /// The operator's instance limits, one field per env name (the name lowercased).
@@ -119,6 +121,8 @@ pub struct Limits {
     pub lookup_search_per_minute: u32,
     pub lookup_profile_per_minute: u32,
     pub lookup_misses_per_hour: u32,
+    pub rare_requests_per_hour: u32,
+    pub rare_requests_per_day: u32,
 }
 
 impl Default for Limits {
@@ -176,6 +180,8 @@ impl Default for Limits {
             lookup_search_per_minute: 30,
             lookup_profile_per_minute: 120,
             lookup_misses_per_hour: 200,
+            rare_requests_per_hour: 20,
+            rare_requests_per_day: 100,
         }
     }
 }
@@ -290,6 +296,8 @@ impl Limits {
             lookup_profile_per_minute: e
                 .num("LOOKUP_PROFILE_PER_MINUTE", d.lookup_profile_per_minute)?,
             lookup_misses_per_hour: e.num("LOOKUP_MISSES_PER_HOUR", d.lookup_misses_per_hour)?,
+            rare_requests_per_hour: e.num("RARE_REQUESTS_PER_HOUR", d.rare_requests_per_hour)?,
+            rare_requests_per_day: e.num("RARE_REQUESTS_PER_DAY", d.rare_requests_per_day)?,
         };
         limits.validate()?;
         Ok(limits)
@@ -351,6 +359,8 @@ impl Limits {
             lookup_search_per_minute,
             lookup_profile_per_minute,
             lookup_misses_per_hour,
+            rare_requests_per_hour,
+            rare_requests_per_day,
         } = *self;
         fn set<T: TryInto<i64>>(value: T) -> Option<i64> {
             value.try_into().ok()
@@ -421,6 +431,8 @@ impl Limits {
             ("LOOKUP_SEARCH_PER_MINUTE", set(lookup_search_per_minute)),
             ("LOOKUP_PROFILE_PER_MINUTE", set(lookup_profile_per_minute)),
             ("LOOKUP_MISSES_PER_HOUR", set(lookup_misses_per_hour)),
+            ("RARE_REQUESTS_PER_HOUR", set(rare_requests_per_hour)),
+            ("RARE_REQUESTS_PER_DAY", set(rare_requests_per_day)),
         ]
     }
 
@@ -770,6 +782,36 @@ mod tests {
             load(&[]).expect("defaults").p2p_backup_buffer_warning(),
             None
         );
+    }
+
+    #[test]
+    fn rare_requests_have_their_defaults_and_ranges_and_0_is_no_limit() {
+        let d = load(&[]).expect("defaults");
+        assert_eq!(
+            (d.rare_requests_per_hour, d.rare_requests_per_day),
+            (20, 100)
+        );
+        let none = load(&[
+            ("RARE_REQUESTS_PER_HOUR", "0".to_string()),
+            ("RARE_REQUESTS_PER_DAY", "0".to_string()),
+        ])
+        .expect("0");
+        assert_eq!(
+            (none.rare_requests_per_hour, none.rare_requests_per_day),
+            (0, 0)
+        );
+        for (name, bad, range) in [
+            ("RARE_REQUESTS_PER_HOUR", "10001", "0 to 10000"),
+            ("RARE_REQUESTS_PER_HOUR", "-1", "0 to 10000"),
+            ("RARE_REQUESTS_PER_DAY", "100001", "0 to 100000"),
+            ("RARE_REQUESTS_PER_DAY", "a few", "0 to 100000"),
+        ] {
+            let err = load(&[(name, bad.to_string())]).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("{name}: expected {range}, got {bad}")
+            );
+        }
     }
 
     #[test]

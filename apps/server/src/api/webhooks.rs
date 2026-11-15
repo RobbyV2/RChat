@@ -36,6 +36,7 @@ use crate::api::pings::{
     ping_message_for, pinged_by, store_group_pings,
 };
 use crate::api::polls::PollReq;
+use crate::api::rare::{self, Rare};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Message, OkResp, ProfanityTarget, Settings, UserRef, allowed,
     bad, check_len, embeds, media, ok, placeholders, valid_color,
@@ -714,7 +715,10 @@ pub(crate) async fn list_webhooks(
 /// mentions is fixed now from your Mention everyone permission (and checked again on every
 /// message). Logged in the audit log. Answers 404 for everyone while the instance has
 /// `incoming_webhooks` off. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/servers/{name}/webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), request_body = NewWebhook, responses((status = 200, description = "The webhook with its token", body = WebhookSecret), (status = 400, description = "Unknown or voice channel, an invalid or taken name (`That name belongs to someone in this server. Pick another name`), an invalid avatar color, the profanity filter, or the channel or server limit", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password` (identical for servers you cannot open or are not a member of). `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// New webhooks, new webhook tokens and secrets, and test events are rare requests of one kind: at
+/// most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per account
+/// by default.
+#[utoipa::path(post, path = "/api/v1/servers/{name}/webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), request_body = NewWebhook, responses((status = 200, description = "The webhook with its token", body = WebhookSecret), (status = 400, description = "Unknown or voice channel, an invalid or taken name (`That name belongs to someone in this server. Pick another name`), an invalid avatar color, the profanity filter, or the channel or server limit", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password` (identical for servers you cannot open or are not a member of). `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn create_webhook(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -734,6 +738,7 @@ pub(crate) async fn create_webhook(
     if !access.is_member() || plain & MANAGE_BITS == 0 {
         return Err(forbidden("Missing permission"));
     }
+    rare::take(&state, Rare::Webhook, Some(&user))?;
     let channel = manager_channel(db, &access, &user, channel_id).await?;
     let hook_name = check_name(db, access.name(), &hook_name).await?;
     let kind = avatar_kind.unwrap_or(AvatarKind::Identicon);
@@ -904,7 +909,10 @@ pub(crate) async fn update_webhook(
 /// member). Instance staff without those permissions as a member reset it without taking it
 /// over; the owner stays. Requires the Manage webhooks or Manage channels permission. Logged in the audit
 /// log. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/servers/{name}/webhooks/{id}/token", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Webhook id")), responses((status = 200, description = "The webhook with its new token", body = WebhookSecret), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission` (also when taking over someone else's webhook without Manage webhooks or Manage channels as a member), or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`. `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// New webhooks, new webhook tokens and secrets, and test events are rare requests of one kind: at
+/// most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per account
+/// by default.
+#[utoipa::path(post, path = "/api/v1/servers/{name}/webhooks/{id}/token", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Webhook id")), responses((status = 200, description = "The webhook with its new token", body = WebhookSecret), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission` (also when taking over someone else's webhook without Manage webhooks or Manage channels as a member), or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`. `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn reset_token(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -914,6 +922,7 @@ pub(crate) async fn reset_token(
     let access = manager(&state, &user, &name).await?;
     let db = &state.db;
     let (hook, _) = managed_hook(db, &access, &user, id).await?;
+    rare::take(&state, Rare::Webhook, Some(&user))?;
     let actor = manager_actor(db, &access, &user).await?;
     let owner = match actor {
         Actor::Staff => None,
@@ -2063,7 +2072,10 @@ pub(crate) async fn list_outgoing(
 /// row the webhook turns off. Only while the instance allows outgoing webhooks. At most 10
 /// per server. Returns the signing secret once. Logged in the audit log (host only). Strict
 /// rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/servers/{name}/outgoing_webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), request_body = NewOutgoing, responses((status = 200, description = "The webhook with its secret", body = OutgoingSecret), (status = 400, description = "Invalid name, events or URL (`URL must use https`, `Address not allowed` (also for hosts that do not resolve), `Port not allowed`), or 10 already", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, or `Outgoing webhooks are turned off on this instance`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// New webhooks, new webhook tokens and secrets, and test events are rare requests of one kind: at
+/// most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per account
+/// by default.
+#[utoipa::path(post, path = "/api/v1/servers/{name}/outgoing_webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), request_body = NewOutgoing, responses((status = 200, description = "The webhook with its secret", body = OutgoingSecret), (status = 400, description = "Invalid name, events or URL (`URL must use https`, `Address not allowed` (also for hosts that do not resolve), `Port not allowed`), or 10 already", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, or `Outgoing webhooks are turned off on this instance`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn create_outgoing(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2086,6 +2098,7 @@ pub(crate) async fn create_outgoing(
     if !access.is_member() || plain & MANAGE_BITS == 0 {
         return Err(forbidden("Missing permission"));
     }
+    rare::take(&state, Rare::Webhook, Some(&user))?;
     let hook_name = hook_name.trim().to_string();
     if hook_name.is_empty() {
         return Err(bad("Name is required"));
@@ -2352,7 +2365,10 @@ pub(crate) async fn update_outgoing(
 /// `url` in the body (the previous owner's URL is never shown): payloads then include only what you
 /// can view (this needs Manage webhooks or Manage channels as a member). Requires the Manage
 /// webhooks or Manage channels permission. Logged in the audit log. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/servers/{name}/outgoing_webhooks/{id}/secret", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), request_body(content = SecretReset, description = "Needed only when the reset makes you the owner"), responses((status = 200, description = "The webhook with its new secret", body = OutgoingSecret), (status = 400, description = "`Enter the destination URL to take over this webhook.`, or an invalid URL", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission` (also when taking over someone else's webhook without Manage webhooks or Manage channels as a member), or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 409, description = "`This webhook was just changed, try again`: its owner changed while this reset was being checked; nothing was written", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// New webhooks, new webhook tokens and secrets, and test events are rare requests of one kind: at
+/// most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per account
+/// by default.
+#[utoipa::path(post, path = "/api/v1/servers/{name}/outgoing_webhooks/{id}/secret", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), request_body(content = SecretReset, description = "Needed only when the reset makes you the owner"), responses((status = 200, description = "The webhook with its new secret", body = OutgoingSecret), (status = 400, description = "`Enter the destination URL to take over this webhook.`, or an invalid URL", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission` (also when taking over someone else's webhook without Manage webhooks or Manage channels as a member), or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 409, description = "`This webhook was just changed, try again`: its owner changed while this reset was being checked; nothing was written", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn reset_secret(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2362,6 +2378,7 @@ pub(crate) async fn reset_secret(
     let access = manager(&state, &user, &name).await?;
     let db = &state.db;
     let row = managed_outgoing(db, &access, id).await?;
+    rare::take(&state, Rare::Webhook, Some(&user))?;
     let hook_name: String = row.try_get(1)?;
     let was_url: String = row.try_get(2)?;
     let owner: Option<String> = row.try_get(4)?;
@@ -2521,7 +2538,10 @@ pub(crate) async fn list_deliveries(
 /// Queues a `ping` event to the outgoing webhook right away, to check the URL and the
 /// signature. Only while the instance allows outgoing webhooks and the webhook is on. Requires
 /// the Manage webhooks or Manage channels permission. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/servers/{name}/outgoing_webhooks/{id}/test", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), responses((status = 200, description = "Queued", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, `Outgoing webhooks are turned off on this instance`, or `This webhook is off`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// New webhooks, new webhook tokens and secrets, and test events are rare requests of one kind: at
+/// most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per account
+/// by default.
+#[utoipa::path(post, path = "/api/v1/servers/{name}/outgoing_webhooks/{id}/test", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), responses((status = 200, description = "Queued", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, `Outgoing webhooks are turned off on this instance`, or `This webhook is off`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn test_outgoing(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2538,6 +2558,7 @@ pub(crate) async fn test_outgoing(
     if row.try_get::<i64, _>(5)? == 0 {
         return Err(forbidden("This webhook is off"));
     }
+    rare::take(&state, Rare::Webhook, Some(&user))?;
     queue(
         db,
         id,
@@ -3724,6 +3745,7 @@ mod tests {
     #[tokio::test]
     async fn managers_create_hooks_with_limits_and_honest_names() {
         let (state, path, cid) = setup("wh_create").await;
+        let state = crate::api::rare::tests::unlimited(state);
         let db = &state.db;
         let made = create(&state, "owner", cid, "Deploys")
             .await

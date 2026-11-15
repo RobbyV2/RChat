@@ -29,6 +29,7 @@ pub mod pins;
 pub mod policy;
 pub mod polls;
 pub mod preview_images;
+pub mod rare;
 pub mod reactions;
 pub mod reauth;
 pub mod recovery;

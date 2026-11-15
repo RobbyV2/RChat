@@ -16,6 +16,7 @@ use utoipa::ToSchema;
 
 use crate::api::access::not_found;
 use crate::api::dms::dm_page;
+use crate::api::rare::{self, Rare};
 use crate::api::servers::{Page, my_servers_page};
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::{
@@ -463,7 +464,10 @@ fn lock_order(defaults: &[String]) -> Vec<&str> {
 /// gets their self DM. A default server that is missing, or that bans the username, is skipped. Answers 404 unless `registration` is `open` and
 /// `password_login` is on in `GET /api/v1/settings`. No authentication.
 /// Strict and general rate-limit buckets.
-#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), NUL-containing, `@`-containing, banned, taken or profanity-filtered username; empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; a missing or invalid avatar color for `color` avatars; or an invalid background color for `identicon` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)), security(()))]
+/// Sign-ups are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
+/// `RARE_REQUESTS_PER_DAY` (100) a day per client address (an IPv6 /64 counts as one) by default,
+/// whatever the username.
+#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), NUL-containing, `@`-containing, banned, taken or profanity-filtered username; empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; a missing or invalid avatar color for `color` avatars; or an invalid background color for `identicon` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
@@ -478,6 +482,7 @@ pub(crate) async fn register(
     if !Settings::cached(&state.db).await.password_signup() {
         return Err(not_found());
     }
+    rare::take(&state, Rare::SignUp, None)?;
     if username.trim().is_empty() || username.contains('\0') {
         return Err(bad("Username required"));
     }
@@ -756,7 +761,10 @@ pub(crate) async fn me(
 /// admits one attempt every 3 seconds, and after 50 wrong current passwords in a UTC day it may not
 /// change the password again until the next day (other sessions and logins are unaffected).
 /// Requires a bearer token. Strict and general rate-limit buckets.
-#[utoipa::path(post, path = "/api/v1/me/password", tag = "Account", request_body(content = PasswordChange, description = "`current` and `new` each take exactly one of `password` (any non-empty text) or `words` (7 words, in order, from the account's word set). Switching between text and words is allowed"), responses((status = 200, description = "Password changed. Every other login token of the account is revoked and their live connections close; the token used for this request stays valid. With `keep_recovery: false` the backup phrase is removed too", body = OkResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, or not exactly one of `password` and `words` in `current` or `new`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token (`Unauthorized`), or wrong current password (`Wrong password`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Password changes from this session locked for the day (UTC) after 50 wrong current passwords (separate from the login lockout; other sessions are unaffected)", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since this session's last attempt (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
+/// Password changes are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
+/// `RARE_REQUESTS_PER_DAY` (100) a day per account by default. Only changes confirmed with the
+/// current password count; past the limit every try is refused.
+#[utoipa::path(post, path = "/api/v1/me/password", tag = "Account", request_body(content = PasswordChange, description = "`current` and `new` each take exactly one of `password` (any non-empty text) or `words` (7 words, in order, from the account's word set). Switching between text and words is allowed"), responses((status = 200, description = "Password changed. Every other login token of the account is revoked and their live connections close; the token used for this request stays valid. With `keep_recovery: false` the backup phrase is removed too", body = OkResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, or not exactly one of `password` and `words` in `current` or `new`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token (`Unauthorized`), or wrong current password (`Wrong password`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Password changes from this session locked for the day (UTC) after 50 wrong current passwords (separate from the login lockout; other sessions are unaffected)", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Less than 3 seconds since this session's last attempt (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn change_password(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -790,11 +798,13 @@ async fn change_password_at(
     let (secret, _) = secret_from(&user.username, password, words, false)?;
     let token = request_token(headers).unwrap_or_default();
     let session = session_key(&token);
+    rare::check(state, Rare::Password, Some(&user))?;
     throttle_change(&state.db, &session, t).await?;
     if !verify_password(&secret, &user.password_hash).await {
         note_change_failure(&state.db, &session).await?;
         return Err(wrong_password());
     }
+    rare::take(state, Rare::Password, Some(&user))?;
     let hash = hash_password(&new_secret).await?;
     let mut tx = state.db.begin().await?;
     let changed = sqlx::query(
@@ -916,12 +926,14 @@ const USERNAME_TAKEN: &str = "Username is taken";
 /// A display name as stored: trimmed, 1 to `DISPLAY_NAME_MAX` characters, no control, format or
 /// invisible characters, not passing for the instance staff, through the name profanity filter.
 /// A new name can not pass for another account's username (`names::name_keys`); the user's own
-/// username in any case and the name they already have are theirs to keep.
+/// username in any case and the name they already have are theirs to keep. Checking a new name
+/// is a rare request.
 pub(crate) async fn clean_display_name(
-    db: &Db,
+    state: &AppState,
     user: &User,
     raw: &str,
 ) -> Result<String, ApiError> {
+    let db = &state.db;
     let name = raw.trim().to_string();
     if names::name_keys(&name).iter().any(String::is_empty) {
         return Err(bad("Display name required"));
@@ -935,8 +947,11 @@ pub(crate) async fn clean_display_name(
     }
     check_profanity(db, ProfanityTarget::Usernames, &name).await?;
     let own = name == user.display_name || name.to_lowercase() == user.username;
-    if !own && names::passes_for_another(db, &name, &user.username).await? {
-        return Err(bad(USERNAME_TAKEN));
+    if !own {
+        rare::take(state, Rare::DisplayName, Some(user))?;
+        if names::passes_for_another(db, &name, &user.username).await? {
+            return Err(bad(USERNAME_TAKEN));
+        }
     }
     Ok(name)
 }
@@ -985,7 +1000,10 @@ fn check_banner(color: Option<String>) -> Result<Option<String>, ApiError> {
 /// (or online again) to others. Banner color changes emit no event. A `display_name` answers
 /// 404 while the `display_names` switch of `GET /api/v1/settings` is off, and then nothing
 /// changes. Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/v1/me", tag = "Account", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `avatar_color` is only read together with `avatar_kind`: the color of a `color` avatar, or the background of an `identicon` (left out or `null`: the default background). `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar. `bio` is the profile description: trimmed, control characters other than newlines removed, 3 or more newlines in a row collapsed to 2, at most 190 characters; empty or `null` clears it. It is checked by the profanity filter (`bios` target). `display_name` is trimmed, 1 to 32 characters, and checked by the profanity filter (`usernames` target)"), responses((status = 200, description = "Display name, avatar, banner color, description and/or appear-offline preference updated; returns the user's public profile plus their banner color, description and appear-offline flag", body = MeUpdated), (status = 400, description = "Invalid or missing avatar color for a `color` avatar, invalid background color for an `identicon`, invalid banner color, description over 190 characters, description blocked by the profanity filter, or a display name that is blank, over 32 characters, holds control, format or invisible characters (`Display name has invalid characters`), passes for the instance staff (`That name is reserved`), is blocked by the profanity filter, or is new and passes for another account's username, also in another case or in look-alike characters (`Username is taken`; your own username and the name you already have are accepted). Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: `display_name` was sent while the `display_names` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+/// A new `display_name` is a rare request: each account may try at most `RARE_REQUESTS_PER_HOUR`
+/// (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day by default, taken or free; your own
+/// username and the name you have don't count.
+#[utoipa::path(patch, path = "/api/v1/me", tag = "Account", request_body(content = MePatch, description = "Every field is optional and only the fields present change. `avatar_color` is only read together with `avatar_kind`: the color of a `color` avatar, or the background of an `identicon` (left out or `null`: the default background). `banner_color` is a `#rrggbb` color, or `null` to go back to the default derived from the avatar. `bio` is the profile description: trimmed, control characters other than newlines removed, 3 or more newlines in a row collapsed to 2, at most 190 characters; empty or `null` clears it. It is checked by the profanity filter (`bios` target). `display_name` is trimmed, 1 to 32 characters, and checked by the profanity filter (`usernames` target)"), responses((status = 200, description = "Display name, avatar, banner color, description and/or appear-offline preference updated; returns the user's public profile plus their banner color, description and appear-offline flag", body = MeUpdated), (status = 400, description = "Invalid or missing avatar color for a `color` avatar, invalid background color for an `identicon`, invalid banner color, description over 190 characters, description blocked by the profanity filter, or a display name that is blank, over 32 characters, holds control, format or invisible characters (`Display name has invalid characters`), passes for the instance staff (`That name is reserved`), is blocked by the profanity filter, or is new and passes for another account's username, also in another case or in look-alike characters (`Username is taken`; your own username and the name you already have are accepted). Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: `display_name` was sent while the `display_names` switch is off", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the general bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(("bearer" = [])))]
 pub(crate) async fn patch_me(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1001,7 +1019,7 @@ pub(crate) async fn patch_me(
     } = req;
     let display_name = match display_name {
         Some(_) if !Settings::cached(&state.db).await.display_names => return Err(not_found()),
-        Some(raw) => Some(clean_display_name(&state.db, &user, &raw).await?),
+        Some(raw) => Some(clean_display_name(&state, &user, &raw).await?),
         None => None,
     };
     let avatar = match avatar_kind {
@@ -2806,9 +2824,11 @@ mod tests {
     #[tokio::test]
     async fn a_display_name_never_passes_for_another_username() {
         let (state, path) = temp_state("display_clash").await;
+        let state = crate::api::rare::tests::unlimited(state);
         display_names_keep_off_other_usernames(&state).await;
         done(state, path).await;
         if let Some((state, pg)) = pg_state("display_clash").await {
+            let state = crate::api::rare::tests::unlimited(state);
             display_names_keep_off_other_usernames(&state).await;
             pg_done(state, pg).await;
         }

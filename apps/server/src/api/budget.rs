@@ -84,7 +84,10 @@ impl Budget {
     }
 
     fn with<T>(&self, key: &str, f: impl FnOnce(Instant, &mut u32) -> T) -> T {
-        let now = Instant::now();
+        self.with_at(key, Instant::now(), f)
+    }
+
+    fn with_at<T>(&self, key: &str, now: Instant, f: impl FnOnce(Instant, &mut u32) -> T) -> T {
         let mut table = locked(&self.table);
         let start = table.entry(key, now, || 0).0;
         if now.duration_since(start) >= self.window {
@@ -127,7 +130,12 @@ impl Budget {
 
     /// Like `reserve`, with `limit` in place of the budget's own.
     pub fn reserve_within(&self, key: &str, limit: u32) -> Option<Instant> {
-        self.with(key, |start, n| match *n < limit {
+        self.reserve_within_at(key, limit, Instant::now())
+    }
+
+    /// Like `reserve_within`, at the time `now`.
+    pub fn reserve_within_at(&self, key: &str, limit: u32, now: Instant) -> Option<Instant> {
+        self.with_at(key, now, |start, n| match *n < limit {
             true => {
                 *n += 1;
                 Some(start)
@@ -152,6 +160,11 @@ impl Budget {
         self.with(key, |_, n| *n >= limit)
     }
 
+    /// Whether the key used `limit` uses in the window at the time `now`, without counting one.
+    pub fn spent_within_at(&self, key: &str, limit: u32, now: Instant) -> bool {
+        self.with_at(key, now, |_, n| *n >= limit)
+    }
+
     /// Counts one use without a check.
     pub fn note(&self, key: &str) {
         self.with(key, |_, n| *n = n.saturating_add(1));
@@ -159,8 +172,15 @@ impl Budget {
 
     /// The time until the key's window ends.
     pub fn left(&self, key: &str) -> Duration {
+        self.left_at(key, Instant::now())
+    }
+
+    /// The time from `now` until the key's window ends.
+    pub fn left_at(&self, key: &str, now: Instant) -> Duration {
         let window = self.window;
-        self.with(key, |start, _| window.saturating_sub(start.elapsed()))
+        self.with_at(key, now, |start, _| {
+            window.saturating_sub(now.saturating_duration_since(start))
+        })
     }
 
     #[cfg(test)]
@@ -479,6 +499,23 @@ mod tests {
             short.reserve_within("a", 1).is_some(),
             "a new window starts at 0"
         );
+    }
+
+    #[test]
+    fn budgets_count_at_the_time_they_are_given() {
+        let b = Budget::new(u32::MAX, Duration::from_secs(60), 10);
+        let t0 = Instant::now();
+        assert!(b.reserve_within_at("a", 1, t0).is_some());
+        let late = t0 + Duration::from_secs(59);
+        assert!(
+            b.reserve_within_at("a", 1, late).is_none(),
+            "the same window"
+        );
+        assert_eq!(b.left_at("a", late), Duration::from_secs(1));
+        let next = t0 + Duration::from_secs(60);
+        assert!(b.reserve_within_at("a", 1, next).is_some(), "a new window");
+        assert_eq!(b.left_at("a", next), Duration::from_secs(60));
+        assert!(b.reserve_within_at("b", 1, t0).is_some(), "keys are apart");
     }
 
     #[test]

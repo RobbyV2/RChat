@@ -5008,6 +5008,7 @@ mod tests {
     #[tokio::test]
     async fn password_admin_rules() {
         let (state, path) = temp_state("access_password_admin").await;
+        let state = crate::api::rare::tests::unlimited(state);
         fixture(&state).await;
         let db = &state.db;
         let (client, server) = serve(&state).await;
