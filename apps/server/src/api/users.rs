@@ -290,11 +290,11 @@ async fn card_of(
 ///
 /// Each call takes one of the caller's `profile` lookups (`LOOKUP_PROFILE_PER_MINUTE`, 120 a
 /// minute by default), counted per account, or per client address without one. A caller that
-/// got more 404s for names in an hour than `LOOKUP_MISSES_PER_HOUR` (200 by default) gets the
-/// same 429 for every name until the hour ends. The 404s of this endpoint, `POST /api/v1/blocks`
-/// and the moderation actions by name count, and those of
-/// `GET /api/v1/users/{username}/profile` where this endpoint answers 404 too. General
-/// rate-limit bucket.
+/// used up its misses for the hour (`LOOKUP_MISSES_PER_HOUR`, 200 by default) gets the same 429
+/// for every name until the hour ends. The 404s of this endpoint, of `POST /api/v1/blocks` and
+/// of `GET /api/v1/users/{username}/profile` where this endpoint answers 404 too are misses, and
+/// so are blocks of accounts whose card the caller may not see and bans of people outside the
+/// server. General rate-limit bucket.
 #[utoipa::path(get, path = "/api/v1/users/{username}/card", tag = "Users", params(("username" = String, Path, description = "Username, case-insensitive"), ProfileQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests"), ("X-Subject-Binding" = Option<String>, Header, description = "A P2P binding of the account: the `token` of `POST /api/v1/identity/p2p_binding` as the account showed it in its P2P badge. It shows that account's profile until the binding expires")), responses((status = 200, description = "The account's name with the parts the caller may see: `profile` (null when the account does not show it to the caller) and `member` (null when `server` was omitted, the caller may not view it or its member list, or the account is not a member). Never both null", body = UserCard, headers(("cache-control" = String, description = "`private, no-cache`"))), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such account, or one the caller may see nothing of (identical responses)", body = ApiErrorBody), (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `profile` lookups, or its misses for the hour. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security((), ("bearer" = [])))]
 pub(crate) async fn card(
     State(state): State<AppState>,

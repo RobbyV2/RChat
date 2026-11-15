@@ -206,8 +206,20 @@ fn is_invite(url: &Url) -> bool {
     )
 }
 
-fn own_message_link(instance: &Instance, url: &str) -> bool {
-    Url::parse(url).is_ok_and(|u| is_message_link(&u) && instance.serves(&u))
+/// Whether `url` is on one of this instance's own addresses (`PUBLIC_URL`, `ALLOWED_HOSTS`,
+/// `PUBLIC_API_URL`, `PUBLIC_WS_URL`): the server never fetches its own pages for a preview; the
+/// viewer's client builds those with its own access.
+fn own_origin(instance: &Instance, url: &str) -> bool {
+    let same = |own: &Url, url: &Url| {
+        own.host() == url.host() && own.port_or_known_default() == url.port_or_known_default()
+    };
+    Url::parse(url).is_ok_and(|u| {
+        instance.serves(&u)
+            || [&instance.api_url, &instance.ws_url]
+                .into_iter()
+                .flatten()
+                .any(|own| same(own, &u))
+    })
 }
 
 /// Whether the link's path looks like a credential: a long opaque token segment, or a
@@ -245,23 +257,6 @@ fn secret_path(url: &str) -> bool {
         ]
         .iter()
         .any(|p| path.contains(p))
-}
-
-fn is_message_link(url: &Url) -> bool {
-    let parts: Vec<&str> = url.path().split('/').skip(1).collect();
-    let parts = match parts.split_last() {
-        Some((&"", rest)) => rest,
-        _ => &parts[..],
-    };
-    let id = |s: &&str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    match parts {
-        ["s", server, channel, message] => !server.is_empty() && id(channel) && id(message),
-        ["s", server, channel, "t", root, message] => {
-            !server.is_empty() && id(channel) && id(root) && id(message)
-        }
-        ["dm", dm, message] => id(dm) && id(message),
-        _ => false,
-    }
 }
 
 fn scrub(mut url: Url) -> Url {
@@ -615,7 +610,7 @@ async fn unfurl_with(state: &AppState, job: UnfurlJob, policy: &Policy) {
     }
     let mut embeds: Vec<Embed> = Vec::new();
     for url in &urls {
-        if own_message_link(&state.instance, url) || secret_path(url) {
+        if own_origin(&state.instance, url) || secret_path(url) {
             continue;
         }
         match resolve(&state.db, url, policy).await {
@@ -792,28 +787,53 @@ mod tests {
     }
 
     #[test]
-    fn only_own_message_links_are_skipped() {
+    fn own_origins_are_never_fetched() {
         let mut pinned = std::sync::Arc::into_inner(Instance::ephemeral()).expect("instance");
         pinned.public_url = Some(Url::parse("https://c.example").expect("url"));
         let mut hosted = std::sync::Arc::into_inner(Instance::ephemeral()).expect("instance");
         hosted.allowed_hosts =
             crate::instance::parse_allowed_hosts("chat.example:8443").expect("hosts");
+        let mut split = std::sync::Arc::into_inner(Instance::ephemeral()).expect("instance");
+        split.public_url = Some(Url::parse("https://c.example").expect("url"));
+        split.api_url = Some(Url::parse("https://api.example").expect("url"));
+        split.ws_url = Some(Url::parse("wss://ws.example:8443").expect("url"));
         for (instance, url, skipped) in [
+            (&split, "https://api.example/api/v1/users/zed/card", true),
+            (
+                &split,
+                "https://API.example:443/api/v1/users/search?q=ze",
+                true,
+            ),
+            (
+                &split,
+                "https://ws.example:8443/api/v1/users/zed/card",
+                true,
+            ),
+            (&split, "https://c.example/@zed", true),
+            (&split, "https://ws.example/api/v1/users/zed/card", false),
+            (&split, "https://api.example:8443/x", false),
+            (&split, "https://other.example/api/v1/users/zed/card", false),
             (&pinned, "https://c.example/s/rust/4/90", true),
             (&pinned, "https://c.example:443/s/rust/4/t/88/90/", true),
             (&pinned, "https://c.example/dm/3/91", true),
-            (&pinned, "https://c.example/s/rust/4/", false),
-            (&pinned, "https://c.example/s/rust/x/90", false),
-            (&pinned, "https://c.example/dm/3/91/x", false),
+            (&pinned, "https://c.example/s/rust/4/", true),
+            (&pinned, "https://c.example/@zed", true),
+            (&pinned, "https://c.example/api/v1/users/zed/card", true),
+            (&pinned, "https://c.example/", true),
+            (&pinned, "https://C.Example/invite/club", true),
             (&pinned, "https://other.example/s/rust/4/90", false),
             (&pinned, "https://c.example:8443/s/rust/4/90", false),
+            (&pinned, "https://sub.c.example/s/rust/4/90", false),
             (&pinned, "http://localhost/s/rust/4/90", false),
             (&hosted, "https://chat.example:8443/s/rust/4/90", true),
+            (&hosted, "https://chat.example:8443/u/zed", true),
             (&hosted, "https://chat.example/s/rust/4/90", false),
             (&hosted, "http://localhost:3000/dm/3/91", true),
+            (&hosted, "http://127.0.0.1:4000/anything", true),
             (&hosted, "https://c.example/s/rust/4/90", false),
+            (&hosted, "not a url", false),
         ] {
-            assert_eq!(own_message_link(instance, url), skipped, "{url}");
+            assert_eq!(own_origin(instance, url), skipped, "{url}");
         }
         assert_eq!(
             extract_urls("https://c.example/s/rust/4/90 https://other.example/dm/3/91"),
@@ -1010,10 +1030,76 @@ mod tests {
         crate::api::test_util::done(state, path).await;
     }
 
+    /// `state` for an instance whose own address is `https://chat.example`, so pages of the test
+    /// upstreams on 127.0.0.1 are someone else's.
+    fn elsewhere(state: AppState) -> AppState {
+        let mut instance = std::sync::Arc::into_inner(Instance::ephemeral()).expect("instance");
+        instance.public_url = Some(Url::parse("https://chat.example").expect("url"));
+        state.with_instance(std::sync::Arc::new(instance))
+    }
+
+    #[tokio::test]
+    async fn the_instance_never_previews_its_own_pages() {
+        use crate::api::preview_images::fake::{response, upstream};
+        let (state, path) = crate::api::test_util::temp_state("unfurl_own").await;
+        let db = state.db.clone();
+        let page = upstream(response(
+            "200 OK",
+            &[("content-type", "text/html".to_string())],
+            b"<html><head><title>Own page</title></head></html>",
+        ))
+        .await;
+        let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
+            .fetch_one(&db)
+            .await
+            .expect("general")
+            .try_get(0)
+            .expect("id");
+        let content = format!("see {}", page.url("/@zed"));
+        let mid: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'a', $2, 1) RETURNING id")
+            .bind(cid)
+            .bind(&content)
+            .fetch_one(&db)
+            .await
+            .expect("msg")
+            .try_get(0)
+            .expect("id");
+        let job = || UnfurlJob {
+            server: Some("rchat".to_string()),
+            channel_id: Some(cid),
+            dm_id: None,
+            dm_users: None,
+            message_id: mid,
+            urls: extract_urls(&content),
+        };
+        let stored = |db: Db| async move {
+            sqlx::query("SELECT COUNT(*) FROM message_embeds WHERE message_id = $1")
+                .bind(mid)
+                .fetch_one(&db)
+                .await
+                .expect("count")
+                .try_get::<i64, _>(0)
+                .expect("n")
+        };
+        let mut hosted = std::sync::Arc::into_inner(Instance::ephemeral()).expect("instance");
+        hosted.allowed_hosts =
+            crate::instance::parse_allowed_hosts(&format!("127.0.0.1:{}", page.port))
+                .expect("hosts");
+        let own = state.clone().with_instance(std::sync::Arc::new(hosted));
+        unfurl_with(&own, job(), &page.policy()).await;
+        assert_eq!(page.hits(), 0, "the server never asked for its own page");
+        assert_eq!(stored(db.clone()).await, 0, "no server-made preview");
+        unfurl_with(&elsewhere(state.clone()), job(), &page.policy()).await;
+        assert_eq!(page.hits(), 1, "someone else's page is fetched");
+        assert_eq!(stored(db.clone()).await, 1);
+        crate::api::test_util::done(state, path).await;
+    }
+
     #[tokio::test]
     async fn previews_off_makes_no_requests_stores_and_serves_nothing() {
         use crate::api::preview_images::fake::{png, response, upstream};
         let (state, path) = crate::api::test_util::temp_state("unfurl_switch").await;
+        let state = elsewhere(state);
         let db = state.db.clone();
         let image = upstream(response("200 OK", &[], &png(4, 4))).await;
         let html = format!(

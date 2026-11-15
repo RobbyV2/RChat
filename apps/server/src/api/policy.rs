@@ -1730,7 +1730,7 @@ mod tests {
                 .await;
                 assert_eq!(
                     answered(opened).await,
-                    not_found("User not found", off("dm_creation")),
+                    not_found(crate::api::dms::NO_CONVERSATION, off("dm_creation")),
                     "{mode}: {name}, the same for an account and for a name nobody has"
                 );
             }
@@ -1746,7 +1746,7 @@ mod tests {
         .await;
         assert_eq!(
             answered(unknown).await,
-            not_found("User not found", serde_json::Value::Null),
+            not_found(crate::api::dms::NO_CONVERSATION, serde_json::Value::Null),
             "no switch refused it, so it has no reason"
         );
 

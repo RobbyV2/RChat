@@ -7,7 +7,7 @@ use sqlx::any::AnyRow;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::resolve_dm;
-use crate::api::blocks::{check_dm, not_blocking};
+use crate::api::blocks::{NOT_ACCEPTING, YOU_FRIENDS_ONLY, check_dm, not_blocking};
 use crate::api::messages::read_dm_latest;
 use crate::api::policy::DmCreation;
 use crate::api::servers::Page;
@@ -231,18 +231,26 @@ pub(crate) async fn list_dms(
     }
 }
 
+/// The one answer to a new DM that can't start: no account by that name, one that takes DMs
+/// only from friends, or one that blocked you.
+pub const NO_CONVERSATION: &str = "Could not start a conversation with that user.";
+
 /// Open a DM
 ///
 /// Returns the one-to-one conversation between the signed-in user and `username`, creating it
 /// if it does not exist yet. Opening a DM with yourself returns your self DM. A newly created
 /// DM emits `dm_created` to both users. If the signed-in user had closed it, it is reopened for
 /// them and `dm_reopened` (`{username, dm_id}`) goes to their connections. Requires a bearer
-/// token. The instance may limit new conversations (`dm_creation` in `GET /api/v1/settings`):
-/// under `friends` only a DM with a friend is created, under `nobody` none is, and the others
-/// get the same 404 as an unknown user. DMs that exist and the self DM always open. A DM that
+/// token. A new DM with a name no account has, with an account that takes DMs only from its
+/// friends, or with one that blocked you gets one answer, `404 Could not start a conversation
+/// with that user.`; your own settings answer `403` (you take DMs only from friends, checked
+/// before the name; or you blocked them). The instance may limit new conversations
+/// (`dm_creation` in `GET /api/v1/settings`): under `friends` only a DM with a friend is
+/// created, under `nobody` none is, and the others get the same 404 with the reason `off_site`.
+/// DMs that exist and the self DM always open; writing in them keeps its own checks. A DM that
 /// does not exist yet counts as an action on another account, also for a name with no account:
 /// new DMs and friend requests share 30 per 10 minutes per account. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/dms", tag = "Direct messages", request_body = OpenDmReq, responses((status = 200, description = "The DM with the given user, created if it did not exist yet", body = DmSummary), (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework error; 415 for the latter)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`User not found`: no such user, or the instance does not let you start this conversation", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many actions on other accounts. Try again later.` with a `Retry-After` header (JSON): more than 30 new DMs and friend requests in 10 minutes. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/dms", tag = "Direct messages", request_body = OpenDmReq, responses((status = 200, description = "The DM with the given user, created if it did not exist yet", body = DmSummary), (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework error; 415 for the latter)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`You only accept DMs from friends. Change this in Settings > Privacy.` or `You blocked this user. Unblock them to send messages.`: your own settings", body = ApiErrorBody), (status = 404, description = "`Could not start a conversation with that user.`: no such user, one that does not take DMs from you or blocked you, or the instance does not let you start this conversation (identical answers; the last with the reason `off_site`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many actions on other accounts. Try again later.` with a `Retry-After` header (JSON): more than 30 new DMs and friend requests in 10 minutes. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn open_dm(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -250,7 +258,7 @@ pub(crate) async fn open_dm(
 ) -> Result<Json<DmSummary>, ApiError> {
     let OpenDmReq { username } = req;
     let target = username.to_lowercase();
-    let unknown = || ApiError(StatusCode::NOT_FOUND, "User not found".to_string(), None);
+    let unknown = || ApiError(StatusCode::NOT_FOUND, NO_CONVERSATION.to_string(), None);
     let (a, b) = match user.username <= target {
         true => (user.username.clone(), target.clone()),
         false => (target.clone(), user.username.clone()),
@@ -288,10 +296,23 @@ pub(crate) async fn open_dm(
             if !allowed {
                 return Err(crate::api::policy::refused(DmCreation::KEY, unknown()));
             }
+            if a != b && crate::api::friends::dm_refused(&state.db, &user.username, &target).await?
+            {
+                return Err(ApiError(
+                    StatusCode::FORBIDDEN,
+                    YOU_FRIENDS_ONLY.to_string(),
+                    None,
+                ));
+            }
             if get_user(&state.db, &target).await?.is_none() {
                 return Err(unknown());
             }
-            check_dm(&state.db, &user.username, &target).await?;
+            match check_dm(&state.db, &user.username, &target).await {
+                Err(ApiError(StatusCode::FORBIDDEN, text, _)) if text == NOT_ACCEPTING => {
+                    return Err(unknown());
+                }
+                checked => checked?,
+            }
             let id: i64 =
                 sqlx::query("INSERT INTO dms(user_a, user_b) VALUES($1, $2) RETURNING id")
                     .bind(&a)
@@ -483,6 +504,218 @@ mod tests {
         .iter()
         .map(|d| d.id)
         .collect()
+    }
+
+    fn answer(res: Result<impl Sized, ApiError>) -> Option<(StatusCode, String, Option<String>)> {
+        res.err().map(|ApiError(code, text, reason)| {
+            (
+                code,
+                text,
+                reason.map(|r| serde_json::to_string(&r).expect("reason")),
+            )
+        })
+    }
+
+    async fn open(state: &AppState, by: &str, name: &str) -> Result<Json<DmSummary>, ApiError> {
+        open_dm(
+            State(state.clone()),
+            Authed(mem_user(by, false)),
+            Json(OpenDmReq {
+                username: name.to_string(),
+            }),
+        )
+        .await
+    }
+
+    async fn count(db: &Db, sql: &str) -> i64 {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .fetch_one(db)
+            .await
+            .expect(sql)
+            .try_get(0)
+            .expect("count")
+    }
+
+    async fn set(db: &Db, sql: &str) {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .execute(db)
+            .await
+            .expect(sql);
+    }
+
+    #[tokio::test]
+    async fn a_new_dm_that_cannot_start_answers_one_way() {
+        let (state, path) = temp_state("dm_uniform").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "carol", "yan", "zed", "zoe"] {
+            add_user(db, name, name).await;
+        }
+        set(db, "INSERT INTO privacy(username, dms, friend_requests) VALUES('zed', 'friends', 'everyone')").await;
+        set(db, "INSERT INTO blocks(blocker, blocked, created_at) VALUES('yan', 'alice', 1), ('alice', 'carol', 1)").await;
+        let uniform = Some((StatusCode::NOT_FOUND, NO_CONVERSATION.to_string(), None));
+        for name in ["ghost", "Ghost", "zed", "yan"] {
+            assert_eq!(
+                answer(open(&state, "alice", name).await),
+                uniform,
+                "{name}: no account, friends only and a block answer alike"
+            );
+        }
+        assert_eq!(
+            count(db, "SELECT COUNT(*) FROM dms").await,
+            0,
+            "nothing is created"
+        );
+        assert_eq!(
+            answer(open(&state, "alice", "carol").await),
+            Some((
+                StatusCode::FORBIDDEN,
+                "You blocked this user. Unblock them to send messages.".to_string(),
+                None
+            )),
+            "alice's own block says so"
+        );
+        assert!(open(&state, "alice", "bob").await.is_ok());
+        let me = open(&state, "alice", "alice").await.expect("self DM").0;
+        assert!(me.is_self);
+        set(db, "INSERT INTO privacy(username, dms, friend_requests) VALUES('alice', 'friends', 'everyone')").await;
+        let own = Some((
+            StatusCode::FORBIDDEN,
+            crate::api::blocks::YOU_FRIENDS_ONLY.to_string(),
+            None,
+        ));
+        for name in ["ghost", "zoe"] {
+            assert_eq!(
+                answer(open(&state, "alice", name).await),
+                own,
+                "{name}: alice's own setting comes before the name"
+            );
+        }
+        assert!(
+            open(&state, "alice", "bob").await.is_ok(),
+            "a DM that exists still opens"
+        );
+        assert!(open(&state, "alice", "alice").await.is_ok());
+        set(db, "DELETE FROM privacy WHERE username = 'alice'").await;
+        set(
+            db,
+            "UPDATE settings SET value = 'friends' WHERE key = 'dm_creation'",
+        )
+        .await;
+        crate::api::Settings::forget(db);
+        let off = answer(open(&state, "alice", "ghost").await);
+        assert_eq!(answer(open(&state, "alice", "zoe").await), off);
+        let (code, text, reason) = off.expect("refused");
+        assert_eq!(
+            (code, text.as_str()),
+            (StatusCode::NOT_FOUND, NO_CONVERSATION)
+        );
+        assert!(reason.expect("a reason").contains("dm_creation"));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn an_existing_dm_keeps_its_write_guards() {
+        let (state, path) = temp_state("dm_existing").await;
+        let db = &state.db;
+        for name in ["alice", "zed"] {
+            add_user(db, name, name).await;
+        }
+        let dm = open(&state, "alice", "zed").await.expect("dm").0;
+        set(db, "INSERT INTO privacy(username, dms, friend_requests) VALUES('zed', 'friends', 'everyone')").await;
+        assert_eq!(
+            open(&state, "alice", "zed")
+                .await
+                .expect("still opens")
+                .0
+                .id,
+            dm.id
+        );
+        let sent = crate::api::messages::send_dm_message(
+            State(state.clone()),
+            Path(dm.id),
+            Authed(mem_user("alice", false)),
+            Json(serde_json::from_value(serde_json::json!({ "content": "hi" })).expect("req")),
+        )
+        .await;
+        assert_eq!(
+            answer(sent),
+            Some((
+                StatusCode::FORBIDDEN,
+                crate::api::blocks::NOT_ACCEPTING.to_string(),
+                None
+            )),
+            "writing keeps today's answer"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn your_own_settings_answer_before_theirs() {
+        let (state, path) = temp_state("dm_own_first").await;
+        let db = &state.db;
+        for name in ["alice", "carol", "dave", "erin"] {
+            add_user(db, name, name).await;
+        }
+        set(db, "INSERT INTO privacy(username, dms, friend_requests) VALUES('dave', 'friends', 'everyone')").await;
+        set(
+            db,
+            "INSERT INTO blocks(blocker, blocked, created_at) VALUES('carol', 'alice', 1)",
+        )
+        .await;
+        let write = |dm: i64| {
+            let state = state.clone();
+            async move {
+                answer(
+                    crate::api::messages::send_dm_message(
+                        State(state),
+                        Path(dm),
+                        Authed(mem_user("alice", false)),
+                        Json(
+                            serde_json::from_value(serde_json::json!({ "content": "hi" }))
+                                .expect("req"),
+                        ),
+                    )
+                    .await,
+                )
+            }
+        };
+        let theirs = ["carol", "dave", "erin"];
+        let mut dms = Vec::new();
+        for name in theirs {
+            dms.push(add_dm(db, "alice", name).await);
+        }
+        set(db, "INSERT INTO blocks(blocker, blocked, created_at) VALUES('alice', 'carol', 1), ('alice', 'dave', 1), ('alice', 'erin', 1)").await;
+        let blocked = Some((
+            StatusCode::FORBIDDEN,
+            "You blocked this user. Unblock them to send messages.".to_string(),
+            None,
+        ));
+        for (name, dm) in theirs.into_iter().zip(dms.iter().copied()) {
+            assert_eq!(write(dm).await, blocked, "{name}: alice's own block first");
+        }
+        set(db, "DELETE FROM dms").await;
+        for name in theirs {
+            assert_eq!(
+                answer(open(&state, "alice", name).await),
+                blocked,
+                "{name}: a new DM says alice's own block, whatever {name} chose"
+            );
+        }
+        set(db, "DELETE FROM blocks WHERE blocker = 'alice'").await;
+        set(db, "INSERT INTO privacy(username, dms, friend_requests) VALUES('alice', 'friends', 'everyone')").await;
+        let mut dms = Vec::new();
+        for name in theirs {
+            dms.push(add_dm(db, "alice", name).await);
+        }
+        let own = Some((
+            StatusCode::FORBIDDEN,
+            crate::api::blocks::YOU_FRIENDS_ONLY.to_string(),
+            None,
+        ));
+        for (name, dm) in theirs.into_iter().zip(dms) {
+            assert_eq!(write(dm).await, own, "{name}: alice's own DM setting first");
+        }
+        done(state, path).await;
     }
 
     #[tokio::test]

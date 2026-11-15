@@ -39,9 +39,7 @@ use crate::api::{
     page_bounds, placeholders, require_guest_ok, unique_capped, user_from, user_ref, user_refs,
     valid_color,
 };
-use crate::db::{
-    ChannelKind, Db, NO_PERMANENT_HASH, User, get_user, lock_server, now, shift_member_count,
-};
+use crate::db::{ChannelKind, Db, NO_PERMANENT_HASH, User, lock_server, now, shift_member_count};
 use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, evict_unviewable};
 
@@ -3414,9 +3412,11 @@ pub(crate) async fn kick_member(
 /// permission, and the target's server permissions must be a strict subset of yours. Banning a
 /// member posts a `leave` system message like leaving does (no reason shown). Emits
 /// `member_kicked` (with `banned: true`) to the server and the user when they were a member,
-/// otherwise `server_banned` to the user. A username with no account counts as a miss
-/// (`LOOKUP_MISSES_PER_HOUR`, as for `GET /api/v1/users/{username}/card`); past the misses the
-/// call is refused until the hour ends. General rate-limit bucket.
+/// otherwise `server_banned` to the user. A name with no account is banned like an account that
+/// is not a member (the same answer), so it applies if the name is ever taken. A ban of someone
+/// who is not a member, with or without an account, counts as a miss (`LOOKUP_MISSES_PER_HOUR`,
+/// as for `GET /api/v1/users/{username}/card`); past the misses such bans are refused until the
+/// hour ends. General rate-limit bucket.
 #[utoipa::path(
     post,
     path = "/api/v1/servers/{name}/bans",
@@ -3425,12 +3425,12 @@ pub(crate) async fn kick_member(
     request_body = UsernameReq,
     responses(
         (status = 200, description = "User banned", body = OkResp),
-        (status = 400, description = "You can't ban yourself. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "You can't ban yourself, or `Invalid username` (reason `invalid`, field `username`) for a name no account could have (blank, longer than 100 characters, or with `@`). Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Kick permission, or the user's server permissions are not a strict subset of yours", body = ApiErrorBody),
-        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user does not exist", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller got more 404s for names this hour than `LOOKUP_MISSES_PER_HOUR`. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
+        (status = 429, description = "`Too many bans of people outside this server. Try again later.` with a `Retry-After` header (JSON, reason `rate`): a ban of someone who is not a member after the caller's misses for the hour (`LOOKUP_MISSES_PER_HOUR`). Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -3447,12 +3447,13 @@ pub(crate) async fn ban_member(
     if target == user.username {
         return Err(bad("You can't ban yourself"));
     }
-    let held = lookup::unmissed(&state, Some(&user))?;
-    let found = match get_user(&state.db, &target).await? {
-        Some(_) => Ok(()),
-        None => Err(not_found("User not found")),
+    if !crate::api::names::could_be_username(&target) {
+        return Err(ApiError::invalid("Invalid username", "username"));
+    }
+    let held = match is_member(&state.db, &key, &target).await? {
+        true => None,
+        false => Some(lookup::outside_ban(&state, &user)?),
     };
-    lookup::counted(held, found)?;
     access.require_moderate(&state.db, &target).await?;
     let (db, who) = (&state.db, target.as_str());
     let bypassed = access
@@ -3500,6 +3501,9 @@ pub(crate) async fn ban_member(
         if users.contains(&target) {
             state.hub.evict_voice(&target, cid);
         }
+    }
+    if let Some(held) = held {
+        held.spend();
     }
     Ok(ok())
 }
@@ -4815,26 +4819,15 @@ async fn channel_perm_guard(
     Ok(channel)
 }
 
-async fn check_subject(
-    state: &AppState,
-    user: &User,
-    server: &str,
-    subject: &str,
-) -> Result<(), ApiError> {
+async fn check_subject(state: &AppState, server: &str, subject: &str) -> Result<(), ApiError> {
+    let wrong = || ApiError::invalid("Invalid subject", "subject");
     match subject.split_once(':') {
-        Some(("u", name)) => {
-            let held = lookup::unmissed(state, Some(user))?;
-            let found = match get_user(&state.db, name).await? {
-                Some(_) => Ok(()),
-                None => Err(not_found("User not found")),
-            };
-            lookup::counted(held, found)
-        }
+        Some(("u", name)) if crate::api::names::could_be_username(name) => Ok(()),
         Some(("r", id)) => {
-            let id: i64 = id.parse().map_err(|_| bad("Invalid subject"))?;
+            let id: i64 = id.parse().map_err(|_| wrong())?;
             require_role(&state.db, server, id).await.map(|_| ())
         }
-        Some((_, _)) | None => Err(bad("Invalid subject")),
+        Some((_, _)) | None => Err(wrong()),
     }
 }
 
@@ -4910,14 +4903,13 @@ pub(crate) async fn list_channel_perms(
 /// Set a channel permission rule
 ///
 /// Creates or replaces the rule for `subject` on the channel. The subject is `u:<username>` (any
-/// existing user) or `r:<role id>` (a role of the channel's server), case-insensitive. A member
+/// name a user could have, whether an account has it or not: the same answer) or `r:<role id>`
+/// (a role of the channel's server), case-insensitive. A member
 /// matching any rule gets what one of their rules allows; members matching none can do what the
 /// channel's `restrict_view` / `restrict_send` leave open. A channel
 /// can have at most 500 rules. Requires the Manage channels permission in the channel's server.
 /// Emits `channel_perms_changed` to the server and removes users from the channel's voice room if
-/// they can no longer view it. A `u:` subject with no account counts as a miss
-/// (`LOOKUP_MISSES_PER_HOUR`, as for `GET /api/v1/users/{username}/card`); past the misses every
-/// `u:` subject is refused until the hour ends. General rate-limit bucket.
+/// they can no longer view it. General rate-limit bucket.
 #[utoipa::path(
     put,
     path = "/api/v1/channels/{id}/perms",
@@ -4926,12 +4918,12 @@ pub(crate) async fn list_channel_perms(
     request_body = ChannelPerm,
     responses(
         (status = 200, description = "Permission rule created or replaced for the subject", body = OkResp),
-        (status = 400, description = "Invalid subject, or the channel already has 500 rules. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "`Invalid subject` (reason `invalid`, field `subject`; also a `u:` name no account could have), or the channel already has 500 rules. A non-integer `id`, malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
-        (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses); or the subject's user or role does not exist", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses); or the subject's role does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller got more 404s for names this hour than `LOOKUP_MISSES_PER_HOUR`. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
     ),
     security(("bearer" = []))
 )]
@@ -4955,7 +4947,7 @@ pub(crate) async fn set_channel_perm(
         can_read_history,
     } = req;
     let subject = subject.to_lowercase();
-    check_subject(&state, &user, &server, &subject).await?;
+    check_subject(&state, &server, &subject).await?;
     let was = sqlx::query("SELECT can_view, can_send, can_read_history FROM channel_perms WHERE channel_id = $1 AND subject = $2")
         .bind(id)
         .bind(&subject)
@@ -6125,7 +6117,8 @@ mod tests {
         );
         assert_eq!(
             status(ban(&state, moderator(), "club", "ghost").await),
-            Some(StatusCode::NOT_FOUND)
+            None,
+            "a name with no account is banned like an account that is not a member"
         );
         assert_eq!(
             status(ban(&state, moderator(), "nowhere", "bob").await),
@@ -6166,8 +6159,10 @@ mod tests {
             .into_iter()
             .map(|(name, _, _)| name)
             .collect();
-        assert_eq!(listed.len(), 2);
-        assert!(listed.contains(&"bob".to_string()) && listed.contains(&"erin".to_string()));
+        assert_eq!(listed.len(), 3);
+        for name in ["bob", "erin", "ghost"] {
+            assert!(listed.contains(&name.to_string()), "{name}");
+        }
         unban(&state, root(), "club", "erin")
             .await
             .expect("site admin unbans");

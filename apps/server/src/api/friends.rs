@@ -2011,7 +2011,14 @@ mod tests {
         set_privacy(&state, "bob", json!({ "dms": "friends" })).await;
         let refused = Some((StatusCode::FORBIDDEN, NOT_ACCEPTING.to_string()));
         assert_eq!(code(say("alice", old.id).await), refused);
-        assert_eq!(code(open("carol", "bob").await), refused);
+        assert_eq!(
+            code(open("carol", "bob").await),
+            Some((
+                StatusCode::NOT_FOUND,
+                crate::api::dms::NO_CONVERSATION.to_string()
+            )),
+            "a new DM answers like a name with no account"
+        );
         let none: i64 =
             sqlx::query("SELECT COUNT(*) FROM dms WHERE user_a = 'bob' AND user_b = 'carol'")
                 .fetch_one(&state.db)
@@ -2040,8 +2047,8 @@ mod tests {
         set_privacy(&state, "alice", json!({ "dms": "friends" })).await;
         assert_eq!(
             code(say("bob", old.id).await),
-            refused,
-            "their setting is named first, with the uniform text"
+            own,
+            "bob's own setting is named first, so alice's gives one answer whatever bob chose"
         );
         set_privacy(&state, "alice", json!({ "dms": "everyone" })).await;
         assert!(
@@ -2115,7 +2122,10 @@ mod tests {
         let old = open("alice", "bob").await.expect("everyone: a new DM").0;
         let own = open("alice", "alice").await.expect("the self DM").0;
         befriend(&state, "alice", "carol").await;
-        let none = Some((StatusCode::NOT_FOUND, "User not found".to_string()));
+        let none = Some((
+            StatusCode::NOT_FOUND,
+            crate::api::dms::NO_CONVERSATION.to_string(),
+        ));
         assert_eq!(code(open("alice", "nobody-here").await), none);
         let before = dms().await;
 

@@ -2,6 +2,15 @@ use crate::db::Db;
 
 pub(crate) const STAFF_NAME: &str = "instance staff";
 
+/// Whether `name` could be a username, by the rules of sign-up: not blank, at most `NAME_MAX`
+/// characters, without `@` or NUL. By-name moderation answers every such name alike, whether an
+/// account has it or not.
+pub(crate) fn could_be_username(name: &str) -> bool {
+    !name.trim().is_empty()
+        && name.chars().count() <= crate::api::NAME_MAX
+        && !name.contains(['@', '\0'])
+}
+
 /// Characters a name may not hold: control, format (zero-width, bidi, soft hyphen), line and
 /// paragraph separators, and the invisible fillers that render as nothing.
 pub(crate) fn hidden_char(c: char) -> bool {

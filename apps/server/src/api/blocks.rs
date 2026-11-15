@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::api::access::Proof;
+use crate::api::access::subjects::{Caller, seen_among};
 use crate::api::friends;
 use crate::api::lookup;
 use crate::api::pings::announce_counts;
@@ -114,18 +116,12 @@ pub(crate) async fn not_blocking(
 }
 
 /// Refuses a DM message or call from `sender` to `other` when either blocked the other, or when
-/// either takes DMs only from friends and they are not friends. The blocked side and non-friends
-/// get the same answer; a refusal because of your own settings says so.
+/// either takes DMs only from friends and they are not friends. A refusal because of your own
+/// settings says so, and comes first, so the other side's block and its DM setting give one
+/// answer whatever you chose.
 pub(crate) async fn check_dm(db: &Db, sender: &str, other: &str) -> Result<(), ApiError> {
     if sender == other {
         return Ok(());
-    }
-    if is_blocked(db, other, sender).await? {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            NOT_ACCEPTING.to_string(),
-            None,
-        ));
     }
     if is_blocked(db, sender, other).await? {
         return Err(ApiError(
@@ -134,17 +130,17 @@ pub(crate) async fn check_dm(db: &Db, sender: &str, other: &str) -> Result<(), A
             None,
         ));
     }
-    if friends::dm_refused(db, other, sender).await? {
-        return Err(ApiError(
-            StatusCode::FORBIDDEN,
-            NOT_ACCEPTING.to_string(),
-            None,
-        ));
-    }
     if friends::dm_refused(db, sender, other).await? {
         return Err(ApiError(
             StatusCode::FORBIDDEN,
             YOU_FRIENDS_ONLY.to_string(),
+            None,
+        ));
+    }
+    if is_blocked(db, other, sender).await? || friends::dm_refused(db, other, sender).await? {
+        return Err(ApiError(
+            StatusCode::FORBIDDEN,
+            NOT_ACCEPTING.to_string(),
             None,
         ));
     }
@@ -158,6 +154,19 @@ pub(crate) async fn check_dm_write(db: &Db, actor: &str, users: &[String]) -> Re
         Some(other) => check_dm(db, actor, other).await,
         None => Ok(()),
     }
+}
+
+/// Whether `user` may see the account `name`, as for its profile card.
+async fn sees(state: &AppState, user: &User, name: &str) -> Result<bool, ApiError> {
+    let caller = Caller {
+        user: Some(user),
+        proof: &Proof::none(),
+        server: None,
+        badge: None,
+    };
+    Ok(seen_among(state, &caller, &[name.to_string()])
+        .await?
+        .contains_key(name))
 }
 
 /// Removes the unseen pings `blocked` caused for `blocker` and sends `ping_count` for each
@@ -196,10 +205,11 @@ async fn drop_pings(state: &AppState, blocker: &str, blocked: &str) -> Result<()
 /// Emits `user_blocked` (`{username, user, blocked_at}`) to your connections when the user was not
 /// blocked yet; blocking again changes nothing. At most 1000 blocked users. Each call counts,
 /// also for a name with no account: 120 blocks per 10 minutes per account, apart from new DMs
-/// and friend requests. A name with no account also counts as a miss (`LOOKUP_MISSES_PER_HOUR`,
-/// as for `GET /api/v1/users/{username}/card`); past the misses every block is refused until the
-/// hour ends. Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/blocks", tag = "Blocking", request_body = BlockReq, responses((status = 200, description = "The blocked user (also when they were blocked already)", body = BlockedUser), (status = 400, description = "`You cannot block yourself`, or `You can block at most 1000 users`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "User not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many blocks. Try again later.` with a `Retry-After` header (JSON): more than 120 blocks in 10 minutes. `Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller got more 404s for names this hour than `LOOKUP_MISSES_PER_HOUR`. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
+/// and friend requests. A name with no account, and an account whose profile card you may not
+/// see, also count as a miss (`LOOKUP_MISSES_PER_HOUR`, as for `GET
+/// /api/v1/users/{username}/card`); past the misses every block is refused until the hour ends.
+/// Requires a bearer token. General rate-limit bucket.
+#[utoipa::path(post, path = "/api/v1/blocks", tag = "Blocking", request_body = BlockReq, responses((status = 200, description = "The blocked user (also when they were blocked already)", body = BlockedUser), (status = 400, description = "`You cannot block yourself`, or `You can block at most 1000 users`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "User not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many blocks. Try again later.` with a `Retry-After` header (JSON): more than 120 blocks in 10 minutes. `Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its misses for the hour (`LOOKUP_MISSES_PER_HOUR`). Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn block_user(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -214,9 +224,15 @@ pub(crate) async fn block_user(
     let found = get_user(&state.db, &target)
         .await?
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "User not found".to_string(), None));
-    let other = match held {
-        Some(held) => lookup::counted(held, found)?,
-        None => found?,
+    let other = match (held, found) {
+        (Some(held), Ok(other)) => {
+            if !sees(&state, &user, &other.username).await? {
+                held.spend();
+            }
+            other
+        }
+        (Some(held), found) => lookup::counted(held, found)?,
+        (None, found) => found?,
     };
     if other.username == user.username {
         return Err(bad("You cannot block yourself"));
@@ -749,7 +765,11 @@ mod tests {
         block(&state, "alice", "dave").await.expect("block dave");
         assert_eq!(
             code(open("dave", "alice").await),
-            Some((StatusCode::FORBIDDEN, NOT_ACCEPTING.to_string()))
+            Some((
+                StatusCode::NOT_FOUND,
+                crate::api::dms::NO_CONVERSATION.to_string()
+            )),
+            "a new DM with someone who blocked you answers like a name with no account"
         );
         let none: i64 =
             sqlx::query("SELECT COUNT(*) FROM dms WHERE user_a = 'alice' AND user_b = 'dave'")

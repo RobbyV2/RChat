@@ -87,8 +87,8 @@ pub fn class_of(method: &Method, path: &str) -> Option<LookupClass> {
 pub const TOO_MANY: &str = "Too many lookups. Try again later.";
 pub const TOO_MANY_CONTACTS: &str = "Too many actions on other accounts. Try again later.";
 pub const TOO_MANY_BLOCKS: &str = "Too many blocks. Try again later.";
-/// The env name of the cap on a caller's 404s for names: profile cards, blocks and moderation
-/// by name.
+pub const TOO_MANY_BANS: &str = "Too many bans of people outside this server. Try again later.";
+/// The env name of the cap on a caller's misses for names: profile cards, blocks and bans.
 const MISSES: &str = "LOOKUP_MISSES_PER_HOUR";
 /// New DMs and friend requests by name per account and window.
 pub const CONTACTS_PER_WINDOW: u32 = 30;
@@ -131,6 +131,15 @@ pub struct Held {
     start: Option<Instant>,
 }
 
+impl Held {
+    /// Keeps this miss whatever the answer: for an action by name that answers every name alike
+    /// but leaves it where the caller reads it later (a ban of someone outside the server, a
+    /// block of an account the caller may not see).
+    pub fn spend(mut self) {
+        self.start = None;
+    }
+}
+
 impl Drop for Held {
     fn drop(&mut self) {
         if let Some(start) = self.start.take() {
@@ -153,6 +162,13 @@ pub fn unmissed(state: &AppState, caller: Option<&User>) -> Result<Held, ApiErro
         },
     };
     Ok(Held { who, start })
+}
+
+/// Holds one of `user`'s misses for a ban of someone who is not a member of the server, like
+/// `unmissed`. Past its misses the ban is refused as a ban, whoever the name is.
+pub fn outside_ban(state: &AppState, user: &User) -> Result<Held, ApiError> {
+    unmissed(state, Some(user))
+        .map_err(|ApiError(code, _, reason)| ApiError(code, TOO_MANY_BANS.to_string(), reason))
 }
 
 /// Takes one lookup of `class` from the caller's budget, before the handler runs any query.
@@ -770,6 +786,7 @@ mod tests {
         );
         assert!(missed.is_err());
         rate_refusal(unmissed(&state, Some(&alice)), TOO_MANY);
+        rate_refusal(outside_ban(&state, &alice), TOO_MANY_BANS);
         for n in 0..5 {
             take(&state, LookupClass::Profile, Some(&bob)).unwrap_or_else(|_| panic!("{n}"));
         }
@@ -936,103 +953,260 @@ mod tests {
         )
     }
 
-    async fn ban(state: &AppState, by: &str, name: &str) -> (StatusCode, String) {
-        status(
-            ban_member(
-                State(state.clone()),
-                me(by),
-                Path("probe".to_string()),
-                body(json!({ "username": name })),
-            )
-            .await,
+    async fn ban_answer(state: &AppState, by: &str, name: &str) -> Result<(), ApiError> {
+        ban_member(
+            State(state.clone()),
+            me(by),
+            Path("probe".to_string()),
+            body(json!({ "username": name })),
         )
+        .await
+        .map(|_| ())
+    }
+
+    async fn ban(state: &AppState, by: &str, name: &str) -> (StatusCode, String) {
+        status(ban_answer(state, by, name).await)
+    }
+
+    async fn rule_answer(
+        state: &AppState,
+        by: &str,
+        channel: i64,
+        name: &str,
+    ) -> Result<(), ApiError> {
+        set_channel_perm(
+            State(state.clone()),
+            me(by),
+            Path(channel),
+            body(json!({
+                "subject": format!("u:{name}"),
+                "can_view": true,
+                "can_send": true,
+                "can_read_history": true,
+            })),
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn rule(state: &AppState, by: &str, channel: i64, name: &str) -> (StatusCode, String) {
-        status(
-            set_channel_perm(
-                State(state.clone()),
-                me(by),
-                Path(channel),
-                body(json!({
-                    "subject": format!("u:{name}"),
-                    "can_view": true,
-                    "can_send": true,
-                    "can_read_history": true,
-                })),
-            )
-            .await,
-        )
+        status(rule_answer(state, by, channel, name).await)
+    }
+
+    /// The 400 `text` with the reason `invalid` for the request value `field`.
+    fn invalid_refusal(res: Result<(), ApiError>, text: &str, field: &str) {
+        let Err(ApiError(code, error, reason)) = res else {
+            panic!("{text}: not refused");
+        };
+        assert_eq!((code, error.as_str()), (StatusCode::BAD_REQUEST, text));
+        let Reason {
+            kind,
+            control,
+            retry_after,
+            field: named,
+        } = reason.expect("a reason");
+        assert_eq!(
+            (kind, control, retry_after, named.as_deref()),
+            (ReasonKind::Invalid, None, None, Some(field)),
+            "{text}"
+        );
+    }
+
+    async fn probe_world(db: &Db) -> i64 {
+        for name in ["alice", "bob", "carol"] {
+            add_user(db, name).await;
+        }
+        for (owner, server) in [("alice", "probe"), ("carol", "other")] {
+            own_server(db, owner, server).await;
+        }
+        sqlx::query("INSERT INTO channels(server, name, created_at) VALUES('probe', 'general', 0) RETURNING id")
+            .fetch_one(db)
+            .await
+            .expect("channel")
+            .try_get(0)
+            .expect("id")
+    }
+
+    async fn join(db: &Db, server: &str, name: &str) {
+        sqlx::query("INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES($1, $2, 0, 0, 0)")
+            .bind(server)
+            .bind(name)
+            .execute(db)
+            .await
+            .expect("member");
+    }
+
+    async fn banned(db: &Db, name: &str) -> i64 {
+        sqlx::query("SELECT COUNT(*) FROM server_bans WHERE server = 'probe' AND username = $1")
+            .bind(name)
+            .fetch_one(db)
+            .await
+            .expect("bans")
+            .try_get(0)
+            .expect("n")
     }
 
     #[tokio::test]
-    async fn names_without_an_account_count_as_misses_everywhere() {
+    async fn moderation_by_name_answers_alike() {
+        let (state, path) = temp_state("lookup_moderation").await;
+        let state = state.with_limits(Arc::new(Limits {
+            lookup_misses_per_hour: 3,
+            ..Limits::default()
+        }));
+        let db = &state.db;
+        let channel = probe_world(db).await;
+        for name in ["dave", "erin", "frank"] {
+            add_user(db, name).await;
+        }
+        join(db, "probe", "dave").await;
+        let ok = (StatusCode::OK, String::new());
+        for round in 0..5 {
+            for name in ["bob", "nobody"] {
+                let what = format!("{name}, round {round}");
+                assert_eq!(untime(&state, "alice", name).await, ok, "{what}");
+                assert_eq!(rule(&state, "alice", channel, name).await, ok, "{what}");
+            }
+        }
+        assert_eq!(ban(&state, "alice", "dave").await, ok, "a member");
+        for name in ["bob", "nobody", "bob"] {
+            assert_eq!(ban(&state, "alice", name).await, ok, "{name}: one miss");
+        }
+        for name in ["nobody", "bob", "erin", "nobody2"] {
+            assert_eq!(
+                ban(&state, "alice", name).await,
+                (StatusCode::TOO_MANY_REQUESTS, TOO_MANY_BANS.to_string()),
+                "{name}: past the misses, an account outside the server and a missing name alike"
+            );
+        }
+        rate_refusal(ban_answer(&state, "alice", "erin").await, TOO_MANY_BANS);
+        for name in ["bob", "nobody"] {
+            assert_eq!(untime(&state, "alice", name).await, ok, "{name}");
+            assert_eq!(rule(&state, "alice", channel, name).await, ok, "{name}");
+        }
+        join(db, "probe", "frank").await;
+        assert_eq!(
+            ban(&state, "alice", "frank").await,
+            ok,
+            "a member needs no miss"
+        );
+        assert_eq!(
+            card_of(&state, Some("alice"), "ghost").await,
+            too_many(),
+            "the bans used the misses"
+        );
+        for (name, n) in [
+            ("bob", 1),
+            ("nobody", 1),
+            ("dave", 1),
+            ("frank", 1),
+            ("erin", 0),
+        ] {
+            assert_eq!(banned(db, name).await, n, "{name}");
+        }
+        for name in ["bob", "nobody"] {
+            assert_eq!(
+                sqlx::query(
+                    "SELECT COUNT(*) FROM channel_perms WHERE channel_id = $1 AND subject = $2"
+                )
+                .bind(channel)
+                .bind(format!("u:{name}"))
+                .fetch_one(db)
+                .await
+                .expect("rules")
+                .try_get::<i64, _>(0)
+                .expect("n"),
+                1,
+                "{name} has its rule either way"
+            );
+        }
+        for name in ["", "  ", "a@b"] {
+            invalid_refusal(
+                ban_answer(&state, "alice", name).await,
+                "Invalid username",
+                "username",
+            );
+        }
+        invalid_refusal(
+            rule_answer(&state, "alice", channel, "a@b").await,
+            "Invalid subject",
+            "subject",
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_block_of_someone_the_caller_cant_see_is_a_miss() {
+        let (state, path) = temp_state("lookup_block_unseen").await;
+        let state = state.with_limits(Arc::new(Limits {
+            lookup_misses_per_hour: 3,
+            ..Limits::default()
+        }));
+        let db = &state.db;
+        probe_world(db).await;
+        for name in ["dave", "erin", "frank", "gwen"] {
+            add_user(db, name).await;
+        }
+        join(db, "probe", "bob").await;
+        sqlx::query("INSERT INTO privacy(username, profile) VALUES('gwen', 'everyone')")
+            .execute(db)
+            .await
+            .expect("gwen");
+        let ok = (StatusCode::OK, String::new());
+        for name in ["bob", "gwen", "bob"] {
+            assert_eq!(block(&state, "alice", name).await, ok, "{name}: seen");
+        }
+        assert_eq!(block(&state, "alice", "dave").await, ok, "dave: one miss");
+        assert_eq!(
+            block(&state, "alice", "nobody").await,
+            (StatusCode::NOT_FOUND, "User not found".to_string()),
+            "nobody: one miss"
+        );
+        assert_eq!(block(&state, "alice", "erin").await, ok, "erin: one miss");
+        for name in ["frank", "nobody2"] {
+            assert_eq!(
+                block(&state, "alice", name).await,
+                too_many(),
+                "{name}: past the misses"
+            );
+        }
+        assert_eq!(card_of(&state, Some("alice"), "ghost").await, too_many());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn names_without_an_account_count_as_misses_where_they_answer_404() {
         let (state, path) = temp_state("lookup_by_name").await;
         let state = state.with_limits(Arc::new(Limits {
             lookup_misses_per_hour: 3,
             ..Limits::default()
         }));
         let db = &state.db;
-        for name in ["alice", "bob", "carol"] {
-            add_user(db, name).await;
-        }
-        for (owner, server) in [("alice", "probe"), ("carol", "other")] {
-            sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES($1, $1, $2, 0)")
-                .bind(server)
-                .bind(owner)
-                .execute(db)
-                .await
-                .expect("server");
-            sqlx::query("INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES($1, $2, 1, 0, 0)")
-                .bind(server)
-                .bind(owner)
-                .execute(db)
-                .await
-                .expect("member");
-        }
-        let channel: i64 = sqlx::query("INSERT INTO channels(server, name, created_at) VALUES('probe', 'general', 0) RETURNING id")
-            .fetch_one(db)
-            .await
-            .expect("channel")
-            .try_get(0)
-            .expect("id");
-        let ok = (StatusCode::OK, String::new());
+        probe_world(db).await;
         let missing = (StatusCode::NOT_FOUND, "User not found".to_string());
+        let hidden = (StatusCode::NOT_FOUND, NOT_FOUND.to_string());
         for _ in 0..5 {
-            assert_eq!(untime(&state, "alice", "bob").await, ok, "a hit");
-            assert_eq!(rule(&state, "alice", channel, "bob").await, ok, "a hit");
-        }
-        assert_eq!(untime(&state, "alice", "nobody1").await, missing);
-        assert_eq!(ban(&state, "alice", "nobody2").await, missing);
-        assert_eq!(rule(&state, "alice", channel, "nobody3").await, missing);
-        for name in ["bob", "nobody4"] {
-            assert_eq!(untime(&state, "alice", name).await, too_many(), "{name}");
-            assert_eq!(ban(&state, "alice", name).await, too_many(), "{name}");
             assert_eq!(
-                rule(&state, "alice", channel, name).await,
-                too_many(),
-                "{name}"
+                card_of(&state, Some("alice"), "alice").await.0,
+                StatusCode::OK
             );
+        }
+        assert_eq!(block(&state, "alice", "nobody1").await, missing);
+        assert_eq!(card_of(&state, Some("alice"), "nobody2").await, hidden);
+        assert_eq!(profile_of(&state, Some("alice"), "nobody3").await, hidden);
+        for name in ["bob", "nobody4"] {
             assert_eq!(block(&state, "alice", name).await, too_many(), "{name}");
             assert_eq!(card_of(&state, Some("alice"), name).await, too_many());
+            assert_eq!(profile_of(&state, Some("alice"), name).await, too_many());
         }
         assert_eq!(
-            status(
-                ban_member(
-                    State(state.clone()),
-                    me("carol"),
-                    Path("other".to_string()),
-                    body(json!({ "username": "nobody" })),
-                )
-                .await
-            ),
+            block(&state, "carol", "ghost").await,
             missing,
             "carol's own count"
         );
-        assert_eq!(block(&state, "carol", "ghost").await, missing);
+        assert_eq!(card_of(&state, Some("carol"), "ghost").await, hidden);
         assert_eq!(
-            card_of(&state, Some("carol"), "ghost").await,
-            (StatusCode::NOT_FOUND, NOT_FOUND.to_string()),
+            card_of(&state, Some("carol"), "ghost2").await,
+            hidden,
             "the third miss"
         );
         assert_eq!(block(&state, "carol", "bob").await, too_many());
@@ -1073,10 +1247,13 @@ mod tests {
         );
         drop(held);
         let names: Vec<String> = (0..12).map(|n| format!("nobody{n}")).collect();
-        let answers =
-            futures_util::future::join_all(names.iter().map(|name| untime(&state, "alice", name)))
-                .await;
-        let missing = (StatusCode::NOT_FOUND, "User not found".to_string());
+        let answers = futures_util::future::join_all(
+            names
+                .iter()
+                .map(|name| card_of(&state, Some("alice"), name)),
+        )
+        .await;
+        let missing = (StatusCode::NOT_FOUND, NOT_FOUND.to_string());
         assert_eq!(
             answers.iter().filter(|answer| **answer == missing).count(),
             3,
@@ -1088,7 +1265,7 @@ mod tests {
                 .all(|answer| *answer == missing || *answer == too_many()),
             "{answers:?}"
         );
-        assert_eq!(untime(&state, "alice", "nobody").await, too_many());
+        assert_eq!(card_of(&state, Some("alice"), "nobody").await, too_many());
         done(state, path).await;
     }
 

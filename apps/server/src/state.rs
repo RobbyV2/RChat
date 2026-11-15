@@ -57,6 +57,12 @@ impl AppState {
     pub fn with_reader(self, reader: Db) -> AppState {
         AppState { reader, ..self }
     }
+
+    /// The same state for another instance identity (its own addresses).
+    #[cfg(test)]
+    pub fn with_instance(self, instance: Arc<Instance>) -> AppState {
+        AppState { instance, ..self }
+    }
 }
 
 #[cfg(test)]

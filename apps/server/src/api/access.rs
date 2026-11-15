@@ -2316,8 +2316,9 @@ mod tests {
     ];
 
     /// Calls outside `ws/` that run after the gate decided: (file, function, call).
-    const AFTER_THE_GATE: [(&str, &str, &str); 5] = [
+    const AFTER_THE_GATE: [(&str, &str, &str); 6] = [
         ("api/servers.rs", "insert_member", "is_member("),
+        ("api/servers.rs", "ban_member", "is_member("),
         ("api/servers.rs", "set_admin", "member_role("),
         ("api/servers.rs", "assign_role", "is_member("),
         ("api/servers.rs", "delete_channel", "ws_view_rules("),
