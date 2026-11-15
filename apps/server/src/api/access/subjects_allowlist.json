@@ -1,0 +1,86 @@
+[
+  {
+    "route": "post /api/v1/auth/register",
+    "reason": "says a username is taken (sign-up has to); strict bucket, and each answer for a free name creates an account"
+  },
+  {
+    "route": "post /api/v1/blocks",
+    "reason": "says a username is taken (a block needs the account); a 404, or a block of an account the caller may not see, takes a miss (LOOKUP_MISSES_PER_HOUR), and it has its own pace (lookup.rs tests)"
+  },
+  {
+    "route": "get /api/v1/servers/{name}/available",
+    "reason": "says whether a name-keyed server name is taken, nothing else"
+  },
+  {
+    "route": "get /api/v1/auth/words/{username}",
+    "reason": "derives the words from the name itself, whether or not an account has it (the same rule for every name)"
+  },
+  {
+    "route": "post /api/v1/servers",
+    "reason": "creates a server under the name; a taken name gets the answer of /servers/{name}/available"
+  },
+  {
+    "route": "patch /api/v1/admin/settings",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "get /api/v1/admin/report_forms",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "put /api/v1/admin/report_forms",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "get /api/v1/admin/config",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "get /api/v1/admin/overview",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "get /api/v1/admin/users",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "get /api/v1/admin/servers",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "post /api/v1/admin/servers",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "delete /api/v1/admin/servers/{name}",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "delete /api/v1/admin/users/{username}",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "delete /api/v1/admin/users/{username}/recovery",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "get /api/v1/admin/audit",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "get /api/v1/admin/users/{username}/servers",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "delete /api/v1/admin/messages/{id}",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "post /api/v1/admin/ban",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "get /api/v1/openapi.json",
+    "reason": "serves the API document itself"
+  }
+]
