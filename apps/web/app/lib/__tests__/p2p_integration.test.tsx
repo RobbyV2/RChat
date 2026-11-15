@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { openDB } from 'idb'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactElement } from 'react'
@@ -80,11 +80,12 @@ import { P2pDmPane } from '../../components/p2p/p2p_dm_pane'
 import { AccountChip } from '../../components/p2p/p2p_badge'
 import { ServerSettingsDialog } from '../../components/p2p/p2p_server_settings'
 import { CallBanner } from '../../components/voice_grid'
-import { markAllReadItem } from '../../components/mark_read'
+import { markAllReadItem, registerAppActions } from '../actions'
 import { p2p, p2pDm, p2pHost, p2pMarkAll, p2pServer } from '../p2p/app'
 import { me, memoryStorage } from './fixtures'
 import { readText } from './masked_text'
 
+beforeAll(registerAppActions)
 afterAll(resetSessionCaches)
 
 const NOW = 1_800_000_000_000
@@ -814,6 +815,7 @@ describe('forwarding', () => {
       items = it
     }
     Object.assign(initial, { openContextMenu: capture })
+    useStore.setState({ openContextMenu: capture })
     const sent: Fwd[] = []
     const saved = { ensureRoom: p2pDm.ensureRoom, forward: p2pDm.forward }
     p2pDm.ensureRoom = async () => 'carol-room'

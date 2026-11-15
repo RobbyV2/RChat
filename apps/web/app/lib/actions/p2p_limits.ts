@@ -1,5 +1,5 @@
-// What can be done with this account's P2P limits (Settings > Peer-to-peer > Advanced). The
-// command palette and the P2P tile's menu read this one list.
+// What can be done with this account's P2P limits (Settings > Peer-to-peer > Advanced), from the
+// command palette and the menu of the rail's P2P tile.
 
 import { HardDrive, RotateCcw } from 'lucide-react'
 import { useP2p } from '../p2p/app'
@@ -22,6 +22,7 @@ export const p2pLimitActions: Action[] = [
     id: 'p2p_limits',
     title: 'P2P storage settings',
     scope: 'p2p',
+    targets: ['p2p_home'],
     group: 'settings',
     icon: HardDrive,
     keywords,
@@ -35,6 +36,7 @@ export const p2pLimitActions: Action[] = [
     id: 'p2p_limits_reset',
     title: 'Reset P2P limits',
     scope: 'p2p',
+    targets: ['p2p_home'],
     group: 'settings',
     icon: RotateCcw,
     keywords,

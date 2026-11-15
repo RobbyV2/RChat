@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Pencil } from 'lucide-react'
-import { useStore, type ContextMenuItem } from '../lib/store'
+import { useStore } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
 import { charCount, counterFrom } from '../lib/rules'
 import { sendKey } from '../lib/keys'
@@ -17,12 +17,6 @@ export const editAction = (onClick: () => void): ToolbarAction => ({
   label: 'Edit',
   icon: Pencil,
   onClick,
-})
-
-export const editMenuItem = (action: () => void): ContextMenuItem => ({
-  label: 'Edit Message',
-  icon: Pencil,
-  action,
 })
 
 export function EditedMark({ at }: { at: number }) {

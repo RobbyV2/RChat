@@ -746,6 +746,33 @@ test('a throwing label, subtitle, body, parse or choices, and a choice step with
   expect(logged.map(l => l[1])).toEqual(['t_label', 't_sub', 't_choices', 't_body', 't_parse'])
 })
 
+test('a disabled choice with nothing to pick keeps its row, open to its dimmed choices', () => {
+  const off = [{ value: 'a', label: 'A', disabled: true }]
+  const files = {
+    scope: 'message' as const,
+    targets: ['message'] as const,
+    ...on,
+    args: [{ kind: 'choice' as const, name: 'f', prompt: 'File', choices: () => off }],
+  }
+  const why = { kind: 'text' as const, name: 'why', prompt: 'Why' }
+  def({ id: 't_files', title: 'Files', icon: Copy, disabled: () => true, ...files })
+  def({ id: 't_hidden', title: 'Hidden', disabled: () => false, ...files })
+  def({
+    id: 't_none',
+    title: 'None',
+    disabled: () => true,
+    ...files,
+    args: [{ ...files.args[0], choices: () => [] }],
+  })
+  def({ id: 't_more', title: 'More', disabled: () => true, ...files, args: [...files.args, why] })
+  const menu = menuItems(ctx('menu', m5))
+  expect(menu.map(i => [i.label, i.disabled, i.icon, i.action])).toEqual([
+    ['Files', false, Copy, undefined],
+  ])
+  expect(menu[0].submenu?.map(i => [i.label, i.disabled])).toEqual([['A', true]])
+  expect(paletteCommands(ctx('palette', m5)).filter(r => r.id.startsWith('t_'))).toEqual([])
+})
+
 test('an action with more than one value step has no row and never runs short of an argument', async () => {
   const got: Args[] = []
   const asked: ConfirmRequest[] = []

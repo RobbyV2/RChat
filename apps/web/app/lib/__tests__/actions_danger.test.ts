@@ -104,6 +104,7 @@ test('the actions marked as danger', () => {
     'p2p_member_transfer',
     'p2p_member_ban',
     'p2p_role_delete',
+    'p2p_message_delete',
   ])
 })
 

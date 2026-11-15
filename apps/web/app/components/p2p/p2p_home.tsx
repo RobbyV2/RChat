@@ -49,9 +49,8 @@ import {
 } from './p2p_badge'
 import { badgeState } from '../../lib/p2p/badge'
 import { ctxFor } from '../../lib/actions/ctx'
-import { itemFor, menuItems } from '../../lib/actions/menu'
+import { menuItems, openActionMenu } from '../../lib/actions/menu'
 import { openContactMenu } from '../../lib/actions/p2p_contact'
-import { p2pLimitActions } from '../../lib/actions/p2p_limits'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 
@@ -75,7 +74,6 @@ const useP2pUnread = () => {
 export function P2pRailTile() {
   const open = useP2p(s => s.home)
   const enabled = useP2p(s => s.enabled)
-  const openMenu = useStore(s => s.openContextMenu)
   const pending = useP2p(s => requestsOf(s.contacts).length)
   const pings = useDmPings()
   const unread = useP2pUnread()
@@ -95,13 +93,7 @@ export function P2pRailTile() {
       aria-label="Peer-to-peer"
       aria-pressed={open}
       onClick={() => (open ? p2p.closeHome() : p2p.openHome())}
-      {...(enabled
-        ? longPress((x, y) => {
-            const ctx = ctxFor(useStore.getState(), { kind: 'none' }, 'menu')
-            const items = p2pLimitActions.flatMap(a => itemFor(a.id, ctx) ?? [])
-            if (items.length) openMenu(x, y, items)
-          })
-        : {})}
+      {...(enabled ? longPress((x, y) => openActionMenu(x, y, { kind: 'p2p_home' })) : {})}
       className={`${tile} relative border-2 border-dashed ${
         open
           ? 'border-tertiary bg-tertiary text-on-tertiary'

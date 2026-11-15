@@ -1,13 +1,17 @@
+import { useStore } from '../store'
 import { adminActions } from './admin'
 import { cardActions } from './cards'
 import { channelActions } from './channel'
+import { ctxFor } from './ctx'
 import { dmActions } from './dm'
 import { folderActions } from './folder'
 import { friendActions } from './friends'
 import { globalActions, goActions } from './global'
 import { maskedActions } from './masked'
 import { memberActions } from './member'
+import { itemFor } from './menu'
 import { embedActions, messageActions } from './message'
+import { p2pChatActions } from './p2p_chat'
 import { p2pContactActions } from './p2p_contact'
 import { p2pServerActions } from './p2p_server'
 import { placeActions } from './place'
@@ -42,7 +46,14 @@ export const registerAppActions = () => {
     voiceActions,
     p2pContactActions,
     p2pServerActions,
+    p2pChatActions,
     maskedActions,
   ])
     for (const a of list) defineAction(a)
+}
+
+// The home menus' "Mark all as read" row (`mark_all_read`), for a signed-in account.
+export const markAllReadItem = () => {
+  registerAppActions()
+  return itemFor('mark_all_read', ctxFor(useStore.getState(), { kind: 'home' }, 'menu'))!
 }

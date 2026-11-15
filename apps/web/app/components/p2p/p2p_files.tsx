@@ -14,10 +14,11 @@ import {
   Waypoints,
   X,
 } from 'lucide-react'
-import { maskOf, useMask, useStore, type ContextMenuItem } from '../../lib/store'
+import { useMask, useStore } from '../../lib/store'
+import { startDownload } from '../../lib/actions/p2p_chat'
 import { fmtSize } from '../../lib/bytes'
 import { downloadName, kindOf } from '../../lib/sniff'
-import { BIG_FILE, p2pFiles, useP2p, type FileView, type PendingFile } from '../../lib/p2p/app'
+import { p2pFiles, useP2p, type FileView, type PendingFile } from '../../lib/p2p/app'
 import type { Attachment } from '../../lib/p2p/content'
 import { AUTO_PAUSED_TEXT } from '../../lib/p2p/dm'
 import { SpoilerCover } from '../markdown_message'
@@ -64,45 +65,6 @@ export const statusText = (v: FileView | undefined) => {
         ? `Available from ${v.holders} online ${v.holders === 1 ? 'member' : 'members'}`
         : 'Unavailable right now: nobody who has this file is online'
   }
-}
-
-const startDownload = (att: Attachment) => {
-  const run = () => void p2pFiles.download(att)
-  if (att.size <= BIG_FILE) return run()
-  useStore.getState().askConfirm({
-    title: 'Download a large file',
-    body: `This file is ${fmtSize(att.size)}. It is stored on this device and shared with others in this conversation.`,
-    confirm: 'Download',
-    action: run,
-  })
-}
-
-// The message menu's way to the per-file buttons: save what is here, download what isn't.
-export const attachmentMenu = (list: Attachment[], canFetch: boolean): ContextMenuItem | null => {
-  const mask = maskOf(useStore.getState(), false, true)
-  const items: ContextMenuItem[] = list.map(att => {
-    const v = useP2p.getState().files[att.h]
-    const name = mask(downloadName(att.name))
-    if (v?.state === 'done')
-      return {
-        label: name,
-        subtitle: 'Save',
-        icon: Download,
-        action: () => void p2pFiles.save(att),
-      }
-    const busy = v?.state === 'downloading'
-    return {
-      label: name,
-      subtitle: busy ? 'Cancel download' : 'Download',
-      icon: busy ? X : Download,
-      disabled: !busy && (!canFetch || !v || v.holders === 0),
-      action: () => (busy ? void p2pFiles.cancel(att.h) : startDownload(att)),
-    }
-  })
-  if (items.length === 0) return null
-  if (items.length === 1)
-    return { ...items[0], label: `${items[0].subtitle} attachment`, subtitle: items[0].label }
-  return { label: 'Attachments', icon: Download, submenu: items }
 }
 
 function useThumb(thumb: string | undefined) {

@@ -1,5 +1,28 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
-import { Bell, BellOff, CheckCheck, Crown, LogOut, Settings, UserPlus, Volume2 } from 'lucide-react'
+import {
+  ArrowRight,
+  Bell,
+  BellOff,
+  CheckCheck,
+  Clock,
+  Copy,
+  Crown,
+  Download,
+  Forward,
+  Hash,
+  LogOut,
+  MessageSquareText,
+  Pencil,
+  Pin,
+  PinOff,
+  RefreshCw,
+  Reply,
+  Settings,
+  Trash2,
+  UserPlus,
+  Volume2,
+  X,
+} from 'lucide-react'
 import { ctxFor, paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { menuItems, openActionMenu, openChoiceMenu } from '../actions/menu'
@@ -7,15 +30,31 @@ import { paletteCommands } from '../actions/palette'
 import { memberMenu } from '../../components/p2p/p2p_server_view'
 import { roleItems, roleMenuItems } from '../../components/p2p/p2p_server_roles'
 import { allActions } from '../actions/registry'
-import type { Target } from '../actions/types'
+import type { ChatFacts, Target } from '../actions/types'
+import { P2P_IP_HINT } from '../call_choice'
 import { emptyLayout, type Folder } from '../nav_layout'
 import { EMPTY_NOTIFY, MUTE_CHOICES, setMute, type NotifyPrefs } from '../notify'
-import { p2p, p2pDm, p2pRail, p2pServer, p2pVoice, useP2p } from '../p2p/app'
+import {
+  p2p,
+  p2pBadge,
+  p2pCall,
+  p2pDm,
+  p2pFiles,
+  p2pRail,
+  p2pServer,
+  p2pThread,
+  p2pVoice,
+  useP2p,
+} from '../p2p/app'
+import type { Attachment } from '../p2p/content'
 import type { Contact } from '../p2p/contacts'
+import type { P2pMessage } from '../p2p/dm'
+import { keyId, newKeyPair } from '../p2p/keys'
 import type { MemberView, RoleView, ServerView } from '../p2p/server'
 import { P } from '../p2p/state'
 import { setSharing, sharing } from '../platform'
 import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
+import type { Message } from '../types'
 
 const initial = useStore.getState()
 const p2pInitial = useP2p.getState()
@@ -160,6 +199,8 @@ const recorder = () => {
       c.action(c.choices?.[0]?.value ?? '')
     },
     muteScope: (scope, until) => void calls.push(['mute', scope, until === null ? null : 'later']),
+    showToast: (...a: unknown[]) => void calls.push(['toast', ...a]),
+    copyForwardClip: c => void calls.push(['clip', c.body, c.author?.display_name]),
   })
   setSharing({
     ...realSharing,
@@ -171,8 +212,11 @@ const recorder = () => {
   const spy = <T extends object>(name: string, obj: T, keys: (keyof T)[]) => {
     for (const k of keys)
       (obj as Record<string, unknown>)[k as string] = (...args: unknown[]) => {
-        calls.push([`${name}.${String(k)}`, ...args])
-        return Promise.resolve(null)
+        calls.push([
+          `${name}.${String(k)}`,
+          ...args.map(a => (a && typeof a === 'object' && 'h' in a ? a.h : a)),
+        ])
+        return Promise.resolve(k === 'ensureRoom' ? 'room-x' : k === 'forward' ? true : null)
       }
   }
   const saved = {
@@ -181,6 +225,10 @@ const recorder = () => {
     voice: { ...p2pVoice },
     p2p: { ...p2p },
     dm: { ...p2pDm },
+    thread: { ...p2pThread },
+    files: { ...p2pFiles },
+    call: { ...p2pCall },
+    badge: { ...p2pBadge },
   }
   spy('server', p2pServer, [
     'leave',
@@ -201,13 +249,31 @@ const recorder = () => {
   spy('rail', p2pRail, ['move', 'ungroup'])
   spy('voice', p2pVoice, ['join', 'leave'])
   spy('p2p', p2p, ['openDialog', 'openHome'])
-  spy('dm', p2pDm, ['openDm'])
+  spy('dm', p2pDm, [
+    'openDm',
+    'startReply',
+    'startEdit',
+    'pin',
+    'remove',
+    'jumpTo',
+    'openPins',
+    'ensureRoom',
+    'forward',
+  ])
+  spy('thread', p2pThread, ['open'])
+  spy('files', p2pFiles, ['save', 'download', 'cancel'])
+  spy('call', p2pCall, ['start'])
+  spy('badge', p2pBadge, ['recheck'])
   const restore = () => {
     Object.assign(p2pServer, saved.server)
     Object.assign(p2pRail, saved.rail)
     Object.assign(p2pVoice, saved.voice)
     Object.assign(p2p, saved.p2p)
     Object.assign(p2pDm, saved.dm)
+    Object.assign(p2pThread, saved.thread)
+    Object.assign(p2pFiles, saved.files)
+    Object.assign(p2pCall, saved.call)
+    Object.assign(p2pBadge, saved.badge)
   }
   return { calls, restore }
 }
@@ -614,4 +680,312 @@ test('the member list menu opens at the pointer with its header', () => {
   openActionMenu(7, 8, onMember(server(), MEMBERS.bob), { header: 'card' })
   const open = useStore.getState().contextMenu
   expect([open?.x, open?.y, open?.header, open?.items.length]).toEqual([7, 8, 'card', 3])
+})
+
+// ----- Chats: messages, pin lines, calls, account badges -----
+
+const TS = 1_800_000_000_000
+
+const msg = (over: Partial<P2pMessage> = {}): P2pMessage => ({
+  id: 'm1',
+  sender: BOB,
+  ts: TS,
+  sentTs: TS,
+  sortKey: 'm1',
+  seq: 1,
+  body: 'hello there',
+  reply: null,
+  mentions: [],
+  fwd: null,
+  att: [],
+  edited: null,
+  reactions: [],
+  pinned: null,
+  late: false,
+  pending: false,
+  failed: false,
+  call: null,
+  ...over,
+})
+
+const shown = { id: 7, created_at: TS / 1000 } as Message
+
+const facts = (over: Partial<ChatFacts> = {}): ChatFacts => ({
+  draftKey: 'room-d',
+  canAct: true,
+  mayPin: false,
+  mayDelete: () => false,
+  forwardSkip: CAROL,
+  threads: false,
+  ownName: ik => (ik === BOB ? 'Bob Own' : 'Me Own'),
+  ...over,
+})
+
+const onMessage = (p: P2pMessage, chat = facts()): Target => ({
+  kind: 'p2p_message',
+  p,
+  m: shown,
+  chat,
+})
+
+const chatState = () => {
+  state()
+  useP2p.setState({
+    contacts: [contact(BOB, 'Bob'), contact(CAROL, 'Carol'), contact(DAVE, 'Dave', 'outgoing')],
+    files: {},
+  })
+}
+
+const att = (h: string, name: string): Attachment => ({
+  h,
+  size: 10,
+  blocks: 1,
+  name,
+  mime: 'text/plain',
+})
+
+const file = (state: string, holders = 1) => ({
+  state,
+  got: 0,
+  total: 1,
+  holders,
+  type: null,
+  error: null,
+  own: false,
+  paused: null,
+})
+
+describe("a P2P message's menu", () => {
+  test("another's message: reply, forward, copies", async () => {
+    chatState()
+    const list = items(onMessage(msg()))
+    expect(list.map(shape)).toEqual([
+      ['Reply', false, Reply],
+      ['Forward', false, Forward],
+      ['Copy Text', false, Copy],
+      ['Copy Timestamp', false, Clock],
+      ['Copy Message ID', false, Hash],
+    ])
+    expect(list[1].submenu?.map(i => [i.label, i.icon ?? null])).toEqual([
+      ['Bob', null],
+      ['Copy for forwarding', Copy],
+    ])
+    expect(await run(list[0])).toEqual([['dm.startReply', 'room-d', 'm1']])
+    expect(await run(list[2])).toEqual([['copy', 'hello there']])
+    expect(await run(list[3])).toEqual([['copy', '<t:1800000000:F>']])
+    expect(await run(list[4])).toEqual([['copy', 'm1']])
+  })
+
+  test('forwarding sends to a contact under the sender’s own name, or copies it', async () => {
+    chatState()
+    const forward = row(onMessage(msg()), 'Forward')!.submenu!
+    expect(await run(forward[0])).toEqual([
+      ['dm.ensureRoom', BOB],
+      ['dm.forward', 'room-x', { name: 'Bob Own', ts: TS, body: 'hello there' }],
+      ['toast', 'Forwarded to', 'Bob'],
+    ])
+    expect(await run(forward[1])).toEqual([['clip', 'hello there', 'Bob Own']])
+  })
+
+  test('without the right to act: forward and copies only, and no header row of reactions', () => {
+    chatState()
+    expect(labels(onMessage(msg(), facts({ canAct: false })))).toEqual([
+      'Forward',
+      'Copy Text',
+      'Copy Timestamp',
+      'Copy Message ID',
+    ])
+    expect(
+      labels(onMessage(msg({ archived: true }), facts({ mayPin: true, threads: true })))
+    ).toEqual(['Forward', 'Copy Text', 'Copy Timestamp', 'Copy Message ID'])
+  })
+
+  test('your own message in a channel you moderate: edit, thread, unpin and delete', async () => {
+    chatState()
+    const chat = facts({ mayPin: true, mayDelete: () => true, threads: true })
+    const t = onMessage(msg({ sender: ME, pinned: 5 }), chat)
+    expect(items(t).map(shape)).toEqual([
+      ['Reply', false, Reply],
+      ['Edit Message', false, Pencil],
+      ['Forward', false, Forward],
+      ['Create thread', false, MessageSquareText],
+      ['Unpin Message', false, PinOff],
+      ['Delete Message', true, Trash2],
+      ['Copy Text', false, Copy],
+      ['Copy Timestamp', false, Clock],
+      ['Copy Message ID', false, Hash],
+    ])
+    expect(await run(row(t, 'Edit Message'))).toEqual([['dm.startEdit', 'room-d', 'm1']])
+    expect(await run(row(t, 'Create thread'))).toEqual([['thread.open', 'm1']])
+    expect(await run(row(t, 'Unpin Message'))).toEqual([['dm.pin', 'm1', false]])
+    expect(await run(row(t, 'Delete Message'))).toEqual([
+      [
+        'confirm',
+        'Delete Message',
+        'Delete this message? It is removed here now, and on the other device the next time you are both online.',
+        'Delete',
+      ],
+      ['dm.remove', 'm1'],
+    ])
+    const other = onMessage(msg({ replies: 2 }), chat)
+    expect(labels(other).slice(2, 4)).toEqual(['View thread', 'Pin Message'])
+    expect(row(other, 'Pin Message')?.icon).toBe(Pin)
+    expect(await run(row(other, 'Pin Message'))).toEqual([['dm.pin', 'm1', true]])
+    expect(labels(onMessage(msg({ thread: 'root' }), chat))).toEqual([
+      'Reply',
+      'Forward',
+      'Delete Message',
+      'Copy Text',
+      'Copy Timestamp',
+      'Copy Message ID',
+    ])
+  })
+
+  test('a message whose body is not here: pin, delete and the stamps only', () => {
+    chatState()
+    const chat = facts({ mayPin: true, mayDelete: () => true, threads: true })
+    expect(labels(onMessage(msg({ unavailable: true, body: '' }), chat))).toEqual([
+      'Pin Message',
+      'Delete Message',
+      'Copy Timestamp',
+      'Copy Message ID',
+    ])
+    expect(labels(onMessage(msg({ body: '  ' })))).toEqual([
+      'Reply',
+      'Forward',
+      'Copy Timestamp',
+      'Copy Message ID',
+    ])
+  })
+
+  test('one attachment is a row of its own; save, download or cancel', async () => {
+    chatState()
+    const one = onMessage(msg({ att: [att('h1', 'a.txt')] }))
+    useP2p.setState({ files: { h1: file('done') } as never })
+    const saveRow = row(one, 'Save attachment')!
+    expect([saveRow.subtitle, saveRow.icon, saveRow.disabled ?? false]).toEqual([
+      'a.txt',
+      Download,
+      false,
+    ])
+    expect(labels(one).indexOf('Save attachment')).toBe(2)
+    expect(await run(saveRow)).toEqual([['files.save', 'h1']])
+    useP2p.setState({ files: { h1: file('downloading') } as never })
+    const cancel = row(one, 'Cancel download attachment')!
+    expect(cancel.icon).toBe(X)
+    expect(await run(cancel)).toEqual([['files.cancel', 'h1']])
+    useP2p.setState({ files: { h1: file('none') } as never })
+    expect(await run(row(one, 'Download attachment'))).toEqual([['files.download', 'h1']])
+    useP2p.setState({ files: {} })
+    expect(row(one, 'Download attachment')?.disabled).toBe(true)
+    useP2p.setState({ files: { h1: file('none') } as never })
+    const offline = onMessage(msg({ att: [att('h1', 'a.txt')] }), facts({ canAct: false }))
+    expect(row(offline, 'Download attachment')?.disabled).toBe(true)
+  })
+
+  test('two or more attachments are a submenu, each with what it can do', async () => {
+    chatState()
+    const two = onMessage(msg({ att: [att('h1', 'a.txt'), att('h2', 'b.txt')] }))
+    useP2p.setState({ files: { h1: file('downloading'), h2: file('none') } as never })
+    const files = row(two, 'Attachments')!
+    expect([files.icon, files.disabled ?? false]).toEqual([Download, false])
+    expect(files.submenu?.map(i => [i.label, i.subtitle, i.icon, i.disabled ?? false])).toEqual([
+      ['a.txt', 'Cancel download', X, false],
+      ['b.txt', 'Download', Download, false],
+    ])
+    expect(await run(files.submenu![1])).toEqual([['files.download', 'h2']])
+    useP2p.setState({ files: {} })
+    const none = row(two, 'Attachments')!
+    expect([none.icon, none.disabled ?? false]).toEqual([Download, false])
+    expect(none.submenu?.map(i => [i.label, i.subtitle, i.icon, i.disabled ?? false])).toEqual([
+      ['a.txt', 'Download', Download, true],
+      ['b.txt', 'Download', Download, true],
+    ])
+    expect(await run(none.submenu![0])).toEqual([])
+  })
+
+  test('a pin line: jump, the pinned list and the stamps', async () => {
+    chatState()
+    const pin = msg({ system: { kind: 'pin', ik: BOB, target: 'm0' } })
+    const t: Target = { kind: 'p2p_pin_line', p: pin, m: shown }
+    expect(items(t).map(shape)).toEqual([
+      ['Jump to Message', false, ArrowRight],
+      ['Pinned Messages', false, Pin],
+      ['Copy Timestamp', false, Clock],
+      ['Copy Message ID', false, Hash],
+    ])
+    expect(await run(row(t, 'Jump to Message'))).toEqual([['dm.jumpTo', 'm0']])
+    expect(await run(row(t, 'Pinned Messages'))).toEqual([['dm.openPins']])
+    const gone: Target = { ...t, p: { ...pin, system: { kind: 'pin', ik: BOB, target: null } } }
+    expect(labels(gone)).toEqual(['Pinned Messages', 'Copy Timestamp', 'Copy Message ID'])
+  })
+})
+
+test("a contact's menu: mutual and pending", () => {
+  const [me, bob, dave] = [0, 1, 2].map(() => keyId(newKeyPair().pk))
+  chatState()
+  useP2p.setState({ contacts: [contact(bob, 'Bob'), contact(dave, 'Dave', 'outgoing')] })
+  const menu = (c: Contact) => labels({ kind: 'p2p_contact', c, me })
+  expect(menu(contact(bob, 'Bob'))).toEqual([
+    'Message',
+    'Mute DM',
+    'Notification settings',
+    'Rename',
+    'Verify',
+    'Block',
+    'Remove',
+  ])
+  expect(menu(contact(dave, 'Dave', 'outgoing'))).toEqual(['Rename', 'Verify', 'Block', 'Remove'])
+})
+
+test('the call route menu: direct (checked), then one row per relay of your own', async () => {
+  chatState()
+  useStore.setState({
+    relayPrefs: {
+      relays: [
+        { url: 'turn:relay.example:3478', username: 'u', credential: 'c' },
+        { url: 'stun:stun.example:3478' },
+      ],
+      allowed: [],
+      ask: false,
+      choice: 'auto',
+    },
+    iceHelpers: true,
+    iceRelay: false,
+  })
+  const t: Target = { kind: 'p2p_call', peer: BOB, video: true }
+  const list = items(t)
+  expect(list.map(i => [i.label, i.subtitle, !!i.radio, !!i.checked, !!i.wrap])).toEqual([
+    ['Direct (P2P)', P2P_IP_HINT, true, true, true],
+    ['Direct through relay.example', undefined, false, false, true],
+  ])
+  expect(await run(list[0])).toEqual([['call.start', BOB, true]])
+  expect(await run(list[1])).toEqual([['call.start', BOB, true, 'turn:relay.example:3478']])
+})
+
+test("an account badge's menu: copy the account, or check again when it couldn't", async () => {
+  chatState()
+  const ok: Target = { kind: 'p2p_badge', ik: BOB, sub: 'bob@host', stale: false }
+  expect(items(ok).map(shape)).toEqual([['Copy account', false, Copy]])
+  expect(await run(items(ok)[0])).toEqual([['copy', 'bob@host']])
+  const stale: Target = { kind: 'p2p_badge', ik: BOB, sub: 'bob@host', stale: true }
+  expect(items(stale).map(shape)).toEqual([['Check again', false, RefreshCw]])
+  expect(await run(items(stale)[0])).toEqual([['badge.recheck', BOB]])
+})
+
+test("the P2P tile's menu lists the storage settings", () => {
+  chatState()
+  useStore.setState({ me: { username: 'ann' } as never, guest: false })
+  useP2p.setState({ account: 'ann' })
+  expect(labels({ kind: 'p2p_home' })).toEqual(['P2P storage settings'])
+})
+
+test('P2P chat rows stay out of the palette (rule 10)', () => {
+  chatState()
+  const ids = new Set(paletteCommands(paletteCtx(useStore.getState())).map(r => r.id))
+  const added = allActions()
+    .map(a => a.id)
+    .filter(id => /^p2p_(message|pin|call|badge)_/.test(id))
+  expect(added.length).toBe(18)
+  expect(added.filter(id => ids.has(id))).toEqual([])
 })

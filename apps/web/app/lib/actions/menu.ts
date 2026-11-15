@@ -67,7 +67,14 @@ interface Built {
 }
 
 const rows = (a: Action, ctx: ActionCtx): Built[] => {
-  if (!a.expand) return a.menuRun || askable(a, ctx) ? [{ id: a.id, item: rowOf(a, ctx) }] : []
+  if (!a.expand) {
+    if (a.menuRun || askable(a, ctx)) return [{ id: a.id, item: rowOf(a, ctx) }]
+    // A choice with nothing to pick keeps its row, open to its dimmed choices, when the action
+    // says it is disabled.
+    if (valueSteps(a).length !== 1 || !a.disabled?.(ctx)) return []
+    const item = rowOf(a, ctx)
+    return item.submenu?.length ? [{ id: a.id, item: { ...item, disabled: false } }] : []
+  }
   const disabled = a.disabled?.(ctx)
   return expansionsOf(a, ctx).map(x => ({
     id: `${a.id}_${x.key}`,

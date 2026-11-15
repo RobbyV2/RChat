@@ -16,14 +16,9 @@ import {
   CircleAlert,
   Check,
   Clock,
-  Copy,
   EyeOff,
-  Forward,
-  Hash,
   History,
   MessageSquareText,
-  Pin,
-  PinOff,
   Plus,
   Reply,
   SendHorizontal,
@@ -31,7 +26,9 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { maskOf, useStore, type ContextMenuItem } from '../../lib/store'
+import { useStore } from '../../lib/store'
+import { openActionMenu } from '../../lib/actions/menu'
+import { confirmDelete, copyForP2p, threadAct } from '../../lib/actions/p2p_chat'
 import { noticeOpen } from '../../lib/home'
 import { hideTip, useHome } from '../../lib/home_store'
 import {
@@ -45,7 +42,6 @@ import {
   useP2p,
   type P2pChat,
 } from '../../lib/p2p/app'
-import { displayName } from '../../lib/p2p/contacts'
 import { hiddenRemovedText, SLOW_HIDDEN_TEXT } from '../../lib/p2p/flows'
 import {
   bodyTooLong,
@@ -64,14 +60,11 @@ import { spliceText } from '../../lib/autocomplete'
 import { loadEmojiData } from '../../lib/emoji'
 import { newSince } from '../../lib/lists'
 import { plainLine } from '../../lib/replies'
-import { messageStampToken } from '../../lib/timestamps'
 import { systemParts } from '../../lib/system_messages'
-import { sharing } from '../../lib/platform'
-import type { ForwardClip } from '../../lib/forward'
 import type { Message, UserRef } from '../../lib/types'
 import { ChatSourceProvider, type ChatSource } from '../chat_source'
 import { MarkdownMessage } from '../markdown_message'
-import { MessageEditor, editAction, editMenuItem, type EditBinding } from '../message_editor'
+import { MessageEditor, editAction, type EditBinding } from '../message_editor'
 import { MessageToolbar, type ToolbarAction } from '../message_toolbar'
 import { QuickReactions, ReactionBar, rowAt } from '../reactions'
 import { ComposerBar, ReplyPreview } from '../replies'
@@ -86,7 +79,7 @@ import { PresentBar, useChatScroll, useFocusMessage } from '../viewport_height'
 import { mentionRowCls } from '../message_pane'
 import { Masked, textBtn } from '../ui'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
-import { AttachmentList, attachmentMenu, PendingFiles } from './p2p_files'
+import { AttachmentList, PendingFiles } from './p2p_files'
 import { namePasted } from '../message_composer'
 import { FormatToolbar, useFormatting } from '../format_toolbar'
 import { P2pCallRow } from './p2p_call'
@@ -213,19 +206,6 @@ interface RowProps {
   onCopy: (p: P2pMessage, m: Message) => void
   onJump: (num: number) => void
 }
-
-// "Create thread" on a message without replies that we may answer, "View thread" once it has
-// some.
-// A message whose body isn't here ("Message unavailable") keeps its thread reachable; one from
-// the copy a server was transferred from (spec 3.8) has none here.
-export const threadAct = (p: P2pMessage, canAct: boolean) =>
-  p.system || p.call || p.thread || p.noThread || p.archived
-    ? null
-    : p.replies
-      ? 'View thread'
-      : canAct && !p.unavailable
-        ? 'Create thread'
-        : null
 
 export const P2pRow = memo(function P2pRow({
   p,
@@ -482,22 +462,6 @@ export function useP2pFlash(
   return flash
 }
 
-const pinLineMenu = (p: P2pMessage, m: Message): ContextMenuItem[] => {
-  const target = p.system?.target ?? null
-  return [
-    ...(target
-      ? [{ label: 'Jump to Message', icon: ArrowRight, action: () => void p2pDm.jumpTo(target) }]
-      : []),
-    { label: 'Pinned Messages', icon: Pin, action: () => void p2pDm.openPins() },
-    {
-      label: 'Copy Timestamp',
-      icon: Clock,
-      action: () => void sharing().copyText(messageStampToken(m.created_at)),
-    },
-    { label: 'Copy Message ID', icon: Hash, action: () => void sharing().copyText(p.id) },
-  ]
-}
-
 // In place of a message sent around the time its author was removed (spec 8.2).
 export function P2pHiddenRow({ m, divider }: { m: Message; divider: boolean }) {
   const [before, after] = hiddenRemovedText('\u0000').split('\u0000')
@@ -545,52 +509,6 @@ export function P2pSlowRow({ m, divider }: { m: Message; divider: boolean }) {
       </div>
     </div>
   )
-}
-
-const confirmDelete = (id: string, skip = false) => {
-  const run = () => void p2pDm.remove(id)
-  if (skip) return run()
-  const server = !!useP2p.getState().chat?.ch
-  useStore.getState().askConfirm({
-    title: 'Delete Message',
-    body: server
-      ? 'Delete this message? It is removed here now, and on other members’ devices as they sync.'
-      : 'Delete this message? It is removed here now, and on the other device the next time you are both online.',
-    confirm: 'Delete',
-    action: run,
-  })
-}
-
-// Puts a message on the forward clipboard: Send in another conversation forwards it there (a
-// P2P one directly; an instance one after it says the text will be copied there).
-export const copyForP2p = (p: P2pMessage, m: Message, author: string) => {
-  const clip: ForwardClip = {
-    id: 1 + Math.floor(Math.random() * 2 ** 40),
-    author: p.fwd ? (m.forward?.author ?? null) : p2pUser(p.sender, author),
-    snippet: plainLine(p.fwd ? p.fwd.body : p.body),
-    has_media: false,
-    created_at: p.fwd ? seconds(p.fwd.ts) : m.created_at,
-    body: p.fwd ? p.fwd.body : p.body,
-    p2p: true,
-  }
-  useStore.getState().copyForwardClip(clip)
-}
-
-// Forwards straight into a P2P conversation with a contact. `author`: the sender's own profile
-// name (profileName), never a display string.
-export const forwardTo = async (ik: string, p: P2pMessage, author: string) => {
-  const fwd = p.fwd ?? {
-    name: author,
-    ts: p.sentTs,
-    body: p.body,
-    ...(p.att.length ? { att: p.att } : {}),
-  }
-  const target = await p2pDm.ensureRoom(ik)
-  if (target && (await p2pDm.forward(target, fwd))) {
-    const c = useP2p.getState().contacts.find(x => x.ik === ik)
-    const s = useStore.getState()
-    s.showToast('Forwarded to', c ? maskOf(s)(displayName(c)) : 'contact')
-  }
 }
 
 // Someone a message can mention: who they are, and the handle the composer writes.
@@ -910,7 +828,6 @@ export function useP2pList({
 }: ListOpts) {
   const me = useP2p(s => s.me)
   const editingState = useP2p(s => (s.editing?.room === draftKey ? s.editing : null))
-  const openContextMenu = useStore(s => s.openContextMenu)
   const [picker, setPicker] = useState<{ m: Message; anchor: HTMLElement | null } | null>(null)
   const user = useCallback((ik: string) => p2pUser(ik, nameOf(ik)), [nameOf])
   // Names the markdown recognizes as mentions, lowercased.
@@ -1022,79 +939,13 @@ export function useP2pList({
   )
 
   const menu = (p: P2pMessage, m: Message, x: number, y: number) => {
-    if (p.system?.kind === 'pin') return openContextMenu(x, y, pinLineMenu(p, m))
-    const mine = p.sender === me
-    const items: ContextMenuItem[] = []
-    const act = canAct && !p.archived
-    const can = messageActs(p, act, mine)
-    if (can.reply)
-      items.push({ label: 'Reply', icon: Reply, action: () => p2pDm.startReply(draftKey, p.id) })
-    if (can.edit) items.push(editMenuItem(() => p2pDm.startEdit(draftKey, p.id)))
-    const others = useP2p
-      .getState()
-      .contacts.filter(c => c.state === 'mutual' && c.ik !== forwardSkip)
-    if (can.forward)
-      items.push({
-        label: 'Forward',
-        icon: Forward,
-        submenu: [
-          ...others.map(c => ({
-            label: maskOf(useStore.getState())(displayName(c)),
-            action: () => void forwardTo(c.ik, p, ownName(p.sender)),
-          })),
-          {
-            label: 'Copy for forwarding',
-            icon: Copy,
-            action: () => copyForP2p(p, m, ownName(p.sender)),
-          },
-        ],
-      })
-    const thread = threads ? threadAct(p, act) : null
-    if (thread)
-      items.push({
-        label: thread,
-        icon: MessageSquareText,
-        action: () => void p2pThread.open(p.id),
-      })
-    if (act && mayPin && !p.thread)
-      items.push(
-        p.pinned !== null
-          ? {
-              label: 'Unpin Message',
-              icon: PinOff,
-              action: () => void p2pDm.pin(p.id, false),
-            }
-          : { label: 'Pin Message', icon: Pin, action: () => void p2pDm.pin(p.id, true) }
-      )
-    if (act && mayDelete(p))
-      items.push({
-        label: 'Delete Message',
-        danger: true,
-        icon: Trash2,
-        action: () => confirmDelete(p.id),
-      })
-    const files = attachmentMenu(p.fwd?.att ?? p.att, canAct)
-    if (files) items.push(files)
-    const body = p.fwd ? p.fwd.body : p.body
-    if (can.copy)
-      items.push({
-        label: 'Copy Text',
-        icon: Copy,
-        action: () => void sharing().copyText(body),
-      })
-    items.push(
-      {
-        label: 'Copy Timestamp',
-        icon: Clock,
-        action: () => void sharing().copyText(messageStampToken(m.created_at)),
-      },
-      { label: 'Copy Message ID', icon: Hash, action: () => void sharing().copyText(p.id) }
-    )
-    openContextMenu(
+    if (p.system?.kind === 'pin') return openActionMenu(x, y, { kind: 'p2p_pin_line', p, m })
+    const chat = { draftKey, canAct, mayPin, mayDelete, forwardSkip, threads, ownName }
+    openActionMenu(
       x,
       y,
-      items,
-      act
+      { kind: 'p2p_message', p, m, chat },
+      canAct && !p.archived
         ? {
             header: (
               <ChatSourceProvider value={source}>

@@ -6,8 +6,6 @@ import {
   BadgeAlert,
   BadgeCheck,
   BadgeX,
-  Copy,
-  RefreshCw,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -16,10 +14,9 @@ import {
 import type { Shield as ShieldKind } from '../../lib/p2p/contacts'
 import type { Presence } from '../../lib/p2p/node'
 import { badgeState, type BadgeSlot, type BadgeState } from '../../lib/p2p/badge'
-import { p2pBadge, useP2p } from '../../lib/p2p/app'
-import { sharing } from '../../lib/platform'
+import { useP2p } from '../../lib/p2p/app'
+import { openActionMenu } from '../../lib/actions/menu'
 import { useStore } from '../../lib/store'
-import type { ContextMenuItem } from '../../lib/store_types'
 import { longPress } from '../context_menu'
 
 // The one mark everything P2P carries: Waypoints, "P2P", a dashed outline in the tertiary color.
@@ -192,20 +189,18 @@ export function AccountChip({
 }) {
   const slot = useP2p(s => s.badges[ik])
   const streamer = useStore(s => s.streamer)
-  const openMenu = useStore(s => s.openContextMenu)
   const state = badgeState(slot, Date.now())
   if (!slot || !state) return null
   const { Icon, cls, text, short } = CHIP[state]
   const line = badgeLine(state, slot, streamer)
   const sub = slot.ok?.sub
-  const items: ContextMenuItem[] =
-    state === 'unchecked'
-      ? [{ label: 'Check again', icon: RefreshCw, action: () => p2pBadge.recheck(ik) }]
-      : sub
-        ? [{ label: 'Copy account', icon: Copy, action: () => void sharing().copyText(sub) }]
-        : []
   const open = (x: number, y: number) =>
-    openMenu(x, y, items, { header: <BadgeSheet state={state} slot={slot} /> })
+    openActionMenu(
+      x,
+      y,
+      { kind: 'p2p_badge', ik, sub: sub ?? null, stale: state === 'unchecked' },
+      { header: <BadgeSheet state={state} slot={slot} /> }
+    )
   return (
     <span
       data-account-badge={state}

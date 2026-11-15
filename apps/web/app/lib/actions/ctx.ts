@@ -79,6 +79,11 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'p2p_channel':
     case 'p2p_member':
     case 'p2p_role':
+    case 'p2p_message':
+    case 'p2p_pin_line':
+    case 'p2p_call':
+    case 'p2p_badge':
+    case 'p2p_home':
       return openPlace(s)
   }
 }
@@ -109,6 +114,11 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'p2p_channel':
     case 'p2p_member':
     case 'p2p_role':
+    case 'p2p_message':
+    case 'p2p_pin_line':
+    case 'p2p_call':
+    case 'p2p_badge':
+    case 'p2p_home':
       return null
   }
 }
@@ -139,6 +149,11 @@ const listOf = (s: RChatState, t: Target) => {
     case 'p2p_channel':
     case 'p2p_member':
     case 'p2p_role':
+    case 'p2p_message':
+    case 'p2p_pin_line':
+    case 'p2p_call':
+    case 'p2p_badge':
+    case 'p2p_home':
       return currentList(s)
   }
 }
@@ -227,6 +242,11 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
     case 'p2p_channel':
     case 'p2p_member':
     case 'p2p_role':
+    case 'p2p_message':
+    case 'p2p_pin_line':
+    case 'p2p_call':
+    case 'p2p_badge':
+    case 'p2p_home':
       return t
   }
 }

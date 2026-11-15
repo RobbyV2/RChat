@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import type { InboxEntry } from '../inbox'
 import type { Folder } from '../nav_layout'
 import type { Contact } from '../p2p/contacts'
+import type { P2pMessage } from '../p2p/dm'
 import type { ChannelView, MemberView, RoleView, ServerView } from '../p2p/server/types'
 import type { PaletteGroup } from '../palette'
 import type { RChatState } from '../store_types'
@@ -25,6 +26,18 @@ export type Args = Record<string, string>
 
 export type MemberWhere =
   'list' | 'author' | 'friend' | 'request' | 'interacted' | 'dm' | 'profile' | 'palette'
+
+// What a P2P message list knows about its rows: where replies and edits go, who may do what, the
+// contact a forward skips, whether rows start threads, and a sender's own profile name.
+export interface ChatFacts {
+  draftKey: string
+  canAct: boolean
+  mayPin: boolean
+  mayDelete(p: P2pMessage): boolean
+  forwardSkip: string | null
+  threads: boolean
+  ownName(ik: string): string
+}
 
 export type Target =
   | { kind: 'none' }
@@ -65,6 +78,15 @@ export type Target =
   | { kind: 'p2p_channel'; v: ServerView; ch: ChannelView }
   | { kind: 'p2p_member'; v: ServerView; m: MemberView }
   | { kind: 'p2p_role'; v: ServerView; r: RoleView }
+  // A P2P message as its list shows it (`m`), and a line that says a message was pinned.
+  | { kind: 'p2p_message'; p: P2pMessage; m: Message; chat: ChatFacts }
+  | { kind: 'p2p_pin_line'; p: P2pMessage; m: Message }
+  // The chevron of a P2P contact's call or video call button.
+  | { kind: 'p2p_call'; peer: string; video: boolean }
+  // An account badge: `stale` when the instance couldn't be asked about it.
+  | { kind: 'p2p_badge'; ik: string; sub: string | null; stale: boolean }
+  // The rail's P2P tile.
+  | { kind: 'p2p_home' }
 
 export interface ActionCtx {
   s: RChatState

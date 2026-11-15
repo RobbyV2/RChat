@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Hash, Lock, Trash2, TriangleAlert, Volume2, X } from 'lucide-react'
 import type { Page } from '../lib/lists'
-import { roleItems } from '../lib/actions/member'
+import { openChoiceMenu } from '../lib/actions/menu'
 import { api } from '../lib/instances'
 import {
   changeableRoles,
@@ -1110,7 +1110,6 @@ function Settings({ server }: { server: string }) {
   const deleteServer = useStore(s => s.deleteServer)
   const askConfirm = useStore(s => s.askConfirm)
   const grantAdmin = useStore(s => s.grantAdmin)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const openDialog = useStore(s => s.openDialog)
   const [name, setName] = useState(detail?.display_name ?? '')
   const [renameError, setRenameError] = useState<string | null>(null)
@@ -1150,7 +1149,14 @@ function Settings({ server }: { server: string }) {
     hasPerm(perms, Perm.ManageAdmins) &&
     changeableRoles(useStore.getState(), server, m.username).length > 0 ? (
       <button
-        onClick={e => openContextMenu(e.clientX, e.clientY, roleItems(server, m))}
+        onClick={e =>
+          openChoiceMenu(e.clientX, e.clientY, 'member_roles', {
+            kind: 'member',
+            user: m,
+            server,
+            where: 'list',
+          })
+        }
         className={textBtn}
       >
         Roles

@@ -2,10 +2,8 @@
 
 import { useState } from 'react'
 import { ChevronDown, Phone, PhoneOff, Video } from 'lucide-react'
-import { relayOnly } from '../../lib/ice'
-import { displayHost, hostOf, manualRelays, ownTurn } from '../../lib/relays'
-import { P2P_IP_HINT, ROUTE_LABEL } from '../../lib/call_choice'
-import { useStore, type ContextMenuItem } from '../../lib/store'
+import { openActionMenu } from '../../lib/actions/menu'
+import { useStore } from '../../lib/store'
 import { CALL_ELSEWHERE, p2pCall, useP2p } from '../../lib/p2p/app'
 import type { P2pMessage } from '../../lib/p2p/dm'
 import type { CallLog } from '../../lib/types'
@@ -44,11 +42,6 @@ export function P2pCallRow({ p, me }: { p: P2pMessage; me: string | null }) {
 // Call and Video for a P2P contact. A call with a contact is always direct; the chevron offers
 // a relay of the user's own for this call only, as in instance DMs.
 function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: string | null }) {
-  const hidesIp = useStore(s =>
-    relayOnly(s.instance?.ice, s.iceHelpers, s.iceRelay, ownTurn(s.relayPrefs))
-  )
-  const relays = useStore(s => s.relayPrefs)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const [shown, setShown] = useState<object | null>(null)
   const open = useStore(s => shown !== null && s.contextMenu === shown)
   const kind = video ? 'Video call' : 'Call'
@@ -56,28 +49,18 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
   const off = why !== null
   const title = why ?? `${kind}, direct (P2P)`
   const menu = (x: number, y: number) => {
-    const items: ContextMenuItem[] = [
+    openActionMenu(
+      x,
+      y,
+      { kind: 'p2p_call', peer, video },
       {
-        label: ROUTE_LABEL.p2p,
-        subtitle: hidesIp ? undefined : P2P_IP_HINT,
-        wrap: true,
-        radio: true,
-        checked: true,
-        action: () => void p2pCall.start(peer, video),
-      },
-      ...manualRelays(relays).map(r => ({
-        label: `Direct through ${displayHost(hostOf(r.url) ?? r.url)}`,
-        wrap: true,
-        action: () => void p2pCall.start(peer, video, r.url),
-      })),
-    ]
-    openContextMenu(x, y, items, {
-      header: (
-        <span className="px-2 text-xs font-medium text-on-surface-variant">
-          {video ? 'Start a video call' : 'Start a call'}
-        </span>
-      ),
-    })
+        header: (
+          <span className="px-2 text-xs font-medium text-on-surface-variant">
+            {video ? 'Start a video call' : 'Start a call'}
+          </span>
+        ),
+      }
+    )
     setShown(useStore.getState().contextMenu)
   }
   return (

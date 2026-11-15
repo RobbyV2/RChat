@@ -22,7 +22,7 @@ import { applyImport, exportP2p, KDF_MIN, unlockP2p, type Kdf } from '../p2p/tra
 import { P2pStore } from '../p2p/db'
 import { heldKey, purgeServer } from '../p2p/dag'
 import { shareKey, shareLive, shareTotal } from '../p2p/shares'
-import { threadAct } from '../../components/p2p/p2p_chat'
+import { threadAct } from '../actions/p2p_chat'
 import { channelReadSkips, threadsSig } from '../p2p/app'
 import { SEARCH_META, SEARCH_STALE, SERVER_TOTAL_BYTES } from '../p2p/db'
 import {
