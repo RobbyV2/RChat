@@ -11,8 +11,9 @@ use crate::hub::Epoch;
 use crate::ws::access::{
     Access, Pace, SUB_FRAME_COST, SubPace, channel_gate, reauthorize, token_live,
 };
-use crate::ws::conn::subscribe;
+use crate::ws::conn::{look, subscribe};
 use crate::ws::filter::{on_event, wants};
+use crate::ws::rewrite::presence_snapshot;
 
 #[tokio::test]
 async fn reauthorize_drops_revoked_access() {
@@ -788,6 +789,175 @@ async fn a_joining_change_drops_subscriptions_to_servers_it_closed() {
     assert!(!guest.settings_changed(&state, 1, &off).await, "guests off");
     assert!(carol.settings_changed(&state, 1, &off).await);
     crate::api::test_util::done(state, path).await;
+}
+
+/// A message of `kind` by `username` in a channel of `server`, as it is broadcast.
+fn posted(server: &str, kind: &str, username: &str) -> WsEvent {
+    WsEvent::Message {
+        server: Some(s(server)),
+        channel_id: Some(1),
+        dm_id: None,
+        dm_users: None,
+        message: Box::new(Message {
+            channel_id: Some(1),
+            dm_id: None,
+            kind: s(kind),
+            author: UserRef {
+                username: s(username),
+                ..message().author
+            },
+            ..message()
+        }),
+    }
+}
+
+#[tokio::test]
+async fn a_server_that_keeps_its_members_sends_outsiders_none_of_them() {
+    let (state, path) = crate::api::test_util::temp_state("ws_member_privacy").await;
+    outsiders_get_none_of_the_members(state.clone()).await;
+    crate::api::test_util::done(state, path).await;
+    if let Some((state, pg)) = crate::api::test_util::pg_state("ws_member_privacy").await {
+        outsiders_get_none_of_the_members(state.clone()).await;
+        crate::api::test_util::pg_done(state, pg).await;
+    }
+}
+
+async fn outsiders_get_none_of_the_members(state: AppState) {
+    for name in ["bob", "carol"] {
+        add_user(&state.db, name).await;
+    }
+    exec(
+        &state.db,
+        "INSERT INTO servers(name, display_name, password_hash, public_read, members_visible, created_at) VALUES('vault', 'vault', 'hash', 1, 0, 1)",
+    )
+    .await;
+    exec(
+        &state.db,
+        "INSERT INTO members(server, username, joined_at) VALUES('vault', 'bob', 1)",
+    )
+    .await;
+    let mut carol = Access::new(Some(s("carol")), false, HashSet::new());
+    let mut guest = Access::new(None, false, HashSet::new());
+    let mut root = Access::new(Some(s("root")), true, HashSet::new());
+    let mut bob = Access::new(Some(s("bob")), false, set(&["vault"]));
+    for access in [&mut carol, &mut guest, &mut root] {
+        subscribe(&state, 1, access, vec![s("vault")], HashMap::new()).await;
+        assert_eq!(access.subs, set(&["vault"]), "it reads vault");
+    }
+    let listing = [
+        WsEvent::PresenceChanged {
+            server: s("vault"),
+            username: s("bob"),
+            online: true,
+            online_count: 1,
+        },
+        joined("vault", "dave"),
+        WsEvent::MemberLeft {
+            server: s("vault"),
+            username: s("bob"),
+        },
+        WsEvent::MemberKicked {
+            server: s("vault"),
+            username: s("bob"),
+            banned: false,
+        },
+        WsEvent::MembersPurged {
+            server: s("vault"),
+            usernames: vec![s("bob")],
+        },
+        WsEvent::AdminChanged {
+            server: s("vault"),
+            username: s("bob"),
+            is_admin: true,
+            perms: 0,
+        },
+        WsEvent::UserUpdated {
+            user: UserRef {
+                username: s("bob"),
+                ..message().author
+            },
+            scope: UserScope {
+                servers: vec![s("vault")],
+                views: Vec::new(),
+                users: Vec::new(),
+            },
+        },
+        posted("vault", "join", "dave"),
+        posted("vault", "leave", "bob"),
+    ];
+    let shown = |access: &Access| {
+        let mut out: Vec<bool> = listing.iter().map(|ev| access.wants(ev)).collect();
+        out.push(presence_snapshot(&state.hub, access, "vault").is_some());
+        out
+    };
+    let all = vec![true; listing.len() + 1];
+    let none = vec![false; listing.len() + 1];
+    assert_eq!(shown(&carol), none, "carol reads vault from outside");
+    assert_eq!(shown(&guest), none, "so does a guest");
+    assert_eq!(shown(&root), all, "the site admin sees the members");
+    assert!(
+        carol.wants(&joined("vault", "carol")),
+        "her own join still arrives"
+    );
+    for access in [&carol, &guest] {
+        assert!(
+            access.wants(&posted("vault", "user", "bob")),
+            "what a member writes still arrives"
+        );
+    }
+    assert!(
+        !carol.wants(&posted("vault", "leave", "carol")),
+        "the leave message of someone who left is as hidden as in the history"
+    );
+    let shared = WsEvent::UserUpdated {
+        user: UserRef {
+            username: s("bob"),
+            ..message().author
+        },
+        scope: UserScope {
+            servers: vec![s("vault"), s("rchat")],
+            views: Vec::new(),
+            users: Vec::new(),
+        },
+    };
+    carol.member_servers.insert(s("rchat"));
+    assert!(
+        carol.wants(&shared),
+        "bob's name through a server they share"
+    );
+    carol.member_servers.remove("rchat");
+    let flip = |visible: bool| WsEvent::ServerUpdated {
+        server: ServerSummaryLite {
+            has_password: true,
+            public_read: Some(true),
+            members_visible: visible,
+            ..lite("vault")
+        },
+    };
+    exec(&state.db, "UPDATE servers SET members_visible = 1").await;
+    for access in [&mut carol, &mut guest, &mut bob] {
+        assert!(on_event(&state, 1, access, &flip(true)).await.is_some());
+    }
+    assert_eq!(shown(&carol), all, "vault shows its members again");
+    assert_eq!(shown(&guest), all);
+    exec(&state.db, "UPDATE servers SET members_visible = 0").await;
+    for access in [&mut carol, &mut guest, &mut bob] {
+        assert!(on_event(&state, 1, access, &flip(false)).await.is_some());
+    }
+    assert_eq!(shown(&carol), none, "and keeps them to itself");
+    assert_eq!(shown(&guest), none);
+    assert!(
+        listing.iter().all(|ev| bob.wants(ev)),
+        "members see each other"
+    );
+    let mut dora = Access::new(Some(s("carol")), false, HashSet::new());
+    let conn = state.hub.next_conn();
+    assert_eq!(
+        look(&state, conn, &mut dora, Some(s("vault"))).await,
+        Some(s("vault"))
+    );
+    assert_eq!(dora.peek.as_deref(), Some("vault"));
+    assert_eq!(shown(&dora), none, "a look from outside, too");
 }
 
 #[tokio::test]

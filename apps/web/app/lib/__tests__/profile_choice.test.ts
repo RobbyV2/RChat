@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  MEMBERS_HIDDEN_LINE,
+  MEMBERS_VISIBLE_LABEL,
   PROFILE_CHOICE_LABEL,
+  membersVisibleLine,
+  parseMembersVisible,
+  seesMembers,
   parseProfileChoice,
   profileChoiceLine,
   profileOptions,
@@ -110,5 +115,37 @@ describe('parseProfileChoice', () => {
     for (const odd of [undefined, null, 'public', 'Friends', 3]) {
       expect(parseProfileChoice(odd)).toBe('default')
     }
+  })
+})
+
+describe('membersVisibleLine', () => {
+  test('says who sees the members, on and off', () => {
+    expect(MEMBERS_VISIBLE_LABEL).toBe('Members can be seen by people outside this server')
+    expect(membersVisibleLine(true)).toBe(
+      'People who can open this server without joining can see its members and find them by name.'
+    )
+    expect(membersVisibleLine(false)).toBe(
+      'Only members see who is here and their profiles. Members who chose Everyone can still be found.'
+    )
+    expect(MEMBERS_HIDDEN_LINE).toBe('Only members can see who is in this server.')
+  })
+})
+
+describe('parseMembersVisible', () => {
+  test('a server from before the option has no switch', () => {
+    expect(parseMembersVisible(true)).toBe(true)
+    expect(parseMembersVisible(false)).toBe(false)
+    for (const raw of [undefined, null, 0, 1, 'false']) expect(parseMembersVisible(raw)).toBeNull()
+  })
+})
+
+describe('seesMembers', () => {
+  test('members and the site admin always, others while the server shows them', () => {
+    for (const visible of [true, undefined]) {
+      expect(seesMembers(visible, false, false)).toBe(true)
+    }
+    expect(seesMembers(false, false, false)).toBe(false)
+    expect(seesMembers(false, true, false)).toBe(true)
+    expect(seesMembers(false, false, true)).toBe(true)
   })
 })

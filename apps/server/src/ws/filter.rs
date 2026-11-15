@@ -280,6 +280,8 @@ pub(super) fn track(ev: &WsEvent, access: &mut Access) {
             if access.subs.remove(old_name) {
                 access.subs.insert(server.name.clone());
             }
+            access.closed.remove(old_name);
+            access.note_option(&server.name, server.members_visible);
             if let Some(at) = access.deadlines.remove(old_name) {
                 access.deadlines.insert(server.name.clone(), at);
             }
@@ -293,7 +295,10 @@ pub(super) fn track(ev: &WsEvent, access: &mut Access) {
             }
             forget_server(access, old_name);
         }
-        WsEvent::ServerUpdated { server } => forget_server(access, &server.name),
+        WsEvent::ServerUpdated { server } => {
+            access.note_option(&server.name, server.members_visible);
+            forget_server(access, &server.name);
+        }
         WsEvent::ServerDeleted { name } => {
             access.topics_dirty |= access.held(name);
             if access.member_servers.remove(name) {
@@ -301,6 +306,7 @@ pub(super) fn track(ev: &WsEvent, access: &mut Access) {
                 access.hosted_scope = None;
             }
             access.subs.remove(name);
+            access.closed.remove(name);
             if access.viewing.as_deref() == Some(name.as_str()) {
                 access.viewing = None;
             }

@@ -56,12 +56,25 @@ describe('servers reducers', () => {
       })
       expect(voice.servers!.s.guest_voice).toBe(guest_voice)
     }
+    expect(out.servers!.s.members_visible).toBeUndefined()
     for (const public_read of [true, false, null]) {
       const read = applyServerChange(s, {
         type: 'server_updated',
         server: { ...lite(), public_read },
       })
       expect(read.servers!.s.public_read).toBe(public_read)
+    }
+    for (const members_visible of [true, false]) {
+      const seen = applyServerChange(s, {
+        type: 'server_updated',
+        server: { ...lite(), members_visible },
+      })
+      expect(seen.servers!.s.members_visible).toBe(members_visible)
+      const older = applyServerChange(
+        { ...s, servers: { ...s.servers, s: { ...detail, members_visible } } },
+        { type: 'server_updated', server: lite() }
+      )
+      expect(older.servers!.s.members_visible).toBe(members_visible)
     }
     expect(out.servers!.t).toBe(s.servers.t)
     expect(out.me!.servers).toEqual([

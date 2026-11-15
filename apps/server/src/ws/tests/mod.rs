@@ -102,6 +102,7 @@ fn lite(name: &str) -> ServerSummaryLite {
         name_color: None,
         public_read: None,
         guest_voice: true,
+        members_visible: true,
     }
 }
 

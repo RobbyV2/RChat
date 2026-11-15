@@ -34,6 +34,7 @@ import {
 import { inviteUrl } from '../lib/invite'
 import { goingPublic, protectedDetail, publicDetail } from '../lib/joining'
 import { readableNow, type PublicRead } from '../lib/public_reading'
+import { parseMembersVisible } from '../lib/profile_choice'
 import { enterKey } from '../lib/keys'
 import { allowListTitle, emptyAllowText } from '../lib/channel_access'
 import { ALL_PERMS, Perm, hasPerm } from '../lib/types'
@@ -1225,6 +1226,7 @@ function Settings({ server }: { server: string }) {
             canRemove={hasPerm(perms, Perm.Kick)}
             publicRead={detail.public_read ?? null}
             guestVoice={detail.guest_voice !== false}
+            membersVisible={parseMembersVisible(detail.members_visible)}
           />
           <p className={sectionCls}>Delete Server</p>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

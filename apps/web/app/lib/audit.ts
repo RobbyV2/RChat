@@ -67,6 +67,7 @@ const FIELD_LABELS: Record<string, string> = {
   kind: 'Type',
   was_member: 'Was a member',
   guest_voice: 'Guests can use voice',
+  members_visible: 'Members can be seen by people outside this server',
   members_removed: 'Members removed',
   guests_revoked: 'Guest access ended',
   passwords_revoked: 'Extra passwords revoked',
@@ -359,6 +360,15 @@ export function sentence(entry: AuditEntry): Part[] {
         return [...actor, t(' renamed the server to '), { text: String(only.after), name: true }]
       if (only?.field === 'guest_voice')
         return [...actor, t(` turned voice ${only.after === 'off' ? 'off' : 'on'} for guests`)]
+      if (only?.field === 'members_visible')
+        return [
+          ...actor,
+          t(
+            only.after === false
+              ? ' hid the members from people outside the server'
+              : ' showed the members to people outside the server'
+          ),
+        ]
       if (only) return [...actor, t(` changed the server ${fieldLabel(only.field).toLowerCase()}`)]
       return [...actor, t(' updated the server settings')]
     }

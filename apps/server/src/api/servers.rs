@@ -147,6 +147,14 @@ pub struct ServerPatch {
     /// the server use them again. Accounts are not affected. Omit to leave it unchanged.
     #[serde(default)]
     guest_voice: Option<bool>,
+    /// "Members can be seen by people outside this server": `false` shows the member list,
+    /// members' profiles and their membership only to other members (and the member list to
+    /// instance staff), and finds members by name through the server only for other members
+    /// (a member whose own choice is `everyone` still shows their profile and is found by
+    /// name, but not as a member), and leaves the server's `join` and `leave` messages out of
+    /// what people outside it read; `true` (the default) also for people who open the server
+    /// without being a member. Omit to leave it unchanged.
+    members_visible: Option<bool>,
 }
 
 /// The server after an update, plus how many members a password change removed.
@@ -953,6 +961,7 @@ async fn server_detail(
         name_color,
         public_read,
         guest_voice,
+        members_visible,
     } = access.lite().clone();
     let rows = sqlx::query(
         "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position FROM channels WHERE server = $1 ORDER BY position, id",
@@ -998,6 +1007,7 @@ async fn server_detail(
         name_color,
         public_read,
         guest_voice,
+        members_visible,
         channels,
         categories,
         layout_version,
@@ -1194,7 +1204,9 @@ async fn members_page(
 ///
 /// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
 /// password-protected server signed-in callers must be members and guests need a valid
-/// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist.
+/// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist. A
+/// server whose `members_visible` is off lists its members only to its members and instance
+/// staff: everyone else gets an empty list in every mode.
 /// Each call takes one of the caller's `list` lookups (`LOOKUP_LIST_PER_MINUTE`, 120 a minute
 /// by default), or with `suggest` one of its `typeahead` lookups
 /// (`LOOKUP_TYPEAHEAD_PER_MINUTE`, 300 a minute), counted per account, or per client address
@@ -1242,6 +1254,9 @@ pub(crate) async fn list_members(
         &Proof::headers(&headers, &state.limits),
     )
     .await?;
+    if !crate::api::access::subjects::lists_members(&access) {
+        return Ok(Paged(Vec::new(), None));
+    }
     let key = access.name().to_string();
     let creator = access.lite().creator.clone();
     let (rows, next) = match usernames {
@@ -1366,7 +1381,9 @@ async fn recent_pairs(
 ///
 /// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
 /// password-protected server signed-in callers must be members and guests need a valid
-/// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist.
+/// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist. A
+/// server whose `members_visible` is off lists them only to its members and instance staff:
+/// everyone else gets an empty list.
 /// Each call takes one of the caller's `list` lookups (`LOOKUP_LIST_PER_MINUTE`, 120 a minute
 /// by default), counted per account, or per client address without one. General rate-limit
 /// bucket.
@@ -1402,6 +1419,9 @@ pub(crate) async fn list_interacted(
         &Proof::headers(&headers, &state.limits),
     )
     .await?;
+    if !crate::api::access::subjects::lists_members(&access) {
+        return Ok(Paged(Vec::new(), None));
+    }
     let key = access.name();
     let MembersQuery {
         offset,
@@ -1559,6 +1579,7 @@ async fn found_server(
             name_color: None,
             public_read: None,
             guest_voice: true,
+            members_visible: true,
         },
     });
     Ok(key)
@@ -2228,12 +2249,12 @@ pub(crate) async fn leave_server(
 ///
 /// Renames the server, switches it between public and password protected, sets, changes or
 /// clears its permanent password, changes its header colors, and sets whether people who
-/// aren't members can read it (`public_read`) and whether guests can use its voice channels
-/// (`guest_voice`); every field is optional.
+/// aren't members can read it (`public_read`) and see its members (`members_visible`), and
+/// whether guests can use its voice channels (`guest_voice`); every field is optional.
 /// Requires the Delete server permission; `members: remove` together with `password` also
 /// requires Kick. The built-in rchat server can't be given a password and keeps its key
-/// `rchat` (a new name changes only its display name); its colors, `public_read` and
-/// `guest_voice` may change.
+/// `rchat` (a new name changes only its display name); its colors, `public_read`,
+/// `members_visible` and `guest_voice` may change.
 ///
 /// When `password` is present, `members: remove` removes every other member whose server
 /// permissions are a strict subset of yours (their roles are dropped, as if kicked) and existing
@@ -2286,6 +2307,7 @@ pub(crate) async fn update_server(
         name_color,
         public_read,
         guest_voice,
+        members_visible,
     } = req;
     let builtin = is_builtin(&state.db, &key).await;
     if password.is_some() || protected.is_some() {
@@ -2379,6 +2401,13 @@ pub(crate) async fn update_server(
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(visible) = members_visible {
+        sqlx::query("UPDATE servers SET members_visible = $1 WHERE name = $2")
+            .bind(i64::from(visible))
+            .bind(&new_key)
+            .execute(&mut *tx)
+            .await?;
+    }
     let (removed, kept, bypassed) = match purge {
         true => purge_members(&mut tx, &new_key, &user, mine, own).await?,
         false => (
@@ -2421,6 +2450,11 @@ pub(crate) async fn update_server(
             "guest_voice",
             on_word(lite.guest_voice),
             on_word(guest_voice.unwrap_or(lite.guest_voice)),
+        )
+        .change(
+            "members_visible",
+            lite.members_visible,
+            members_visible.unwrap_or(lite.members_visible),
         );
     if changed.has_changes() {
         let changed = match passwords_revoked && password_hash.is_none() {
@@ -2480,6 +2514,7 @@ pub(crate) async fn update_server(
         name_color: name_color.unwrap_or(lite.name_color),
         public_read: public_read.unwrap_or(lite.public_read),
         guest_voice: guest_voice.unwrap_or(lite.guest_voice),
+        members_visible: members_visible.unwrap_or(lite.members_visible),
     };
     state.hub.broadcast(match renamed {
         true => WsEvent::ServerRenamed {
@@ -4969,6 +5004,210 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn member_privacy_is_set_by_whoever_edits_the_server() {
+        let (state, path) = temp_state("member_privacy_patch").await;
+        let db = &state.db;
+        let _ = make_server(&state, "club").await.expect("club");
+        add_member(db, "club", "bob", 0, 0, 1).await;
+        assert!(lite_of(db, "club").await.members_visible, "on by default");
+        let detail = |state: AppState| async move {
+            detail_as(&state, "club", Some(&mem_user("alice", false)))
+                .await
+                .expect("detail")
+                .members_visible
+        };
+        assert!(detail(state.clone()).await);
+        let patch = |who: &'static str, body: serde_json::Value| {
+            let state = state.clone();
+            async move {
+                update_server(
+                    State(state),
+                    Authed(mem_user(who, false)),
+                    Path("club".to_string()),
+                    Json(serde_json::from_value(body).expect("patch")),
+                )
+                .await
+                .map(|Json(updated)| updated.server.members_visible)
+            }
+        };
+        let mut rx = state.hub.subscribe();
+        assert!(matches!(
+            patch("bob", serde_json::json!({"members_visible": false})).await,
+            Err(ApiError(StatusCode::FORBIDDEN, _, _))
+        ));
+        assert!(lite_of(db, "club").await.members_visible, "a member can't");
+        assert_eq!(
+            patch("alice", serde_json::json!({"members_visible": false}))
+                .await
+                .ok(),
+            Some(false)
+        );
+        assert!(!lite_of(db, "club").await.members_visible);
+        assert!(!detail(state.clone()).await);
+        let mut told = None;
+        while let Ok(event) = rx.try_recv() {
+            if let WsEvent::ServerUpdated { server } = event {
+                told = Some(server.members_visible);
+            }
+        }
+        assert_eq!(told, Some(false), "server_updated carries it");
+        let logged: String = sqlx::query(
+            "SELECT details FROM audit_log WHERE server = 'club' AND action = 'server.update' ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(db)
+        .await
+        .expect("audit")
+        .try_get(0)
+        .expect("details");
+        let logged: serde_json::Value = serde_json::from_str(&logged).expect("json");
+        assert_eq!(
+            logged["changes"],
+            serde_json::json!([{"field": "members_visible", "before": true, "after": false}])
+        );
+        assert_eq!(
+            patch("alice", serde_json::json!({"banner_color": "#112233"}))
+                .await
+                .ok(),
+            Some(false),
+            "left out, it stays"
+        );
+        assert_eq!(
+            patch("alice", serde_json::json!({"members_visible": true}))
+                .await
+                .ok(),
+            Some(true)
+        );
+        assert!(lite_of(db, "club").await.members_visible);
+        done(state, path).await;
+    }
+
+    /// Every member list of `server` for `who` (or a guest holding `grant`), as sorted names.
+    async fn member_lists(
+        state: &AppState,
+        who: Option<User>,
+        grant: Option<&str>,
+        server: &str,
+    ) -> Vec<(&'static str, Vec<String>)> {
+        let mut headers = HeaderMap::new();
+        if let Some(grant) = grant {
+            let grant = crate::api::test_util::test_grant(grant);
+            headers.insert("x-guest-grant", grant.parse().expect("grant"));
+        }
+        let mut out = Vec::new();
+        for mode in ["", "q=bo", "admins=1", "usernames=bob"] {
+            let Paged(rows, _) = list_members(
+                State(state.clone()),
+                MaybeAuthed(who.clone()),
+                headers.clone(),
+                Path(server.to_string()),
+                RawQuery(Some(mode.to_string())),
+            )
+            .await
+            .expect(mode);
+            let mut names: Vec<String> = rows.into_iter().map(|m| m.user.username).collect();
+            names.sort();
+            out.push((mode, names));
+        }
+        let Paged(rows, _) = list_interacted(
+            State(state.clone()),
+            MaybeAuthed(who),
+            headers,
+            Path(server.to_string()),
+            Query(MembersQuery {
+                offset: None,
+                limit: None,
+                cursor: None,
+            }),
+        )
+        .await
+        .expect("interacted");
+        out.push(("interacted", rows.into_iter().map(|u| u.username).collect()));
+        out
+    }
+
+    #[tokio::test]
+    async fn a_server_that_keeps_its_members_lists_them_to_members_only() {
+        let (state, path) = temp_state("member_privacy_lists").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "carol", "erin"] {
+            crate::db::NewUser::plain(name).at(1).add(db).await;
+        }
+        for (server, password, public) in [("club", None, 1), ("vault", Some("hash"), 0)] {
+            sqlx::query("INSERT INTO servers(name, display_name, creator, password_hash, public_read, created_at) VALUES($1, $1, 'alice', $2, $3, 0)")
+                .bind(server)
+                .bind(password)
+                .bind(public)
+                .execute(db)
+                .await
+                .expect("server");
+            add_member(db, server, "alice", 1, 0, 1).await;
+            add_member(db, server, "bob", 0, 0, 2).await;
+            sqlx::query(
+                "INSERT INTO interactions(server, username, last_at) VALUES($1, 'erin', 3)",
+            )
+            .bind(server)
+            .execute(db)
+            .await
+            .expect("interaction");
+        }
+        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'vault', 0, 4000000000)")
+            .bind(crate::db::secret_key(&crate::api::test_util::test_grant("g1")))
+            .execute(db)
+            .await
+            .expect("grant");
+        let names = |list: &[&str]| list.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let full = vec![
+            ("", names(&["alice", "bob"])),
+            ("q=bo", names(&["bob"])),
+            ("admins=1", names(&["alice"])),
+            ("usernames=bob", names(&["bob"])),
+            ("interacted", names(&["erin"])),
+        ];
+        let none: Vec<_> = full.iter().map(|(m, _)| (*m, Vec::new())).collect();
+        let user = |name: &str, admin: bool| Some(mem_user(name, admin));
+        for visible in [true, false] {
+            sqlx::query("UPDATE servers SET members_visible = $1")
+                .bind(i64::from(visible))
+                .execute(db)
+                .await
+                .expect("option");
+            let outside = match visible {
+                true => &full,
+                false => &none,
+            };
+            let cases = [
+                ("alice, a member", user("alice", false), None, "club", &full),
+                ("bob, a member", user("bob", false), None, "vault", &full),
+                ("root reading", user("root", true), None, "club", &full),
+                (
+                    "root, the staff view",
+                    user("root", true),
+                    None,
+                    "vault",
+                    &full,
+                ),
+                (
+                    "carol, reading",
+                    user("carol", false),
+                    None,
+                    "club",
+                    outside,
+                ),
+                ("no token, reading", None, None, "club", outside),
+                ("a guest's grant", None, Some("g1"), "vault", outside),
+            ];
+            for (what, who, grant, server, want) in cases {
+                assert_eq!(
+                    &member_lists(&state, who, grant, server).await,
+                    want,
+                    "{what}, members_visible {visible}"
+                );
+            }
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn sole_channel_guard() {
         let (state, path) = temp_state("sole_channel").await;
         let cid: i64 = sqlx::query("SELECT id FROM channels WHERE server = 'rchat'")
@@ -5061,6 +5300,7 @@ mod tests {
                 name_color: None,
                 public_read: None,
                 guest_voice: None,
+                members_visible: None,
             }),
         )
         .await
@@ -6177,6 +6417,7 @@ mod tests {
                 name_color: None,
                 public_read: None,
                 guest_voice: None,
+                members_visible: None,
             }),
         )
         .await
@@ -6570,6 +6811,7 @@ mod tests {
                 name_color: None,
                 public_read: None,
                 guest_voice: None,
+                members_visible: None,
             }),
         )
         .await
@@ -9268,6 +9510,7 @@ mod tests {
                 name_color: None,
                 public_read: None,
                 guest_voice: None,
+                members_visible: None,
             }),
         )
         .await

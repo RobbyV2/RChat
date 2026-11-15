@@ -309,7 +309,7 @@ mod tests {
     use crate::api::servers::{
         ban_member, delete_channel, guest_access, join_server, kick_member, leave_server,
     };
-    use crate::api::test_util::{add_member, done, mem_user, temp_state};
+    use crate::api::test_util::{add_member, done, mem_user, pg_done, pg_state, temp_state};
     use crate::api::{MaybeAuthed, Message};
     use crate::db::Db;
 
@@ -884,5 +884,362 @@ mod tests {
             "everyone joined"
         );
         done(state, path).await;
+    }
+
+    /// Who reads a server: an account, the site admin, a guest with a grant, or nobody signed
+    /// in.
+    #[derive(Clone, Copy)]
+    struct Reader {
+        name: Option<&'static str>,
+        admin: bool,
+        grant: Option<&'static str>,
+    }
+
+    impl Reader {
+        fn user(self) -> Option<User> {
+            self.name.map(|name| mem_user(name, self.admin))
+        }
+
+        fn headers(self) -> HeaderMap {
+            let mut headers = HeaderMap::new();
+            if let Some(grant) = self.grant {
+                let grant = crate::api::test_util::test_grant(grant);
+                headers.insert("x-guest-grant", grant.parse().expect("grant"));
+            }
+            headers
+        }
+    }
+
+    /// A system channel with a text message, a join and a leave message.
+    struct Place {
+        server: &'static str,
+        channel: i64,
+        text: i64,
+        join: i64,
+        leave: i64,
+    }
+
+    fn rows_of(list: &[Message]) -> String {
+        list.iter()
+            .map(|m| format!("{} {}", m.kind, m.author.username))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    fn code_of(ApiError(code, _, _): ApiError) -> String {
+        code.as_u16().to_string()
+    }
+
+    /// What `reader` gets of the join and leave messages of `place` from every read that
+    /// answers by channel or by message id.
+    async fn system_reads(
+        state: &AppState,
+        reader: Reader,
+        place: &Place,
+    ) -> Vec<(&'static str, String)> {
+        let Place {
+            server: _,
+            channel,
+            text,
+            join,
+            leave,
+        } = *place;
+        let mut out = Vec::new();
+        for (what, page) in [
+            ("history", json!({})),
+            ("history around", json!({ "around": join })),
+            ("history after", json!({ "after": 0 })),
+        ] {
+            let listed = channel_messages(
+                State(state.clone()),
+                MaybeAuthed(reader.user()),
+                reader.headers(),
+                Path(channel),
+                Query(serde_json::from_value(page).expect("query")),
+            )
+            .await
+            .map(|Json(list)| rows_of(&list))
+            .unwrap_or_else(code_of);
+            out.push((what, listed));
+        }
+        for (what, id) in [("location of join", join), ("location of leave", leave)] {
+            let located = crate::api::messages::message_location(
+                State(state.clone()),
+                MaybeAuthed(reader.user()),
+                reader.headers(),
+                Path(id),
+            )
+            .await
+            .map(|Json(found)| format!("{} {}", found.kind, found.author.username))
+            .unwrap_or_else(code_of);
+            out.push((what, located));
+        }
+        let batch = crate::api::messages::message_locations(
+            State(state.clone()),
+            MaybeAuthed(reader.user()),
+            reader.headers(),
+            Json(serde_json::from_value(json!({ "ids": [text, join, leave] })).expect("ids")),
+        )
+        .await
+        .map(|Json(found)| {
+            found
+                .iter()
+                .map(|l| format!("{} {}", l.kind, l.author.username))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_else(code_of);
+        out.push(("locations", batch));
+        let thread = crate::api::messages::thread_messages(
+            State(state.clone()),
+            MaybeAuthed(reader.user()),
+            reader.headers(),
+            Path(join),
+            Query(serde_json::from_value(json!({})).expect("query")),
+        )
+        .await
+        .map(|_| "200".to_string())
+        .unwrap_or_else(code_of);
+        out.push(("thread of join", thread));
+        let reactors = crate::api::reactions::list_reactors(
+            State(state.clone()),
+            MaybeAuthed(reader.user()),
+            reader.headers(),
+            Path((join, "👍".to_string())),
+            Query(serde_json::from_value(json!({})).expect("query")),
+        )
+        .await
+        .map(|_| "200".to_string())
+        .unwrap_or_else(code_of);
+        out.push(("reactions of join", reactors));
+        out
+    }
+
+    /// The kinds `reader` gets from the reads that list messages across a channel or an
+    /// account: the pins, the search (everything, and what the joiner wrote) and the inbox.
+    async fn listed_kinds(state: &AppState, reader: Reader, place: &Place) -> Vec<String> {
+        let mut kinds = Vec::new();
+        let Json(pins) = crate::api::pins::channel_pins(
+            State(state.clone()),
+            MaybeAuthed(reader.user()),
+            reader.headers(),
+            Path(place.channel),
+        )
+        .await
+        .expect("pins");
+        kinds.extend(pins.into_iter().map(|m| format!("pins {}", m.kind)));
+        for query in ["", "from=carol&"] {
+            let crate::api::Paged(found, _) = crate::api::messages::search(
+                State(state.clone()),
+                MaybeAuthed(reader.user()),
+                reader.headers(),
+                axum::extract::RawQuery(Some(format!("{query}servers={}", place.server))),
+            )
+            .await
+            .expect("search");
+            kinds.extend(
+                found
+                    .into_iter()
+                    .map(|r| format!("search {query}{}", r.message.kind)),
+            );
+        }
+        if let Some(user) = reader.user() {
+            let Json(inbox) = crate::api::inbox::list_inbox(
+                State(state.clone()),
+                Authed(user),
+                Query(serde_json::from_value(json!({})).expect("query")),
+            )
+            .await
+            .expect("inbox");
+            kinds.extend(
+                inbox
+                    .items
+                    .into_iter()
+                    .filter(|item| [Some(place.join), Some(place.leave)].contains(&item.message_id))
+                    .map(|item| format!("inbox {:?}", item.message_id)),
+            );
+        }
+        kinds.sort();
+        kinds.dedup();
+        kinds
+    }
+
+    async fn joins_and_leaves_are_read_by_whoever_sees_the_members(state: AppState) {
+        let db = &state.db;
+        for name in ["alice", "carol", "erin", "zed"] {
+            crate::db::NewUser::plain(name).at(1).add(db).await;
+        }
+        exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 1)").await;
+        exec(db, "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('vault', 'Vault', 'alice', 'hash', 1)").await;
+        sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'vault', 0, 4000000000)")
+            .bind(crate::db::secret_key(&crate::api::test_util::test_grant("g1")))
+            .execute(db)
+            .await
+            .expect("grant");
+        let t = now();
+        let mut places = Vec::new();
+        for server in ["club", "vault"] {
+            add_member(db, server, "alice", 1, 0, 1).await;
+            let channel = id_of(db, &format!("INSERT INTO channels(server, name, kind, created_at) VALUES('{server}', 'general', 'text', 1) RETURNING id")).await;
+            let text = id_of(db, &format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({channel}, 'alice', 'welcome', {t}) RETURNING id")).await;
+            let (joined, left) = match server {
+                "club" => {
+                    for who in ["carol", "erin"] {
+                        join(&state, who, "club").await.expect("join");
+                    }
+                    leave(&state, "erin").await.expect("leave");
+                    (
+                        id_of(db, "SELECT id FROM messages WHERE kind = 'join' AND author = 'carol'").await,
+                        id_of(db, "SELECT id FROM messages WHERE kind = 'leave' AND author = 'erin'").await,
+                    )
+                }
+                _ => (
+                    id_of(db, &format!("INSERT INTO messages(channel_id, author, content, kind, created_at) VALUES({channel}, 'carol', '', 'join', {t}) RETURNING id")).await,
+                    id_of(db, &format!("INSERT INTO messages(channel_id, author, content, kind, created_at) VALUES({channel}, 'erin', '', 'leave', {t}) RETURNING id")).await,
+                ),
+            };
+            let _ = crate::api::pins::pin_message(
+                State(state.clone()),
+                Path(text),
+                Authed(mem_user("alice", false)),
+            )
+            .await
+            .expect("pin");
+            places.push(Place {
+                server,
+                channel,
+                text,
+                join: joined,
+                leave: left,
+            });
+        }
+        let [club, vault] = places.as_slice() else {
+            panic!("two places");
+        };
+        let rows = |list: &[&str]| list.join(", ");
+        let answers = |history: String, by_id: [&str; 5]| {
+            let [join, leave, batch, thread, reactors] = by_id;
+            vec![
+                ("history", history.clone()),
+                ("history around", history.clone()),
+                ("history after", history),
+                ("location of join", join.to_string()),
+                ("location of leave", leave.to_string()),
+                ("locations", batch.to_string()),
+                ("thread of join", thread.to_string()),
+                ("reactions of join", reactors.to_string()),
+            ]
+        };
+        let shown = |all: &[&str]| {
+            answers(
+                rows(all),
+                [
+                    "join carol",
+                    "leave erin",
+                    "user alice, join carol, leave erin",
+                    "400",
+                    "200",
+                ],
+            )
+        };
+        let kept = |rest: &[&str]| answers(rows(rest), ["404", "404", "user alice", "404", "404"]);
+        let club_all = [
+            "user alice",
+            "join carol",
+            "join erin",
+            "leave erin",
+            "pin alice",
+        ];
+        let vault_all = ["user alice", "join carol", "leave erin", "pin alice"];
+        let rest = ["user alice", "pin alice"];
+        let by = |name, admin, grant| Reader { name, admin, grant };
+        for visible in [true, false] {
+            sqlx::query("UPDATE servers SET members_visible = $1")
+                .bind(i64::from(visible))
+                .execute(db)
+                .await
+                .expect("option");
+            let cases = [
+                (
+                    "alice, a member",
+                    by(Some("alice"), false, None),
+                    club,
+                    &club_all[..],
+                    true,
+                ),
+                (
+                    "alice, a member",
+                    by(Some("alice"), false, None),
+                    vault,
+                    &vault_all[..],
+                    true,
+                ),
+                (
+                    "the site admin reading",
+                    by(Some("root"), true, None),
+                    club,
+                    &club_all[..],
+                    true,
+                ),
+                (
+                    "the site admin, the staff view",
+                    by(Some("root"), true, None),
+                    vault,
+                    &vault_all[..],
+                    true,
+                ),
+                (
+                    "zed, reading",
+                    by(Some("zed"), false, None),
+                    club,
+                    &club_all[..],
+                    visible,
+                ),
+                (
+                    "no token, reading",
+                    by(None, false, None),
+                    club,
+                    &club_all[..],
+                    visible,
+                ),
+                (
+                    "a guest's grant",
+                    by(None, false, Some("g1")),
+                    vault,
+                    &vault_all[..],
+                    visible,
+                ),
+            ];
+            for (who, reader, place, all, sees) in cases {
+                let want = match sees {
+                    true => shown(all),
+                    false => kept(&rest),
+                };
+                assert_eq!(
+                    system_reads(&state, reader, place).await,
+                    want,
+                    "{who} in {}, members_visible {visible}",
+                    place.server
+                );
+                let kinds = listed_kinds(&state, reader, place).await;
+                assert!(
+                    kinds.contains(&"pins user".to_string())
+                        && kinds.iter().all(|k| k == "pins user" || k == "search user"),
+                    "{who} in {}, members_visible {visible}: {kinds:?}",
+                    place.server
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn joins_and_leaves_stay_inside_a_server_that_keeps_its_members() {
+        let (state, path) = temp_state("system_member_privacy").await;
+        joins_and_leaves_are_read_by_whoever_sees_the_members(state.clone()).await;
+        done(state, path).await;
+        if let Some((state, pg)) = pg_state("system_member_privacy").await {
+            joins_and_leaves_are_read_by_whoever_sees_the_members(state.clone()).await;
+            pg_done(state, pg).await;
+        }
     }
 }

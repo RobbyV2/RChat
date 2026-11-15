@@ -390,3 +390,26 @@ describe('the guest voice option', () => {
     expect(fieldLabel('guest_voice')).toBe('Guests can use voice')
   })
 })
+
+describe('the member privacy option', () => {
+  test('a change says who sees the members', () => {
+    const turned = (before: boolean, after: boolean) =>
+      sentenceText(
+        entry({
+          action: 'server.update',
+          target: {
+            kind: 'server',
+            id: null,
+            name: 'Club',
+            user: null,
+            staff: false,
+            deleted: false,
+          },
+          details: { changes: [{ field: 'members_visible', before, after }] },
+        })
+      )
+    expect(turned(true, false)).toBe('Alice hid the members from people outside the server')
+    expect(turned(false, true)).toBe('Alice showed the members to people outside the server')
+    expect(fieldLabel('members_visible')).toBe('Members can be seen by people outside this server')
+  })
+})

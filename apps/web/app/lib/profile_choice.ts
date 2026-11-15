@@ -76,3 +76,22 @@ export const parseProfileChoices = (raw: unknown): ProfileChoices => {
   if (raw === undefined) return 'narrower'
   return raw === 'any' || raw === 'narrower' ? raw : 'site'
 }
+
+// Server settings: "Members can be seen by people outside this server".
+export const MEMBERS_VISIBLE_LABEL = 'Members can be seen by people outside this server'
+
+export const membersVisibleLine = (visible: boolean) =>
+  visible
+    ? 'People who can open this server without joining can see its members and find them by name.'
+    : 'Only members see who is here and their profiles. Members who chose Everyone can still be found.'
+
+// The option as the server sent it: null for a server from before it, which has no switch.
+export const parseMembersVisible = (raw: unknown): boolean | null =>
+  typeof raw === 'boolean' ? raw : null
+
+// Whether the viewer sees a server's member list: members and the site admin always, anyone
+// else while the server shows its members to people outside it.
+export const seesMembers = (visible: boolean | undefined, member: boolean, siteAdmin: boolean) =>
+  member || siteAdmin || visible !== false
+
+export const MEMBERS_HIDDEN_LINE = 'Only members can see who is in this server.'

@@ -622,6 +622,7 @@ pub(super) async fn subscribe(
     }
     access.deadlines = deadlines;
     access.set_peek(peek);
+    access.note_closed(&state.read()).await;
     leave_closed_voice(&state.hub, access);
 }
 
@@ -649,6 +650,7 @@ pub(super) async fn look(
         (_, _) => (None, None, None),
     };
     access.set_peek(peek);
+    access.note_closed(&state.read()).await;
     if let Some(s) = &seen {
         access.topics_dirty |= !access.held(s);
     }

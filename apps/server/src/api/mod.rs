@@ -366,6 +366,14 @@ pub struct ServerSummaryLite {
     /// voice channels. Accounts are not affected.
     #[serde(default = "yes")]
     pub guest_voice: bool,
+    /// "Members can be seen by people outside this server": `true` (the default) lets people
+    /// who can open the server without being a member see its member list and its members'
+    /// profiles and find them by name through it; `false` shows them only to members (and the
+    /// member list to instance staff), and people outside the server get none of its `join`
+    /// and `leave` messages. A member whose own choice is `everyone` still shows their profile
+    /// and is found by name, but not as a member of this server.
+    #[serde(default = "yes")]
+    pub members_visible: bool,
 }
 
 /// A channel in a server.
@@ -568,6 +576,9 @@ pub struct ServerDetail {
     /// voice channels; accounts are not affected. `true` for new servers. Set with
     /// `PATCH /api/v1/servers/{name}`.
     pub guest_voice: bool,
+    /// "Members can be seen by people outside this server" (see `ServerSummaryLite`). Set with
+    /// `PATCH /api/v1/servers/{name}`.
+    pub members_visible: bool,
     /// Channels the caller can see, in list order (see `category_id` and `position`). Channels
     /// with permission rules that do not grant the caller `can_view` are left out.
     pub channels: Vec<Channel>,

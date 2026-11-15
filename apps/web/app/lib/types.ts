@@ -51,6 +51,8 @@ export interface ServerSummaryLite {
   public_read?: boolean | null
   // "Guests can use voice": absent from older servers means on.
   guest_voice?: boolean
+  // "Members can be seen by people outside this server". Absent on older servers: on.
+  members_visible?: boolean
 }
 
 export type PasswordMembers = 'keep' | 'remove'
@@ -215,6 +217,8 @@ export interface ServerDetail {
   public_read?: boolean | null
   // "Guests can use voice": absent from older servers means on.
   guest_voice?: boolean
+  // "Members can be seen by people outside this server". Absent on older servers: on.
+  members_visible?: boolean
   channels: Channel[]
   categories?: Category[]
   layout_version?: number

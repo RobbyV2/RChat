@@ -1804,7 +1804,8 @@ pub(crate) async fn message_locations(
 /// users are refused. All refusals are the same `404 Not found` as for an unknown channel.
 /// Channels with permission overrides need the view permission (guests never see them). Without
 /// read-history access, you get only messages posted after you joined (none if you are not a
-/// member). General rate-limit bucket.
+/// member). In a server that keeps its members to itself (`members_visible` off), `join` and
+/// `leave` messages are left out for callers who are not members. General rate-limit bucket.
 #[utoipa::path(get, path = "/api/v1/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id"), PageQuery), responses((status = 200, description = "Up to `limit` (default 50, max 100) top-level messages, oldest first: the newest ones before `before` (or the latest), or with `after` the oldest ones after that id, or with `around` a window of `limit / 2` messages before that id followed by the message itself and newer ones (`around` wins over `after`, which wins over `before`); without read-history access only messages since joining are returned", body = Vec<Message>), (status = 400, description = "Non-numeric id or paging parameter (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
 pub(crate) async fn channel_messages(
     State(state): State<AppState>,
@@ -1823,14 +1824,13 @@ pub(crate) async fn channel_messages(
     )
     .await?;
     let min_ts = channel.read_since(db).await?;
-    let mut msgs = page(
-        db,
-        "m.channel_id = $1 AND m.thread_root_id IS NULL",
-        id,
-        &q,
-        min_ts,
-    )
-    .await?;
+    let cond = match channel.shows_membership_notices() {
+        true => "m.channel_id = $1 AND m.thread_root_id IS NULL",
+        false => {
+            "m.channel_id = $1 AND m.thread_root_id IS NULL AND m.kind NOT IN ('join', 'leave')"
+        }
+    };
+    let mut msgs = page(db, cond, id, &q, min_ts).await?;
     attach_reactions(db, &mut msgs, user.as_ref()).await?;
     crate::api::polls::personalize(db, &mut msgs, user.as_ref()).await?;
     Ok(Json(msgs))

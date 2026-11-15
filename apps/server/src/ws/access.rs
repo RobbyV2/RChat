@@ -17,8 +17,9 @@ use super::{
 };
 
 use crate::api::access::{
-    ViewRules, is_member, presence_mode, ws_channel_now, ws_channel_public, ws_channel_view,
-    ws_grant_deadline, ws_member_servers, ws_server_password_hash, ws_view_under,
+    ViewRules, is_member, is_membership_notice, presence_mode, ws_channel_now, ws_channel_public,
+    ws_channel_view, ws_closed_servers, ws_grant_deadline, ws_member_servers,
+    ws_server_password_hash, ws_view_under,
 };
 use crate::api::policy::ServerJoining;
 use crate::api::{Settings, token_row};
@@ -316,6 +317,9 @@ pub(super) struct Access {
     pub(super) site_admin: bool,
     pub(super) member_servers: HashSet<String>,
     pub(super) subs: HashSet<String>,
+    /// Servers it reads from outside that keep their members to themselves
+    /// (`members_visible` off).
+    pub(super) closed: HashSet<String>,
     pub(super) grants: HashMap<String, String>,
     pub(super) deadlines: HashMap<String, i64>,
     pub(super) viewing: Option<String>,
@@ -358,6 +362,7 @@ impl Access {
             site_admin,
             member_servers,
             subs: HashSet::new(),
+            closed: HashSet::new(),
             grants: HashMap::new(),
             deadlines: HashMap::new(),
             viewing: None,
@@ -596,7 +601,102 @@ impl Access {
         self.member_servers.contains(name) || self.subs.contains(name)
     }
 
+    /// Whether this connection reads `server` from outside while it keeps its members to
+    /// itself.
+    pub(super) fn closes(&self, server: &str) -> bool {
+        self.closed.contains(server) && !self.member_servers.contains(server)
+    }
+
+    /// Notes which servers this connection reads from outside keep their members to themselves.
+    /// The site admin sees every member list; a failed read counts each of them as closed.
+    pub(super) async fn note_closed(&mut self, db: &Db) {
+        let outside: Vec<&str> = self
+            .subs
+            .iter()
+            .filter(|s| !self.member_servers.contains(*s))
+            .map(String::as_str)
+            .collect();
+        if self.site_admin {
+            self.closed.clear();
+            return;
+        }
+        self.closed = match ws_closed_servers(db, &outside).await {
+            Ok(closed) => closed,
+            Err(_) => outside.into_iter().map(str::to_string).collect(),
+        };
+    }
+
+    /// Keeps `closed` in step with a server's `members_visible` from an event.
+    pub(super) fn note_option(&mut self, server: &str, visible: bool) {
+        match visible || self.site_admin || !self.subs.contains(server) {
+            true => self.closed.remove(server),
+            false => self.closed.insert(server.to_string()),
+        };
+    }
+
+    /// Whether `ev` shows the members of a server this connection reads from outside while it
+    /// keeps them to itself: who is in it, joins and leaves, admins, presence, and a member's
+    /// name changes that reach it only through such servers. Events about the connection's own
+    /// user still arrive. `join` and `leave` messages are hidden whoever they are about, like
+    /// in the channel's history.
+    fn hides_members(&self, ev: &WsEvent) -> bool {
+        let me = self.user.as_deref();
+        let (server, about) = match ev {
+            WsEvent::Message {
+                server: Some(server),
+                channel_id: _,
+                dm_id: _,
+                dm_users: _,
+                message,
+            } if is_membership_notice(&message.kind) => return self.closes(server),
+            WsEvent::MemberJoined { server, member } => (server, Some(&member.user.username)),
+            WsEvent::MemberLeft { server, username }
+            | WsEvent::MemberKicked {
+                server,
+                username,
+                banned: _,
+            }
+            | WsEvent::AdminChanged {
+                server,
+                username,
+                is_admin: _,
+                perms: _,
+            }
+            | WsEvent::PresenceChanged {
+                server,
+                username,
+                online: _,
+                online_count: _,
+            } => (server, Some(username)),
+            WsEvent::MembersPurged { server, usernames } => {
+                (server, usernames.iter().find(|u| Some(u.as_str()) == me))
+            }
+            WsEvent::PresenceSnapshot {
+                server,
+                online: _,
+                online_count: _,
+            } => (server, None),
+            WsEvent::UserUpdated { user, scope } => {
+                let mut held = scope
+                    .servers
+                    .iter()
+                    .chain(scope.views.iter())
+                    .filter(|s| self.held(s))
+                    .peekable();
+                return Some(user.username.as_str()) != me
+                    && !me.is_some_and(|me| scope.users.iter().any(|u| u == me))
+                    && held.peek().is_some()
+                    && held.all(|s| self.closes(s));
+            }
+            _ => return false,
+        };
+        about.is_none_or(|u| Some(u.as_str()) != me) && self.closes(server)
+    }
+
     pub(super) fn wants(&self, ev: &WsEvent) -> bool {
+        if self.hides_members(ev) {
+            return false;
+        }
         let me = self.user.as_deref();
         match self.retry.pending() {
             false => {
@@ -783,6 +883,7 @@ pub(super) async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::
     {
         access.viewing = None;
     }
+    access.note_closed(db).await;
     access.topics_dirty = true;
     Ok(true)
 }

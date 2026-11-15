@@ -775,6 +775,7 @@ fn indexes_follow_every_op() {
                     name_color: None,
                     public_read: None,
                     guest_voice: true,
+                    members_visible: true,
                 },
             },
         },
@@ -1502,6 +1503,7 @@ fn renamed(old_name: &str, name: &str) -> Op {
                 name_color: None,
                 public_read: None,
                 guest_voice: true,
+                members_visible: true,
             },
         },
     }

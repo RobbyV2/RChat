@@ -232,6 +232,7 @@ fn self_grants_are_recognized() {
             name_color: None,
             public_read: None,
             guest_voice: true,
+            members_visible: true,
         },
     };
     assert_eq!(

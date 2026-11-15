@@ -18,6 +18,7 @@ import {
   type PublicRead,
   type ReadingChoice,
 } from '../lib/public_reading'
+import { MEMBERS_VISIBLE_LABEL, membersVisibleLine } from '../lib/profile_choice'
 import {
   ACTIVE_MAX,
   EXPIRY_PRESETS,
@@ -605,18 +606,51 @@ export function GuestVoiceSwitch({ server, on }: { server: string; on: boolean }
   )
 }
 
+// "Members can be seen by people outside this server": on or off.
+function MemberPrivacy({ server, visible }: { server: string; visible: boolean }) {
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const flip = (next: boolean) => {
+    if (busy || next === visible) return
+    setBusy(true)
+    void api
+      .updateServer(server, { members_visible: next })
+      .then(
+        () => setError(null),
+        (err: unknown) => setError(errorText(err))
+      )
+      .finally(() => setBusy(false))
+  }
+  return (
+    <div className="-mx-2 pt-3">
+      <SettingSwitch
+        label={MEMBERS_VISIBLE_LABEL}
+        hint={membersVisibleLine(visible)}
+        value={visible}
+        onChange={flip}
+        disabled={busy}
+      />
+      <div className="px-2">
+        <FieldError message={error} />
+      </div>
+    </div>
+  )
+}
+
 export function ServerAccessSection({
   server,
   hasPassword,
   canRemove,
   publicRead,
   guestVoice,
+  membersVisible,
 }: {
   server: string
   hasPassword: boolean
   canRemove: boolean
   publicRead: PublicRead
   guestVoice: boolean
+  membersVisible: boolean | null
 }) {
   const username = useStore(s => s.me?.username ?? null)
   const askConfirm = useStore(s => s.askConfirm)
@@ -789,6 +823,7 @@ export function ServerAccessSection({
             </>
           )}
           <PublicReading server={server} hasPassword={data.protected} option={publicRead} />
+          {membersVisible !== null && <MemberPrivacy server={server} visible={membersVisible} />}
           <GuestVoiceSwitch server={server} on={guestVoice} />
           <FieldError message={error} />
         </>

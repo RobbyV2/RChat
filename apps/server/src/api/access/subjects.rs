@@ -236,12 +236,26 @@ const INCOMING_SQL: &str = "SELECT 1 FROM friend_requests WHERE sender = $1 AND 
 const DM_SQL: &str = "SELECT 1 FROM dms d WHERE d.user_a = $1 AND d.user_b = $2 AND EXISTS(SELECT 1 FROM messages m WHERE m.dm_id = d.id AND m.author = $3)";
 const COMMON_SQL: &str = "SELECT a.server FROM members a JOIN members b ON b.server = a.server AND b.username = $2 WHERE a.username = $1 LIMIT 1";
 
-/// Whether `$1` is a member of a server anyone may read by its name, as the gate decides it.
+/// Whether `$1` is a member of a server anyone may read by its name, as the gate decides it,
+/// that shows its members to people outside it.
 fn public_sql(reading: Reading) -> String {
     format!(
-        "SELECT 1 FROM members m JOIN servers s ON s.name = m.server WHERE m.username = $1 AND {} LIMIT 1",
+        "SELECT 1 FROM members m JOIN servers s ON s.name = m.server WHERE m.username = $1 AND {} AND s.members_visible <> 0 LIMIT 1",
         reading.readable_sql()
     )
+}
+
+/// Whether a server the caller opened proves a relationship with its members: always for one
+/// of its members, and for anyone else only while it shows its members to people outside it.
+fn shows_members(access: &ServerAccess) -> bool {
+    access.is_member() || access.lite().members_visible
+}
+
+/// Whether a server the caller opened lists its members and their membership to the caller: to
+/// its members and the site admin always, and to anyone else only while it shows its members to
+/// people outside it.
+pub fn lists_members(access: &ServerAccess) -> bool {
+    shows_members(access) || access.site_admin()
 }
 
 fn own_choice(stored: Option<&str>) -> Option<ProfilePolicy> {
@@ -339,10 +353,10 @@ async fn find(state: &AppState, caller: &Caller<'_>, username: &str) -> Result<F
                 ran("member");
                 if is_member(db, access.name(), &name).await? {
                     let found = Seen::Context(access.name().to_string());
-                    if seen.is_none() && found.counts(level) {
+                    if seen.is_none() && found.counts(level) && shows_members(&access) {
                         seen = Some(found);
                     }
-                    member = Some(access);
+                    member = Some(access).filter(lists_members);
                 }
             }
         }
@@ -351,7 +365,7 @@ async fn find(state: &AppState, caller: &Caller<'_>, username: &str) -> Result<F
             if !servers.is_empty() {
                 ran("grants");
                 let sql = format!(
-                    "SELECT server FROM members WHERE username = $1 AND server IN ({}) ORDER BY server LIMIT 1",
+                    "SELECT m.server FROM members m JOIN servers s ON s.name = m.server WHERE m.username = $1 AND m.server IN ({}) AND s.members_visible <> 0 ORDER BY m.server LIMIT 1",
                     placeholders(2, servers.len())
                 );
                 let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(&name);
@@ -432,7 +446,8 @@ pub async fn view_user(
 /// account's level `everyone`, a friendship, a pending request from the account, a direct
 /// conversation the account wrote in, a common server, a server the caller names and can open
 /// where the account is a member (for a guest also a server its grants open), a server anyone
-/// can read, or a P2P binding of the account. The first that holds and counts at the account's
+/// can read, or a P2P binding of the account. A server that keeps its members to itself
+/// (`members_visible` off) proves nothing to people outside it. The first that holds and counts at the account's
 /// level is the answer. Everything else is `not_found()`, the same for a name without an
 /// account, after the same checks. Nothing is kept between calls.
 pub async fn resolve_user(
@@ -560,7 +575,7 @@ pub async fn seen_among(
     match caller.server {
         Some(server) => {
             let access = allowed(resolve_server(db, server, caller.user, caller.proof).await)?;
-            if let Some(access) = access {
+            if let Some(access) = access.filter(shows_members) {
                 for (name, _) in among(
                     db,
                     "SELECT username, '' FROM members WHERE server = $1 AND username IN ({in})",
@@ -578,7 +593,7 @@ pub async fn seen_among(
             if !servers.is_empty() {
                 let first: Vec<&str> = servers.iter().map(String::as_str).collect();
                 let sql = format!(
-                    "SELECT username, MIN(server) FROM members WHERE server IN ({}) AND username IN ({{in}}) GROUP BY username",
+                    "SELECT m.username, MIN(m.server) FROM members m JOIN servers s ON s.name = m.server WHERE m.server IN ({}) AND s.members_visible <> 0 AND m.username IN ({{in}}) GROUP BY m.username",
                     placeholders(1, servers.len())
                 );
                 for (name, server) in among(db, &sql, &first, &rest(&seen)).await? {
@@ -590,7 +605,7 @@ pub async fn seen_among(
     }
     if settings.profile_visibility >= Level::PublicServers {
         let sql = format!(
-            "SELECT DISTINCT m.username, '' FROM members m JOIN servers s ON s.name = m.server WHERE m.username IN ({{in}}) AND {}",
+            "SELECT DISTINCT m.username, '' FROM members m JOIN servers s ON s.name = m.server WHERE m.username IN ({{in}}) AND {} AND s.members_visible <> 0",
             Reading::now(&state.db).await.readable_sql()
         );
         for (name, _) in among(db, &sql, &[], &rest(&seen)).await? {
@@ -1858,6 +1873,187 @@ mod tests {
             .into_iter()
             .map(|user| user.username)
             .collect()
+    }
+
+    async fn batch(state: &AppState, ask: Ask<'_>, names: &[&str]) -> HashMap<String, Seen> {
+        let user = ask.who.map(|who| mem_user(who, ask.admin));
+        let grants: Vec<String> = ask.grant.iter().map(|g| test_grant(g)).collect();
+        let proof = Proof::grants(grants, &state.limits);
+        let caller = Caller {
+            user: user.as_ref(),
+            proof: &proof,
+            server: ask.server,
+            badge: ask.badge,
+        };
+        let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        seen_among(state, &caller, &names).await.expect("batch")
+    }
+
+    /// zed is in the public server town and the password server vault; alice is in town too,
+    /// carol in nothing; the grant `g-vault` opens vault and root is the site admin.
+    #[tokio::test]
+    async fn member_privacy_keeps_members_to_their_server() {
+        let (state, path) = temp_state("subject_member_privacy").await;
+        let db = &state.db;
+        for name in ["alice", "carol", "root", "zed"] {
+            add_user(db, name, name).await;
+        }
+        exec(
+            db,
+            "UPDATE users SET is_site_admin = 1 WHERE username = 'root'",
+        )
+        .await;
+        add_server(db, "town", false).await;
+        add_server(db, "vault", true).await;
+        for (server, name) in [("town", "alice"), ("town", "zed"), ("vault", "zed")] {
+            add_member(db, server, name, 0, 0, 1).await;
+        }
+        add_grant(db, "g-vault", "vault", now()).await;
+        let alice = by("alice");
+        let carol = by("carol");
+        let at = |ask: Ask<'static>, server: &'static str| Ask {
+            server: Some(server),
+            ..ask
+        };
+        let guest = Ask {
+            grant: Some("g-vault"),
+            ..NOBODY
+        };
+        let root = Ask {
+            admin: true,
+            ..by("root")
+        };
+        let common = Seen::Common("town".to_string());
+        let context = |server: &str| Some(Seen::Context(server.to_string()));
+        // (what, ask, the server it goes through, the level, shown while on)
+        let cases: Vec<(&str, Ask<'_>, &str, &str, Option<Seen>)> = vec![
+            (
+                "a member of town",
+                alice,
+                "town",
+                "shared",
+                Some(common.clone()),
+            ),
+            (
+                "a member of town, town named",
+                at(alice, "town"),
+                "town",
+                "shared",
+                Some(common.clone()),
+            ),
+            (
+                "signed in, town named",
+                at(carol, "town"),
+                "town",
+                "shared",
+                context("town"),
+            ),
+            (
+                "signed in, public servers",
+                carol,
+                "town",
+                "public_servers",
+                Some(Seen::Public),
+            ),
+            (
+                "a guest, town named",
+                at(NOBODY, "town"),
+                "town",
+                "shared",
+                context("town"),
+            ),
+            (
+                "a guest's grant",
+                guest,
+                "vault",
+                "shared",
+                context("vault"),
+            ),
+            (
+                "a guest's grant, vault named",
+                at(guest, "vault"),
+                "vault",
+                "shared",
+                context("vault"),
+            ),
+            (
+                "the site admin, vault named",
+                at(root, "vault"),
+                "vault",
+                "shared",
+                context("vault"),
+            ),
+        ];
+        for (what, ask, through, level, on) in &cases {
+            set_level(db, level).await;
+            for visible in [1, 0] {
+                for server in ["town", "vault"] {
+                    sqlx::query("UPDATE servers SET members_visible = $1 WHERE name = $2")
+                        .bind(match server == *through {
+                            true => visible,
+                            false => 0,
+                        })
+                        .bind(server)
+                        .execute(db)
+                        .await
+                        .expect("option");
+                }
+                let members = Some(Seen::Common("town".to_string()));
+                let want = match (visible, on) {
+                    (1, _) => on.clone(),
+                    (_, seen) if *seen == members => seen.clone(),
+                    (_, _) => None,
+                };
+                assert_eq!(
+                    seen(&state, *ask, "zed").await,
+                    want,
+                    "{what}, {through} shows members: {visible}"
+                );
+                assert_eq!(
+                    batch(&state, *ask, &["zed"]).await.get("zed"),
+                    want.as_ref(),
+                    "{what}, batch, {through} shows members: {visible}"
+                );
+                let searched = found(&state, *ask, "ze", 10).await;
+                assert_eq!(
+                    searched.contains(&"zed".to_string()),
+                    want.is_some(),
+                    "{what}, search, {through} shows members: {visible}"
+                );
+                choose(db, "zed", Some("everyone")).await;
+                assert_eq!(
+                    seen(&state, *ask, "zed").await,
+                    Some(Seen::Everyone),
+                    "{what}: zed's own everyone still applies"
+                );
+                choose(db, "zed", None).await;
+            }
+        }
+        exec(db, "UPDATE servers SET members_visible = 0").await;
+        set_level(db, "shared").await;
+        let user = mem_user("carol", false);
+        let proof = Proof::none();
+        let caller = Caller {
+            user: Some(&user),
+            proof: &proof,
+            server: Some("town"),
+            badge: None,
+        };
+        assert!(
+            view_user(&state, &caller, "zed").await.is_err(),
+            "nor the membership, as town lists its members only to them"
+        );
+        let root = mem_user("root", true);
+        let staff = Caller {
+            user: Some(&root),
+            ..caller
+        };
+        let view = view_user(&state, &staff, "zed")
+            .await
+            .expect("the site admin sees the membership, as in the member list");
+        assert_eq!(view.seen, None, "but no profile");
+        assert!(view.member.is_some());
+        done(state, path).await;
     }
 
     #[tokio::test]

@@ -136,6 +136,7 @@ export const applyServerChange = (
       name_color: server.name_color ?? null,
       public_read: server.public_read ?? null,
       guest_voice: server.guest_voice ?? true,
+      members_visible: server.members_visible ?? detail.members_visible,
     }
   }
   const members = renameKey(s.members, old_name, server.name)

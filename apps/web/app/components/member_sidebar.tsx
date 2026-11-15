@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import type { Member, UserRef } from '../lib/types'
 import { prefixHeights, visibleRange } from '../lib/window'
 import { onlineSection } from '../lib/presence'
+import { MEMBERS_HIDDEN_LINE, seesMembers } from '../lib/profile_choice'
 import { openActionMenu } from '../lib/actions/menu'
 import { roleColor, useStore } from '../lib/store'
 import { UserAvatar } from './user_avatar'
@@ -84,10 +85,16 @@ export default function MemberSidebar() {
     s.view?.kind === 'channel' ? s.interacted[s.view.server] : undefined
   )
   const me = useStore(s => s.me)
+  const listed = useStore(s => {
+    const v = s.view
+    if (v?.kind !== 'channel') return true
+    const member = s.me?.servers.some(x => x.name === v.server) ?? false
+    return seesMembers(s.servers[v.server]?.members_visible, member, s.me?.is_site_admin ?? false)
+  })
   const loadMembers = useStore(s => s.loadMembers)
   const loadInteracted = useStore(s => s.loadInteracted)
   const loadMissingOnline = useStore(s => s.loadMissingOnline)
-  const server = detail?.name
+  const server = listed ? detail?.name : undefined
   useEffect(() => {
     if (server) {
       void loadMembers(server, true)
@@ -138,6 +145,12 @@ export default function MemberSidebar() {
   }, [detail, cache, info, inter, more, moreOnline, moreInteracted])
   const { ref, range } = useWindowed(items)
   if (!detail) return null
+  if (!listed)
+    return (
+      <aside className="h-full w-60 shrink-0 overflow-y-auto bg-surface-container-low p-2">
+        <p className="px-2 py-3 text-sm text-on-surface-variant">{MEMBERS_HIDDEN_LINE}</p>
+      </aside>
+    )
 
   const row = (m: Member) => {
     return (

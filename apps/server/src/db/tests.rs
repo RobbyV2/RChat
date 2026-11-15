@@ -6694,6 +6694,128 @@ async fn the_profile_visibility_control_reaches_an_old_database() {
     .await;
 }
 
+/// A database as schema 31 left it: no `servers.members_visible`, with a server without a
+/// password, a password server that closed its voice to guests, a member and a message.
+async fn old_member_privacy_db(db: &Db) {
+    for stmt in [
+        "ALTER TABLE servers DROP COLUMN members_visible",
+        "UPDATE settings SET value = '31' WHERE key = 'schema_version'",
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 5)",
+        "INSERT INTO servers(name, display_name, creator, member_count, created_at) VALUES('club', 'Club', 'alice', 1, 7)",
+        "INSERT INTO servers(name, display_name, creator, password_hash, member_count, public_read, guest_voice, created_at) VALUES('vault', 'Vault', 'alice', 'hash', 1, 1, 0, 8)",
+        "INSERT INTO members(server, username, is_admin, joined_at) VALUES('club', 'alice', 1, 7), ('vault', 'alice', 1, 8)",
+        "INSERT INTO channels(server, name, created_at) VALUES('club', 'general', 7)",
+        "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'kept', 9 FROM channels WHERE server = 'club'",
+    ] {
+        sqlx::query(stmt).execute(db).await.expect(stmt);
+    }
+}
+
+/// A server row as the schema before `members_visible` kept it.
+type ServerBefore = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    Option<i64>,
+    i64,
+);
+
+async fn servers_before(db: &Db) -> Vec<ServerBefore> {
+    sqlx::query("SELECT name, display_name, creator, password_hash, member_count, public_read, guest_voice FROM servers ORDER BY name")
+        .fetch_all(db)
+        .await
+        .expect("servers")
+        .iter()
+        .map(|r| {
+            (
+                r.try_get(0).expect("name"),
+                r.try_get(1).expect("display"),
+                r.try_get(2).expect("creator"),
+                r.try_get(3).expect("hash"),
+                r.try_get(4).expect("count"),
+                r.try_get(5).expect("public_read"),
+                r.try_get(6).expect("guest_voice"),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn member_privacy_is_added_to_an_old_database() {
+    on_each_database("member_privacy_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        old_member_privacy_db(&db).await;
+        assert_eq!(count(&db, STORED_SCHEMA).await, 31);
+        let before = servers_before(&db).await;
+        assert_eq!(before.len(), 3, "the built-in server and the two old ones");
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            const { assert!(SCHEMA_VERSION >= 32) };
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM servers WHERE members_visible = 1"
+                )
+                .await,
+                3,
+                "start {round}: every old server shows its members"
+            );
+            assert_eq!(
+                servers_before(&db).await,
+                before,
+                "start {round}: the old rows are as they were"
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM messages WHERE content = 'kept' AND author = 'alice'"
+                )
+                .await,
+                1
+            );
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM members").await, 2);
+            close(&db).await;
+        }
+        let db = open_started(Some(&url)).await.expect("open");
+        sqlx::query("UPDATE servers SET members_visible = 0 WHERE name = 'vault'")
+            .execute(&db)
+            .await
+            .expect("an owner turns it off");
+        sqlx::query(
+            "INSERT INTO servers(name, display_name, created_at) VALUES('fresh', 'Fresh', 9)",
+        )
+        .execute(&db)
+        .await
+        .expect("a new server");
+        close(&db).await;
+        let db = open_started(Some(&url)).await.expect("restart");
+        assert_eq!(
+            count(
+                &db,
+                "SELECT members_visible FROM servers WHERE name = 'vault'"
+            )
+            .await,
+            0,
+            "a set option survives a restart"
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT members_visible FROM servers WHERE name = 'fresh'"
+            )
+            .await,
+            1,
+            "a new server shows its members"
+        );
+        close(&db).await;
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn the_profile_choices_control_reaches_an_old_database() {
     controls_reach_an_old_database(

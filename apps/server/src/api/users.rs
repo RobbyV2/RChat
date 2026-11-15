@@ -258,14 +258,16 @@ async fn card_of(
 /// server anyone can read (`public_read` in `PATCH /api/v1/servers/{name}`, `public_reading` in
 /// `GET /api/v1/settings`), a guest with a valid `X-Guest-Grant`), or the caller sends a P2P
 /// binding of the account in `X-Subject-Binding`. A guest that names no server is also shown
-/// members of the servers its grants open. The instance's `profile_visibility` in `GET
+/// members of the servers its grants open. Through a server whose `members_visible` is off,
+/// only its own members see its members' profiles. The instance's `profile_visibility` in `GET
 /// /api/v1/settings` widens this to members of servers anyone can read (`public_servers`) or to
 /// every account (`everyone`). An account's own choice (`profile` in `PATCH
 /// /api/v1/me/privacy`) may narrow it to friends or widen it to everyone, as far as the
 /// instance's `profile_choices` lets it.
 ///
 /// `member` is the account's membership in `server`, set when the caller may view that server
-/// and the account is a member, whoever may see the profile. An account with neither part
+/// and its member list (see `GET /api/v1/servers/{name}/members`) and the account is a member,
+/// whoever may see the profile. An account with neither part
 /// answers the same 404 as a name with no account, after the same checks. Works without a
 /// token for guests when guest access is on.
 ///
@@ -276,7 +278,7 @@ async fn card_of(
 /// and the moderation actions by name count, and those of
 /// `GET /api/v1/users/{username}/profile` where this endpoint answers 404 too. General
 /// rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/users/{username}/card", tag = "Users", params(("username" = String, Path, description = "Username, case-insensitive"), ProfileQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests"), ("X-Subject-Binding" = Option<String>, Header, description = "A P2P binding of the account: the `token` of `POST /api/v1/identity/p2p_binding` as the account showed it in its P2P badge. It shows that account's profile until the binding expires")), responses((status = 200, description = "The account's name with the parts the caller may see: `profile` (null when the account does not show it to the caller) and `member` (null when `server` was omitted, the caller may not view it, or the account is not a member). Never both null", body = UserCard, headers(("cache-control" = String, description = "`private, no-cache`"))), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such account, or one the caller may see nothing of (identical responses)", body = ApiErrorBody), (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `profile` lookups, or its misses for the hour. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/users/{username}/card", tag = "Users", params(("username" = String, Path, description = "Username, case-insensitive"), ProfileQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests"), ("X-Subject-Binding" = Option<String>, Header, description = "A P2P binding of the account: the `token` of `POST /api/v1/identity/p2p_binding` as the account showed it in its P2P badge. It shows that account's profile until the binding expires")), responses((status = 200, description = "The account's name with the parts the caller may see: `profile` (null when the account does not show it to the caller) and `member` (null when `server` was omitted, the caller may not view it or its member list, or the account is not a member). Never both null", body = UserCard, headers(("cache-control" = String, description = "`private, no-cache`"))), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such account, or one the caller may see nothing of (identical responses)", body = ApiErrorBody), (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `profile` lookups, or its misses for the hour. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security((), ("bearer" = [])))]
 pub(crate) async fn card(
     State(state): State<AppState>,
     MaybeAuthed(viewer): MaybeAuthed,
@@ -813,6 +815,92 @@ mod tests {
                 }
             }
         }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn cards_through_a_server_that_keeps_its_members() {
+        let (state, path) = temp_state("card_member_privacy").await;
+        let db = &state.db;
+        world(&state).await;
+        let grant = Ask {
+            grant: Some("g1"),
+            ..Ask::default()
+        };
+        let cases = [
+            (
+                "carol, rchat named",
+                in_server(by("carol"), "rchat"),
+                "rchat",
+            ),
+            (
+                "a guest, rchat named",
+                in_server(Ask::default(), "rchat"),
+                "rchat",
+            ),
+            ("a guest's grant", grant, "vault"),
+            (
+                "a guest's grant, vault named",
+                in_server(grant, "vault"),
+                "vault",
+            ),
+        ];
+        let root = Ask {
+            viewer: Some("root"),
+            admin: true,
+            ..Ask::default()
+        };
+        for visible in [true, false] {
+            exec(
+                db,
+                &format!(
+                    "UPDATE servers SET members_visible = {}",
+                    i64::from(visible)
+                ),
+            )
+            .await;
+            for through in ["vault", "rchat"] {
+                assert_eq!(
+                    parts(&state, in_server(root, through), "bob").await,
+                    Some((visible, true)),
+                    "the site admin, {through} named: {visible}"
+                );
+            }
+        }
+        for (what, ask, through) in cases {
+            for visible in [true, false] {
+                sqlx::query("UPDATE servers SET members_visible = $1 WHERE name = $2")
+                    .bind(i64::from(visible))
+                    .bind(through)
+                    .execute(db)
+                    .await
+                    .expect("option");
+                let member = ask.server.is_some();
+                let want = visible.then_some((true, member));
+                assert_eq!(parts(&state, ask, "bob").await, want, "{what}: {visible}");
+                assert_eq!(
+                    view(&state, ask, "bob").await.is_ok(),
+                    visible,
+                    "{what}, /profile: {visible}"
+                );
+            }
+        }
+        exec(db, "UPDATE servers SET members_visible = 0").await;
+        assert_eq!(
+            parts(&state, in_server(by("alice"), "vault"), "bob").await,
+            Some((true, true)),
+            "members still see each other"
+        );
+        exec(
+            db,
+            "INSERT INTO privacy(username, profile) VALUES('bob', 'everyone')",
+        )
+        .await;
+        assert_eq!(
+            parts(&state, by("carol"), "bob").await,
+            Some((true, false)),
+            "bob's own everyone still applies"
+        );
         done(state, path).await;
     }
 
