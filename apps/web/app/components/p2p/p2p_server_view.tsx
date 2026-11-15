@@ -8,17 +8,15 @@ import {
   FolderOpen,
   Hash,
   Lock,
-  LogOut,
   Menu,
   Plus,
   Search,
-  Settings,
   UserPlus,
   Users,
   Volume2,
   Waypoints,
 } from 'lucide-react'
-import { maskOf, useMask, useStore, type ContextMenuItem } from '../../lib/store'
+import { useMask, useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
 import { P2P_SERVER_INTRO } from '../../lib/home'
 import {
@@ -28,10 +26,8 @@ import {
   p2p,
   p2pDm,
   p2pRail,
-  banRequest,
   p2pSearch,
   p2pServer,
-  p2pVoice,
   serverScope,
   useP2p,
 } from '../../lib/p2p/app'
@@ -45,33 +41,25 @@ import { levelOf, mutedOf } from '../../lib/notify'
 import { folderKey, railItems, serverKey, type Folder } from '../../lib/nav_layout'
 import { folderStyle } from '../../lib/folder_colors'
 import { ctxFor } from '../../lib/actions/ctx'
-import { folderActions } from '../../lib/actions/folder'
-import { itemFor } from '../../lib/actions/menu'
+import { registerAppActions } from '../../lib/actions'
+import { menuItems, openActionMenu } from '../../lib/actions/menu'
+import { confirmForget } from '../../lib/actions/p2p_server'
 import type { DropTarget } from '../../lib/drag'
 import { serverInitial } from '../../lib/rules'
-import { sharing } from '../../lib/platform'
 import { longPress } from '../context_menu'
 import { PingBadge, RailPingBadge, pingLabel } from '../ping_badge'
-import { MutedIcon, notifyMenuItems } from '../notify_menu'
-import { markReadItem } from '../mark_read'
+import { MutedIcon } from '../notify_menu'
 import { PinsButton } from '../pins'
 import { iconBtn, Masked, Sentinel } from '../ui'
 import { PAGE, pageGroups } from '../../lib/paging'
 import { AccountChip, ContactShield, KeyAvatar, P2pBadge, PresenceDot } from './p2p_badge'
 import { ElsewhereNotice, MovingBanner } from './p2p_home'
 import { ServerNotices } from './p2p_server_flows'
-import {
-  SYNCING_TEXT,
-  TRANSFER_CO_OWNERS_TEXT,
-  TRANSFERRED_TEXT,
-  transferText,
-  VOUCH_INVITER_TEXT,
-  WITHDRAW_TEXT,
-} from '../../lib/p2p/flows'
+import { SYNCING_TEXT, TRANSFERRED_TEXT, VOUCH_INVITER_TEXT } from '../../lib/p2p/flows'
 import { noteBarCls, P2pChatBody, P2pIntro, type Mentionable } from './p2p_chat'
 import { P2pVoiceRow } from './p2p_voice'
 import { VoiceDock, VoiceGrid } from '../voice_grid'
-import { MemberCard, roleMenuItems } from './p2p_server_roles'
+import { MemberCard } from './p2p_server_roles'
 import { hex, memberGroups, nameColor } from '../../lib/p2p/roles'
 import { slowTitle } from '../../lib/slowmode'
 
@@ -115,68 +103,11 @@ const dropServer = (room: string, { zone, index, onto }: DropTarget) => {
   else p2pRail.move(room, index)
 }
 
-const leaveItem = (v: ServerView): ContextMenuItem => ({
-  label: 'Leave Server',
-  danger: true,
-  icon: LogOut,
-  action: () =>
-    useStore.getState().askConfirm({
-      title: 'Leave Server',
-      body: `Leave ${useStore.getState().streamer ? 'this server' : v.name}? Someone who can invite has to let you in again.`,
-      confirm: 'Leave',
-      action: () => void p2pServer.leave(v.id),
-    }),
-})
-
-export const serverMenu = (v: ServerView, folder: string | null, at: number): ContextMenuItem[] => {
-  const s = useStore.getState()
-  const prefs = s.notifyPrefs
-  const items: ContextMenuItem[] = []
-  const unread = serverUnread(v, prefs) || serverPings(v, prefs) > 0
-  items.push(markReadItem(unread ? [v.id] : [], () => p2pServer.markAllRead(v.id)))
-  items.push(...notifyMenuItems(serverScope(v.id), 'Server'))
-  if (can(v, P.Invite))
-    items.push({
-      label: 'Invite People',
-      icon: UserPlus,
-      action: () => p2p.openDialog({ kind: 'server_invite', room: v.id }),
-    })
-  if (v.me === 'join')
-    items.push({
-      label: 'Server Settings',
-      icon: Settings,
-      action: () => p2p.openDialog({ kind: 'server_settings', room: v.id }),
-    })
-  items.push({
-    label: 'Copy Server ID',
-    action: () => void sharing().copyText(v.id),
-  })
-  if (folder !== null)
-    items.push({ label: 'Remove from folder', action: () => p2pRail.move(v.id, at + 1) })
-  if (v.me === 'join' || v.me === 'invite') items.push(leaveItem(v))
-  else
-    items.push({
-      label: 'Remove from this device',
-      danger: true,
-      action: () => confirmForget(v),
-    })
-  return items
-}
-
-const confirmForget = (v: ServerView) =>
-  useStore.getState().askConfirm({
-    title: 'Remove Server',
-    body: `Remove ${useStore.getState().streamer ? 'this server' : v.name} and everything of it from this device? You aren't a member any more, so it can't come back.`,
-    confirm: 'Remove',
-    action: () => void p2pServer.forget(v.id),
-  })
-
 // The tile's ring is dashed and a Waypoints badge sits on it: this server lives on its members'
 // devices.
 function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null; at: number }) {
   const active = useP2p(s => s.server?.room === v.id)
   const prefs = useStore(s => s.notifyPrefs)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const pings = serverPings(v, prefs)
   const unread = serverUnread(v, prefs)
   const muted = mutedOf(prefs, serverScope(v.id), Date.now())
@@ -190,7 +121,7 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
       aria-label={`${mask(v.name)}, peer-to-peer`}
       aria-current={active ? 'page' : undefined}
       onClick={() => p2pServer.open(v.id)}
-      {...longPress((x, y) => openContextMenu(x, y, serverMenu(v, folder, at)), {
+      {...longPress((x, y) => openActionMenu(x, y, { kind: 'p2p_server', v, folder, at }), {
         group: 'p2prail',
         key: serverKey(v.id),
         zones: P2P_ZONES,
@@ -243,7 +174,6 @@ export function P2pFolderEntry({
   at: number
 }) {
   const prefs = useStore(s => s.notifyPrefs)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const unread = !folder.open && list.some(v => serverUnread(v, prefs))
   const pings = folder.open ? 0 : list.reduce((n, v) => n + serverPings(v, prefs), 0)
   const streamer = useStore(s => s.streamer)
@@ -258,29 +188,12 @@ export function P2pFolderEntry({
     'data-drop-onto': 'Add to folder',
     'data-p2p-tile': '',
     onClick: () => p2pRail.toggleFolder(folder.id),
-    ...longPress(
-      (x, y) =>
-        openContextMenu(x, y, [
-          ...folderActions.flatMap(
-            a =>
-              itemFor(
-                a.id,
-                ctxFor(useStore.getState(), { kind: 'folder', folder, p2p: true }, 'menu')
-              ) ?? []
-          ),
-          {
-            label: 'Edit folder',
-            action: () => p2p.openDialog({ kind: 'p2p_folder', id: folder.id }),
-          },
-          { label: 'Ungroup', action: () => p2pRail.ungroup(folder.id) },
-        ]),
-      {
-        group: 'p2prail',
-        key: folderKey(folder.id),
-        zones: zone => zone === 'p2p',
-        onDrop: ({ index }) => p2pRail.moveFolder(folder.id, index),
-      }
-    ),
+    ...longPress((x, y) => openActionMenu(x, y, { kind: 'folder', folder, p2p: true }), {
+      group: 'p2prail',
+      key: folderKey(folder.id),
+      zones: zone => zone === 'p2p',
+      onDrop: ({ index }) => p2pRail.moveFolder(folder.id, index),
+    }),
   }
   if (!folder.open)
     return (
@@ -399,8 +312,8 @@ const useOpen = () => {
 
 function ServerHead({ v }: { v: ServerView }) {
   const own = useP2p(s => ownsP2pServer(v, s.me))
-  const openContextMenu = useStore(s => s.openContextMenu)
-  const open = (x: number, y: number) => openContextMenu(x, y, serverMenu(v, null, 0))
+  const open = (x: number, y: number) =>
+    openActionMenu(x, y, { kind: 'p2p_server', v, folder: null, at: 0 })
   return (
     <div className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-3">
       <button
@@ -435,63 +348,11 @@ function ServerHead({ v }: { v: ServerView }) {
   )
 }
 
-const channelMenu = (
-  v: ServerView,
-  ch: { id: string; name: string; kind?: string }
-): ContextMenuItem[] => {
-  const s = useStore.getState()
-  const c = v.chans[ch.id]
-  const voice = ch.kind === 'voice'
-  const here = useP2p.getState().voice
-  const items: ContextMenuItem[] = voice
-    ? [
-        here?.room === v.id && here.ch === ch.id
-          ? { label: 'Leave Voice', icon: Volume2, action: () => p2pVoice.leave() }
-          : {
-              label: 'Join Voice',
-              icon: Volume2,
-              action: () => {
-                p2pServer.openChannel(ch.id)
-                void p2pVoice.join(v.id, ch.id)
-              },
-            },
-      ]
-    : [
-        markReadItem(c && (c.unread || c.pings) ? [ch.id] : [], () =>
-          p2pServer.markRead(v.id, ch.id)
-        ),
-        ...notifyMenuItems(channelScope(v.id, ch.id), 'Channel'),
-      ]
-  if (can(v, P.ManageChannels))
-    items.push(
-      {
-        label: 'Edit Channel',
-        action: () => p2p.openDialog({ kind: 'server_settings', room: v.id, tab: 'channels' }),
-      },
-      {
-        label: 'Delete Channel',
-        danger: true,
-        action: () =>
-          s.askConfirm({
-            title: 'Delete Channel',
-            body: voice
-              ? `Delete ${ch.name}?`
-              : `Delete #${ch.name}? Its messages stay on members' devices but can't be opened.`,
-            confirm: 'Delete',
-            action: () => void p2pServer.removeChannel(v.id, ch.id),
-          }),
-      }
-    )
-  items.push({ label: 'Copy Channel ID', action: () => void sharing().copyText(ch.id) })
-  return items
-}
-
 export function P2pServerSidebar() {
   const { v } = useOpen()
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const active = useP2p(s => s.server?.ch ?? null)
   const prefs = useStore(s => s.notifyPrefs)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const [adding, setAdding] = useState<string | null>(null)
   const [kind, setKind] = useState<'text' | 'voice'>('text')
   if (!v) return <aside className="flex h-full w-60 shrink-0 flex-col bg-surface-container-low" />
@@ -557,8 +418,8 @@ export function P2pServerSidebar() {
                 v={v}
                 c={c}
                 active={active === c.id}
-                menu={(x, y) => openContextMenu(x, y, channelMenu(v, c))}
-                memberMenu={m => (x, y) => openContextMenu(x, y, memberMenu(v, m))}
+                menu={(x, y) => openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c })}
+                memberMenu={m => (x, y) => openActionMenu(x, y, { kind: 'p2p_member', v, m })}
               />
             )
           const counts = v.chans[c.id]
@@ -572,7 +433,7 @@ export function P2pServerSidebar() {
               key={c.id}
               data-p2p-channel={c.name}
               onClick={() => p2pServer.openChannel(c.id)}
-              {...longPress((x, y) => openContextMenu(x, y, channelMenu(v, c)))}
+              {...longPress((x, y) => openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c }))}
               className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
                 active === c.id
                   ? 'bg-secondary-container text-on-secondary-container'
@@ -641,93 +502,22 @@ export function P2pServerSidebar() {
   )
 }
 
-// Withdrawing an invite (spec 8.2): the inviter, or a moderator who may kick.
-export const withdrawRequest = (v: ServerView, m: MemberView) => ({
-  title: 'Withdraw Invite',
-  body: WITHDRAW_TEXT,
-  confirm: 'Withdraw',
-  action: () => void p2pServer.withdraw(v.id, m.ik),
-})
-
-// Spec 3.8: the member takes the new copy; every other owner must approve.
-export const transferRequest = (v: ServerView, m: MemberView) => {
-  const who = useStore.getState().streamer ? 'this member' : m.name
-  return {
-    title: 'Transfer Ownership',
-    body: `${transferText(who)}${v.owners.length > 1 ? ` ${TRANSFER_CO_OWNERS_TEXT}` : ''}`,
-    confirm: 'Transfer',
-    action: () => void p2pServer.transfer(v.id, m.ik),
-  }
-}
-
-export const memberMenu = (v: ServerView, m: MemberView): ContextMenuItem[] => {
-  const s = useStore.getState()
-  const mask = maskOf(s)
-  const me = useP2p.getState().me
-  const items: ContextMenuItem[] = []
-  const contact = useP2p.getState().contacts.find(c => c.ik === m.ik)
-  if (contact?.state === 'mutual')
-    items.push({
-      label: 'Message',
-      action: () => {
-        p2p.openHome()
-        void p2pDm.openDm(m.ik)
-      },
-    })
-  if (contact)
-    items.push({
-      label: 'Contact details',
-      action: () => p2p.openDialog({ kind: 'contact', ik: m.ik }),
-    })
-  const roles = m.m === 'join' ? roleMenuItems(v, m) : []
-  if (roles.length) items.push({ label: 'Roles', submenu: roles })
-  if (can(v, P.Kick) && m.below && m.ik !== me && m.m === 'join') {
-    items.push({
-      label: s.streamer ? 'Kick Member' : `Kick ${mask(m.name)}`,
-      danger: true,
-      action: () =>
-        s.askConfirm({
-          title: 'Kick Member',
-          body: `Kick ${s.streamer ? 'this member' : m.name}? They can come back with a new invite.`,
-          confirm: 'Kick',
-          action: () => void p2pServer.kick(v.id, m.ik),
-        }),
-    })
-  }
-  if (m.m === 'invite' && m.ik !== me && (can(v, P.Kick) || m.myInvite))
-    items.push({
-      label: s.streamer ? 'Withdraw Invite' : `Withdraw invite of ${mask(m.name)}`,
-      danger: true,
-      action: () => s.askConfirm(withdrawRequest(v, m)),
-    })
-  if (
-    me &&
-    v.owners.includes(me) &&
-    v.me === 'join' &&
-    m.m === 'join' &&
-    m.ik !== me &&
-    !v.upgraded
-  )
-    items.push({
-      label: 'Transfer Ownership',
-      icon: Crown,
-      action: () => s.askConfirm(transferRequest(v, m)),
-    })
-  if (can(v, P.Ban) && m.below && m.ik !== me && m.m !== 'ban')
-    items.push({
-      label: s.streamer ? 'Ban Member' : `Ban ${mask(m.name)}`,
-      danger: true,
-      action: () => s.askConfirm(banRequest(v, m.ik, s.streamer ? 'this member' : m.name)),
-    })
-  items.push({ label: 'Copy Identity Key', action: () => void sharing().copyText(m.ik) })
-  return items
+// A member's menu (the settings and tests read its rows).
+export const memberMenu = (v: ServerView, m: MemberView) => {
+  registerAppActions()
+  return menuItems(ctxFor(useStore.getState(), { kind: 'p2p_member', v, m }, 'menu'))
 }
 
 // A member's menu with their card on top (roles, removable where we may).
 export const openMemberMenu = (v: ServerView, m: MemberView, x: number, y: number) =>
-  useStore
-    .getState()
-    .openContextMenu(x, y, memberMenu(v, m), { header: <MemberCard room={v.id} ik={m.ik} /> })
+  openActionMenu(
+    x,
+    y,
+    { kind: 'p2p_member', v, m },
+    {
+      header: <MemberCard room={v.id} ik={m.ik} />,
+    }
+  )
 
 function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
   const contact = useP2p(s => s.contacts.find(c => c.ik === m.ik))

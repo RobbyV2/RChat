@@ -117,6 +117,19 @@ export const openActionMenu = (
   live = { ctx, menu: useStore.getState().contextMenu, ids: idsOf(built) }
 }
 
+// One action's choices as a menu of their own, as its submenu shows them (a row's Roles button).
+export const openChoiceMenu = (
+  x: number,
+  y: number,
+  id: string,
+  target: Target,
+  opts: ContextMenuOptions = {}
+) => {
+  const st = useStore.getState()
+  const items = itemFor(id, ctxFor(st, target, 'menu'))?.submenu
+  if (items?.length) st.openContextMenu(x, y, items, opts)
+}
+
 // An open action menu (or sheet) follows actions defined or removed while it shows, and keeps
 // its state while its rows stay the same.
 subscribeActions(() => {

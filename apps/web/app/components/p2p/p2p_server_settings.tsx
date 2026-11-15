@@ -21,7 +21,8 @@ import { page, PAGE } from '../../lib/paging'
 import { KeyAvatar } from './p2p_badge'
 import { CodeList } from './p2p_invite_dialog'
 import { ServerNotices } from './p2p_server_flows'
-import { withdrawRequest } from './p2p_server_view'
+import { openChoiceMenu } from '../../lib/actions/menu'
+import { withdrawRequest } from '../../lib/actions/p2p_server'
 import { ChannelAccess, MemberCard, roleMenuItems, RolesTab } from './p2p_server_roles'
 import { slowTitle } from '../../lib/slowmode'
 import { hex, nameColor } from '../../lib/p2p/roles'
@@ -364,7 +365,6 @@ function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children
 function Members({ v }: { v: ServerView }) {
   const me = useP2p(s => s.me)
   const ask = useStore(s => s.askConfirm)
-  const openContextMenu = useStore(s => s.openContextMenu)
   const kick = can(v, P.Kick)
   const ban = can(v, P.Ban)
   const list = v.members
@@ -381,9 +381,13 @@ function Members({ v }: { v: ServerView }) {
             {m.m === 'join' && roleMenuItems(v, m).length > 0 && (
               <button
                 onClick={e =>
-                  openContextMenu(e.clientX, e.clientY, roleMenuItems(v, m), {
-                    header: <MemberCard room={v.id} ik={m.ik} />,
-                  })
+                  openChoiceMenu(
+                    e.clientX,
+                    e.clientY,
+                    'p2p_member_roles',
+                    { kind: 'p2p_member', v, m },
+                    { header: <MemberCard room={v.id} ik={m.ik} /> }
+                  )
                 }
                 className={textBtn}
               >

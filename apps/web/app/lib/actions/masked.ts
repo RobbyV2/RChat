@@ -33,6 +33,10 @@ const ROWS: Record<Target['kind'], boolean> = {
   card: true,
   call: false,
   p2p_contact: true,
+  p2p_server: true,
+  p2p_channel: true,
+  p2p_member: true,
+  p2p_role: true,
 }
 
 export const maskedActions: Action[] = [

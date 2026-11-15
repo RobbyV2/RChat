@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import type { InboxEntry } from '../inbox'
 import type { Folder } from '../nav_layout'
 import type { Contact } from '../p2p/contacts'
+import type { ChannelView, MemberView, RoleView, ServerView } from '../p2p/server/types'
 import type { PaletteGroup } from '../palette'
 import type { RChatState } from '../store_types'
 import type { Category, Channel, DmSummary, Message, UserRef } from '../types'
@@ -59,6 +60,11 @@ export type Target =
   | { kind: 'call'; dm: DmSummary; video: boolean }
   // A P2P contact; `me`: this account's P2P key, which names the DM's room.
   | { kind: 'p2p_contact'; c: Contact; me: string | null }
+  // A P2P server's rail tile or header: `folder` and `at` place the tile on the P2P rail.
+  | { kind: 'p2p_server'; v: ServerView; folder: string | null; at: number }
+  | { kind: 'p2p_channel'; v: ServerView; ch: ChannelView }
+  | { kind: 'p2p_member'; v: ServerView; m: MemberView }
+  | { kind: 'p2p_role'; v: ServerView; r: RoleView }
 
 export interface ActionCtx {
   s: RChatState

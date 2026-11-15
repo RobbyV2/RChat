@@ -75,6 +75,10 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'inbox':
     case 'card':
     case 'p2p_contact':
+    case 'p2p_server':
+    case 'p2p_channel':
+    case 'p2p_member':
+    case 'p2p_role':
       return openPlace(s)
   }
 }
@@ -101,6 +105,10 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'card':
       return s.profile?.user ?? null
     case 'p2p_contact':
+    case 'p2p_server':
+    case 'p2p_channel':
+    case 'p2p_member':
+    case 'p2p_role':
       return null
   }
 }
@@ -127,6 +135,10 @@ const listOf = (s: RChatState, t: Target) => {
     case 'inbox':
     case 'card':
     case 'p2p_contact':
+    case 'p2p_server':
+    case 'p2p_channel':
+    case 'p2p_member':
+    case 'p2p_role':
       return currentList(s)
   }
 }
@@ -211,6 +223,10 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
     case 'inbox':
     case 'card':
     case 'p2p_contact':
+    case 'p2p_server':
+    case 'p2p_channel':
+    case 'p2p_member':
+    case 'p2p_role':
       return t
   }
 }

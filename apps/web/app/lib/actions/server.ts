@@ -24,7 +24,9 @@ export const railServer = ({ s, target }: ActionCtx): string | null =>
 const previewed = ({ s, target }: ActionCtx): string | null =>
   target.kind === 'server' && previewServer(s) === target.server ? target.server : null
 
-const folderOf = ({ target }: ActionCtx) => (target.kind === 'folder' ? target.folder : null)
+// A folder of the instance servers' rail.
+const folderOf = ({ target }: ActionCtx) =>
+  target.kind === 'folder' && !target.p2p ? target.folder : null
 
 // The folder's servers, each with its own mute end (null: not muted).
 const folderMutes = (s: RChatState, servers: string[]) => {

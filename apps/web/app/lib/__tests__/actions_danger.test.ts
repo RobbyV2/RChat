@@ -51,6 +51,9 @@ const PLAIN: Record<string, string> = {
   p2p_limits_reset: 'puts your own storage limits back to the defaults',
   server_remove_from_folder: 'moves a server out of a folder on your own rail',
   card_forget: 'takes a card off your own Home; it comes back when you visit the place',
+  p2p_server_remove_from_folder: 'moves a P2P server out of a folder on your own rail',
+  p2p_role_up: 'moves a role one step; a move that takes rights away asks first',
+  p2p_role_down: 'moves a role one step; a move that takes rights away asks first',
 }
 
 test('every action that changes standing or cannot be undone is marked as danger', () => {
@@ -92,6 +95,15 @@ test('the actions marked as danger', () => {
     'category_delete',
     'p2p_contact_block',
     'p2p_contact_remove',
+    'p2p_server_leave',
+    'p2p_server_remove',
+    'p2p_channel_leave_voice',
+    'p2p_channel_delete',
+    'p2p_member_kick',
+    'p2p_member_withdraw',
+    'p2p_member_transfer',
+    'p2p_member_ban',
+    'p2p_role_delete',
   ])
 })
 

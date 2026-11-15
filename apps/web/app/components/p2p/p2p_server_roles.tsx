@@ -2,10 +2,14 @@
 
 import { useState, type ReactNode, type SyntheticEvent } from 'react'
 import { Crown, GripVertical, Trash2, X } from 'lucide-react'
-import { maskOf, useMask, useStore, type ContextMenuItem } from '../../lib/store'
+import { useMask, useStore } from '../../lib/store'
 import { memberName, p2pServer, useP2p } from '../../lib/p2p/app'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
-import { ROLE_DOWN_TEXT } from '../../lib/p2p/flows'
+import { registerAppActions } from '../../lib/actions'
+import { ctxFor } from '../../lib/actions/ctx'
+import { itemFor, menuItems, openActionMenu } from '../../lib/actions/menu'
+import { deleteRole, moveRoles, takeRole } from '../../lib/actions/p2p_server'
+import type { Target } from '../../lib/actions/types'
 import {
   ALLOW_BOTH,
   EVERYONE_ITEMS,
@@ -15,12 +19,10 @@ import {
   hex,
   mayTakeRole,
   mayWriteRow,
-  movesWarn,
   nameColor,
   overBits,
   overFlags,
   placeRole,
-  type Move,
 } from '../../lib/p2p/roles'
 import { EVERYONE, P } from '../../lib/p2p/state'
 import {
@@ -76,66 +78,21 @@ const bitChecks = (v: ServerView, role: string, value: number) => ({
   },
 })
 
-const moveRoles = (v: ServerView, moves: Move[]) => {
-  if (!moves.length) return
-  const go = () => void p2pServer.moveRoles(v.id, moves)
-  if (movesWarn(v.roles, moves))
-    useStore.getState().askConfirm({
-      title: 'Move Role Down',
-      body: ROLE_DOWN_TEXT,
-      confirm: 'Move',
-      action: go,
-    })
-  else go()
-}
-
-// Role names in our own server are our own text, never masked.
-const roleMask = (v: ServerView) =>
-  maskOf(useStore.getState(), ownsP2pServer(v, useP2p.getState().me))
-
-const deleteRole = (v: ServerView, r: RoleView) => {
-  const s = useStore.getState()
-  s.askConfirm({
-    title: 'Delete Role',
-    body: `Delete ${roleMask(v)(r.name)}? ${r.holders ? 'Members who have it lose it.' : ''}`.trim(),
-    confirm: 'Delete',
-    action: () => void p2pServer.deleteRole(v.id, r.id),
-  })
+const rows = (target: Target) => {
+  registerAppActions()
+  return menuItems(ctxFor(useStore.getState(), target, 'menu'))
 }
 
 // A role's menu (right-click, long-press): move it a step, or delete it.
-export const roleItems = (v: ServerView, r: RoleView): ContextMenuItem[] => {
-  if (!can(v, P.ManageRoles) || !r.below) return []
-  const i = v.roles.findIndex(x => x.id === r.id)
-  const fixed = v.roles.filter(x => !x.below).length
-  const items: ContextMenuItem[] = []
-  if (i > fixed)
-    items.push({
-      label: 'Move Up',
-      action: () => moveRoles(v, placeRole(v.roles, r.id, i - 1, v.rank)),
-    })
-  if (i < v.roles.length - 1)
-    items.push({
-      label: 'Move Down',
-      action: () => moveRoles(v, placeRole(v.roles, r.id, i + 1, v.rank)),
-    })
-  // Its channel rows hold its holders back: deleting it needs Manage channels (spec 1.4).
-  if (!r.held || can(v, P.ManageChannels))
-    items.push({ label: 'Delete Role', danger: true, action: () => deleteRole(v, r) })
-  return items
-}
+export const roleItems = (v: ServerView, r: RoleView) => rows({ kind: 'p2p_role', v, r })
 
 function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
-  const openContextMenu = useStore(s => s.openContextMenu)
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const mask = useMask(own)
   const edit = can(v, P.ManageRoles) && r.below
   const locked = !can(v, P.ManageRoles) ? 'Needs Manage roles' : r.below ? null : ROLE_LOCKED
   const fixed = v.roles.filter(x => !x.below).length
-  const menu = (x: number, y: number) => {
-    const items = roleItems(v, r)
-    if (items.length) openContextMenu(x, y, items)
-  }
+  const menu = (x: number, y: number) => openActionMenu(x, y, { kind: 'p2p_role', v, r })
   const handle = edit
     ? longPress(menu, {
         group: 'p2p-roles',
@@ -251,38 +208,11 @@ export function RolesTab({ v }: { v: ServerView }) {
 
 // ----- A member's roles -----
 
-// Whether we may give `r` to `m`, or take it (spec 1.4 assign, revoke): Manage roles, ranked above
-// the role and the member; our own roles we may always drop.
-const mayGive = (v: ServerView, m: MemberView, r: RoleView, me: string | null) =>
-  can(v, P.ManageRoles) && r.below && m.m === 'join' && m.ik !== me && m.below && !m.owner
-const mayTake = mayTakeRole
-
-// Taking a role; one's own asks first (nobody can give themselves a role back, spec 1.6).
-const takeRole = (v: ServerView, m: MemberView, r: RoleView) => {
-  const s = useStore.getState()
-  if (m.ik !== useP2p.getState().me) return void p2pServer.revokeRole(v.id, m.ik, r.id)
-  s.askConfirm({
-    title: 'Remove Role',
-    body: `Remove ${roleMask(v)(r.name)} from yourself? You can't give it back to yourself.`,
-    confirm: 'Remove',
-    action: () => void p2pServer.revokeRole(v.id, m.ik, r.id),
-  })
-}
-
-export const roleMenuItems = (v: ServerView, m: MemberView): ContextMenuItem[] => {
-  const me = useP2p.getState().me
-  const mask = roleMask(v)
-  return v.roles.flatMap(r => {
-    const holds = m.roles.includes(r.id)
-    if (holds ? !mayTake(v, m, r, me) : !mayGive(v, m, r, me)) return []
-    return [
-      {
-        label: mask(r.name),
-        checked: holds,
-        action: () => (holds ? takeRole(v, m, r) : void p2pServer.assignRole(v.id, m.ik, r.id)),
-      },
-    ]
-  })
+// The roles we may give or take, as the member menu's Roles submenu lists them.
+export const roleMenuItems = (v: ServerView, m: MemberView) => {
+  registerAppActions()
+  const ctx = ctxFor(useStore.getState(), { kind: 'p2p_member', v, m }, 'menu')
+  return itemFor('p2p_member_roles', ctx)?.submenu ?? []
 }
 
 // The card on top of a member's menu: who they are and their roles, each removable where we may.
@@ -325,7 +255,7 @@ export function MemberCard({ room, ik }: { room: string; ik: string }) {
             >
               <span aria-hidden className="h-2.5 w-2.5 rounded-full" style={swatch(r.color)} />
               <Masked text={r.name} own={own} />
-              {mayTake(v, m, r, me) ? (
+              {mayTakeRole(v, m, r, me) ? (
                 <button
                   onClick={e => {
                     e.stopPropagation()

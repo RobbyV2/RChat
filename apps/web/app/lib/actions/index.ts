@@ -9,6 +9,7 @@ import { maskedActions } from './masked'
 import { memberActions } from './member'
 import { embedActions, messageActions } from './message'
 import { p2pContactActions } from './p2p_contact'
+import { p2pServerActions } from './p2p_server'
 import { placeActions } from './place'
 import { defineAction } from './registry'
 import { selectionActions } from './selection'
@@ -40,6 +41,7 @@ export const registerAppActions = () => {
     cardActions,
     voiceActions,
     p2pContactActions,
+    p2pServerActions,
     maskedActions,
   ])
     for (const a of list) defineAction(a)
