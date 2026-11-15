@@ -451,6 +451,9 @@ pub struct Features {
     /// P2P backups (`/api/v1/me/p2p_backup`) are kept, up to `limits.p2p_backup_bytes` per version.
     /// Whether new ones can be uploaded is the `p2p_backup` switch of `GET /api/v1/settings`.
     pub p2p_backup: bool,
+    /// `/api/v1/users/{username}/card`, `/api/v1/servers/{name}/mentions` and
+    /// `/api/v1/users/search` are available.
+    pub lookups: bool,
 }
 
 /// Limits of this instance.

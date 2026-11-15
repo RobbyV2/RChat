@@ -78,7 +78,7 @@ pub fn class_of(method: &Method, path: &str) -> Option<LookupClass> {
         }
         ["servers", _, "interacted"] => Some(LookupClass::List),
         ["servers", _, "mentions"] => Some(LookupClass::Typeahead),
-        ["server_search"] => Some(LookupClass::Search),
+        ["server_search"] | ["users", "search"] => Some(LookupClass::Search),
         ["users", _, "card" | "profile"] => Some(LookupClass::Profile),
         _ => None,
     }
@@ -289,6 +289,7 @@ mod tests {
             ("/servers/club/mentions", Some(LookupClass::Typeahead)),
             ("/server_search?q=club", Some(LookupClass::Search)),
             ("/server_search", Some(LookupClass::Search)),
+            ("/users/search?q=bo", Some(LookupClass::Search)),
             ("/users/bob/card", Some(LookupClass::Profile)),
             ("/users/bob/card?server=club", Some(LookupClass::Profile)),
             ("/users/bob/profile", Some(LookupClass::Profile)),

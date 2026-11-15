@@ -651,7 +651,8 @@ async fn names_of(db: &Db, sql: &str, binds: &[&str]) -> Result<Vec<String>, Api
 /// name starts with `q`, only ones `caller` may see. Members of the server the caller names
 /// come first, then friends and people who sent a request, people the caller has a direct
 /// conversation with, members of the caller's other servers, then everyone else; by username
-/// within each. A named server the caller can't open is the gate's denial.
+/// within each. A named server the caller can't open is the gate's denial, and one that keeps
+/// its members from the caller adds none of them and puts none first.
 pub async fn candidates(
     state: &AppState,
     caller: &Caller<'_>,
@@ -677,7 +678,7 @@ pub async fn candidates(
     let like =
         "(lower(u.username) LIKE $2 ESCAPE '\\' OR lower(u.display_name) LIKE $2 ESCAPE '\\')";
     let mut sources: Vec<Vec<String>> = Vec::new();
-    match &context {
+    match context.as_ref().filter(|access| shows_members(access)) {
         Some(access) => {
             let (name, display) = (col("m.username"), col("lower(u.display_name)"));
             let by_name = format!(
@@ -733,6 +734,23 @@ pub async fn candidates(
     }
     let names = unique_capped(sources.into_iter().flatten());
     let seen = seen_among(state, caller, &names).await?;
+    let open: Vec<&String> = names
+        .iter()
+        .filter(|name| matches!(seen.get(*name), Some(Seen::Public | Seen::Everyone)))
+        .collect();
+    let shared: Vec<String> = match caller.user {
+        Some(me) => among(
+            db,
+            "SELECT DISTINCT b.username, '' FROM members a JOIN members b ON b.server = a.server WHERE a.username = $1 AND b.username IN ({in})",
+            &[me.username.as_str()],
+            &open,
+        )
+        .await?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect(),
+        None => Vec::new(),
+    };
     let mut shown: Vec<(usize, String)> = names
         .into_iter()
         .filter_map(|name| {
@@ -740,6 +758,7 @@ pub async fn candidates(
                 Seen::Myself | Seen::Friend | Seen::Incoming => 1,
                 Seen::Dm => 2,
                 Seen::Common(_) | Seen::Context(_) | Seen::Badge => 3,
+                Seen::Public | Seen::Everyone if shared.contains(&name) => 3,
                 Seen::Public | Seen::Everyone => 4,
             };
             let by_source = rank.get(&name).copied().unwrap_or(4);
@@ -2129,9 +2148,9 @@ mod tests {
         assert_eq!(
             found(&state, alice, "z", 10).await,
             [
-                "zed", "zulu", "zoe", "zara", "zeb", "bob", "yan", "zack", "zip"
+                "zed", "zulu", "zoe", "bob", "zara", "zeb", "yan", "zack", "zip"
             ],
-            "the same order, then everyone else by name"
+            "the same order (bob, found by his display name, still by the shared server), then everyone else by name"
         );
         set_level(db, "shared").await;
         let guest = Ask {

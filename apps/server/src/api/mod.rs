@@ -2019,6 +2019,7 @@ fn api_routes(
         .route("/me/p2p_identity/{ik}", get(p2p_identity::get_identity))
         .route("/auth/logout", post(auth::logout))
         .route("/me/servers", get(servers::list_my_servers))
+        .route("/users/search", get(users::search))
         .route("/users/{username}/profile", get(users::profile))
         .route("/users/{username}/card", get(users::card))
         .route(

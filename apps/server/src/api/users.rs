@@ -7,8 +7,10 @@ use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::perms::Perm;
+use crate::api::access::subjects::{CANDIDATES_MAX, candidates};
 use crate::api::access::{Caller, Proof, ServerAccess, UserView, not_found, view_user};
 use crate::api::lookup::{self, LookupClass};
+use crate::api::servers::lookup_text;
 use crate::api::{ApiError, ApiErrorBody, MaybeAuthed, Role, UserRef, require_guest_ok};
 use crate::db::{Db, User};
 use crate::state::AppState;
@@ -364,6 +366,83 @@ pub(crate) async fn profile(
     }))
 }
 
+/// Query for the user search.
+#[derive(Deserialize, IntoParams)]
+pub struct UserSearchQuery {
+    /// The start of a username or display name, 2 to 32 characters after trimming,
+    /// case-insensitive.
+    #[param(example = "al")]
+    q: Option<String>,
+    /// A server the caller names: its members come first, and it shows them as when a card is
+    /// opened from it. A server that keeps its members from the caller (`members_visible` off,
+    /// for someone who is not a member) adds none of them and puts none first.
+    server: Option<String>,
+    /// Most accounts, 1 to 10 (clamped), default 8. Must be an integer.
+    limit: Option<i64>,
+}
+
+/// The default number of accounts the user search answers.
+pub const SEARCH_DEFAULT: i64 = 8;
+
+/// Search accounts
+///
+/// Accounts whose username or display name starts with `q` (case-insensitive) that the caller
+/// may find by name, at most `limit`: the same rule as `GET /api/v1/users/{username}/card`,
+/// so an account the caller may not see is left out, never answered with 404. Members of
+/// `server` come first, then friends and people whose friend request is pending, people in a
+/// direct conversation with the caller, members of the caller's other servers, and then
+/// everyone else (accounts in a server anyone can read, or that show themselves to everyone);
+/// by username within each. A `server` the caller can't open answers the uniform server 404.
+/// Works without a token for guests when guest access is on. Each call takes one of the
+/// caller's `search` lookups (`LOOKUP_SEARCH_PER_MINUTE`, 30 a minute by default, shared with
+/// `GET /api/v1/server_search`), counted per account, or per client address without one.
+/// General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/search",
+    tag = "Users",
+    params(UserSearchQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests"), ("X-Subject-Binding" = Option<String>, Header, description = "A P2P binding of an account, as for `GET /api/v1/users/{username}/card`")),
+    responses(
+        (status = 200, description = "The accounts found, best first", body = Vec<UserRef>, headers(("cache-control" = String, description = "`private, max-age=15`"))),
+        (status = 400, description = "`Search text needs at least 2 characters`, `Search text must be at most 32 characters` or `Search text cannot contain NUL characters` (reason `invalid`, field `q`), or `Server name cannot contain NUL characters` (reason `invalid`, field `server`) (JSON); a non-integer `limit` (plain-text framework error)", body = ApiErrorBody),
+        (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody),
+        (status = 403, description = "`You are banned from this server` for a `server` you took part in before", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: `server` does not exist, or the caller may not open it (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `search` lookups. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
+    ),
+    security((), ("bearer" = []))
+)]
+pub(crate) async fn search(
+    State(state): State<AppState>,
+    MaybeAuthed(viewer): MaybeAuthed,
+    headers: HeaderMap,
+    Query(query): Query<UserSearchQuery>,
+) -> Result<Names, ApiError> {
+    require_guest_ok(&state.db, viewer.as_ref()).await?;
+    let UserSearchQuery { q, server, limit } = query;
+    let q = lookup_text(q.as_deref(), 2)?;
+    if server.as_deref().is_some_and(|s| s.contains('\0')) {
+        return Err(ApiError::invalid(
+            "Server name cannot contain NUL characters",
+            "server",
+        ));
+    }
+    lookup::take(&state, LookupClass::Search, viewer.as_ref())?;
+    let proof = Proof::headers(&headers, &state.limits);
+    let caller = Caller {
+        user: viewer.as_ref(),
+        proof: &proof,
+        server: server.as_deref(),
+        badge: headers
+            .get("x-subject-binding")
+            .and_then(|v| v.to_str().ok()),
+    };
+    let limit = limit
+        .unwrap_or(SEARCH_DEFAULT)
+        .clamp(1, CANDIDATES_MAX as i64) as usize;
+    Ok(Names(candidates(&state, &caller, &q, limit).await?))
+}
+
 #[cfg(test)]
 mod tests {
     use axum::http::{StatusCode, header};
@@ -374,7 +453,7 @@ mod tests {
     use crate::api::access::NOT_FOUND;
     use crate::api::auth::{MePatch, patch_me};
     use crate::api::test_util::{add_member, done, mem_user, temp_state, test_grant};
-    use crate::api::{Authed, MaybeAuthed, Reason};
+    use crate::api::{Authed, MaybeAuthed, Reason, ReasonKind};
     use crate::db::get_user;
 
     async fn insert_user(db: &Db, name: &str, created_at: i64) {
@@ -461,6 +540,17 @@ mod tests {
     fn refusal<T>(res: Result<T, ApiError>) -> Option<(StatusCode, String, Option<Reason>)> {
         res.err()
             .map(|ApiError(code, text, reason)| (code, text, reason))
+    }
+
+    /// A 400 whose reason says the request value `field` is wrong.
+    fn invalid(text: &str, field: &str) -> (StatusCode, String, Option<Reason>) {
+        let reason = Reason {
+            kind: ReasonKind::Invalid,
+            control: None,
+            retry_after: None,
+            field: Some(field.to_string()),
+        };
+        (StatusCode::BAD_REQUEST, text.to_string(), Some(reason))
     }
 
     /// The uniform 404, without a reason.
@@ -915,6 +1005,476 @@ mod tests {
             parts(&state, by("carol"), "bob").await,
             Some((true, false)),
             "bob's own everyone still applies"
+        );
+        done(state, path).await;
+    }
+
+    /// What `GET /users/search` answers: the usernames, or the refusal.
+    async fn searched(
+        state: &AppState,
+        ask: Ask<'_>,
+        q: &str,
+        limit: Option<i64>,
+    ) -> Result<Vec<String>, (StatusCode, String, Option<Reason>)> {
+        let res = search(
+            State(state.clone()),
+            MaybeAuthed(ask.viewer.map(|name| mem_user(name, ask.admin))),
+            headers_of(ask),
+            Query(UserSearchQuery {
+                q: Some(q.to_string()),
+                server: ask.server.map(str::to_string),
+                limit,
+            }),
+        )
+        .await
+        .map_err(|ApiError(code, text, reason)| (code, text, reason))?;
+        let res = res.into_response();
+        assert_eq!(res.headers()[header::CACHE_CONTROL], "private, max-age=15");
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let rows: Vec<UserRef> = serde_json::from_slice(&body).expect("json");
+        Ok(rows.into_iter().map(|u| u.username).collect())
+    }
+
+    async fn set_site(db: &Db, site: &str, choices: &str) {
+        for (key, value) in [("profile_visibility", site), ("profile_choices", choices)] {
+            sqlx::query("UPDATE settings SET value = $1 WHERE key = $2")
+                .bind(value)
+                .bind(key)
+                .execute(db)
+                .await
+                .expect("setting");
+        }
+        crate::api::Settings::forget(db);
+    }
+
+    async fn choose(db: &Db, name: &str, choice: Option<&str>) {
+        sqlx::query("INSERT INTO privacy(username, profile) VALUES($1, $2) ON CONFLICT(username) DO UPDATE SET profile = excluded.profile")
+            .bind(name)
+            .bind(choice)
+            .execute(db)
+            .await
+            .expect("choice");
+    }
+
+    /// alice is in club with pa_mate and zz_y (shown as "Pa Mate"), a friend of pa_friend and in
+    /// a DM pa_dm wrote in. pa_ctx is in the public server town, pa_pub in the public server
+    /// plaza, pa_local in the password server hush, and pa_loner, pa_z1, pa_z2 and zz_x ("Pa
+    /// Hidden") in nothing.
+    async fn search_world(state: &AppState) {
+        let db = &state.db;
+        for (name, display) in [
+            ("alice", "alice"),
+            ("pa_ctx", "pa_ctx"),
+            ("pa_friend", "pa_friend"),
+            ("pa_dm", "pa_dm"),
+            ("pa_mate", "pa_mate"),
+            ("pa_pub", "pa_pub"),
+            ("pa_local", "pa_local"),
+            ("pa_loner", "pa_loner"),
+            ("zz_x", "Pa Hidden"),
+            ("zz_y", "Pa Mate"),
+            ("pa_z1", "pa_z1"),
+            ("pa_z2", "pa_z2"),
+        ] {
+            crate::db::NewUser::plain(name)
+                .shown(display)
+                .at(1)
+                .add(db)
+                .await;
+        }
+        for (name, password) in [
+            ("club", Some("hash")),
+            ("town", None),
+            ("plaza", None),
+            ("hush", Some("hash")),
+        ] {
+            sqlx::query("INSERT INTO servers(name, display_name, password_hash, created_at) VALUES($1, $1, $2, 0)")
+                .bind(name)
+                .bind(password)
+                .execute(db)
+                .await
+                .expect("server");
+        }
+        for (server, name) in [
+            ("club", "alice"),
+            ("club", "pa_mate"),
+            ("club", "zz_y"),
+            ("town", "pa_ctx"),
+            ("plaza", "pa_pub"),
+            ("hush", "pa_local"),
+        ] {
+            add_member(db, server, name, 0, 0, 1).await;
+        }
+        exec(db, "INSERT INTO friends(username, friend, created_at) VALUES('alice', 'pa_friend', 1), ('pa_friend', 'alice', 1)").await;
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'pa_dm') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("id");
+        sqlx::query(
+            "INSERT INTO messages(dm_id, author, content, created_at) VALUES($1, 'pa_dm', 'hi', 1)",
+        )
+        .bind(dm)
+        .execute(db)
+        .await
+        .expect("message");
+    }
+
+    fn fast(state: AppState) -> AppState {
+        state.with_limits(std::sync::Arc::new(crate::limits::Limits {
+            lookup_search_per_minute: 1_000,
+            ..crate::limits::Limits::default()
+        }))
+    }
+
+    #[tokio::test]
+    async fn the_user_search_finds_who_the_caller_may_see_in_order() {
+        let (state, path) = temp_state("user_search").await;
+        let state = fast(state);
+        let db = &state.db;
+        search_world(&state).await;
+        let alice = in_server(by("alice"), "town");
+        let names = |list: &[&str]| list.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        let first = names(&["pa_ctx", "pa_friend", "pa_dm", "pa_mate", "zz_y"]);
+        assert_eq!(
+            searched(&state, alice, "pa", None).await,
+            Ok(first.clone()),
+            "the named server, friends, DMs, then shared servers"
+        );
+        assert_eq!(
+            searched(&state, alice, "PA ", Some(10)).await,
+            Ok(first.clone())
+        );
+        set_site(db, "public_servers", "any").await;
+        let mut public = first.clone();
+        public.push("pa_pub".to_string());
+        assert_eq!(searched(&state, alice, "pa", None).await, Ok(public));
+        set_site(db, "everyone", "any").await;
+        let mut everyone = first.clone();
+        everyone.extend(names(&["pa_local", "pa_loner", "pa_pub", "pa_z1", "pa_z2"]));
+        assert_eq!(
+            searched(&state, alice, "pa", Some(10)).await,
+            Ok(everyone.clone()),
+            "zz_x is the eleventh"
+        );
+        assert_eq!(
+            searched(&state, alice, "pa", None).await,
+            Ok(everyone[..8].to_vec()),
+            "eight by default"
+        );
+        assert_eq!(
+            searched(&state, alice, "pa", Some(50)).await,
+            Ok(everyone.clone()),
+            "at most ten"
+        );
+        assert_eq!(
+            searched(&state, alice, "pa", Some(0)).await,
+            Ok(vec!["pa_ctx".to_string()]),
+            "at least one"
+        );
+        set_site(db, "shared", "any").await;
+        assert_eq!(
+            searched(&state, by("alice"), "pa", None).await,
+            Ok(names(&["pa_friend", "pa_dm", "pa_mate", "zz_y"])),
+            "without the server named"
+        );
+        assert_eq!(
+            searched(&state, by("alice"), "pa h", None).await,
+            Ok(Vec::new()),
+            "zz_x is hidden by its display name too"
+        );
+        assert_eq!(
+            searched(&state, by("alice"), "pa m", None).await,
+            Ok(names(&["zz_y"]))
+        );
+        choose(db, "pa_loner", Some("everyone")).await;
+        assert!(
+            searched(&state, by("alice"), "pa_lo", None)
+                .await
+                .expect("search")
+                .contains(&"pa_loner".to_string()),
+            "an account's own everyone"
+        );
+        set_site(db, "shared", "narrower").await;
+        assert_eq!(
+            searched(&state, by("alice"), "pa_lo", None).await,
+            Ok(Vec::new()),
+            "only narrower choices apply"
+        );
+        set_site(db, "shared", "any").await;
+        choose(db, "pa_loner", None).await;
+        choose(db, "pa_mate", Some("friends")).await;
+        assert_eq!(
+            searched(&state, by("alice"), "pa_m", None).await,
+            Ok(Vec::new()),
+            "a friends-only account is not found by a fellow member"
+        );
+        choose(db, "pa_mate", None).await;
+        exec(
+            db,
+            "UPDATE servers SET members_visible = 0 WHERE name = 'town'",
+        )
+        .await;
+        assert_eq!(
+            searched(&state, alice, "pa_c", None).await,
+            Ok(Vec::new()),
+            "town keeps its members to itself"
+        );
+        exec(db, "UPDATE servers SET members_visible = 1").await;
+        let guest = Ask::default();
+        assert_eq!(
+            searched(&state, guest, "pa", None).await,
+            Ok(Vec::new()),
+            "a guest names no server"
+        );
+        assert_eq!(
+            searched(&state, in_server(guest, "plaza"), "pa", None).await,
+            Ok(names(&["pa_pub"])),
+            "a guest finds a public server's members with it named"
+        );
+        let refused = |res: Result<Vec<String>, (StatusCode, String, Option<Reason>)>| {
+            res.expect_err("refused")
+        };
+        let short = invalid("Search text needs at least 2 characters", "q");
+        for q in ["p", " p ", "", "  "] {
+            assert_eq!(
+                refused(searched(&state, alice, q, None).await),
+                short,
+                "{q:?}"
+            );
+        }
+        assert_eq!(
+            refused(searched(&state, alice, &"p".repeat(33), None).await),
+            invalid("Search text must be at most 32 characters", "q")
+        );
+        for q in ["p\0a", "\0pa"] {
+            assert_eq!(
+                refused(searched(&state, alice, q, None).await),
+                invalid("Search text cannot contain NUL characters", "q"),
+                "{q:?}"
+            );
+        }
+        assert_eq!(
+            refused(searched(&state, in_server(alice, "pl\0aza"), "pa", None).await),
+            invalid("Server name cannot contain NUL characters", "server")
+        );
+        let nowhere =
+            refused(searched(&state, in_server(by("alice"), "nowhere"), "pa", None).await);
+        assert_eq!(nowhere.0, StatusCode::NOT_FOUND);
+        assert_eq!(
+            refused(searched(&state, in_server(by("alice"), "hush"), "pa", None).await),
+            nowhere,
+            "a server the caller can't open is the uniform 404"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_user_search_follows_every_choice() {
+        use crate::api::access::subjects::{
+            ALL_CHOICES, Level, OWN_CHOICES, SITE_LEVELS, wanted_level,
+        };
+        let (state, path) = temp_state("user_search_choices").await;
+        let state = fast(state);
+        let db = &state.db;
+        search_world(&state).await;
+        for (site, instance) in SITE_LEVELS {
+            for (allowed, choices) in ALL_CHOICES {
+                set_site(db, site, allowed).await;
+                for choice in OWN_CHOICES {
+                    for name in ["pa_mate", "pa_loner", "pa_pub"] {
+                        choose(db, name, choice).await;
+                    }
+                    let level = wanted_level(instance, choices, choice);
+                    let found = searched(&state, by("alice"), "pa", Some(10))
+                        .await
+                        .expect("search");
+                    let what = format!("{site}, {allowed}, {choice:?}");
+                    for (name, want) in [
+                        ("pa_mate", level >= Level::Shared),
+                        ("pa_pub", level >= Level::PublicServers),
+                        ("pa_loner", level == Level::Everyone),
+                    ] {
+                        assert_eq!(found.contains(&name.to_string()), want, "{name}: {what}");
+                    }
+                    assert!(found.contains(&"pa_friend".to_string()), "{what}");
+                }
+            }
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_user_search_keeps_a_servers_members_to_itself() {
+        let (state, path) = temp_state("user_search_kept").await;
+        let state = fast(state);
+        let db = &state.db;
+        search_world(&state).await;
+        set_site(db, "everyone", "any").await;
+        add_member(db, "town", "pa_z2", 0, 0, 1).await;
+        let (alice, there) = (by("alice"), in_server(by("alice"), "town"));
+        let (guest, guest_there) = (Ask::default(), in_server(Ask::default(), "town"));
+        let plain = searched(&state, alice, "pa", Some(10))
+            .await
+            .expect("search");
+        let blind = searched(&state, guest, "pa", Some(10))
+            .await
+            .expect("search");
+        for (ask, without) in [(there, &plain), (guest_there, &blind)] {
+            let named = searched(&state, ask, "pa", Some(10)).await.expect("search");
+            assert_eq!(
+                named[..2],
+                ["pa_ctx".to_string(), "pa_z2".to_string()],
+                "town shows its members: they come first"
+            );
+            assert_ne!(&named, without);
+        }
+        exec(
+            db,
+            "UPDATE servers SET members_visible = 0 WHERE name = 'town'",
+        )
+        .await;
+        add_member(db, "town", "pa_friend", 0, 0, 1).await;
+        for (ask, without) in [(there, &plain), (guest_there, &blind)] {
+            assert_eq!(
+                &searched(&state, ask, "pa", Some(10)).await.expect("search"),
+                without,
+                "town keeps its members: naming it tells someone outside it nothing"
+            );
+        }
+        add_member(db, "town", "alice", 0, 0, 1).await;
+        let inside = searched(&state, there, "pa", Some(10))
+            .await
+            .expect("search");
+        assert_eq!(
+            inside[..3],
+            [
+                "pa_ctx".to_string(),
+                "pa_friend".to_string(),
+                "pa_z2".to_string()
+            ],
+            "its members still find each other first"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn an_accounts_own_everyone_reaches_whoever_can_use_the_app() {
+        let (state, path) = temp_state("own_everyone").await;
+        let state = fast(state);
+        let db = &state.db;
+        search_world(&state).await;
+        let guest = Ask::default();
+        let callers = [
+            ("a stranger", by("pa_z1")),
+            ("a guest", guest),
+            ("a guest naming a server", in_server(guest, "plaza")),
+        ];
+        let found = vec!["pa_loner".to_string()];
+        for (who, ask) in callers {
+            assert_eq!(parts(&state, ask, "pa_loner").await, None, "{who}");
+            assert_eq!(
+                searched(&state, ask, "pa_lo", None).await,
+                Ok(Vec::new()),
+                "{who}"
+            );
+        }
+        choose(db, "pa_loner", Some("everyone")).await;
+        for (who, ask) in callers {
+            assert_eq!(
+                parts(&state, ask, "pa_loner").await,
+                Some((true, false)),
+                "{who} sees the card"
+            );
+            assert!(view(&state, ask, "pa_loner").await.is_ok(), "{who}");
+            assert_eq!(
+                searched(&state, ask, "pa_lo", None).await,
+                Ok(found.clone()),
+                "{who} finds the account by name"
+            );
+        }
+        for choices in ["narrower", "site"] {
+            set_site(db, "shared", choices).await;
+            for (who, ask) in callers {
+                assert_eq!(
+                    parts(&state, ask, "pa_loner").await,
+                    None,
+                    "{who}, {choices}"
+                );
+                assert_eq!(
+                    searched(&state, ask, "pa_lo", None).await,
+                    Ok(Vec::new()),
+                    "{who}, {choices}"
+                );
+            }
+        }
+        set_site(db, "shared", "any").await;
+        exec(
+            db,
+            "UPDATE settings SET value = '0' WHERE key = 'guests_enabled'",
+        )
+        .await;
+        crate::api::Settings::forget(db);
+        let off = (
+            StatusCode::UNAUTHORIZED,
+            "Guest access is disabled".to_string(),
+            None,
+        );
+        for (who, ask) in &callers[1..] {
+            assert_eq!(
+                refusal(card_for(&state, *ask, "pa_loner").await),
+                Some(off.clone()),
+                "{who}"
+            );
+            assert_eq!(
+                searched(&state, *ask, "pa_lo", None).await,
+                Err(off.clone()),
+                "{who}"
+            );
+        }
+        let (_, stranger) = callers[0];
+        assert_eq!(
+            parts(&state, stranger, "pa_loner").await,
+            Some((true, false)),
+            "an account still sees it with guest access off"
+        );
+        assert_eq!(searched(&state, stranger, "pa_lo", None).await, Ok(found));
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_user_search_is_quick_for_someone_in_many_servers() {
+        let (state, path) = temp_state("user_search_heavy").await;
+        let state = fast(state);
+        let db = &state.db;
+        for name in ["alice", "zed"] {
+            insert_user(db, name, 1).await;
+        }
+        exec(db, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200) INSERT INTO servers(name, display_name, creator, password_hash, created_at) SELECT 'h' || i, 'H', NULL, 'hash', 0 FROM n").await;
+        for i in 1..=200 {
+            insert_user(db, &format!("m{i}"), 1).await;
+        }
+        exec(db, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200) INSERT INTO members(server, username, is_admin, perms, joined_at) SELECT 'h' || i, 'alice', 0, 0, 1 FROM n").await;
+        exec(db, "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200) INSERT INTO members(server, username, is_admin, perms, joined_at) SELECT 'h' || i, 'm' || i, 0, 0, 1 FROM n").await;
+        let mut best = std::time::Duration::MAX;
+        for _ in 0..3 {
+            let start = std::time::Instant::now();
+            for n in 0..20 {
+                let found = searched(&state, by("alice"), &format!("m{}", n % 9 + 1), None)
+                    .await
+                    .expect("search");
+                assert!(!found.is_empty());
+            }
+            best = best.min(start.elapsed() / 20);
+        }
+        println!("user search for an account in 200 servers: {best:?} a search");
+        assert!(
+            best < std::time::Duration::from_millis(250),
+            "{best:?} a search"
         );
         done(state, path).await;
     }

@@ -106,6 +106,7 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
             identity_assertions: true,
             backup_phrase: true,
             p2p_backup: state.limits.p2p_backup_bytes() > 0,
+            lookups: true,
         },
         &state.limits,
     );
@@ -1416,6 +1417,7 @@ mod tests {
             identity_assertions: true,
             backup_phrase: true,
             p2p_backup: true,
+            lookups: true,
         };
         let advertised = |config: InstanceConfig, origin: &'static str| {
             let (db, limits) = (state.db.clone(), state.limits.clone());
@@ -1475,6 +1477,7 @@ mod tests {
             identity_assertions: true,
             backup_phrase: true,
             p2p_backup: true,
+            lookups: true,
         };
         let instance = Instance::load(&state.db, &InstanceConfig::default())
             .await
@@ -1617,6 +1620,7 @@ mod tests {
                 identity_assertions: true,
                 backup_phrase: true,
                 p2p_backup: true,
+                lookups: true,
             },
             &state.limits,
         );
