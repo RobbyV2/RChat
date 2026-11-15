@@ -1,6 +1,6 @@
 // Unread count shown on the tray icon and, where the OS has no badge, as a dot overlay.
 
-const DOT: [u8; 4] = [0xe5, 0x39, 0x35, 0xff];
+pub(crate) const DOT: [u8; 4] = [0xe5, 0x39, 0x35, 0xff];
 
 pub fn tooltip(name: &str, count: u32) -> String {
     match count {

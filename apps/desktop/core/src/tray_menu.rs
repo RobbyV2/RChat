@@ -68,11 +68,11 @@ pub struct Server {
     pub needs_restart: bool,
 }
 
-// `server` is None until a server is set up.
+// `offline` is None until the page reports its status, and `server` until a server is set up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub webview: bool,
-    pub offline: bool,
+    pub offline: Option<bool>,
     pub muted: bool,
     pub server: Option<Server>,
 }
@@ -162,17 +162,17 @@ pub fn menu(snapshot: &Snapshot) -> Vec<Item> {
         // The page sets the status of its signed-in accounts, so it needs a webview.
         Item::Choice {
             label: "Status",
-            enabled: webview,
+            enabled: webview && offline.is_some(),
             options: vec![
                 Pick {
                     action: Action::Online,
                     label: "Online",
-                    selected: !offline,
+                    selected: offline == Some(false),
                 },
                 Pick {
                     action: Action::Offline,
                     label: "Appear offline",
-                    selected: offline,
+                    selected: offline == Some(true),
                 },
             ],
         },
@@ -189,13 +189,54 @@ pub fn menu(snapshot: &Snapshot) -> Vec<Item> {
     items
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Redraw {
+    Nothing,
+    // Same items in the same places: change their text, checks and enabled states.
+    Items,
+    // Items came or went: build the menu again.
+    Menu,
+}
+
+// An item without its state, so two menus with the same slots can be updated in place.
+#[derive(PartialEq)]
+enum Slot {
+    Separator,
+    Note,
+    Button(Action, &'static str),
+    Check(Action, &'static str),
+    Choice(&'static str, Vec<(Action, &'static str)>),
+}
+
+fn slot(item: &Item) -> Slot {
+    match item {
+        Item::Separator => Slot::Separator,
+        Item::Note(_) => Slot::Note,
+        Item::Button { action, label, .. } => Slot::Button(*action, label),
+        Item::Check { action, label, .. } => Slot::Check(*action, label),
+        Item::Choice { label, options, .. } => {
+            Slot::Choice(label, options.iter().map(|o| (o.action, o.label)).collect())
+        }
+    }
+}
+
+pub fn redraw(shown: &[Item], next: &[Item]) -> Redraw {
+    if shown == next {
+        Redraw::Nothing
+    } else if shown.iter().map(slot).eq(next.iter().map(slot)) {
+        Redraw::Items
+    } else {
+        Redraw::Menu
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const PLAIN: Snapshot = Snapshot {
         webview: true,
-        offline: false,
+        offline: Some(false),
         muted: false,
         server: None,
     };
@@ -219,7 +260,7 @@ mod tests {
         }
     }
 
-    fn status(enabled: bool, offline: bool) -> Item {
+    fn status(enabled: bool, offline: Option<bool>) -> Item {
         Item::Choice {
             label: "Status",
             enabled,
@@ -227,12 +268,12 @@ mod tests {
                 Pick {
                     action: Action::Online,
                     label: "Online",
-                    selected: !offline,
+                    selected: offline == Some(false),
                 },
                 Pick {
                     action: Action::Offline,
                     label: "Appear offline",
-                    selected: offline,
+                    selected: offline == Some(true),
                 },
             ],
         }
@@ -253,7 +294,7 @@ mod tests {
             vec![
                 button(Action::Open, "Open RChat", true),
                 Item::Separator,
-                status(true, false),
+                status(true, Some(false)),
                 mute(false),
                 Item::Separator,
                 button(Action::CheckUpdates, "Check for updates", true),
@@ -269,7 +310,7 @@ mod tests {
             vec![
                 button(Action::Open, "Open RChat", true),
                 Item::Separator,
-                status(true, false),
+                status(true, Some(false)),
                 mute(false),
                 Item::Separator,
                 Item::Note("Server: running, 2 connected".into()),
@@ -368,7 +409,7 @@ mod tests {
             ..server(ServerState::Running, 1, false)
         };
         let items = menu(&none);
-        assert_eq!(items[2], status(false, false));
+        assert_eq!(items[2], status(false, Some(false)));
         assert_eq!(items[0], button(Action::Open, "Open RChat", true));
         assert_eq!(items[3], mute(false));
         assert_eq!(items[6], button(Action::StopServer, "Stop server", true));
@@ -377,17 +418,86 @@ mod tests {
     #[test]
     fn checks_follow_the_snapshot() {
         let offline = Snapshot {
-            offline: true,
+            offline: Some(true),
             ..PLAIN
         };
-        assert_eq!(menu(&offline)[2], status(true, true));
+        assert_eq!(menu(&offline)[2], status(true, Some(true)));
         assert_eq!(menu(&offline)[3], mute(false));
         let muted = Snapshot {
             muted: true,
             ..PLAIN
         };
-        assert_eq!(menu(&muted)[2], status(true, false));
+        assert_eq!(menu(&muted)[2], status(true, Some(false)));
         assert_eq!(menu(&muted)[3], mute(true));
+    }
+
+    #[test]
+    fn status_waits_for_the_page() {
+        let unknown = Snapshot {
+            offline: None,
+            ..PLAIN
+        };
+        assert_eq!(menu(&unknown)[2], status(false, None));
+        let Item::Choice { options, .. } = &menu(&unknown)[2] else {
+            panic!("no status")
+        };
+        assert!(options.iter().all(|o| !o.selected));
+        let hidden = Snapshot {
+            webview: false,
+            offline: Some(true),
+            ..PLAIN
+        };
+        assert_eq!(menu(&hidden)[2], status(false, Some(true)));
+    }
+
+    #[test]
+    fn state_changes_redraw_items_in_place() {
+        let base = menu(&PLAIN);
+        assert_eq!(redraw(&base, &base), Redraw::Nothing);
+        for changed in [
+            Snapshot {
+                muted: true,
+                ..PLAIN
+            },
+            Snapshot {
+                offline: Some(true),
+                ..PLAIN
+            },
+            Snapshot {
+                offline: None,
+                ..PLAIN
+            },
+            Snapshot {
+                webview: false,
+                ..PLAIN
+            },
+        ] {
+            assert_eq!(redraw(&base, &menu(&changed)), Redraw::Items, "{changed:?}");
+        }
+        let running = menu(&server(ServerState::Running, 1, false));
+        let busier = menu(&server(ServerState::Running, 5, false));
+        let stale = menu(&server(ServerState::Running, 5, true));
+        assert_eq!(redraw(&running, &busier), Redraw::Items);
+        assert_eq!(redraw(&busier, &stale), Redraw::Items);
+        let starting = menu(&server(ServerState::Starting, 0, false));
+        assert_eq!(redraw(&starting, &running), Redraw::Items);
+    }
+
+    #[test]
+    fn new_items_rebuild_the_menu() {
+        let base = menu(&PLAIN);
+        let running = menu(&server(ServerState::Running, 1, false));
+        let off = menu(&server(ServerState::Off, 0, false));
+        assert_eq!(redraw(&base, &running), Redraw::Menu);
+        assert_eq!(redraw(&running, &base), Redraw::Menu);
+        assert_eq!(redraw(&running, &off), Redraw::Menu);
+        assert_eq!(redraw(&[], &base), Redraw::Menu);
+        let mut renamed = base.clone();
+        renamed[0] = button(Action::Open, "Open", true);
+        assert_eq!(redraw(&base, &renamed), Redraw::Menu);
+        let mut swapped = base.clone();
+        swapped.swap(2, 3);
+        assert_eq!(redraw(&base, &swapped), Redraw::Menu);
     }
 
     #[test]

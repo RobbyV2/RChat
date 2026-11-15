@@ -3,5 +3,6 @@
 pub mod badge;
 pub mod close;
 pub mod launch;
+pub mod pixmap;
 pub mod settings;
 pub mod tray_menu;
