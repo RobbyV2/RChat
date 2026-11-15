@@ -6,8 +6,9 @@ mod store;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use query::{groups as groups_in, list as list_in, open_count};
+pub(crate) use query::{groups as groups_in, list as list_in, open_count, reporter_known};
 pub(crate) use store::{forget_user, purge_server, sweep};
+pub(crate) use store::{mute as mute_in, mutes as mutes_in};
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -23,8 +24,8 @@ use crate::api::access::{
 use crate::api::features::Feature;
 use crate::api::policy::Policy;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, LIST_PAGE, Paged, Settings, UserRef, allowed, bad,
-    decode_cursor, encode_cursor, lookup,
+    ApiError, ApiErrorBody, Authed, LIST_PAGE, OkResp, Paged, Settings, UserRef, allowed, bad,
+    decode_cursor, encode_cursor, lookup, ok,
 };
 use crate::db::{Db, User, now};
 use crate::state::AppState;
@@ -772,14 +773,21 @@ pub enum ModAction {
     Kick,
     /// The member was banned.
     Ban,
+    /// The reported server was deleted. Only for a report about a server.
+    DeleteServer,
+    /// The owner of the reported server was banned from the instance. Only for a report about
+    /// a server.
+    BanOwner,
 }
 
 impl ModAction {
-    pub const ALL: [ModAction; 4] = [
+    pub const ALL: [ModAction; 6] = [
         ModAction::Delete,
         ModAction::Timeout,
         ModAction::Kick,
         ModAction::Ban,
+        ModAction::DeleteServer,
+        ModAction::BanOwner,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -788,6 +796,8 @@ impl ModAction {
             ModAction::Timeout => "timeout",
             ModAction::Kick => "kick",
             ModAction::Ban => "ban",
+            ModAction::DeleteServer => "delete_server",
+            ModAction::BanOwner => "ban_owner",
         }
     }
 
@@ -1226,4 +1236,587 @@ pub(crate) async fn admin_scope(
         }
         (Some(_), _) => Err(invalid("scope", "Unknown scope")),
     }
+}
+
+pub const ACTION_NEEDS_RESOLVED: &str = "Action goes only with resolved";
+pub const SERVER_REPORTS_ONLY: &str = "This action is only for server reports";
+pub const CANT_HANDLE: &str = "They can't handle reports here";
+pub const NOT_ESCALATABLE: &str = "Only server reports can be escalated";
+
+/// Changes to a report. Left-out fields stay as they are.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+pub struct ReportPatch {
+    /// The new status. Any status can follow any other.
+    #[serde(default)]
+    pub status: Option<Status>,
+    /// What was done about it. Only together with `status: "resolved"`; any other status
+    /// clears it. `delete_server` and `ban_owner` are carried out by this request.
+    #[serde(default)]
+    pub action: Option<ModAction>,
+    /// Who handles it: a username, or `null` for nobody. For a server's report a member with
+    /// Manage reports who is not the one reported; otherwise yourself.
+    #[serde(default, deserialize_with = "crate::api::auth::present")]
+    #[schema(value_type = Option<String>)]
+    pub assignee: Option<Option<String>>,
+    /// With `ban_owner`: the account to ban, the server's creator or one of its admins. Left
+    /// out, it is the creator.
+    #[serde(default)]
+    pub owner: Option<String>,
+}
+
+/// Request body of `POST /api/v1/reports/{id}/notes`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct NoteBody {
+    /// The note, 1 to 1,000 characters.
+    pub text: String,
+}
+
+/// Request body of `POST /api/v1/reports/{id}/escalate`.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+pub struct EscalateBody {
+    /// A note for the instance, up to 1,000 characters.
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// Request body of `POST /api/v1/servers/{name}/reports/resolve`.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct BulkResolve {
+    /// The `target_key` of the reports to close.
+    pub target: String,
+    /// `resolved` or `dismissed`.
+    pub status: Status,
+    /// What was done, with `resolved`.
+    #[serde(default)]
+    pub action: Option<ModAction>,
+}
+
+/// How many reports a bulk change closed.
+#[derive(Debug, PartialEq, Eq, Serialize, ToSchema)]
+pub struct Resolved {
+    /// The reports that were open or in review and are closed now.
+    pub count: i64,
+}
+
+/// An account whose reports are muted.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct MutedReporter {
+    /// The account.
+    pub user: UserRef,
+    /// When it was muted, unix seconds.
+    pub created_at: i64,
+}
+
+/// Paging of the muted reporters.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+pub struct MutesQuery {
+    /// The `X-Next-Cursor` of the page before.
+    pub cursor: Option<String>,
+}
+
+fn note_text(text: &str) -> Result<&str, ApiError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(invalid("text", "Note can't be empty"));
+    }
+    if text.chars().count() > NOTE_MAX {
+        return Err(invalid(
+            "text",
+            &format!("Note must be at most {NOTE_MAX} characters"),
+        ));
+    }
+    Ok(text)
+}
+
+/// The action of a status change, checked against the status and the report.
+fn action_for(
+    scope: &ReportScope,
+    row: &ReportRow,
+    status: Option<Status>,
+    action: Option<ModAction>,
+) -> Result<Option<ModAction>, ApiError> {
+    let Some(action) = action else {
+        return Ok(None);
+    };
+    if status != Some(Status::Resolved) {
+        return Err(invalid("action", ACTION_NEEDS_RESOLVED));
+    }
+    match action {
+        ModAction::DeleteServer | ModAction::BanOwner => {
+            if scope.server.is_some() || row.target_kind != "server" {
+                return Err(invalid("action", SERVER_REPORTS_ONLY));
+            }
+        }
+        ModAction::Delete | ModAction::Timeout | ModAction::Kick | ModAction::Ban => {}
+    }
+    Ok(Some(action))
+}
+
+/// Who a report is assigned to after `given`, which names an account or nobody.
+async fn assignee_for(
+    db: &Db,
+    scope: &ReportScope,
+    row: &ReportRow,
+    given: Option<String>,
+) -> Result<Option<String>, ApiError> {
+    let Some(name) = given else {
+        return Ok(None);
+    };
+    let name = name.to_lowercase();
+    let reported = row.target.as_ref().is_some_and(|t| t.username == name);
+    let channel = store::audience(db, row.id).await?.channel;
+    match scope.handler(db, &name, channel).await? && !reported {
+        true => Ok(Some(name)),
+        false => Err(invalid("assignee", CANT_HANDLE)),
+    }
+}
+
+/// A `delete_server` or `ban_owner` that passed its checks.
+enum Deed {
+    DeleteServer { server: String },
+    BanOwner { server: String, who: String },
+}
+
+/// What a deed leaves to do once its transaction is committed.
+enum Done {
+    Server(crate::api::admin::RemovedServer),
+    Owner(crate::api::admin::HiddenUser),
+}
+
+fn server_gone() -> ApiError {
+    ApiError(
+        axum::http::StatusCode::NOT_FOUND,
+        "Server not found".to_string(),
+        None,
+    )
+}
+
+/// What `action` does to the server of the server report `row`, checked: nothing for the
+/// actions that only record what was done.
+async fn deed_for(
+    state: &AppState,
+    user: &User,
+    row: &ReportRow,
+    action: ModAction,
+    owner: Option<&str>,
+) -> Result<Option<Deed>, ApiError> {
+    use crate::api::admin;
+    match action {
+        ModAction::Delete | ModAction::Timeout | ModAction::Kick | ModAction::Ban => Ok(None),
+        ModAction::DeleteServer => {
+            let server = row.server.clone().ok_or_else(server_gone)?;
+            if admin::is_default_builtin(state, &server).await {
+                return Err(invalid("action", admin::DEFAULT_SERVER_STAYS));
+            }
+            Ok(Some(Deed::DeleteServer { server }))
+        }
+        ModAction::BanOwner => {
+            let server = row.server.clone().ok_or_else(server_gone)?;
+            let who = store::server_owner(&state.db, &server, owner)
+                .await?
+                .ok_or_else(|| invalid("owner", "They don't own this server"))?;
+            if who == user.username {
+                return Err(invalid("owner", admin::BAN_SELF));
+            }
+            Ok(Some(Deed::BanOwner { server, who }))
+        }
+    }
+}
+
+impl Deed {
+    /// Carries the deed out in `tx` for the report `report`, as the admin routes do it, and
+    /// notes it in the instance audit log. A ban that changes nothing is not noted.
+    async fn carry_out(
+        self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+        actor: &str,
+        report: i64,
+        t: i64,
+    ) -> Result<Done, ApiError> {
+        use crate::api::{admin, instance_audit};
+        match self {
+            Deed::DeleteServer { server } => {
+                let removed = admin::remove_server_in(tx, &server)
+                    .await?
+                    .ok_or_else(server_gone)?;
+                let about = json!({ "report": report });
+                instance_audit::record_in(tx, actor, "server.delete", Some(&server), about, t)
+                    .await?;
+                Ok(Done::Server(removed))
+            }
+            Deed::BanOwner { server, who } => {
+                let hidden = admin::ban_in(tx, &who).await?;
+                if hidden.changed {
+                    let about = json!({ "report": report, "server": server });
+                    instance_audit::record_in(tx, actor, "user.ban", Some(&who), about, t).await?;
+                }
+                Ok(Done::Owner(hidden))
+            }
+        }
+    }
+}
+
+impl Done {
+    async fn finish(self, state: &AppState) {
+        match self {
+            Done::Server(removed) => removed.finish(state).await,
+            Done::Owner(hidden) => hidden.finish(state).await,
+        }
+    }
+}
+
+/// Change a report
+///
+/// Sets the status of a report, what was done about it, and who handles it. `action` goes only
+/// with `status: "resolved"`, and any other status clears a stored action. For a report about
+/// a server, `delete_server` deletes that server and `ban_owner` bans its creator (or the
+/// admin `owner` names) from the instance, together with the status change: either both
+/// happen or neither. Other actions only record what you did through the moderation
+/// endpoints. A server's report can be assigned to a moderator who can view the channel of
+/// the reported message. Every change is added to the report's history and to the audit log
+/// (`report.status`, `report.assign`), which never names the reporter or the one reported.
+/// Emits `reports_changed`. For the moderators of the report's server: members with the
+/// Manage reports permission who are not timed out. General rate-limit bucket.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/reports/{id}",
+    tag = "Reports",
+    params(("id" = i64, Path, description = "Report id")),
+    request_body = ReportPatch,
+    responses(
+        (status = 200, description = "The report after the change", body = ReportRow),
+        (status = 400, description = "`Action goes only with resolved`, `This action is only for server reports`, `They can't handle reports here` (the assignee is not a moderator of the server, can't view the channel of the reported message, is the one reported, or for a report to the instance is not you), `They don't own this server`, `Cannot ban yourself` (`ban_owner` on your own account), `The rchat server is a default server. Take it off the default servers first` (`delete_server`). Each has the reason `invalid` with the field `action`, `assignee` or `owner`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`You are timed out in this server`", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: no such report, one you don't handle, one about you, or one about a message in a channel you can't view (identical responses). `Server not found or wrong password`: you can read the report but are not a member of its server. `Server not found`: the reported server is gone", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn patch_report(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(id): Path<i64>,
+    Json(patch): Json<ReportPatch>,
+) -> Result<Json<ReportRow>, ApiError> {
+    let ReportPatch {
+        status,
+        action,
+        assignee,
+        owner,
+    } = patch;
+    let db = &state.db;
+    let (scope, row) = query::held(db, &user, id).await?;
+    let action = action_for(&scope, &row, status, action)?;
+    let assignee = match assignee {
+        Some(given) => Some(assignee_for(db, &scope, &row, given).await?),
+        None => None,
+    };
+    let deed = match action {
+        Some(action) => deed_for(&state, &user, &row, action, owner.as_deref()).await?,
+        None => None,
+    };
+    let change = store::Change {
+        id,
+        status: status.map(|s| (s, action)),
+        assignee,
+    };
+    let t = now();
+    let mut tx = db.begin().await?;
+    store::change(&mut tx, &scope, &user.username, change, t).await?;
+    let done = match deed {
+        Some(deed) => Some(deed.carry_out(&mut tx, &user.username, id, t).await?),
+        None => None,
+    };
+    tx.commit().await?;
+    if let Some(done) = done {
+        done.finish(&state).await;
+    }
+    if status.is_some() {
+        let audience = store::audience(db, id).await?;
+        announce(&state, scope.server.as_deref(), audience);
+    }
+    Ok(Json(query::row(db, &scope, id).await?))
+}
+
+/// Add a note to a report
+///
+/// Adds a note to the report's history, for the others who handle it. The reporter never sees
+/// it. Logged as `report.note` without the text. For the moderators of the report's server:
+/// members with the Manage reports permission who are not timed out. General rate-limit
+/// bucket.
+#[utoipa::path(
+    post,
+    path = "/api/v1/reports/{id}/notes",
+    tag = "Reports",
+    params(("id" = i64, Path, description = "Report id")),
+    request_body = NoteBody,
+    responses(
+        (status = 200, description = "The report with the note in its history", body = ReportDetail),
+        (status = 400, description = "`Note can't be empty` or `Note must be at most 1000 characters`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`You are timed out in this server`", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: no such report, one you don't handle, one about you, or one about a message in a channel you can't view (identical responses). `Server not found or wrong password`: you can read the report but are not a member of its server", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn add_note(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(id): Path<i64>,
+    Json(NoteBody { text }): Json<NoteBody>,
+) -> Result<Json<ReportDetail>, ApiError> {
+    let text = note_text(&text)?;
+    let db = &state.db;
+    let (scope, _) = query::held(db, &user, id).await?;
+    store::note(db, &scope, &user.username, id, text, now()).await?;
+    Ok(Json(query::detail_in(db, &scope, id).await?))
+}
+
+/// Pass a report on to the instance
+///
+/// Sends a copy of a server's report to the instance: the same target, content, reason and
+/// reporter, with your note. The copy never counts against the reporter's limits. Asking
+/// again changes nothing. Logged as `report.escalate`. Emits `reports_changed`. For the
+/// moderators of the report's server: members with the Manage reports permission who are not
+/// timed out. General rate-limit bucket.
+#[utoipa::path(
+    post,
+    path = "/api/v1/reports/{id}/escalate",
+    tag = "Reports",
+    params(("id" = i64, Path, description = "Report id")),
+    request_body = EscalateBody,
+    responses(
+        (status = 200, description = "The report, now `escalated`", body = ReportDetail),
+        (status = 400, description = "`Only server reports can be escalated` or `Note must be at most 1000 characters`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`You are timed out in this server`", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: no such report, one you don't handle, one about you, or one about a message in a channel you can't view (identical responses); also while reports to the instance are turned off (reason `off_site`). `Server not found or wrong password`: you can read the report but are not a member of its server", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn escalate(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(id): Path<i64>,
+    Json(EscalateBody { note }): Json<EscalateBody>,
+) -> Result<Json<ReportDetail>, ApiError> {
+    let feature = Feature::InstanceReports;
+    if !Settings::cached(&state.db).await.on(feature) {
+        return Err(crate::api::policy::refused(feature.key(), not_found()));
+    }
+    let note = note.as_deref().map(str::trim).filter(|n| !n.is_empty());
+    if note.is_some_and(|n| n.chars().count() > NOTE_MAX) {
+        return Err(invalid(
+            "note",
+            &format!("Note must be at most {NOTE_MAX} characters"),
+        ));
+    }
+    let db = &state.db;
+    let (scope, _) = query::held(db, &user, id).await?;
+    if scope.server.is_none() {
+        return Err(invalid("id", NOT_ESCALATABLE));
+    }
+    if store::escalate(db, &scope, &user.username, id, note, now()).await? {
+        let audience = store::audience(db, id).await?;
+        announce(&state, scope.server.as_deref(), audience.clone());
+        announce(&state, None, audience);
+    }
+    Ok(Json(query::detail_in(db, &scope, id).await?))
+}
+
+/// The status and action of a bulk change.
+fn bulk_change(req: &BulkResolve) -> Result<(Status, Option<ModAction>), ApiError> {
+    let BulkResolve {
+        target: _,
+        status,
+        action,
+    } = req;
+    match (status, action) {
+        (Status::Open | Status::InReview, _) => {
+            Err(invalid("status", "Only resolved or dismissed"))
+        }
+        (Status::Dismissed, Some(_)) => Err(invalid("action", ACTION_NEEDS_RESOLVED)),
+        (Status::Resolved, Some(ModAction::DeleteServer | ModAction::BanOwner)) => {
+            Err(invalid("action", "This action goes with one report"))
+        }
+        (Status::Resolved | Status::Dismissed, action) => Ok((*status, *action)),
+    }
+}
+
+/// `bulk_resolve` over `scope`.
+pub(crate) async fn resolve_in(
+    state: &AppState,
+    scope: &ReportScope,
+    user: &User,
+    req: BulkResolve,
+) -> Result<Resolved, ApiError> {
+    let (status, action) = bulk_change(&req)?;
+    let closed = store::resolve_all(
+        &state.db,
+        scope,
+        &user.username,
+        &req.target,
+        (status, action),
+        now(),
+    )
+    .await?;
+    let count = closed.len() as i64;
+    let mut told: Vec<Audience> = Vec::new();
+    for audience in closed {
+        if !told.contains(&audience) {
+            announce(state, scope.server.as_deref(), audience.clone());
+            told.push(audience);
+        }
+    }
+    Ok(Resolved { count })
+}
+
+/// Close every report about one target
+///
+/// Sets every report of the server about `target` (a `target_key`) that is `open` or
+/// `in_review`, and that you can see, to `resolved` or `dismissed`. Logged once as
+/// `report.status` with the count. Emits `reports_changed`. Requires being a member with the
+/// Manage reports permission who is not timed out. General rate-limit bucket.
+#[utoipa::path(
+    post,
+    path = "/api/v1/servers/{name}/reports/resolve",
+    tag = "Reports",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    request_body = BulkResolve,
+    responses(
+        (status = 200, description = "How many reports were closed", body = Resolved),
+        (status = 400, description = "`Only resolved or dismissed`, `Action goes only with resolved`, `This action goes with one report`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`Missing permission`: a member without Manage reports. `You are timed out in this server`. Or banned from the server", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
+        (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn bulk_resolve(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    Json(req): Json<BulkResolve>,
+) -> Result<Json<Resolved>, ApiError> {
+    let scope = report_scope(&state.db, &user, Some(&name), ReportMode::Write).await?;
+    resolve_in(&state, &scope, &user, req).await.map(Json)
+}
+
+/// List muted reporters
+///
+/// The accounts whose reports to this server's moderators are muted, by username, 50 a page.
+/// Page with `cursor` from the `X-Next-Cursor` response header. Requires being a member with
+/// the Manage reports permission. General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/v1/servers/{name}/report_mutes",
+    tag = "Reports",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), MutesQuery),
+    responses(
+        (status = 200, description = "A page of muted reporters", body = Vec<MutedReporter>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
+        (status = 400, description = "An invalid cursor", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`Missing permission`: a member without Manage reports. Or banned from the server", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn list_mutes(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    Query(q): Query<MutesQuery>,
+) -> Result<Paged<MutedReporter>, ApiError> {
+    let db = &state.read();
+    let scope = report_scope(db, &user, Some(&name), ReportMode::Read).await?;
+    store::mutes(db, &scope, q.cursor.as_deref()).await
+}
+
+/// Mute a reporter
+///
+/// Mutes the reports of `username` to this server's moderators: their next reports here get
+/// the answer of a reporter past a limit, and nothing is stored. Their reports to the instance
+/// are not affected. Works for members of the server and for accounts with a report here that
+/// you can see; every other name answers 404 and counts as a miss
+/// (`LOOKUP_MISSES_PER_HOUR`, as for `GET /api/v1/users/{username}/card`). Muting twice
+/// changes nothing. Logged as `report.mute`. Requires being a member with the Manage reports
+/// permission who is not timed out. General rate-limit bucket.
+#[utoipa::path(
+    put,
+    path = "/api/v1/servers/{name}/report_mutes/{username}",
+    tag = "Reports",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ("username" = String, Path, description = "The reporter, case-insensitive")),
+    responses(
+        (status = 200, description = "Their reports are muted", body = OkResp),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`Missing permission`: a member without Manage reports. `You are timed out in this server`. Or banned from the server", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses). `Not found`: no account by that name, or one that is no member and sent no report here that you can see (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller got more 404s for names this hour than `LOOKUP_MISSES_PER_HOUR`. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn mute_reporter(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path((name, username)): Path<(String, String)>,
+) -> Result<Json<OkResp>, ApiError> {
+    let db = &state.db;
+    let scope = report_scope(db, &user, Some(&name), ReportMode::Write).await?;
+    let target = username.to_lowercase();
+    let held = lookup::unmissed(&state, Some(&user))?;
+    let known = match query::reporter_known(db, &scope, &target).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(not_found()),
+        Err(e) => Err(e),
+    };
+    lookup::counted(held, known)?;
+    store::mute(db, &scope, &user.username, &target, true, now()).await?;
+    Ok(ok())
+}
+
+/// Unmute a reporter
+///
+/// Lets `username` report to this server's moderators again. Succeeds without changes when
+/// they are not muted. Logged as `report.unmute`. Requires being a member with the Manage
+/// reports permission who is not timed out. General rate-limit bucket.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/servers/{name}/report_mutes/{username}",
+    tag = "Reports",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ("username" = String, Path, description = "The reporter, case-insensitive")),
+    responses(
+        (status = 200, description = "Their reports are not muted", body = OkResp),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`Missing permission`: a member without Manage reports. `You are timed out in this server`. Or banned from the server", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn unmute_reporter(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path((name, username)): Path<(String, String)>,
+) -> Result<Json<OkResp>, ApiError> {
+    let db = &state.db;
+    let scope = report_scope(db, &user, Some(&name), ReportMode::Write).await?;
+    store::mute(
+        db,
+        &scope,
+        &user.username,
+        &username.to_lowercase(),
+        false,
+        now(),
+    )
+    .await?;
+    Ok(ok())
 }

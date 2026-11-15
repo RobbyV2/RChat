@@ -2238,8 +2238,28 @@ fn api_routes(
         .route("/servers/{name}/reports/groups", get(reports::list_groups))
         .route("/servers/{name}/reports/open", get(reports::server_open))
         .route("/reports/open", get(reports::my_open))
-        .route("/reports/{id}", get(reports::get_report))
+        .route(
+            "/reports/{id}",
+            get(reports::get_report).patch(reports::patch_report),
+        )
         .route("/reports/{id}/events", get(reports::list_events))
+        .route("/reports/{id}/notes", post(reports::add_note))
+        .route("/reports/{id}/escalate", post(reports::escalate))
+        .route(
+            "/servers/{name}/reports/resolve",
+            post(reports::bulk_resolve),
+        )
+        .route("/servers/{name}/report_mutes", get(reports::list_mutes))
+        .route(
+            "/servers/{name}/report_mutes/{username}",
+            put(reports::mute_reporter).delete(reports::unmute_reporter),
+        )
+        .route("/admin/reports/resolve", post(admin::resolve_reports))
+        .route("/admin/report_mutes", get(admin::list_report_mutes))
+        .route(
+            "/admin/report_mutes/{username}",
+            put(admin::mute_reporter).delete(admin::unmute_reporter),
+        )
         .route("/admin/reports", get(admin::list_reports))
         .route("/admin/reports/groups", get(admin::report_groups))
         .route("/admin/reports/open", get(admin::reports_open))

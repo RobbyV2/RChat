@@ -3,9 +3,16 @@ use sqlx::{AnyConnection, Row};
 
 use super::forms::StoredAnswer;
 use super::limits::{Caps, Class, allowed};
-use super::{Placed, ReportKind};
-use crate::api::ApiError;
-use crate::api::audit::like_escape;
+use super::query::visible;
+use super::snapshot::Snapshot;
+use super::{Audience, ModAction, MutedReporter, Placed, ReportKind, Status};
+use crate::api::access::ReportScope;
+use crate::api::audit::{
+    self, Action, ChannelRef, Details, Entry, Target, TargetKind, like_escape,
+};
+use crate::api::{
+    ApiError, LIST_PAGE, Paged, decode_cursor, encode_cursor, instance_audit, user_from, user_refs,
+};
 use crate::db::{Db, PURGE_BATCH, delete_batched};
 
 /// How many reports `forget_user` reads at a time.
@@ -140,6 +147,535 @@ pub(super) async fn event(
         .map(|_| ())
 }
 
+/// A change to one report.
+pub(super) struct Change {
+    pub id: i64,
+    /// The new status and, for `resolved`, what was done.
+    pub status: Option<(Status, Option<ModAction>)>,
+    /// The new assignee, or nobody.
+    pub assignee: Option<Option<String>>,
+}
+
+/// What a change to reports is logged as.
+#[derive(Clone, Copy)]
+pub(super) enum Noted {
+    Status,
+    Assign,
+    Note,
+    Escalate,
+    Resolve,
+}
+
+impl Noted {
+    fn action(self) -> Action {
+        match self {
+            Noted::Status | Noted::Resolve => Action::ReportStatus,
+            Noted::Assign => Action::ReportAssign,
+            Noted::Note => Action::ReportNote,
+            Noted::Escalate => Action::ReportEscalate,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Noted::Resolve => "report.resolve",
+            Noted::Status | Noted::Assign | Noted::Note | Noted::Escalate => self.action().as_str(),
+        }
+    }
+}
+
+/// The channel of the reported message as report `id` keeps it: the channel's name now, or the
+/// one it had when the report was sent, and whether it was private then.
+async fn channel_of(conn: &mut AnyConnection, id: i64) -> Result<Option<ChannelRef>, ApiError> {
+    let Some(row) = sqlx::query("SELECT r.channel_id, r.channel_private, c.name, r.snapshot FROM reports r LEFT JOIN channels c ON c.id = r.channel_id WHERE r.id = $1")
+        .bind(id)
+        .fetch_optional(&mut *conn)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let Some(channel) = row.try_get::<Option<i64>, _>(0)? else {
+        return Ok(None);
+    };
+    let name = match row.try_get::<Option<String>, _>(2)? {
+        Some(name) => name,
+        None => serde_json::from_str::<Snapshot>(&row.try_get::<String, _>(3)?)
+            .ok()
+            .and_then(|snapshot| snapshot.channel)
+            .unwrap_or_default(),
+    };
+    Ok(Some(ChannelRef {
+        id: channel,
+        name,
+        private: row.try_get::<i64, _>(1)? != 0,
+    }))
+}
+
+/// What a logged change is about: one report, or several with the channels they come from
+/// (each channel's id and whether it was private).
+enum About<'a> {
+    One(i64),
+    Many(&'a [(i64, bool)]),
+}
+
+/// Logs a change to reports by `actor`: in the server's audit log for a server's reports, in
+/// the instance audit log for the reports to the instance. The entry never names the reporter
+/// or the one reported. In the server's log it carries the channels of the reported messages,
+/// so it is hidden from who can't view one of them.
+async fn log(
+    conn: &mut AnyConnection,
+    scope: &ReportScope,
+    actor: &str,
+    noted: Noted,
+    about: About<'_>,
+    details: &[(&str, Value)],
+    t: i64,
+) -> Result<(), ApiError> {
+    let id = match about {
+        About::One(id) => Some(id),
+        About::Many(_) => None,
+    };
+    match &scope.server {
+        Some(server) => {
+            let details = details
+                .iter()
+                .fold(Details::new(), |d, (key, value)| d.set(key, value.clone()));
+            let details = match about {
+                About::One(id) => match channel_of(conn, id).await? {
+                    Some(channel) => details.channel(&channel),
+                    None => details,
+                },
+                About::Many(channels) => channels.iter().fold(details, |d, (id, private)| {
+                    d.mention(&ChannelRef {
+                        id: *id,
+                        name: String::new(),
+                        private: *private,
+                    })
+                }),
+            };
+            let target = Target {
+                kind: TargetKind::Report,
+                id,
+                name: None,
+            };
+            let entry = Entry::new(server, &scope.actor(), noted.action())
+                .target(target)
+                .details(details);
+            Ok(audit::record(conn, entry).await?)
+        }
+        None => {
+            let detail: serde_json::Map<String, Value> = details
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.clone()))
+                .collect();
+            let target = id.map(|id| format!("report:{id}"));
+            instance_audit::record_in(
+                conn,
+                actor,
+                noted.name(),
+                target.as_deref(),
+                Value::Object(detail),
+                t,
+            )
+            .await
+        }
+    }
+}
+
+fn status_detail(status: Status, action: Option<ModAction>) -> Vec<(&'static str, Value)> {
+    let mut detail = vec![("status", Value::from(status.as_str()))];
+    if let Some(action) = action {
+        detail.push(("action", Value::from(action.as_str())));
+    }
+    detail
+}
+
+fn object(detail: &[(&str, Value)]) -> Value {
+    Value::Object(
+        detail
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.clone()))
+            .collect(),
+    )
+}
+
+/// Applies `change` by `actor` at `t` on `conn`, with its history lines and audit entries.
+pub(super) async fn change(
+    conn: &mut AnyConnection,
+    scope: &ReportScope,
+    actor: &str,
+    change: Change,
+    t: i64,
+) -> Result<(), ApiError> {
+    let Change {
+        id,
+        status,
+        assignee,
+    } = change;
+    if let Some((status, action)) = status {
+        let closed = match status {
+            Status::Resolved | Status::Dismissed => Some(t),
+            Status::Open | Status::InReview => None,
+        };
+        sqlx::query("UPDATE reports SET status = $1, action = $2, resolved_at = $3, updated_at = $4 WHERE id = $5")
+            .bind(status.as_str())
+            .bind(action.map(ModAction::as_str))
+            .bind(closed)
+            .bind(t)
+            .bind(id)
+            .execute(&mut *conn)
+            .await?;
+        let detail = status_detail(status, action);
+        event(&mut *conn, id, Some(actor), "status", object(&detail), t).await?;
+        log(
+            &mut *conn,
+            scope,
+            actor,
+            Noted::Status,
+            About::One(id),
+            &detail,
+            t,
+        )
+        .await?;
+    }
+    if let Some(assignee) = assignee {
+        sqlx::query("UPDATE reports SET assignee = $1, updated_at = $2 WHERE id = $3")
+            .bind(assignee.as_deref())
+            .bind(t)
+            .bind(id)
+            .execute(&mut *conn)
+            .await?;
+        event(
+            &mut *conn,
+            id,
+            Some(actor),
+            "assign",
+            json!({ "assignee": assignee }),
+            t,
+        )
+        .await?;
+        let detail = [("assigned", Value::from(assignee.is_some()))];
+        log(
+            &mut *conn,
+            scope,
+            actor,
+            Noted::Assign,
+            About::One(id),
+            &detail,
+            t,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Adds the note `text` by `actor` to the history of report `id`.
+pub(super) async fn note(
+    db: &Db,
+    scope: &ReportScope,
+    actor: &str,
+    id: i64,
+    text: &str,
+    t: i64,
+) -> Result<(), ApiError> {
+    let mut tx = db.begin().await?;
+    sqlx::query("UPDATE reports SET updated_at = $1 WHERE id = $2")
+        .bind(t)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    event(&mut tx, id, Some(actor), "note", json!({ "text": text }), t).await?;
+    log(&mut tx, scope, actor, Noted::Note, About::One(id), &[], t).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Passes the server report `id` on to the instance as a copy that keeps the target, the
+/// content, the reason, the reporter and their note and answers. `false` when it was passed
+/// on before: there is never a second copy.
+pub(super) async fn escalate(
+    db: &Db,
+    scope: &ReportScope,
+    actor: &str,
+    id: i64,
+    note: Option<&str>,
+    t: i64,
+) -> Result<bool, ApiError> {
+    let mut tx = db.begin().await?;
+    let claimed = sqlx::query("UPDATE reports SET escalated_to = -1, updated_at = $1 WHERE id = $2 AND escalated_to IS NULL")
+        .bind(t)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if claimed == 0 {
+        return Ok(false);
+    }
+    let copy: i64 = sqlx::query("INSERT INTO reports(kind, server, server_name, target_kind, target_key, target_user, message_id, channel_id, channel_private, dm_id, role_id, role_name, reporter, form, form_label, form_rev, reason, reason_label, note, answers, snapshot, franking, escalated_from, created_at, updated_at) SELECT 'instance', server, server_name, target_kind, target_key, target_user, message_id, channel_id, channel_private, dm_id, role_id, role_name, reporter, form, form_label, form_rev, reason, reason_label, note, answers, snapshot, franking, id, $1, $1 FROM reports WHERE id = $2 RETURNING id")
+        .bind(t)
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?
+        .try_get(0)?;
+    sqlx::query("UPDATE reports SET escalated_to = $1 WHERE id = $2")
+        .bind(copy)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    let said = |key: &str, other: i64| {
+        let mut detail = serde_json::Map::new();
+        if let Some(note) = note {
+            detail.insert("note".to_string(), Value::from(note));
+        }
+        detail.insert(key.to_string(), Value::from(other));
+        Value::Object(detail)
+    };
+    event(&mut tx, id, Some(actor), "escalate", said("to", copy), t).await?;
+    event(&mut tx, copy, None, "created", json!({}), t).await?;
+    event(&mut tx, copy, Some(actor), "escalate", said("from", id), t).await?;
+    log(
+        &mut tx,
+        scope,
+        actor,
+        Noted::Escalate,
+        About::One(id),
+        &[],
+        t,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// Who must not learn that report `id` changed.
+pub(super) async fn audience(db: &Db, id: i64) -> Result<Audience, ApiError> {
+    let row =
+        sqlx::query("SELECT target_user, channel_id, channel_private FROM reports WHERE id = $1")
+            .bind(id)
+            .fetch_optional(db)
+            .await?;
+    Ok(match &row {
+        Some(row) => audience_of(row, 0)?,
+        None => Audience {
+            about: None,
+            channel: None,
+        },
+    })
+}
+
+/// The audience in the columns `target_user`, `channel_id` and `channel_private` from `at` on.
+fn audience_of(row: &sqlx::any::AnyRow, at: usize) -> sqlx::Result<Audience> {
+    let channel: Option<i64> = row.try_get(at + 1)?;
+    let private = row.try_get::<i64, _>(at + 2)? != 0;
+    Ok(Audience {
+        about: row.try_get(at)?,
+        channel: channel.map(|id| (id, private)),
+    })
+}
+
+/// Closes every report of `scope` about `target` that is open or in review and that the
+/// viewer can see, in one statement, and answers who must not learn of each. Logged once.
+pub(super) async fn resolve_all(
+    db: &Db,
+    scope: &ReportScope,
+    actor: &str,
+    target: &str,
+    to: (Status, Option<ModAction>),
+    t: i64,
+) -> Result<Vec<Audience>, ApiError> {
+    let (status, action) = to;
+    let mut clause = visible(scope);
+    let key = clause.text(target);
+    clause.and(format!(
+        "r.target_key = {key} AND r.status IN ('open', 'in_review')"
+    ));
+    let (to_status, to_action, at) = (
+        clause.text(status.as_str()),
+        match action {
+            Some(action) => clause.text(action.as_str()),
+            None => "NULL".to_string(),
+        },
+        clause.int(t),
+    );
+    let sql = format!(
+        "UPDATE reports SET status = {to_status}, action = {to_action}, resolved_at = {at}, updated_at = {at} WHERE id IN (SELECT r.id FROM reports r WHERE {}) RETURNING id, target_user, channel_id, channel_private",
+        clause.sql()
+    );
+    let mut tx = db.begin().await?;
+    let closed = clause.run(&mut tx, sql).await?;
+    let detail = status_detail(status, action);
+    let mut audiences = Vec::with_capacity(closed.len());
+    for row in &closed {
+        let id: i64 = row.try_get(0)?;
+        event(&mut tx, id, Some(actor), "status", object(&detail), t).await?;
+        audiences.push(audience_of(row, 1)?);
+    }
+    let count = closed.len() as i64;
+    if count > 0 {
+        let mut detail = detail;
+        detail.insert(0, ("count", Value::from(count)));
+        let mut channels: Vec<(i64, bool)> = Vec::new();
+        for channel in audiences.iter().filter_map(|a| a.channel) {
+            if !channels.contains(&channel) {
+                channels.push(channel);
+            }
+        }
+        let about = About::Many(&channels);
+        log(&mut tx, scope, actor, Noted::Resolve, about, &detail, t).await?;
+    }
+    tx.commit().await?;
+    Ok(audiences)
+}
+
+/// The accounts whose reports are muted in `scope`, by username, a page at a time.
+pub(crate) async fn mutes(
+    db: &Db,
+    scope: &ReportScope,
+    cursor: Option<&str>,
+) -> Result<Paged<MutedReporter>, ApiError> {
+    let after = match cursor.filter(|c| !c.trim().is_empty()) {
+        Some(cursor) => decode_cursor(cursor, 1)?.remove(0),
+        None => String::new(),
+    };
+    let rows = match &scope.server {
+        Some(server) => {
+            sqlx::query("SELECT username, created_at FROM report_mutes WHERE server = $1 AND username > $2 ORDER BY username LIMIT $3")
+                .bind(server)
+                .bind(&after)
+                .bind(LIST_PAGE + 1)
+                .fetch_all(db)
+                .await?
+        }
+        None => {
+            sqlx::query("SELECT username, created_at FROM instance_report_mutes WHERE username > $1 ORDER BY username LIMIT $2")
+                .bind(&after)
+                .bind(LIST_PAGE + 1)
+                .fetch_all(db)
+                .await?
+        }
+    };
+    let mut found: Vec<(String, i64)> = Vec::with_capacity(rows.len());
+    for row in &rows {
+        found.push((row.try_get(0)?, row.try_get(1)?));
+    }
+    let more = found.len() as i64 > LIST_PAGE;
+    found.truncate(LIST_PAGE as usize);
+    let next = match (more, found.last()) {
+        (true, Some((last, _))) => Some(encode_cursor(&[last])),
+        (_, _) => None,
+    };
+    let names: Vec<String> = found.iter().map(|(name, _)| name.clone()).collect();
+    let refs = user_refs(db, &names).await;
+    Ok(Paged(
+        found
+            .into_iter()
+            .map(|(name, created_at)| MutedReporter {
+                user: user_from(&refs, &name),
+                created_at,
+            })
+            .collect(),
+        next,
+    ))
+}
+
+/// Mutes (`on`) or unmutes the reports of `target` in `scope`. A change is logged; asking
+/// for what already holds changes nothing.
+pub(crate) async fn mute(
+    db: &Db,
+    scope: &ReportScope,
+    actor: &str,
+    target: &str,
+    on: bool,
+    t: i64,
+) -> Result<(), ApiError> {
+    let mut tx = db.begin().await?;
+    let changed = match (&scope.server, on) {
+        (Some(server), true) => {
+            sqlx::query("INSERT INTO report_mutes(server, username, muted_by, created_at) VALUES($1, $2, $3, $4) ON CONFLICT(server, username) DO NOTHING")
+                .bind(server)
+                .bind(target)
+                .bind(actor)
+                .bind(t)
+                .execute(&mut *tx)
+                .await?
+        }
+        (Some(server), false) => {
+            sqlx::query("DELETE FROM report_mutes WHERE server = $1 AND username = $2")
+                .bind(server)
+                .bind(target)
+                .execute(&mut *tx)
+                .await?
+        }
+        (None, true) => {
+            sqlx::query("INSERT INTO instance_report_mutes(username, created_at) VALUES($1, $2) ON CONFLICT(username) DO NOTHING")
+                .bind(target)
+                .bind(t)
+                .execute(&mut *tx)
+                .await?
+        }
+        (None, false) => {
+            sqlx::query("DELETE FROM instance_report_mutes WHERE username = $1")
+                .bind(target)
+                .execute(&mut *tx)
+                .await?
+        }
+    }
+    .rows_affected()
+        > 0;
+    if changed {
+        match &scope.server {
+            Some(server) => {
+                let action = match on {
+                    true => Action::ReportMute,
+                    false => Action::ReportUnmute,
+                };
+                let entry = Entry::new(server, &scope.actor(), action).target(Target::user(target));
+                audit::record(&mut tx, entry).await?;
+            }
+            None => {
+                let action = match on {
+                    true => "user.report_mute",
+                    false => "user.report_unmute",
+                };
+                instance_audit::record_in(&mut tx, actor, action, Some(target), json!({}), t)
+                    .await?;
+            }
+        }
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Who `ban_owner` bans for the server `server`: its creator, or with `given` that account
+/// when it is the creator or one of the server's admins. `None` when there is nobody to ban.
+pub(super) async fn server_owner(
+    db: &Db,
+    server: &str,
+    given: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    let creator: Option<String> = sqlx::query("SELECT creator FROM servers WHERE name = $1")
+        .bind(server)
+        .fetch_optional(db)
+        .await?
+        .map(|r| r.try_get(0))
+        .transpose()?
+        .flatten();
+    let Some(given) = given.map(str::to_lowercase) else {
+        return Ok(creator);
+    };
+    if creator.as_deref() == Some(given.as_str()) {
+        return Ok(Some(given));
+    }
+    let admin =
+        sqlx::query("SELECT 1 FROM members WHERE server = $1 AND username = $2 AND is_admin <> 0")
+            .bind(server)
+            .bind(&given)
+            .fetch_optional(db)
+            .await?
+            .is_some();
+    Ok(admin.then_some(given))
+}
+
 /// How long the pace row of an account that stopped reporting is kept.
 const PACE_KEEP: i64 = 7 * 86400;
 
@@ -194,8 +730,8 @@ fn forget_in(value: &mut Value, username: &str) -> bool {
 }
 
 /// Drops a deleted account's name from the reports (as reporter, assignee, the one reported, an
-/// author in a snapshot, a person an answer names, the actor of an event, the one who muted a
-/// reporter), so a new account with the same username never inherits the history. What was
+/// author in a snapshot, a person an answer names, the actor of an event, the one an event
+/// assigned, the one who muted a reporter), so a new account with the same username never inherits the history. What was
 /// written stays.
 pub(crate) async fn forget_user(conn: &mut AnyConnection, username: &str) -> sqlx::Result<()> {
     let named = like_escape(&Value::from(username).to_string());
@@ -230,6 +766,10 @@ pub(crate) async fn forget_user(conn: &mut AnyConnection, username: &str) -> sql
             break;
         }
     }
+    sqlx::query("UPDATE report_events SET detail = '{\"assignee\":null}' WHERE kind = 'assign' AND detail = $1")
+        .bind(json!({ "assignee": username }).to_string())
+        .execute(&mut *conn)
+        .await?;
     for sql in [
         "UPDATE reports SET reporter = NULL WHERE reporter = $1",
         "UPDATE reports SET assignee = NULL WHERE assignee = $1",

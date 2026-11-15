@@ -1916,6 +1916,41 @@ pub async fn report_scope(
     })
 }
 
+impl ReportScope {
+    /// Who an action in this scope is logged as in the server's audit log: the viewer, or the
+    /// unnamed instance staff.
+    pub fn actor(&self) -> Actor {
+        match self.staff {
+            true => Actor::Staff,
+            false => Actor::User(self.viewer.clone()),
+        }
+    }
+
+    /// Whether `username` (lowercase) can be given a report of this scope to handle: for a
+    /// server a member who holds Manage reports themselves and can view `channel`, the channel
+    /// of the reported message (its id and whether it was private); otherwise only the viewer.
+    pub async fn handler(
+        &self,
+        db: &Db,
+        username: &str,
+        channel: Option<(i64, bool)>,
+    ) -> Result<bool, ApiError> {
+        match &self.server {
+            Some(server) => Ok(ws_sees_reports(db, server, username, channel).await?),
+            None => Ok(username == self.viewer),
+        }
+    }
+
+    /// Whether `username` (lowercase) is a member of the scope's server or, for the reports to
+    /// the instance, an account.
+    pub async fn has_member(&self, db: &Db, username: &str) -> Result<bool, ApiError> {
+        match &self.server {
+            Some(server) => Ok(is_member(db, server, username).await?),
+            None => Ok(crate::db::get_user(db, username).await?.is_some()),
+        }
+    }
+}
+
 /// The servers where `user` holds Manage reports through their own membership (an admin's
 /// permissions or a role), by name. Being a site admin adds none.
 pub(crate) async fn report_servers(db: &Db, user: &User) -> sqlx::Result<Vec<String>> {

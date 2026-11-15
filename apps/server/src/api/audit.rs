@@ -70,6 +70,12 @@ pub enum Action {
     OutgoingUpdate,
     OutgoingDelete,
     OutgoingSecretReset,
+    ReportStatus,
+    ReportAssign,
+    ReportNote,
+    ReportEscalate,
+    ReportMute,
+    ReportUnmute,
 }
 
 pub const ACTIONS: &[Action] = &[
@@ -119,11 +125,17 @@ pub const ACTIONS: &[Action] = &[
     Action::OutgoingUpdate,
     Action::OutgoingDelete,
     Action::OutgoingSecretReset,
+    Action::ReportStatus,
+    Action::ReportAssign,
+    Action::ReportNote,
+    Action::ReportEscalate,
+    Action::ReportMute,
+    Action::ReportUnmute,
 ];
 
 /// Action groups, the part of an action name before the dot.
 pub const GROUPS: &[&str] = &[
-    "member", "role", "channel", "server", "access", "message", "webhook",
+    "member", "role", "channel", "server", "access", "message", "webhook", "report",
 ];
 
 impl Action {
@@ -175,6 +187,12 @@ impl Action {
             Action::OutgoingUpdate => "webhook.outgoing_update",
             Action::OutgoingDelete => "webhook.outgoing_delete",
             Action::OutgoingSecretReset => "webhook.outgoing_secret_reset",
+            Action::ReportStatus => "report.status",
+            Action::ReportAssign => "report.assign",
+            Action::ReportNote => "report.note",
+            Action::ReportEscalate => "report.escalate",
+            Action::ReportMute => "report.mute",
+            Action::ReportUnmute => "report.unmute",
         }
     }
 
@@ -218,6 +236,7 @@ pub enum TargetKind {
     Server,
     Webhook,
     Guest,
+    Report,
 }
 
 impl TargetKind {
@@ -232,14 +251,16 @@ impl TargetKind {
             TargetKind::Server => "server",
             TargetKind::Webhook => "webhook",
             TargetKind::Guest => "guest",
+            TargetKind::Report => "report",
         }
     }
 }
 
 /// What the action was done to: a user (`name` is the username), a role, channel or category
 /// (`id` and name at the time), a message (`id`, `name` is its author), an extra password
-/// (`id`, `name` is its label), the server itself (`name` is its display name) or a guest in
-/// voice (`name` is its voice name).
+/// (`id`, `name` is its label), the server itself (`name` is its display name), a guest in
+/// voice (`name` is its voice name) or a report (`id`, never a name; no id for several reports
+/// at once).
 #[derive(Clone, Debug)]
 pub struct Target {
     pub kind: TargetKind,
@@ -532,8 +553,9 @@ pub(crate) async fn forget_user(conn: &mut AnyConnection, username: &str) -> sql
         .bind(username)
         .execute(&mut *conn)
         .await?;
+    let named = like_escape(&Value::from(username).to_string());
     let rows = sqlx::query("SELECT id, details FROM audit_log WHERE action IN ('channel.perm_set', 'channel.perm_clear') AND details LIKE $1 ESCAPE '\\'")
-        .bind(like_escape(username))
+        .bind(&named)
         .fetch_all(&mut *conn)
         .await?;
     for r in &rows {
@@ -558,7 +580,7 @@ pub(crate) async fn forget_user(conn: &mut AnyConnection, username: &str) -> sql
         }
     }
     let rows = sqlx::query("SELECT id, details FROM audit_log WHERE action = 'message.bulk_delete' AND details LIKE $1 ESCAPE '\\'")
-        .bind(like_escape(username))
+        .bind(&named)
         .fetch_all(&mut *conn)
         .await?;
     for r in &rows {
@@ -616,11 +638,12 @@ pub(crate) async fn purge_server(db: &Db, server: &str) -> sqlx::Result<u64> {
 /// What an entry was done to.
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuditTarget {
-    /// `user`, `role`, `channel`, `category`, `message`, `password`, `server` or `guest`.
+    /// `user`, `role`, `channel`, `category`, `message`, `password`, `server`, `guest` or
+    /// `report`.
     #[schema(example = "user")]
     pub kind: String,
-    /// Id of the role, channel, category, message or password; `null` for users, guests and the
-    /// server.
+    /// Id of the role, channel, category, message, password or report; `null` for users, guests,
+    /// the server and several reports at once.
     pub id: Option<i64>,
     /// Name at the time: the username for users, the author's username for messages, the
     /// label for passwords (`null` without one), the display name for the server, the voice
@@ -648,7 +671,10 @@ pub struct AuditEntry {
     /// `system_messages`. `access`: `mode` (password protection and the permanent password, never
     /// the password itself), `password_create`, `password_revoke`. `message`: `delete` and
     /// `attachment_remove` (of other people's messages), `pin`, `unpin`, `poll_close` and
-    /// `poll_reopen` (of other people's polls). Clients should show
+    /// `poll_reopen` (of other people's polls). `report`: `status`, `assign`, `note`, `escalate`
+    /// (the target is the report's id, never a name; `channel` in the details is the channel
+    /// of the reported message), `mute` and `unmute` (of someone's reports to this server).
+    /// Clients should show
     /// unknown actions generically; new ones may be added.
     #[schema(example = "member.ban")]
     pub action: String,
@@ -673,8 +699,8 @@ pub struct AuditEntry {
 
 #[derive(Deserialize, IntoParams, Default)]
 pub struct AuditQuery {
-    /// An action group (`member`, `role`, `channel`, `server`, `access`, `message`) or one
-    /// action name such as `member.ban`.
+    /// An action group (`member`, `role`, `channel`, `server`, `access`, `message`, `report`) or
+    /// one action name such as `member.ban`.
     action: Option<String>,
     /// Only entries by this username, case-insensitive.
     actor: Option<String>,
@@ -2309,5 +2335,52 @@ mod tests {
             assert_eq!(Action::parse(a.as_str()), Some(*a));
             assert!(GROUPS.contains(&a.as_str().split('.').next().unwrap_or_default()));
         }
+    }
+    #[tokio::test]
+    async fn forgetting_an_account_finds_names_as_json_writes_them() {
+        let (state, path) = temp_state("audit_forget_json").await;
+        let db = &state.db;
+        exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', NULL, 0)").await;
+        for (n, name) in ["o\"neil", "back\\slash", "tab\tbed", "plain"]
+            .into_iter()
+            .enumerate()
+        {
+            let rule = json!({"subject": {"kind": "user", "name": name}, "said": "kept"});
+            let bulk =
+                json!({"authors": [{"name": name, "count": 2}, {"name": "erin", "count": 1}]});
+            for (action, details) in [("channel.perm_set", rule), ("message.bulk_delete", bulk)] {
+                sqlx::query("INSERT INTO audit_log(server, actor, action, details, created_at) VALUES('club', 'erin', $1, $2, $3)")
+                    .bind(action)
+                    .bind(details.to_string())
+                    .bind(n as i64)
+                    .execute(db)
+                    .await
+                    .expect("entry");
+            }
+            let mut conn = db.acquire().await.expect("conn");
+            forget_user(&mut conn, name).await.expect("forget");
+            drop(conn);
+            let rows =
+                sqlx::query("SELECT details FROM audit_log WHERE created_at = $1 ORDER BY id")
+                    .bind(n as i64)
+                    .fetch_all(db)
+                    .await
+                    .expect("rows");
+            let details: Vec<Value> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::from_str(&r.try_get::<String, _>(0).expect("text")).expect("json")
+                })
+                .collect();
+            assert_eq!(
+                details,
+                [
+                    json!({"subject": {"kind": "user", "deleted": true}, "said": "kept"}),
+                    json!({"authors": [{"deleted": true, "count": 2}, {"name": "erin", "count": 1}]}),
+                ],
+                "{name}"
+            );
+        }
+        done(state, path).await;
     }
 }

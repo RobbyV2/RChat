@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::api::access::subjects::{Level, ProfileChoices};
-use crate::api::access::{MsgScope, not_found, staff_message};
+use crate::api::access::{MsgScope, ReportMode, not_found, report_scope, staff_message};
 use crate::api::controls::{ConfigRecords, Control, ROWS_SQL};
 use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
@@ -707,6 +707,70 @@ pub(crate) async fn reports_open(
     }))
 }
 
+/// Closes every report to the instance about one target: `POST
+/// /api/v1/servers/{name}/reports/resolve` for the instance.
+pub(crate) async fn resolve_reports(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Json(req): Json<reports::BulkResolve>,
+) -> Result<Json<reports::Resolved>, ApiError> {
+    require_site_admin(&user)?;
+    let scope = report_scope(&state.db, &user, None, ReportMode::Write).await?;
+    reports::resolve_in(&state, &scope, &user, req)
+        .await
+        .map(Json)
+}
+
+/// The accounts whose reports to the instance are muted.
+pub(crate) async fn list_report_mutes(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Query(q): Query<reports::MutesQuery>,
+) -> Result<Paged<reports::MutedReporter>, ApiError> {
+    require_site_admin(&user)?;
+    let db = &state.read();
+    let scope = report_scope(db, &user, None, ReportMode::Read).await?;
+    reports::mutes_in(db, &scope, q.cursor.as_deref()).await
+}
+
+/// Mutes the reports of an account to the instance. A name without an account is a 404.
+pub(crate) async fn mute_reporter(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(username): Path<String>,
+) -> Result<Json<OkResp>, ApiError> {
+    require_site_admin(&user)?;
+    let db = &state.db;
+    let scope = report_scope(db, &user, None, ReportMode::Write).await?;
+    let target = username.to_lowercase();
+    if !reports::reporter_known(db, &scope, &target).await? {
+        return Err(not_found());
+    }
+    reports::mute_in(db, &scope, &user.username, &target, true, now()).await?;
+    Ok(ok())
+}
+
+/// Lets an account report to the instance again.
+pub(crate) async fn unmute_reporter(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(username): Path<String>,
+) -> Result<Json<OkResp>, ApiError> {
+    require_site_admin(&user)?;
+    let db = &state.db;
+    let scope = report_scope(db, &user, None, ReportMode::Write).await?;
+    reports::mute_in(
+        db,
+        &scope,
+        &user.username,
+        &username.to_lowercase(),
+        false,
+        now(),
+    )
+    .await?;
+    Ok(ok())
+}
+
 /// Request body of `POST /api/v1/admin/servers`.
 #[derive(Deserialize)]
 pub struct AdminServerReq {
@@ -837,15 +901,8 @@ pub(crate) async fn delete_server(
 ) -> Result<Json<OkResp>, ApiError> {
     require_site_admin(&user)?;
     let name = name.to_lowercase();
-    if crate::api::servers::is_builtin(&state.db, &name).await
-        && Policy::load(&state.db)
-            .await
-            .default_servers
-            .contains(&name)
-    {
-        return Err(bad(
-            "The rchat server is a default server. Take it off the default servers first",
-        ));
+    if is_default_builtin(&state, &name).await {
+        return Err(bad(DEFAULT_SERVER_STAYS));
     }
     match remove_server(&state, &name).await? {
         true => Ok(ok()),
@@ -855,6 +912,20 @@ pub(crate) async fn delete_server(
             None,
         )),
     }
+}
+
+pub(crate) const DEFAULT_SERVER_STAYS: &str =
+    "The rchat server is a default server. Take it off the default servers first";
+
+/// Whether `name` (a server's key) is the built-in server while it is a default server, which
+/// can't be deleted.
+pub(crate) async fn is_default_builtin(state: &AppState, name: &str) -> bool {
+    crate::api::servers::is_builtin(&state.db, name).await
+        && Policy::load(&state.db)
+            .await
+            .default_servers
+            .iter()
+            .any(|server| server == name)
 }
 
 pub(crate) const PURGING_HASH: &str = crate::db::PURGING_HASH;
@@ -914,16 +985,52 @@ async fn note_purge(
     .map(|_| ())
 }
 
+/// A server hidden inside a transaction, with what is left to do once it is committed.
+pub(crate) struct RemovedServer {
+    name: String,
+    builtin_gone: bool,
+}
+
+impl RemovedServer {
+    /// Tells everyone that the server is gone and starts its purge.
+    pub(crate) async fn finish(self, state: &AppState) {
+        let RemovedServer { name, builtin_gone } = self;
+        let settings = PublicSettings::load(&state.db).await;
+        debug_assert!(!builtin_gone || settings.builtin_server == Builtin::Removed);
+        state
+            .hub
+            .broadcast(WsEvent::ServerDeleted { name: name.clone() });
+        if builtin_gone {
+            state.hub.broadcast(WsEvent::SettingsChanged { settings });
+        }
+        spawn_purge(state, PurgeKind::Server, &name);
+    }
+}
+
 pub(crate) async fn remove_server(state: &AppState, name: &str) -> Result<bool, ApiError> {
     let mut tx = state.db.begin().await?;
+    let Some(removed) = remove_server_in(&mut tx, name).await? else {
+        return Ok(false);
+    };
+    tx.commit().await?;
+    removed.finish(state).await;
+    Ok(true)
+}
+
+/// Hides the server `name` and drops its memberships in `tx`. `None` when there is no such
+/// server or it is being deleted already.
+pub(crate) async fn remove_server_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    name: &str,
+) -> Result<Option<RemovedServer>, ApiError> {
     let hidden = sqlx::query("UPDATE servers SET password_hash = $1 WHERE name = $2 AND COALESCE(password_hash, '') <> $1")
         .bind(PURGING_HASH)
         .bind(name)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?
         .rows_affected();
     if hidden == 0 {
-        return Ok(false);
+        return Ok(None);
     }
     for table in [
         "guest_grants",
@@ -937,30 +1044,58 @@ pub(crate) async fn remove_server(state: &AppState, name: &str) -> Result<bool, 
             "DELETE FROM {table} WHERE server = $1"
         )))
         .bind(name)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     }
-    crate::api::policy::move_creator_roles(&mut tx, name, None).await?;
-    crate::api::policy::move_default_server(&mut tx, name, None).await?;
+    crate::api::policy::move_creator_roles(tx, name, None).await?;
+    crate::api::policy::move_default_server(tx, name, None).await?;
     let builtin_gone = name == crate::db::BUILTIN_SERVER
         && sqlx::query("UPDATE settings SET value = 'removed' WHERE key = $1 AND value = 'kept'")
             .bind(crate::db::BUILTIN_STATE)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?
             .rows_affected()
             > 0;
-    note_purge(&mut tx, PurgeKind::Server, name, now()).await?;
-    tx.commit().await?;
-    let settings = PublicSettings::load(&state.db).await;
-    debug_assert!(!builtin_gone || settings.builtin_server == Builtin::Removed);
-    state.hub.broadcast(WsEvent::ServerDeleted {
+    note_purge(tx, PurgeKind::Server, name, now()).await?;
+    Ok(Some(RemovedServer {
         name: name.to_string(),
-    });
-    if builtin_gone {
-        state.hub.broadcast(WsEvent::SettingsChanged { settings });
+        builtin_gone,
+    }))
+}
+
+/// An account hidden inside a transaction, with what is left to do once it is committed.
+pub(crate) struct HiddenUser {
+    key: String,
+    kind: PurgeKind,
+    /// The servers the account was in. `None` when it was hidden before.
+    servers: Option<Vec<String>>,
+    /// Whether anything changed: the account was hidden, or its name was banned.
+    pub changed: bool,
+}
+
+impl HiddenUser {
+    async fn recount(&self, state: &AppState) {
+        for server in self.servers.iter().flatten() {
+            if let Err(e) = recount_members(&state.db, server).await {
+                tracing::warn!("member count of {server} not updated: {e}");
+            }
+        }
     }
-    spawn_purge(state, PurgeKind::Server, name);
-    Ok(true)
+
+    /// Finishes what the transaction began: the member counts, and for an account hidden in
+    /// it the sign-out, the word to its servers and the purge.
+    pub(crate) async fn finish(self, state: &AppState) {
+        self.recount(state).await;
+        let HiddenUser {
+            key,
+            kind,
+            servers,
+            changed: _,
+        } = self;
+        if let Some(servers) = servers {
+            announce_hidden(state, &key, kind, servers);
+        }
+    }
 }
 
 pub(crate) async fn hide_user_rows(
@@ -969,16 +1104,28 @@ pub(crate) async fn hide_user_rows(
     kind: PurgeKind,
 ) -> Result<Option<Vec<String>>, ApiError> {
     let mut tx = state.db.begin().await?;
+    let hidden = hide_user_in(&mut tx, key, kind).await?;
+    tx.commit().await?;
+    hidden.recount(state).await;
+    Ok(hidden.servers)
+}
+
+/// Hides the account `key` in `tx`, for a deletion or a ban.
+async fn hide_user_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    key: &str,
+    kind: PurgeKind,
+) -> Result<HiddenUser, ApiError> {
     let hidden = sqlx::query(
         "UPDATE users SET password_hash = $1 WHERE username = $2 AND password_hash <> $1",
     )
     .bind(PURGING_HASH)
     .bind(key)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?
     .rows_affected();
     if hidden == 0 {
-        let pending = user_row(&mut *tx, key)
+        let pending = user_row(&mut **tx, key)
             .await?
             .is_some_and(|u| u.password_hash == PURGING_HASH);
         if !pending {
@@ -988,19 +1135,27 @@ pub(crate) async fn hide_user_rows(
                 None,
             ));
         }
-        if kind == PurgeKind::Ban {
-            ban_name(&mut tx, key).await?;
-            sqlx::query("UPDATE pending_purges SET kind = $1 WHERE kind = $2 AND key = $3")
-                .bind(PurgeKind::Ban.tag())
-                .bind(PurgeKind::User.tag())
-                .bind(key)
-                .execute(&mut *tx)
-                .await?;
-        }
-        tx.commit().await?;
-        return Ok(None);
+        let changed = match kind {
+            PurgeKind::Ban => {
+                let banned = ban_name(tx, key).await?;
+                sqlx::query("UPDATE pending_purges SET kind = $1 WHERE kind = $2 AND key = $3")
+                    .bind(PurgeKind::Ban.tag())
+                    .bind(PurgeKind::User.tag())
+                    .bind(key)
+                    .execute(&mut **tx)
+                    .await?;
+                banned
+            }
+            PurgeKind::Server | PurgeKind::User => false,
+        };
+        return Ok(HiddenUser {
+            key: key.to_string(),
+            kind,
+            servers: None,
+            changed,
+        });
     }
-    let servers = member_servers(&mut tx, key).await?;
+    let servers = member_servers(tx, key).await?;
     for sql in [
         "DELETE FROM tokens WHERE username = $1",
         "DELETE FROM config_shares WHERE owner = $1",
@@ -1017,45 +1172,59 @@ pub(crate) async fn hide_user_rows(
         "UPDATE servers SET creator = NULL WHERE creator = $1",
         "UPDATE servers SET upload_expiry_by = NULL WHERE upload_expiry_by = $1",
     ] {
-        sqlx::query(sql).bind(key).execute(&mut *tx).await?;
+        sqlx::query(sql).bind(key).execute(&mut **tx).await?;
     }
     sqlx::query("DELETE FROM channel_perms WHERE subject = $1")
         .bind(format!("u:{key}"))
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     if kind == PurgeKind::Ban {
-        ban_name(&mut tx, key).await?;
+        ban_name(tx, key).await?;
     }
-    note_purge(&mut tx, kind, key, now()).await?;
-    tx.commit().await?;
-    for server in &servers {
-        if let Err(e) = recount_members(&state.db, server).await {
-            tracing::warn!("member count of {server} not updated: {e}");
-        }
-    }
-    Ok(Some(servers))
+    note_purge(tx, kind, key, now()).await?;
+    Ok(HiddenUser {
+        key: key.to_string(),
+        kind,
+        servers: Some(servers),
+        changed: true,
+    })
 }
 
-async fn ban_name(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) -> sqlx::Result<()> {
+/// Bans the name `key`. `false` when it was banned before.
+async fn ban_name(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) -> sqlx::Result<bool> {
     sqlx::query(
         "INSERT INTO banned_usernames(username) VALUES($1) ON CONFLICT(username) DO NOTHING",
     )
     .bind(key)
     .execute(&mut **tx)
     .await
-    .map(|_| ())
+    .map(|done| done.rows_affected() > 0)
+}
+
+/// Bans the account `key` from the instance in `tx`.
+pub(crate) async fn ban_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    key: &str,
+) -> Result<HiddenUser, ApiError> {
+    hide_user_in(tx, key, PurgeKind::Ban).await
 }
 
 async fn hide_user(state: &AppState, key: &str, kind: PurgeKind) -> Result<(), ApiError> {
     let Some(servers) = hide_user_rows(state, key, kind).await? else {
         return Ok(());
     };
+    announce_hidden(state, key, kind, servers);
+    Ok(())
+}
+
+/// Signs the hidden account `key` out everywhere, tells `servers` that it left and starts its
+/// purge.
+fn announce_hidden(state: &AppState, key: &str, kind: PurgeKind, servers: Vec<String>) {
     state.hub.broadcast(WsEvent::TokensRevoked {
         username: key.to_string(),
     });
     remove_user_events(state, key.to_string(), servers);
     spawn_purge(state, kind, key);
-    Ok(())
 }
 
 fn spawn_purge(state: &AppState, kind: PurgeKind, key: &str) {
@@ -1348,11 +1517,13 @@ pub(crate) async fn ban_user(
     let BanReq { username } = req;
     let key = username.to_lowercase();
     if key == user.username {
-        return Err(bad("Cannot ban yourself"));
+        return Err(bad(BAN_SELF));
     }
     hide_user(&state, &key, PurgeKind::Ban).await?;
     Ok(ok())
 }
+
+pub(crate) const BAN_SELF: &str = "Cannot ban yourself";
 
 async fn member_servers(
     tx: &mut sqlx::Transaction<'_, sqlx::Any>,

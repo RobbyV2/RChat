@@ -48,6 +48,22 @@
     "reason": "site-admin only and left out of the API document (the hidden admin)"
   },
   {
+    "route": "post /api/v1/admin/reports/resolve",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "get /api/v1/admin/report_mutes",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "put /api/v1/admin/report_mutes/{username}",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "delete /api/v1/admin/report_mutes/{username}",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
     "route": "get /api/v1/admin/config",
     "reason": "site-admin only and left out of the API document (the hidden admin)"
   },

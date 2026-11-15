@@ -29,25 +29,45 @@ enum Bind {
 }
 
 /// A `WHERE` clause over `reports r` and its values, in placeholder order.
-struct Clause {
+pub(super) struct Clause {
     sql: String,
     binds: Vec<Bind>,
 }
 
 impl Clause {
-    fn int(&mut self, value: i64) -> String {
+    pub(super) fn int(&mut self, value: i64) -> String {
         self.binds.push(Bind::Int(value));
         format!("${}", self.binds.len())
     }
 
-    fn text(&mut self, value: &str) -> String {
+    pub(super) fn text(&mut self, value: &str) -> String {
         self.binds.push(Bind::Text(value.to_string()));
         format!("${}", self.binds.len())
     }
 
-    fn and(&mut self, condition: String) {
+    pub(super) fn and(&mut self, condition: String) {
         self.sql.push_str(" AND ");
         self.sql.push_str(&condition);
+    }
+
+    pub(super) fn sql(&self) -> &str {
+        &self.sql
+    }
+
+    /// Runs `sql`, which holds this clause, on `conn`.
+    pub(super) async fn run(
+        self,
+        conn: &mut sqlx::AnyConnection,
+        sql: String,
+    ) -> sqlx::Result<Vec<AnyRow>> {
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for bind in self.binds {
+            query = match bind {
+                Bind::Int(v) => query.bind(v),
+                Bind::Text(v) => query.bind(v),
+            };
+        }
+        query.fetch_all(&mut *conn).await
     }
 
     async fn fetch(self, db: &Db, sql: String) -> sqlx::Result<Vec<AnyRow>> {
@@ -65,7 +85,7 @@ impl Clause {
 /// The reports `scope` shows: its kind and server, never a report about the viewer, and
 /// nothing from a channel the viewer can't see (the audit log's rule: a channel closed to them,
 /// or a private channel that no longer exists).
-fn visible(scope: &ReportScope) -> Clause {
+pub(super) fn visible(scope: &ReportScope) -> Clause {
     let mut clause = Clause {
         sql: String::new(),
         binds: Vec::new(),
@@ -572,6 +592,46 @@ async fn one(db: &Db, scope: &ReportScope, id: i64) -> Result<Option<Raw>, ApiEr
     let id = clause.int(id);
     clause.and(format!("r.id = {id}"));
     Ok(rows(db, clause, "r.id", 1).await?.pop())
+}
+
+/// The scope of report `id` for `user` to act in, and the report. A report `user` can't read
+/// is `not_found()`, whatever the reason. One they can read but not handle is refused as the
+/// scope refuses it.
+pub(crate) async fn held(
+    db: &Db,
+    user: &User,
+    id: i64,
+) -> Result<(ReportScope, ReportRow), ApiError> {
+    let read = reading(db, user, id).await?;
+    one(db, &read, id).await?.ok_or_else(not_found)?;
+    let scope = scope_of(db, user, id, ReportMode::Write)
+        .await?
+        .ok_or_else(not_found)?;
+    let raw = one(db, &scope, id).await?.ok_or_else(not_found)?;
+    Ok((scope, raw.row))
+}
+
+/// The report `id` as `scope` lists it.
+pub(crate) async fn row(db: &Db, scope: &ReportScope, id: i64) -> Result<ReportRow, ApiError> {
+    Ok(one(db, scope, id).await?.ok_or_else(not_found)?.row)
+}
+
+/// Whether those who handle the reports of `scope` may name the account `username`: a member
+/// of the server (for the instance, any account), or someone who sent a report there that the
+/// viewer can see.
+pub(crate) async fn reporter_known(
+    db: &Db,
+    scope: &ReportScope,
+    username: &str,
+) -> Result<bool, ApiError> {
+    if scope.has_member(db, username).await? {
+        return Ok(true);
+    }
+    let mut clause = visible(scope);
+    let name = clause.text(username);
+    clause.and(format!("r.reporter = {name}"));
+    let sql = format!("SELECT 1 FROM reports r WHERE {} LIMIT 1", clause.sql);
+    Ok(!clause.fetch(db, sql).await?.is_empty())
 }
 
 /// A page of the history of report `id`: the lines before the line `before` (without one, the

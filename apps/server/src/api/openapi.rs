@@ -242,6 +242,13 @@ impl Modify for Bearer {
         super::reports::my_open,
         super::reports::get_report,
         super::reports::list_events,
+        super::reports::patch_report,
+        super::reports::add_note,
+        super::reports::escalate,
+        super::reports::bulk_resolve,
+        super::reports::list_mutes,
+        super::reports::mute_reporter,
+        super::reports::unmute_reporter,
         super::health::health,
         super::health::ready,
         super::instance::instance,
@@ -382,13 +389,17 @@ pub(crate) mod tests {
         ),
     ];
 
-    const ADMIN_ROUTES: [(&str, &str); 18] = [
+    const ADMIN_ROUTES: [(&str, &str); 22] = [
         ("patch", "/api/v1/admin/settings"),
         ("get", "/api/v1/admin/report_forms"),
         ("put", "/api/v1/admin/report_forms"),
         ("get", "/api/v1/admin/reports"),
         ("get", "/api/v1/admin/reports/groups"),
         ("get", "/api/v1/admin/reports/open"),
+        ("post", "/api/v1/admin/reports/resolve"),
+        ("get", "/api/v1/admin/report_mutes"),
+        ("put", "/api/v1/admin/report_mutes/{username}"),
+        ("delete", "/api/v1/admin/report_mutes/{username}"),
         ("get", "/api/v1/admin/config"),
         ("get", "/api/v1/admin/overview"),
         ("get", "/api/v1/admin/users"),

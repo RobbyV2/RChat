@@ -2956,3 +2956,1710 @@ fn days_and_dates() {
         assert_eq!(query::day_of(bad), None, "{bad}");
     }
 }
+
+// Acting.
+
+impl World {
+    pub(super) async fn patch(
+        &self,
+        by: &str,
+        id: i64,
+        change: Value,
+    ) -> Result<ReportRow, ApiError> {
+        let user = who(self.db(), by).await;
+        patch_report(
+            State(self.state.clone()),
+            Authed(user),
+            Path(id),
+            Json(serde_json::from_value(change).expect("patch")),
+        )
+        .await
+        .map(|Json(row)| row)
+    }
+
+    /// The audit log of `s`: action, actor, target kind, target id, target name and details.
+    pub(super) async fn audit(&self) -> Vec<String> {
+        sqlx::query("SELECT action || '|' || COALESCE(actor, '-') || '|' || CAST(staff AS TEXT) || '|' || COALESCE(target_kind, '-') || '|' || COALESCE(CAST(target_id AS TEXT), '-') || '|' || COALESCE(target_name, '-') || '|' || details FROM audit_log WHERE server = 's' ORDER BY id")
+            .fetch_all(self.db())
+            .await
+            .expect("audit")
+            .iter()
+            .map(|r| r.try_get(0).expect("line"))
+            .collect()
+    }
+
+    /// The instance audit log: action, actor, target and detail.
+    pub(super) async fn instance_audit(&self) -> Vec<String> {
+        sqlx::query("SELECT action || '|' || COALESCE(actor, '-') || '|' || COALESCE(target, '-') || '|' || detail FROM instance_audit WHERE action NOT LIKE 'settings.%' ORDER BY id")
+            .fetch_all(self.db())
+            .await
+            .expect("audit")
+            .iter()
+            .map(|r| r.try_get(0).expect("line"))
+            .collect()
+    }
+
+    /// The history of report `id`: kind, actor and detail.
+    pub(super) async fn history(&self, id: i64) -> Vec<String> {
+        sqlx::query("SELECT kind || '|' || COALESCE(actor, '-') || '|' || detail FROM report_events WHERE report_id = $1 ORDER BY id")
+            .bind(id)
+            .fetch_all(self.db())
+            .await
+            .expect("events")
+            .iter()
+            .map(|r| r.try_get(0).expect("line"))
+            .collect()
+    }
+}
+
+#[tokio::test]
+async fn status_changes_record_history_and_audit() {
+    let (w, path) = world("reports_status").await;
+    let db = w.db();
+    let id = w.about("alice", "bob", T0).await;
+    let row = w
+        .patch("mo", id, json!({"status": "resolved", "action": "timeout"}))
+        .await
+        .expect("resolve");
+    assert_eq!(
+        (row.id, row.status, row.action),
+        (id, Status::Resolved, Some(ModAction::Timeout))
+    );
+    let stored = |id: i64| async move {
+        text(db, &format!("SELECT status || '|' || COALESCE(action, '-') || '|' || CASE WHEN resolved_at IS NULL THEN 'open' ELSE 'closed' END || '|' || CASE WHEN updated_at <> created_at THEN 'touched' ELSE 'same' END FROM reports WHERE id = {id}")).await
+    };
+    assert_eq!(stored(id).await, "resolved|timeout|closed|touched");
+    assert_eq!(
+        w.history(id).await,
+        [
+            "created|-|{}",
+            r#"status|mo|{"action":"timeout","status":"resolved"}"#
+        ]
+    );
+    assert_eq!(
+        w.audit().await,
+        [format!(
+            r#"report.status|mo|0|report|{id}|-|{{"action":"timeout","status":"resolved"}}"#
+        )],
+        "the entry names neither the reporter nor the one reported"
+    );
+    let row = w
+        .patch("mo", id, json!({"status": "open"}))
+        .await
+        .expect("reopen");
+    assert_eq!((row.status, row.action), (Status::Open, None));
+    assert_eq!(stored(id).await, "open|-|open|touched");
+    let row = w
+        .patch("mo", id, json!({"status": "in_review"}))
+        .await
+        .expect("review");
+    assert_eq!(row.status, Status::InReview);
+    let row = w
+        .patch("mo", id, json!({"status": "dismissed"}))
+        .await
+        .expect("dismiss");
+    assert_eq!((row.status, row.action), (Status::Dismissed, None));
+    assert_eq!(stored(id).await, "dismissed|-|closed|touched");
+    for change in [
+        json!({"status": "dismissed", "action": "ban"}),
+        json!({"action": "ban"}),
+        json!({"status": "open", "action": "kick"}),
+    ] {
+        assert_eq!(
+            refusal(w.patch("mo", id, change.clone()).await),
+            (400, ACTION_NEEDS_RESOLVED.to_string()),
+            "{change}"
+        );
+    }
+    for action in ["delete_server", "ban_owner"] {
+        assert_eq!(
+            refusal(
+                w.patch("mo", id, json!({"status": "resolved", "action": action}))
+                    .await
+            ),
+            (400, SERVER_REPORTS_ONLY.to_string()),
+            "a server's moderator can't send {action}"
+        );
+    }
+    assert_eq!(stored(id).await, "dismissed|-|closed|touched");
+    assert_eq!(w.audit().await.len(), 4);
+    assert!(w.instance_audit().await.is_empty());
+    let unchanged = w.patch("mo", id, json!({})).await.expect("nothing");
+    assert_eq!(unchanged.status, Status::Dismissed);
+    assert_eq!(w.history(id).await.len(), 5);
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn assignees_must_handle_reports() {
+    let (w, path) = world("reports_assign").await;
+    let db = w.db();
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_roles(server, username, role_id) VALUES('s', 'frank', {})",
+            w.mods
+        ),
+    )
+    .await;
+    let id = w.about("alice", "frank", T0).await;
+    let row = w
+        .patch("mo", id, json!({"assignee": "MO"}))
+        .await
+        .expect("a holder");
+    assert_eq!(row.assignee.map(|u| u.username), Some("mo".to_string()));
+    let cant = (400, CANT_HANDLE.to_string());
+    for name in ["alice", "frank", "erin", "nobody", "root"] {
+        assert_eq!(
+            refusal(w.patch("mo", id, json!({"assignee": name})).await),
+            cant,
+            "{name}: a plain member, the one reported, a non-member, no account, the site admin"
+        );
+    }
+    let row = w
+        .patch("mo", id, json!({"assignee": "olga"}))
+        .await
+        .expect("the owner");
+    assert_eq!(row.assignee.map(|u| u.username), Some("olga".to_string()));
+    let row = w
+        .patch("mo", id, json!({"assignee": null}))
+        .await
+        .expect("unassign");
+    assert_eq!(row.assignee, None);
+    assert_eq!(
+        w.history(id).await[1..],
+        [
+            r#"assign|mo|{"assignee":"mo"}"#,
+            r#"assign|mo|{"assignee":"olga"}"#,
+            r#"assign|mo|{"assignee":null}"#
+        ]
+    );
+    assert_eq!(
+        w.audit().await,
+        [
+            format!(r#"report.assign|mo|0|report|{id}|-|{{"assigned":true}}"#),
+            format!(r#"report.assign|mo|0|report|{id}|-|{{"assigned":true}}"#),
+            format!(r#"report.assign|mo|0|report|{id}|-|{{"assigned":false}}"#),
+        ],
+        "the log says that a report was assigned, not to whom"
+    );
+    w.patch("mo", id, json!({"assignee": "olga"}))
+        .await
+        .expect("again");
+    assert_eq!(
+        w.ids("mo", json!({"by": "assignee", "key": "olga"})).await,
+        [id]
+    );
+    let mut conn = db.acquire().await.expect("conn");
+    forget_user(&mut conn, "olga").await.expect("forget");
+    drop(conn);
+    let lines = w.history(id).await.join("\n");
+    assert!(!lines.contains("olga"), "{lines}");
+    assert!(lines.contains(r#"assign|mo|{"assignee":"mo"}"#), "{lines}");
+
+    let in_ops = ops_report(&w, T0 + 1).await;
+    for name in ["mo", "frank"] {
+        assert_eq!(
+            refusal(w.patch("olga", in_ops, json!({"assignee": name})).await),
+            cant,
+            "{name} holds Manage reports but can't view the channel of the reported message"
+        );
+    }
+    let row = w
+        .patch("olga", in_ops, json!({"assignee": "olga"}))
+        .await
+        .expect("someone who can view the channel");
+    assert_eq!(row.assignee.map(|u| u.username), Some("olga".to_string()));
+
+    let to_instance = w
+        .send(
+            "alice",
+            json!({"to": "instance", "target": member("bob"), "reason": "spam"}),
+            T0,
+        )
+        .await
+        .expect("instance")
+        .id;
+    assert_eq!(
+        refusal(
+            w.patch("root", to_instance, json!({"assignee": "mo"}))
+                .await
+        ),
+        cant,
+        "a report to the instance goes to the viewer only"
+    );
+    let row = w
+        .patch(
+            "root",
+            to_instance,
+            json!({"assignee": "root", "status": "in_review"}),
+        )
+        .await
+        .expect("the admin takes it");
+    assert_eq!(
+        (row.assignee.map(|u| u.username), row.status),
+        (Some("root".to_string()), Status::InReview)
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn report_entries_are_hidden_with_the_channel_of_the_report() {
+    let (w, path) = world("reports_audit_channel").await;
+    let db = w.db();
+    let in_ops = ops_report(&w, T0).await;
+    let about_carol = w.about("dave", "carol", T0).await;
+    let auditor = int(db, "INSERT INTO roles(server, name, color, perms) VALUES('s', 'auditor', '#ffffff', 64) RETURNING id").await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_roles(server, username, role_id) VALUES('s', 'dave', {auditor})"
+        ),
+    )
+    .await;
+    let olga = who(db, "olga").await;
+    w.patch(
+        "olga",
+        in_ops,
+        json!({"status": "in_review", "assignee": "olga"}),
+    )
+    .await
+    .expect("status and assignee");
+    add_note(
+        State(w.state.clone()),
+        Authed(olga.clone()),
+        Path(in_ops),
+        Json(NoteBody {
+            text: "seen".to_string(),
+        }),
+    )
+    .await
+    .map(|_| ())
+    .expect("note");
+    escalate(
+        State(w.state.clone()),
+        Authed(olga.clone()),
+        Path(in_ops),
+        Json(EscalateBody::default()),
+    )
+    .await
+    .map(|_| ())
+    .expect("escalate");
+    bulk_resolve(
+        State(w.state.clone()),
+        Authed(olga),
+        Path("s".to_string()),
+        Json(
+            serde_json::from_value(json!({"target": "u:carol", "status": "dismissed"}))
+                .expect("bulk"),
+        ),
+    )
+    .await
+    .map(|_| ())
+    .expect("bulk");
+    w.patch("olga", about_carol, json!({"status": "open"}))
+        .await
+        .expect("a report without a channel");
+    let log = |by: &'static str| {
+        let w = &w;
+        async move {
+            let user = who(w.db(), by).await;
+            let Paged(entries, _) = crate::api::audit::list_audit(
+                State(w.state.clone()),
+                Authed(user),
+                Path("s".to_string()),
+                Query(serde_json::from_value(json!({})).expect("query")),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{by}: {e:?}"));
+            let mut lines: Vec<String> = entries
+                .iter()
+                .map(|e| {
+                    let id = e.target.as_ref().and_then(|t| t.id);
+                    format!(
+                        "{}|{}|{}|{}",
+                        e.action,
+                        id.map_or("-".to_string(), |id| id.to_string()),
+                        e.hidden,
+                        e.details
+                    )
+                })
+                .collect();
+            lines.reverse();
+            lines
+        }
+    };
+    let channel = format!(
+        r#""channel":{{"id":{},"name":"ops","private":true}}"#,
+        w.ops
+    );
+    let open = format!(r#"report.status|{about_carol}|false|{{"status":"open"}}"#);
+    assert_eq!(
+        log("olga").await,
+        [
+            format!(r#"report.status|{in_ops}|false|{{{channel},"status":"in_review"}}"#),
+            format!(r#"report.assign|{in_ops}|false|{{"assigned":true,{channel}}}"#),
+            format!(r#"report.note|{in_ops}|false|{{{channel}}}"#),
+            format!(r#"report.escalate|{in_ops}|false|{{{channel}}}"#),
+            r#"report.status|-|false|{"count":2,"status":"dismissed"}"#.to_string(),
+            open.clone(),
+        ],
+        "who can view the channel reads the entries, with the channel"
+    );
+    assert_eq!(
+        log("dave").await,
+        [
+            format!("report.status|{in_ops}|true|{{}}"),
+            format!("report.assign|{in_ops}|true|{{}}"),
+            format!("report.note|{in_ops}|true|{{}}"),
+            format!("report.escalate|{in_ops}|true|{{}}"),
+            "report.status|-|true|{}".to_string(),
+            open.clone(),
+        ],
+        "who can't view #ops gets every entry about its report hidden, the bulk change too"
+    );
+    exec(db, &format!("DELETE FROM channels WHERE id = {}", w.ops)).await;
+    w.patch("olga", in_ops, json!({"status": "resolved"}))
+        .await
+        .expect("after the channel is gone");
+    assert_eq!(
+        log("olga").await[6..],
+        [format!(
+            r#"report.status|{in_ops}|false|{{{channel},"status":"resolved"}}"#
+        )],
+        "the entry keeps the channel as the report has it"
+    );
+    assert_eq!(
+        log("dave").await[6..],
+        [format!("report.status|{in_ops}|true|{{}}")],
+        "a private channel that is gone stays hidden"
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn muting_a_name_unknown_here_counts_as_a_lookup_miss() {
+    let (w, path) = world("reports_mute_misses").await;
+    let w = w
+        .with_limits(Limits {
+            lookup_misses_per_hour: 2,
+            ..Limits::default()
+        })
+        .await;
+    let mo = who(w.db(), "mo").await;
+    let mute = |name: &'static str| {
+        let (state, mo) = (w.state.clone(), mo.clone());
+        async move {
+            mute_reporter(
+                State(state),
+                Authed(mo),
+                Path(("s".to_string(), name.to_string())),
+            )
+            .await
+            .map(|_| ())
+        }
+    };
+    let not_found = (404, "Not found".to_string());
+    assert_eq!(refusal(mute("nobody").await), not_found, "no such account");
+    mute("alice").await.expect("muting a member is no miss");
+    assert_eq!(
+        refusal(mute("erin").await),
+        not_found,
+        "an account that is no member, as the second miss"
+    );
+    assert_eq!(
+        refusal(mute("bob").await),
+        (429, lookup::TOO_MANY.to_string()),
+        "past the misses of the hour every name is refused"
+    );
+    assert_eq!(int(w.db(), "SELECT COUNT(*) FROM report_mutes").await, 1);
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn entries_of_a_staff_scope_name_nobody() {
+    let (w, path) = world("reports_staff_entries").await;
+    let db = w.db();
+    let root = who(db, "root").await;
+    let staff = report_scope(db, &root, Some("s"), ReportMode::Read)
+        .await
+        .expect("staff");
+    assert!(staff.staff);
+    mute_in(db, &staff, &root.username, "alice", true, T0)
+        .await
+        .expect("mute");
+    assert_eq!(w.audit().await, ["report.mute|-|1|user|-|alice|{}"]);
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn notes_join_the_history() {
+    let (w, path) = world("reports_notes").await;
+    let id = w.about("alice", "bob", T0).await;
+    let note = |by: &'static str, text: String| {
+        let w = &w;
+        async move {
+            let user = who(w.db(), by).await;
+            add_note(
+                State(w.state.clone()),
+                Authed(user),
+                Path(id),
+                Json(NoteBody { text }),
+            )
+            .await
+            .map(|Json(detail)| detail)
+        }
+    };
+    let detail = note("mo", "  asked bob about it ".to_string())
+        .await
+        .expect("note");
+    assert_eq!(detail.events.len(), 2);
+    assert_eq!(detail.events[1].kind, "note");
+    assert_eq!(
+        detail.events[1].detail,
+        json!({"text": "asked bob about it"})
+    );
+    assert_eq!(
+        detail.events[1].actor.as_ref().map(|u| u.username.as_str()),
+        Some("mo")
+    );
+    assert_eq!(
+        refusal(note("mo", "   ".to_string()).await),
+        (400, "Note can't be empty".to_string())
+    );
+    assert_eq!(
+        refusal(note("mo", "a".repeat(1001)).await),
+        (400, "Note must be at most 1000 characters".to_string())
+    );
+    note("mo", "a".repeat(1000))
+        .await
+        .expect("1,000 characters");
+    assert_eq!(
+        w.audit().await[0],
+        format!("report.note|mo|0|report|{id}|-|{{}}"),
+        "the log does not repeat the note"
+    );
+    assert_eq!(
+        wire(note("alice", "hello".to_string()).await).await,
+        (404, r#"{"error":"Not found"}"#.to_string())
+    );
+    assert_eq!(
+        wire(note("bob", "hello".to_string()).await).await,
+        (404, r#"{"error":"Not found"}"#.to_string()),
+        "nor the one reported"
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn escalation_makes_one_instance_copy() {
+    let (w, path) = world("reports_escalate").await;
+    let db = w.db();
+    let said = message(db, w.general, "bob", "buy my coins", 100).await;
+    let id = w
+        .send("alice", json!({"to": "server", "target": {"kind": "message", "id": said}, "reason": "spam", "form": "message", "answers": [{"id": "details", "value": "again"}]}), T0)
+        .await
+        .expect("report")
+        .id;
+    let escalate = |by: &'static str, id: i64, note: Option<String>| {
+        let w = &w;
+        async move {
+            let user = who(w.db(), by).await;
+            escalate(
+                State(w.state.clone()),
+                Authed(user),
+                Path(id),
+                Json(EscalateBody { note }),
+            )
+            .await
+            .map(|Json(detail)| detail)
+        }
+    };
+    let mut events = w.state.hub.subscribe();
+    let detail = escalate("mo", id, Some("needs a ban".to_string()))
+        .await
+        .expect("escalate");
+    assert!(detail.report.escalated);
+    let copy = int(
+        db,
+        &format!("SELECT escalated_to FROM reports WHERE id = {id}"),
+    )
+    .await;
+    let again = escalate("mo", id, Some("really".to_string()))
+        .await
+        .expect("again");
+    assert!(again.report.escalated);
+    assert_eq!(
+        int(db, "SELECT COUNT(*) FROM reports WHERE kind = 'instance'").await,
+        1,
+        "one copy"
+    );
+    assert_eq!(
+        text(db, &format!("SELECT kind || '|' || status || '|' || target_key || '|' || reporter || '|' || reason || '|' || CAST(escalated_from AS TEXT) || '|' || server || '|' || answers FROM reports WHERE id = {copy}")).await,
+        format!(r#"instance|open|u:bob|alice|spam|{id}|s|[{{"id":"details","label":"Note","kind":"long_text","value":"again"}}]"#)
+    );
+    assert_eq!(
+        text(
+            db,
+            &format!("SELECT snapshot FROM reports WHERE id = {copy}")
+        )
+        .await,
+        text(db, &format!("SELECT snapshot FROM reports WHERE id = {id}")).await
+    );
+    assert_eq!(
+        w.history(id).await[1..],
+        [format!(
+            r#"escalate|mo|{{"note":"needs a ban","to":{copy}}}"#
+        )]
+    );
+    assert_eq!(
+        w.history(copy).await,
+        [
+            "created|-|{}".to_string(),
+            format!(r#"escalate|mo|{{"from":{id},"note":"needs a ban"}}"#)
+        ]
+    );
+    assert_eq!(
+        w.audit().await,
+        [format!(
+            r#"report.escalate|mo|0|report|{id}|-|{{"channel":{{"id":{},"name":"general","private":false}}}}"#,
+            w.general
+        )]
+    );
+    let mut sent = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        sent.push(serde_json::to_value(&event).expect("json"));
+    }
+    assert_eq!(
+        sent,
+        [
+            json!({"type": "reports_changed", "server": "s"}),
+            json!({"type": "reports_changed", "server": null})
+        ],
+        "once, for both"
+    );
+    assert_eq!(
+        w.admin_ids("root", json!({}), json!({}))
+            .await
+            .expect("instance"),
+        [copy]
+    );
+    let seen = w
+        .detail("root", copy)
+        .await
+        .expect("the admin reads the copy");
+    assert_eq!(
+        seen.report.reporter.as_ref().map(|u| u.username.as_str()),
+        Some("alice")
+    );
+    assert_eq!(
+        seen.snapshot.message.map(|m| m.content),
+        Some("buy my coins".to_string())
+    );
+    w.send(
+        "alice",
+        json!({"to": "instance", "target": member("bob"), "reason": "spam"}),
+        T0 + 1,
+    )
+    .await
+    .expect("the copy does not count against the reporter");
+
+    let to_instance = int(db, "SELECT MAX(id) FROM reports").await;
+    assert_eq!(
+        refusal(escalate("root", to_instance, None).await),
+        (400, NOT_ESCALATABLE.to_string())
+    );
+    assert_eq!(
+        refusal(escalate("mo", id, Some("a".repeat(1001))).await),
+        (400, "Note must be at most 1000 characters".to_string())
+    );
+    assert_eq!(
+        wire(escalate("alice", id, None).await).await,
+        (404, r#"{"error":"Not found"}"#.to_string())
+    );
+    let other = w.about("carol", "dave", T0).await;
+    exec(
+        db,
+        "UPDATE settings SET value = '0' WHERE key = 'instance_reports'",
+    )
+    .await;
+    Settings::forget(db);
+    assert_eq!(
+        wire(escalate("mo", other, None).await).await,
+        (
+            404,
+            r#"{"error":"Not found","reason":{"kind":"off_site","control":"instance_reports"}}"#
+                .to_string()
+        )
+    );
+    assert_eq!(wire(escalate("mo", 999_999, None).await).await.0, 404);
+    w.detail("root", copy)
+        .await
+        .expect("existing reports stay readable");
+    w.patch("root", copy, json!({"status": "dismissed"}))
+        .await
+        .expect("and can be handled");
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn bulk_resolve_covers_the_target() {
+    let (w, path) = world("reports_bulk").await;
+    let db = w.db();
+    let ids = [
+        w.about("alice", "bob", T0).await,
+        w.about("carol", "bob", T0).await,
+        w.about("dave", "bob", T0).await,
+    ];
+    let closed = w.about("frank", "bob", T0).await;
+    exec(
+        db,
+        &format!("UPDATE reports SET status = 'dismissed' WHERE id = {closed}"),
+    )
+    .await;
+    exec(
+        db,
+        &format!(
+            "UPDATE reports SET status = 'in_review' WHERE id = {}",
+            ids[1]
+        ),
+    )
+    .await;
+    let about_carol = w.about("alice", "carol", T0).await;
+    let about_mo = w.about("alice", "mo", T0 + 1).await;
+    let bulk = |by: &'static str, req: Value| {
+        let w = &w;
+        async move {
+            let user = who(w.db(), by).await;
+            bulk_resolve(
+                State(w.state.clone()),
+                Authed(user),
+                Path("S".to_string()),
+                Json(serde_json::from_value(req).expect("bulk")),
+            )
+            .await
+            .map(|Json(resolved)| resolved)
+        }
+    };
+    let mut events = w.state.hub.subscribe();
+    assert_eq!(
+        bulk(
+            "mo",
+            json!({"target": "u:bob", "status": "resolved", "action": "kick"})
+        )
+        .await
+        .expect("bulk"),
+        Resolved { count: 3 }
+    );
+    for id in ids {
+        assert_eq!(
+            text(db, &format!("SELECT status || '|' || action || '|' || CASE WHEN resolved_at IS NULL THEN 'open' ELSE 'closed' END FROM reports WHERE id = {id}")).await,
+            "resolved|kick|closed"
+        );
+        assert_eq!(
+            w.history(id).await[1..],
+            [r#"status|mo|{"action":"kick","status":"resolved"}"#]
+        );
+    }
+    assert_eq!(
+        text(
+            db,
+            &format!(
+                "SELECT status || '|' || COALESCE(action, '-') FROM reports WHERE id = {closed}"
+            )
+        )
+        .await,
+        "dismissed|-",
+        "a closed report is left alone"
+    );
+    assert_eq!(
+        text(
+            db,
+            &format!("SELECT status FROM reports WHERE id = {about_carol}")
+        )
+        .await,
+        "open"
+    );
+    assert_eq!(
+        w.audit().await,
+        [r#"report.status|mo|0|report|-|-|{"action":"kick","count":3,"status":"resolved"}"#],
+        "logged once"
+    );
+    assert_eq!(
+        serde_json::to_value(events.try_recv().expect("event")).expect("json"),
+        json!({"type": "reports_changed", "server": "s"})
+    );
+    assert_eq!(
+        bulk("mo", json!({"target": "u:bob", "status": "dismissed"}))
+            .await
+            .expect("again"),
+        Resolved { count: 0 }
+    );
+    assert_eq!(w.audit().await.len(), 1);
+    assert!(events.try_recv().is_err(), "nothing changed");
+    assert_eq!(
+        bulk("mo", json!({"target": "u:mo", "status": "dismissed"}))
+            .await
+            .expect("own"),
+        Resolved { count: 0 },
+        "reports about the moderator are out of their reach"
+    );
+    assert_eq!(
+        text(
+            db,
+            &format!("SELECT status FROM reports WHERE id = {about_mo}")
+        )
+        .await,
+        "open"
+    );
+    for (req, message) in [
+        (
+            json!({"target": "u:carol", "status": "open"}),
+            "Only resolved or dismissed",
+        ),
+        (
+            json!({"target": "u:carol", "status": "dismissed", "action": "ban"}),
+            ACTION_NEEDS_RESOLVED,
+        ),
+        (
+            json!({"target": "u:carol", "status": "resolved", "action": "delete_server"}),
+            "This action goes with one report",
+        ),
+    ] {
+        assert_eq!(
+            refusal(bulk("mo", req.clone()).await),
+            (400, message.to_string()),
+            "{req}"
+        );
+    }
+    assert_eq!(
+        refusal(bulk("alice", json!({"target": "u:carol", "status": "dismissed"})).await),
+        (403, "Missing permission".to_string())
+    );
+
+    for name in ["bob", "carol"] {
+        w.send(
+            "alice",
+            json!({"to": "instance", "target": member(name), "reason": "spam"}),
+            T0 + 10 * DAY,
+        )
+        .await
+        .expect("instance");
+    }
+    w.send(
+        "dave",
+        json!({"to": "instance", "target": member("bob"), "reason": "hate"}),
+        T0,
+    )
+    .await
+    .expect("instance");
+    let root = who(db, "root").await;
+    let resolved = admin::resolve_reports(
+        State(w.state.clone()),
+        Authed(root),
+        Json(
+            serde_json::from_value(
+                json!({"target": "u:bob", "status": "resolved", "action": "ban"}),
+            )
+            .expect("bulk"),
+        ),
+    )
+    .await
+    .expect("the admin");
+    assert_eq!(resolved.0, Resolved { count: 2 });
+    assert_eq!(
+        w.instance_audit().await,
+        [r#"report.resolve|root|-|{"action":"ban","count":2,"status":"resolved"}"#]
+    );
+    let mo = who(db, "mo").await;
+    let refused = admin::resolve_reports(
+        State(w.state.clone()),
+        Authed(mo),
+        Json(
+            serde_json::from_value(json!({"target": "u:carol", "status": "dismissed"}))
+                .expect("bulk"),
+        ),
+    )
+    .await
+    .map(|Json(r)| r);
+    assert_eq!(
+        wire(refused).await,
+        (404, r#"{"error":"Not found"}"#.to_string())
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn mutes_block_further_reports() {
+    let (w, path) = world("reports_mutes").await;
+    let db = w.db();
+    let mute = |by: &'static str, name: &'static str, on: bool| {
+        let w = &w;
+        async move {
+            let user = who(w.db(), by).await;
+            let at = Path(("s".to_string(), name.to_string()));
+            match on {
+                true => mute_reporter(State(w.state.clone()), Authed(user), at).await,
+                false => unmute_reporter(State(w.state.clone()), Authed(user), at).await,
+            }
+            .map(|_| ())
+        }
+    };
+    mute("mo", "Alice", true).await.expect("mute");
+    mute("mo", "alice", true).await.expect("twice is fine");
+    let to = |to: &str, name: &str| json!({"to": to, "target": member(name), "reason": "spam"});
+    assert_eq!(
+        refusal(w.send("alice", to("server", "bob"), T0).await),
+        (429, OVER_LIMIT.to_string())
+    );
+    w.send("alice", to("instance", "bob"), T0)
+        .await
+        .expect("her reports to the instance still pass");
+    assert_eq!(
+        w.audit().await,
+        ["report.mute|mo|0|user|-|alice|{}"],
+        "logged once, naming the muted reporter"
+    );
+    mute("mo", "alice", false).await.expect("unmute");
+    mute("mo", "alice", false).await.expect("twice is fine");
+    w.send("alice", to("server", "bob"), T0)
+        .await
+        .expect("restored");
+    assert_eq!(w.audit().await[1..], ["report.unmute|mo|0|user|-|alice|{}"]);
+
+    let unknown = wire(mute("mo", "nobody", true).await).await;
+    assert_eq!(unknown, (404, r#"{"error":"Not found"}"#.to_string()));
+    assert_eq!(
+        wire(mute("mo", "erin", true).await).await,
+        unknown,
+        "an account that is no member and reported nothing here answers as no account"
+    );
+    mute("mo", "erin", false)
+        .await
+        .expect("unmuting needs no lookup");
+    exec(
+        db,
+        "DELETE FROM members WHERE server = 's' AND username = 'alice'",
+    )
+    .await;
+    mute("mo", "alice", true)
+        .await
+        .expect("someone who reported here and left");
+    w.about("gina", "mo", T0).await;
+    exec(
+        db,
+        "DELETE FROM members WHERE server = 's' AND username = 'gina'",
+    )
+    .await;
+    assert_eq!(
+        wire(mute("mo", "gina", true).await).await,
+        unknown,
+        "a report about the moderator tells them nothing"
+    );
+    assert_eq!(
+        refusal(mute("carol", "alice", true).await),
+        (403, "Missing permission".to_string())
+    );
+
+    exec(db, "DELETE FROM report_mutes").await;
+    for n in 0..60 {
+        exec(db, &format!("INSERT INTO report_mutes(server, username, muted_by, created_at) VALUES('s', 'u{n:02}', 'mo', {n})")).await;
+    }
+    let mo = who(db, "mo").await;
+    let Paged(page, next) = list_mutes(
+        State(w.state.clone()),
+        Authed(mo.clone()),
+        Path("s".to_string()),
+        Query(MutesQuery::default()),
+    )
+    .await
+    .expect("mutes");
+    assert_eq!(page.len(), 50);
+    assert_eq!(
+        (page[0].user.username.as_str(), page[0].created_at),
+        ("u00", 0)
+    );
+    let Paged(rest, end) = list_mutes(
+        State(w.state.clone()),
+        Authed(mo),
+        Path("s".to_string()),
+        Query(MutesQuery { cursor: next }),
+    )
+    .await
+    .expect("more");
+    assert_eq!((rest.len(), end), (10, None));
+    assert_eq!(rest[0].user.username, "u50");
+
+    let root = who(db, "root").await;
+    admin::mute_reporter(
+        State(w.state.clone()),
+        Authed(root.clone()),
+        Path("Dave".to_string()),
+    )
+    .await
+    .map(|_| ())
+    .expect("the admin mutes");
+    assert_eq!(
+        refusal(w.send("dave", to("instance", "bob"), T0).await),
+        (429, OVER_LIMIT.to_string())
+    );
+    w.send("dave", to("server", "bob"), T0)
+        .await
+        .expect("the server kind passes");
+    let Paged(muted, _) = admin::list_report_mutes(
+        State(w.state.clone()),
+        Authed(root.clone()),
+        Query(MutesQuery::default()),
+    )
+    .await
+    .expect("list");
+    assert_eq!(
+        muted
+            .iter()
+            .map(|m| m.user.username.as_str())
+            .collect::<Vec<_>>(),
+        ["dave"]
+    );
+    let gone = admin::mute_reporter(
+        State(w.state.clone()),
+        Authed(root.clone()),
+        Path("nobody".to_string()),
+    )
+    .await
+    .map(|_| ());
+    assert_eq!(refusal(gone), (404, "Not found".to_string()));
+    admin::unmute_reporter(
+        State(w.state.clone()),
+        Authed(root),
+        Path("dave".to_string()),
+    )
+    .await
+    .map(|_| ())
+    .expect("unmute");
+    w.send("dave", to("instance", "bob"), T0)
+        .await
+        .expect("restored");
+    assert_eq!(
+        w.instance_audit().await,
+        [
+            "user.report_mute|root|dave|{}",
+            "user.report_unmute|root|dave|{}"
+        ]
+    );
+    let mo = who(db, "mo").await;
+    let refused =
+        admin::mute_reporter(State(w.state.clone()), Authed(mo), Path("dave".to_string()))
+            .await
+            .map(|_| ());
+    assert_eq!(refusal(refused), (404, "Not found".to_string()));
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn writes_need_the_member_permission() {
+    let (w, path) = world("reports_writes").await;
+    let db = w.db();
+    let id = w.about("alice", "bob", T0).await;
+    exec(db, &format!("INSERT INTO member_timeouts(server, username, until, created_at) VALUES('s', 'mo', {}, 0)", now() + 3600)).await;
+    assert_eq!(
+        refusal(w.patch("mo", id, json!({"status": "resolved"})).await),
+        (403, "You are timed out in this server".to_string())
+    );
+    exec(db, "DELETE FROM member_timeouts").await;
+    assert_eq!(
+        refusal(w.patch("root", id, json!({"status": "resolved"})).await),
+        (404, "Server not found or wrong password".to_string()),
+        "the site admin reads it but is no member"
+    );
+    let missing = wire(w.patch("mo", 999_999, json!({"status": "resolved"})).await).await;
+    assert_eq!(missing, (404, r#"{"error":"Not found"}"#.to_string()));
+    for name in ["alice", "bob", "erin"] {
+        assert_eq!(
+            wire(w.patch(name, id, json!({"status": "resolved"})).await).await,
+            missing,
+            "{name}: who can't read a report learns nothing from a write"
+        );
+    }
+    assert_eq!(
+        text(db, &format!("SELECT status FROM reports WHERE id = {id}")).await,
+        "open"
+    );
+    add_member(db, "s", "root", 0, 0, 0).await;
+    assert_eq!(
+        refusal(w.patch("root", id, json!({"status": "resolved"})).await),
+        (403, "Missing permission".to_string()),
+        "as a plain member the site admin has no instance powers here"
+    );
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_roles(server, username, role_id) VALUES('s', 'root', {})",
+            w.mods
+        ),
+    )
+    .await;
+    let row = w
+        .patch("root", id, json!({"status": "resolved", "action": "ban"}))
+        .await
+        .expect("with the role");
+    assert_eq!(row.status, Status::Resolved);
+    assert_eq!(
+        w.audit().await,
+        [format!(
+            r#"report.status|root|0|report|{id}|-|{{"action":"ban","status":"resolved"}}"#
+        )],
+        "logged under their name as a member, not as staff"
+    );
+    assert!(w.instance_audit().await.is_empty());
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn instance_actions_go_to_instance_audit() {
+    let (w, path) = world("reports_instance_actions").await;
+    let db = w.db();
+    let id = w
+        .send(
+            "alice",
+            json!({"to": "instance", "target": member("bob"), "reason": "spam"}),
+            T0,
+        )
+        .await
+        .expect("instance")
+        .id;
+    let mut events = w.state.hub.subscribe();
+    let row = w
+        .patch("root", id, json!({"status": "resolved", "action": "ban"}))
+        .await
+        .expect("resolve");
+    assert_eq!(
+        (row.status, row.action),
+        (Status::Resolved, Some(ModAction::Ban))
+    );
+    assert_eq!(
+        w.instance_audit().await,
+        [format!(
+            r#"report.status|root|report:{id}|{{"action":"ban","status":"resolved"}}"#
+        )]
+    );
+    assert!(w.audit().await.is_empty(), "nothing in the server's log");
+    assert_eq!(
+        serde_json::to_value(events.try_recv().expect("event")).expect("json"),
+        json!({"type": "reports_changed", "server": null})
+    );
+    let user = who(db, "root").await;
+    add_note(
+        State(w.state.clone()),
+        Authed(user),
+        Path(id),
+        Json(NoteBody {
+            text: "done".to_string(),
+        }),
+    )
+    .await
+    .map(|_| ())
+    .expect("note");
+    assert_eq!(
+        w.instance_audit().await[1..],
+        [format!("report.note|root|report:{id}|{{}}")]
+    );
+    for name in ["mo", "olga", "alice"] {
+        assert_eq!(
+            wire(w.patch(name, id, json!({"status": "open"})).await).await,
+            (404, r#"{"error":"Not found"}"#.to_string()),
+            "{name}"
+        );
+    }
+    done(w.state, path).await;
+}
+
+/// Waits until the purges of deleted servers and accounts are done.
+async fn purged(db: &Db) {
+    for _ in 0..200 {
+        if int(db, "SELECT COUNT(*) FROM pending_purges").await == 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("a purge is still pending");
+}
+
+#[tokio::test]
+async fn server_reports_can_delete_the_server_or_ban_its_owner() {
+    let (w, path) = world("reports_server_actions").await;
+    let db = w.db();
+    for (name, creator) in [("bad", "zed"), ("worse", "zed"), ("orphan", "")] {
+        let creator = match creator {
+            "" => "NULL".to_string(),
+            name => format!("'{name}'"),
+        };
+        exec(db, &format!("INSERT INTO servers(name, display_name, creator, created_at) VALUES('{name}', '{name}', {creator}, 0)")).await;
+        add_member(db, name, "alice", 0, 0, 0).await;
+    }
+    add_member(db, "bad", "zed", 1, 0, 0).await;
+    add_member(db, "orphan", "erin", 1, 0, 0).await;
+    add_member(db, "orphan", "frank", 0, 0, 0).await;
+    let report = |server: &'static str, t: i64| {
+        let w = &w;
+        async move {
+            w.send("alice", json!({"to": "instance", "target": {"kind": "server", "server": server}, "reason": "illegal"}), t)
+                .await
+                .expect("a server report")
+                .id
+        }
+    };
+    let about_bad = report("bad", T0).await;
+    let about_worse = report("worse", T0 + DAY).await;
+    let about_orphan = report("orphan", T0 + 2 * DAY).await;
+    let about_user = w
+        .send(
+            "carol",
+            json!({"to": "instance", "target": member("bob"), "reason": "spam"}),
+            T0,
+        )
+        .await
+        .expect("a user report")
+        .id;
+    for action in ["delete_server", "ban_owner"] {
+        assert_eq!(
+            refusal(
+                w.patch(
+                    "root",
+                    about_user,
+                    json!({"status": "resolved", "action": action})
+                )
+                .await
+            ),
+            (400, SERVER_REPORTS_ONLY.to_string()),
+            "{action} on a report about an account"
+        );
+        assert_eq!(
+            refusal(
+                w.patch(
+                    "root",
+                    about_bad,
+                    json!({"status": "dismissed", "action": action})
+                )
+                .await
+            ),
+            (400, ACTION_NEEDS_RESOLVED.to_string())
+        );
+    }
+    for name in ["mo", "olga", "alice", "zed"] {
+        assert_eq!(
+            wire(
+                w.patch(
+                    name,
+                    about_bad,
+                    json!({"status": "resolved", "action": "delete_server"})
+                )
+                .await
+            )
+            .await,
+            (404, r#"{"error":"Not found"}"#.to_string()),
+            "{name} is not the instance"
+        );
+    }
+    assert_eq!(int(db, "SELECT COUNT(*) FROM servers WHERE name = 'bad' AND COALESCE(password_hash, '') <> '!purging'").await, 1);
+
+    exec(db, "CREATE TRIGGER no_history BEFORE INSERT ON report_events BEGIN SELECT RAISE(ABORT, 'no history'); END").await;
+    for (id, action) in [(about_bad, "delete_server"), (about_worse, "ban_owner")] {
+        let unsaved = w
+            .patch("root", id, json!({"status": "resolved", "action": action}))
+            .await;
+        assert!(
+            unsaved.is_err_and(|e| e.failed()),
+            "{action}: the status change can't be saved"
+        );
+    }
+    exec(db, "DROP TRIGGER no_history").await;
+    assert_eq!(
+        int(db, "SELECT COUNT(*) FROM servers WHERE name = 'bad' AND COALESCE(password_hash, '') <> '!purging'").await,
+        1,
+        "a server is deleted only together with the status change of its report"
+    );
+    assert_eq!(
+        int(db, "SELECT COUNT(*) FROM members WHERE server = 'bad'").await,
+        2
+    );
+    assert!(
+        get_user(db, "zed").await.expect("user").is_some(),
+        "and an owner is banned only together with it"
+    );
+    assert_eq!(int(db, "SELECT COUNT(*) FROM banned_usernames").await, 0);
+    assert_eq!(
+        int(db, "SELECT COUNT(*) FROM reports WHERE status <> 'open'").await,
+        0
+    );
+    assert!(w.instance_audit().await.is_empty());
+
+    let row = w
+        .patch(
+            "root",
+            about_bad,
+            json!({"status": "resolved", "action": "delete_server"}),
+        )
+        .await
+        .expect("delete the server");
+    assert_eq!(
+        (row.status, row.action),
+        (Status::Resolved, Some(ModAction::DeleteServer))
+    );
+    assert_eq!(
+        int(db, "SELECT COUNT(*) FROM servers WHERE name = 'bad' AND COALESCE(password_hash, '') <> '!purging'").await,
+        0,
+        "the server is deleted the way the admin page deletes it"
+    );
+    assert_eq!(
+        int(db, "SELECT COUNT(*) FROM members WHERE server = 'bad'").await,
+        0
+    );
+    purged(db).await;
+    assert_eq!(
+        text(db, &format!("SELECT COALESCE(server, '-') || '|' || server_name FROM reports WHERE id = {about_bad}")).await,
+        "-|bad",
+        "the report outlives the server"
+    );
+    assert_eq!(
+        w.instance_audit().await,
+        [
+            format!(
+                r#"report.status|root|report:{about_bad}|{{"action":"delete_server","status":"resolved"}}"#
+            ),
+            format!(r#"server.delete|root|bad|{{"report":{about_bad}}}"#),
+        ],
+        "the status change first, then what was done"
+    );
+    assert_eq!(
+        refusal(
+            w.patch(
+                "root",
+                about_bad,
+                json!({"status": "resolved", "action": "delete_server"})
+            )
+            .await
+        ),
+        (404, "Server not found".to_string()),
+        "it is gone"
+    );
+
+    assert_eq!(
+        refusal(
+            w.patch(
+                "root",
+                about_worse,
+                json!({"status": "resolved", "action": "ban_owner", "owner": "alice"})
+            )
+            .await
+        ),
+        (400, "They don't own this server".to_string()),
+        "a plain member is not an owner"
+    );
+    let row = w
+        .patch(
+            "root",
+            about_worse,
+            json!({"status": "resolved", "action": "ban_owner"}),
+        )
+        .await
+        .expect("ban the creator");
+    assert_eq!(row.action, Some(ModAction::BanOwner));
+    assert_eq!(
+        int(
+            db,
+            "SELECT COUNT(*) FROM banned_usernames WHERE username = 'zed'"
+        )
+        .await,
+        1
+    );
+    assert!(
+        get_user(db, "zed").await.expect("user").is_none(),
+        "banned site-wide"
+    );
+    purged(db).await;
+    assert_eq!(
+        w.instance_audit().await[2..],
+        [
+            format!(
+                r#"report.status|root|report:{about_worse}|{{"action":"ban_owner","status":"resolved"}}"#
+            ),
+            format!(r#"user.ban|root|-|{{"report":{about_worse},"server":"worse"}}"#),
+        ]
+    );
+
+    assert_eq!(
+        refusal(
+            w.patch(
+                "root",
+                about_orphan,
+                json!({"status": "resolved", "action": "ban_owner"})
+            )
+            .await
+        ),
+        (400, "They don't own this server".to_string()),
+        "the creator left: pick an admin"
+    );
+    assert_eq!(
+        refusal(
+            w.patch(
+                "root",
+                about_orphan,
+                json!({"status": "resolved", "action": "ban_owner", "owner": "frank"})
+            )
+            .await
+        ),
+        (400, "They don't own this server".to_string())
+    );
+    w.patch(
+        "root",
+        about_orphan,
+        json!({"status": "resolved", "action": "ban_owner", "owner": "Erin"}),
+    )
+    .await
+    .expect("ban an admin of the server");
+    assert_eq!(
+        int(
+            db,
+            "SELECT COUNT(*) FROM banned_usernames WHERE username = 'erin'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(int(db, "SELECT COUNT(*) FROM banned_usernames").await, 2);
+    assert_eq!(
+        text(
+            db,
+            &format!("SELECT status || '|' || action FROM reports WHERE id = {about_orphan}")
+        )
+        .await,
+        "resolved|ban_owner"
+    );
+    add_member(db, "worse", "root", 1, 0, 0).await;
+    let own = report("worse", T0 + 20 * DAY).await;
+    assert_eq!(
+        refusal(
+            w.patch(
+                "root",
+                own,
+                json!({"status": "resolved", "action": "ban_owner", "owner": "root"})
+            )
+            .await
+        ),
+        (400, "Cannot ban yourself".to_string())
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn refused_server_actions_say_which_value_is_wrong() {
+    let (w, path) = world("reports_server_refusals").await;
+    let db = w.db();
+    exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('den', 'den', 'root', 0)").await;
+    add_member(db, "den", "root", 1, 0, 0).await;
+    add_member(db, "den", "alice", 0, 0, 0).await;
+    let report = |server: &'static str, t: i64| {
+        let w = &w;
+        async move {
+            w.send("alice", json!({"to": "instance", "target": {"kind": "server", "server": server}, "reason": "illegal"}), t)
+                .await
+                .expect("a server report")
+                .id
+        }
+    };
+    let own = report("den", T0).await;
+    let about_builtin = report("rchat", T0 + DAY).await;
+    let invalid = |field: &str| {
+        Some(crate::api::error::Reason {
+            kind: crate::api::error::ReasonKind::Invalid,
+            control: None,
+            retry_after: None,
+            field: Some(field.to_string()),
+        })
+    };
+    let ApiError(status, text, reason) = w
+        .patch(
+            "root",
+            own,
+            json!({"status": "resolved", "action": "ban_owner"}),
+        )
+        .await
+        .expect_err("the admin's own account");
+    assert_eq!(
+        (status.as_u16(), text.as_str(), reason),
+        (400, "Cannot ban yourself", invalid("owner"))
+    );
+    let ApiError(status, text, reason) = w
+        .patch(
+            "root",
+            about_builtin,
+            json!({"status": "resolved", "action": "delete_server"}),
+        )
+        .await
+        .expect_err("a default server");
+    assert_eq!(
+        (status.as_u16(), text.as_str(), reason),
+        (
+            400,
+            "The rchat server is a default server. Take it off the default servers first",
+            invalid("action")
+        )
+    );
+    assert_eq!(
+        int(db, "SELECT COUNT(*) FROM reports WHERE status <> 'open'").await,
+        0,
+        "a refused action changes no report"
+    );
+    assert!(w.instance_audit().await.is_empty());
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn a_ban_that_changes_nothing_is_not_logged_as_one() {
+    let (w, path) = world("reports_ban_twice").await;
+    let db = w.db();
+    exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('late', 'late', 'gina', 0)").await;
+    add_member(db, "late", "alice", 0, 0, 0).await;
+    let about_late = w
+        .send("alice", json!({"to": "instance", "target": {"kind": "server", "server": "late"}, "reason": "illegal"}), T0)
+        .await
+        .expect("a server report")
+        .id;
+    exec(
+        db,
+        &format!(
+            "UPDATE users SET password_hash = '{}' WHERE username = 'gina'",
+            admin::PURGING_HASH
+        ),
+    )
+    .await;
+    exec(db, "INSERT INTO banned_usernames(username) VALUES('gina')").await;
+    let row = w
+        .patch(
+            "root",
+            about_late,
+            json!({"status": "resolved", "action": "ban_owner"}),
+        )
+        .await
+        .expect("an owner whose ban is under way");
+    assert_eq!(row.action, Some(ModAction::BanOwner));
+    assert_eq!(
+        w.instance_audit().await,
+        [format!(
+            r#"report.status|root|report:{about_late}|{{"action":"ban_owner","status":"resolved"}}"#
+        )],
+        "the status change is logged, a second ban is not"
+    );
+    done(w.state, path).await;
+}
+
+/// Handles reports on `state`: status and assignee, notes, the history in pages, escalation,
+/// the bulk change and the actions on a reported server.
+async fn handled(state: AppState) {
+    let w = fill(state).await;
+    let db = w.db();
+    let in_ops = ops_report(&w, T0).await;
+    let row = w
+        .patch(
+            "olga",
+            in_ops,
+            json!({"status": "in_review", "assignee": "olga"}),
+        )
+        .await
+        .expect("status and assignee");
+    assert_eq!(
+        (row.status, row.assignee.map(|u| u.username)),
+        (Status::InReview, Some("olga".to_string()))
+    );
+    assert_eq!(
+        refusal(w.patch("olga", in_ops, json!({"assignee": "mo"})).await),
+        (400, CANT_HANDLE.to_string())
+    );
+    let olga = who(db, "olga").await;
+    escalate(
+        State(w.state.clone()),
+        Authed(olga.clone()),
+        Path(in_ops),
+        Json(EscalateBody::default()),
+    )
+    .await
+    .map(|_| ())
+    .expect("escalate");
+    for n in 0..60 {
+        add_note(
+            State(w.state.clone()),
+            Authed(olga.clone()),
+            Path(in_ops),
+            Json(NoteBody {
+                text: format!("note {n}"),
+            }),
+        )
+        .await
+        .map(|_| ())
+        .expect("note");
+    }
+    let detail = w.detail("olga", in_ops).await.expect("detail");
+    assert_eq!(detail.events.len(), 50);
+    assert_eq!(detail.events[49].detail, json!({"text": "note 59"}));
+    let Paged(earlier, end) = list_events(
+        State(w.state.clone()),
+        Authed(olga.clone()),
+        Path(in_ops),
+        Query(EventsQuery {
+            cursor: detail.events_cursor,
+        }),
+    )
+    .await
+    .expect("the lines before");
+    assert_eq!(
+        (earlier.len(), earlier[0].kind.as_str(), end),
+        (14, "created", None)
+    );
+    let closed = bulk_resolve(
+        State(w.state.clone()),
+        Authed(olga),
+        Path("s".to_string()),
+        Json(
+            serde_json::from_value(json!({"target": "u:carol", "status": "dismissed"}))
+                .expect("bulk"),
+        ),
+    )
+    .await
+    .expect("bulk");
+    assert_eq!(closed.0, Resolved { count: 1 });
+    assert_eq!(
+        int(
+            db,
+            &format!(
+                "SELECT COUNT(*) FROM audit_channels WHERE channel_id = {} AND private = 1",
+                w.ops
+            )
+        )
+        .await,
+        64,
+        "every entry about the report carries its channel"
+    );
+
+    for (name, creator) in [("bad", "zed"), ("worse", "erin")] {
+        exec(db, &format!("INSERT INTO servers(name, display_name, creator, created_at) VALUES('{name}', '{name}', '{creator}', 0)")).await;
+        add_member(db, name, creator, 1, 0, 0).await;
+        add_member(db, name, "alice", 0, 0, 0).await;
+    }
+    let about = |server: &'static str, t: i64| {
+        let w = &w;
+        async move {
+            w.send("alice", json!({"to": "instance", "target": {"kind": "server", "server": server}, "reason": "illegal"}), t)
+                .await
+                .expect("a server report")
+                .id
+        }
+    };
+    let about_bad = about("bad", T0).await;
+    let about_worse = about("worse", T0 + DAY).await;
+    w.patch(
+        "root",
+        about_bad,
+        json!({"status": "resolved", "action": "delete_server"}),
+    )
+    .await
+    .expect("delete the server");
+    w.patch(
+        "root",
+        about_worse,
+        json!({"status": "resolved", "action": "ban_owner"}),
+    )
+    .await
+    .expect("ban the owner");
+    purged(db).await;
+    assert_eq!(
+        int(db, "SELECT COUNT(*) FROM servers WHERE name = 'bad'").await,
+        0
+    );
+    assert!(get_user(db, "erin").await.expect("user").is_none());
+    assert_eq!(
+        w.instance_audit().await,
+        [
+            format!(
+                r#"report.status|root|report:{about_bad}|{{"action":"delete_server","status":"resolved"}}"#
+            ),
+            format!(r#"server.delete|root|bad|{{"report":{about_bad}}}"#),
+            format!(
+                r#"report.status|root|report:{about_worse}|{{"action":"ban_owner","status":"resolved"}}"#
+            ),
+            format!(r#"user.ban|root|-|{{"report":{about_worse},"server":"worse"}}"#),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn reports_are_handled_alike_on_each_database() {
+    let (state, path) = temp_state("reports_handled").await;
+    handled(state.clone()).await;
+    done(state, path).await;
+    if let Some((state, temp)) = pg_state("reports_handled").await {
+        handled(state.clone()).await;
+        pg_done(state, temp).await;
+    }
+}
+
+#[tokio::test]
+async fn reports_changed_after_status_changes() {
+    let (w, path) = world("reports_changed").await;
+    let id = w.about("alice", "bob", T0).await;
+    let mut events = w.state.hub.subscribe();
+    w.patch("mo", id, json!({"status": "resolved"}))
+        .await
+        .expect("resolve");
+    let told = events.try_recv().expect("event");
+    assert_eq!(
+        serde_json::to_value(&told).expect("json"),
+        json!({"type": "reports_changed", "server": "s"})
+    );
+    assert!(
+        matches!(told, WsEvent::ReportsChanged { about: Some(ref about), channel: None, .. } if about == "bob"),
+        "the one reported is never told"
+    );
+    assert!(events.try_recv().is_err());
+    let in_ops = ops_report(&w, T0).await;
+    let also_carol = w.about("dave", "carol", T0).await;
+    let mut events = w.state.hub.subscribe();
+    let olga = who(w.db(), "olga").await;
+    let closed = bulk_resolve(
+        State(w.state.clone()),
+        Authed(olga),
+        Path("s".to_string()),
+        Json(
+            serde_json::from_value(json!({"target": "u:carol", "status": "dismissed"}))
+                .expect("bulk"),
+        ),
+    )
+    .await
+    .expect("bulk");
+    assert_eq!(closed.0, Resolved { count: 2 });
+    let mut told = Vec::new();
+    while let Ok(WsEvent::ReportsChanged {
+        server,
+        about,
+        channel,
+    }) = events.try_recv()
+    {
+        told.push((server, about, channel));
+    }
+    told.sort();
+    assert_eq!(
+        told,
+        [
+            (Some("s".to_string()), Some("carol".to_string()), None),
+            (
+                Some("s".to_string()),
+                Some("carol".to_string()),
+                Some((w.ops, true))
+            ),
+        ],
+        "one event per channel of the closed reports ({in_ops}, {also_carol}), so nobody is told of one they can't see"
+    );
+    w.patch("mo", id, json!({"assignee": "mo"}))
+        .await
+        .expect("assign");
+    assert!(events.try_recv().is_err(), "an assignment changes no count");
+    done(w.state, path).await;
+}
