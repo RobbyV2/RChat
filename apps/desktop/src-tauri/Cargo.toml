@@ -19,7 +19,7 @@ tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
 rchat-desktop-core = { path = "../core" }
-tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
+tauri = { workspace = true }
 tauri-plugin-notification = "2.8"
 tauri-plugin-opener = "2.7"
 tauri-plugin-clipboard-manager = "2.5"
@@ -34,6 +34,12 @@ tauri-plugin-single-instance = { version = "2.5", features = ["deep-link"] }
 tauri-plugin-window-state = "2.5"
 tauri-plugin-updater = "2.14"
 tauri-plugin-autostart = "2.7"
+
+# Tauri's tray as a StatusNotifierItem over D-Bus (left click opens, no libayatana-appindicator).
+# Tauri turns on tray-icon's appindicator backend, and tray-icon prefers ksni when both are on.
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.25", default-features = false, features = ["ksni"] }
+zbus = "5"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-fs = "2.7"

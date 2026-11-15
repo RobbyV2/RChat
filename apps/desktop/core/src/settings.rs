@@ -210,7 +210,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            minimize_to_tray: false,
+            minimize_to_tray: true,
             mute_notifications: false,
             auto_update: false,
             channel: Channel::built(),
@@ -309,13 +309,13 @@ fn parse_over(raw: &str, base: Settings) -> Settings {
     }
 }
 
-// What the page sent, without the fields that belong to the shell's own commands: the server
+// What the page sent, without the fields that belong to the shell: the tray's Mute, the server
 // setup, the resume flag and the login entry. The page sends back the whole copy it read when it
 // opened, which would otherwise undo what the shell wrote since.
 pub fn from_page(current: &Settings, sent: Settings) -> Settings {
     let Settings {
         minimize_to_tray,
-        mute_notifications,
+        mute_notifications: _,
         auto_update,
         channel,
         boot:
@@ -330,7 +330,7 @@ pub fn from_page(current: &Settings, sent: Settings) -> Settings {
     } = sent;
     Settings {
         minimize_to_tray,
-        mute_notifications,
+        mute_notifications: current.mute_notifications,
         auto_update,
         channel,
         boot: Boot {
@@ -386,7 +386,7 @@ mod tests {
 
     fn custom() -> Settings {
         Settings {
-            minimize_to_tray: true,
+            minimize_to_tray: false,
             mute_notifications: true,
             auto_update: true,
             channel: Channel::Weekly,
@@ -424,7 +424,7 @@ mod tests {
         assert_eq!(
             Settings::default(),
             Settings {
-                minimize_to_tray: false,
+                minimize_to_tray: true,
                 mute_notifications: false,
                 auto_update: false,
                 channel: Channel::built(),
@@ -456,6 +456,25 @@ mod tests {
                 resume_server: false,
             }
         );
+    }
+
+    // A fresh install keeps running on close, and turning that off sticks.
+    #[test]
+    fn closing_keeps_running_unless_turned_off() {
+        assert!(parse("").minimize_to_tray);
+        assert!(parse(r#"{"close_to_tray":true}"#).minimize_to_tray);
+        let old = r#"{"close_to_tray":false,"auto_update":false,"channel":"stable"}"#;
+        assert!(parse(old).minimize_to_tray);
+        let off = Settings {
+            minimize_to_tray: false,
+            ..Settings::default()
+        };
+        let text = saved("close-off", &off);
+        assert_eq!(json(&text)["minimize_to_tray"], false);
+        assert!(!parse(&text).minimize_to_tray);
+        let on = saved("close-on", &Settings::default());
+        assert!(json(&on).get("minimize_to_tray").is_none());
+        assert!(parse(&on).minimize_to_tray);
     }
 
     #[test]
@@ -520,7 +539,7 @@ mod tests {
     fn parses_every_v2_field() {
         let raw = r#"{
             "version": 2,
-            "minimize_to_tray": true,
+            "minimize_to_tray": false,
             "mute_notifications": true,
             "auto_update": true,
             "channel": "weekly",
@@ -643,7 +662,7 @@ mod tests {
         let stored: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(path(&dir)).unwrap()).unwrap();
         assert_eq!(stored["version"], 2);
-        assert_eq!(stored["minimize_to_tray"], true);
+        assert_eq!(stored["minimize_to_tray"], false);
         assert_eq!(stored["server"]["access"]["mode"], "https");
         assert!(stored.get("close_to_tray").is_none());
         let left: Vec<_> = fs::read_dir(&dir).unwrap().flatten().collect();
@@ -692,7 +711,7 @@ mod tests {
     // Defaults a later build might ship.
     fn later_defaults() -> Settings {
         Settings {
-            minimize_to_tray: true,
+            minimize_to_tray: false,
             auto_update: true,
             boot: Boot {
                 hidden: false,
@@ -725,7 +744,7 @@ mod tests {
         assert_eq!(parse_over(&text, later_defaults()), later_defaults());
         let upgraded = parse(r#"{"close_to_tray":false,"auto_update":false,"channel":"stable"}"#);
         let text = saved("follows-v1", &upgraded);
-        assert!(parse_over(&text, later_defaults()).minimize_to_tray);
+        assert!(!parse_over(&text, later_defaults()).minimize_to_tray);
     }
 
     #[test]
@@ -801,7 +820,7 @@ mod tests {
         );
         let read = parse_over(&text, later_defaults());
         assert_eq!(read.server, set_up.server);
-        assert!(read.minimize_to_tray);
+        assert!(!read.minimize_to_tray);
     }
 
     // The file can hold the server's database address and secrets.
@@ -830,7 +849,7 @@ mod tests {
             from_page(&current, sent.clone()),
             Settings {
                 minimize_to_tray: sent.minimize_to_tray,
-                mute_notifications: sent.mute_notifications,
+                mute_notifications: current.mute_notifications,
                 auto_update: sent.auto_update,
                 channel: sent.channel,
                 boot: Boot {
@@ -870,6 +889,10 @@ mod tests {
             server(|s| s.extra = "ALLOWED_HOSTS=*".into()),
             Settings {
                 resume_server: false,
+                ..current.clone()
+            },
+            Settings {
+                mute_notifications: false,
                 ..current.clone()
             },
             Settings {
@@ -927,6 +950,31 @@ mod tests {
                 ..current.clone()
             }
         );
+    }
+
+    // The tray switches Mute. The page's copy holds the value from when it opened.
+    #[test]
+    fn a_page_save_keeps_mute_as_the_shell_has_it() {
+        for muted in [false, true] {
+            let current = Settings {
+                mute_notifications: muted,
+                ..Settings::default()
+            };
+            let sent = Settings {
+                mute_notifications: !muted,
+                minimize_to_tray: false,
+                ..Settings::default()
+            };
+            assert_eq!(
+                from_page(&current, sent),
+                Settings {
+                    minimize_to_tray: false,
+                    ..current.clone()
+                }
+            );
+            let without: Settings = serde_json::from_str(r#"{"auto_update":true}"#).unwrap();
+            assert_eq!(from_page(&current, without).mute_notifications, muted);
+        }
     }
 
     #[test]

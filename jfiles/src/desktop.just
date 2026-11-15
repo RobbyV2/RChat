@@ -15,8 +15,8 @@ desktop-build *args: deps
   set -euo pipefail
   if [ "$(uname -s)" = Linux ] && ! pkg-config --exists webkit2gtk-4.1 libsoup-3.0; then
     echo "Missing webkit2gtk-4.1 or libsoup-3.0 development files."
-    echo "  Debian/Ubuntu: sudo apt install libwebkit2gtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev"
-    echo "  Arch: sudo pacman -S webkit2gtk-4.1 libsoup3 libayatana-appindicator librsvg"
+    echo "  Debian/Ubuntu: sudo apt install libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev"
+    echo "  Arch: sudo pacman -S webkit2gtk-4.1 libsoup3 librsvg"
     exit 1
   fi
   cd "{{DESKTOP}}" && cargo tauri build {{args}}

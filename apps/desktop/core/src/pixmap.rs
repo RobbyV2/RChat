@@ -66,6 +66,23 @@ pub fn tray_icon(os: Os, app_icon: &Pixmap, unread: bool) -> Pixmap {
     if unread { with_dot(&base, dot) } else { base }
 }
 
+// An icon as the tray sets it. The template flag goes with every icon: macOS draws an icon that
+// is set without it in plain black.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Icon {
+    pub pixmap: Pixmap,
+    pub template: bool,
+}
+
+// The tray's icons without and with the unread dot.
+pub fn tray_icons(os: Os, app_icon: &Pixmap) -> [Icon; 2] {
+    let template = look(os).template;
+    [false, true].map(|unread| Icon {
+        pixmap: tray_icon(os, app_icon, unread),
+        template,
+    })
+}
+
 const BLACK: [u8; 4] = [0, 0, 0, 0xff];
 
 fn blank(width: u32, height: u32) -> Pixmap {
@@ -271,6 +288,17 @@ mod tests {
                 assert_eq!((icon.width, icon.height), (size, size));
                 assert_eq!(icon.rgba.len(), (size * size * 4) as usize);
             }
+        }
+    }
+
+    #[test]
+    fn both_icons_carry_the_template_flag() {
+        for (os, template) in [(Os::Windows, false), (Os::Macos, true), (Os::Linux, false)] {
+            let want = [false, true].map(|unread| Icon {
+                pixmap: tray_icon(os, &sticker(), unread),
+                template,
+            });
+            assert_eq!(tray_icons(os, &sticker()), want);
         }
     }
 

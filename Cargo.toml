@@ -16,6 +16,11 @@ members = [
 ]
 default-members = ["apps/server", "apps/desktop/core"]
 
+# The desktop shell takes Tauri from here. With the `tray-icon` feature in its own manifest, the
+# Tauri CLI asks for an appindicator package when it bundles on Linux and adds it to the .deb.
+[workspace.dependencies]
+tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
+
 [profile.release]
 opt-level = "z"
 lto = true

@@ -2,6 +2,8 @@ mod files;
 mod links;
 #[cfg(feature = "smoke")]
 mod smoke;
+#[cfg(desktop)]
+mod tray;
 
 use rchat_desktop_core::settings::{self, Settings};
 use std::path::PathBuf;
@@ -25,7 +27,9 @@ struct Shell {
     links: Mutex<Vec<String>>,
     saves: files::Saves,
     #[cfg(desktop)]
-    tray: Mutex<Option<tauri::tray::TrayIcon>>,
+    tray: Mutex<Option<tray::Tray>>,
+    #[cfg(desktop)]
+    reported: Mutex<tray::Reported>,
     #[cfg(desktop)]
     update: Mutex<Option<tauri_plugin_updater::Update>>,
 }
@@ -120,9 +124,18 @@ fn set_desktop_settings(shell: State<'_, Shell>, settings: Settings) -> Result<(
 }
 
 // Commands that reach a mobile plugin run off the main thread there, as the plugins' own do.
+// While notifications are muted, nothing is shown, whichever page path asked.
 #[cfg_attr(desktop, tauri::command)]
 #[cfg_attr(mobile, tauri::command(async))]
-fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
+fn notify(
+    app: AppHandle,
+    shell: State<'_, Shell>,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    if shell.settings().mute_notifications {
+        return Ok(());
+    }
     app.notification()
         .builder()
         .title(title)
@@ -322,129 +335,97 @@ async fn share_text(app: AppHandle, title: Option<String>, text: String) -> Resu
 #[cfg(desktop)]
 mod desktop {
     use super::*;
-    use rchat_desktop_core::badge;
+    use rchat_desktop_core::close::{self, Close};
+    use rchat_desktop_core::tray_menu::Snapshot;
     use serde::Serialize;
-    use tauri::image::Image;
-    use tauri::menu::{Menu, MenuItem};
-    use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
     use tauri_plugin_autostart::ManagerExt;
     use tauri_plugin_updater::UpdaterExt;
 
-    const NAME: &str = "RChat";
     const UPDATER_PLACEHOLDER: &str = "RCHAT_UPDATER_PUBKEY_PLACEHOLDER";
-    const TRAY_ICON: &[u8] = include_bytes!("../icons/64x64.png");
 
     fn has_tray(app: &AppHandle) -> bool {
         lock(&app.state::<Shell>().tray).is_some()
     }
 
-    fn toggle_main(app: &AppHandle) {
-        match main_window(app) {
-            Some(w) if w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false) => {
-                let _ = w.hide();
-            }
-            _ => show_main(app),
-        }
-    }
-
-    fn build_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
-        let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
-        let hide = MenuItem::with_id(app, "hide", "Hide", true, None::<&str>)?;
-        let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-        let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
-        TrayIconBuilder::with_id(MAIN)
-            .icon(Image::from_bytes(TRAY_ICON)?)
-            .tooltip(NAME)
-            .menu(&menu)
-            .show_menu_on_left_click(false)
-            .on_menu_event(|app, event| match event.id().as_ref() {
-                "show" => show_main(app),
-                "hide" => {
-                    if let Some(w) = main_window(app) {
-                        let _ = w.hide();
-                    }
-                }
-                "quit" => app.exit(0),
-                _ => {}
-            })
-            .on_tray_icon_event(|tray, event| {
-                if let TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                } = event
-                {
-                    toggle_main(tray.app_handle());
-                }
-            })
-            .build(app)
-    }
-
-    // Linux trays need libayatana-appindicator at runtime and panic without it; the app then runs
-    // without a tray (and close-to-tray turns into a plain close).
-    fn try_tray(app: &AppHandle) -> Option<TrayIcon> {
-        let app = app.clone();
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || build_tray(&app))) {
-            Ok(Ok(tray)) => Some(tray),
-            Ok(Err(e)) => {
-                eprintln!("tray unavailable: {e}");
-                None
-            }
-            Err(_) => {
-                eprintln!("tray unavailable: no appindicator library");
-                None
-            }
-        }
-    }
-
     // Puts up the tray; true when there is one.
-    pub fn start_tray(app: &AppHandle) -> bool {
-        let tray = try_tray(app);
-        let ok = tray.is_some();
-        *lock(&app.state::<Shell>().tray) = tray;
-        ok
+    fn start_tray(app: &AppHandle) -> bool {
+        let shell = app.state::<Shell>();
+        let tray::Reported { unread, offline } = *lock(&shell.reported);
+        let snapshot = Snapshot {
+            webview: true,
+            offline,
+            muted: shell.settings().mute_notifications,
+            server: None,
+        };
+        match tray::start(app, snapshot, unread) {
+            Ok(tray) => {
+                *lock(&shell.tray) = Some(tray);
+                true
+            }
+            Err(e) => {
+                eprintln!("tray unavailable: {e}");
+                false
+            }
+        }
     }
 
-    // Close to tray: hides the main window instead of closing it when the user asked for that.
+    // True when the tray is up. Linux has none without a StatusNotifierItem host; there the
+    // tray comes up when a host appears later in the session.
+    pub fn tray_now_or_later(app: &AppHandle) -> bool {
+        if start_tray(app) {
+            return true;
+        }
+        #[cfg(target_os = "linux")]
+        tray::when_host_appears(app, start_tray);
+        false
+    }
+
+    // Closing the main window hides it while the tray can bring it back, or quits.
     pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event
             && window.label() == MAIN
         {
             let app = window.app_handle();
-            if app.state::<Shell>().settings().minimize_to_tray && has_tray(app) {
-                api.prevent_close();
-                let _ = window.hide();
+            let settings = app.state::<Shell>().settings();
+            match close::on_close(&settings, has_tray(app), false) {
+                Close::Hide => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                Close::Quit(_) => {}
             }
         }
     }
 
     pub fn show_badge(app: &AppHandle, count: u32) {
-        if let Some(tray) = lock(&app.state::<Shell>().tray).as_ref() {
-            let _ = tray.set_tooltip(Some(badge::tooltip(NAME, count)));
-            if let Ok(base) = Image::from_bytes(TRAY_ICON) {
-                let icon = if count > 0 {
-                    Image::new_owned(
-                        badge::with_dot(base.rgba(), base.width(), base.height()),
-                        base.width(),
-                        base.height(),
-                    )
-                } else {
-                    base
-                };
-                let _ = tray.set_icon(Some(icon));
-            }
+        lock(&app.state::<Shell>().reported).unread = count;
+        if let Err(e) = tray::set_unread(app, count) {
+            eprintln!("tray icon: {e}");
         }
         let Some(w) = main_window(app) else { return };
         #[cfg(windows)]
-        let _ = w.set_overlay_icon((count > 0).then(|| Image::new_owned(badge::dot(16), 16, 16)));
+        {
+            use rchat_desktop_core::badge;
+            let dot = (count > 0).then(|| tauri::image::Image::new_owned(badge::dot(16), 16, 16));
+            let _ = w.set_overlay_icon(dot);
+        }
         #[cfg(not(windows))]
         let _ = w.set_badge_count((count > 0).then_some(i64::from(count)));
     }
 
+    // The page reports whether its accounts appear offline, for the tray's Status.
+    #[tauri::command]
+    pub fn set_tray_state(app: AppHandle, offline: bool) {
+        lock(&app.state::<Shell>().reported).offline = Some(offline);
+        if let Err(e) = tray::update(&app, |s| s.offline = Some(offline)) {
+            eprintln!("tray menu: {e}");
+        }
+    }
+
     #[derive(Serialize)]
     pub struct Found {
-        version: String,
-        notes: Option<String>,
+        pub version: String,
+        pub notes: Option<String>,
     }
 
     #[tauri::command]
@@ -503,6 +484,10 @@ mod desktop {
 
     #[tauri::command]
     pub async fn update_install(app: AppHandle) -> Result<(), String> {
+        install(&app).await
+    }
+
+    pub async fn install(app: &AppHandle) -> Result<(), String> {
         let pending = lock(&app.state::<Shell>().update).take();
         let Some(update) = pending else {
             return Err("No update to install".into());
@@ -627,6 +612,8 @@ pub fn run() {
             desktop::update_check,
             #[cfg(desktop)]
             desktop::update_install,
+            #[cfg(desktop)]
+            desktop::set_tray_state,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -642,6 +629,8 @@ pub fn run() {
                 #[cfg(desktop)]
                 tray: Mutex::new(None),
                 #[cfg(desktop)]
+                reported: Mutex::default(),
+                #[cfg(desktop)]
                 update: Mutex::new(None),
             });
             #[cfg(any(windows, target_os = "linux"))]
@@ -649,7 +638,8 @@ pub fn run() {
                 let _ = app.deep_link().register_all();
             }
             #[cfg(desktop)]
-            let hidden = desktop::start_tray(&handle) && std::env::args().any(|a| a == "--hidden");
+            let hidden =
+                desktop::tray_now_or_later(&handle) && std::env::args().any(|a| a == "--hidden");
             #[cfg(mobile)]
             let hidden = false;
             let window = create_main(&handle)?;

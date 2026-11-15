@@ -18,6 +18,7 @@ fn main() {
         "set_autostart",
         "update_check",
         "update_install",
+        "set_tray_state",
     ];
     tauri_build::try_build(
         tauri_build::Attributes::new()

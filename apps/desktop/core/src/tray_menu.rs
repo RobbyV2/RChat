@@ -1,5 +1,7 @@
-// The tray menu as data. The Tauri menu (macOS, Windows) and the StatusNotifierItem menu (Linux)
-// both render it.
+// The tray menu as data. Tauri's tray renders it on every desktop OS (on Linux as a
+// StatusNotifierItem).
+
+use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -149,9 +151,15 @@ fn server_block(server: Server) -> [Item; 6] {
     ]
 }
 
+// The page sets the status of its signed-in accounts, so it needs a webview, and the tray shows
+// a status only once the page has reported one.
+fn status_ready(snapshot: &Snapshot) -> bool {
+    snapshot.webview && snapshot.offline.is_some()
+}
+
 pub fn menu(snapshot: &Snapshot) -> Vec<Item> {
     let Snapshot {
-        webview,
+        webview: _,
         offline,
         muted,
         server,
@@ -159,10 +167,9 @@ pub fn menu(snapshot: &Snapshot) -> Vec<Item> {
     let mut items = vec![
         button(Action::Open, "Open RChat", true),
         Item::Separator,
-        // The page sets the status of its signed-in accounts, so it needs a webview.
         Item::Choice {
             label: "Status",
-            enabled: webview && offline.is_some(),
+            enabled: status_ready(snapshot),
             options: vec![
                 Pick {
                     action: Action::Online,
@@ -187,6 +194,44 @@ pub fn menu(snapshot: &Snapshot) -> Vec<Item> {
     items.push(button(Action::CheckUpdates, "Check for updates", true));
     items.push(button(Action::Quit, "Quit RChat", true));
     items
+}
+
+// The `tray-action` event: picks that the page carries out, because it holds the accounts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum TrayAction {
+    Status { online: bool },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Effect {
+    Open,
+    Page(TrayAction),
+    // The new value.
+    Mute(bool),
+    CheckUpdates,
+    Quit,
+}
+
+pub fn effect(action: Action, snapshot: &Snapshot) -> Option<Effect> {
+    match action {
+        Action::Open => Some(Effect::Open),
+        Action::Online | Action::Offline if status_ready(snapshot) => {
+            Some(Effect::Page(TrayAction::Status {
+                online: action == Action::Online,
+            }))
+        }
+        Action::Online | Action::Offline => None,
+        Action::Mute => Some(Effect::Mute(!snapshot.muted)),
+        Action::CheckUpdates => Some(Effect::CheckUpdates),
+        Action::Quit => Some(Effect::Quit),
+        // The server block comes with the app's own server.
+        Action::StartServer
+        | Action::StopServer
+        | Action::RestartServer
+        | Action::CopyAddress
+        | Action::ServerSettings => None,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -549,5 +594,83 @@ mod tests {
             }
         }
         assert!(texts.iter().all(|t| t.is_ascii() && !t.is_empty()));
+    }
+
+    #[test]
+    fn picks_have_effects() {
+        let effect_of = |action| effect(action, &PLAIN);
+        assert_eq!(effect_of(Action::Open), Some(Effect::Open));
+        assert_eq!(effect_of(Action::CheckUpdates), Some(Effect::CheckUpdates));
+        assert_eq!(effect_of(Action::Quit), Some(Effect::Quit));
+        assert_eq!(effect_of(Action::Mute), Some(Effect::Mute(true)));
+        let muted = Snapshot {
+            muted: true,
+            ..PLAIN
+        };
+        assert_eq!(effect(Action::Mute, &muted), Some(Effect::Mute(false)));
+        for snapshot in [
+            PLAIN,
+            Snapshot {
+                offline: Some(true),
+                ..PLAIN
+            },
+        ] {
+            assert_eq!(
+                effect(Action::Online, &snapshot),
+                Some(Effect::Page(TrayAction::Status { online: true }))
+            );
+            assert_eq!(
+                effect(Action::Offline, &snapshot),
+                Some(Effect::Page(TrayAction::Status { online: false }))
+            );
+        }
+    }
+
+    // A disabled item does nothing, even if a tray host sends its click anyway.
+    #[test]
+    fn status_picks_wait_for_the_page() {
+        for snapshot in [
+            Snapshot {
+                offline: None,
+                ..PLAIN
+            },
+            Snapshot {
+                webview: false,
+                ..PLAIN
+            },
+        ] {
+            assert_eq!(effect(Action::Online, &snapshot), None);
+            assert_eq!(effect(Action::Offline, &snapshot), None);
+            assert_eq!(effect(Action::Open, &snapshot), Some(Effect::Open));
+        }
+    }
+
+    #[test]
+    fn server_picks_wait_for_the_server() {
+        for action in [
+            Action::StartServer,
+            Action::StopServer,
+            Action::RestartServer,
+            Action::CopyAddress,
+            Action::ServerSettings,
+        ] {
+            assert_eq!(
+                effect(action, &server(ServerState::Running, 1, false)),
+                None
+            );
+        }
+    }
+
+    // What the page gets with the `tray-action` event.
+    #[test]
+    fn page_actions_as_json() {
+        assert_eq!(
+            serde_json::to_value(TrayAction::Status { online: true }).unwrap(),
+            serde_json::json!({"kind": "status", "online": true})
+        );
+        assert_eq!(
+            serde_json::to_value(TrayAction::Status { online: false }).unwrap(),
+            serde_json::json!({"kind": "status", "online": false})
+        );
     }
 }
