@@ -582,7 +582,7 @@ export function P2pComposer({
       return
     }
     const now = Date.now()
-    if (now - typedAt.current < 3000) return
+    if (now - typedAt.current < p2pDm.typingEvery(key)) return
     typedAt.current = now
     p2pDm.typing(key, true)
   }, [typing, text, key])

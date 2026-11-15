@@ -1,23 +1,22 @@
 import type { PackedRec } from '../acl_room'
-import { UNKNOWN } from '../dag'
 import type { EventRecord } from '../db'
-import { LOCAL } from '../limits'
 import { channelOf, isShortId } from '../state'
-import { candidates, matches, SEARCH, words } from '../search'
+import { candidates, matches, words } from '../search'
 import type { P2pMessage } from '../dm'
 import type { ServerCtx } from './context'
 import type { SearchQuery, SearchHit } from './types'
 
 // Messages stored here (thread replies too) that show and match, newest first: one page of at
-// most SEARCH.page below `cursor` (a sort key). `next` when more may follow.
+// most `page` (`search.page`) below `cursor` (a sort key). `next` when more may follow.
 // A query without letters or digits ("!!!") looks for that text in what shows.
 export async function search(
   cx: ServerCtx,
   q: SearchQuery,
   cursor: string | null = null,
-  page: number = SEARCH.page
+  page: number = cx.local.search.page
 ) {
-  const query = words(q.q)
+  const lim = cx.local.search
+  const query = words(q.q, lim)
   const literal = !query.length && q.q.trim() ? q.q.trim().toLowerCase() : null
   const rooms = [...cx.rooms.values()]
     .filter(r => !r.invite && !cx.readOnly(r.id) && (q.room === null || r.id === q.room))
@@ -31,13 +30,13 @@ export async function search(
       if (keep) keeps.set(room, keep)
     }
   const { pool, capped: more0 } = await cx.searchPool(q, query, rooms, cursor)
-  const scan = pool.slice(0, SEARCH.scan)
+  const scan = pool.slice(0, lim.scan)
   let capped = more0 || pool.length > scan.length
   const hits: SearchHit[] = []
   let last: string | null = null
   let i = 0
   while (i < scan.length && hits.length < page) {
-    const chunk = scan.slice(i, i + LOCAL.server.searchChunk)
+    const chunk = scan.slice(i, i + cx.local.server.searchChunk)
     i += chunk.length
     const recs = new Map<string, EventRecord>()
     for (const x of chunk) {
@@ -67,7 +66,7 @@ export async function search(
       const r = recs.get(x.id)
       const text = m ? (m.fwd ? m.fwd.body : m.body) : ''
       if (!m || !r || m.unavailable) continue
-      if (literal ? !text.toLowerCase().includes(literal) : !matches(text, query)) continue
+      if (literal ? !text.toLowerCase().includes(literal) : !matches(text, query, lim)) continue
       hits.push({ room: r.room, ch: r.chan as string, thread: m.thread ?? null, m })
       if (hits.length >= page) break
     }
@@ -86,16 +85,17 @@ export async function searchPool(
   const now = cx.clock.now()
   const key = JSON.stringify([query, q.from, rooms])
   const c = cx.searchCache
-  if (query.length && cursor !== null && c?.key === key && now - c.at < SEARCH.poolMs) {
+  const lim = cx.local.search
+  if (query.length && cursor !== null && c?.key === key && now - c.at < lim.poolMs) {
     const pool = c.pool.filter(x => x.sk < cursor)
     if (pool.length || !c.capped) return { pool, capped: c.capped }
   }
   const pool: { room: string; id: string; sk: string }[] = []
   let capped = false
-  const max = query.length ? SEARCH.pool : SEARCH.scan
+  const max = query.length ? lim.pool : lim.scan
   for (const room of rooms) {
     const got = query.length
-      ? await candidates(cx.db, room, query, cursor, max)
+      ? await candidates(cx.db, room, query, cursor, max, lim.exact)
       : await cx.recent(room, q, cursor, max)
     pool.push(...got.list)
     capped ||= got.more
@@ -201,5 +201,10 @@ export async function recordOf(cx: ServerCtx, id: string): Promise<PackedRec | n
 // Server events held for later (tests): pending (waiting for ACL parents) and held (dated ahead).
 export function waiting(cx: ServerCtx, room: string) {
   const rt = cx.rt(room)
-  return { pending: rt?.pending.size ?? 0, held: rt?.held.size ?? 0, unknown: UNKNOWN }
+  const dag = cx.local.dag
+  return {
+    pending: rt?.pending.size ?? 0,
+    held: rt?.held.size ?? 0,
+    unknown: { events: dag.unknownEvents, bytes: dag.unknownBytes },
+  }
 }

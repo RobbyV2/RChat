@@ -11,8 +11,8 @@ import { probe, probeWasm, unavailable, UNAVAILABLE } from '../capabilities'
 import {
   Cancelled,
   fastKdf,
-  KDF_MAX,
-  KDF_MOBILE,
+  kdfBounds,
+  kdfFor,
   open,
   percent,
   seal,
@@ -25,6 +25,7 @@ import {
   type P2pSection,
 } from '../p2p/transfer'
 import { runKdfJob, type KdfReply } from '../p2p/kdf_job'
+import { LOCAL } from '../p2p/limits'
 import { p2pAccount, p2pTransfer, useP2p } from '../p2p/app'
 import { dbFor } from '../p2p/app/account'
 import { P2pStore } from '../p2p/db'
@@ -255,7 +256,7 @@ describe('P2P passphrase protection without WebAssembly', () => {
   const PASS = 'päss phrase \u{1f511} long enough'
   const SALT = new Uint8Array(16).map((_, i) => i * 7 + 1)
   const SMALL: Kdf = { alg: 'argon2id', m: 1024, t: 1, p: 1 }
-  const LOOSE = { min: { m: 8, t: 1, p: 1 }, max: KDF_MAX }
+  const LOOSE = { min: { m: 8, t: 1, p: 1 }, max: kdfBounds(LOCAL.transfer).max }
   const hex = (b: Uint8Array) => Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
   const refusal = (p: Promise<unknown>) =>
     p.then(
@@ -296,8 +297,9 @@ describe('P2P passphrase protection without WebAssembly', () => {
     const fast = await fastKdf(true)
     if (!fast) throw new Error('no fast module')
     const password = new TextEncoder().encode(PASS.normalize('NFC'))
-    const slow = await slowKdf(password, SALT, KDF_MOBILE)
-    expect(hex(slow)).toBe(hex(await fast(password, SALT, KDF_MOBILE)))
+    const mobile = kdfFor(LOCAL.transfer, true)
+    const slow = await slowKdf(password, SALT, mobile)
+    expect(hex(slow)).toBe(hex(await fast(password, SALT, mobile)))
   }, 120_000)
 
   test('a file sealed without WebAssembly opens with it, and the other way round', async () => {

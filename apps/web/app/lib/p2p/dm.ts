@@ -2,11 +2,11 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { b64u, concat, utf8 } from './canonical'
 import {
   blankRoom,
-  DAG,
+  capped,
   insertEvent,
   refitFull,
+  type DagLimits,
   type FullWhy,
-  type InsertCtx,
   type Inserted,
   type PingKind,
 } from './dag'
@@ -39,7 +39,7 @@ import { fmtSize } from '../bytes'
 import { maskCode } from '../mentions'
 import { keyBytes } from './keys'
 import type { P2pNode } from './node'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 import { realClock, type Clock } from './session'
 import { around, type PageOpts } from './jump'
 import { isQuotaError, Sync, type SyncLimits } from './sync'
@@ -60,8 +60,9 @@ export const dmRoomId = (a: string, b: string) => {
   return b64u(sha256(concat(utf8(DM_TAG), ka, kb)))
 }
 
-export const PINS_MAX = LOCAL.dm.pinsMax
-export const PAGE = LOCAL.dm.page
+// limits.ts `dm` (pins, the page of messages, missed calls kept, auto-download), with the walks
+// of `dag` and the jumps of `misc`.
+export type DmLimits = Pick<Local, 'dm' | 'dag' | 'misc'>
 
 export interface P2pReaction {
   key: string
@@ -315,8 +316,6 @@ export interface MissedCall {
   at: number
 }
 
-export const MISSED_MAX = LOCAL.dm.missedMax
-
 export const missedRow = (m: MissedCall): P2pMessage => ({
   ...blankRow(`call:${m.id}`, m.from, m.at, `${String(m.at).padStart(16, '0')}.local`, 0),
   call: { id: m.id, video: m.video, outcome: 'missed', local: true },
@@ -369,9 +368,10 @@ export const loadMessages = async (
   room: string,
   me: string,
   peer: string,
-  opts: PageOpts = {}
+  opts: PageOpts = {},
+  lim: Pick<Local, 'dm'> = LOCAL
 ) => {
-  const limit = opts.limit ?? PAGE
+  const limit = opts.limit ?? lim.dm.page
   const up = opts.newer === true
   const recs: EventRecord[] = []
   // Messages, call rows and pin lines, from the starting end.
@@ -395,9 +395,15 @@ export const loadMessages = async (
   return { messages: await viewOf(db, room, page, me, peer), more }
 }
 
-// Live pins, newest first, at most PINS_MAX. Walks pin events newest first, so the first one
-// seen for a message is its latest, and stops after PINS_MAX live pins or DAG.walk events.
-export const loadPins = async (db: P2pDatabase, room: string, me: string, peer: string) => {
+// Live pins, newest first, at most `pinsMax`. Walks pin events newest first, so the first one
+// seen for a message is its latest, and stops after `pinsMax` live pins or `walk` events.
+export const loadPins = async (
+  db: P2pDatabase,
+  room: string,
+  me: string,
+  peer: string,
+  lim: DmLimits = LOCAL
+) => {
   const seen = new Set<string>()
   const on: EventRecord[] = []
   let steps = 0
@@ -405,7 +411,7 @@ export const loadPins = async (db: P2pDatabase, room: string, me: string, peer: 
     .transaction('events')
     .store.index('room_type_sort')
     .openCursor(sortRange(room, 'pin'), 'prev')
-  while (cursor && on.length < PINS_MAX && steps < DAG.walk) {
+  while (cursor && on.length < lim.dm.pinsMax && steps < lim.dag.walk) {
     const p = cursor.value
     steps += 1
     if (p.target && p.wire.c && !seen.has(p.target)) {
@@ -428,14 +434,16 @@ export const loadAround = async (
   room: string,
   me: string,
   peer: string,
-  id: string
+  id: string,
+  lim: DmLimits = LOCAL
 ) => {
   const r = await db.get('events', id)
   if (!r || r.room !== room) return null
   return around(
     r.sortKey,
     () => viewOf(db, room, [r], me, peer),
-    o => loadMessages(db, room, me, peer, o)
+    o => loadMessages(db, room, me, peer, o, lim),
+    lim.misc
   )
 }
 
@@ -456,7 +464,7 @@ export const DMS_FULL_BYTES_TEXT = (bytes: number) =>
 // that of every conversation together.
 export const fullNote = (
   room: { count: number; bytes?: number; fullWhy?: FullWhy },
-  caps: Required<Pick<InsertCtx, 'roomCap' | 'totalCap' | 'roomBytes' | 'totalBytes'>>
+  caps: Pick<DagLimits, 'roomCap' | 'totalCap' | 'roomBytes' | 'totalBytes'>
 ) =>
   room.fullWhy === 'bytes'
     ? (room.bytes ?? 0) + EV.core + EV.attContent > caps.roomBytes
@@ -503,6 +511,8 @@ export interface DmDeps {
   node: P2pNode
   store: P2pStore
   clock?: Clock
+  // The account's limits (limits.ts); `limits` (sync), `bulk` and the budgets below override parts.
+  local?: Readonly<Local>
   limits?: Partial<SyncLimits>
   roomCap?: number
   totalCap?: number
@@ -523,8 +533,6 @@ export interface DmDeps {
   space?: () => Promise<{ free: number; quota: number } | null>
 }
 
-export const AUTO_DAILY = LOCAL.dm.autoDaily
-export const AUTO_FLOOR = LOCAL.dm.autoFloor
 const DAY = 24 * 60 * 60_000
 
 // Why a file that arrived was not fetched by itself.
@@ -550,9 +558,11 @@ export class Dms {
   // The browser refused to store more (quota exceeded). Pulls pause for a minute after that.
   storageFull = false
   private quotaAt = 0
+  readonly local: Readonly<Local>
 
   constructor(private deps: DmDeps) {
     this.clock = deps.clock ?? realClock
+    this.local = deps.local ?? LOCAL
     const { node } = deps
     this.sync = new Sync({
       store: deps.store,
@@ -565,11 +575,8 @@ export class Dms {
       onDelivered: room => this.changed(room),
       onTyping: (room, ik, on) => this.typed(room, ik, on),
       onState: room => this.changed(room),
-      limits: deps.limits,
-      roomCap: deps.roomCap,
-      totalCap: deps.totalCap,
-      roomBytes: deps.roomBytes,
-      totalBytes: deps.totalBytes,
+      limits: { ...this.local.sync, ...deps.limits },
+      dag: () => this.dag,
       onQuota: full => this.quota(full),
       quotaFull: () => this.storageFull && this.clock.now() - this.quotaAt < 60_000,
       pace: deps.pace,
@@ -579,7 +586,7 @@ export class Dms {
       node,
       store: deps.store,
       clock: this.clock,
-      limits: deps.bulk,
+      limits: { ...this.local.bulk, ...deps.bulk },
       entitled: async (ik, h) =>
         (await this.entitled(ik, h)) || ((await this.moreEntitled?.(ik, h)) ?? false),
       members: async h => [
@@ -592,9 +599,7 @@ export class Dms {
 
   // Conversations that filled under lower limits than these take events again.
   async start() {
-    const { roomCap, totalCap, roomBytes, totalBytes } = this.deps
-    for (const id of await refitFull(this.db, 'dm', { roomCap, totalCap, roomBytes, totalBytes }))
-      this.changed(id)
+    for (const id of await refitFull(this.db, 'dm', this.dag)) this.changed(id)
   }
 
   // The serving gate for files: a mutual contact, in a conversation where a live message carries
@@ -669,14 +674,15 @@ export class Dms {
     if (rec?.done || rec?.wanted) return
     const space = (await this.deps.space?.()) ?? null
     if (space) {
-      const floor = Math.max(space.quota / 10, AUTO_FLOOR)
+      const floor = Math.max(space.quota / 10, this.local.dm.autoFloor)
       if (space.free - this.blobs.reservedBytes() - f.size < floor) return this.pause(f.h, 'space')
     }
     const key = `auto:${from}`
     const day = Math.floor(this.clock.now() / DAY)
     const cur = (await this.db.get('meta', key)) as { day?: unknown; bytes?: unknown } | undefined
     const used = cur?.day === day && Number.isSafeInteger(cur.bytes) ? (cur.bytes as number) : 0
-    if (used + f.size > (this.deps.autoDaily?.() ?? AUTO_DAILY)) return this.pause(f.h, 'daily')
+    if (used + f.size > (this.deps.autoDaily?.() ?? this.local.dm.autoDaily))
+      return this.pause(f.h, 'daily')
     await this.db.put('meta', { day, bytes: used + f.size }, key)
     this.paused.delete(f.h)
     await this.blobs.download(f).catch(() => {})
@@ -684,7 +690,7 @@ export class Dms {
 
   private pause(h: string, why: AutoPause) {
     this.paused.set(h, why)
-    while (this.paused.size > LOCAL.dm.pausedMax)
+    while (this.paused.size > this.local.dm.pausedMax)
       this.paused.delete(this.paused.keys().next().value as string)
     this.blobs.touchView(h)
   }
@@ -722,18 +728,13 @@ export class Dms {
   }
 
   fullText(why: FullWhy | undefined) {
-    return why === 'bytes'
-      ? FULL_BYTES_TEXT(this.deps.roomBytes ?? DAG.roomBytes)
-      : FULL_TEXT(this.deps.roomCap ?? DAG.roomCap)
+    const d = this.dag
+    return why === 'bytes' ? FULL_BYTES_TEXT(d.roomBytes) : FULL_TEXT(d.roomCap)
   }
 
-  private get caps() {
-    return {
-      roomCap: this.deps.roomCap ?? DAG.roomCap,
-      totalCap: this.deps.totalCap ?? DAG.totalCap,
-      roomBytes: this.deps.roomBytes ?? DAG.roomBytes,
-      totalBytes: this.deps.totalBytes ?? DAG.totalBytes,
-    }
+  // What the conversations are stored within now (the budgets set apart win).
+  get dag(): DagLimits {
+    return capped(this.local.dag, this.deps)
   }
 
   private auth(room: string, peer: string) {
@@ -804,10 +805,7 @@ export class Dms {
       res = await insertEvent(this.db, id, wire, now, {
         me: this.me,
         peer: rec.peer,
-        roomCap: this.deps.roomCap,
-        totalCap: this.deps.totalCap,
-        roomBytes: this.deps.roomBytes,
-        totalBytes: this.deps.totalBytes,
+        lim: this.dag,
         own: true,
       })
       if (res.status === 'new')
@@ -817,7 +815,7 @@ export class Dms {
       this.quota(true)
       throw new DmError(STORAGE_FULL_TEXT)
     }
-    if (res.status === 'full') throw new DmError(fullNote({ ...rec, fullWhy: res.why }, this.caps))
+    if (res.status === 'full') throw new DmError(fullNote({ ...rec, fullWhy: res.why }, this.dag))
     if (res.status === 'invalid') throw new DmError("Couldn't save the message")
     this.quota(false)
     this.files([res])
@@ -915,8 +913,9 @@ export class Dms {
   async pin(room: string, target: string, on: boolean) {
     await this.ownMessage(room, target)
     if (on) {
-      const pins = await loadPins(this.db, room, this.me, '')
-      if (pins.length >= PINS_MAX) throw new DmError(`You can pin up to ${PINS_MAX} messages`)
+      const pins = await loadPins(this.db, room, this.me, '', this.local)
+      const max = this.local.dm.pinsMax
+      if (pins.length >= max) throw new DmError(`You can pin up to ${max} messages`)
     }
     return this.create(room, 'pin', { target, on })
   }

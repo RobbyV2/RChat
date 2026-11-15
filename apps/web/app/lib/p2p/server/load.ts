@@ -26,7 +26,6 @@ import {
 import { indexEstimate } from '../search'
 import type { ServerCtx } from './context'
 import { heldBare, storeDue } from './storage'
-import { JOIN_WAIT, SETTLE_RESAMPLE } from './types'
 
 // A room on start: what the cache says at once (when it is current), while the evaluator
 // rebuilds from the stored events and their admission records (no event is decided again
@@ -75,7 +74,10 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
     }
     held.add(x.id)
     if (x.layer === 'c' && !x.purged && !x.redacted)
-      bodies.set(x.sender, (bodies.get(x.sender) ?? 0) + storedSize(x.wire) + indexEstimate(x))
+      bodies.set(
+        x.sender,
+        (bodies.get(x.sender) ?? 0) + storedSize(x.wire) + indexEstimate(x, cx.local.search)
+      )
     const w = serverWire(x)
     if (x.imp) {
       imported.push(x.id)
@@ -209,7 +211,7 @@ export async function dropRows(cx: ServerCtx, room: string, ids: string[]) {
   let acl = 0
   let bytes = 0
   // Out of the index first, while everything is still stored.
-  bytes += await unindexAll(tx.objectStore('search'), events, null, room, ids)
+  bytes += await unindexAll(tx.objectStore('search'), events, null, room, ids, cx.local.search)
   for (const id of ids) {
     const e = await events.get(id)
     if (!e || e.room !== room) continue
@@ -237,7 +239,7 @@ export async function saveCache(cx: ServerCtx, room: string) {
     sum: toStored(sum),
   }
   await cx.db.put('meta', cache, cacheKey(room))
-  const n = nameOf(sum)?.name
+  const n = nameOf(sum, cx.local.display)?.name
   const r = cx.rooms.get(room)
   if (r && (r.server || (n && n !== r.name)))
     await cx.updateRoom(room, cur => ({ ...cur, server: null, ...(n ? { name: n } : {}) }))
@@ -255,7 +257,9 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
   // A channel we may view now that we couldn't: what peers held back can come.
   const seen = (s: Summary) => {
     const F = chanFactsOf(s)
-    return channelsOf(s).filter(c => channelPermsOf(s, cx.me, c.id, F) & P.ViewChannel)
+    return channelsOf(s, cx.local.display).filter(
+      c => channelPermsOf(s, cx.me, c.id, F) & P.ViewChannel
+    )
   }
   const had = new Set(seen(before).map(c => c.id))
   const opened = seen(cx.sumOf(room)).filter(c => !had.has(c.id))
@@ -282,7 +286,7 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
   if (now === 'join' && was !== 'join') cx.sync.loadOlder(room)
   // A new copy: links are drawn again soon, once we know more of who is in.
   if (now === 'join' && was !== 'join' && r?.prev)
-    for (const ms of SETTLE_RESAMPLE) cx.clock.set(() => cx.gossip.resample(), ms)
+    for (const ms of cx.local.server.settleResample) cx.clock.set(() => cx.gossip.resample(), ms)
   // Out without a removal of our own (a cascade took our join): we keep syncing the
   // ACL with members, and join again by ourselves if someone invites us again.
   if (
@@ -291,7 +295,7 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
     !mine?.rem &&
     r &&
     !r.cascade &&
-    cutOut(cx.sumOf(room), cx.me, cx.clock.now())
+    cutOut(cx.sumOf(room), cx.me, cx.clock.now(), cx.local.misc)
   )
     await cx.updateRoom(room, cur => ({ ...cur, cascade: cx.clock.now() }))
   // Only after a cascade this device saw and recently: any other invite waits for the user.
@@ -363,7 +367,7 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
 export function maybeJoin(cx: ServerCtx, room: string) {
   const r = cx.rooms.get(room)
   if (cx.myMembership(room) !== 'invite' || !r?.joining) return
-  // Not while ACL events we know of are still missing, for at most JOIN_WAIT.
-  if (cx.rt(room)?.waits.size && cx.clock.now() - r.joining.at < JOIN_WAIT) return
+  // Not while ACL events we know of are still missing, for at most `server.joinWaitMs`.
+  if (cx.rt(room)?.waits.size && cx.clock.now() - r.joining.at < cx.local.server.joinWaitMs) return
   void cx.postJoin(room).catch(() => {})
 }

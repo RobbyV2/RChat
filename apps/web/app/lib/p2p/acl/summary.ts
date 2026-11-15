@@ -1,4 +1,3 @@
-import { LOCAL } from '../limits'
 import type { EvalResult } from './facts'
 import type { Ix } from './reach'
 import {
@@ -8,6 +7,7 @@ import {
   poster,
   rank,
   RULES_VERSION,
+  evalLimits,
   type AclContent,
   type Rank,
 } from './rules'
@@ -450,7 +450,7 @@ function vouched(src: SummarySource, add: string, to: string) {
   if (src.state().facts.owners.has(by)) return true
   const seen = new Set<number>([p])
   const queue = [...ix.kids[p]]
-  const walk = LOCAL.acl.vouchWalk
+  const walk = evalLimits(ix.cx).acl.vouchWalk
   for (let at = 0; at < queue.length && seen.size < walk; at++) {
     const q = queue[at]
     if (seen.has(q)) continue

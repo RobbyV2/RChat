@@ -2,12 +2,20 @@ import { home, writeLocal } from '../../instances'
 import { fitContent, LIMITS as EV, type Attachment } from '../content'
 import { assemble, EMPTY_VIEW } from '../blobs'
 import type { Hashed } from '../hashing'
-import { LOCAL } from '../limits'
 import { checkedThumb, hashFile, imageFits, previewOf, saveName, UrlCache } from '../files'
 import { kindOf, NEUTRAL_TYPE } from '../../sniff'
 import { sharing } from '../../platform'
 import { dbNow } from './dms'
-import { dms, useP2p, p2pHost, readAuto, autoKey, type FileView, type PendingFile } from './store'
+import {
+  dms,
+  limits,
+  useP2p,
+  p2pHost,
+  readAuto,
+  autoKey,
+  type FileView,
+  type PendingFile,
+} from './store'
 import { p2p } from './account'
 
 // ----- Attachments -----
@@ -89,8 +97,6 @@ export const FILES_MAX_TEXT = `You can attach up to ${EV.att} files to a message
 
 export const PREPARING_TEXT = 'Files are still being prepared.'
 
-export const BIG_FILE = LOCAL.files.bigFile
-
 export const p2pFiles = {
   // A tile is shown: keep its state current and ask who has it.
   watch(att: Pick<Attachment, 'h' | 'size'>) {
@@ -140,7 +146,7 @@ export const p2pFiles = {
 
   unuse: (h: string) => urls.unuse(h),
 
-  thumb: checkedThumb,
+  thumb: (thumb: string | undefined) => checkedThumb(thumb, limits),
 
   // Saves a stored file under a safe name, as plain bytes (never opened).
   async save(att: Attachment) {
@@ -170,7 +176,7 @@ export const p2pFiles = {
         hashed => patchPending(room, id, { hashed, progress: 1 }),
         () => patchPending(room, id, { error: "Couldn't read this file" })
       )
-      void previewOf(file).then(preview => patchPending(room, id, { preview }))
+      void previewOf(file, limits.files).then(preview => patchPending(room, id, { preview }))
     }
   },
 

@@ -37,7 +37,7 @@ import {
   useP2p,
   type P2pState,
 } from '../lib/p2p/app'
-import { pastFit, VOICE_NOTICE, type VoiceUser } from '../lib/p2p/voice'
+import { pastFit, voiceNotice, type VoiceUser } from '../lib/p2p/voice'
 import { displayName } from '../lib/p2p/contacts'
 import type { CallView } from '../lib/p2p/calls'
 import { KeyAvatar, P2pBadge } from './p2p/p2p_badge'
@@ -654,13 +654,15 @@ const QUALITY: Record<LinkQuality, { label: string; cls: string; Icon: typeof Si
   bad: { label: 'Connection lost', cls: 'text-status-red', Icon: SignalLow },
 }
 
-// How far a P2P voice mesh goes, past VOICE_FIT people (fewer with video). Joining is never
-// blocked.
+// How far a P2P voice mesh goes, past `voice.fitAudio` people (`fitVideo` with video). Joining
+// is never blocked.
 export function MeshNotice({ users, className }: { users: VoiceUser[]; className?: string }) {
+  const fit = p2pApp.limits().voice
   if (
     !pastFit(
       users.length,
-      users.some(u => u.video)
+      users.some(u => u.video),
+      fit
     )
   )
     return null
@@ -670,7 +672,7 @@ export function MeshNotice({ users, className }: { users: VoiceUser[]; className
       data-p2p-voice-notice
       className={`rounded-lg border border-dashed border-tertiary bg-tertiary-container/40 px-2.5 py-1.5 text-xs text-on-surface ${className ?? ''}`}
     >
-      {VOICE_NOTICE}
+      {voiceNotice(fit)}
     </p>
   )
 }

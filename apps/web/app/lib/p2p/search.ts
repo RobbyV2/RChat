@@ -10,7 +10,7 @@ import {
   type SearchMeta,
 } from './db'
 import { isEventId, type EditContent, type MsgContent } from './content'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 
 // Local search over P2P server messages (store `search`): one row per word and
 // message, written with the message in the transaction that stores, purges or drops it, and
@@ -19,9 +19,13 @@ import { LOCAL } from './limits'
 // An edit's words count for its message, and hidden content keeps its rows (visibility changes
 // after storage), so hits are checked against what shows before they are listed.
 
-export const SEARCH = { ...LOCAL.search }
+// limits.ts `search`. `word` and `words` cut what the index holds: an index made with another cut
+// is built again (rebuildStep).
+export type SearchLimits = Local['search']
+export type Cut = Pick<SearchLimits, 'word' | 'words'>
+type Query = Pick<SearchLimits, 'word' | 'words' | 'exact'>
 
-export const words = (text: string): string[] => {
+export const words = (text: string, cut: Cut = LOCAL.search): string[] => {
   const norm = text
     .normalize('NFKD')
     .replace(/\p{M}+/gu, '')
@@ -29,19 +33,20 @@ export const words = (text: string): string[] => {
   const out = new Set<string>()
   for (const w of norm.split(/[^\p{L}\p{N}]+/u)) {
     if (!w) continue
-    out.add(Array.from(w).slice(0, SEARCH.word).join(''))
-    if (out.size >= SEARCH.words) break
+    out.add(Array.from(w).slice(0, cut.word).join(''))
+    if (out.size >= cut.words) break
   }
   return [...out]
 }
 
-const wordMatches = (w: string, q: string) => (q.length <= SEARCH.exact ? w === q : w.startsWith(q))
+const wordMatches = (w: string, q: string, exact: number) =>
+  q.length <= exact ? w === q : w.startsWith(q)
 
 // Whether every query word matches a word of `text`.
-export const matches = (text: string, query: readonly string[]) => {
+export const matches = (text: string, query: readonly string[], lim: Query = LOCAL.search) => {
   if (!query.length) return true
-  const have = words(text)
-  return query.every(q => have.some(w => wordMatches(w, q)))
+  const have = words(text, lim)
+  return query.every(q => have.some(w => wordMatches(w, q, lim.exact)))
 }
 
 // What a row costs in storage, about: its key and value.
@@ -84,13 +89,13 @@ export interface EventRead {
   index(name: 'room_target'): { getAll(q: [string, string]): Promise<EventRecord[]> }
 }
 
-// The words a message's rows hold: its body's, then its author's edits' in order, SEARCH.words at
+// The words a message's rows hold: its body's, then its author's edits' in order, `words` at
 // most, so edits can't grow a message's rows past that.
-const planned = (texts: (string | null)[]) => {
+const planned = (texts: (string | null)[], cut: Cut) => {
   const out = new Set<string>()
   for (const t of texts)
-    for (const w of t ? words(t) : []) {
-      if (out.size >= SEARCH.words) return out
+    for (const w of t ? words(t, cut) : []) {
+      if (out.size >= cut.words) return out
       out.add(w)
     }
   return out
@@ -134,16 +139,24 @@ const messageOf = async (events: EventRead, rec: EventRecord) => {
     : null
 }
 
-const wordsOf = async (events: EventRead, msg: EventRecord, without?: string) =>
-  planned([
-    textOf(msg),
-    ...(await editsOf(events, msg)).filter(e => e.id !== without && indexable(e)).map(textOf),
-  ])
+const wordsOf = async (events: EventRead, msg: EventRecord, cut: Cut, without?: string) =>
+  planned(
+    [
+      textOf(msg),
+      ...(await editsOf(events, msg)).filter(e => e.id !== without && indexable(e)).map(textOf),
+    ],
+    cut
+  )
 
 // Indexes a stored content event: a message (with the edits its author made of it that came
-// first), or an edit of a message held here. A message holds SEARCH.words rows at most, whatever
+// first), or an edit of a message held here. A message holds `words` rows at most, whatever
 // order its edits arrive in: rows already there count first. Returns the bytes added.
-export const indexEvent = async (st: SearchWrite, events: EventRead, rec: EventRecord) => {
+export const indexEvent = async (
+  st: SearchWrite,
+  events: EventRead,
+  rec: EventRecord,
+  cut: Cut
+) => {
   if (!indexable(rec) || (rec.type !== 'msg' && rec.type !== 'edit')) return 0
   const msg = await messageOf(events, rec)
   if (!msg) return 0
@@ -151,13 +164,13 @@ export const indexEvent = async (st: SearchWrite, events: EventRead, rec: EventR
   const every = new Set<string>()
   for (const r of [msg, ...(await editsOf(events, msg))]) {
     const t = textOf(r)
-    for (const w of t ? words(t) : []) every.add(w)
+    for (const w of t ? words(t, cut) : []) every.add(w)
   }
   const present = new Set<string>()
   for (const w of every) if ((await st.getKey([msg.room, w, msg.id])) !== undefined) present.add(w)
-  let left = SEARCH.words - present.size
+  let left = cut.words - present.size
   const fresh: string[] = []
-  for (const w of await wordsOf(events, msg)) {
+  for (const w of await wordsOf(events, msg, cut)) {
     if (left <= 0) break
     if (present.has(w)) continue
     fresh.push(w)
@@ -167,11 +180,11 @@ export const indexEvent = async (st: SearchWrite, events: EventRead, rec: EventR
 }
 
 // About what a message's or edit's rows take (a cold start counts it for its author).
-export const indexEstimate = (rec: EventRecord) => {
+export const indexEstimate = (rec: EventRecord, cut: Cut) => {
   if (!indexable(rec) || (rec.type !== 'msg' && rec.type !== 'edit')) return 0
   const id = rec.type === 'edit' ? (rec.target ?? rec.id) : rec.id
   const text = textOf(rec)
-  return (text ? words(text) : []).reduce(
+  return (text ? words(text, cut) : []).reduce(
     (n, w) => n + rowBytes([rec.room, w, id], '0'.repeat(30)),
     0
   )
@@ -179,14 +192,19 @@ export const indexEstimate = (rec: EventRecord) => {
 
 // Takes an edit's words off its message (the edit is dropped or purged; call it while the edit
 // is stored whole): those no other text of the message holds. Returns the bytes freed.
-export const unindexEdit = async (st: SearchWrite, events: EventRead, edit: EventRecord) => {
+export const unindexEdit = async (
+  st: SearchWrite,
+  events: EventRead,
+  edit: EventRecord,
+  cut: Cut
+) => {
   const text = edit.type === 'edit' && edit.target ? textOf(edit) : null
   const msg = edit.target ? await events.get(edit.target) : undefined
   if (!text || !msg || msg.type !== 'msg' || msg.room !== edit.room) return 0
-  const keep = indexable(msg) ? await wordsOf(events, msg, edit.id) : new Set<string>()
+  const keep = indexable(msg) ? await wordsOf(events, msg, cut, edit.id) : new Set<string>()
   const head = skHead(msg.sortKey, msg.id)
   let bytes = 0
-  for (const token of words(text)) {
+  for (const token of words(text, cut)) {
     const k: SearchKey = [edit.room, token, msg.id]
     if (keep.has(token) || (await st.getKey(k)) === undefined) continue
     await st.delete(k)
@@ -197,12 +215,12 @@ export const unindexEdit = async (st: SearchWrite, events: EventRead, edit: Even
 
 // Takes a message out of the index (purged, dropped or deleted here), by its words and its
 // edits' (call it while they are still stored whole); returns the bytes freed.
-export const unindex = async (st: SearchWrite, events: EventRead, rec: EventRecord) => {
+export const unindex = async (st: SearchWrite, events: EventRead, rec: EventRecord, cut: Cut) => {
   if (rec.type !== 'msg') return 0
   const texts = [textOf(rec), ...(await editsOf(events, rec)).map(textOf)]
   const head = skHead(rec.sortKey, rec.id)
   let bytes = 0
-  for (const token of new Set(texts.flatMap(t => (t ? words(t) : [])))) {
+  for (const token of new Set(texts.flatMap(t => (t ? words(t, cut) : [])))) {
     const k: SearchKey = [rec.room, token, rec.id]
     if ((await st.getKey(k)) === undefined) continue
     await st.delete(k)
@@ -227,16 +245,26 @@ const deleteRows = async (st: SearchWrite, range?: IDBKeyRange) => {
 export const unindexRoom = async (st: SearchWrite, room: string) =>
   (await deleteRows(st, IDBKeyRange.bound([room], [room, []]))).get(room) ?? 0
 
-const readMeta = (x: unknown): SearchMeta | null => {
+// The cut of an index whose meta states none: 32 characters of a word, 256 words of a message.
+const UNSTATED_CUT: Cut = { word: 32, words: 256 }
+
+// The index's progress, or null when it is of another version or cut (it is built again).
+const readMeta = (x: unknown, cut: Cut): SearchMeta | null => {
   if (typeof x !== 'object' || x === null) return null
   const m = x as Record<string, unknown>
-  return m.v === SEARCH_V && typeof m.done === 'boolean' && typeof m.at === 'string'
+  const word = m.word ?? UNSTATED_CUT.word
+  const max = m.words ?? UNSTATED_CUT.words
+  return m.v === SEARCH_V &&
+    typeof m.done === 'boolean' &&
+    typeof m.at === 'string' &&
+    word === cut.word &&
+    max === cut.words
     ? { v: SEARCH_V, done: m.done, at: m.at }
     : null
 }
 
-export const searchReady = async (db: P2pDatabase) =>
-  readMeta(await db.get('meta', SEARCH_META))?.done === true
+export const searchReady = async (db: P2pDatabase, cut: Cut = LOCAL.search) =>
+  readMeta(await db.get('meta', SEARCH_META), cut)?.done === true
 
 // Bytes of the index rows a step wrote or freed, per room (the rooms and the servers' total
 // count them).
@@ -267,12 +295,12 @@ const account = async (
 // before threads existed are filled in on the way. Returns whether the index is complete.
 export const rebuildStep = async (
   db: P2pDatabase,
-  limit = SEARCH.step,
+  lim: Pick<SearchLimits, 'word' | 'words' | 'step'> = LOCAL.search,
   skip: (room: string) => boolean = () => false
 ) => {
   const tx = db.transaction(['events', 'search', 'meta', 'rooms'], 'readwrite')
   const meta = tx.objectStore('meta')
-  let m = readMeta(await meta.get(SEARCH_META))
+  let m = readMeta(await meta.get(SEARCH_META), lim)
   if (m?.done) {
     await tx.done
     return true
@@ -287,7 +315,7 @@ export const rebuildStep = async (
   let cursor = await events.openCursor(m.at ? IDBKeyRange.lowerBound(m.at, true) : undefined)
   let at = m.at
   let n = 0
-  while (cursor && n < limit) {
+  while (cursor && n < lim.step) {
     let rec = cursor.value
     if (rec.layer === 'c' && rec.type === 'msg' && rec.thread === undefined) {
       const t = (serverWire(rec).c as MsgContent | null)?.thread
@@ -297,21 +325,21 @@ export const rebuildStep = async (
       }
     }
     if (rec.layer === 'c' && !skip(rec.room))
-      delta.set(rec.room, (delta.get(rec.room) ?? 0) + (await indexEvent(st, events, rec)))
+      delta.set(rec.room, (delta.get(rec.room) ?? 0) + (await indexEvent(st, events, rec, lim)))
     at = rec.id
     n += 1
     cursor = await cursor.continue()
   }
   await account(tx.objectStore('rooms'), meta, delta)
   const done = cursor === null
-  await meta.put({ v: SEARCH_V, done, at }, SEARCH_META)
+  await meta.put({ v: SEARCH_V, done, at, word: lim.word, words: lim.words }, SEARCH_META)
   await tx.done
   return done
 }
 
 // The rows that can match a query word: its own word when it is short, else every word it starts.
-const wordRange = (room: string, q: string) =>
-  q.length <= SEARCH.exact
+const wordRange = (room: string, q: string, exact: number) =>
+  q.length <= exact
     ? IDBKeyRange.bound([room, q], [room, q, []])
     : IDBKeyRange.bound([room, q], [room, `${q}￿`])
 
@@ -322,10 +350,11 @@ export const candidates = async (
   room: string,
   query: readonly string[],
   before: string | null,
-  max: number
+  max: number,
+  exact: number
 ) => {
   const order = [...query].sort((a, b) => b.length - a.length)
-  const range = wordRange(room, order[0])
+  const range = wordRange(room, order[0], exact)
   const tx = db.transaction('search')
   const [keys, heads] = await Promise.all([tx.store.getAllKeys(range), tx.store.getAll(range)])
   const sk = new Map<string, string>()
@@ -335,7 +364,7 @@ export const candidates = async (
   })
   for (const q of order.slice(1)) {
     if (!sk.size) break
-    const ids = new Set((await db.getAllKeys('search', wordRange(room, q))).map(k => k[2]))
+    const ids = new Set((await db.getAllKeys('search', wordRange(room, q, exact))).map(k => k[2]))
     for (const id of [...sk.keys()]) if (!ids.has(id)) sk.delete(id)
   }
   const list = [...sk]

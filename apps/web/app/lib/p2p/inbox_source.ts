@@ -2,9 +2,8 @@ import { create } from 'zustand'
 import type { InboxAdapter, InboxView } from '../inbox'
 import { levelOf, type NotifyPrefs } from '../notify'
 import { useStore } from '../store'
-import { memberName, p2pOpenAt, p2pPings, useP2p, type P2pState } from './app'
+import { memberName, p2p, p2pOpenAt, p2pPings, useP2p, type P2pState } from './app'
 import { displayName } from './contacts'
-import { LOCAL } from './limits'
 import {
   byCounter,
   counterKey,
@@ -19,9 +18,6 @@ import {
   type PingRec,
   type PingWorld,
 } from './inbox'
-
-const PAGE_SIZE = LOCAL.inbox.pageSize
-const RECOUNT_MS = LOCAL.inbox.recountMs
 
 export const worldOf = (st: P2pState, readSeq: ReadonlyMap<string, number>): PingWorld => ({
   readSeq,
@@ -121,8 +117,9 @@ export const pingInputsChanged = (st: P2pState, prev: P2pState) =>
   (st.servers !== prev.servers && inputsOf.servers(st) !== inputsOf.servers(prev)) ||
   (st.contacts !== prev.contacts && inputsOf.contacts(st) !== inputsOf.contacts(prev))
 
-// Keeps the listed pings up to date; returns the cleanup.
-export const startP2pPings = (recountMs = RECOUNT_MS) => {
+// Keeps the listed pings up to date (counted again `inbox.recountMs` after a change); returns
+// the cleanup.
+export const startP2pPings = (recountMs?: number) => {
   let run = 0
   let timer: ReturnType<typeof setTimeout> | null = null
   const recount = () => {
@@ -136,7 +133,8 @@ export const startP2pPings = (recountMs = RECOUNT_MS) => {
     )
   }
   const off = useP2p.subscribe((st, prev) => {
-    if (!timer && pingInputsChanged(st, prev)) timer = setTimeout(recount, recountMs)
+    if (!timer && pingInputsChanged(st, prev))
+      timer = setTimeout(recount, recountMs ?? p2p.limits().inbox.recountMs)
   })
   recount()
   return () => {
@@ -163,7 +161,7 @@ export const p2pInbox: InboxAdapter = {
     const w = worldOf(st, snap.readSeq)
     const prefs = useStore.getState().notifyPrefs
     const list = snap.list.filter(listedIn(view, w, prefs)).sort(newerFirst)
-    const { page, next } = pagePings(list, cursor, PAGE_SIZE)
+    const { page, next } = pagePings(list, cursor, p2p.limits().inbox.pageSize)
     const texts = await Promise.all(page.map(p => p2pPings.text(p)))
     const entries = page.flatMap((p, i) => {
       const t = texts[i]

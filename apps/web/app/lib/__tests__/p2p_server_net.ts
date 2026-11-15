@@ -9,8 +9,10 @@ import { Servers } from '../p2p/server'
 import type { AclHost } from '../p2p/resolve_host'
 import type { NodeDeps, P2pNode } from '../p2p/node'
 import type { P2pStore } from '../p2p/db'
+import { localDefaults, type Local } from '../p2p/limits'
 
-// Test members of P2P servers: a real node, DMs and servers over the in-memory hub.
+// Test members of P2P servers: a real node, DMs and servers over the in-memory hub. Each member's
+// DMs and servers share one copy of the limits (`limits(m)`), which a test may change as it runs.
 
 export interface Member {
   name: string
@@ -22,6 +24,18 @@ export interface Member {
 }
 
 export const running: Member[] = []
+
+const tuners: ((l: Local) => void)[] = []
+
+// Every member made while `fn` runs starts with `tune` applied to its limits.
+export const withLimits = async <T>(tune: (l: Local) => void, fn: () => Promise<T>) => {
+  tuners.push(tune)
+  try {
+    return await fn()
+  } finally {
+    tuners.splice(tuners.indexOf(tune), 1)
+  }
+}
 
 export const stopAll = () => {
   for (const m of running.splice(0)) stopMember(m)
@@ -40,18 +54,21 @@ export const makeMember = async (
   opts: {
     seed?: number
     db?: string
-    node?: Pick<NodeDeps, 'limits' | 'session'>
+    node?: Pick<NodeDeps, 'limits' | 'session' | 'contacts'>
     dms?: Partial<ConstructorParameters<typeof Dms>[0]>
     servers?: Partial<ConstructorParameters<typeof Servers>[0]>
   } = {}
 ): Promise<Member> => {
   const n = await makeNode(hub, name, { clock, db: opts.db, ...opts.node })
-  const dms = new Dms({ node: n.node, store: n.store, clock, ...opts.dms })
+  const local = localDefaults()
+  for (const t of tuners) t(local)
+  const dms = new Dms({ node: n.node, store: n.store, clock, local, ...opts.dms })
   const servers = new Servers({
     node: n.node,
     store: n.store,
     dms,
     clock,
+    local,
     random: prng(opts.seed ?? name.length * 7919),
     autoMax: () => 5 * 1024 * 1024,
     ...opts.servers,
@@ -70,6 +87,9 @@ export const restart = async (hub: Hub, m: Member, clock: ManualClock) => {
   const again = await makeMember(hub, m.name, clock, { db: m.db })
   return again
 }
+
+// A member's running limits, to change while a test runs.
+export const limits = (m: Member) => m.servers.local as Local
 
 export const eventually = async (
   ok: () => Promise<boolean> | boolean,

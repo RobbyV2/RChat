@@ -1,9 +1,8 @@
 import { Hdrs } from './equivocation'
-import { LOCAL } from '../limits'
 import { FastEval } from './eval'
 import { emptyResult, type EvalResult } from './facts'
 import { Ix } from './reach'
-import { poster, type AclEv, type Ctx } from './rules'
+import { evalLimits, poster, type AclEv, type Ctx } from './rules'
 import { snapPacked, packedOfSets, subsetResult, snapResult, type Packed } from './packed'
 
 // Recorded states and the client's incremental evaluator. Every admitted event records
@@ -19,15 +18,19 @@ export class AclState {
   private fe?: FastEval
   private cur?: EvalResult
   cache = new Map<string, EvalResult>()
-  cap = LOCAL.cache.mergeCap
+  cap: number
   // Admission states of content positions, kept for rendering within a count and a byte
   // budget (a packed state takes about five bits per indexed event).
   content = new Map<string, EvalResult>()
-  contentCap = LOCAL.cache.contentCap
-  contentBytes = LOCAL.cache.contentBytes
+  contentCap: number
+  contentBytes: number
   stats = { head: 0, full: 0, subsets: 0, hits: 0, contentHits: 0 }
   constructor(public cx: Ctx) {
     this.ix = new Ix(cx)
+    const l = evalLimits(cx).cache
+    this.cap = l.mergeCap
+    this.contentCap = l.contentCap
+    this.contentBytes = l.contentBytes
   }
   // Headers of events storage dropped, outside the index: evidence for the current
   // state only (no held event has one in its past, so no St(e) reads them).
@@ -89,7 +92,7 @@ export class AclState {
       if (prev?.len === src.len) return prev.p
       const p = snapPacked(src.fe, src.len, prev)
       this.snaps.push({ fe: src.fe, len: src.len, p })
-      if (this.snaps.length > LOCAL.cache.headSnaps) this.snaps.shift()
+      if (this.snaps.length > evalLimits(this.cx).cache.headSnaps) this.snaps.shift()
       return p
     }
     return packedOfSets(this.ix, r)

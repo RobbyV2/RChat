@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { AclContent } from '../p2p/acl/rules'
 import { emptySummary, type MemberSum, type Summary } from '../p2p/acl/summary'
 import * as flows from '../p2p/flows'
+import { LOCAL } from '../p2p/limits'
 import {
   hasInviteCode,
   reachedBy,
@@ -30,13 +31,14 @@ const sum = (members: Record<string, Partial<MemberSum>>): Summary => ({
 
 describe('P2P server flows: copy', () => {
   test('every line is plain: no em dashes, and the app never names itself', () => {
-    const lines = Object.values(flows).flatMap(v =>
+    const lines = Object.values({ ...flows, lostTimes: null }).flatMap(v =>
       typeof v === 'string'
         ? [v]
         : typeof v === 'function' && v.length <= 2
           ? [String((v as (a: string, b: number) => unknown)('Bob', 2))]
           : []
     )
+    lines.push(...flows.lostTimes(LOCAL.misc).map(t => t.label))
     expect(lines.length).toBeGreaterThan(30)
     for (const l of lines) {
       expect(l).not.toContain('—')

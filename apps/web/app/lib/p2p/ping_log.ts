@@ -12,11 +12,10 @@ import {
   readSeqs,
   type P2pPingKind,
   type PingRec,
+  type InboxLimits,
   type PingText,
 } from './inbox'
 import { LOCAL } from './limits'
-
-export const PING_BATCH_MS = LOCAL.inbox.pingBatchMs
 
 // The ping a counted arrival leaves in the log.
 export const pingOf = (
@@ -94,6 +93,7 @@ export interface PingLogDeps {
   now?: () => number
   // The stored list changed.
   onWrite?: () => void
+  limits?: Partial<InboxLimits>
 }
 
 // The pings of the tab that runs P2P: arrivals are written in batches, and every write is a
@@ -103,7 +103,11 @@ export class PingLog {
   private timer: ReturnType<typeof setTimeout> | null = null
   private writes: Promise<unknown> = Promise.resolve()
 
-  constructor(private deps: PingLogDeps) {}
+  readonly limits: InboxLimits
+
+  constructor(private deps: PingLogDeps) {
+    this.limits = { ...LOCAL.inbox, ...deps.limits }
+  }
 
   note(
     room: string,
@@ -113,7 +117,7 @@ export class PingLog {
     thread: string | null = null
   ) {
     this.batch.push(pingOf(room, ch, kind, rec, thread))
-    if (!this.timer) this.timer = setTimeout(() => void this.flush(), PING_BATCH_MS)
+    if (!this.timer) this.timer = setTimeout(() => void this.flush(), this.limits.pingBatchMs)
   }
 
   // Writes the pings noted so far; `true` once they are stored.
@@ -123,7 +127,9 @@ export class PingLog {
     const add = this.batch
     this.batch = []
     const now = this.deps.now ?? Date.now
-    return add.length ? this.write(list => addPings(list, add, now())) : Promise.resolve(true)
+    return add.length
+      ? this.write(list => addPings(list, add, now(), this.limits))
+      : Promise.resolve(true)
   }
 
   stop() {

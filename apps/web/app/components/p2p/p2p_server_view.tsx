@@ -478,7 +478,7 @@ export function P2pServerSidebar() {
             <input
               autoFocus
               value={adding}
-              maxLength={100}
+              maxLength={p2p.limits().server.nameMax}
               onChange={e => setAdding(e.target.value)}
               onKeyDown={e => {
                 if (e.key === 'Enter') submit()

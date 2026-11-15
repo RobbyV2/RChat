@@ -11,7 +11,7 @@ import type { PingLog } from '../ping_log'
 import type { BlobView, Usage } from '../blobs'
 import type { Hashed } from '../hashing'
 import { LOCAL, type Local } from '../limits'
-import { instanceLocal, withChoice } from '../user_limits'
+import { instanceLocal, limitsFor, withChoice } from '../user_limits'
 import type { Preview } from '../files'
 import type { TabLeader } from '../leader'
 import type { P2pNode, Presence, Status } from '../node'
@@ -320,14 +320,16 @@ export const writeOn = (username: string, on: boolean) =>
 // one again as a new device would make a second device of the identity. { v: 1, ids }.
 export const importsKey = (username: string) => `rchat_p2p_imports:${username}`
 
-const IMPORTS_KEPT = LOCAL.transfer.browserImportsKept
-
-export const parseImports = (raw: string | null): string[] => {
+// At most `transfer.browserImportsKept`, the newest.
+export const parseImports = (
+  raw: string | null,
+  lim: Pick<Local['transfer'], 'browserImportsKept'> = LOCAL.transfer
+): string[] => {
   try {
     const v = raw ? (JSON.parse(raw) as unknown) : null
     const ids = (v as { v?: unknown; ids?: unknown } | null)?.ids
     return (v as { v?: unknown } | null)?.v === 1 && Array.isArray(ids)
-      ? ids.filter((x): x is string => typeof x === 'string').slice(-IMPORTS_KEPT)
+      ? ids.filter((x): x is string => typeof x === 'string').slice(-lim.browserImportsKept)
       : []
   } catch {
     return []
@@ -336,7 +338,8 @@ export const parseImports = (raw: string | null): string[] => {
 
 export const readImports = (username: string) => {
   try {
-    return parseImports(readLocal(home.scoped(importsKey(username))))
+    const raw = readLocal(home.scoped(importsKey(username)))
+    return parseImports(raw, limitsFor(username).transfer)
   } catch {
     return []
   }
@@ -347,7 +350,9 @@ export const rememberImport = (username: string, id: string) =>
     home.scoped(importsKey(username)),
     JSON.stringify({
       v: 1,
-      ids: [...readImports(username).filter(x => x !== id), id].slice(-IMPORTS_KEPT),
+      ids: [...readImports(username).filter(x => x !== id), id].slice(
+        -limitsFor(username).transfer.browserImportsKept
+      ),
     })
   )
 
@@ -477,14 +482,6 @@ export const autoDefaults = (l: Readonly<Local> = LOCAL) => ({
   daily: l.dm.autoDaily,
 })
 
-export const AUTO_DEFAULT = autoDefaults()
-
-export const AUTO_DAILY_OPTIONS = [...LOCAL.files.autoDailyOptions]
-
-export const AUTO_DM = [...LOCAL.files.autoDmOptions]
-
-export const AUTO_SERVER = [...LOCAL.files.autoServerOptions]
-
 // The choices, with the defaults the instance set among them.
 export const autoChoices = (l: Readonly<Local> = LOCAL) => ({
   dm: withChoice(l.files.autoDmOptions, l.files.autoDm),
@@ -493,7 +490,7 @@ export const autoChoices = (l: Readonly<Local> = LOCAL) => ({
 })
 
 export const parseAuto = (raw: string | null, l: Readonly<Local> = LOCAL) => {
-  const d = l === LOCAL ? AUTO_DEFAULT : autoDefaults(l)
+  const d = autoDefaults(l)
   try {
     const v = raw
       ? (JSON.parse(raw) as { v?: unknown; dm?: unknown; server?: unknown; daily?: unknown })

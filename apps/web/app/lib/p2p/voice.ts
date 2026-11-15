@@ -4,7 +4,7 @@ import type { RtcTarget, Signaler } from '../rtc'
 import type { RtcPayload } from '../types'
 import { bytesOf, hasKeys } from './canonical'
 import type { Message } from './frames'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 import { isKeyId, signTagged, verifyTagged, type Cert } from './keys'
 import type { Clock, Session } from './session'
 import { isRoomId, readPayload } from './signal'
@@ -31,24 +31,23 @@ import { isShortId } from './state'
 // `confirmMs` is dropped and ignored for `ttlMs`. At most `keepMax` participants hold sessions
 // outside the budget.
 
-const { fitAudio, fitVideo, ...VOICE_LOCAL } = LOCAL.voice
-
 export const VOICE = {
   // Participants a channel lists at most.
   listMax: 64,
-  ...VOICE_LOCAL,
 }
 
-export type VoiceLimits = typeof VOICE
+// With limits.ts `voice`.
+export type VoiceLimits = typeof VOICE & Local['voice']
 
-// Past these many in a channel (the second with a camera or a screen share on), the channel and
+type Fit = Pick<VoiceLimits, 'fitAudio' | 'fitVideo'>
+
+// Past `fitAudio` in a channel (`fitVideo` with a camera or a screen share on), the channel and
 // the voice panel say how far a mesh goes. Joining is never blocked.
-export const VOICE_FIT = { audio: fitAudio, video: fitVideo }
-export const VOICE_NOTICE =
-  'Voice in P2P servers is peer-to-peer. It works best with up to 8 people (4 with video).'
+export const voiceNotice = (fit: Fit) =>
+  `Voice in P2P servers is peer-to-peer. It works best with up to ${fit.fitAudio} people (${fit.fitVideo} with video).`
 
-export const pastFit = (count: number, video: boolean) =>
-  count > (video ? VOICE_FIT.video : VOICE_FIT.audio)
+export const pastFit = (count: number, video: boolean, fit: Fit = LOCAL.voice) =>
+  count > (video ? fit.fitVideo : fit.fitAudio)
 
 export const NO_VOICE = "You can't join this voice channel."
 export const RELAY_DENIED_TEXT = 'Relay not allowed. Not connected to'
@@ -171,7 +170,7 @@ export class VoiceRoster {
   // The newest stamp seen of each member, kept past expiry, so an old frame never comes back.
   private high = new Map<string, Map<string, number>>()
 
-  constructor(private ttl = VOICE.ttlMs) {}
+  constructor(private ttl: number) {}
 
   // Takes a frame about `ik` (`direct`: from them): true when it changed what we had. Their own
   // word beats a passed-on one; a passed-on one never replaces it while it is fresh.
@@ -377,7 +376,7 @@ export class Voice implements Signaler {
   private fns = new Set<() => void>()
 
   constructor(private deps: VoiceDeps) {
-    this.limits = { ...VOICE, ...deps.limits }
+    this.limits = { ...VOICE, ...LOCAL.voice, ...deps.limits }
     this.roster = new VoiceRoster(this.limits.ttlMs)
   }
 

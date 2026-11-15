@@ -5,7 +5,6 @@ import { Eye } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { p2p, useP2p } from '../../lib/p2p/app'
 import { looksLikeCard, type Card } from '../../lib/p2p/card'
-import { INTRO_MAX } from '../../lib/p2p/contacts'
 import { fingerprint } from '../../lib/p2p/keys'
 import { CopyButton, QrCode } from '../config_sync'
 import { Dialog, FieldError, fieldCls, filledBtn, Masked, textBtn } from '../ui'
@@ -178,7 +177,7 @@ export function AddContactDialog({ initial = 'paste' }: { initial?: Tab }) {
               <Preview card={card} />
               <textarea
                 value={intro}
-                maxLength={INTRO_MAX}
+                maxLength={p2p.limits().contacts.introMax}
                 onChange={e => setIntro(e.target.value)}
                 rows={2}
                 placeholder="Say who you are (optional)"

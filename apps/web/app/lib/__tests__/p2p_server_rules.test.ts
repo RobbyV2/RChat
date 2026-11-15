@@ -11,11 +11,11 @@ import {
   type Summary,
   type SumDelta,
 } from '../p2p/acl/summary'
-import { AclRoom, IMPL, KEEP } from '../p2p/acl_room'
+import { AclRoom, IMPL } from '../p2p/acl_room'
 import { MODEL_LIMITS, testBinds, toProd } from './p2p_acl_world'
 import { buildEvent2 } from '../p2p/event_v2'
 import { signRevocation2 } from '../p2p/event_v2'
-import { HOLD_MS } from '../p2p/acl_room'
+import { LOCAL } from '../p2p/limits'
 import { MIN, ServerWorld } from './p2p_server_world'
 
 // The rules of P2P servers as the host's evaluator applies them to real signed events
@@ -63,12 +63,12 @@ describe('receipt outcomes', () => {
     if (ok.out.s === 'A') expect(ok.out.rec.cls).toBe('A')
     // Dated more than 5 minutes ahead: admitted, held, not applied.
     const ahead = w.build('O', 'kick', p => ({ to: w.who('B').a, seen: p.seen ?? {} }), {
-      ts: w.now + HOLD_MS + MIN,
+      ts: w.now + LOCAL.acl.holdMs + MIN,
       to: w.who('B').a,
     })
     expect(w.receive(ahead.id, ahead.wire).s).toBe('H')
     expect(w.sum.members[w.who('B').a].m).toBe('join')
-    w.now += HOLD_MS + 2 * MIN
+    w.now += LOCAL.acl.holdMs + 2 * MIN
     expect(w.receive(ahead.id, ahead.wire).s).toBe('A')
     expect(w.sum.members[w.who('B').a].m).toBe('leave')
     // A child of a rejected event is rejected.
@@ -299,20 +299,16 @@ describe('admission records (the evaluation cache)', () => {
   })
 
   test('the evaluator keeps no rejected or unknown-rules event, only bounded ids', () => {
-    const w = ServerWorld.create('O')
+    const w = ServerWorld.create('O', {}, undefined, {
+      ...LOCAL,
+      acl: { ...LOCAL.acl, keepRejected: 5 },
+    })
     w.join('O', 'B')
-    const was = KEEP.rejected
-    KEEP.rejected = 5
-    try {
-      const before = w.room.r.evs.size
-      for (let i = 0; i < 20; i++)
-        expect(w.post('B', 'settings', { name: `x${i}` }).out.s).toBe('R')
-      expect(w.room.r.evs.size).toBe(before)
-      const R = [...w.room.r.status.values()].filter(v => v.s === 'R').length
-      expect(R).toBe(5)
-    } finally {
-      KEEP.rejected = was
-    }
+    const before = w.room.r.evs.size
+    for (let i = 0; i < 20; i++) expect(w.post('B', 'settings', { name: `x${i}` }).out.s).toBe('R')
+    expect(w.room.r.evs.size).toBe(before)
+    const R = [...w.room.r.status.values()].filter(v => v.s === 'R').length
+    expect(R).toBe(5)
     const u = ServerWorld.create('O', { rules: 3 })
     for (let i = 1; i <= 30; i++) {
       const e = buildEvent2(u.who('O'), u.srv, 'mark', 'a', {}, { seq: i, ap: [u.srv] }, u.now)

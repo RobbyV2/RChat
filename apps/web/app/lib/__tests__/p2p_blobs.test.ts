@@ -8,7 +8,6 @@ import {
   Blobs,
   BULK,
   BulkLink,
-  HOLDERS_KEPT,
   MISMATCH_TEXT,
   partRange,
   thumbBytes,
@@ -21,6 +20,8 @@ import { buildEvent, validate } from '../p2p/event_v1'
 import { LIMITS as EV, type Attachment } from '../p2p/content'
 import { AUTO_PAUSED_TEXT, Dms, dmRoomId, loadMessages, type DmDeps } from '../p2p/dm'
 import { insertEvent } from '../p2p/dag'
+import { LOCAL } from '../p2p/limits'
+import { accountLimits } from '../p2p/user_limits'
 import { keyId, newKeyPair, signCert } from '../p2p/keys'
 
 // Real-time tests (sessions, IndexedDB): budgets for a loaded machine.
@@ -329,9 +330,9 @@ describe('bulk transfers', () => {
     const probe = (h: string) =>
       (bb as unknown as { probe: (h: string) => Promise<unknown> }).probe(h)
     const holders = (bb as unknown as { holders: Map<string, unknown> }).holders
-    for (let i = 0; i < HOLDERS_KEPT + 100; i += 1) await probe(b64u(bytes(32, i + 1)))
-    expect(holders.size).toBe(HOLDERS_KEPT)
-    clock.t += BULK.probeMs
+    for (let i = 0; i < LOCAL.bulk.holdersKept + 100; i += 1) await probe(b64u(bytes(32, i + 1)))
+    expect(holders.size).toBe(LOCAL.bulk.holdersKept)
+    clock.t += LOCAL.bulk.probeMs
     await probe(b64u(bytes(32, 9999)))
     expect(holders.size).toBe(1)
   })
@@ -554,7 +555,27 @@ describe('bulk transfers', () => {
     // Nobody was banned: one pipe all along, still open.
     expect(hub.bulkDials).toBe(1)
     expect(bb.pipes[0].state).toBe('open')
-    expect(bb.pipes[0].maxQueued).toBeLessThan(BULK.queueBytes + 3 * BLOCK)
+    expect(bb.pipes[0].maxQueued).toBeLessThan(LOCAL.bulk.queueBytes + 3 * BLOCK)
+  }, 60_000)
+
+  test('an instance that gives the frames per batch as a fraction: blocks go out in order, with no strikes', async () => {
+    const { bulk } = accountLimits({ limits: { p2p: { 'local.bulk.batch': 1.5 } } }, null)
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await node(hub, 'Alice', clock)
+    const b = await node(hub, 'Bob', clock)
+    await befriend(a, b)
+    const ba = blobsOn(a, clock, { limits: bulk })
+    const bb = blobsOn(b, clock, { limits: bulk, members: async () => [a.node.ik] })
+    const data = bytes(2 * BLOCK + 4 * BULK.chunk, 31)
+    const att = await attOf(data)
+    await ba.putOwn(new Blob([data as BlobPart]), await hashBytes(data))
+    await bb.download(att)
+    const struck = () => [...bb.pipes, ...ba.incoming].some(l => l.strikes > 0)
+    await eventually(async () => struck() || !!(await bb.record(att.h))?.done, 'download')
+    clean(ba, bb)
+    expect(same(await contentsOf(await bb.file(att.h)), data)).toBe(true)
+    expect(bulk.batch).toBe(LOCAL.bulk.batch)
   }, 60_000)
 
   test('cancelling mid-block costs the holder nothing, and the next download from them works', async () => {
@@ -607,7 +628,7 @@ describe('bulk transfers', () => {
     await eventually(async () => link.fetches.size === 2 && h.stash.length > 0, 'requests out')
     // Time moves on until both stall timers ran (one may be armed after a first advance).
     await eventually(async () => {
-      await clock.advance(BULK.stallMs)
+      await clock.advance(LOCAL.bulk.stallMs)
       return link.abandoned.size >= 2
     }, 'stalled blocks cancelled')
     // The network comes back: the stalled blocks arrive in full, late, and are dropped.
@@ -1036,7 +1057,7 @@ describe('attachments in direct messages', () => {
     const author = a.node.author() as NonNullable<ReturnType<P2pNode['author']>>
     const att = await attOf(bytes(5, 5))
     const msg = buildEvent(author, room, 'msg', { body: '', att: [att] }, [], 0, clock.now())
-    const ctx = { me: a.node.ik, peer: other }
+    const ctx = { me: a.node.ik, peer: other, lim: LOCAL.dag }
     const first = await insertEvent(a.store.db, msg.id, msg.wire, clock.now(), ctx)
     expect(first.status === 'new' && first.rec.atts).toEqual([att.h])
     const red = buildEvent(author, room, 'redact', { target: msg.id }, [msg.id], 1, clock.now())
@@ -1143,7 +1164,7 @@ describe('many files from one holder, with a slow gate', () => {
       // A few has requests for all of them, and a meta request only for the larger files.
       expect(has).toBeLessThanOrEqual(Math.ceil(n / BULK.hasMax) + Math.ceil(n / EV.att) + 2)
       expect(meta).toBeLessThanOrEqual(
-        atts.filter(x => x.size > BULK.smallMeta * BLOCK).length + Math.ceil(n / 25)
+        atts.filter(x => x.size > LOCAL.bulk.smallMeta * BLOCK).length + Math.ceil(n / 25)
       )
       expect(gateCalls()).toBeGreaterThan(0)
     }, 120_000)
@@ -1419,12 +1440,12 @@ describe('images, the gate, forwards, late chunks, auto-download limits', () => 
     await eventually(async () => link.fetches.size === 2, 'requests out')
     // Stalls, asked again, stalls again, then even the holder check times out: well past the
     // old 2 x stallMs grace.
-    await clock.advance(BULK.stallMs)
+    await clock.advance(LOCAL.bulk.stallMs)
     await eventually(
       async () => link.abandoned.size === 2 && link.fetches.size === 2,
       'asked again'
     )
-    for (let i = 0; i < 4; i += 1) await clock.advance(BULK.stallMs)
+    for (let i = 0; i < 4; i += 1) await clock.advance(LOCAL.bulk.stallMs)
     expect([...link.abandoned.values()].flat().length).toBe(4)
     expect(link.state).toBe('open')
     w.wire.tamper = undefined
@@ -1455,7 +1476,7 @@ describe('images, the gate, forwards, late chunks, auto-download limits', () => 
     hub.bulkWires[0].wire.tamper = (d, from) => (from !== 'b' ? d : null)
     await bb.download(att)
     await eventually(async () => link.fetches.size === 2, 'requests out')
-    await clock.advance(BULK.stallMs)
+    await clock.advance(LOCAL.bulk.stallMs)
     await eventually(async () => link.state === 'closed', 'replaced')
     expect(bannedOf({ dms: { blobs: bb } } as unknown as Peer).size).toBe(0)
     bb.kick()

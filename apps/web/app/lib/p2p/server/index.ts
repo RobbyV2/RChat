@@ -1,18 +1,18 @@
 import { RULES_VERSION } from '../acl/rules'
 import { emptySummary, type SumDelta, type Summary } from '../acl/summary'
 import type { Carried, PackedRec, Plan } from '../acl_room'
-import { refitFull, type DevChain, type Inserted } from '../dag'
+import { capped, refitFull, type DevChain, type Inserted, type StoreLimits } from '../dag'
 import type { EventRecord, IdentRecord, P2pDatabase, RoomRecord } from '../db'
 import type { PageOpts } from '../jump'
 import type { Attachment, Fwd, MsgContent } from '../content'
 import type { Wire } from '../event_v1'
 import type { WireV2 } from '../event_v2'
-import { CANT_TEXT, CUT_MS, cutOut, TOO_OFTEN_TEXT, type Reached } from '../flows'
+import { CANT_TEXT, cutOut, TOO_OFTEN_TEXT, type Reached } from '../flows'
 import type { Message } from '../frames'
 import { Gossip, type LinkKind } from '../gossip'
 import { keyId, verifyProfile, liveCerts, type Cert, type Profile } from '../keys'
 import { mergeCerts, mergeRevocations, displayName } from '../contacts'
-import { LOCAL } from '../limits'
+import { LOCAL, type Local } from '../limits'
 import { RateWindow, clip } from '../rate'
 import { LocalHost, WorkerHost, type AclHost, type WorkerLike } from '../resolve_host'
 import { realClock, type Clock, type Session } from '../session'
@@ -28,19 +28,16 @@ import {
   type SystemContent,
 } from '../state'
 import { Sync, type Check, type Link, type Walked } from '../sync'
-import { rebuildStep, SEARCH } from '../search'
+import { rebuildStep } from '../search'
 import { Voice } from '../voice'
 import { dmRoomId, type P2pMessage } from '../dm'
 import type { ServerCtx } from './context'
 import {
-  SERVER,
   BAD_CODE,
   LEGACY_TEXT,
   UPDATE_TEXT,
   ServerError,
   webLocks,
-  SETTLE_MS,
-  ARCHIVE_LINKS,
   type ServerArrival,
   type SearchQuery,
   type ServerView,
@@ -68,9 +65,8 @@ import * as moderation from './moderation'
 
 export {
   SERVER,
-  VOUCH,
   CODE_PREFIX,
-  CODE_TTLS,
+  codeTtls,
   NEEDS_INVITER,
   NOBODY_ONLINE,
   BAD_CODE,
@@ -88,8 +84,6 @@ export {
   THREAD_ROOT_TEXT,
   PIN_TEXT,
   PIN_THREAD_TEXT,
-  ROLE_NAME_MAX,
-  ROLE_STEP,
   NO_ROOM_TEXT,
   newRolePos,
 } from './types'
@@ -105,6 +99,7 @@ export type {
   ReachedView,
   ServerView,
   ServerDeps,
+  ServerLimits,
   Migrated,
   LostRoom,
   ChannelPatch,
@@ -139,9 +134,13 @@ export class Servers {
   // When we last vouched for an invite by each inviter.
   private vouchedBy = new Map<string, number>()
   storageFull = false
+  // The account's limits (limits.ts).
+  readonly local: Readonly<Local>
 
   constructor(private deps: ServerDeps) {
     this.clock = deps.clock ?? realClock
+    this.local = deps.local ?? LOCAL
+    const evaluator = { acl: this.local.acl, cache: this.local.cache }
     this.host =
       deps.resolver ??
       (typeof window !== 'undefined' && typeof Worker !== 'undefined'
@@ -149,9 +148,10 @@ export class Servers {
             () =>
               new Worker(new URL('../p2p.worker.ts', import.meta.url), {
                 type: 'module',
-              }) as unknown as WorkerLike
+              }) as unknown as WorkerLike,
+            evaluator
           )
-        : new LocalHost())
+        : new LocalHost({ local: evaluator }))
     if (this.host instanceof WorkerHost)
       this.host.onLost = () => {
         for (const r of this.rooms.values())
@@ -182,11 +182,8 @@ export class Servers {
       onDelivered: room => this.changed(room),
       onTyping: () => {},
       onState: room => this.changed(room),
-      limits: deps.limits,
-      roomCap: deps.roomCap,
-      totalCap: deps.totalCap,
-      roomBytes: deps.roomBytes,
-      totalBytes: deps.totalBytes,
+      limits: { ...this.local.sync, ...deps.limits },
+      dag: () => this.storeLimits().dag,
     })
     this.gossip = new Gossip({
       clock: this.clock,
@@ -195,7 +192,11 @@ export class Servers {
       rooms: () => this.activeRooms(),
       members: room => this.linkCandidates(room),
       may: (room, ik) => this.may(room, ik),
-      budget: room => (this.archived(room) ? ARCHIVE_LINKS : null),
+      budget: room => {
+        if (!this.archived(room)) return null
+        const g = this.gossip.limits
+        return { perRoom: g.archivePerRoom, outTarget: g.archiveOutTarget }
+      },
       needs: (room, ik) => {
         const next = this.archived(room) ? this.rooms.get(room)?.next : undefined
         const m = next ? membershipOf(this.sumOf(next), ik) : 'join'
@@ -230,7 +231,7 @@ export class Servers {
         this.myMembership(room) === 'join' && membershipOf(this.sumOf(room), ik) === 'join',
       onPresence: room => this.changed(room),
       onTyping: room => this.typingChanged(room),
-      limits: deps.gossip,
+      limits: { ...this.local.gossip, ...deps.gossip },
     })
     this.voice = new Voice({
       clock: this.clock,
@@ -256,7 +257,7 @@ export class Servers {
       },
       onChange: room => this.changed(room),
       wake: () => node.schedule(),
-      limits: deps.voice,
+      limits: { ...this.local.voice, ...deps.voice },
     })
     node.use({
       attach: s => {
@@ -318,10 +319,8 @@ export class Servers {
     }
     // Rooms that filled under lower limits than these take events again; one whose rules this
     // build doesn't run (or doesn't know yet) only within what it stores of it.
-    const { roomCap, roomBytes, serverCap, serverBytes } = this.deps
-    const caps = { roomCap, roomBytes, serverCap, serverBytes }
     const unknown = (r: RoomRecord) => this.sumOf(r.id).rules !== RULES_VERSION
-    for (const id of await refitFull(this.db, 'server', caps, unknown)) {
+    for (const id of await refitFull(this.db, 'server', this.storeLimits().dag, unknown)) {
       const r = this.rooms.get(id)
       if (r) this.rooms.set(id, { ...r, full: false })
     }
@@ -350,7 +349,8 @@ export class Servers {
   private async indexPass() {
     try {
       while (!this.stopped && !this.deps.store.closed) {
-        if (await rebuildStep(this.db, SEARCH.step, room => this.readOnly(room) !== null)) {
+        const skip = (room: string) => this.readOnly(room) !== null
+        if (await rebuildStep(this.db, this.local.search, skip)) {
           this.indexed = true
           return
         }
@@ -445,7 +445,7 @@ export class Servers {
         evictFrom: new Map(),
         proofs: new Map(),
         proofed: new Map(),
-        proofTimes: new RateWindow(60 * 60_000, () => SERVER.proofsPerHour),
+        proofTimes: new RateWindow(60 * 60_000, () => this.local.server.proofsPerHour),
         ackDue: null,
         ackAt: -Infinity,
         views: new Map(),
@@ -604,7 +604,7 @@ export class Servers {
   private settling(r: RoomRecord | undefined) {
     if (!r?.prev) return false
     const me = memberOf(this.sumOf(r.id), this.me)
-    return me?.m === 'join' && this.clock.now() - (me.joinTs ?? 0) < SETTLE_MS
+    return me?.m === 'join' && this.clock.now() - (me.joinTs ?? 0) < this.local.server.settleMs
   }
 
   // Who a room links with: its joined members; a new copy we joined lately, the old copy's
@@ -694,20 +694,24 @@ export class Servers {
     if (m === null && (mine === 'join' || mine === 'invite') && this.carriedHere(r, ik))
       return 'state'
     // Cut out by a cascade: they get the ACL, so they learn it (and of an invite back).
-    if (mine === 'join' && cutOut(s, ik, this.clock.now())) return 'state'
+    if (mine === 'join' && cutOut(s, ik, this.clock.now(), this.local.misc)) return 'state'
     return mine === 'join' && this.redeeming(room, ik) ? 'state' : false
   }
 
   // Out of a room by a cascade (no removal of ours) within the last week.
   private lostByCascade(r: RoomRecord) {
-    return !!r.cascade && this.clock.now() - r.cascade < CUT_MS
+    return !!r.cascade && this.clock.now() - r.cascade < this.local.misc.cutMs
   }
 
   // Out by a cascade, or by someone else's removal, within the last week.
   private outForNow(r: RoomRecord) {
     if (this.lostByCascade(r)) return true
     const m = memberOf(this.sumOf(r.id), this.me)
-    return !!m?.rem && m.by !== this.me && this.clock.now() - (m.remTs ?? -Infinity) < CUT_MS
+    return (
+      !!m?.rem &&
+      m.by !== this.me &&
+      this.clock.now() - (m.remTs ?? -Infinity) < this.local.misc.cutMs
+    )
   }
 
   private isPreferred(room: string, ik: string) {
@@ -753,8 +757,9 @@ export class Servers {
   // Whether we take a code now: not paused here, and under its hourly invites.
   private codeOpen(room: string, code: string, now: number) {
     const u = this.codeUseOf(room, code)
-    const adds = new RateWindow(60 * 60_000, SERVER.codeAddsPerHour, u.adds).count(now)
-    return u.until <= now && adds < SERVER.codeAddsPerHour
+    const per = this.local.server.codeAddsPerHour
+    const adds = new RateWindow(60 * 60_000, per, u.adds).count(now)
+    return u.until <= now && adds < per
   }
 
   // Codes we stopped taking here, by hash.
@@ -782,8 +787,8 @@ export class Servers {
       const m = memberOf(this.sumOf(room), ik)
       if (m?.m !== 'invite' || !m.adds?.includes(r.add)) continue
       const u = this.codeUseOf(room, r.code)
-      if ((u.lapses += 1) >= SERVER.codeLapses) {
-        u.until = now + SERVER.codePauseMs
+      if ((u.lapses += 1) >= this.local.server.codeLapses) {
+        u.until = now + this.local.server.codePauseMs
         u.lapses = 0
         this.changed(room)
       }
@@ -800,9 +805,9 @@ export class Servers {
       if (s.state !== 'ready' || this.sync.linksOn(s).length || this.deps.node.contact(ik)) return
       if (this.voice.keeps(ik, s.remote?.dk)) return
       if ([...this.rooms.keys()].some(room => this.redeeming(room, ik))) return
-      if (this.clock.now() - s.lastUseful < SERVER.idleMs) return this.idle(s)
+      if (this.clock.now() - s.lastUseful < this.local.server.idleMs) return this.idle(s)
       s.close('closed')
-    }, SERVER.idleMs)
+    }, this.local.server.idleMs)
   }
 
   // A hello from someone who isn't a mutual contact: kept when they are a member (or invited)
@@ -825,8 +830,9 @@ export class Servers {
     profile: Profile | null
   ) {
     const cur = this.idents.get(ik)
-    const revocations = mergeRevocations(cur?.revocations ?? [], revs as never[], ik)
-    const merged = mergeCerts(cur?.certs ?? [], certs, ik, revocations)
+    const lim = this.local.contacts
+    const revocations = mergeRevocations(cur?.revocations ?? [], revs as never[], ik, lim)
+    const merged = mergeCerts(cur?.certs ?? [], certs, ik, revocations, lim)
     const newer =
       profile && verifyProfile(profile, ik) && profile.updated > (cur?.profile?.updated ?? -1)
     if (
@@ -854,7 +860,7 @@ export class Servers {
     if (c && (c.petname || c.name)) return displayName(c)
     if (room) {
       const n = memberOf(this.sumOf(room), ik)?.profile?.name
-      if (typeof n === 'string' && n.trim()) return clip(n, LOCAL.server.memberNameMax)
+      if (typeof n === 'string' && n.trim()) return clip(n, this.local.server.memberNameMax)
     }
     const p = this.idents.get(ik)?.profile
     if (p) return p.name
@@ -866,7 +872,7 @@ export class Servers {
   profileName(ik: string, room?: string) {
     if (ik === this.me) return this.deps.node.name
     const n = room ? memberOf(this.sumOf(room), ik)?.profile?.name : undefined
-    if (typeof n === 'string' && n.trim()) return clip(n, LOCAL.server.memberNameMax)
+    if (typeof n === 'string' && n.trim()) return clip(n, this.local.server.memberNameMax)
     const c = this.deps.node.contact(ik)
     if (c?.name) return c.name
     return this.idents.get(ik)?.profile?.name || 'Member'
@@ -1032,8 +1038,11 @@ export class Servers {
     return receive.purgeRedacted(ctx(this), room, rec)
   }
 
-  private caps() {
-    return receive.caps(ctx(this))
+  // What the servers' events are stored within now: the account's limits, with the budgets set
+  // apart (deps) first.
+  storeLimits(): StoreLimits {
+    const l = this.local
+    return { dag: capped(l.dag, this.deps), share: l.share, search: l.search }
   }
 
   private applyDelta(room: string, delta: SumDelta) {
@@ -1543,7 +1552,11 @@ export class Servers {
     return codes.forgetEmpty(ctx(this), room)
   }
 
-  private request(s: Session, msg: Message, ms = SERVER.redeemMs): Promise<Message | null> {
+  private request(
+    s: Session,
+    msg: Message,
+    ms = this.local.server.redeemMs
+  ): Promise<Message | null> {
     return codes.request(ctx(this), s, msg, ms)
   }
 
@@ -1769,12 +1782,13 @@ export class Servers {
 
   // ----- Search -----
 
-  search(q: SearchQuery, cursor: string | null = null, page: number = SEARCH.page) {
+  search(q: SearchQuery, cursor: string | null = null, page: number = this.local.search.page) {
     return search.search(ctx(this), q, cursor, page)
   }
 
   // The candidates of a query, newest first below `cursor`. Words: from the index, kept for the
-  // query's next pages a minute (at most SEARCH.pool); else by a scan of recent messages.
+  // query's next pages for `search.poolMs` (at most `search.pool`); else by a scan of recent
+  // messages.
   private searchCache: {
     key: string
     at: number

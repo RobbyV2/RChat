@@ -7,6 +7,7 @@ import { buildEvent, validate } from '../p2p/event_v1'
 import { keyId, newKeyPair, signCert, signRevocation } from '../p2p/keys'
 import { parseImports } from '../p2p/app'
 import type { Contact } from '../p2p/contacts'
+import { LOCAL } from '../p2p/limits'
 import { fromB64u, b64u } from '../p2p/canonical'
 import {
   applyImport,
@@ -20,7 +21,7 @@ import {
   exportP2p,
   HEAVY_KDF,
   importKind,
-  KDF_MIN,
+  kdfBounds,
   NEWER_DUMP,
   parseDump,
   passProblem,
@@ -76,7 +77,8 @@ setDefaultTimeout(60_000)
 // Device move: the encrypted section, the dump of every store, the three
 // import cases, and what contacts and the old device see afterwards.
 
-const KDF: Kdf = { alg: 'argon2id', m: KDF_MIN.m, t: KDF_MIN.t, p: 1 }
+const MIN = kdfBounds(LOCAL.transfer).min
+const KDF: Kdf = { alg: 'argon2id', m: MIN.m, t: MIN.t, p: 1 }
 const PASS = 'correct horse battery'
 
 interface Peer {
@@ -536,7 +538,8 @@ describe('dump and encryption', () => {
     ).toBe(NEWER_DUMP)
     const { a } = await scene()
     const real = await dumpBytes(a.store.db)
-    expect(await msg(parseDump(real, 100))).toBe(DAMAGED_DUMP)
+    const small = { ...LOCAL, transfer: { ...LOCAL.transfer, dumpMax: 100 } }
+    expect(await msg(parseDump(real, small))).toBe(DAMAGED_DUMP)
   }, 60_000)
 
   test('share links never carry the P2P section; the string and the file do', async () => {

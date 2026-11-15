@@ -227,7 +227,8 @@ export const headerOf = (e: AclEv): AclEv => ({
 })
 
 // S2: at least 3 admitted ACL events, none void by equivocation, by at least 2 identities
-// other than `not`, acknowledge the cause (`acks`, tried from index `from` on).
+// other than `not`, acknowledge the cause (`acks`, tried from index `from` on). The counts are
+// start-only (limits.ts START_ONLY).
 export function witnessed(
   fe: FastEval,
   from: number,

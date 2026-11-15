@@ -14,7 +14,7 @@ import {
   type StIdx,
 } from './facts'
 import { EMPTY, Ix } from './reach'
-import { EVERYONE, introduces, rkey, type AclContent, type Rank } from './rules'
+import { EVERYONE, evalLimits, introduces, rkey, type AclContent, type Rank } from './rules'
 
 // The packed state codec: snapshot and subset views of an evaluation, packed
 // statuses in chunked bitsets and ordinals, their deltas, and the facts views over them.
@@ -81,15 +81,17 @@ class SubView extends View {
 }
 
 // Bounded caches per index (a replica's), so a dropped replica takes its entries along: whole
-// enumerations (16), and the facts of recorded states (FACTS_CAP; a state's facts are built again
-// when read after they left, its statuses stay packed).
+// enumerations (`cache.lruCap`), and the facts of recorded states (`cache.factsCap`; a state's
+// facts are built again when read after they left, its statuses stay packed).
 const lrus = new WeakMap<Ix, Map<string, Map<object, unknown>>>()
 
-const LRU_CAP = LOCAL.cache.lruCap
-
-export const FACTS_CAP = LOCAL.cache.factsCap
-
-function lruGet<T>(ix: Ix, k: object, make: () => T, kind = 'all', cap = LRU_CAP): T {
+function lruGet<T>(
+  ix: Ix,
+  k: object,
+  make: () => T,
+  kind = 'all',
+  cap = evalLimits(ix.cx).cache.lruCap
+): T {
   let byKind = lrus.get(ix)
   if (!byKind) lrus.set(ix, (byKind = new Map()))
   let lru = byKind.get(kind)
@@ -466,7 +468,7 @@ class SnapResult implements EvalResult {
         this,
         () => snapFacts(new SnapView(this.fe.ix, this.fe, this.len)),
         'facts',
-        FACTS_CAP
+        evalLimits(this.fe.ix.cx).cache.factsCap
       )
     )
   }
@@ -547,7 +549,8 @@ export const snapResult = (fe: FastEval, len: number): EvalResult => new SnapRes
 
 // Packed statuses of a downset, in chunked bitsets: chunk k holds indices [k*CB, (k+1)*CB). A
 // state built from another shares the chunks it doesn't change, so the recorded states of a
-// replica (off the heads, and every one after a cold start) cost the chunks they change.
+// replica (off the heads, and every one after a cold start) cost the chunks they change. Start-only
+// (limits.ts START_ONLY): the shifts below assume it.
 export const CB = LOCAL.cache.chunk
 
 export type Bits = (Uint32Array | undefined)[]
@@ -772,7 +775,7 @@ class PackedResult implements EvalResult {
         this,
         () => snapFacts(new SubView(this.ix, p.set, p.X, p.V, p.E, p.len)),
         'facts',
-        FACTS_CAP
+        evalLimits(this.ix.cx).cache.factsCap
       )
     )
   }

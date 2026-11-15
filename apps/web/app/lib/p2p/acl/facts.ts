@@ -153,7 +153,7 @@ const NOBITS: ReadonlyMap<number, BitW> = new Map()
 
 // Two exact computations of one value, each giving up (undefined) past a number of steps: the
 // first, then the second, with budgets growing fourfold, so the cost is within a constant of the
-// cheaper one's.
+// cheaper one's. Start-only (limits.ts START_ONLY).
 const RACE_STEPS = LOCAL.acl.raceSteps
 const RACE_GROWTH = LOCAL.acl.raceGrowth
 function race<T>(a: (limit: number) => T | undefined, b: (limit: number) => T | undefined): T {

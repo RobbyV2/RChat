@@ -3,7 +3,7 @@ import { randomHex } from '../bytes'
 import { home } from '../instances'
 import { ice } from '../ice'
 import { declaredHosts, hidesIp, relayBook, unknownHosts, type RelayBook } from '../relays'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 import { RateWindow } from './rate'
 import { TransportError, type Listener, type OfferGuard, type Transport } from './node'
 import type { Pipe } from './session'
@@ -15,14 +15,10 @@ import type { Pipe } from './session'
 
 export const LABEL = 'rcp1'
 export const BULK_LABEL = 'rcp1b'
-// A bulk sender waits once this much is queued in the data channel.
-const LOW_MARK = LOCAL.transport.lowMark
-const DIAL_MS = LOCAL.transport.dialMs
-// Offers held while the user decides about a relay host they don't know, in all and per peer,
-// and the proofs of such offers checked a minute.
-export const HELD_MAX = LOCAL.transport.heldMax
-export const HELD_PER_PEER = LOCAL.transport.heldPerPeer
-export const CHECKS_PER_MIN = LOCAL.transport.checksPerMin
+// limits.ts `transport`: a bulk sender waits once `lowMark` is queued in the data channel; a dial
+// gives up after `dialMs`; offers held while the user decides about a relay host they don't know,
+// in all and per peer, and the proofs of such offers checked a minute.
+export type TransportLimits = Local['transport']
 
 type Hooked = Peer & { _handleMessage?: (msg: unknown) => void }
 
@@ -48,13 +44,16 @@ export const answerConfig = (hooked: boolean, book: RelayBook = relayBook): RTCC
 export class OfferGate {
   private held = new Map<string, number>()
   private heldAll = 0
-  private checks = new RateWindow(60_000, CHECKS_PER_MIN)
+  private checks: RateWindow
 
   constructor(
     private book: RelayBook,
     private guard: () => OfferGuard | null,
-    private now: () => number = () => Date.now()
-  ) {}
+    private now: () => number = () => Date.now(),
+    private limits: TransportLimits = LOCAL.transport
+  ) {
+    this.checks = new RateWindow(60_000, limits.checksPerMin)
+  }
 
   offer(src: string, meta: unknown, answer: () => void) {
     const declared = field(meta, 'relays')
@@ -67,7 +66,11 @@ export class OfferGate {
     const guard = this.guard()
     if (hosts === null || !guard || !this.mayCheck()) return
     const who = guard.sender(src, field(meta, 'ask'), hosts)
-    if (who === null || this.heldAll >= HELD_MAX || (this.held.get(who) ?? 0) >= HELD_PER_PEER)
+    if (
+      who === null ||
+      this.heldAll >= this.limits.heldMax ||
+      (this.held.get(who) ?? 0) >= this.limits.heldPerPeer
+    )
       return
     this.hold(who, 1)
     const done = () => this.hold(who, -1)
@@ -97,11 +100,11 @@ const queuedIn = (conn: DataConnection) =>
   (channelOf(conn)?.bufferedAmount ?? 0) +
   ((conn as { bufferSize?: number }).bufferSize ?? 0) * 16384
 
-const drainOf = (conn: DataConnection) => () =>
+const drainOf = (conn: DataConnection, lowMark: number) => () =>
   new Promise<void>(resolve => {
     const ch = channelOf(conn)
-    if (!ch || queuedIn(conn) <= LOW_MARK || ch.readyState !== 'open') return resolve()
-    ch.bufferedAmountLowThreshold = LOW_MARK
+    if (!ch || queuedIn(conn) <= lowMark || ch.readyState !== 'open') return resolve()
+    ch.bufferedAmountLowThreshold = lowMark
     const done = () => {
       clearInterval(poll)
       ch.removeEventListener('bufferedamountlow', check)
@@ -109,7 +112,7 @@ const drainOf = (conn: DataConnection) => () =>
       resolve()
     }
     const check = () => {
-      if (queuedIn(conn) <= LOW_MARK || ch.readyState !== 'open') done()
+      if (queuedIn(conn) <= lowMark || ch.readyState !== 'open') done()
     }
     // PeerJS's own queue drains on a timer, so the event alone isn't enough.
     const poll = setInterval(check, 50)
@@ -117,7 +120,7 @@ const drainOf = (conn: DataConnection) => () =>
     ch.addEventListener('close', done)
   })
 
-const pipeOf = (conn: DataConnection): Pipe => {
+const pipeOf = (conn: DataConnection, lowMark: number): Pipe => {
   const dataFns: ((d: Uint8Array) => void)[] = []
   const closeFns: (() => void)[] = []
   let closed = false
@@ -137,7 +140,7 @@ const pipeOf = (conn: DataConnection): Pipe => {
   return {
     remote: conn.peer,
     ...(conn.label === BULK_LABEL ? { kind: 'bulk' as const } : {}),
-    drain: drainOf(conn),
+    drain: drainOf(conn, lowMark),
     send: data => {
       if (closed) throw new Error('closed')
       void conn.send(data)
@@ -155,14 +158,21 @@ export class PeerTransport implements Transport {
   private peer: Peer | null = null
   private unwatch: (() => void)[] = []
   private offers: OfferGuard | null = null
-  private gate = new OfferGate(relayBook, () => this.offers)
+  private limits: TransportLimits
+  private gate: OfferGate
+  private listenMs: number
 
   constructor(
+    limits: Partial<TransportLimits> = {},
     // PeerJS's Peer; tests pass a stand-in.
     private peerClass: typeof Peer = Peer,
-    // How long the PeerJS server may take to accept our id.
-    private listenMs = DIAL_MS
-  ) {}
+    // How long the PeerJS server may take to accept our id: `dialMs` unless given.
+    listenMs?: number
+  ) {
+    this.limits = { ...LOCAL.transport, ...limits }
+    this.listenMs = listenMs ?? this.limits.dialMs
+    this.gate = new OfferGate(relayBook, () => this.offers, undefined, this.limits)
+  }
 
   guard(g: OfferGuard) {
     this.offers = g
@@ -199,7 +209,7 @@ export class PeerTransport implements Transport {
       peer.on('connection', conn => {
         if ((conn.label !== LABEL && conn.label !== BULK_LABEL) || conn.serialization !== 'raw')
           return conn.close()
-        conn.on('open', () => onPipe(pipeOf(conn)))
+        conn.on('open', () => onPipe(pipeOf(conn, this.limits.lowMark)))
       })
       peer.on('disconnected', () => {
         if (peer.destroyed || this.peer !== peer) return
@@ -281,13 +291,13 @@ export class PeerTransport implements Transport {
         if (err) {
           conn.close()
           reject(err)
-        } else resolve(pipeOf(conn))
+        } else resolve(pipeOf(conn, this.limits.lowMark))
       }
       const onError = (err: { type?: string; message?: string }) => {
         if (err.type === 'peer-unavailable' && String(err.message).endsWith(to))
           finish(new TransportError('peer-unavailable'))
       }
-      const timer = setTimeout(() => finish(new TransportError('timeout')), DIAL_MS)
+      const timer = setTimeout(() => finish(new TransportError('timeout')), this.limits.dialMs)
       peer.on('error', onError)
       conn.on('open', () => finish(null))
       conn.on('close', () => finish(new TransportError('peer-unavailable')))

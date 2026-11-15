@@ -1,12 +1,12 @@
 import { gt, restricts, type Rank } from '../acl/rules'
 import type { Summary } from '../acl/summary'
 import type { Shown } from '../acl_room'
-import { DAG, getEvents } from '../dag'
+import { getEvents } from '../dag'
 import { serverWire, type EventRecord, type OutboxRecord, type RoomRecord } from '../db'
-import { reactionsOf, PINS_MAX, type P2pMessage } from '../dm'
+import { reactionsOf, type P2pMessage } from '../dm'
 import { around, type PageOpts } from '../jump'
 import { LIMITS as EV, type MsgContent } from '../content'
-import { LOCAL } from '../limits'
+import type { Local } from '../limits'
 import {
   can,
   chanFactsOf,
@@ -27,7 +27,6 @@ import {
 } from '../state'
 import type { ServerCtx } from './context'
 import {
-  SERVER,
   systemRow,
   placeholder,
   roleName,
@@ -57,6 +56,7 @@ export interface ViewEnv {
   frozen(): boolean
   voice(): ServerView['voice']
   syncing(): boolean
+  lim: Pick<Local, 'display' | 'server'>
 }
 
 export function view(cx: ServerCtx, room: string): ServerView | null {
@@ -72,6 +72,7 @@ export function view(cx: ServerCtx, room: string): ServerView | null {
     frozen: () => cx.frozen(room),
     voice: () => cx.voice.channels(room),
     syncing: () => !!cx.sync.pullingState(room),
+    lim: cx.local,
   })
 }
 
@@ -108,7 +109,7 @@ export function serverView(
       top: m.m === 'join' ? topRoleOf(s, m.ik) : null,
     }))
   const joined = members.filter(m => m.m === 'join')
-  const n = nameOf(s)
+  const n = nameOf(s, env.lim.display)
   const readOnly = env.readOnly()
   const me = readOnly ? null : membershipOf(s, env.me)
   return {
@@ -122,13 +123,13 @@ export function serverView(
     perms: me === 'join' ? permsOf(s, env.me) : 0,
     rank: meRank ?? [-Infinity, ''],
     history: historyOf(s),
-    system: systemOf(s),
-    channels: readOnly ? [] : channelViews(s, env.me, me),
+    system: systemOf(s, env.lim.display),
+    channels: readOnly ? [] : channelViews(s, env.me, me, env.lim.display),
     roles: readOnly
       ? []
       : order.map(r => ({
           id: r.id,
-          name: roleName(r.name),
+          name: roleName(r.name, env.lim.server),
           color:
             Number.isSafeInteger(r.color) && r.color! >= 0 && r.color! <= 0xffffff
               ? r.color!
@@ -168,10 +169,15 @@ export function serverView(
 }
 
 // The channels we may view, with what we may do there.
-export function channelViews(s: Summary, myIk: string, me: Membership | null): ChannelView[] {
+export function channelViews(
+  s: Summary,
+  myIk: string,
+  me: Membership | null,
+  lim: Pick<Local['display'], 'name' | 'topic'>
+): ChannelView[] {
   const F = chanFactsOf(s)
   const out: ChannelView[] = []
-  for (const c of channelsOf(s)) {
+  for (const c of channelsOf(s, lim)) {
     const p = channelPermsOf(s, myIk, c.id, F)
     if (!(p & P.ViewChannel)) continue
     out.push({
@@ -249,7 +255,7 @@ export async function loadChannel(
     pins.filter(p => (lo === undefined || p.sortKey > lo) && (hi === undefined || p.sortKey < hi))
   )
   rows.push(...pinRows)
-  const sys = systemOf(cx.sumOf(room))
+  const sys = systemOf(cx.sumOf(room), cx.local.display)
   // An archive brings no join and leave lines of the old copy.
   if (sys.ch === ch && (sys.join || sys.leave) && !opts.keep)
     rows.push(...(await cx.systemRows(room, lo, hi, sys)))
@@ -416,11 +422,11 @@ export async function loadThreadAround(cx: ServerCtx, room: string, root: string
   if (!r || r.room !== room || (await cx.rootOf(r)) !== root) return null
   const older = await cx.loadThread(room, root, {
     before: r.sortKey,
-    limit: LOCAL.server.threadBefore,
+    limit: cx.local.server.threadBefore,
   })
   const newer = await cx.loadThread(room, root, {
     after: r.sortKey,
-    limit: LOCAL.server.threadAfter,
+    limit: cx.local.server.threadAfter,
   })
   if (!older || !newer) return null
   const self = await cx.rows(room, [r])
@@ -581,7 +587,7 @@ export async function rows(cx: ServerCtx, room: string, recs: EventRecord[]) {
     const rt = cx.ensureRt(room)
     const fresh = viewed.filter(id => !rt.viewed.has(id))
     for (const id of fresh) rt.viewed.add(id)
-    while (rt.viewed.size > SERVER.viewedMax)
+    while (rt.viewed.size > cx.local.server.viewedMax)
       rt.viewed.delete(rt.viewed.values().next().value as string)
     if (fresh.length) cx.sync.fetch(room, fresh)
   }
@@ -600,7 +606,8 @@ export async function loadAround(cx: ServerCtx, room: string, ch: string, id: st
   return around(
     r.sortKey,
     async () => cx.withReplies(room, ch, await cx.rows(room, [r])),
-    o => cx.loadChannel(room, ch, o)
+    o => cx.loadChannel(room, ch, o),
+    cx.local.misc
   )
 }
 
@@ -615,7 +622,7 @@ export async function loadPins(cx: ServerCtx, room: string, ch: string) {
     .transaction('events')
     .store.index('room_type_sort')
     .openCursor(IDBKeyRange.bound([room, 'pin', ''], [room, 'pin', '￿']), 'prev')
-  while (cursor && steps < DAG.walk) {
+  while (cursor && steps < cx.local.dag.walk) {
     const p = cursor.value
     steps += 1
     if (p.target && p.chan === ch && !seen.has(p.target)) {
@@ -633,5 +640,5 @@ export async function loadPins(cx: ServerCtx, room: string, ch: string) {
   for (const r of await getEvents(cx.db, room, on))
     if (r.type === 'msg' && r.chan === ch && !(await cx.rootOf(r)) && (!keep || keep(r)))
       recs.push(r)
-  return cx.rows(room, recs.slice(0, PINS_MAX))
+  return cx.rows(room, recs.slice(0, cx.local.dm.pinsMax))
 }

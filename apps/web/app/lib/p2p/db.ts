@@ -367,6 +367,9 @@ export interface SearchMeta {
   v: number
   done: boolean
   at: string
+  // The cut the rows were made with (search.ts); an index that states none has 32 and 256.
+  word?: number
+  words?: number
 }
 
 // Bytes stored for every P2P server together (dag.ts), the search index included.

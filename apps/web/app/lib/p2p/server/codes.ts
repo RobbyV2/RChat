@@ -1,12 +1,11 @@
 import { isRecord } from '../../bytes'
 import { b64u, bytesOf, randomBytes } from '../canonical'
 import { blankRoom } from '../dag'
-import type { CodeRecord } from '../db'
 import { validate2, type WireV2 } from '../event_v2'
+import { serverWire, type CodeRecord } from '../db'
 import { type Wire } from '../event_v1'
 import type { Message } from '../frames'
 import { peerId, liveCerts } from '../keys'
-import { LOCAL } from '../limits'
 import type { Session } from '../session'
 import { can, LIMITS as STATE_LIMITS, memberOf, membershipOf, nameOf, P } from '../state'
 import type { ServerCtx } from './context'
@@ -40,7 +39,7 @@ export async function issueCode(cx: ServerCtx, room: string, ttl: number, label 
   const secret = b64u(randomBytes(16))
   const hash = codeHash(secret)
   const exp = now + ttl
-  const clean = label.trim().slice(0, STATE_LIMITS.label)
+  const clean = label.trim().slice(0, cx.local.display.label)
   await cx.emit(room, 'code', () => ({ h: hash, exp, ...(clean ? { label: clean } : {}) }))
   const rec: CodeRecord = { hash, room, secret, exp, label: clean, created: now }
   await cx.db.put('codes', rec)
@@ -63,7 +62,7 @@ export function codeText(cx: ServerCtx, room: string, secret: string) {
   return encodeCode({
     v: 1,
     room,
-    name: nameOf(s)?.name ?? 'P2P server',
+    name: nameOf(s, cx.local.display)?.name ?? 'P2P server',
     ...(id ? { code: id } : {}),
     secret,
     peers,
@@ -200,7 +199,7 @@ export function request(
   cx: ServerCtx,
   s: Session,
   msg: Message,
-  ms = SERVER.redeemMs
+  ms = cx.local.server.redeemMs
 ): Promise<Message | null> {
   return new Promise(resolve => {
     const key = `${s.peer}\n${msg.room as string}`
@@ -241,6 +240,13 @@ export async function takeInvite(cx: ServerCtx, room: string) {
   )
 }
 
+// When a code expires here: when it says, but at most `display.codeTtl` past its own time.
+const expiresAt = async (cx: ServerCtx, id: string, exp: number | undefined) => {
+  if (exp === undefined) return Infinity
+  const rec = await cx.db.get('events', id)
+  return rec ? Math.min(exp, serverWire(rec).ev.ts + cx.local.display.codeTtl) : exp
+}
+
 // Someone redeems a code with us: we check it by our own clock and, if it holds, post an
 // invite for them that names the code, send it to them and let them sync the ACL for
 // a while. The invite is withdrawn if they don't join by then (lapseRedeems).
@@ -250,7 +256,7 @@ export async function onRedeem(cx: ServerCtx, m: Message, s: Session) {
   if (!r || typeof room !== 'string' || bytesOf(m.secret, 16) === null) return s.strike()
   const n = (cx.redeems.get(s) ?? 0) + 1
   cx.redeems.set(s, n)
-  if (n > SERVER.redeems) return s.strike()
+  if (n > cx.local.server.redeems) return s.strike()
   const answer = (ok: boolean, why?: string, ev?: Wire) =>
     void s
       .send({ t: 'gredeemed', room, ok, ...(why ? { why } : {}), ...(ev ? { ev } : {}) })
@@ -274,7 +280,7 @@ export async function onRedeem(cx: ServerCtx, m: Message, s: Session) {
     return answer(false, rec && rec.room === room ? 'revoked' : 'unknown')
   }
   const now = cx.clock.now()
-  if ((code.exp ?? Infinity) <= now) return answer(false, 'expired')
+  if ((await expiresAt(cx, code.id, code.exp)) <= now) return answer(false, 'expired')
   const cur = membershipOf(st, r.ik)
   if (cur === 'ban') return answer(false, 'banned')
   if (cur === 'join') {
@@ -284,7 +290,8 @@ export async function onRedeem(cx: ServerCtx, m: Message, s: Session) {
   const map = cx.redeemersOf(room)
   if (!map.has(r.ik)) {
     const perCode = [...map.values()].filter(x => x.code === code.id).length
-    if (perCode >= SERVER.redeemsPerCode || map.size >= SERVER.redeemsPerRoom)
+    const lim = cx.local.server
+    if (perCode >= lim.redeemsPerCode || map.size >= lim.redeemsPerRoom)
       return answer(false, 'busy')
   }
   let add = memberOf(st, r.ik)?.adds?.[0]
@@ -307,7 +314,7 @@ export async function onRedeem(cx: ServerCtx, m: Message, s: Session) {
   if (!map.has(r.ik) && add)
     map.set(r.ik, {
       code: code.id,
-      until: now + SERVER.redeemTtl,
+      until: now + cx.local.server.redeemTtl,
       add,
       ...(at !== undefined ? { at } : {}),
     })
@@ -337,7 +344,7 @@ export function sendInvite(cx: ServerCtx, s: Session, room: string) {
       .send({
         t: 'ginvite',
         room,
-        name: nameOf(cx.sumOf(room))?.name ?? 'P2P server',
+        name: nameOf(cx.sumOf(room), cx.local.display)?.name ?? 'P2P server',
         ev: rec.wire,
       })
       .catch(() => {})
@@ -367,11 +374,11 @@ export async function onInvite(cx: ServerCtx, m: Message, s: Session) {
   if (cur && (cur.joining || cx.myMembership(room) === 'join')) return
   if (!cur && (await cx.isDmId(room))) return
   const pending = [...cx.rooms.values()].filter(r => r.invite).length
-  if (!cur && pending >= SERVER.invites) return
+  if (!cur && pending >= cx.local.server.invites) return
   const now = cx.clock.now()
   await cx.putRoom({
     ...(cur ?? { ...blankRoom(room, '', now), kind: 'server', chans: {}, server: null }),
-    name: clip(m.name, LOCAL.server.nameMax),
+    name: clip(m.name, cx.local.server.nameMax),
     invite: { from, at: now, wire: v.wire },
   })
   cx.ensureRt(room)

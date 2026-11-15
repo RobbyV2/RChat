@@ -5,7 +5,8 @@ import type { Member } from './p2p_server_net'
 import type { EventRecord } from '../p2p/db'
 import { dmRoomId } from '../p2p/dm'
 import { PING_LOG, type PingRec } from '../p2p/inbox'
-import { PING_BATCH_MS, PingLog, pingAlive, pingOf, pingText } from '../p2p/ping_log'
+import { PingLog, pingAlive, pingOf, pingText } from '../p2p/ping_log'
+import { LOCAL } from '../p2p/limits'
 
 afterEach(stopAll)
 
@@ -54,7 +55,7 @@ describe('the P2P ping log against real conversations', () => {
     const { log, writes } = logOf(b, clock)
     for (const rec of arrived) log.note(room, null, 'mention', rec)
     expect(await stored(b)).toEqual([])
-    await later(PING_BATCH_MS * 3)
+    await later(LOCAL.inbox.pingBatchMs * 3)
     expect(writes()).toBe(1)
     const list = await stored(b)
     expect(list.map(p => p.id).sort()).toEqual(arrived.map(r => r.id).sort())

@@ -3,7 +3,7 @@
 import { useState, type ReactNode, type SyntheticEvent } from 'react'
 import { Crown, GripVertical, Trash2, X } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
-import { memberName, p2pServer, useP2p } from '../../lib/p2p/app'
+import { memberName, p2p, p2pServer, useP2p } from '../../lib/p2p/app'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { registerAppActions } from '../../lib/actions'
 import { ctxFor } from '../../lib/actions/ctx'
@@ -25,13 +25,7 @@ import {
   placeRole,
 } from '../../lib/p2p/roles'
 import { EVERYONE, P } from '../../lib/p2p/state'
-import {
-  ROLE_NAME_MAX,
-  type ChannelView,
-  type MemberView,
-  type RoleView,
-  type ServerView,
-} from '../../lib/p2p/server'
+import type { ChannelView, MemberView, RoleView, ServerView } from '../../lib/p2p/server'
 import { allowListTitle, emptyAllowText, type RestrictKey } from '../../lib/channel_access'
 import { matching, nextPage, page, PAGE } from '../../lib/paging'
 import { longPress } from '../context_menu'
@@ -98,7 +92,8 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
         group: 'p2p-roles',
         key: r.id,
         zones: z => z === 'p2p-roles',
-        onDrop: ({ index }) => moveRoles(v, placeRole(v.roles, r.id, fixed + index, v.rank)),
+        onDrop: ({ index }) =>
+          moveRoles(v, placeRole(v.roles, r.id, fixed + index, v.rank, p2p.limits().server)),
       })
     : longPress(menu)
   return (
@@ -127,7 +122,7 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
             />
             <RoleNameForm
               initial={r.name}
-              maxLength={ROLE_NAME_MAX}
+              maxLength={p2p.limits().server.roleNameMax}
               onRename={name => void p2pServer.editRole(v.id, r.id, { name, color: r.color })}
             />
           </span>
@@ -191,7 +186,7 @@ export function RolesTab({ v }: { v: ServerView }) {
       {edit && (
         <>
           <RoleCreateForm
-            maxLength={ROLE_NAME_MAX}
+            maxLength={p2p.limits().server.roleNameMax}
             onCreate={(name, color) =>
               p2pServer.createRole(v.id, { name, color: fromHex(color), bits: 0 })
             }

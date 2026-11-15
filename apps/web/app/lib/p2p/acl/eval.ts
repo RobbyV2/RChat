@@ -34,6 +34,7 @@ import {
 const B0 = BigInt(0)
 const B1 = BigInt(1)
 const bit = (i: number) => B1 << BigInt(i)
+// Start-only (limits.ts START_ONLY).
 const MASK_SWITCH = LOCAL.acl.maskSwitch
 
 // Decisions of the strata above the one being processed, and this stratum's cuts so far.

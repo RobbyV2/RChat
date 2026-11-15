@@ -192,6 +192,7 @@ export const makeNode = async (
     visibility?: Visibility
     limits?: NodeDeps['limits']
     session?: NodeDeps['session']
+    contacts?: NodeDeps['contacts']
   } = {}
 ) => {
   const db = opts.db ?? `test-${name}-${dbSeq++}-${Math.random()}`
@@ -205,6 +206,7 @@ export const makeNode = async (
       visibility: opts.visibility,
       limits: opts.limits,
       session: opts.session,
+      contacts: opts.contacts,
     },
     { name }
   )) as P2pNode

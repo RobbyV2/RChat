@@ -14,12 +14,12 @@ import {
   loadAround,
   loadMessages,
   loadPins,
-  PAGE,
   type Arrival,
 } from '../dm'
 import type { Fwd } from '../content'
-import { JUMP, type PageOpts } from '../jump'
+import type { PageOpts } from '../jump'
 import { Servers, type ServerView } from '../server'
+import { typingResendMs } from '../sync'
 import {
   store,
   reader,
@@ -27,6 +27,7 @@ import {
   useP2p,
   servers,
   dms,
+  limits,
   pingLog,
   p2pHost,
   chatScope,
@@ -93,7 +94,7 @@ const chatPage = (chat: P2pChat, o: PageOpts) => {
   const s = dbNow()
   const me = meNow()
   if (chat.ch) return servers ? servers.loadChannel(chat.room, chat.ch, o) : Promise.resolve(null)
-  return s && me ? loadMessages(s.db, chat.room, me, chat.peer, o) : Promise.resolve(null)
+  return s && me ? loadMessages(s.db, chat.room, me, chat.peer, o, limits) : Promise.resolve(null)
 }
 
 // Opened at a message, the view keeps its place when the conversation changes (an old copy's
@@ -105,7 +106,7 @@ export const refreshWindow = async (cur: P2pChat) => {
   const gen = jumpGen
   const page = await chatPage(cur, {
     from: first.sortKey,
-    limit: Math.max(PAGE, cur.messages.length),
+    limit: Math.max(limits.dm.page, cur.messages.length),
     newer: true,
   }).catch(() => null)
   const now = useP2p.getState().chat
@@ -122,10 +123,11 @@ export const loadChat = async (room: string, peer: string, keep = false) => {
   const cur = useP2p.getState().chat
   if (cur?.ch && cur.room === room) return loadChannel(room, cur.ch, keep)
   if (keep && cur?.room === room && cur.newer) return refreshWindow(cur)
-  const limit = keep && cur?.room === room ? Math.max(PAGE, cur.messages.length) : PAGE
+  const page = limits.dm.page
+  const limit = keep && cur?.room === room ? Math.max(page, cur.messages.length) : page
   const gen = jumpGen
   try {
-    const { messages, more } = await loadMessages(s.db, room, me, peer, { limit })
+    const { messages, more } = await loadMessages(s.db, room, me, peer, { limit }, limits)
     const missed = readMissed(await s.meta<unknown>(missedKey(room)).catch(() => undefined))
     const now = useP2p.getState().chat
     if (now?.room !== room || gen !== jumpGen) return
@@ -173,7 +175,7 @@ export const loadPinList = async (room: string) => {
   const me = meNow()
   const peer = useP2p.getState().rooms[room]?.peer ?? useP2p.getState().chat?.peer
   if (!s || !me || !peer) return
-  const list = await loadPins(s.db, room, me, peer).catch(() => null)
+  const list = await loadPins(s.db, room, me, peer, limits).catch(() => null)
   if (useP2p.getState().pins?.room === room) useP2p.setState({ pins: { room, list } })
 }
 
@@ -338,7 +340,7 @@ export const p2pDm = {
         ? sv
           ? sv.loadChannel(chat.room, chat.ch, { before: first?.sortKey })
           : Promise.resolve(null)
-        : loadMessages(s.db, chat.room, me, chat.peer, { before: first?.sortKey })
+        : loadMessages(s.db, chat.room, me, chat.peer, { before: first?.sortKey }, limits)
     ).catch(() => null)
     const now = useP2p.getState().chat
     if (now?.room !== chat.room || now.ch !== chat.ch) return
@@ -357,7 +359,7 @@ export const p2pDm = {
     const last = chat.messages[chat.messages.length - 1]
     const page = await chatPage(chat, {
       after: last?.sortKey,
-      limit: JUMP.after,
+      limit: limits.misc.jumpAfter,
       newer: true,
     }).catch(() => null)
     const now = useP2p.getState().chat
@@ -410,7 +412,7 @@ export const p2pDm = {
           ? sv
             ? sv.loadAround(chat.room, chat.ch, id)
             : Promise.resolve(null)
-          : loadAround(s.db, chat.room, me, chat.peer, id)
+          : loadAround(s.db, chat.room, me, chat.peer, id, limits)
       ).catch(() => null)
       if (!around) return
       const now = useP2p.getState().chat
@@ -606,6 +608,12 @@ export const p2pDm = {
     const list = Object.values(useP2p.getState().rooms).filter(r => r.unread || r.pings)
     if (list.length && !dms) return p2pHost.toast(ELSEWHERE_TEXT)
     for (const r of list) p2pDm.markRead(r.id)
+  },
+
+  // How often a composer says it is still typing, by the window of the place it types in.
+  typingEvery(room: string) {
+    const server = targetOf(room).kind === 'server'
+    return typingResendMs(server ? limits.gossip.typingMs : limits.sync.typingMs)
   },
 
   typing(room: string, on: boolean) {

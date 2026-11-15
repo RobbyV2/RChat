@@ -9,7 +9,6 @@ import { dmRoomId, movedText, MOVING_TEXT, RESUME_TEXT } from '../../lib/p2p/dm'
 import { levelOf, mutedOf } from '../../lib/notify'
 import {
   displayName,
-  PETNAME_MAX,
   requests as requestsOf,
   shieldOf,
   visibleContacts,
@@ -795,7 +794,7 @@ function RenameDialog({ ik }: { ik: string }) {
       <input
         autoFocus
         value={name}
-        maxLength={PETNAME_MAX}
+        maxLength={p2p.limits().contacts.petnameMax}
         onChange={e => setName(e.target.value)}
         onKeyDown={e => {
           if (enterKey(e)) save()

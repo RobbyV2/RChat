@@ -1,13 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, settle, waitFor } from './p2p_net'
-import { OFFER_SKEW_MS, type OfferGuard, type OfferProof, type P2pNode } from '../p2p/node'
-import {
-  CHECKS_PER_MIN,
-  HELD_PER_PEER,
-  OfferGate,
-  PeerTransport,
-  answerConfig,
-} from '../p2p/transport'
+import type { OfferGuard, OfferProof, P2pNode } from '../p2p/node'
+import { LOCAL } from '../p2p/limits'
+import { OfferGate, PeerTransport, answerConfig } from '../p2p/transport'
 import { PROMPTS, RelayBook, defaultRelays, relayBook, type Decision } from '../relays'
 import { ice } from '../ice'
 
@@ -134,7 +129,7 @@ describe('relay prompts from offers', () => {
       )
     )
     const stale = guardOf(bob).vouch(bob.peerId, alice.peerId, ['turn.b.example'])
-    clock.t += OFFER_SKEW_MS + 1000
+    clock.t += LOCAL.node.offerSkewMs + 1000
     await offer(offerOf(bob, alice, ['turn.b.example'], stale))
     await offer({ src: bob.peerId, meta: { relays: ['bad host!'], ask: stale } })
     expect(asked).toEqual([])
@@ -229,7 +224,7 @@ describe('relay prompts from offers', () => {
       gate.offer(o.src, o.meta, () => (answered += 1))
     }
     await settle()
-    expect(waiting.length).toBe(HELD_PER_PEER)
+    expect(waiting.length).toBe(LOCAL.transport.heldPerPeer)
     waiting[0]('once')
     await settle()
     expect(answered).toBe(1)
@@ -245,12 +240,12 @@ describe('relay prompts from offers', () => {
       }),
       () => now
     )
-    for (let i = 0; i < CHECKS_PER_MIN * 2; i++)
+    for (let i = 0; i < LOCAL.transport.checksPerMin * 2; i++)
       counting.offer(bob.peerId, { relays: ['x.example'] }, () => {})
-    expect(checked).toBe(CHECKS_PER_MIN)
+    expect(checked).toBe(LOCAL.transport.checksPerMin)
     now += 60_000
     counting.offer(bob.peerId, { relays: ['x.example'] }, () => {})
-    expect(checked).toBe(CHECKS_PER_MIN + 1)
+    expect(checked).toBe(LOCAL.transport.checksPerMin + 1)
   })
 
   test('without the offer hook, connections use relays only while asking is on', () => {

@@ -274,6 +274,13 @@
     "contacts.introsMax": [3, 1, 64],
     "contacts.petnameMax": [32, 8, 256],
     "contacts.certsKept": [8, 2, 256],
+    "contacts.certs2Kept": [32, 8, 1024],
+    "contacts.revs2Kept": [32, 8, 1024],
+    "contacts.profiles2Kept": [8, 2, 256],
+    "contacts.badgesHeld": [4, 1, 64],
+    "contacts.storedRecords": [256, 64, 4096],
+    "contacts.storedV1": [64, 8, 4096],
+    "contacts.v1Checks": [4096, 4096, 4096],
     "inbox.pingsKept": [500, 50, 100000],
     "inbox.pingKeepMs": [2592000000, 86400000, 31536000000],
     "inbox.pageSize": [30, 10, 500],
@@ -288,6 +295,27 @@
     "misc.cutMs": [604800000, 86400000, 31536000000],
     "misc.lostTimes.0": [3600000, 3600000, 3600000],
     "misc.lostTimes.1": [86400000, 86400000, 86400000],
-    "misc.lostTimes.2": [604800000, 604800000, 604800000]
-  }
+    "misc.lostTimes.2": [604800000, 604800000, 604800000],
+    "misc.infoWaitMs": [5000, 5000, 5000],
+    "misc.chainChecks": [8192, 8192, 8192]
+  },
+  "start": [
+    "acl.maskSwitch",
+    "acl.raceGrowth",
+    "acl.raceSteps",
+    "acl.s2Events",
+    "acl.s2Ids",
+    "cache.chunk",
+    "contacts.v1Checks",
+    "misc.chainChecks",
+    "misc.infoWaitMs"
+  ],
+  "refresh": [
+    { "refresh": ["gossip.typingRelayMs"], "expiry": "gossip.typingMs", "times": 2 },
+    { "refresh": ["session.pingMs"], "expiry": "session.deadMs", "times": 2 },
+    { "refresh": ["gossip.presenceMs"], "expiry": "gossip.presenceTtl", "times": 2 },
+    { "refresh": ["voice.refreshMs"], "expiry": "voice.ttlMs", "times": 2 },
+    { "refresh": ["voice.relayMs"], "expiry": "voice.ttlMs", "times": 2 },
+    { "refresh": ["voice.refreshMs", "voice.relayMs"], "expiry": "voice.lostMs", "times": 1 }
+  ]
 }

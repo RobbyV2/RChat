@@ -38,6 +38,7 @@ import {
   verifyTagged,
   type Succession,
 } from './keys'
+import { LOCAL, type Local } from './limits'
 
 // What one contact holds about an identity's protection: its creation-record
 // state (known, none, unknown) with the pending claims, the chain and the devices it trusts by
@@ -55,12 +56,12 @@ export type Src = 'card' | 'hello' | 'qr' | 'safety' | 'server' | 'carried'
 export const CLAIMS_MAX = 4
 export const HELD_MS = 30 * 86_400_000
 export const HELD_RECORDS = CHAIN_MAX + 1
-// Most stored records a contact is read from.
-const STORED_RECORDS = 256
-export const CERTS2_MAX = 32
-export const REVS2_MAX = 32
-export const PROFILES2_MAX = 8
-export const BADGES_HELD = 4
+
+// What a contact keeps and reads back, from the account's limits (limits.ts `contacts`).
+export type ClaimLimits = Pick<
+  Local['contacts'],
+  'certs2Kept' | 'revs2Kept' | 'profiles2Kept' | 'badgesHeld' | 'storedRecords' | 'storedV1'
+>
 
 const PINS = new Set<Src>(['qr', 'safety'])
 const DIRECT = new Set<Src>(['card', 'hello', 'qr', 'safety'])
@@ -156,8 +157,10 @@ const signedByOld = (x: Record<string, unknown>): boolean => {
   return verifyTagged(old, TAG2.succ1, { v, old, new: next, at }, sig_old)
 }
 
-// Hellos repeat their v1 records, so what the identity key signed is checked once.
-const V1_MAX = 4096
+// Hellos repeat their v1 records, so what the identity key signed is checked once, for every
+// account of the tab. The checks kept are cleared past `contacts.v1Checks`, which is start-only
+// (limits.ts START_ONLY).
+const V1_MAX = LOCAL.contacts.v1Checks
 const v1Checks = new Map<string, boolean>()
 const v1Ok = (kind: 'cert' | 'revoke' | 'profile', ik: string, x: unknown): boolean => {
   if (!isRecord(x) || typeof x.sig !== 'string') return false
@@ -271,7 +274,8 @@ export class ContactClaims {
     readonly ik: string,
     src: Src,
     first: readonly ClaimMsg[] = [],
-    now = 0
+    now = 0,
+    private lim: ClaimLimits = LOCAL.contacts
   ) {
     this.now = now
     const cr = first.find(
@@ -468,7 +472,8 @@ export class ContactClaims {
   private addCert2(c: CertV2) {
     if (this.certs2.some(x => x.dk === c.dk && x.n === c.n && x.pk === c.pk)) return
     this.certs2.push(c)
-    if (this.certs2.length > CERTS2_MAX) this.prune(this.certs2, CERTS2_MAX, atHead)
+    const max = this.lim.certs2Kept
+    if (this.certs2.length > max) this.prune(this.certs2, max, atHead)
   }
 
   // The chains whose keys sign v2 records: the known one, or while unknown each pending claim's
@@ -487,8 +492,9 @@ export class ContactClaims {
     const key = revOf(r)
     if (this.revs2.some(x => revOf(x) === key)) return
     this.revs2.push(r)
-    if (this.revs2.length > REVS2_MAX)
-      this.prune(this.revs2, REVS2_MAX, (C, x) => C.heads.some(h => revokes(C, h, x)))
+    const max = this.lim.revs2Kept
+    if (this.revs2.length > max)
+      this.prune(this.revs2, max, (C, x) => C.heads.some(h => revokes(C, h, x)))
   }
 
   private addProfile2(p: ProfileV2) {
@@ -498,7 +504,8 @@ export class ContactClaims {
       return
     }
     this.profiles2.push(p)
-    if (this.profiles2.length > PROFILES2_MAX) this.prune(this.profiles2, PROFILES2_MAX, atHead)
+    const max = this.lim.profiles2Kept
+    if (this.profiles2.length > max) this.prune(this.profiles2, max, atHead)
   }
 
   // Past its cap a list drops, oldest first, what counts at no head of the chain (while unknown,
@@ -717,7 +724,7 @@ export class ContactClaims {
     const verdict = tokenOk(tok, C)
     if (verdict === 'wait') {
       this.badgeTodo.push(tok)
-      cut(this.badgeTodo, BADGES_HELD)
+      cut(this.badgeTodo, this.lim.badgesHeld)
       return
     }
     if (verdict !== 'take') return
@@ -766,11 +773,11 @@ export class ContactClaims {
   }
 
   // Reads what `toJSON` wrote, checking every record again; null when it isn't one.
-  static parse(x: unknown): ContactClaims | null {
+  static parse(x: unknown, lim: ClaimLimits = LOCAL.contacts): ContactClaims | null {
     if (!isRecord(x) || x.v !== 1 || !isKeyId(x.ik)) return null
     const { st } = x
     if (st !== 'known' && st !== 'none' && st !== 'unknown') return null
-    const c = new ContactClaims(x.ik, 'carried')
+    const c = new ContactClaims(x.ik, 'carried', [], 0, lim)
     const list = <T>(v: unknown, ok: (y: unknown) => y is T, max: number): T[] =>
       Array.isArray(v) ? v.filter(ok).slice(0, max) : []
     const key = (y: unknown): y is string => isKeyId(y)
@@ -784,15 +791,19 @@ export class ContactClaims {
     c.st = st
     c.now = isInt(x.now) ? x.now : 0
     c.proof = flag(x.proof) || st === 'none'
-    c.certs1 = new Set(list(x.certs1, key, 64))
-    c.revs1 = new Set(list(x.revs1, key, 64))
-    c.certs2 = list(x.certs2, (y): y is CertV2 => verifyCertV2(y, c.ik), CERTS2_MAX)
-    c.revs2 = list(x.revs2, (y): y is RevocationV2 => isRevocationV2(y, c.ik), REVS2_MAX)
-    c.profiles2 = list(x.profiles2, (y): y is ProfileV2 => verifyProfileV2(y, c.ik), PROFILES2_MAX)
-    if (st === 'known') for (const r of list(x.recs, recOk, STORED_RECORDS)) c.addRec(r)
+    c.certs1 = new Set(list(x.certs1, key, lim.storedV1))
+    c.revs1 = new Set(list(x.revs1, key, lim.storedV1))
+    c.certs2 = list(x.certs2, (y): y is CertV2 => verifyCertV2(y, c.ik), lim.certs2Kept)
+    c.revs2 = list(x.revs2, (y): y is RevocationV2 => isRevocationV2(y, c.ik), lim.revs2Kept)
+    c.profiles2 = list(
+      x.profiles2,
+      (y): y is ProfileV2 => verifyProfileV2(y, c.ik),
+      lim.profiles2Kept
+    )
+    if (st === 'known') for (const r of list(x.recs, recOk, lim.storedRecords)) c.addRec(r)
     if (st === 'unknown') {
       c.pending = list(x.pending, crOk, CLAIMS_MAX + 1)
-      const held = list(x.heldRecs, recOk, STORED_RECORDS)
+      const held = list(x.heldRecs, recOk, lim.storedRecords)
       for (const r of parentsFirst(held)) c.hold(r)
       const kept = new Set(c.heldRecs)
       c.heldRecs = held.filter(r => kept.has(r))
@@ -806,7 +817,7 @@ export class ContactClaims {
     c.warning =
       w === 'impersonation' || w === 'ik-hot' || w === 'phrase' || w === 'move-dead' ? w : null
     if (tokenShape(x.badge) && x.badge.ik === c.ik) c.badge = x.badge
-    c.badgeTodo = list(x.badgeTodo, tokenShape, BADGES_HELD).filter(t => t.ik === c.ik)
+    c.badgeTodo = list(x.badgeTodo, tokenShape, lim.badgesHeld).filter(t => t.ik === c.ik)
     return c
   }
 }

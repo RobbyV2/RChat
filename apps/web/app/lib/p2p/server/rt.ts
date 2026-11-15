@@ -21,8 +21,8 @@ export interface SyncRt {
   rejected: Set<string>
   // Invites (add ids, by inviter) another member posted: a tick posts a mark, so the invitee's
   // join has the acknowledgement of a third member it needs (W3(e)), while the invite is
-  // pending and its inviter a member; at most one per inviter per VOUCH.inviterMs and one per room
-  // per VOUCH.roomMs.
+  // pending and its inviter a member; at most one per inviter per `server.vouchInviterMs` and one per room
+  // per `server.vouchRoomMs`.
   vouch: Map<string, string>
   vouchedAt: number
   // Our own ACL events we must hold before we sign again.
@@ -32,7 +32,7 @@ export interface SyncRt {
 // Storage passes, bodies wanted back, proofs and acknowledgements (storage.ts, the only writer;
 // the others mark work due through it).
 export interface StoreRt {
-  // Storage passes (SERVER.storeMs): due when the state or the held content changed.
+  // Storage passes (`server.storeMs`): due when the state or the held content changed.
   storeDirty: boolean
   storeAt: number
   // Content held without its body (purged, evicted, stripped by its author), and those of them

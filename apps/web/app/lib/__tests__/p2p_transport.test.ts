@@ -37,7 +37,7 @@ describe('PeerJS transport', () => {
         made.push(this)
       }
     }
-    const t = new PeerTransport(Made as unknown as typeof Peer, 50)
+    const t = new PeerTransport({}, Made as unknown as typeof Peer, 50)
     const err = await t
       .listen(
         'rcp-x',
@@ -68,7 +68,7 @@ describe('PeerJS transport', () => {
         this.destroyed = true
       }
     }
-    const t = new PeerTransport(NoWebRtc as unknown as typeof Peer, 5000)
+    const t = new PeerTransport({}, NoWebRtc as unknown as typeof Peer, 5000)
     const err = await t
       .listen(
         'rcp-x',

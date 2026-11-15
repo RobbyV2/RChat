@@ -30,7 +30,7 @@ import {
   type Hashed,
 } from './hashing'
 import type { P2pNode } from './node'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 import { realClock, type Clock, type Pipe, type Session } from './session'
 
 // P2P attachments. Files are split into 1 MiB blocks, named by a root hash over
@@ -40,8 +40,6 @@ import { realClock, type Clock, type Pipe, type Session } from './session'
 // several holders at once and a download resumes after a disconnect or a reload. A holder serves
 // a file only to a contact who shares a conversation with a live message that carries it, and
 // checks that again for every block.
-
-const { holdersKept, thumbSide, lateMax, touchedMax, ...BULK_LOCAL } = LOCAL.bulk
 
 export const BULK = {
   // Plaintext bytes of a block per frame.
@@ -58,10 +56,10 @@ export const BULK = {
   // Pipes a peer may open to us (still opening ones included), per session and per identity.
   inSession: 2,
   inPeer: 4,
-  ...BULK_LOCAL,
 }
 
-export type BulkLimits = typeof BULK
+// With limits.ts `bulk`.
+export type BulkLimits = typeof BULK & Local['bulk']
 
 export const PIPE_INFO = 'rchat-p2p bulk pipe1'
 
@@ -430,7 +428,7 @@ export class BulkLink {
     last: () => void = () => {}
   ) {
     const hb = fromB64u(h)
-    const step = BULK.chunk * BULK.batch
+    const step = BULK.chunk * this.limits.batch
     for (let at = 0; at < data.length; at += step) {
       if (this.state !== 'open' || !live()) return false
       const parts: Uint8Array[] = []
@@ -511,7 +509,8 @@ export class BulkLink {
       const timer = this.clock.set(() => {
         this.calls.delete(rid)
         this.late.add(rid)
-        if (this.late.size > lateMax) this.late.delete(this.late.values().next().value as number)
+        if (this.late.size > this.limits.lateMax)
+          this.late.delete(this.late.values().next().value as number)
         resolve(null)
       }, this.limits.openMs * 2)
       this.calls.set(rid, {
@@ -682,8 +681,6 @@ export interface BlobsDeps {
 
 const hashOk = (x: unknown): x is string => typeof x === 'string' && bytesOf(x, 32) !== null
 
-export const HOLDERS_KEPT = holdersKept
-
 const blockOk = (x: unknown): x is number => Number.isSafeInteger(x) && (x as number) >= 0
 
 export class Blobs {
@@ -706,7 +703,7 @@ export class Blobs {
 
   constructor(private deps: BlobsDeps) {
     this.clock = deps.clock ?? realClock
-    this.limits = { ...BULK, ...deps.limits }
+    this.limits = { ...BULK, ...LOCAL.bulk, ...deps.limits }
     deps.node.use({
       attach: () => {},
       ready: () => this.kick(),
@@ -1281,10 +1278,10 @@ export class Blobs {
     return this.holders.get(h)?.links ?? new Set<BulkLink>()
   }
 
-  // Files probed and not downloaded are forgotten once stale, and past HOLDERS_KEPT.
+  // Files probed and not downloaded are forgotten once stale, and past `holdersKept`.
   private pruneHolders() {
     const now = this.clock.now()
-    let over = this.holders.size - HOLDERS_KEPT
+    let over = this.holders.size - this.limits.holdersKept
     for (const [h, x] of this.holders) {
       if (this.downloads.has(h)) continue
       if (over > 0 || now - x.at >= this.limits.probeMs) {
@@ -1750,7 +1747,7 @@ export class Blobs {
     const last = this.touched.get(h)
     if (last !== undefined && now - last < this.limits.touchMs) return
     this.touched.set(h, now)
-    if (this.touched.size > touchedMax)
+    if (this.touched.size > this.limits.touchedMax)
       this.touched.delete(this.touched.keys().next().value as string)
     void this.store.updateBlob(h, cur => (cur ? { ...cur, lastUsed: now } : null)).catch(() => {})
   }
@@ -1873,19 +1870,21 @@ export class Blobs {
 export const isThumbJpeg = (b: Uint8Array) =>
   b.length >= 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff
 
-// Largest side a thumbnail may say it has.
-export const THUMB_SIDE = thumbSide
-
 // A thumbnail claim from a message: b64u, at most 6 KiB, a JPEG by its bytes whose header says
-// it is at most 1024 px a side (read without decoding, so a tiny file can't declare a huge
-// image). The UI still has to decode it as an image before showing it.
-export const thumbBytes = (thumb: string | undefined, max = 6 * 1024) => {
+// it is at most `side` px a side (limits.ts `bulk.thumbSide`, read without decoding, so a tiny
+// file can't declare a huge image). The UI still has to decode it as an image before showing it.
+export const thumbBytes = (
+  thumb: string | undefined,
+  lim: Pick<BulkLimits, 'thumbSide'> = LOCAL.bulk,
+  max = 6 * 1024
+) => {
+  const side = lim.thumbSide
   if (!thumb) return null
   try {
     const b = fromB64u(thumb)
     if (b.length === 0 || b.length > max || !isThumbJpeg(b)) return null
     const size = imageSize(b)
-    return size && size.w >= 1 && size.h >= 1 && size.w <= THUMB_SIDE && size.h <= THUMB_SIDE
+    return size && size.w >= 1 && size.h >= 1 && size.w <= side && size.h <= side
       ? { bytes: b, ...size }
       : null
   } catch {

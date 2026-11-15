@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Eye, Waypoints } from 'lucide-react'
 import { useStore } from '../../lib/store'
-import { CODE_TTLS, NEEDS_INVITER, p2p, p2pRail, p2pServer, useP2p } from '../../lib/p2p/app'
+import { codeTtls, NEEDS_INVITER, p2p, p2pRail, p2pServer, useP2p } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
 import { P } from '../../lib/p2p/state'
+import { fieldMax } from '../../lib/p2p/event_v2'
 import { CopyButton, QrCode } from '../config_sync'
 import { Dialog, FieldError, fieldCls, filledBtn, Masked, textBtn } from '../ui'
 import { FolderColorField } from '../folder_dialog'
@@ -173,7 +174,8 @@ export function CodeList({ room, version }: { room: string; version: number }) {
 export function ServerInviteDialog({ room }: { room: string }) {
   const v = useP2p(s => s.servers[room])
   const contacts = useP2p(s => s.contacts)
-  const [ttl, setTtl] = useState(CODE_TTLS[1].ms)
+  const ttls = codeTtls(p2p.limits().server)
+  const [ttl, setTtl] = useState(ttls[1].ms)
   const [label, setLabel] = useState('')
   const [code, setCode] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -218,7 +220,7 @@ export function ServerInviteDialog({ room }: { room: string }) {
                 aria-label="Expires after"
                 className={fieldCls}
               >
-                {CODE_TTLS.map(t => (
+                {ttls.map(t => (
                   <option key={t.ms} value={t.ms}>
                     {t.label}
                   </option>
@@ -229,7 +231,7 @@ export function ServerInviteDialog({ room }: { room: string }) {
               Label (only for you and the server)
               <input
                 value={label}
-                maxLength={64}
+                maxLength={fieldMax(p2p.limits().display.label)}
                 onChange={e => setLabel(e.target.value)}
                 placeholder="For the book club"
                 className={fieldCls}
@@ -375,7 +377,7 @@ export function ServerNewDialog({
               <input
                 autoFocus
                 value={name}
-                maxLength={100}
+                maxLength={p2p.limits().server.nameMax}
                 onChange={e => setName(e.target.value)}
                 onKeyDown={e => {
                   if (e.key === 'Enter' && name.trim() && !busy) void create()

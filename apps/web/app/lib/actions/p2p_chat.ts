@@ -21,16 +21,7 @@ import {
 import { fmtSize } from '../bytes'
 import { P2P_IP_HINT, ROUTE_LABEL } from '../call_choice'
 import type { ForwardClip } from '../forward'
-import {
-  BIG_FILE,
-  p2pBadge,
-  p2pCall,
-  p2pDm,
-  p2pFiles,
-  p2pThread,
-  p2pUser,
-  useP2p,
-} from '../p2p/app'
+import { p2p, p2pBadge, p2pCall, p2pDm, p2pFiles, p2pThread, p2pUser, useP2p } from '../p2p/app'
 import type { Attachment } from '../p2p/content'
 import { displayName } from '../p2p/contacts'
 import { messageActs, type P2pMessage } from '../p2p/dm'
@@ -111,7 +102,7 @@ export const forwardTo = async (ik: string, p: P2pMessage, author: string) => {
 
 export const startDownload = (att: Attachment) => {
   const run = () => void p2pFiles.download(att)
-  if (att.size <= BIG_FILE) return run()
+  if (att.size <= p2p.limits().files.bigFile) return run()
   get().askConfirm({
     title: 'Download a large file',
     body: `This file is ${fmtSize(att.size)}. It is stored on this device and shared with others in this conversation.`,

@@ -2,7 +2,6 @@ import { decide, pastOf } from './acl/admit'
 import { orphanDrops, stableDeny, underDroppable } from './acl/storage'
 import type { AclContent, AclEv } from './acl/rules'
 import type { ContentEv } from './acl/visibility'
-import { LOCAL } from './limits'
 import type { RoomCtx } from './acl_room_ctx'
 import type { Cause, Drops, Plan, ProofCand, Purgeable } from './acl_room'
 
@@ -257,7 +256,7 @@ export function acks(cx: RoomCtx, me: string): string[] {
     for (const P of F.mem) if (P !== r.a && P !== t.a) others += 1
     if (others < 3 || v.redactionWitnessed(r, t)) continue
     out.push(r.id)
-    if (out.length >= LOCAL.acl.acksPerPass) break
+    if (out.length >= cx.r.local.acl.acksPerPass) break
   }
   return out
 }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { b64u, randomBytes } from '../p2p/canonical'
-import { Gossip, GOSSIP } from '../p2p/gossip'
+import { Gossip } from '../p2p/gossip'
+import { LOCAL } from '../p2p/limits'
 import type { Message } from '../p2p/frames'
 import type { Session } from '../p2p/session'
 import type { Link } from '../p2p/sync'
@@ -174,7 +175,7 @@ const simulate = (seed: number, total = 300, online = 30) => {
     await settle(3)
     for (const n of nodes.values()) n.gossip.tick()
     await settle(3)
-    clock.t += GOSSIP.tickMs
+    clock.t += LOCAL.gossip.tickMs
   }
   // A member drops off and comes back: all its sessions close.
   const churn = (n: number) => {
@@ -215,7 +216,7 @@ describe('gossip at scale', () => {
           await sim.round()
           await settle(3)
           for (const n of sim.nodes.values()) {
-            expect(linkCount(n, sim.room)).toBeLessThanOrEqual(GOSSIP.perRoom)
+            expect(linkCount(n, sim.room)).toBeLessThanOrEqual(LOCAL.gossip.perRoom)
             worst = Math.max(worst, n.sessions.size)
           }
         }
@@ -223,10 +224,12 @@ describe('gossip at scale', () => {
         // period whose answer is pending, and close if they find no use: the
         // owner holds no session with everyone online.
         const sizes = [...sim.nodes.values()].map(n => n.sessions.size)
-        expect(sizes.reduce((a, b) => a + b, 0) / sizes.length).toBeLessThanOrEqual(GOSSIP.perRoom)
-        expect(worst).toBeLessThanOrEqual(GOSSIP.perRoom + DIALS)
+        expect(sizes.reduce((a, b) => a + b, 0) / sizes.length).toBeLessThanOrEqual(
+          LOCAL.gossip.perRoom
+        )
+        expect(worst).toBeLessThanOrEqual(LOCAL.gossip.perRoom + DIALS)
         expect((sim.nodes.get(sim.owner) as SimNode).sessions.size).toBeLessThanOrEqual(
-          GOSSIP.perRoom + DIALS
+          LOCAL.gossip.perRoom + DIALS
         )
         let far = 0
         for (const origin of [...sim.nodes.keys()].slice(0, 30))
@@ -245,7 +248,7 @@ describe('gossip at scale', () => {
       try {
         for (let i = 0; i < 40; i += 1) await sim.round()
         for (const n of sim.nodes.values())
-          expect(linkCount(n, sim.room)).toBeLessThanOrEqual(GOSSIP.perRoom)
+          expect(linkCount(n, sim.room)).toBeLessThanOrEqual(LOCAL.gossip.perRoom)
         // Links are agreed: both ends hold them.
         for (const n of sim.nodes.values())
           for (const l of n.links.get(sim.room)?.values() ?? [])
@@ -259,7 +262,7 @@ describe('gossip at scale', () => {
           worst = Math.max(worst, rounds(sim.nodes, sim.room, origin))
         expect(worst).toBeLessThanOrEqual(5)
         // Re-sampling keeps the overlay connected and within budget.
-        sim.clock.t += GOSSIP.resampleMs
+        sim.clock.t += LOCAL.gossip.resampleMs
         for (const n of sim.nodes.values()) n.gossip.resample()
         for (let i = 0; i < 20; i += 1) await sim.round()
         let after = 0
@@ -267,7 +270,7 @@ describe('gossip at scale', () => {
           after = Math.max(after, rounds(sim.nodes, sim.room, origin))
         expect(after).toBeLessThanOrEqual(5)
         for (const n of sim.nodes.values())
-          expect(linkCount(n, sim.room)).toBeLessThanOrEqual(GOSSIP.perRoom)
+          expect(linkCount(n, sim.room)).toBeLessThanOrEqual(LOCAL.gossip.perRoom)
       } catch (e) {
         console.error(`scale seed ${seed}`)
         throw e

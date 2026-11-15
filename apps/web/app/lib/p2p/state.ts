@@ -9,7 +9,7 @@ import {
   type Rank,
 } from './acl/rules'
 import type { Membership, MemberSum, RoleSum, Summary } from './acl/summary'
-import { AGREED, LOCAL } from './limits'
+import { AGREED, type Local } from './limits'
 
 // The current state of a P2P server as the page reads it: the mirror of the evaluator's facts
 // (acl_room.ts Summary), with the readers the views, gates and gossip use. Values members write
@@ -23,10 +23,12 @@ export type { Membership }
 export type HistoryVis = 'shared' | 'joined'
 
 export const LIMITS = {
-  ...LOCAL.display,
   // Live codes of a member without Manage server (the rules cap them per device).
   codesPerMember: AGREED.codesPerDev,
 }
+
+// limits.ts `display`: what this device shows of names, topics, labels and reasons members write.
+export type DisplayLimits = Local['display']
 
 export const CHANNEL_KINDS: readonly string[] = ['text', 'voice']
 
@@ -101,8 +103,11 @@ export const outranks = (s: Summary, ik: string, other: string) =>
 
 export const membersOf = (s: Summary) => Object.entries(s.members).map(([ik, m]) => ({ ik, ...m }))
 
-export const nameOf = (s: Summary): { name: string; color: number | null } | null => {
-  const n = text(s.settings?.name, LIMITS.name)
+export const nameOf = (
+  s: Summary,
+  lim: Pick<DisplayLimits, 'name'>
+): { name: string; color: number | null } | null => {
+  const n = text(s.settings?.name, lim.name)
   if (!n) return null
   const c = int(s.settings?.color)
   return { name: n, color: c !== null && c >= 0 && c <= 0xffffff ? c : null }
@@ -114,14 +119,14 @@ export const historyOf = (s: Summary): HistoryVis => {
 }
 
 // Live channels of a kind this version knows, in display order.
-export const channelsOf = (s: Summary) => {
+export const channelsOf = (s: Summary, lim: Pick<DisplayLimits, 'name' | 'topic'>) => {
   const out: ({ id: string } & ChannelContent)[] = []
   for (const [id, c] of Object.entries(s.channels)) {
-    const name = text(c.name, LIMITS.name)
+    const name = text(c.name, lim.name)
     const kind = typeof c.kind === 'string' ? c.kind : 'text'
     if (!isShortId(id) || !name || c.gone === true || !CHANNEL_KINDS.includes(kind)) continue
     const ch: { id: string } & ChannelContent = { id, name, kind, pos: int(c.pos) ?? 0 }
-    const topic = text(c.topic, LIMITS.topic)
+    const topic = text(c.topic, lim.topic)
     if (topic) ch.topic = topic
     if (c.restrict_view === true) ch.restrict_view = true
     if (c.restrict_send === true) ch.restrict_send = true
@@ -137,9 +142,9 @@ export const channelOf = (s: Summary, id: string) => {
   return c && c.gone !== true ? c : undefined
 }
 
-export const systemOf = (s: Summary): SystemContent => {
+export const systemOf = (s: Summary, lim: Pick<DisplayLimits, 'name' | 'topic'>): SystemContent => {
   const sys = s.settings?.system as Partial<SystemContent> | undefined
-  const texts = channelsOf(s).filter(c => c.kind === 'text')
+  const texts = channelsOf(s, lim).filter(c => c.kind === 'text')
   const pick = typeof sys?.ch === 'string' ? texts.find(c => c.id === sys.ch) : undefined
   return {
     ch: (pick ?? texts[0])?.id ?? null,

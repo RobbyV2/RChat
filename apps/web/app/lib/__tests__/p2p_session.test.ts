@@ -15,7 +15,8 @@ import {
   Reassembler,
   WIRE_MAX,
 } from '../p2p/frames'
-import { LIMITS, Session, type SessionOpts } from '../p2p/session'
+import { Session, type SessionOpts } from '../p2p/session'
+import { LOCAL } from '../p2p/limits'
 import { ManualClock, pipePair, settle, waitFor } from './p2p_net'
 
 const device = (suffix = 0): Me & { ik: KeyPair } => {
@@ -364,7 +365,7 @@ describe('session', () => {
     wire.cut = true
     // Gone once not heard from for deadMs, not at the next ping after it.
     const heard = (sa as unknown as { lastHeard: number }).lastHeard
-    await clock.advance(heard + LIMITS.deadMs - 1000 - clock.now())
+    await clock.advance(heard + LOCAL.session.deadMs - 1000 - clock.now())
     expect(sa.state).toBe('ready')
     await clock.advance(1002)
     expect(sa.state).toBe('closed')
@@ -452,7 +453,7 @@ describe('session', () => {
     await settle()
     expect(sa.state).toBe('open')
     expect(sb.state).toBe('open')
-    await clock.advance(LIMITS.handshakeMs - 1000)
+    await clock.advance(LOCAL.session.handshakeMs - 1000)
     expect(sb.state).toBe('open')
     await clock.advance(10 * 60_000)
     expect(sb.state).toBe('closed')
@@ -463,7 +464,7 @@ describe('session', () => {
   test('a ready session outlives the handshake deadline', async () => {
     const { sa, sb, clock } = pair()
     await settle()
-    await clock.advance(LIMITS.handshakeMs * 3)
+    await clock.advance(LOCAL.session.handshakeMs * 3)
     expect(sa.state).toBe('ready')
     expect(sb.state).toBe('ready')
   })
@@ -500,8 +501,8 @@ describe('session', () => {
     }
     expect(sb.state).toBe('closed')
     expect(sb.reason).toBe('strikes')
-    expect(peak <= LIMITS.frameBacklogBytes).toBe(true)
-    expect(sent * WIRE_MAX < LIMITS.frameBacklogBytes + 2 * WIRE_MAX).toBe(true)
+    expect(peak <= LOCAL.session.frameBacklogBytes).toBe(true)
+    expect(sent * WIRE_MAX < LOCAL.session.frameBacklogBytes + 2 * WIRE_MAX).toBe(true)
   })
 
   test('a stranger flooding before its hello is closed as a failed handshake', async () => {

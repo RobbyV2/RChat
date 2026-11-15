@@ -1,4 +1,4 @@
-import { DAG, getEvents } from '../dag'
+import { getEvents } from '../dag'
 import { serverWire, type EventRecord } from '../db'
 import type { Wire } from '../event_v1'
 import type { WireV2 } from '../event_v2'
@@ -15,7 +15,7 @@ export function gate(cx: ServerCtx, room: string, ik: string): 'all' | 'joined' 
   if (m === 'invite') return 'acl'
   if (m !== 'join')
     return cx.myMembership(room) === 'join' &&
-      (cx.redeeming(room, ik) || cutOut(s, ik, cx.clock.now()))
+      (cx.redeeming(room, ik) || cutOut(s, ik, cx.clock.now(), cx.local.misc))
       ? 'acl'
       : 'none'
   return historyOf(s) === 'joined' ? 'joined' : 'all'
@@ -69,7 +69,7 @@ export async function walkContent(
   let steps = 0
   let more = false
   while (queue.length) {
-    if (picked.length >= limit || steps >= DAG.walk) {
+    if (picked.length >= limit || steps >= cx.local.dag.walk) {
       more = true
       break
     }

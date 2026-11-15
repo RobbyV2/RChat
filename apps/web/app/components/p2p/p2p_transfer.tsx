@@ -87,8 +87,8 @@ export function P2pExportOption({
   value: PassState
   onChange: (v: PassState) => void
 }) {
-  const strength = passStrength(value.pass)
-  const problem = value.again ? passProblem(value.pass, value.again) : null
+  const strength = passStrength(value.pass, p2p.limits().transfer)
+  const problem = value.again ? passProblem(value.pass, value.again, p2p.limits().transfer) : null
   usePreloadKdf(on)
   return (
     <div className="flex flex-col gap-2">

@@ -47,12 +47,12 @@ import {
   pingUnread,
   pingVisible,
   readSeqs,
-  PINGS_KEPT,
-  PING_KEEP_MS,
   P2P_DM_LABEL,
   type PingRec,
   type PingWorld,
 } from '../p2p/inbox'
+import { LOCAL, type Local } from '../p2p/limits'
+import { put } from '../p2p/app/store'
 import {
   listedIn,
   pingInputsChanged,
@@ -79,6 +79,7 @@ import { memberMenu, P2pMemberList, P2pServerSidebar } from '../../components/p2
 import { P2pDmPane } from '../../components/p2p/p2p_dm_pane'
 import { AccountChip } from '../../components/p2p/p2p_badge'
 import { ServerSettingsDialog } from '../../components/p2p/p2p_server_settings'
+import { ServerInviteDialog, ServerNewDialog } from '../../components/p2p/p2p_invite_dialog'
 import { CallBanner } from '../../components/voice_grid'
 import { markAllReadItem, registerAppActions } from '../actions'
 import { p2p, p2pDm, p2pHost, p2pMarkAll, p2pServer } from '../p2p/app'
@@ -227,7 +228,7 @@ describe('P2P inbox: the noted pings', () => {
     expect(list[0].seq).toBe(10)
     expect(list[1]).toMatchObject({ kind: 'reaction', emoji: '🎉', target: 'm1', ch: CH })
 
-    const old = ping('old', { at: NOW - PING_KEEP_MS - 1 })
+    const old = ping('old', { at: NOW - LOCAL.inbox.pingKeepMs - 1 })
     const added = addPings(
       [old, ping('a')],
       [ping('a', { seq: 50 }), ping('n', { at: NOW + 5 })],
@@ -235,10 +236,12 @@ describe('P2P inbox: the noted pings', () => {
     )
     expect(added.map(p => p.id)).toEqual(['n', 'a'])
     expect(added[1].seq).toBe(10)
-    const many = Array.from({ length: PINGS_KEPT + 20 }, (_, i) => ping(`p${i}`, { at: NOW + i }))
+    const many = Array.from({ length: LOCAL.inbox.pingsKept + 20 }, (_, i) =>
+      ping(`p${i}`, { at: NOW + i })
+    )
     const capped = addPings([], many, NOW)
-    expect(capped.length).toBe(PINGS_KEPT)
-    expect(capped[0].id).toBe(`p${PINGS_KEPT + 19}`)
+    expect(capped.length).toBe(LOCAL.inbox.pingsKept)
+    expect(capped[0].id).toBe(`p${LOCAL.inbox.pingsKept + 19}`)
   })
 
   test('a ping is read when marked, or when its conversation or channel was read past it', () => {
@@ -863,6 +866,53 @@ describe('account chips', () => {
     expect(html).toContain('role="button"')
     expect(html).toContain('tabindex="0"')
     expect(html).toContain('aria-haspopup="menu"')
+  })
+})
+
+describe('this device’s limits in server forms', () => {
+  const maxOf = (html: string, placeholder: string) =>
+    Number(
+      new RegExp(`<input[^>]*maxLength="(\\d+)"[^>]*placeholder="${placeholder}"`).exec(html)?.[1]
+    )
+
+  test('an invite label and a channel topic take what this device shows, within one event', () => {
+    p2pState({ enabled: true, account: 'bob', me: BOB, servers: { [SRV]: server({ perms: -1 }) } })
+    const at = (display: Partial<Local['display']>) => {
+      put.limits({ ...LOCAL, display: { ...LOCAL.display, ...display } })
+      return [
+        maxOf(render(<ServerInviteDialog room={SRV} />), 'For the book club'),
+        maxOf(render(<ServerSettingsDialog room={SRV} tab="channels" />), 'Topic'),
+      ]
+    }
+    try {
+      expect(at({})).toEqual([64, 1024])
+      expect(at({ label: 20, topic: 300 })).toEqual([20, 300])
+      expect(at({ label: 1024, topic: 16 * 1024 })).toEqual([1024, 1024])
+    } finally {
+      put.limits(LOCAL)
+    }
+  })
+
+  test('server and channel name fields take `server.nameMax`', () => {
+    p2pState({ enabled: true, account: 'bob', me: BOB, servers: { [SRV]: server({ perms: -1 }) } })
+    const named = (html: string, label: string) =>
+      Number(new RegExp(`<input[^>]*maxLength="(\\d+)"[^>]*aria-label="${label}"`).exec(html)?.[1])
+    const at = (nameMax: number) => {
+      put.limits({ ...LOCAL, server: { ...LOCAL.server, nameMax } })
+      const channels = render(<ServerSettingsDialog room={SRV} tab="channels" />)
+      return [
+        named(render(<ServerSettingsDialog room={SRV} tab="overview" />), 'Server name'),
+        named(channels, 'Name of #general'),
+        named(channels, 'New channel name'),
+        named(render(<ServerNewDialog />), 'Server name'),
+      ]
+    }
+    try {
+      expect(at(LOCAL.server.nameMax)).toEqual([100, 100, 100, 100])
+      expect(at(40)).toEqual([40, 40, 40, 40])
+    } finally {
+      put.limits(LOCAL)
+    }
   })
 })
 

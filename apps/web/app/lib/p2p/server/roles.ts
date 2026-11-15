@@ -1,19 +1,10 @@
 import { gt } from '../acl/rules'
 import { cacheKey, countOf, moveCounts, storedSize } from '../dag'
 import { CANT_TEXT } from '../flows'
-import {
-  can,
-  channelPermsOf,
-  channelsOf,
-  LIMITS as STATE_LIMITS,
-  membershipOf,
-  P,
-  rankOf,
-  roleRank,
-} from '../state'
+import { can, channelPermsOf, channelsOf, membershipOf, P, rankOf, roleRank } from '../state'
 import { unindexRoom } from '../search'
 import type { ServerCtx } from './context'
-import { ServerError, ROLE_NAME_MAX, NO_ROOM_TEXT, newRolePos } from './types'
+import { ServerError, NO_ROOM_TEXT, newRolePos } from './types'
 import { clip } from '../rate'
 
 // A new role goes to the bottom of the list.
@@ -24,12 +15,14 @@ export async function createRole(
 ) {
   const s = cx.sumOf(room)
   const me = rankOf(s, cx.me)
+  const lim = cx.local.server
   const pos = newRolePos(
     Object.values(s.roles).map(r => r.pos),
-    me[0] === Infinity ? Infinity : me[0]
+    me[0] === Infinity ? Infinity : me[0],
+    lim
   )
   if (pos === null) throw new ServerError(NO_ROOM_TEXT)
-  const name = clip(role.name.trim(), ROLE_NAME_MAX)
+  const name = clip(role.name.trim(), lim.roleNameMax)
   return cx.emit(room, 'role_create', () => ({
     pos,
     bits: role.bits,
@@ -49,7 +42,7 @@ export async function editRole(
   const s = cx.sumOf(room)
   if (!can(s, cx.me, P.ManageRoles) || !s.roles[role] || !gt(rankOf(s, cx.me), roleRank(s, role)))
     throw new ServerError(CANT_TEXT)
-  const name = clip(meta.name.trim(), ROLE_NAME_MAX)
+  const name = clip(meta.name.trim(), cx.local.server.roleNameMax)
   return cx.emit(room, 'role_meta', () => ({
     role,
     ...(name ? { name } : {}),
@@ -84,7 +77,7 @@ export function revokeRole(cx: ServerCtx, room: string, ik: string, role: string
 // out.
 export async function slowLeft(cx: ServerCtx, room: string, ch: string) {
   const s = cx.sumOf(room)
-  const c = channelsOf(s).find(x => x.id === ch)
+  const c = channelsOf(s, cx.local.display).find(x => x.id === ch)
   if (!c?.slow || channelPermsOf(s, cx.me, ch) & (P.ManageChannels | P.ManageMessages)) return 0
   const last = await cx.host.lastSent(room, cx.me, ch)
   return last === null ? 0 : Math.max(0, last + c.slow * 1000 - cx.clock.now())
@@ -105,7 +98,7 @@ export function ban(cx: ServerCtx, room: string, ik: string, reason?: string, wi
     plan => ({
       to: ik,
       seen: plan.seen ?? {},
-      ...(reason ? { reason: reason.slice(0, STATE_LIMITS.reason) } : {}),
+      ...(reason ? { reason: reason.slice(0, cx.local.display.reason) } : {}),
       ...(wipe ? { wipe: true } : {}),
     }),
     { to: ik }

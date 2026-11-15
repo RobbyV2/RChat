@@ -8,8 +8,7 @@ import { serverWire } from '../p2p/db'
 import type { P2pMessage } from '../p2p/dm'
 import { keyId, newKeyPair, type KeyPair } from '../p2p/keys'
 import type { LocalHost } from '../p2p/resolve_host'
-import { SERVER } from '../p2p/server'
-import { SHARE } from '../p2p/shares'
+import { LOCAL, type Local } from '../p2p/limits'
 import { oldestBodies } from '../p2p/dag'
 import { hashBytes } from '../p2p/hashing'
 import {
@@ -18,6 +17,7 @@ import {
   general,
   Hub,
   joinWithCode,
+  limits,
   makeMember,
   ManualClock,
   planOf,
@@ -26,6 +26,7 @@ import {
   signed,
   stopAll,
   stopMember,
+  withLimits,
   type Member,
 } from './p2p_server_net'
 
@@ -277,45 +278,40 @@ describe('proofs', () => {
     const o = await makeMember(hub, 'Olive', clock)
     const room = await o.servers.create('Proofs')
     const ch = general(o, room)
-    const per = SERVER.proofsPerHour
-    SERVER.proofsPerHour = 1
-    try {
-      const forked: Ext[] = []
-      for (const x of [ext(), ext()]) {
-        const join = await extJoin(o, room, x, clock)
-        const at = await heads(o, room)
-        // Two messages at one seq (E1), then an ACL event past them.
-        for (const body of ['one', 'two'])
-          expect(
-            await deliver(
-              o,
-              room,
-              sign(x, room, 'msg', 'c', { body, ch }, { seq: 1, ap: at }, clock.now()).wire,
-              clock.now()
-            )
-          ).toBe('new')
-        const mark = sign(x, room, 'mark', 'a', {}, { seq: 2, ap: at, aprev: join }, clock.now())
-        expect(await deliver(o, room, mark.wire, clock.now())).toBe('new')
-        forked.push(x)
-      }
-      const F = () => evaluator(o, room).r.state().F
-      const proofs = async () =>
-        (await o.store.db.getAll('events')).filter(r => r.room === room && r.type === 'proof')
-      expect(forked.map(x => F().get(x.dev))).toEqual([undefined, undefined])
-      await pump(clock, async () => (await proofs()).length === 1, 'one proof', 2_000)
-      expect((await proofs())[0].sender).toBe(o.node.ik)
-      await clock.advance(20 * 60_000)
-      expect((await proofs()).length).toBe(1)
-      clock.t += 60 * 60_000
-      await pump(clock, async () => (await proofs()).length === 2, 'the second', 2_000)
-      expect(forked.map(x => F().get(x.dev))).toEqual([1, 1])
-      // Nothing left to prove: no more proofs, whatever the time.
-      clock.t += 2 * 60 * 60_000
-      await clock.advance(60_000)
-      expect((await proofs()).length).toBe(2)
-    } finally {
-      SERVER.proofsPerHour = per
+    limits(o).server.proofsPerHour = 1
+    const forked: Ext[] = []
+    for (const x of [ext(), ext()]) {
+      const join = await extJoin(o, room, x, clock)
+      const at = await heads(o, room)
+      // Two messages at one seq, then an ACL event past them.
+      for (const body of ['one', 'two'])
+        expect(
+          await deliver(
+            o,
+            room,
+            sign(x, room, 'msg', 'c', { body, ch }, { seq: 1, ap: at }, clock.now()).wire,
+            clock.now()
+          )
+        ).toBe('new')
+      const mark = sign(x, room, 'mark', 'a', {}, { seq: 2, ap: at, aprev: join }, clock.now())
+      expect(await deliver(o, room, mark.wire, clock.now())).toBe('new')
+      forked.push(x)
     }
+    const F = () => evaluator(o, room).r.state().F
+    const proofs = async () =>
+      (await o.store.db.getAll('events')).filter(r => r.room === room && r.type === 'proof')
+    expect(forked.map(x => F().get(x.dev))).toEqual([undefined, undefined])
+    await pump(clock, async () => (await proofs()).length === 1, 'one proof', 2_000)
+    expect((await proofs())[0].sender).toBe(o.node.ik)
+    await clock.advance(20 * 60_000)
+    expect((await proofs()).length).toBe(1)
+    clock.t += 60 * 60_000
+    await pump(clock, async () => (await proofs()).length === 2, 'the second', 2_000)
+    expect(forked.map(x => F().get(x.dev))).toEqual([1, 1])
+    // Nothing left to prove: no more proofs, whatever the time.
+    clock.t += 2 * 60 * 60_000
+    await clock.advance(60_000)
+    expect((await proofs()).length).toBe(2)
   }, 90_000)
 })
 
@@ -332,7 +328,7 @@ describe('per-sender shares', () => {
     await joinWithCode(clock, a, room, c)
     await b.node.setPaused(true)
     await c.node.setPaused(true)
-    const share = Math.floor(40 * SHARE.room)
+    const share = Math.floor(40 * LOCAL.share.room)
     const at = await heads(b, room)
     const out: string[] = []
     let seq = (await planOf(b, room, 'msg', 'c')).seq
@@ -377,13 +373,12 @@ const modRoom = async (names: string[]) => {
 
 describe('eviction under pressure', () => {
   test('a room at its content budget takes a member’s message and ours: the oldest bodies of the sender who takes the most go, and come back when viewed', async () => {
-    const share = { ...SHARE }
-    SHARE.room = 2
-    SHARE.server = 2
     // One body at a time, so what goes is visible.
-    const batch = SERVER.evictBytes
-    SERVER.evictBytes = 1
-    try {
+    const tune = (l: Local) => {
+      Object.assign(l.share, { room: 2, server: 2 })
+      l.server.evictBytes = 1
+    }
+    await withLimits(tune, async () => {
       const clock = new ManualClock()
       const hub = new Hub()
       const a = await makeMember(hub, 'Alice', clock, { servers: { roomCap: 40 } })
@@ -471,25 +466,14 @@ describe('eviction under pressure', () => {
       for (let i = 0; i < 6; i++) await a.servers.send(room, { ch, body: `more ${i}` })
       expect((await stored(a, sent[0]))?.purged).toBeUndefined()
       expect((await a.store.room(room))!.count).toBe(await countedOf(a, room))
-    } finally {
-      Object.assign(SHARE, share)
-      SERVER.evictBytes = batch
-    }
+    })
   }, 120_000)
 })
 
 describe('eviction details', () => {
   type Purge = { purge: (room: string, ids: string[], evict?: boolean) => Promise<number> }
-  const lifted = async (fn: () => Promise<void>) => {
-    const share = { ...SHARE }
-    SHARE.room = 4
-    SHARE.server = 4
-    try {
-      await fn()
-    } finally {
-      Object.assign(SHARE, share)
-    }
-  }
+  const lifted = (fn: () => Promise<void>) =>
+    withLimits(l => Object.assign(l.share, { room: 4, server: 4 }), fn)
 
   test(
     'copies without their bodies never stall eviction, and a room counts what it stores',
@@ -616,20 +600,18 @@ describe('eviction details', () => {
     const at = await heads(b, room)
     let seq = (await planOf(b, room, 'msg', 'c')).seq
     const sent: string[] = []
-    const batch = SERVER.evictBytes
-    SERVER.evictBytes = 1
-    try {
-      for (let i = 0; i < 40; i++) {
-        seq += 1
-        const f = { ap: at, seq, ts: clock.now() + i, ...(i ? { cprev: sent[i - 1] } : {}) }
-        const m = await signed(b, room, 'msg', { body: `b ${i}`, ch }, f)
-        sent.push(m.id)
-        expect(await deliver(b, room, m.wire, clock.now())).toBe('new')
-        expect(await deliver(a, room, m.wire, clock.now())).toBe('new')
-      }
-    } finally {
-      SERVER.evictBytes = batch
+    const lim = limits(a).server
+    const batch = lim.evictBytes
+    lim.evictBytes = 1
+    for (let i = 0; i < 40; i++) {
+      seq += 1
+      const f = { ap: at, seq, ts: clock.now() + i, ...(i ? { cprev: sent[i - 1] } : {}) }
+      const m = await signed(b, room, 'msg', { body: `b ${i}`, ch }, f)
+      sent.push(m.id)
+      expect(await deliver(b, room, m.wire, clock.now())).toBe('new')
+      expect(await deliver(a, room, m.wire, clock.now())).toBe('new')
     }
+    lim.evictBytes = batch
     return { a, b, room, ch, sent }
   }
   const evictedOf = async (m: Member, room: string) =>
@@ -689,7 +671,7 @@ describe('eviction details', () => {
         for (let i = 0; i < 2; i++) {
           stopMember(x)
           x = await restart(hub, x, clock)
-          for (let k = 0; k < 4; k++) await clock.advance(SERVER.causesMs)
+          for (let k = 0; k < 4; k++) await clock.advance(LOCAL.server.causesMs)
           expect(await contentOf(x, room)).toBeLessThanOrEqual(30)
           expect((await evictedOf(x, room)).sort()).toEqual([...before].sort())
           expect(await (x.servers as unknown as { host: LocalHost }).host.wanted(room)).toEqual([])
@@ -709,7 +691,7 @@ describe('eviction details', () => {
         const his = (await a.store.db.getAll('events')).filter(
           r => r.room === room && r.sender === b.node.ik
         )
-        const got = await oldestBodies(a.store.db, room, b.node.ik, 1, clock.now())
+        const got = await oldestBodies(a.store.db, room, b.node.ik, 1, clock.now(), LOCAL.dag)
         expect(got.seen).toBeLessThanOrEqual(his.length)
         expect(got.ids.length).toBe(1)
         const before = await evictedOf(a, room)
@@ -730,7 +712,7 @@ describe('eviction details', () => {
         expect(after.length).toBe(before.length)
         expect(after.filter(x => two.includes(x))).toEqual([])
         // In their grace now: a walk lists them apart.
-        const again = await oldestBodies(a.store.db, room, b.node.ik, 1e9, clock.now())
+        const again = await oldestBodies(a.store.db, room, b.node.ik, 1e9, clock.now(), LOCAL.dag)
         expect([...again.late].sort()).toEqual([...two].sort())
         // Walking all of them reads Bob's records and nobody else's.
         const hisNow = (await a.store.db.getAll('events')).filter(
@@ -837,17 +819,15 @@ describe('eviction details', () => {
         const old = await post(y, 20, t0 + 1_000)
         const newer = await post(y2, 5, t0 + 30_000)
         await capNow(a, room)
-        const batch = SERVER.evictBytes
-        SERVER.evictBytes = 1
-        try {
-          for (let i = 0; i < 4; i++) await a.servers.send(room, { ch, body: `a ${i}` })
-        } finally {
-          SERVER.evictBytes = batch
-        }
+        const lim = limits(a).server
+        const batch = lim.evictBytes
+        lim.evictBytes = 1
+        for (let i = 0; i < 4; i++) await a.servers.send(room, { ch, body: `a ${i}` })
+        lim.evictBytes = batch
         const gone = await evictedOf(a, room)
         expect(gone.length).toBeGreaterThanOrEqual(4)
         expect([...gone].sort()).toEqual(old.slice(0, gone.length).sort())
-        const rest = await oldestBodies(a.store.db, room, y.a, 1e9, clock.now())
+        const rest = await oldestBodies(a.store.db, room, y.a, 1e9, clock.now(), LOCAL.dag)
         expect(rest.ids).toEqual([...old.slice(gone.length), ...newer])
       }),
     90_000
@@ -1025,7 +1005,7 @@ describe('stability and purges', () => {
       (await a.servers.loadChannel(room, ch, { limit: 100 })).messages.find(x => x.id === id)
     expect((await row())?.unavailable).toBe(true)
     // The page asks the members online, who purged it too; then nothing happens in the room.
-    for (let i = 0; i < 3; i++) await clock.advance(SERVER.storeMs)
+    for (let i = 0; i < 3; i++) await clock.advance(LOCAL.server.storeMs)
     expect((await stored(a, id))?.purged).toBe(true)
     // Eve never heard of the ban: she holds X whole and sends it back once she is online.
     await e.node.setPaused(false)

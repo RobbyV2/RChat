@@ -1,10 +1,18 @@
 import type { Contact } from './contacts'
-import { ancestorsAmong, getEvents, insertEvent, vouched, walkBack, type Inserted } from './dag'
+import {
+  ancestorsAmong,
+  getEvents,
+  insertEvent,
+  vouched,
+  walkBack,
+  type DagLimits,
+  type Inserted,
+} from './dag'
 import type { EventRecord, P2pStore } from './db'
 import { claimedId, redacted, validate, type Devices, type Wire } from './event_v1'
 import { isEventId } from './content'
 import type { Message } from './frames'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 import { RateWindow } from './rate'
 import type { Clock, Session } from './session'
 
@@ -57,10 +65,14 @@ export const SYNC = {
   // What a peer may have queued with us before it counts as flooding.
   pushQueueEvents: 64,
   pushQueueBytes: 512 * 1024,
-  ...LOCAL.sync,
 }
 
-export type SyncLimits = typeof SYNC
+// With limits.ts `sync`.
+export type SyncLimits = typeof SYNC & Local['sync']
+
+// How often a typer says so again while they type: under half of the window a typer is shown
+// for (`typingMs`), so one late frame doesn't hide them.
+export const typingResendMs = (windowMs: number) => Math.floor((windowMs * 3) / 8)
 
 export interface SyncDeps {
   store: P2pStore
@@ -96,10 +108,8 @@ export interface SyncDeps {
   // Called when a room's sync state changes (gaps, outstanding pulls).
   onState?: (room: string) => void
   limits?: Partial<SyncLimits>
-  roomCap?: number
-  totalCap?: number
-  roomBytes?: number
-  totalBytes?: number
+  // The room store's limits now (DMs: the budgets their events are stored within; both: walks).
+  dag: () => DagLimits
   // The browser refused to store more (quota): true when it happens, false once a write works.
   onQuota?: (full: boolean) => void
   quotaFull?: () => boolean
@@ -191,7 +201,7 @@ export class Sync {
   private t: (name: string) => string
 
   constructor(private deps: SyncDeps) {
-    this.limits = { ...SYNC, ...deps.limits }
+    this.limits = { ...SYNC, ...LOCAL.sync, ...deps.limits }
     const prefix = deps.prefix ?? ''
     this.t = name => prefix + name
   }
@@ -589,10 +599,7 @@ export class Sync {
     return insertEvent(this.deps.store.db, id, wire, now, {
       me: this.deps.me(),
       peer: link.ik,
-      roomCap: this.deps.roomCap,
-      totalCap: this.deps.totalCap,
-      roomBytes: this.deps.roomBytes,
-      totalBytes: this.deps.totalBytes,
+      lim: this.deps.dag(),
     })
   }
 
@@ -639,7 +646,8 @@ export class Sync {
       if (v.revoked && !(await this.deps.store.event(v.id))) {
         const revs = this.deps.devices(v.wire.ev.sender)?.revocations ?? []
         const good = (dev: string) => !revs.some(x => x.dk === dev)
-        if (!(await vouched(db, link.room, v.id, v.wire.ev.sender, good))) {
+        const walk = this.deps.dag().walk
+        if (!(await vouched(db, link.room, v.id, v.wire.ev.sender, good, walk))) {
           later.push(v.id)
           link.later.add(v.id)
           continue
@@ -738,7 +746,7 @@ export class Sync {
     this.serve(link, m.rid, () =>
       this.deps.serving
         ? this.deps.serving.walk(link, from, have, limit, bytes, state)
-        : walkBack(this.deps.store.db, link.room, from, have, limit, bytes)
+        : walkBack(this.deps.store.db, link.room, from, have, limit, bytes, this.deps.dag().walk)
     )
   }
 

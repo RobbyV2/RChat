@@ -4,8 +4,8 @@ import { registerAppActions } from '../actions/index'
 import { itemFor } from '../actions/menu'
 import { actionsFor, runAction } from '../actions/registry'
 import { home } from '../instances'
-import { AUTO_DEFAULT, parseAuto, autoChoices } from '../p2p/app'
-import { LOCAL, localDefaults, RANGES } from '../p2p/limits'
+import { autoDefaults, parseAuto, autoChoices } from '../p2p/app'
+import { LOCAL, localDefaults, RANGES, type Local } from '../p2p/limits'
 import {
   accountLimits,
   applyUser,
@@ -32,6 +32,7 @@ import {
   restart,
   stopAll,
   stopMember,
+  withLimits,
   type Member,
 } from './p2p_server_net'
 import { startDeps } from '../p2p/app/account'
@@ -39,7 +40,7 @@ import type { InstanceInfo } from '../types'
 import { RULES_VERSION } from '../p2p/acl/rules'
 import { genesisBundle } from '../p2p/acl/binding'
 import { b64u, randomBytes } from '../p2p/canonical'
-import { blankRoom, UNKNOWN } from '../p2p/dag'
+import { blankRoom } from '../p2p/dag'
 import { buildEvent2 } from '../p2p/event_v2'
 import type { Wire } from '../p2p/event_v1'
 import { keyId } from '../p2p/keys'
@@ -140,6 +141,63 @@ describe('user P2P limits', () => {
     expect(accountLimits({ limits: { p2p: 'junk' } }, '{')).toEqual(localDefaults())
   })
 
+  test('an instance that puts a refresh over half its expiry leaves both at their defaults', () => {
+    const p2p = {
+      'local.gossip.typingMs': 1000,
+      'local.session.pingMs': 120_000,
+      'local.gossip.presenceMs': 300_000,
+      'local.gossip.presenceTtl': 15_000,
+      'local.gossip.perRoom': 4,
+    }
+    const l = accountLimits({ limits: { p2p } }, null)
+    expect(l.gossip).toEqual({ ...LOCAL.gossip, perRoom: 4 })
+    expect(l.session).toEqual(LOCAL.session)
+    const at = accountLimits(
+      {
+        limits: {
+          p2p: { 'local.gossip.typingMs': 6000, 'local.session.pingMs': 30_000 },
+        },
+      },
+      null
+    )
+    expect([at.gossip.typingRelayMs, at.gossip.typingMs]).toEqual([3000, 6000])
+    expect([at.session.pingMs, at.session.deadMs]).toEqual([30_000, 60_000])
+  })
+
+  test('an instance that breaks a voice refresh rule leaves voice at its defaults', () => {
+    const voice = (p2p: Record<string, number>) => accountLimits({ limits: { p2p } }, null).voice
+    const broken = { refreshMs: 40_000, relayMs: 40_000, lostMs: 10_000, ttlMs: 30_000 }
+    for (const [name, v] of Object.entries(broken))
+      expect(voice({ [`local.voice.${name}`]: v })).toEqual(LOCAL.voice)
+    const edges = { refreshMs: 25_000, relayMs: 10_000, lostMs: 25_000, ttlMs: 40_000 }
+    for (const [name, v] of Object.entries(edges))
+      expect(voice({ [`local.voice.${name}`]: v })).toEqual({ ...LOCAL.voice, [name]: v })
+  })
+
+  test('a fraction for a whole-number limit is not taken, from the instance or the user', () => {
+    const info = {
+      limits: {
+        p2p: {
+          'local.bulk.batch': 1.5,
+          'local.gossip.perRoom': 4.5,
+          'local.dag.totalBytes': 4 * GIB + 0.5,
+          'local.share.room': 0.5,
+        },
+      },
+    }
+    const l = accountLimits(info, JSON.stringify({ v: 1, roomBytes: 64 * MIB + 0.5 }))
+    expect(l.bulk.batch).toBe(LOCAL.bulk.batch)
+    expect(l.gossip.perRoom).toBe(LOCAL.gossip.perRoom)
+    expect(l.dag.totalBytes).toBe(LOCAL.dag.totalBytes)
+    expect(l.share.room).toBe(0.5)
+    expect(l.dag.roomBytes).toBe(LOCAL.dag.roomBytes)
+    expect(applyUser(LOCAL, { v: 1, hiddenPauseMs: 90_000.5 }).node.hiddenPauseMs).toBe(
+      LOCAL.node.hiddenPauseMs
+    )
+    writeUserLimits('ann', { v: 1, roomBytes: 64 * MIB + 0.5, totalBytes: 4 * GIB })
+    expect(readUserLimits('ann')).toEqual({ v: 1, totalBytes: 4 * GIB })
+  })
+
   test('overrides are kept per account and only when they differ', () => {
     writeUserLimits('ann', { v: 1, roomBytes: 64 * MIB, hiddenPauseMs: LOCAL.node.hiddenPauseMs })
     expect(readUserLimits('ann')).toEqual({ v: 1, roomBytes: 64 * MIB })
@@ -178,7 +236,7 @@ describe('user P2P limits', () => {
 
   test('P2P server auto-download defaults to 10 MB', () => {
     expect(parseAuto(null).server).toBe(10 * MIB)
-    expect(AUTO_DEFAULT.server).toBe(10 * MIB)
+    expect(autoDefaults().server).toBe(10 * MIB)
     expect(LOCAL.files.autoServer).toBe(10 * MIB)
   })
 
@@ -269,17 +327,20 @@ describe('the P2P runtime', () => {
       writeUserLimits('ann', { v: 1, roomBytes: 64 * MIB, hiddenPauseMs: 60_000 })
       const d = startDeps('ann')
       expect(d.limits.gossip.perRoom).toBe(4)
-      expect(d.servers.gossip.perRoom).toBe(4)
-      expect([d.dms.roomBytes, d.servers.roomBytes]).toEqual([64 * MIB, 64 * MIB])
-      expect([d.dms.totalBytes, d.servers.serverBytes]).toEqual([
+      expect(d.servers.local.gossip.perRoom).toBe(4)
+      expect([d.dms.local.dag.roomBytes, d.servers.local.dag.roomBytes]).toEqual([
+        64 * MIB,
+        64 * MIB,
+      ])
+      expect([d.dms.local.dag.totalBytes, d.servers.local.dag.serverBytes]).toEqual([
         LOCAL.dag.totalBytes,
         LOCAL.dag.serverBytes,
       ])
       expect(d.node.limits.hiddenPauseMs).toBe(60_000)
       expect(d.node.session).toEqual(LOCAL.session)
-      expect(d.dms.limits).toEqual(LOCAL.sync)
+      expect(d.dms.local.sync).toEqual(LOCAL.sync)
       expect(d.node.host).toBe(home.host)
-      expect(startDeps('bob').dms.roomBytes).toBe(LOCAL.dag.roomBytes)
+      expect(startDeps('bob').dms.local.dag.roomBytes).toBe(LOCAL.dag.roomBytes)
     } finally {
       home.info = was
     }
@@ -314,7 +375,10 @@ describe('the P2P runtime', () => {
   test('a full server of unknown rules stays full after a start', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
-    const a = await makeMember(hub, 'Alice', clock)
+    const unknown = (n: number) => (l: Local) => {
+      l.dag.unknownEvents = n
+    }
+    const a = await withLimits(unknown(3), () => makeMember(hub, 'Alice', clock))
     const author = a.node.author()!
     const dk = keyId(author.dk.pk)
     const bare = {
@@ -340,27 +404,20 @@ describe('the P2P runtime', () => {
     const kick = (i: number) =>
       buildEvent2(author, room, 'kick', 'a', { to: i }, { seq: i, ap: [room] }, 1)
         .wire as unknown as Wire
-    const was = UNKNOWN.events
-    UNKNOWN.events = 3
-    try {
-      const out: string[] = []
-      for (const w of [g.wire as unknown as Wire, kick(1), kick(2), kick(3)])
-        out.push(await deliver(a, room, w, clock.now()))
-      expect(out).toEqual(['new', 'new', 'new', 'full'])
-      stopMember(a)
-      let m = await restart(hub, a, clock)
-      expect((await m.store.room(room))?.full).toBe(true)
-      expect(m.servers.view(room)?.full).toBe(true)
-      expect(await deliver(m, room, kick(3), clock.now())).toBe('full')
-      // It is judged by what this build stores of such a server.
-      stopMember(m)
-      UNKNOWN.events = 10
-      m = await restart(hub, m, clock)
-      expect((await m.store.room(room))?.full).toBe(false)
-      expect(m.servers.view(room)?.full).toBe(false)
-      expect(await deliver(m, room, kick(3), clock.now())).toBe('new')
-    } finally {
-      UNKNOWN.events = was
-    }
+    const out: string[] = []
+    for (const w of [g.wire as unknown as Wire, kick(1), kick(2), kick(3)])
+      out.push(await deliver(a, room, w, clock.now()))
+    expect(out).toEqual(['new', 'new', 'new', 'full'])
+    stopMember(a)
+    let m = await withLimits(unknown(3), () => restart(hub, a, clock))
+    expect((await m.store.room(room))?.full).toBe(true)
+    expect(m.servers.view(room)?.full).toBe(true)
+    expect(await deliver(m, room, kick(3), clock.now())).toBe('full')
+    // It is judged by what this build stores of such a server.
+    stopMember(m)
+    m = await withLimits(unknown(10), () => restart(hub, m, clock))
+    expect((await m.store.room(room))?.full).toBe(false)
+    expect(m.servers.view(room)?.full).toBe(false)
+    expect(await deliver(m, room, kick(3), clock.now())).toBe('new')
   }, 60_000)
 })

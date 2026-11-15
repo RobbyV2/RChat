@@ -9,7 +9,6 @@ import {
   SERVER_ACL,
   SERVER_TOTAL,
   storedSize,
-  UNKNOWN,
   type DevChain,
 } from '../p2p/dag'
 import type { RoomRecord, ServerCache } from '../p2p/db'
@@ -22,8 +21,8 @@ import { LocalHost, type AclHost } from '../p2p/resolve_host'
 import { Gossip } from '../p2p/gossip'
 import type { Message } from '../p2p/frames'
 import { LONE_TEXT, TOO_BIG_TEXT } from '../p2p/flows'
-import { LEGACY_TEXT, parseCode, REDEEM_TEXT, SERVER, UPDATE_TEXT } from '../p2p/server'
-import { SHARE } from '../p2p/shares'
+import { LEGACY_TEXT, parseCode, REDEEM_TEXT, UPDATE_TEXT } from '../p2p/server'
+import { LOCAL } from '../p2p/limits'
 import type { Session } from '../p2p/session'
 import type { Link } from '../p2p/sync'
 import { Hub, ManualClock } from './p2p_net'
@@ -32,6 +31,7 @@ import {
   deliver,
   general,
   joinWithCode,
+  limits,
   makeMember,
   planOf,
   pump,
@@ -87,15 +87,7 @@ const run = async (m: Member, room: string, ap: string[], bodies_: string[], ch:
 
 describe('storage', () => {
   test('a full room takes the owner’s ban; the banned member’s hidden content is evicted at once, giving room back', async () => {
-    // One sender fills the room here: no share limits this test.
-    const share = { ...SHARE }
-    SHARE.room = 2
-    SHARE.server = 2
-    try {
-      await fullRoom()
-    } finally {
-      Object.assign(SHARE, share)
-    }
+    await fullRoom()
   }, 60_000)
 
   const fullRoom = async () => {
@@ -104,6 +96,8 @@ describe('storage', () => {
     const a = await makeMember(hub, 'Alice', clock, { servers: { roomCap: 40 } })
     const b = await makeMember(hub, 'Bob', clock)
     const c = await makeMember(hub, 'Carol', clock)
+    // One sender fills the room here: no share limits this test.
+    for (const m of [a, b, c]) Object.assign(limits(m).share, { room: 2, server: 2 })
     const room = await a.servers.create('Full')
     const ch = general(a, room)
     await joinWithCode(clock, a, room, b)
@@ -148,16 +142,11 @@ describe('storage', () => {
     const room = await a.servers.create('Pending')
     const ch = general(a, room)
     await joinWithCode(clock, a, room, b)
-    const was = SERVER.pendingEvents
-    SERVER.pendingEvents = 5
-    try {
-      const missing = 'A'.repeat(43)
-      for (const ev of await run(b, room, [missing], ['1', '2', '3', '4', '5', '6', '7'], ch))
-        expect(await deliver(a, room, ev.wire, clock.now())).toBe('quota')
-      expect(a.servers.waiting(room).pending).toBe(5)
-    } finally {
-      SERVER.pendingEvents = was
-    }
+    limits(a).server.pendingEvents = 5
+    const missing = 'A'.repeat(43)
+    for (const ev of await run(b, room, [missing], ['1', '2', '3', '4', '5', '6', '7'], ch))
+      expect(await deliver(a, room, ev.wire, clock.now())).toBe('quota')
+    expect(a.servers.waiting(room).pending).toBe(5)
     // Refused by the rules (no Manage server): not stored, no strike, and an event built on it is
     // refused with it, even one that waited for it.
     const bad = await signed(b, room, 'settings', { name: 'Mine' })
@@ -177,35 +166,30 @@ describe('storage', () => {
     const ch = general(a, room)
     await joinWithCode(clock, a, room, b)
     await b.node.setPaused(true)
-    const was = SERVER.heldPerDevice
-    SERVER.heldPerDevice = 2
-    try {
-      const ap = (await planOf(b, room, 'msg', 'c')).ap
-      const dev = keyId(b.node.author()!.dk.pk)
-      const chain = (await b.store.meta<DevChain>(chainKey(room, dev)))!
-      const ahead = clock.now() + 20 * 60_000
-      const evs = []
-      let cprev = chain.cprev
-      for (let i = 1; i <= 3; i++) {
-        const ev = await signed(
-          b,
-          room,
-          'msg',
-          { body: `later ${i}`, ch },
-          { ap, seq: chain.seq + i, ts: ahead + i, ...(cprev ? { cprev } : {}) }
-        )
-        cprev = ev.id
-        evs.push(ev)
-      }
-      for (const ev of evs) expect(await deliver(a, room, ev.wire, clock.now())).toBe('quota')
-      expect(a.servers.waiting(room).held).toBe(2)
-      expect(await bodies(a, room, ch)).toEqual([])
-      clock.t += 20 * 60_000
-      await pump(clock, async () => (await bodies(a, room, ch)).length === 2, 'held ones shown')
-      expect(await bodies(a, room, ch)).toEqual(['later 1', 'later 2'])
-    } finally {
-      SERVER.heldPerDevice = was
+    limits(a).server.heldPerDevice = 2
+    const ap = (await planOf(b, room, 'msg', 'c')).ap
+    const dev = keyId(b.node.author()!.dk.pk)
+    const chain = (await b.store.meta<DevChain>(chainKey(room, dev)))!
+    const ahead = clock.now() + 20 * 60_000
+    const evs = []
+    let cprev = chain.cprev
+    for (let i = 1; i <= 3; i++) {
+      const ev = await signed(
+        b,
+        room,
+        'msg',
+        { body: `later ${i}`, ch },
+        { ap, seq: chain.seq + i, ts: ahead + i, ...(cprev ? { cprev } : {}) }
+      )
+      cprev = ev.id
+      evs.push(ev)
     }
+    for (const ev of evs) expect(await deliver(a, room, ev.wire, clock.now())).toBe('quota')
+    expect(a.servers.waiting(room).held).toBe(2)
+    expect(await bodies(a, room, ch)).toEqual([])
+    clock.t += 20 * 60_000
+    await pump(clock, async () => (await bodies(a, room, ch)).length === 2, 'held ones shown')
+    expect(await bodies(a, room, ch)).toEqual(['later 1', 'later 2'])
   }, 60_000)
 
   test('a device alone can make only so many changes nobody acknowledged; moderation fits', async () => {
@@ -864,18 +848,14 @@ describe('rules versions', () => {
     const early = buildEvent2(author, room, 'kick', 'a', { to: 0 }, { seq: 9, ap: [room] }, 1)
     expect(await deliver(a, room, early.wire as unknown as Wire, clock.now())).toBe('later')
     expect(await deliver(a, room, g.wire as unknown as Wire, clock.now())).toBe('new')
-    const was = UNKNOWN.events
-    UNKNOWN.events = 3
-    try {
-      const out: string[] = []
-      for (let i = 1; i <= 4; i++) {
-        const e = buildEvent2(author, room, 'kick', 'a', { to: i }, { seq: i, ap: [room] }, 1)
-        out.push(await deliver(a, room, e.wire as unknown as Wire, clock.now()))
-      }
-      expect(out).toEqual(['new', 'new', 'full', 'full'])
-    } finally {
-      UNKNOWN.events = was
+    limits(a).dag.unknownEvents = 3
+    const out: string[] = []
+    for (let i = 1; i <= 4; i++) {
+      const e = buildEvent2(author, room, 'kick', 'a', { to: i }, { seq: i, ap: [room] }, 1)
+      out.push(await deliver(a, room, e.wire as unknown as Wire, clock.now()))
     }
+    expect(out).toEqual(['new', 'new', 'full', 'full'])
+    limits(a).dag.unknownEvents = LOCAL.dag.unknownEvents
     expect(a.servers.view(room)?.readOnly).toBe(UPDATE_TEXT)
     // They count against the budget of every server here too.
     const meta = a.store.db
@@ -944,7 +924,7 @@ describe('invite codes', () => {
     const c = (await stored(a, add))!.wire.c as { code?: string }
     expect(Object.values(a.servers.sumOf(room).codes)).toHaveLength(1)
     expect(Object.keys(a.servers.sumOf(room).codes)).toContain(c.code!)
-    clock.t += SERVER.redeemTtl + 1
+    clock.t += LOCAL.server.redeemTtl + 1
     await pump(clock, () => membershipAt(a, room, x.node.ik) === null, 'withdrawn')
   }, 60_000)
 
@@ -983,7 +963,7 @@ describe('invite codes', () => {
     const use = (
       a.servers as unknown as { codeUseOf(r: string, c: string): { adds: number[] } }
     ).codeUseOf(room, parseCode(code)!.code!)
-    use.adds.push(...Array.from({ length: SERVER.codeAddsPerHour }, () => clock.now()))
+    use.adds.push(...Array.from({ length: LOCAL.server.codeAddsPerHour }, () => clock.now()))
     const x = await makeMember(hub, 'Xena', clock)
     expect(await failure(x.servers.redeem(code))).toBe('ok')
     await pump(clock, () => x.servers.myMembership(room) === 'join', 'xena joined', 1_000)
@@ -1004,18 +984,18 @@ describe('invite codes', () => {
       ;(x.servers as unknown as { postJoin: () => Promise<void> }).postJoin = async () => {}
       return failure(x.servers.redeem(code))
     }
-    for (let i = 0; i < SERVER.codeAddsPerHour; i += 1) expect(await fresh(i)).toBe('ok')
-    expect(adds().length).toBe(SERVER.codeAddsPerHour)
+    for (let i = 0; i < LOCAL.server.codeAddsPerHour; i += 1) expect(await fresh(i)).toBe('ok')
+    expect(adds().length).toBe(LOCAL.server.codeAddsPerHour)
     expect(await fresh(10)).toBe(REDEEM_TEXT.busy)
-    expect(adds().length).toBe(SERVER.codeAddsPerHour)
+    expect(adds().length).toBe(LOCAL.server.codeAddsPerHour)
     // Their invites lapse: withdrawn, and the code is paused here.
-    clock.t += SERVER.redeemTtl + 1
+    clock.t += LOCAL.server.redeemTtl + 1
     await pump(clock, () => adds().length === 0, 'withdrawn')
     expect((await a.servers.codes(room))[0].paused).toBe(true)
     clock.t += 60 * 60_000
     expect(await fresh(11)).toBe(REDEEM_TEXT.busy)
     // A real joiner after the pause gets in.
-    clock.t += SERVER.codePauseMs
+    clock.t += LOCAL.server.codePauseMs
     const b = await makeMember(hub, 'Bob', clock)
     await b.servers.redeem(code)
     await pump(clock, () => b.servers.myMembership(room) === 'join', 'bob joined')

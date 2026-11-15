@@ -2,7 +2,7 @@ import { DM_PLACE, type InboxEntry, type InboxPlace, type InboxView } from '../i
 import type { InboxFilter } from '../types'
 import type { RoomRecord } from './db'
 import type { Membership } from './state'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 
 // P2P pings for the inbox. The P2P core keeps only counters per conversation and
 // channel, so the tab that runs P2P also notes each ping as it arrives in a bounded list in the
@@ -33,8 +33,8 @@ export interface PingRec {
 }
 
 export const PING_LOG = 'inbox'
-export const PINGS_KEPT = LOCAL.inbox.pingsKept
-export const PING_KEEP_MS = LOCAL.inbox.pingKeepMs
+// limits.ts `inbox`: pings kept and for how long, the page, and how soon counts and writes follow.
+export type InboxLimits = Local['inbox']
 export const P2P_INBOX = 'p2p'
 export const P2P_DM_LABEL = 'P2P direct message'
 
@@ -91,9 +91,14 @@ export const logValue = (list: PingRec[]) => ({ v: 1, list })
 export const newerFirst = (a: PingRec, b: PingRec) =>
   b.at - a.at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
 
-// The list with new pings added: one per event, nothing older than PING_KEEP_MS, at most
-// PINGS_KEPT (the newest).
-export const addPings = (list: PingRec[], add: PingRec[], now: number): PingRec[] => {
+// The list with new pings added: one per event, nothing older than `pingKeepMs`, at most
+// `pingsKept` (the newest).
+export const addPings = (
+  list: PingRec[],
+  add: PingRec[],
+  now: number,
+  lim: Pick<InboxLimits, 'pingsKept' | 'pingKeepMs'> = LOCAL.inbox
+): PingRec[] => {
   const ids = new Set(list.map(p => p.id))
   const all = [...list]
   for (const p of add)
@@ -102,9 +107,9 @@ export const addPings = (list: PingRec[], add: PingRec[], now: number): PingRec[
       all.push(p)
     }
   return all
-    .filter(p => now - p.at <= PING_KEEP_MS)
+    .filter(p => now - p.at <= lim.pingKeepMs)
     .sort(newerFirst)
-    .slice(0, PINGS_KEPT)
+    .slice(0, lim.pingsKept)
 }
 
 export const markSeen = (list: PingRec[], ids: ReadonlySet<string>): PingRec[] =>

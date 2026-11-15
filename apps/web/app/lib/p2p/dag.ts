@@ -1,12 +1,19 @@
 import type { Drops, PackedRec } from './acl_room'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 import { headerContent } from './acl/storage'
-import { shareAdd, shareKey, shareLive, SHARE, withinShare, type Share } from './shares'
+import { shareAdd, shareKey, shareLive, withinShare, type Share } from './shares'
 import { attsOf, isEventId, LIMITS as EV, shownReaction, TARGETED } from './content'
 import { authorizeTarget, effTsOf, redacted, sortKeyOf, targetOf, type Wire } from './event_v1'
 import { type WireV2 } from './event_v2'
 import type { IDBPTransaction } from 'idb'
-import { indexEvent, unindex, unindexEdit, type EventRead, type SearchWrite } from './search'
+import {
+  indexEvent,
+  unindex,
+  unindexEdit,
+  type Cut,
+  type EventRead,
+  type SearchWrite,
+} from './search'
 import {
   serverWire,
   SERVER_TOTAL_BYTES,
@@ -22,7 +29,25 @@ import {
 // still miss, and bounded walks over prev links. Inserting an event is one transaction, so the
 // heads, counters and redactions never disagree with the events stored.
 
-export const DAG = { ...LOCAL.dag }
+// limits.ts `dag` and `share`: what this device stores of rooms (heads, missing parents, walks,
+// the event and byte budgets, unknown-rules servers) and each sender's share of a budget.
+export type DagLimits = Local['dag']
+export type StoreLimits = Pick<Local, 'dag' | 'share' | 'search'>
+
+// Budgets an owner may set apart from the account's (`dag`); unset ones keep it.
+export type Caps = Partial<
+  Pick<DagLimits, 'roomCap' | 'totalCap' | 'roomBytes' | 'totalBytes' | 'serverCap' | 'serverBytes'>
+>
+
+export const capped = (dag: DagLimits, c: Caps): DagLimits => ({
+  ...dag,
+  roomCap: c.roomCap ?? dag.roomCap,
+  totalCap: c.totalCap ?? dag.totalCap,
+  roomBytes: c.roomBytes ?? dag.roomBytes,
+  totalBytes: c.totalBytes ?? dag.totalBytes,
+  serverCap: c.serverCap ?? dag.serverCap,
+  serverBytes: c.serverBytes ?? dag.serverBytes,
+})
 
 export type PingKind = 'mention' | 'reply' | 'reaction'
 
@@ -45,10 +70,7 @@ export type FullWhy = 'events' | 'bytes'
 export interface InsertCtx {
   me: string
   peer: string
-  roomCap?: number
-  totalCap?: number
-  roomBytes?: number
-  totalBytes?: number
+  lim: DagLimits
   // Our own new event: its display time doesn't follow parents shown in the future.
   own?: boolean
   // Fields to store with the record (an import keeps what the exporting device decided).
@@ -131,13 +153,14 @@ export const nextHeads = (
   id: string,
   depth: number,
   prev: string[],
-  hasChild: boolean
+  hasChild: boolean,
+  max: number
 ) => {
   const drop = new Set(prev)
   const out = heads.filter(h => !drop.has(h.id) && h.id !== id)
   if (!hasChild) out.push({ id, depth })
   out.sort((a, b) => b.depth - a.depth || (a.id < b.id ? -1 : 1))
-  return out.slice(0, DAG.heads)
+  return out.slice(0, max)
 }
 
 // The stored form of a redacted event: no content, and no files to serve.
@@ -191,10 +214,7 @@ export const insertInto = async (
   const totalBytes = ((await meta.get(TOTAL_BYTES)) as number | undefined) ?? 0
   const roomBytes = room.bytes ?? 0
   const size = storedSize(wire)
-  const totalCap = ctx.totalCap ?? DAG.totalCap
-  const totalMax = ctx.totalBytes ?? DAG.totalBytes
-  const roomCap = ctx.roomCap ?? DAG.roomCap
-  const roomMax = ctx.roomBytes ?? DAG.roomBytes
+  const { totalCap, totalBytes: totalMax, roomCap, roomBytes: roomMax } = ctx.lim
   const why: FullWhy | null =
     room.count >= roomCap || total >= totalCap
       ? 'events'
@@ -299,8 +319,8 @@ export const insertInto = async (
   }
   const next: RoomRecord = {
     ...room,
-    heads: nextHeads(room.heads, id, ev.depth, ev.prev, hasChild),
-    missing: missing.slice(-DAG.missing),
+    heads: nextHeads(room.heads, id, ev.depth, ev.prev, hasChild, ctx.lim.heads),
+    missing: missing.slice(-ctx.lim.missing),
     maxDepth: Math.max(room.maxDepth, ev.depth),
     count: room.count + 1,
     lastSeq: seq,
@@ -341,29 +361,14 @@ export interface ServerInsert {
   acl?: PackedRec
   // Our own event: the device chain must still be where it was read when the event was built.
   chain?: DevChain | null
-  // Content caps (per room and for every server together); ACL events always fit, and so do the
-  // events of a server of unknown rules up to `unknownCap`.
-  roomCap?: number
-  roomBytes?: number
-  serverCap?: number
-  serverBytes?: number
+  // Content caps (per room and for every server together) and shares; ACL events always fit,
+  // and so do the events of a server of unknown rules (stored unchecked) up to
+  // `unknownEvents` and `unknownBytes`.
+  lim: StoreLimits
   unknown?: boolean
 }
 
-// Limits of a server whose rules this build doesn't know (stored unchecked).
-export const UNKNOWN = { events: LOCAL.dag.unknownEvents, bytes: LOCAL.dag.unknownBytes }
-
 export type ServerInserted = Inserted | { status: 'stale' }
-
-// The running limits a room marked full is judged by again.
-export interface FullCaps {
-  roomCap?: number
-  totalCap?: number
-  roomBytes?: number
-  totalBytes?: number
-  serverCap?: number
-  serverBytes?: number
-}
 
 // Rooms of `kind` marked full that are under every running limit again (raised since they
 // filled): no longer full. A server of rules this build doesn't know (`unknown`) is judged as its
@@ -371,7 +376,7 @@ export interface FullCaps {
 export const refitFull = async (
   db: P2pDatabase,
   kind: RoomRecord['kind'],
-  caps: FullCaps,
+  caps: DagLimits,
   unknown: (r: RoomRecord) => boolean = () => false
 ) => {
   const tx = db.transaction(['rooms', 'meta'], 'readwrite')
@@ -381,8 +386,8 @@ export const refitFull = async (
   const dm = kind === 'dm'
   const events = await num(dm ? TOTAL : SERVER_TOTAL)
   const content = events - (dm ? 0 : await num(SERVER_ACL))
-  const totalCap = dm ? (caps.totalCap ?? DAG.totalCap) : (caps.serverCap ?? DAG.serverCap)
-  const totalMax = dm ? (caps.totalBytes ?? DAG.totalBytes) : (caps.serverBytes ?? DAG.serverBytes)
+  const totalCap = dm ? caps.totalCap : caps.serverCap
+  const totalMax = dm ? caps.totalBytes : caps.serverBytes
   const bytes = await num(dm ? TOTAL_BYTES : SERVER_TOTAL_BYTES)
   const out: string[] = []
   for (const r of await rooms.getAll()) {
@@ -391,10 +396,9 @@ export const refitFull = async (
     const u = !dm && unknown(r)
     const count = u || dm ? r.count : r.count - (r.acount ?? 0)
     const eventsFull =
-      count >= (u ? UNKNOWN.events : (caps.roomCap ?? DAG.roomCap)) ||
-      (u ? events : content) >= totalCap
+      count >= (u ? caps.unknownEvents : caps.roomCap) || (u ? events : content) >= totalCap
     const bytesFull =
-      (r.bytes ?? 0) >= (u ? UNKNOWN.bytes : (caps.roomBytes ?? DAG.roomBytes)) || bytes >= totalMax
+      (r.bytes ?? 0) >= (u ? caps.unknownBytes : caps.roomBytes) || bytes >= totalMax
     if (eventsFull || bytesFull) {
       const fullWhy: FullWhy = eventsFull ? 'events' : 'bytes'
       if (r.fullWhy !== fullWhy) await rooms.put({ ...r, fullWhy })
@@ -422,13 +426,6 @@ const heldAdd = async (
   await meta.put(Math.max(0, (typeof cur === 'number' ? cur : 0) + n), k)
 }
 
-export interface Caps {
-  roomCap?: number
-  roomBytes?: number
-  serverCap?: number
-  serverBytes?: number
-}
-
 // The sender's share of the room's and of every server's content budget, over the day
 // before `now`: whether one more event of `size` bytes fits, and the buckets to write if stored.
 const shareOf = async (
@@ -437,25 +434,14 @@ const shareOf = async (
   sender: string,
   size: number,
   now: number,
-  caps: Caps
+  lim: StoreLimits
 ): Promise<{ ok: boolean; room: Share; server: Share }> => {
-  const rs = shareLive(await get(shareKey(room, sender)), now)
-  const ss = shareLive(await get(shareKey(null, sender)), now)
+  const { dag, share } = lim
+  const rs = shareLive(await get(shareKey(room, sender)), now, share)
+  const ss = shareLive(await get(shareKey(null, sender)), now, share)
   const ok =
-    withinShare(
-      rs,
-      size,
-      SHARE.room,
-      caps.roomCap ?? DAG.roomCap,
-      caps.roomBytes ?? DAG.roomBytes
-    ) &&
-    withinShare(
-      ss,
-      size,
-      SHARE.server,
-      caps.serverCap ?? DAG.serverCap,
-      caps.serverBytes ?? DAG.serverBytes
-    )
+    withinShare(rs, size, share.room, dag.roomCap, dag.roomBytes) &&
+    withinShare(ss, size, share.server, dag.serverCap, dag.serverBytes)
   return { ok, room: rs, server: ss }
 }
 
@@ -467,15 +453,15 @@ export const withinShareNow = async (
   sender: string,
   size: number,
   now: number,
-  caps: Caps
-) => (await shareOf(k => db.get('meta', k), room, sender, size, now, caps)).ok
+  lim: StoreLimits
+) => (await shareOf(k => db.get('meta', k), room, sender, size, now, lim)).ok
 
 // A message's or an edit's search rows taken out (it is dropped or purged). Returns the bytes.
-const unindexOne = (st: SearchWrite, events: EventRead, r: EventRecord) =>
+const unindexOne = (st: SearchWrite, events: EventRead, r: EventRecord, cut: Cut) =>
   r.type === 'msg'
-    ? unindex(st, events, r)
+    ? unindex(st, events, r, cut)
     : r.type === 'edit'
-      ? unindexEdit(st, events, r)
+      ? unindexEdit(st, events, r, cut)
       : Promise.resolve(0)
 
 // The same for content about to be deleted: messages first, then edits; held bytes come off their
@@ -485,7 +471,8 @@ export const unindexAll = async (
   events: EventRead,
   meta: Parameters<typeof heldAdd>[0] | null,
   room: string,
-  ids: readonly string[]
+  ids: readonly string[],
+  cut: Cut
 ) => {
   const recs: EventRecord[] = []
   for (const id of ids) {
@@ -494,7 +481,7 @@ export const unindexAll = async (
   }
   let bytes = 0
   for (const e of [...recs.filter(r => r.type === 'msg'), ...recs.filter(r => r.type !== 'msg')]) {
-    const n = await unindexOne(st, events, e)
+    const n = await unindexOne(st, events, e, cut)
     if (meta) await heldAdd(meta, room, e.sender, -n)
     bytes += n
   }
@@ -539,18 +526,18 @@ export const insertServer = async (
   const size = storedSize(wire as unknown as Wire)
   const roomBytes = r.bytes ?? 0
   const cc = await contentCounts(meta, r)
+  const dag = ctx.lim.dag
   const full: FullWhy | null = ctx.unknown
-    ? r.count >= UNKNOWN.events || total >= (ctx.serverCap ?? DAG.serverCap)
+    ? r.count >= dag.unknownEvents || total >= dag.serverCap
       ? 'events'
-      : roomBytes + size > UNKNOWN.bytes || totalBytes + size > (ctx.serverBytes ?? DAG.serverBytes)
+      : roomBytes + size > dag.unknownBytes || totalBytes + size > dag.serverBytes
         ? 'bytes'
         : null
     : acl
       ? null
-      : cc.room >= (ctx.roomCap ?? DAG.roomCap) || cc.total >= (ctx.serverCap ?? DAG.serverCap)
+      : cc.room >= dag.roomCap || cc.total >= dag.serverCap
         ? 'events'
-        : roomBytes + size > (ctx.roomBytes ?? DAG.roomBytes) ||
-            totalBytes + size > (ctx.serverBytes ?? DAG.serverBytes)
+        : roomBytes + size > dag.roomBytes || totalBytes + size > dag.serverBytes
           ? 'bytes'
           : null
   if (full) {
@@ -562,7 +549,7 @@ export const insertServer = async (
   // Someone else's content counts against its share; past it, not stored for now (no strike).
   const share =
     !acl && !ctx.unknown && ev.a !== ctx.me
-      ? await shareOf(k => meta.get(k), room, ev.a, size, receivedAt, ctx)
+      ? await shareOf(k => meta.get(k), room, ev.a, size, receivedAt, ctx.lim)
       : null
   if (share && !share.ok) {
     await tx.done
@@ -626,7 +613,10 @@ export const insertServer = async (
   if (atts.length) Object.assign(rec, withFiles(rec, atts))
   await events.put(rec)
   // The search index's rows count as the room's storage.
-  const indexed = !acl && !ctx.unknown ? await indexEvent(tx.objectStore('search'), events, rec) : 0
+  const indexed =
+    !acl && !ctx.unknown
+      ? await indexEvent(tx.objectStore('search'), events, rec, ctx.lim.search)
+      : 0
   const storedBytes = (gone ? storedSize(stored) : size) + indexed
   // Only a body eviction can free counts.
   if (!acl && !ctx.unknown && !isRedacted) await heldAdd(meta, room, ev.a, size + indexed)
@@ -639,8 +629,9 @@ export const insertServer = async (
   if (cp !== undefined) next.cprev = cp
   await meta.put(next, ck)
   if (share) {
-    await meta.put(shareAdd(share.room, receivedAt, size + indexed), shareKey(room, ev.a))
-    await meta.put(shareAdd(share.server, receivedAt, size + indexed), shareKey(null, ev.a))
+    const hours = ctx.lim.share
+    await meta.put(shareAdd(share.room, receivedAt, size + indexed, hours), shareKey(room, ev.a))
+    await meta.put(shareAdd(share.server, receivedAt, size + indexed, hours), shareKey(null, ev.a))
   }
   const missing = r.missing.filter(m => m !== id)
   const known = new Set(parents.map(x => x.id))
@@ -651,14 +642,21 @@ export const insertServer = async (
   if (!acl) {
     const children = tx.objectStore('children')
     for (const p of prev) await children.put({ parent: p, child: id })
-    heads = nextHeads(r.heads, id, depth, prev, (await children.count(childRange(id))) > 0)
+    heads = nextHeads(
+      r.heads,
+      id,
+      depth,
+      prev,
+      (await children.count(childRange(id))) > 0,
+      dag.heads
+    )
   }
   const moved = await moveCounts(
     meta,
     {
       ...r,
       heads,
-      missing: missing.slice(-DAG.missing),
+      missing: missing.slice(-dag.missing),
       lastSeq: seq,
       lastTs: !acl && ev.t === 'msg' ? Math.max(r.lastTs, effTs) : r.lastTs,
       // ACL events of a server of known rules are stored whatever the room holds.
@@ -675,7 +673,12 @@ export const insertServer = async (
 // header stays keeps its core, signature, the content `acl/` keeps, its admission order and record;
 // anything else keeps only its id. The room's counts and space come back, and its gaps and heads
 // forget the dropped ids. Returns the files of dropped content (they may be deleted here now).
-export const dropServer = async (db: P2pDatabase, room: string, drops: Drops) => {
+export const dropServer = async (
+  db: P2pDatabase,
+  room: string,
+  drops: Drops,
+  cut: Cut = LOCAL.search
+) => {
   const tx = db.transaction(
     ['events', 'dropped', 'rooms', 'meta', 'children', 'search'],
     'readwrite'
@@ -690,7 +693,7 @@ export const dropServer = async (db: P2pDatabase, room: string, drops: Drops) =>
   const freed: string[] = []
   const gone = new Set<string>()
   // Messages, then edits, leave the index first, while everything is still stored.
-  bytes += await unindexAll(tx.objectStore('search'), events, meta, room, drops.content)
+  bytes += await unindexAll(tx.objectStore('search'), events, meta, room, drops.content, cut)
   for (const id of [...drops.acl.map(d => d.id), ...drops.content]) {
     const e = await events.get(id)
     if (!e || e.room !== room) continue
@@ -740,7 +743,8 @@ export const purgeServer = async (
   room: string,
   ids: readonly string[],
   me: string,
-  evict = false
+  evict = false,
+  cut: Cut = LOCAL.search
 ) => {
   const tx = db.transaction(['events', 'rooms', 'meta', 'search'], 'readwrite')
   const events = tx.objectStore('events')
@@ -763,7 +767,7 @@ export const purgeServer = async (
     }
     done.push(r.id)
     // Out of the index before the record goes (an edit while its message's rows are there).
-    const ix = await unindexOne(tx.objectStore('search'), events, r)
+    const ix = await unindexOne(tx.objectStore('search'), events, r, cut)
     await heldAdd(meta, room, r.sender, -ix)
     saved += ix
     await events.put(next)
@@ -791,7 +795,8 @@ export const restoreBody = async (
   room: string,
   id: string,
   wire: WireV2,
-  now: number
+  now: number,
+  cut: Cut = LOCAL.search
 ) => {
   const tx = db.transaction(['events', 'rooms', 'meta', 'search'], 'readwrite')
   const events = tx.objectStore('events')
@@ -807,7 +812,7 @@ export const restoreBody = async (
   next = withFiles(next, atts)
   const size = storedSize(next.wire)
   await events.put(next)
-  const indexed = await indexEvent(tx.objectStore('search'), events, next)
+  const indexed = await indexEvent(tx.objectStore('search'), events, next, cut)
   const grown = size - storedSize(r.wire) + indexed
   await heldAdd(meta, room, r.sender, size + indexed)
   const rec = await tx.objectStore('rooms').get(room)
@@ -847,9 +852,9 @@ export const evictionOrder = async (db: P2pDatabase, room: string | null, me: st
 }
 
 // The oldest content bodies of `ik` in `room` (in display order across its devices, on the
-// sender's index, not a room scan), at least `bytes` of them and at least one, at most `max`. One
-// walk gives both those outside their grace (`ids`) and those fetched back less than
-// DAG.backGraceMs before `now` (`late`). `seen`: records walked, at most DAG.walk. `from`: where
+// sender's index, not a room scan), at least `bytes` of them and at least one, at most
+// `oldestBodies`. One walk gives both those outside their grace (`ids`) and those fetched back
+// less than `backGraceMs` before `now` (`late`). `seen`: records walked, at most `walk`. `from`: where
 // the walk starts (the `from` an earlier walk returned: nothing before it has a body to give).
 // `undelivered`: our own, kept while no peer has them.
 export const oldestBodies = async (
@@ -858,9 +863,10 @@ export const oldestBodies = async (
   ik: string,
   bytes: number,
   now: number,
-  max = LOCAL.dag.oldestBodies,
+  lim: Pick<DagLimits, 'oldestBodies' | 'walk' | 'backGraceMs'>,
   opts: { from?: string; undelivered?: boolean } = {}
 ) => {
+  const max = lim.oldestBodies
   const ids: string[] = []
   const late: string[] = []
   let got = 0
@@ -875,7 +881,7 @@ export const oldestBodies = async (
     .index('room_sender_sort')
     .openCursor(IDBKeyRange.bound([room, ik, opts.from ?? ''], [room, ik, '\uffff']))
   const enough = (l: string[], n: number) => l.length >= max || (n >= bytes && l.length > 0)
-  while (cursor && !enough(ids, got) && seen < DAG.walk) {
+  while (cursor && !enough(ids, got) && seen < lim.walk) {
     const r = cursor.value
     seen += 1
     last = r.sortKey
@@ -886,7 +892,7 @@ export const oldestBodies = async (
         cursor = await cursor.continue()
         continue
       }
-      if (r.back !== undefined && now - r.back < DAG.backGraceMs) {
+      if (r.back !== undefined && now - r.back < lim.backGraceMs) {
         if (!enough(late, lateGot)) {
           late.push(r.id)
           lateGot += storedSize(r.wire)
@@ -920,7 +926,7 @@ export const vouched = async (
   id: string,
   sender: string,
   good: (dev: string) => boolean,
-  limit = DAG.walk
+  limit: number
 ) => {
   const tx = db.transaction(['events', 'children'])
   const events = tx.objectStore('events')
@@ -961,7 +967,7 @@ export const ancestorsAmong = async (
   room: string,
   from: string[],
   targets: Set<string>,
-  limit = DAG.walk
+  limit: number
 ): Promise<Set<string>> => {
   const found = new Set<string>()
   if (!targets.size) return found
@@ -991,7 +997,8 @@ export const walkBack = async (
   from: string[],
   have: string[],
   limit: number,
-  bytes: number
+  bytes: number,
+  walk: number
 ): Promise<{ events: EventRecord[]; more: boolean }> => {
   const tx = db.transaction('events')
   const stop = new Set(have)
@@ -1002,7 +1009,7 @@ export const walkBack = async (
   let steps = 0
   let more = false
   while (queue.length) {
-    if (out.length >= limit || steps >= DAG.walk) {
+    if (out.length >= limit || steps >= walk) {
       more = true
       break
     }

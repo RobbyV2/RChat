@@ -17,7 +17,7 @@ import {
 } from '../flows'
 import type { Message } from '../frames'
 import { keyId } from '../keys'
-import { AGREED, LOCAL } from '../limits'
+import { AGREED } from '../limits'
 import type { Session } from '../session'
 import {
   channelOf,
@@ -155,10 +155,7 @@ export async function emitOne(
       me: cx.me,
       chain,
       ...(out.s === 'A' ? { aseq: out.aseq, acl: out.rec } : {}),
-      roomCap: cx.deps.roomCap,
-      roomBytes: cx.deps.roomBytes,
-      serverCap: cx.deps.serverCap,
-      serverBytes: cx.deps.serverBytes,
+      lim: cx.storeLimits(),
     })
   } catch (e) {
     await cx.reload(room)
@@ -207,7 +204,7 @@ export async function create(
   coOwners: string[] = []
 ): Promise<string> {
   const author = await cx.author()
-  const clean = clip(name.trim(), LOCAL.server.nameMax) || 'P2P server'
+  const clean = clip(name.trim(), cx.local.server.nameMax) || 'P2P server'
   const dk = keyId(author.dk.pk)
   if (coOwners.length > SERVER.coOwners) throw new ServerError(CO_OWNERS_MAX_TEXT)
   const sessions = coOwners.map(ik => {
@@ -264,7 +261,11 @@ export async function create(
 // certificate over that content's digest comes back.
 export async function askBundle(cx: ServerCtx, s: Session, g: Record<string, unknown>) {
   const r = s.remote!
-  const reply = await cx.request(s, { t: 'gbundle', room: g.nonce as string, g }, SERVER.coOwnerMs)
+  const reply = await cx.request(
+    s,
+    { t: 'gbundle', room: g.nonce as string, g },
+    cx.local.server.coOwnerMs
+  )
   const dcert = (reply?.b as { dcert?: unknown } | undefined)?.dcert
   if (typeof dcert !== 'string' || !deviceCertOk(r.ik, genesisSrv(g), r.ik, r.dk, '', dcert))
     throw new ServerError(`${cx.nameOf(r.ik)} didn't agree to be a co-owner`)
@@ -296,11 +297,11 @@ export function onBundle(cx: ServerCtx, m: Message, s: Session) {
   if (!ok || !author) return cx.answerBundle(s, m.room, g, ok)
   // Asked here (coOwnerAsks): agreed or declined from the UI, or no answer in time.
   const key = `${from}\n${m.room}`
-  if (cx.coAsks.size >= SERVER.coOwnerAsks && !cx.coAsks.has(key))
+  if (cx.coAsks.size >= cx.local.server.coOwnerAsks && !cx.coAsks.has(key))
     return cx.answerBundle(s, m.room, g, false)
   cx.coAsks.set(key, {
     from,
-    name: typeof g.name === 'string' ? clip(g.name, LOCAL.server.nameMax) : '',
+    name: typeof g.name === 'string' ? clip(g.name, cx.local.server.nameMax) : '',
     room: m.room,
     g,
     s,
@@ -309,7 +310,7 @@ export function onBundle(cx: ServerCtx, m: Message, s: Session) {
     if (cx.coAsks.delete(key)) cx.changed('')
   }
   s.onClose(drop)
-  cx.clock.set(drop, SERVER.coOwnerMs)
+  cx.clock.set(drop, cx.local.server.coOwnerMs)
   cx.changed('')
 }
 
@@ -349,7 +350,7 @@ export function settings(cx: ServerCtx, room: string, patch: Record<string, unkn
 }
 
 export function setName(cx: ServerCtx, room: string, name: string, color?: number | null) {
-  const patch: Record<string, unknown> = { name: clip(name.trim(), LOCAL.server.nameMax) }
+  const patch: Record<string, unknown> = { name: clip(name.trim(), cx.local.server.nameMax) }
   if (typeof color === 'number') patch.color = color
   return cx.settings(room, patch)
 }
@@ -369,12 +370,12 @@ export function addChannel(
   name: string,
   opts: { restrictView?: boolean; kind?: 'text' | 'voice' } = {}
 ) {
-  const pos = Math.max(-1, ...channelsOf(cx.sumOf(room)).map(c => c.pos)) + 1
+  const pos = Math.max(-1, ...channelsOf(cx.sumOf(room), cx.local.display).map(c => c.pos)) + 1
   const id = newShortId()
   return cx
     .emit(room, 'channel', () => ({
       id,
-      name: clip(name.trim(), LOCAL.server.nameMax),
+      name: clip(name.trim(), cx.local.server.nameMax),
       kind: opts.kind ?? 'text',
       pos,
       ...(opts.restrictView ? { restrict_view: true } : {}),
@@ -387,7 +388,7 @@ export function editChannel(cx: ServerCtx, room: string, id: string, patch: Chan
   const cur = channelOf(cx.sumOf(room), id)
   if (!cur) throw new ServerError('Unknown channel')
   const next: Record<string, unknown> = { ...knownChannel(cur), ...patch, id }
-  if (patch.name !== undefined) next.name = clip(patch.name.trim(), LOCAL.server.nameMax)
+  if (patch.name !== undefined) next.name = clip(patch.name.trim(), cx.local.server.nameMax)
   if (next.topic === '') delete next.topic
   for (const k of ['restrict_view', 'restrict_send']) if (next[k] !== true) delete next[k]
   if (!Number.isSafeInteger(next.slow) || (next.slow as number) <= 0) delete next.slow

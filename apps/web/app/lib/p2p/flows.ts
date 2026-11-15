@@ -1,6 +1,6 @@
 import { EVERYONE } from './acl/rules'
 import type { Summary } from './acl/summary'
-import { LOCAL } from './limits'
+import type { Local } from './limits'
 
 // The user-facing flows of P2P servers: their copy, and the pure
 // decisions behind them. server.ts runs the flows; the components show this copy.
@@ -119,16 +119,15 @@ export interface Reached {
 // - takenAlong: for the note to whoever removed them (Invite them again): someone *we* removed
 //   (kick, ban or leave) within the last day.
 // - cutOut: for the member themself (they keep the ACL and come back when invited again): their
-//   inviter was kicked, by anyone, within the last week; a ban or a disowned device means the
-//   invitees go for good.
+//   inviter was kicked, by anyone, within the last `cutMs` (limits.ts `misc`, a week); a ban or
+//   a disowned device means the invitees go for good.
 const DAY = 24 * 60 * 60_000
-export const CUT_MS = LOCAL.misc.cutMs
-export const cutOut = (s: Summary, ik: string, now: number) => {
+export const cutOut = (s: Summary, ik: string, now: number, lim: Pick<Local['misc'], 'cutMs'>) => {
   const m = s.members[ik]
   if (!m || m.m !== 'leave' || m.rem) return false
   return [m.via, m.code].some(x => {
     const r = x === undefined ? undefined : s.members[x]
-    return r?.m === 'leave' && r.remT === 'kick' && now - (r.remTs ?? -Infinity) < CUT_MS
+    return r?.m === 'leave' && r.remT === 'kick' && now - (r.remTs ?? -Infinity) < lim.cutMs
   })
 }
 
@@ -180,10 +179,10 @@ export const syncedSince = (
 
 // ----- Devices -----
 
-export const LOST_TIMES = ['1 hour ago', '1 day ago', '1 week ago'].map((label, i) => ({
-  label,
-  ms: LOCAL.misc.lostTimes[i],
-}))
+const LOST_LABELS = ['1 hour ago', '1 day ago', '1 week ago']
+
+export const lostTimes = (lim: Pick<Local['misc'], 'lostTimes'>) =>
+  LOST_LABELS.map((label, i) => ({ label, ms: lim.lostTimes[i] }))
 
 // What an ACL action did, for lists (re-apply, a lost device's actions): the act, and the member
 // it names (shown as a name, masked in streamer mode).

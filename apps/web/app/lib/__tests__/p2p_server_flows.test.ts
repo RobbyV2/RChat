@@ -29,6 +29,7 @@ import {
   type Member,
 } from './p2p_server_net'
 import { Hub, ManualClock } from './p2p_net'
+import { LOCAL } from '../p2p/limits'
 
 // The user-facing flows of P2P servers on real members over the in-memory hub.
 
@@ -2088,6 +2089,7 @@ describe('transfer', () => {
     let fired = 0
     const fake = {
       rooms: new Map([['r', {}]]),
+      local: LOCAL,
       clock: {
         set: (fn: () => void) => {
           fired++

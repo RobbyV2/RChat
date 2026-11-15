@@ -17,7 +17,7 @@ import { keyId } from '../keys'
 import { memberOf } from '../state'
 import { MOVED_TEXT } from '../dm'
 import type { ServerCtx } from './context'
-import { SERVER, ServerError, sizeOfWire } from './types'
+import { ServerError, sizeOfWire } from './types'
 import { type Rt } from './rt'
 
 // Storage work is due: the state or the held content changed.
@@ -33,13 +33,14 @@ export const heldBare = (rt: Rt, ids: Iterable<string>) => {
 // A tick's storage work in room `r`: a storage pass when due, bodies still
 // wanted asked for again while some are, proofs, and the mark acknowledging a redaction.
 export function tick(cx: ServerCtx, r: RoomRecord, rt: Rt, now: number) {
-  const every = Object.keys(r.causes ?? {}).length ? SERVER.causesMs : Infinity
-  if ((rt.storeDirty && now - rt.storeAt >= SERVER.storeMs) || now - rt.storeAt >= every) {
+  const lim = cx.local.server
+  const every = Object.keys(r.causes ?? {}).length ? lim.causesMs : Infinity
+  if ((rt.storeDirty && now - rt.storeAt >= lim.storeMs) || now - rt.storeAt >= every) {
     rt.storeDirty = false
     rt.storeAt = now
     void cx.locked(r.id, () => cx.storePass(r.id)).catch(() => {})
   }
-  if ((rt.want.size || rt.viewed.size) && now - rt.wantAt >= SERVER.causesMs) {
+  if ((rt.want.size || rt.viewed.size) && now - rt.wantAt >= lim.causesMs) {
     rt.wantAt = now
     void cx.locked(r.id, () => cx.wantPass(r.id)).catch(() => {})
   }
@@ -67,7 +68,7 @@ export async function dropPass(cx: ServerCtx, room: string) {
   if (!d.acl.length && !d.content.length) return
   let freed: string[]
   try {
-    freed = await dropServer(cx.db, room, d)
+    freed = await dropServer(cx.db, room, d, cx.local.search)
   } catch (e) {
     // The evaluator let go of what is still stored: it starts again from storage.
     await cx.reload(room)
@@ -104,7 +105,8 @@ export async function purgePass(cx: ServerCtx, room: string, pressure: boolean, 
   const keys = (x: Record<string, number>) => Object.keys(x).sort().join()
   if (keys(causes) !== keys(old)) await cx.updateRoom(room, cur => ({ ...cur, causes }))
   const due = (c: (typeof p.causes)[number]) =>
-    c.kind === 'self' || (c.stable && (pressure || now - causes[c.id] >= SERVER.purgeAfter))
+    c.kind === 'self' ||
+    (c.stable && (pressure || now - causes[c.id] >= cx.local.server.purgeAfter))
   const ids = p.causes.filter(due).flatMap(c => c.ids)
   const n = await cx.purge(room, ids)
   if (!pressure || p.causes.some(c => c.kind !== 'self' && due(c))) return n
@@ -125,7 +127,7 @@ export async function purge(
   keepFiles = evict
 ) {
   if (!ids.length) return 0
-  const { done, freed, mine } = await purgeServer(cx.db, room, ids, cx.me, evict)
+  const { done, freed, mine } = await purgeServer(cx.db, room, ids, cx.me, evict, cx.local.search)
   if (!done.length) return 0
   const rt = cx.ensureRt(room)
   for (const id of done) rt.bodiless.add(id)
@@ -168,7 +170,7 @@ export async function restoreBody(
   // Room for it first: just its size, from bodies not fetched back lately.
   const full = await cx.contentFull(room, w)
   if (full) await cx.evictForSpace(room, sizeOfWire(w), full === 'total', true)
-  const rec = await restoreIn(cx.db, room, id, w, cx.clock.now())
+  const rec = await restoreIn(cx.db, room, id, w, cx.clock.now(), cx.local.search)
   const rt = cx.ensureRt(room)
   if (!rec) return { status: 'dropped' }
   rt.evictFrom.delete(rec.sender)
@@ -195,7 +197,8 @@ export async function proofPass(cx: ServerCtx, room: string) {
     const q = rt.proofs.get(c.dev)
     if (q && q.f <= c.f) continue
     const rand = cx.deps.random ?? Math.random
-    rt.proofs.set(c.dev, { f: c.f, due: now + Math.floor(rand() * SERVER.proofDelayMs) })
+    const due = now + Math.floor(rand() * cx.local.server.proofDelayMs)
+    rt.proofs.set(c.dev, { f: c.f, due })
   }
 }
 
@@ -230,14 +233,15 @@ export async function postProof(cx: ServerCtx, room: string, dev: string) {
 }
 
 // A moderator's redaction we applied: a mark naming it within a minute, so it can be
-// acknowledged (S2), at most one per room per SERVER.ackMs, and only while some
-// redaction still needs it (ackRedactions).
+// acknowledged, at most one per room per `server.ackMs`, and only while some redaction still
+// needs it (ackRedactions).
 export function noteRedaction(cx: ServerCtx, room: string) {
   const rt = cx.ensureRt(room)
   if (rt.ackDue !== null) return
   const rand = cx.deps.random ?? Math.random
-  const at = cx.clock.now() + Math.floor(rand() * SERVER.ackDelayMs)
-  rt.ackDue = Math.max(at, rt.ackAt + SERVER.ackMs)
+  const lim = cx.local.server
+  const at = cx.clock.now() + Math.floor(rand() * lim.ackDelayMs)
+  rt.ackDue = Math.max(at, rt.ackAt + lim.ackMs)
 }
 
 // A mark only names redactions not yet acknowledged that can still be
@@ -257,7 +261,7 @@ export function ackRedactions(cx: ServerCtx, room: string, rt: Rt, now: number) 
 
 // Out of space: purgeable bodies go first, then hidden ones that can be fetched
 // again, then the oldest bodies of the sender whose bodies take the most here (`total`: in
-// every server), until `size` more bytes fit, at least SERVER.evictBytes. Bodies fetched back
+// every server), until `size` more bytes fit, at least `server.evictBytes`. Bodies fetched back
 // lately go only when nothing else can. `restore`: making room for a body fetched back, which
 // takes just its size and never one fetched back lately.
 export async function evictForSpace(
@@ -270,12 +274,12 @@ export async function evictForSpace(
   const n = await cx.purgePass(room, true)
   if (n) return n
   const now = cx.clock.now()
-  const need = restore ? size : Math.max(size, SERVER.evictBytes)
+  const need = restore ? size : Math.max(size, cx.local.server.evictBytes)
   let late: { room: string; ids: string[] } | null = null
   for (const c of await evictionOrder(cx.db, total ? null : room, cx.me)) {
     const starts = cx.ensureRt(c.room).evictFrom
     const walk = (from?: string) =>
-      oldestBodies(cx.db, c.room, c.ik, need, now, 500, {
+      oldestBodies(cx.db, c.room, c.ik, need, now, cx.local.dag, {
         from,
         undelivered: c.ik === cx.me,
       })
@@ -379,7 +383,7 @@ export async function refreshBadge(cx: ServerCtx) {
   const now = cx.clock.now()
   const due = [...cx.rooms.keys()].filter(id => {
     const m = memberOf(cx.sumOf(id), cx.me)
-    return m?.m === 'join' && memberBindingDue(m.binding, binding, now)
+    return m?.m === 'join' && memberBindingDue(m.binding, binding, now, cx.local.badge)
   })
   if (!due.length || !cx.deps.node.author()) return
   await cx.deps.node.touchProfile()

@@ -10,6 +10,7 @@ import * as dm from '../p2p/dm'
 import { Dms, dmRoomId, loadMessages } from '../p2p/dm'
 import * as dag from '../p2p/dag'
 import { insertEvent } from '../p2p/dag'
+import { LOCAL } from '../p2p/limits'
 
 // Real-time tests (sessions, IndexedDB): budgets for a loaded machine.
 setDefaultTimeout(60_000)
@@ -106,7 +107,7 @@ const eventOn = async (
 const legacyEvent = async (p: Peer, room: string, body: string) => {
   const author = p.node.author()!
   const { id, wire } = await eventOn(p, room, author, 'msg', { body })
-  await insertEvent(p.store.db, id, wire, Date.now(), { me: p.node.ik, peer: '' })
+  await insertEvent(p.store.db, id, wire, Date.now(), { me: p.node.ik, peer: '', lim: LOCAL.dag })
   await p.store.db.put('outbox', { id, room, created: Date.now(), deliveredTo: [] })
   return { id, wire }
 }
@@ -190,8 +191,8 @@ describe('storage limits', () => {
     expect(await failure(b.dms.send(room, { body: 'b' }))).toBe(
       'This conversation reached the storage limit of 6 KB on this device.'
     )
-    expect(dag.DAG.roomBytes).toBe(200 * 1024 * 1024)
-    expect(dag.DAG.totalBytes).toBe(1024 * 1024 * 1024)
+    expect(LOCAL.dag.roomBytes).toBe(200 * 1024 * 1024)
+    expect(LOCAL.dag.totalBytes).toBe(1024 * 1024 * 1024)
   })
 
   test('a full conversation takes messages again after a start with a higher limit', async () => {
@@ -228,7 +229,7 @@ describe('storage limits', () => {
   test('a room marked full is not full once an event fits', async () => {
     const { a, b, room } = await pair()
     const me = a.node.author()!
-    const ctx = { me: a.node.ik, peer: b.node.ik, roomBytes: 2000 }
+    const ctx = { me: a.node.ik, peer: b.node.ik, lim: { ...LOCAL.dag, roomBytes: 2000 } }
     const big = await eventOn(a, room, me, 'msg', { body: 'x'.repeat(2500) })
     expect((await insertEvent(a.store.db, big.id, big.wire, Date.now(), ctx)).status).toBe('full')
     expect((await a.store.room(room))?.full).toBe(true)
@@ -266,7 +267,7 @@ describe('storage limits', () => {
         .filter(r => r.full)
         .map(r => r.id)
         .sort()
-    const dms = { roomCap: 50, roomBytes: 8000, totalCap: 100, totalBytes: 20_000 }
+    const dms = { ...LOCAL.dag, roomCap: 50, roomBytes: 8000, totalCap: 100, totalBytes: 20_000 }
     expect(await dag.refitFull(db, 'dm', { ...dms, totalBytes: 19_000 })).toEqual([])
     const why = async (id: string) => (await store.room(id))?.fullWhy
     expect(await dag.refitFull(db, 'dm', { ...dms, totalCap: 70 })).toEqual([])
@@ -274,7 +275,7 @@ describe('storage limits', () => {
     expect(await dag.refitFull(db, 'dm', dms)).toEqual(['d1'])
     expect(await full()).toEqual(['d2', 'd3', 's1', 's2'])
     expect([await why('d2'), await why('d3')]).toEqual(['bytes', 'events'])
-    const sv = { roomCap: 9, roomBytes: 8000, serverCap: 30, serverBytes: 20_000 }
+    const sv = { ...LOCAL.dag, roomCap: 9, roomBytes: 8000, serverCap: 30, serverBytes: 20_000 }
     expect(await dag.refitFull(db, 'server', { ...sv, roomCap: 8 })).toEqual([])
     expect(await dag.refitFull(db, 'server', { ...sv, serverCap: 18 })).toEqual([])
     expect(await dag.refitFull(db, 'server', { ...sv, serverBytes: 12_000 })).toEqual([])
@@ -304,20 +305,22 @@ describe('storage limits', () => {
     await db.put('meta', 50, dag.SERVER_TOTAL)
     await db.put('meta', 30, dag.SERVER_ACL)
     await db.put('meta', 30_000, dag.SERVER_TOTAL_BYTES)
-    const was = { ...dag.UNKNOWN }
-    Object.assign(dag.UNKNOWN, { events: 20, bytes: 8000 })
-    try {
-      const sv = { roomCap: 100, roomBytes: 100_000, serverCap: 60, serverBytes: 100_000 }
-      const unknown = (r: RoomRecord) => r.id.startsWith('u')
-      // Every event of theirs counts, ACL ones too: all 50 against the total.
-      expect(await dag.refitFull(db, 'server', { ...sv, serverCap: 50 }, unknown)).toEqual(['k1'])
-      expect(await dag.refitFull(db, 'server', { ...sv, serverBytes: 30_000 }, unknown)).toEqual([])
-      expect(await dag.refitFull(db, 'server', sv, unknown)).toEqual(['u1'])
-      const full = (await store.rooms()).filter(r => r.full).map(r => r.id)
-      expect(full.sort()).toEqual(['u2', 'u3'])
-    } finally {
-      Object.assign(dag.UNKNOWN, was)
+    const sv = {
+      ...LOCAL.dag,
+      roomCap: 100,
+      roomBytes: 100_000,
+      serverCap: 60,
+      serverBytes: 100_000,
+      unknownEvents: 20,
+      unknownBytes: 8000,
     }
+    const unknown = (r: RoomRecord) => r.id.startsWith('u')
+    // Every event of theirs counts, ACL ones too: all 50 against the total.
+    expect(await dag.refitFull(db, 'server', { ...sv, serverCap: 50 }, unknown)).toEqual(['k1'])
+    expect(await dag.refitFull(db, 'server', { ...sv, serverBytes: 30_000 }, unknown)).toEqual([])
+    expect(await dag.refitFull(db, 'server', sv, unknown)).toEqual(['u1'])
+    const full = (await store.rooms()).filter(r => r.full).map(r => r.id)
+    expect(full.sort()).toEqual(['u2', 'u3'])
     store.close()
   })
 
@@ -456,7 +459,7 @@ describe('revoked devices', () => {
   test('a pre-revocation event that a good device built on is kept', async () => {
     const { a, b, room, bob, oldAuthor, revokedAt } = await setup()
     const sessB = sessionOf(b, room)
-    const ctx = { me: b.node.ik, peer: a.node.ik }
+    const ctx = { me: b.node.ik, peer: a.node.ik, lim: LOCAL.dag }
     const early = await eventOn(
       b,
       room,
@@ -476,7 +479,7 @@ describe('revoked devices', () => {
 
   test('one pulled before the good device built on it comes once that head arrives', async () => {
     const { a, b, room, bob, oldAuthor, revokedAt } = await setup()
-    const ctx = { me: b.node.ik, peer: a.node.ik }
+    const ctx = { me: b.node.ik, peer: a.node.ik, lim: LOCAL.dag }
     const early = await eventOn(
       b,
       room,
@@ -537,7 +540,7 @@ describe('events a peer pushes', () => {
     const bob = b.node.author()!
     const msg = await eventOn(a, room, alice, 'msg', { body: 'original' })
     const edit = await eventOn(a, room, bob, 'edit', { target: msg.id, body: 'hacked' })
-    const ctx = { me: a.node.ik, peer: b.node.ik }
+    const ctx = { me: a.node.ik, peer: b.node.ik, lim: LOCAL.dag }
     expect((await insertEvent(a.store.db, edit.id, edit.wire, Date.now(), ctx)).status).toBe('new')
     expect((await insertEvent(a.store.db, msg.id, msg.wire, Date.now(), ctx)).status).toBe('new')
     expect(await bodies(a, b)).toEqual(['original'])

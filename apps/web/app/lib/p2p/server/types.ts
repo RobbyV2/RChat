@@ -10,7 +10,7 @@ import type { Wire } from '../event_v1'
 import type { WireV2 } from '../event_v2'
 import { CO_OWNERS_MAX } from '../flows'
 import type { GossipLimits } from '../gossip'
-import { LOCAL } from '../limits'
+import { LOCAL, type Local } from '../limits'
 import type { P2pNode } from '../node'
 import type { AclHost } from '../resolve_host'
 import type { Clock } from '../session'
@@ -40,24 +40,20 @@ export const SERVER = {
   codePeers: 4,
   // Co-owners a new server may list (its genesis must fit in one ACL event).
   coOwners: CO_OWNERS_MAX,
-  ...LOCAL.server,
 }
 
-// Vouching marks (Rt.vouch): at most one per room this often, and one per inviter.
-export const VOUCH = { roomMs: LOCAL.server.vouchRoomMs, inviterMs: LOCAL.server.vouchInviterMs }
+// limits.ts `server`. Among them: vouching marks (Rt.vouch), at most one per room every
+// `vouchRoomMs` and one per inviter every `vouchInviterMs`; how long a joiner waits for missing
+// ACL events before joining with what it has (`joinWaitMs`), and how soon the evaluation cache is
+// written after a change (`saveMs`).
+export type ServerLimits = Local['server']
 
 export const CODE_PREFIX = 'rci1.'
 
-// How long a joiner waits for missing ACL events before joining with what it has, and how soon
-// the evaluation cache is written after a change.
-export const JOIN_WAIT = LOCAL.server.joinWaitMs
+const TTL_LABELS = ['1 hour', '1 day', '7 days', '30 days']
 
-export const SAVE_MS = LOCAL.server.saveMs
-
-export const CODE_TTLS = ['1 hour', '1 day', '7 days', '30 days'].map((label, i) => ({
-  label,
-  ms: LOCAL.server.codeTtls[i],
-}))
+export const codeTtls = (lim: Pick<ServerLimits, 'codeTtls'>) =>
+  TTL_LABELS.map((label, i) => ({ label, ms: lim.codeTtls[i] }))
 
 export const NEEDS_INVITER = 'Someone who can invite must be online'
 
@@ -321,6 +317,9 @@ export interface ServerDeps {
   dms: Dms
   clock?: Clock
   random?: () => number
+  // The account's limits (limits.ts); `limits` (sync), `gossip`, `voice` and the budgets below
+  // override parts.
+  local?: Readonly<Local>
   limits?: Partial<SyncLimits>
   gossip?: Partial<GossipLimits>
   voice?: Partial<VoiceLimits>
@@ -378,25 +377,6 @@ export const systemRow = (rec: EventRecord, ik: string): P2pMessage => ({
   failed: false,
   call: null,
 })
-
-// Entries per `migrate` chunk (chunks within the 16 KiB of a migrate event), and the
-// ACL events of a new owner's carry-over a member acknowledges with a mark.
-export const MIGRATE_PER = LOCAL.server.migratePer
-
-// A new copy links with the old copy's members this long after we joined it.
-export const SETTLE_MS = LOCAL.server.settleMs
-
-export const ARCHIVE_LINKS = {
-  perRoom: LOCAL.gossip.archivePerRoom,
-  outTarget: LOCAL.gossip.archiveOutTarget,
-}
-
-export const SETTLE_RESAMPLE = LOCAL.server.settleResample
-
-export const CARRY_ACK = LOCAL.server.carryAck
-
-// Acknowledgements of a carry-over whose size isn't known here (its old copy isn't).
-export const CARRY_ACKS_MAX = LOCAL.server.carryAcksMax
 
 export interface Migrated {
   members: string[]
@@ -463,33 +443,34 @@ export type ChannelPatch = {
   slow?: number
 }
 
-export const ROLE_NAME_MAX = LOCAL.server.roleNameMax
-
-// Positions are absolute: a new role goes below the lowest, leaving room between, else
-// into a gap below `cap` (our own top role's position), else (owners) above every role; never onto a
-// position a role has. Null: no room below `cap`.
-export const ROLE_STEP = LOCAL.server.roleStep
-
 export const NO_ROOM_TEXT = 'No room for a new role below your highest role. Move a role first.'
 
-export const newRolePos = (positions: number[], cap = Infinity): number | null => {
+// Positions are absolute: a new role goes below the lowest, leaving `roleStep` between, else
+// into a gap below `cap` (our own top role's position), else (owners) above every role; never
+// onto a position a role has. Null: no room below `cap`.
+export const newRolePos = (
+  positions: number[],
+  cap = Infinity,
+  lim: Pick<ServerLimits, 'roleStep'> = LOCAL.server
+): number | null => {
+  const step = lim.roleStep
   const s = [...new Set(positions)].sort((a, b) => a - b)
-  if (!s.length) return Number.isFinite(cap) ? null : ROLE_STEP * ROLE_STEP
+  if (!s.length) return Number.isFinite(cap) ? null : step * step
   if (s[0] > 0) {
-    const p = s[0] > ROLE_STEP ? s[0] - ROLE_STEP : Math.floor(s[0] / 2)
+    const p = s[0] > step ? s[0] - step : Math.floor(s[0] / 2)
     return p < cap ? p : null
   }
   for (let i = 0; i < s.length; i++) {
     const hi = Math.min(s[i + 1] ?? Infinity, cap)
-    if (hi === Infinity) return s[i] + ROLE_STEP
+    if (hi === Infinity) return s[i] + step
     if (hi - s[i] >= 2) return Math.floor((s[i] + hi) / 2)
     if (hi === cap) break
   }
   return null
 }
 
-export const roleName = (x: unknown) =>
-  typeof x === 'string' && x.trim() ? clip(x.trim(), ROLE_NAME_MAX) : 'Role'
+export const roleName = (x: unknown, lim: Pick<ServerLimits, 'roleNameMax'>) =>
+  typeof x === 'string' && x.trim() ? clip(x.trim(), lim.roleNameMax) : 'Role'
 
 export const sortRoles = (ids: string[], at: Map<string, number>) =>
   ids.filter(id => at.has(id)).sort((a, b) => at.get(a)! - at.get(b)!)

@@ -2,7 +2,7 @@ import { sha512 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
 import { b64u, bytesOf, canonical, concat, fromB64u, parseCanonical, utf8 } from './canonical'
 import { isKeyId, keyBytes } from './keys'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 import { NONCE_LEN } from './acl/rules'
 
 // Safety numbers (Signal's construction): per identity, SHA-512 iterated 5200 times over the
@@ -28,23 +28,27 @@ const half = (ik: Uint8Array) => {
 
 const cache = new Map<string, string>()
 
-const halfOf = (ik: string) => {
+// Safety halves computed, cleared past `max` (limits.ts `misc.safetyCache`).
+const halfOf = (ik: string, max: number) => {
   const hit = cache.get(ik)
   if (hit) return hit
   const key = keyBytes(ik)
   if (!key) throw new Error('bad identity key')
   const d = half(key)
-  if (cache.size > LOCAL.misc.safetyCache) cache.clear()
+  if (cache.size > max) cache.clear()
   cache.set(ik, d)
   return d
 }
 
-export const safetyDigits = (a: string, b: string) => {
+type Cache = Pick<Local['misc'], 'safetyCache'>
+
+export const safetyDigits = (a: string, b: string, lim: Cache = LOCAL.misc) => {
   const [x, y] = a < b ? [a, b] : [b, a]
-  return halfOf(x) + halfOf(y)
+  return halfOf(x, lim.safetyCache) + halfOf(y, lim.safetyCache)
 }
 
-export const safetyGroups = (a: string, b: string) => safetyDigits(a, b).match(/.{5}/g) ?? []
+export const safetyGroups = (a: string, b: string, lim: Cache = LOCAL.misc) =>
+  safetyDigits(a, b, lim).match(/.{5}/g) ?? []
 
 // ----- QR verification -----
 

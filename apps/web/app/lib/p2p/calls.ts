@@ -4,7 +4,7 @@ import type { RtcPayload } from '../types'
 import { b64u, randomBytes } from './canonical'
 import { CALL_ID_LEN, type CallContent, type CallOutcome } from './content'
 import type { Message } from './frames'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 import { RateWindow } from './rate'
 import type { MissedCall } from './dm'
 import { realClock, type Clock, type Session } from './session'
@@ -22,21 +22,14 @@ import {
 // to the conversation's room, both identities and, once answered, the one device that answered.
 // Only the tab that runs P2P (the leader) has a node, so only it rings and handles calls.
 
-export const RING_MS = LOCAL.calls.ringMs
-// The callee gives up a moment after the caller would have.
-export const RING_GRACE_MS = LOCAL.calls.ringGraceMs
-// Rings per contact per minute; more are dropped without an answer.
-export const RINGS_PER_MIN = LOCAL.calls.ringsPerMin
-// How often a minute one session is told that a call it named doesn't exist.
-export const UNKNOWN_PER_MIN = LOCAL.calls.unknownPerMin
-// How long an answered call waits for its session to come back (a short network drop), and
-// after the other side said goodbye (a reload or a closed tab).
-export const LOST_MS = LOCAL.calls.lostMs
-export const BYE_MS = LOCAL.calls.byeMs
-// Negotiation frames from the callee held while the caller is still deciding on its relays.
-export const HELD_MAX = LOCAL.calls.heldMax
-// How often the caller notes the call is still going, for the log after a crash or reload.
-export const ALIVE_MS = LOCAL.calls.aliveMs
+// limits.ts `calls`: how long a ring lasts (the callee gives up `ringGraceMs` after the caller
+// would have); rings per contact per minute (more are dropped without an answer); how often a
+// minute one session is told that a call it named doesn't exist; how long an answered call waits
+// for its session to come back (a short network drop) and after the other side said goodbye (a
+// reload or a closed tab); negotiation frames from the callee held while the caller is still
+// deciding on its relays; how often the caller notes the call is still going, for the log after
+// a crash or reload; and the ended calls remembered.
+export type CallLimits = Local['calls']
 
 export const OFFLINE_TEXT = (name: string) => `${name} is offline. Try again when they are online.`
 export const BUSY_TEXT = (name: string) => `${name} is in another call.`
@@ -102,6 +95,7 @@ export interface CallDeps {
   // right before it takes the microphone.
   leaveOthers?: () => void
   clock?: Clock
+  limits?: Partial<CallLimits>
 }
 
 interface Live extends CallView {
@@ -135,9 +129,11 @@ export class Calls {
   private fns = new Set<() => void>()
   private ringFns = new Set<(c: CallView) => void>()
   readonly signaler: P2pSignaler
+  readonly limits: CallLimits
 
   constructor(private deps: CallDeps) {
     this.clock = deps.clock ?? realClock
+    this.limits = { ...LOCAL.calls, ...deps.limits }
     this.signaler = new P2pSignaler(
       () => this.cur?.id ?? null,
       (to, frame) => this.out(to, frame)
@@ -273,7 +269,10 @@ export class Calls {
       c.rung.add(s)
       this.send(s, this.ringFrame(c))
     }
-    c.timer = this.clock.set(() => this.end(c, { op: 'end', outcome: 'missed' }), RING_MS)
+    c.timer = this.clock.set(
+      () => this.end(c, { op: 'end', outcome: 'missed' }),
+      this.limits.ringMs
+    )
   }
 
   async accept() {
@@ -423,7 +422,7 @@ export class Calls {
     const now = this.clock.now()
     for (const [ik, w] of this.rings) if (w.idle(now)) this.rings.delete(ik)
     let rings = this.rings.get(r.ik)
-    if (!rings) this.rings.set(r.ik, (rings = new RateWindow(60_000, RINGS_PER_MIN)))
+    if (!rings) this.rings.set(r.ik, (rings = new RateWindow(60_000, this.limits.ringsPerMin)))
     if (!rings.hit(now)) return
     const c = this.cur
     // Both sides called each other at once: the call with the lower id goes ahead. The side
@@ -460,7 +459,10 @@ export class Calls {
       alive: null,
     }
     this.cur = next
-    next.timer = this.clock.set(() => this.end(next, { missed: true }), RING_MS + RING_GRACE_MS)
+    next.timer = this.clock.set(
+      () => this.end(next, { missed: true }),
+      this.limits.ringMs + this.limits.ringGraceMs
+    )
     const v = this.view() as CallView
     for (const fn of this.ringFns) fn(v)
     this.changed()
@@ -490,7 +492,7 @@ export class Calls {
       c.state = 'active'
       c.since = this.clock.now()
       this.saveOut(c)
-      c.alive = this.clock.set(() => this.tickAlive(c), ALIVE_MS)
+      c.alive = this.clock.set(() => this.tickAlive(c), this.limits.aliveMs)
       this.deps.media.sync([this.deps.me(), c.peer])
       this.changed()
       const held = c.held
@@ -516,7 +518,7 @@ export class Calls {
     if (!c || c.id !== f.call || c.peer !== r.ik) return this.unknown(s, f.call, f.target.p2pRoom)
     if (c.dk !== null && r.dk !== c.dk) return
     if (c.state !== 'active') {
-      if (c.dir === 'out' && c.dk !== null && c.held.length < HELD_MAX) c.held.push(f)
+      if (c.dir === 'out' && c.dk !== null && c.held.length < this.limits.heldMax) c.held.push(f)
       return
     }
     void this.deps.media.onSignal(r.ik, f.payload, f.target)
@@ -526,10 +528,10 @@ export class Calls {
     if (this.answered.includes(id)) return
     const now = this.clock.now()
     let told = this.told.get(s)
-    if (!told) this.told.set(s, (told = new RateWindow(60_000, UNKNOWN_PER_MIN)))
+    if (!told) this.told.set(s, (told = new RateWindow(60_000, this.limits.unknownPerMin)))
     if (!told.hit(now)) return
     this.answered.push(id)
-    if (this.answered.length > LOCAL.calls.answeredMax) this.answered.shift()
+    if (this.answered.length > this.limits.answeredMax) this.answered.shift()
     this.send(s, { t: 'call', op: 'end', id, room })
   }
 
@@ -548,7 +550,7 @@ export class Calls {
         this.end(c, {
           outcome: c.dir === 'out' ? 'ended' : null,
         }),
-      why === 'remote' ? BYE_MS : LOST_MS
+      why === 'remote' ? this.limits.byeMs : this.limits.lostMs
     )
   }
 
@@ -612,6 +614,6 @@ export class Calls {
   private tickAlive(c: Live) {
     if (this.cur !== c) return
     this.saveOut(c)
-    c.alive = this.clock.set(() => this.tickAlive(c), ALIVE_MS)
+    c.alive = this.clock.set(() => this.tickAlive(c), this.limits.aliveMs)
   }
 }

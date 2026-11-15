@@ -32,22 +32,26 @@ import {
 import { b64u, utf8 } from '../p2p/canonical'
 import { recordId, type ChainRecord } from '../p2p/chain'
 import {
-  BADGES_HELD,
-  CERTS2_MAX,
   CLAIMS_MAX,
   ContactClaims,
   HELD_MS,
   HELD_RECORDS,
   MANY_MOVES,
   MANY_RECORDS,
-  PROFILES2_MAX,
   rankRestore,
-  REVS2_MAX,
   SCAN,
   tokenOk,
   warningText,
   type ClaimMsg,
 } from '../p2p/contact_claims'
+import { LOCAL } from '../p2p/limits'
+
+const {
+  certs2Kept: CERTS2_MAX,
+  revs2Kept: REVS2_MAX,
+  profiles2Kept: PROFILES2_MAX,
+  badgesHeld: BADGES_HELD,
+} = LOCAL.contacts
 
 const ORDERS = Number(process.env.FZ_ORDERS ?? 1)
 const SEED = Number(process.env.FZ_SEED ?? 0)
@@ -1845,6 +1849,62 @@ describe('contact claims over real records', () => {
       'hello'
     )
     expect([c.profiles2.length, c.name('Vee')]).toEqual([PROFILES2_MAX, 'Vera'])
+  })
+
+  test('a contact keeps what the limits it was made with allow, also when it is read back', () => {
+    const lim = {
+      ...LOCAL.contacts,
+      certs2Kept: 9,
+      revs2Kept: 10,
+      profiles2Kept: 3,
+      badgesHeld: 2,
+      storedRecords: 1,
+      storedV1: 1,
+    }
+    const fill = (c: ContactClaims) => {
+      for (let i = 0; i < 12; i++) {
+        c.receive(realMsg({ k: 'cert2', ik: 'V', dk: `T${i}`, n: 0, pk: 'p0', by: 'p0' }), 'hello')
+        c.receive(realMsg({ k: 'rev2', ik: 'V', dk: `U${i}`, n: 0, pk: 'p0', by: 'p0' }), 'hello')
+        c.receive(
+          realMsg({
+            k: 'profile2',
+            ik: 'V',
+            n: 0,
+            pk: `q${i}`,
+            by: `q${i}`,
+            name: 'T',
+            updated: 9,
+          }),
+          'hello'
+        )
+        c.receive(
+          { k: 'badge', token: { sub: 'v@inst', ik: V, iat: i, head: { n: 2, d: recD(reset) } } },
+          'hello'
+        )
+      }
+      return c
+    }
+    const sizes = (c: ContactClaims) => [
+      c.certs2.length,
+      c.revs2.length,
+      c.profiles2.length,
+      c.held().badges.length,
+    ]
+    const first = real(card([{ k: 'rec', rec: r1 }]))
+    expect(sizes(fill(new ContactClaims(V, 'card', first, 0, lim)))).toEqual([9, 10, 3, 2])
+    const full = fill(knownReal([{ k: 'rec', rec: r1 }]))
+    expect(sizes(full)).toEqual([12, 12, PROFILES2_MAX, BADGES_HELD])
+    const stored = {
+      ...(JSON.parse(JSON.stringify(full)) as Record<string, unknown>),
+      recs: [r1, reset].map(rec => (realMsg({ k: 'rec', rec }) as { rec: unknown }).rec),
+      certs1: [dkOf('D1'), dkOf('D5')],
+    }
+    const read = (c: ContactClaims) => [...sizes(c), c.recs.size, c.certs1.size]
+    expect(read(ContactClaims.parse(stored)!)).toEqual([12, 12, PROFILES2_MAX, BADGES_HELD, 2, 2])
+    const back = ContactClaims.parse(stored, lim)!
+    expect(read(back)).toEqual([9, 10, 3, 2, 1, 1])
+    // What it was read with holds for what it receives after.
+    expect(sizes(fill(back)).slice(0, 3)).toEqual([9, 10, 3])
   })
 
   test('a v2 record signed by another key than the one it names is not kept', () => {

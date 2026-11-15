@@ -10,9 +10,8 @@ import {
   type IndexSource,
 } from '../palette_sync'
 import { replaceSpoilers } from '../spoilers'
-import { memberName, p2pOpenAt, p2pRecent, useP2p, type P2pState } from './app'
+import { memberName, p2p, p2pOpenAt, p2pRecent, useP2p, type P2pState } from './app'
 import { displayName } from './contacts'
-import { LOCAL } from './limits'
 import type { P2pMessage } from './dm'
 
 // P2P conversations and server channels in the palette's index: messages as this browser loads
@@ -146,9 +145,6 @@ export const placesOf = (st: Pick<P2pState, 'rooms' | 'servers' | 'contacts'>) =
   return out
 }
 
-const GAP_MS = LOCAL.misc.paletteGapMs
-const REFRESH_MS = LOCAL.misc.paletteRefreshMs
-
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 // Places whose stored content changed (messages, edits, deletions, channels, membership): their
@@ -171,8 +167,12 @@ export const changedRooms = (
   return out
 }
 
-// Follows P2P and the palette index; returns the cleanup.
-export const startP2pIndex = ({ recent = p2pRecent, refreshMs = REFRESH_MS } = {}) => {
+// Follows P2P and the palette index; returns the cleanup. Stored pages are read `misc.paletteGapMs`
+// apart, and changed places again `misc.paletteRefreshMs` after a change.
+export const startP2pIndex = ({
+  recent = p2pRecent,
+  refreshMs,
+}: { recent?: typeof p2pRecent; refreshMs?: number } = {}) => {
   let ix: PaletteIndex | null = null
   let run = 0
   // The message list of the open place last indexed, and the places filled from storage.
@@ -196,7 +196,7 @@ export const startP2pIndex = ({ recent = p2pRecent, refreshMs = REFRESH_MS } = {
       const list = await recent(p.room, p.ch)
       if (mine !== run || !ix) return
       if (list) reconcilePlace(useP2p.getState(), p.room, p.ch, list)
-      await wait(GAP_MS)
+      await wait(p2p.limits().misc.paletteGapMs)
     }
   }
 
@@ -287,7 +287,8 @@ export const startP2pIndex = ({ recent = p2pRecent, refreshMs = REFRESH_MS } = {
         if (!st.contacts.some(x => x.ik === c.ik)) dropDm(c.ik)
     }
     for (const room of changedRooms(prev, st)) dirty.add(room)
-    if (dirty.size && !timer) timer = setTimeout(refresh, refreshMs)
+    if (dirty.size && !timer)
+      timer = setTimeout(refresh, refreshMs ?? p2p.limits().misc.paletteRefreshMs)
     if (st.chat !== prev.chat) indexChat(st)
     if (st.rooms !== prev.rooms || st.servers !== prev.servers || st.contacts !== prev.contacts)
       backfill()

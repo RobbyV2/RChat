@@ -1,20 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, settle, waitFor } from './p2p_net'
-import { LIMITS, P2pNode, victimFor, type Visibility } from '../p2p/node'
+import { P2pNode, victimFor, type Visibility } from '../p2p/node'
+import { LOCAL } from '../p2p/limits'
 import { P2pStore, type SelfRecord } from '../p2p/db'
 import { Dms, dmRoomId, loadMessages, withMissed, type MissedCall } from '../p2p/dm'
-import {
-  BUSY_TEXT,
-  BYE_MS,
-  Calls,
-  RING_GRACE_MS,
-  RING_MS,
-  RINGS_PER_MIN,
-  UNKNOWN_PER_MIN,
-  type CallMedia,
-  type CallPlan,
-  type PendingCall,
-} from '../p2p/calls'
+import { BUSY_TEXT, Calls, type CallMedia, type CallPlan, type PendingCall } from '../p2p/calls'
 import { P2pSignaler, readCallFrame, readRtcFrame, type RtcFrame } from '../p2p/signal'
 import { decodeMessage, encodeMessage, type Message } from '../p2p/frames'
 import { checkContent, type CallContent } from '../p2p/content'
@@ -532,14 +522,14 @@ describe('P2P calls', () => {
     await answered(a, b)
     visible = false
     fns.forEach(f => f())
-    await clock.advance(LIMITS.hiddenPauseMs + 30_000)
+    await clock.advance(LOCAL.node.hiddenPauseMs + 30_000)
     await settle()
     expect(a.node.status).toBe('online')
     expect(a.calls.view()?.state).toBe('active')
     expect(b.calls.view()?.state).toBe('active')
     a.calls.hangup()
     await waitFor(() => b.calls.view() === null, 'ended')
-    await clock.advance(LIMITS.hiddenPauseMs + 1000)
+    await clock.advance(LOCAL.node.hiddenPauseMs + 1000)
     await waitFor(() => a.node.status === 'paused', 'paused once the call ended')
   }, 60_000)
 
@@ -557,7 +547,7 @@ describe('P2P calls', () => {
     const { clock, a, b } = await pair({ visibility })
     visible = false
     fns.forEach(f => f())
-    await clock.advance(3 * LIMITS.hiddenPauseMs)
+    await clock.advance(3 * LOCAL.node.hiddenPauseMs)
     await settle()
     expect(a.node.status).toBe('online')
     expect(a.node.presence(b.node.ik)).toBe('online')
@@ -604,7 +594,7 @@ describe('P2P calls', () => {
     const { clock, a, b } = await pair()
     await ringing(a, b)
     const id = b.calls.view()?.id as string
-    await clock.advance(RING_MS)
+    await clock.advance(LOCAL.calls.ringMs)
     await waitFor(() => b.calls.view() === null, 'stopped ringing')
     expect(a.logs).toMatchObject([{ id, outcome: 'missed' }])
     expect(b.missed).toMatchObject([{ id, from: a.node.ik }])
@@ -623,7 +613,7 @@ describe('P2P calls', () => {
     // Gone without a word (a crashed tab): no end frame, no log reaches Bob.
     a.calls = new Calls({} as never)
     a.node.stop()
-    await clock.advance(RING_MS + RING_GRACE_MS)
+    await clock.advance(LOCAL.calls.ringMs + LOCAL.calls.ringGraceMs)
     expect(b.calls.view()).toBeNull()
     expect(b.missed).toMatchObject([{ id, from: a.node.ik, video: false }])
     const shown = withMissed(await rows(b, a), b.missed, false).filter(m => m.call)
@@ -665,7 +655,7 @@ describe('P2P calls', () => {
     expect(b.calls.view()).toBeNull()
     // The bye may land after a first advance: time moves on until the caller hears it.
     await eventually(async () => {
-      await clock.advance(BYE_MS)
+      await clock.advance(LOCAL.calls.byeMs)
       return a.calls.view() === null
     }, 'ended for the caller')
     expect(a.logs).toMatchObject([{ outcome: 'ended' }])
@@ -683,7 +673,7 @@ describe('P2P calls', () => {
       return send(m)
     }
     const out = sessionOf(a, b)
-    for (let i = 0; i < RINGS_PER_MIN + 3; i += 1)
+    for (let i = 0; i < LOCAL.calls.ringsPerMin + 3; i += 1)
       await out.send({
         t: 'call',
         op: 'ring',
@@ -692,7 +682,7 @@ describe('P2P calls', () => {
         video: false,
       })
     await drained(out, s)
-    expect(busy.length).toBe(RINGS_PER_MIN)
+    expect(busy.length).toBe(LOCAL.calls.ringsPerMin)
     expect(s.strikes).toBe(0)
   }, 60_000)
 
@@ -842,10 +832,10 @@ describe('P2P calls', () => {
       if (m.t === 'call' && m.op === 'end') ends.push(m.id as string)
       return send(m)
     }
-    for (let i = 0; i < UNKNOWN_PER_MIN + 5; i += 1)
+    for (let i = 0; i < LOCAL.calls.unknownPerMin + 5; i += 1)
       await s.send({ t: 'call', op: 'accept', id: `${i}`.padStart(21, 'x') + 'A', room })
     await drained(s, recv)
-    expect(ends.length).toBe(UNKNOWN_PER_MIN)
+    expect(ends.length).toBe(LOCAL.calls.unknownPerMin)
     expect(recv.strikes).toBe(0)
   }, 60_000)
 
@@ -908,7 +898,7 @@ describe('P2P calls', () => {
     a.calls.stop()
     a.node.stop()
     await waitFor(() => b.node.readySessions(a.node.ik).length === 0, 'session closed')
-    await clock.advance(BYE_MS)
+    await clock.advance(LOCAL.calls.byeMs)
     await waitFor(() => b.calls.view() === null, 'ended for the callee')
     expect(b.media.left).toBe(1)
     expect(a.logs).toEqual([])
@@ -923,7 +913,7 @@ describe('P2P calls', () => {
     await answered(a, b)
     hub.drop(b.node.peerId)
     sessionOf(a, b).close('timeout')
-    await clock.advance(BYE_MS)
+    await clock.advance(LOCAL.calls.byeMs)
     expect(a.calls.view()?.state).toBe('active')
     await clock.advance(20_000)
     expect(a.calls.view()).toBeNull()

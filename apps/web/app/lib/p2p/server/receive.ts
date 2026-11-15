@@ -5,7 +5,6 @@ import type { Received } from '../acl_room'
 import {
   chainKey,
   contentCounts,
-  DAG,
   getEvents,
   insertServer,
   SERVER_TOTAL_BYTES,
@@ -20,13 +19,12 @@ import { type Wire } from '../event_v1'
 import { reachedBy } from '../flows'
 import type { Message } from '../frames'
 import { isKeyId, verifyCert, verifyProfile, type Cert, type Profile } from '../keys'
-import { LOCAL } from '../limits'
 import type { Session } from '../session'
 import { chanFactsOf, channelPermsOf, isOwner, memberOf, membershipOf, P } from '../state'
 import type { Check } from '../sync'
 import type { ServerCtx } from './context'
 import { storeDue } from './storage'
-import { SERVER, VOUCH, SAVE_MS, sizeOfWire, type ServerArrival } from './types'
+import { sizeOfWire, type ServerArrival } from './types'
 import { type Rt } from './rt'
 
 // The wire checks: schema, sizes, id, `ch` and the device's signature. Everything else is
@@ -72,7 +70,7 @@ export async function decidePeer(cx: ServerCtx, room: string, id: string, w: Wir
 export function wanted(cx: ServerCtx, room: string) {
   const rt = cx.rt(room)
   if (!rt) return []
-  return [...rt.need, ...rt.waits.keys()].slice(0, DAG.missing)
+  return [...rt.need, ...rt.waits.keys()].slice(0, cx.local.dag.missing)
 }
 
 export async function admittedHere(cx: ServerCtx, room: string, id: string) {
@@ -136,7 +134,7 @@ export async function take(
 export function reject(cx: ServerCtx, room: string, id: string, why: string): Inserted {
   const rt = cx.ensureRt(room)
   rt.rejected.add(id)
-  if (rt.rejected.size > SERVER.rejectedKept)
+  if (rt.rejected.size > cx.local.server.rejectedKept)
     rt.rejected.delete(rt.rejected.values().next().value as string)
   // What waited on it is refused with it.
   const q = [id]
@@ -164,9 +162,10 @@ export function park(cx: ServerCtx, room: string, id: string, w: WireV2, missing
     s.add(id)
     rt.waits.set(p, s)
   }
+  const lim = cx.local.server
   while (
-    rt.pending.size > SERVER.pendingEvents ||
-    (rt.pendingBytes > SERVER.pendingBytes && rt.pending.size > 1)
+    rt.pending.size > lim.pendingEvents ||
+    (rt.pendingBytes > lim.pendingBytes && rt.pending.size > 1)
   )
     cx.unpark(rt, rt.pending.keys().next().value as string)
 }
@@ -225,7 +224,7 @@ export async function decide(
   if (
     w.ev.L === 'c' &&
     w.ev.a !== cx.me &&
-    !(await withinShareNow(cx.db, room, w.ev.a, sizeOfWire(w), now, cx.caps()))
+    !(await withinShareNow(cx.db, room, w.ev.a, sizeOfWire(w), now, cx.storeLimits()))
   )
     return { status: 'quota' }
   if (w.ev.L === 'c') {
@@ -272,10 +271,7 @@ export async function decide(
       me: cx.me,
       ...(out.s === 'A' ? { aseq: out.aseq, acl: out.rec } : {}),
       unknown: out.s === 'U',
-      roomCap: cx.deps.roomCap,
-      roomBytes: cx.deps.roomBytes,
-      serverCap: cx.deps.serverCap,
-      serverBytes: cx.deps.serverBytes,
+      lim: cx.storeLimits(),
     })
   } catch (e) {
     await undo()
@@ -341,15 +337,6 @@ export async function purgeRedacted(cx: ServerCtx, room: string, rec: EventRecor
   }
 }
 
-export function caps(cx: ServerCtx) {
-  return {
-    roomCap: cx.deps.roomCap,
-    roomBytes: cx.deps.roomBytes,
-    serverCap: cx.deps.serverCap,
-    serverBytes: cx.deps.serverBytes,
-  }
-}
-
 // The page's copy takes a delta from the evaluator; what follows from it runs for the members
 // it changed, and the cache is written soon after.
 export async function applyDelta(cx: ServerCtx, room: string, delta: SumDelta) {
@@ -372,7 +359,7 @@ export function saveSoon(cx: ServerCtx, room: string) {
   cx.clock.set(() => {
     cx.saving.delete(room)
     if (cx.rooms.has(room)) void cx.saveCache(room).catch(() => {})
-  }, SAVE_MS)
+  }, cx.local.server.saveMs)
 }
 
 // Whether content of `w`'s size fits: no ('room' or 'total', the budget it doesn't fit) or yes.
@@ -386,40 +373,36 @@ export async function contentFull(
   const size = sizeOfWire(w)
   const bytes = ((await cx.db.get('meta', SERVER_TOTAL_BYTES)) as number | undefined) ?? 0
   const cc = await contentCounts({ get: k => cx.db.get('meta', k) }, r)
-  if (
-    cc.room >= (cx.deps.roomCap ?? DAG.roomCap) ||
-    (r.bytes ?? 0) + size > (cx.deps.roomBytes ?? DAG.roomBytes)
-  )
-    return 'room'
-  if (
-    cc.total >= (cx.deps.serverCap ?? DAG.serverCap) ||
-    bytes + size > (cx.deps.serverBytes ?? DAG.serverBytes)
-  )
-    return 'total'
+  const dag = cx.storeLimits().dag
+  if (cc.room >= dag.roomCap || (r.bytes ?? 0) + size > dag.roomBytes) return 'room'
+  if (cc.total >= dag.serverCap || bytes + size > dag.serverBytes) return 'total'
   return null
 }
 
 // The hold store: admitted, dated more than 5 minutes ahead of our clock; kept
-// until our clock reaches it, at most SERVER.heldPerDevice per device.
+// until our clock reaches it, at most `heldPerDevice` per device.
 export function hold(cx: ServerCtx, room: string, id: string, w: WireV2): Inserted {
   const rt = cx.ensureRt(room)
+  const lim = cx.local.server
   const n = [...rt.held.values()].filter(h => h.wire.ev.dev === w.ev.dev).length
-  if (n < SERVER.heldPerDevice)
-    rt.held.set(id, { wire: w, due: w.ev.ts - LOCAL.server.heldEarlyMs })
+  if (n < lim.heldPerDevice) rt.held.set(id, { wire: w, due: w.ev.ts - lim.heldEarlyMs })
   return { status: 'quota' }
 }
 
 // The vouching mark (see Rt.vouch).
 export function vouch(cx: ServerCtx, room: string, rt: Rt, now: number) {
   if (cx.myMembership(room) !== 'join' || cx.frozen(room)) return
-  if (now - rt.vouchedAt < VOUCH.roomMs) return
+  const lim = cx.local.server
+  if (now - rt.vouchedAt < lim.vouchRoomMs) return
   const s = rt.sum
   const live = [...rt.vouch].filter(([add, by]) => {
     const to = Object.entries(s.members).find(([, m]) => m.adds?.includes(add))
     return !!to && membershipOf(s, by) === 'join'
   })
   rt.vouch = new Map(live)
-  const due = live.filter(([, by]) => now - (cx.vouchedBy.get(by) ?? -Infinity) >= VOUCH.inviterMs)
+  const due = live.filter(
+    ([, by]) => now - (cx.vouchedBy.get(by) ?? -Infinity) >= lim.vouchInviterMs
+  )
   if (!due.length) return
   rt.vouchedAt = now
   for (const [add, by] of due) {

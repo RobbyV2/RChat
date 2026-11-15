@@ -12,13 +12,13 @@ import {
   type Member,
 } from './p2p_server_net'
 import { b64u, randomBytes } from '../p2p/canonical'
-import { PINS_MAX } from '../p2p/dm'
 import { blockCount } from '../p2p/hashing'
 import { PIN_TEXT, PIN_THREAD_TEXT, THREAD_ROOT_TEXT, type SearchQuery } from '../p2p/server'
 import { matches, rebuildStep, rowBytes, searchReady, words } from '../p2p/search'
 import { storedSize } from '../p2p/dag'
 import { PingLog } from '../p2p/ping_log'
-import { applyImport, exportP2p, KDF_MIN, unlockP2p, type Kdf } from '../p2p/transfer'
+import { applyImport, exportP2p, kdfBounds, unlockP2p, type Kdf } from '../p2p/transfer'
+import { LOCAL } from '../p2p/limits'
 import { P2pStore } from '../p2p/db'
 import { heldKey, purgeServer } from '../p2p/dag'
 import { shareKey, shareLive, shareTotal } from '../p2p/shares'
@@ -225,14 +225,14 @@ describe('search index', () => {
     await check(b)
     // A rebuilt index is counted once.
     await a.store.db.put('meta', SEARCH_STALE, SEARCH_META)
-    while (!(await rebuildStep(a.store.db, 3))) {
+    while (!(await rebuildStep(a.store.db, { ...LOCAL.search, step: 3 }))) {
       // again from the start
     }
     await check(a)
     // A meta of another version clears the index and its bytes, then builds it again.
     await a.servers.send(room, { ch, body: 'kept words here' })
     await a.store.db.put('meta', { v: 99 }, SEARCH_META)
-    while (!(await rebuildStep(a.store.db, 3))) {
+    while (!(await rebuildStep(a.store.db, { ...LOCAL.search, step: 3 }))) {
       // cleared, then built
     }
     expect(await check(a)).toBe(before + 3)
@@ -295,7 +295,8 @@ describe('search index', () => {
         keys.reduce((n, k, i) => n + rowBytes(k, heads[i]), 0)
       return { bytes, total, want }
     }
-    const kdf: Kdf = { alg: 'argon2id', m: KDF_MIN.m, t: KDF_MIN.t, p: 1 }
+    const { min } = kdfBounds(LOCAL.transfer)
+    const kdf: Kdf = { alg: 'argon2id', m: min.m, t: min.t, p: 1 }
     let cur = a
     const first = await real(cur)
     expect([first.bytes, first.total]).toEqual([first.want, first.want])
@@ -345,7 +346,7 @@ describe('search index', () => {
     await a.servers.send(room, { ch, body: 'skip me' })
     await a.store.db.clear('search')
     await a.store.db.put('meta', SEARCH_STALE, SEARCH_META)
-    while (!(await rebuildStep(a.store.db, 100, r => r === room))) {
+    while (!(await rebuildStep(a.store.db, { ...LOCAL.search, step: 100 }, r => r === room))) {
       // skipping the room
     }
     expect(await a.store.db.count('search')).toBe(0)
@@ -360,7 +361,7 @@ describe('search index', () => {
     await a.store.db.put('meta', SEARCH_STALE, SEARCH_META)
     expect(await found(a, { q: 'common' })).toEqual([])
     let steps = 0
-    while (!(await rebuildStep(a.store.db, 2))) steps += 1
+    while (!(await rebuildStep(a.store.db, { ...LOCAL.search, step: 2 }))) steps += 1
     expect(steps).toBeGreaterThan(1)
     expect(await found(a, { q: 'common' })).toHaveLength(5)
     expect(await found(a, { q: 'word3' })).toEqual(['word3 common'])
@@ -729,28 +730,29 @@ describe('pins', () => {
     const b = await makeMember(hub, 'Bob', clock)
     await joinWithCode(clock, a, room, b)
     const ids: string[] = []
-    for (let i = 0; i <= PINS_MAX; i++) ids.push(await a.servers.send(room, { ch, body: `m${i}` }))
+    for (let i = 0; i <= LOCAL.dm.pinsMax; i++)
+      ids.push(await a.servers.send(room, { ch, body: `m${i}` }))
     await pump(clock, async () => (await b.servers.loadThread(room, ids[0])) !== null, 'at b')
     expect(await failure(b.servers.pin(room, ids[0], true))).toBe(PIN_TEXT)
     const reply = await a.servers.send(room, { ch, body: 'in thread', thread: ids[0] })
     expect(await failure(a.servers.pin(room, reply, true))).toBe(PIN_THREAD_TEXT)
-    for (let i = 0; i < PINS_MAX; i++) await a.servers.pin(room, ids[i], true)
-    expect(await a.servers.loadPins(room, ch)).toHaveLength(PINS_MAX)
-    expect(await failure(a.servers.pin(room, ids[PINS_MAX], true))).toBe(
-      `You can pin up to ${PINS_MAX} messages`
+    for (let i = 0; i < LOCAL.dm.pinsMax; i++) await a.servers.pin(room, ids[i], true)
+    expect(await a.servers.loadPins(room, ch)).toHaveLength(LOCAL.dm.pinsMax)
+    expect(await failure(a.servers.pin(room, ids[LOCAL.dm.pinsMax], true))).toBe(
+      `You can pin up to ${LOCAL.dm.pinsMax} messages`
     )
     // The latest pin event of a message decides (by time, then id).
     await clock.advance(1000)
     await a.servers.pin(room, ids[0], false)
-    await a.servers.pin(room, ids[PINS_MAX], true)
-    expect(await a.servers.loadPins(room, ch)).toHaveLength(PINS_MAX)
+    await a.servers.pin(room, ids[LOCAL.dm.pinsMax], true)
+    expect(await a.servers.loadPins(room, ch)).toHaveLength(LOCAL.dm.pinsMax)
     const lines = (await a.servers.loadChannel(room, ch, { limit: 1000 })).messages.filter(
       m => m.system?.kind === 'pin'
     )
     // One line per pin that went on (the unpin adds none), each linking its message.
-    expect(lines).toHaveLength(PINS_MAX + 1)
+    expect(lines).toHaveLength(LOCAL.dm.pinsMax + 1)
     expect(lines.every(l => l.system?.ik === a.node.ik)).toBe(true)
-    expect(lines[lines.length - 1].system?.target).toBe(ids[PINS_MAX])
+    expect(lines[lines.length - 1].system?.target).toBe(ids[LOCAL.dm.pinsMax])
     // A pin line's message that is gone shows no link.
     await a.servers.redact(room, ids[1])
     const gone = (await a.servers.loadChannel(room, ch, { limit: 1000 })).messages.find(
@@ -817,7 +819,7 @@ describe('storage v8', () => {
     expect(await store.db.count('search')).toBe(0)
     expect(await store.meta(SEARCH_META)).toEqual(SEARCH_STALE)
     expect((await store.room('srv'))?.kind).toBe('server')
-    while (!(await rebuildStep(store.db, 1))) {
+    while (!(await rebuildStep(store.db, { ...LOCAL.search, step: 1 }))) {
       // one event a step
     }
     expect(await searchReady(store.db)).toBe(true)

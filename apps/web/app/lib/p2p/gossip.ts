@@ -1,6 +1,6 @@
 import { isKeyId } from './keys'
 import type { Message } from './frames'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 import type { Clock, Session } from './session'
 import type { Link } from './sync'
 import { isShortId } from './state'
@@ -25,10 +25,10 @@ import { isEventId } from './content'
 export const GOSSIP = {
   presenceMax: 64,
   linkRooms: 32,
-  ...LOCAL.gossip,
 }
 
-export type GossipLimits = typeof GOSSIP
+// With limits.ts `gossip`.
+export type GossipLimits = typeof GOSSIP & Local['gossip']
 
 // How a room may be linked with a member: everything, its state only (an invited member who
 // hasn't joined), or not at all.
@@ -91,7 +91,7 @@ export interface GossipDeps {
   // A session left without room links.
   idle?: (s: Session) => void
   // A room that keeps fewer links than the limits give (an old copy after a transfer).
-  budget?: (room: string) => { perRoom: number; outTarget: number } | null
+  budget?: (room: string) => Pick<GossipLimits, 'perRoom' | 'outTarget'> | null
   // A member let in at the cap, in place of a link that isn't one (someone away from an old copy),
   // for `preferMs` from when we first let them in or keep them that way.
   needs?: (room: string, ik: string) => boolean
@@ -134,7 +134,7 @@ export class Gossip {
   private stopped = false
 
   constructor(private deps: GossipDeps) {
-    this.limits = { ...GOSSIP, ...deps.limits }
+    this.limits = { ...GOSSIP, ...LOCAL.gossip, ...deps.limits }
     this.salt = String(deps.random())
   }
 
@@ -361,17 +361,25 @@ export class Gossip {
       for (const [ik, t] of pref ?? [])
         if (t <= now || this.deps.settled?.(room, ik)) pref?.delete(ik)
       this.trim(room)
-      // Members we already have a session with, best first.
+      // Members we already have a session with, best first, at most `candidates` a tick.
+      let asks = 0
       for (const c of this.ranked(room)) {
+        if (asks >= this.limits.candidates) break
         if (!c.live) continue
         if (!this.wants(room, c.ik)) continue
         const s = this.deps.sessions(c.ik)[0]
-        if (s) this.ask(s, [room])
+        if (s) {
+          this.ask(s, [room])
+          asks += 1
+        }
       }
       for (const ik of this.preferredOf(room))
-        if (this.wants(room, ik)) {
+        if (asks < this.limits.candidates && this.wants(room, ik)) {
           const s = this.deps.sessions(ik)[0]
-          if (s) this.ask(s, [room])
+          if (s) {
+            this.ask(s, [room])
+            asks += 1
+          }
         }
     }
     this.deps.onTick?.()

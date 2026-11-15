@@ -16,7 +16,7 @@ import {
   type Message,
 } from './frames'
 import { Initiator, Responder, type Established, type Me, type Remote } from './handshake'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 
 // One authenticated, encrypted session with a remote device over a reliable binary pipe:
 // handshake, then `hello` both ways, then typed messages. Later tasks register handlers for
@@ -47,24 +47,8 @@ export const realClock: Clock = {
   clear: h => clearTimeout(h as ReturnType<typeof setTimeout>),
 }
 
-export interface Limits {
-  // From the start until the hello is accepted: SIGMA, then the hello. Pings don't extend it.
-  handshakeMs: number
-  pingMs: number
-  deadMs: number
-  strikes: number
-  // Token bucket for incoming frames: `framesPerSec` sustained, bursts up to `frameBurst` (two
-  // full 1 MiB messages). Past it, frames wait for tokens; they are never dropped.
-  framesPerSec: number
-  frameBurst: number
-  // Bytes of frames waiting to be read before the session gives up on a flooding peer. Each frame
-  // counts at least FRAME_COST. Past the burst an honest peer queues far less than this.
-  frameBacklogBytes: number
-  rekeyMs: number
-  rekeyBytes: number
-}
-
-export const LIMITS: Limits = { ...LOCAL.session }
+// limits.ts `session`.
+export type Limits = Local['session']
 
 export type CloseReason =
   'closed' | 'remote' | 'handshake' | 'timeout' | 'strikes' | 'refused' | 'replaced' | 'paused'
@@ -84,8 +68,6 @@ export interface SessionOpts {
   // Their hello. Returning false closes the session.
   onHello: (msg: Message, session: Session) => boolean | Promise<boolean>
 }
-
-const FRAME_COST = LOCAL.session.frameCost
 
 type Rx = { epoch: number; cipher: Cipher }
 
@@ -135,13 +117,13 @@ export class Session {
 
   constructor(private opts: SessionOpts) {
     this.clock = opts.clock ?? realClock
-    this.limits = { ...LIMITS, ...opts.limits }
+    this.limits = { ...LOCAL.session, ...opts.limits }
     this.tokens = this.limits.frameBurst
     this.filledAt = this.clock.now()
     opts.pipe.onData(data => {
       if (this.state === 'closed') return
       // Checked before queuing, so a waiting frame holds at most frameBacklogBytes behind it.
-      const cost = Math.max(data.byteLength, FRAME_COST)
+      const cost = Math.max(data.byteLength, this.limits.frameCost)
       if (data.byteLength > WIRE_MAX || this.queued + cost > this.limits.frameBacklogBytes)
         return this.close(this.state === 'ready' ? 'strikes' : 'handshake')
       this.queued += cost

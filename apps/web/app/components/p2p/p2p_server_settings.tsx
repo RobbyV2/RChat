@@ -13,7 +13,8 @@ import {
   VOUCH_INVITER_TEXT,
 } from '../../lib/p2p/flows'
 import { P } from '../../lib/p2p/state'
-import { VOICE_NOTICE } from '../../lib/p2p/voice'
+import { fieldMax } from '../../lib/p2p/event_v2'
+import { voiceNotice } from '../../lib/p2p/voice'
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { Dialog, fieldCls, filledBtn, Masked, sectionCls, Sentinel, textBtn } from '../ui'
@@ -62,7 +63,7 @@ function Overview({ v }: { v: ServerView }) {
         Server name
         <input
           value={name}
-          maxLength={100}
+          maxLength={p2p.limits().server.nameMax}
           disabled={!edit}
           onChange={e => setName(e.target.value)}
           aria-label="Server name"
@@ -156,7 +157,7 @@ function Channels({ v }: { v: ServerView }) {
               <input
                 value={name}
                 disabled={!edit}
-                maxLength={100}
+                maxLength={p2p.limits().server.nameMax}
                 onChange={e => setNames(n => ({ ...n, [c.id]: e.target.value }))}
                 aria-label={`Name of ${label}`}
                 className={`${fieldCls} min-w-0 flex-1`}
@@ -184,7 +185,7 @@ function Channels({ v }: { v: ServerView }) {
             <input
               value={topic}
               disabled={!edit}
-              maxLength={1024}
+              maxLength={fieldMax(p2p.limits().display.topic)}
               onChange={e => setTopics(t => ({ ...t, [c.id]: e.target.value }))}
               placeholder="Topic"
               aria-label={`Topic of ${label}`}
@@ -228,7 +229,7 @@ function Channels({ v }: { v: ServerView }) {
           </select>
           <input
             value={fresh}
-            maxLength={100}
+            maxLength={p2p.limits().server.nameMax}
             onChange={e => setFresh(e.target.value)}
             placeholder="new-channel"
             aria-label="New channel name"
@@ -248,7 +249,7 @@ function Channels({ v }: { v: ServerView }) {
       ) : (
         <Note>Only members with Manage channels can change channels.</Note>
       )}
-      <Note>{VOICE_NOTICE}</Note>
+      <Note>{voiceNotice(p2p.limits().voice)}</Note>
     </div>
   )
 }

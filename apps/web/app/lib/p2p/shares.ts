@@ -1,22 +1,24 @@
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 
 // Per-sender content shares of P2P servers: what one sender's content may take of a
 // room's and of every server's content budget, counted over a rolling day of local receipt in
-// hourly buckets.
+// hourly buckets (limits.ts `share`).
 
-export const SHARE = { ...LOCAL.share }
+export type ShareLimits = Local['share']
+
+type Hours = Pick<ShareLimits, 'hourMs' | 'hours'>
 
 // [hour, events, bytes] per hour with receipts, oldest first.
 export type Share = [number, number, number][]
 
 export const shareKey = (room: string | null, ik: string) => `share\n${room ?? ''}\n${ik}`
 
-const hourOf = (now: number) => Math.floor(now / SHARE.hourMs)
+const hourOf = (now: number, lim: Hours) => Math.floor(now / lim.hourMs)
 
 // The buckets still inside the day, defensively (a stored value of another shape counts nothing).
-export const shareLive = (s: unknown, now: number): Share => {
+export const shareLive = (s: unknown, now: number, lim: Hours = LOCAL.share): Share => {
   if (!Array.isArray(s)) return []
-  const from = hourOf(now) - SHARE.hours + 1
+  const from = hourOf(now, lim) - lim.hours + 1
   return s.filter(
     (b): b is [number, number, number] =>
       Array.isArray(b) &&
@@ -29,8 +31,8 @@ export const shareLive = (s: unknown, now: number): Share => {
 export const shareTotal = (s: Share) =>
   s.reduce((t, [, n, b]) => ({ n: t.n + n, b: t.b + b }), { n: 0, b: 0 })
 
-export const shareAdd = (s: Share, now: number, bytes: number): Share => {
-  const h = hourOf(now)
+export const shareAdd = (s: Share, now: number, bytes: number, lim: Hours = LOCAL.share): Share => {
+  const h = hourOf(now, lim)
   const last = s[s.length - 1]
   if (last && last[0] === h) return [...s.slice(0, -1), [h, last[1] + 1, last[2] + bytes]]
   return [...s, [h, 1, bytes]]

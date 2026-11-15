@@ -26,7 +26,8 @@ import {
   mentionsIn,
   reactionsOf,
 } from '../p2p/dm'
-import { DAG, insertEvent } from '../p2p/dag'
+import { insertEvent } from '../p2p/dag'
+import { LOCAL } from '../p2p/limits'
 import { openDB } from 'idb'
 import { DB_VERSION, P2pStore as Store, UPGRADES } from '../p2p/db'
 import { SYNC } from '../p2p/sync'
@@ -454,7 +455,7 @@ describe('P2P DMs', () => {
     const author = a.node.author()!
     const msg = buildEvent(author, room, 'msg', { body: 'gone' }, [], 0, clock.now())
     const red = buildEvent(author, room, 'redact', { target: msg.id }, [msg.id], 1, clock.now())
-    const ctx = { me: b.node.ik, peer: a.node.ik }
+    const ctx = { me: b.node.ik, peer: a.node.ik, lim: LOCAL.dag }
     expect((await insertEvent(b.store.db, red.id, red.wire, clock.now(), ctx)).status).toBe('new')
     expect((await roomOf(b, room)).missing).toEqual([msg.id])
     expect((await insertEvent(b.store.db, msg.id, msg.wire, clock.now(), ctx)).status).toBe('new')
@@ -633,7 +634,7 @@ describe('P2P DMs', () => {
     const { a, b, room, clock } = await pair()
     a.dms.typing(room, true)
     await waitFor(() => b.dms.typingIn(room).includes(a.node.ik), 'typing')
-    await clock.advance(SYNC.typingMs + 1)
+    await clock.advance(LOCAL.sync.typingMs + 1)
     expect(b.dms.typingIn(room)).toEqual([])
     a.dms.typing(room, true)
     await waitFor(() => b.dms.typingIn(room).length === 1, 'typing again')
@@ -684,7 +685,7 @@ describe('P2P DMs', () => {
     // Bob's room is full too: his own message can't be stored, nor more of Alice's.
     expect(await failure(b.dms.send(room, { body: 'b' }))).toBe(FULL_TEXT(3))
     expect((await roomOf(b, room)).full).toBe(true)
-    expect(DAG.roomCap).toBeGreaterThanOrEqual(100_000)
+    expect(LOCAL.dag.roomCap).toBeGreaterThanOrEqual(100_000)
   })
 })
 

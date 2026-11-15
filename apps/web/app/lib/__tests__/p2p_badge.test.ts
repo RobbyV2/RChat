@@ -9,6 +9,7 @@ import {
   type JWK,
 } from 'jose'
 import { Hub, makeNode, ManualClock, settle, waitFor } from './p2p_net'
+import { LOCAL } from '../p2p/limits'
 import { joinWithCode, makeMember, pump, stopAll } from './p2p_server_net'
 import {
   AssertionError,
@@ -20,7 +21,6 @@ import {
 import {
   accountTwin,
   applyVerdict,
-  BADGE,
   BadgeKeeper,
   Badges,
   badgeState,
@@ -246,7 +246,7 @@ describe('Badges', () => {
     await settle()
     expect(calls.length).toBe(1)
     // A day later the next tick checks again.
-    await jump(clock, DAY + BADGE.tickMs)
+    await jump(clock, DAY + LOCAL.badge.tickMs)
     clockNow = clock.now()
     await waitFor(() => calls.length === 2, 'the daily check')
     await waitFor(() => (b.get(ik)?.ok?.checked ?? 0) > DAY, 'checked again')
@@ -257,10 +257,10 @@ describe('Badges', () => {
     clockNow = clock.now()
     expect(badgeState(b.get(ik), clock.now())).toBe('expired')
     const n = calls.length
-    await jump(clock, DAY + BADGE.tickMs)
+    await jump(clock, DAY + LOCAL.badge.tickMs)
     expect(calls.length).toBe(n)
     // Long expired: forgotten.
-    await jump(clock, BADGE.keepExpiredMs)
+    await jump(clock, LOCAL.badge.keepExpiredMs)
     await waitFor(() => b.get(ik) === undefined, 'forgotten')
     expect((await readSlots(store)).has(ik)).toBe(false)
   }, 30_000)
@@ -280,12 +280,12 @@ describe('Badges', () => {
     await settle()
     expect(calls.length).toBe(1)
     up = true
-    await jump(clock, BADGE.retryMs + BADGE.tickMs)
+    await jump(clock, LOCAL.badge.retryMs + LOCAL.badge.tickMs)
     await waitFor(() => badgeState(b.get(ik), clock.now()) === 'confirmed', 'confirmed')
     // The issuer goes away again: a stale re-check keeps "confirmed" with the old date.
     up = false
     const checked = b.get(ik)?.ok?.checked
-    await jump(clock, DAY + BADGE.tickMs)
+    await jump(clock, DAY + LOCAL.badge.tickMs)
     await waitFor(() => (b.get(ik)?.ok?.tried ?? 0) > (checked ?? 0), 'tried')
     expect(badgeState(b.get(ik), clock.now())).toBe('confirmed')
     expect(b.get(ik)?.ok?.checked).toBe(checked as number)
@@ -328,7 +328,8 @@ describe('Badges', () => {
     await settle()
     expect(b.get(ik)).toBeUndefined()
     b.offer(ik, 'bad')
-    for (const junk of [7, null, { t: 1 }, '', 'x'.repeat(BADGE.tokenMax + 1)]) b.offer(ik, junk)
+    for (const junk of [7, null, { t: 1 }, '', 'x'.repeat(LOCAL.badge.tokenMax + 1)])
+      b.offer(ik, junk)
     b.offer('not-a-key', 'other')
     await settle()
     expect(calls).toEqual(['bad'])
@@ -572,7 +573,7 @@ describe('badges over P2P', () => {
     // Verified, it stays clear on later checks.
     await bob.node.markVerified(fresh.node.ik)
     await bob.node.accept(fresh.node.ik)
-    await jump(clock, DAY + BADGE.tickMs)
+    await jump(clock, DAY + LOCAL.badge.tickMs)
     await settle(100)
     expect(bob.node.contact(fresh.node.ik)?.warning).toBeNull()
   }, 60_000)
@@ -714,7 +715,7 @@ describe('BadgeKeeper', () => {
     expect(ts).toBe(Math.floor(clock.now() / 1000))
     expect(proof).toBe(`alice@${HOST}|${ts}`)
     // Not due within the day.
-    await jump(clock, BADGE.tickMs * 3)
+    await jump(clock, LOCAL.badge.tickMs * 3)
     expect(asked.length).toBe(2)
     await jump(clock, DAY)
     await waitFor(() => node.badge?.token === 't3', 'renewed')
@@ -724,7 +725,7 @@ describe('BadgeKeeper', () => {
     await waitFor(() => asked.length === 4, 'tried')
     expect(node.badge?.token).toBe('t3')
     fail = null
-    await jump(clock, BADGE.retryMs + BADGE.tickMs)
+    await jump(clock, LOCAL.badge.retryMs + LOCAL.badge.tickMs)
     await waitFor(() => node.badge?.token === 't5', 'retried')
     // A new identity key: the binding named the old one.
     node.ik = keyId(newKeyPair().pk)
@@ -795,7 +796,7 @@ describe('BadgeKeeper', () => {
     // The identity moved into another account: off until the user opts in again.
     sub = `Bob@${HOST}`
     expect(keeper.due()).toBe(false)
-    await jump(clock, BADGE.tickMs * 2)
+    await jump(clock, LOCAL.badge.tickMs * 2)
     await waitFor(() => node.badge?.on === false, 'turned off')
     expect(node.badge?.token).toBeNull()
     await jump(clock, 3 * DAY)
@@ -808,7 +809,7 @@ describe('BadgeKeeper', () => {
     expect(node.badge?.sub).toBe(`ALICE@${HOST.toUpperCase()}`)
     sub = `alice@${HOST}`
     expect(keeper.due()).toBe(false)
-    await jump(clock, BADGE.tickMs * 2)
+    await jump(clock, LOCAL.badge.tickMs * 2)
     expect(node.badge?.on).toBe(true)
     expect(node.badge?.sub).toBe(`ALICE@${HOST.toUpperCase()}`)
     keeper.stop()

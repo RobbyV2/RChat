@@ -3,7 +3,7 @@ import { AssertionError, jwksUrl, type BindingClaims } from '../identity'
 import type { Contact } from './contacts'
 import type { OwnBadge, P2pStore } from './db'
 import { isKeyId } from './keys'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 import { realClock, type Clock } from './session'
 
 // The account badge: "Confirmed as alice@host". With it on, the instance signs
@@ -13,9 +13,8 @@ import { realClock, type Clock } from './session'
 // the last result ("checked {date}"); a binding past its expiry shows as expired. Each browser
 // checks for itself: the results live in its `meta` store (never exported), one key per identity.
 
-export const BADGE = { ...LOCAL.badge }
-
-export type BadgeLimits = typeof BADGE
+// limits.ts `badge`.
+export type BadgeLimits = Local['badge']
 
 // A binding that verified: who the instance says holds the key.
 export interface Binding {
@@ -91,12 +90,17 @@ export const applyVerdict = (
 // Members we never connect to see our badge only in our server member event: it is posted again
 // when the badge is on and the event has no binding, or one with less than half its life left
 // (about every 4 days while the badge stays on; turning it off posts nothing).
-export const memberBindingDue = (posted: unknown, current: string | null, now: number) => {
+export const memberBindingDue = (
+  posted: unknown,
+  current: string | null,
+  now: number,
+  lim: Pick<BadgeLimits, 'memberLeftMs'> = LOCAL.badge
+) => {
   if (current === null || posted === current) return false
   if (typeof posted !== 'string') return true
   try {
     const { exp } = decodeJwt(posted)
-    return typeof exp !== 'number' || exp * 1000 - now < BADGE.memberLeftMs
+    return typeof exp !== 'number' || exp * 1000 - now < lim.memberLeftMs
   } catch {
     return true
   }
@@ -188,7 +192,7 @@ export class Badges {
   private clock: Clock
 
   constructor(private deps: BadgesDeps) {
-    this.limits = { ...BADGE, ...deps.limits }
+    this.limits = { ...LOCAL.badge, ...deps.limits }
     this.clock = deps.clock ?? realClock
   }
 
@@ -373,7 +377,7 @@ export class BadgeKeeper {
   private clock: Clock
 
   constructor(private deps: KeeperDeps) {
-    this.limits = { ...BADGE, ...deps.limits }
+    this.limits = { ...LOCAL.badge, ...deps.limits }
     this.clock = deps.clock ?? realClock
   }
 

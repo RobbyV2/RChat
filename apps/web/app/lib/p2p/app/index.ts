@@ -1,6 +1,6 @@
-import { CODE_TTLS, NEEDS_INVITER, ServerError } from '../server'
+import { codeTtls, NEEDS_INVITER, ServerError } from '../server'
 
-export { CODE_TTLS, NEEDS_INVITER, ServerError }
+export { codeTtls, NEEDS_INVITER, ServerError }
 export {
   emptySearch,
   chatKey,
@@ -12,10 +12,7 @@ export {
   parseImports,
   p2pHost,
   autoKey,
-  AUTO_DEFAULT,
-  AUTO_DAILY_OPTIONS,
-  AUTO_DM,
-  AUTO_SERVER,
+  autoDefaults,
   autoChoices,
   parseAuto,
   readAuto,
@@ -57,7 +54,6 @@ export {
   TOO_MANY_FILES,
   FILES_MAX_TEXT,
   PREPARING_TEXT,
-  BIG_FILE,
   p2pFiles,
 } from './attachments'
 export { p2pUser, p2pDm } from './dms'

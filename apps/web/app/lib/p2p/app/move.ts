@@ -4,6 +4,7 @@ import {
   alreadyImported,
   applyImport,
   Cancelled,
+  defaultKdf,
   exportP2p,
   exportP2pWithFiles,
   filesSize,
@@ -37,6 +38,7 @@ import {
   writeOn,
 } from './store'
 import { dbFor, stopNode, boot, run } from './account'
+import { limitsFor } from '../user_limits'
 
 // ----- Device move -----
 
@@ -117,10 +119,12 @@ export const p2pTransfer = {
     files = false,
     watch?: KdfWatch
   ): Promise<{ section: P2pSection; files: FilesKey | null }> {
+    const username = useP2p.getState().account
+    const k = kdf ?? defaultKdf(username ? limitsFor(username).transfer : undefined)
     const out = await withDb(async s =>
       files
-        ? exportP2pWithFiles(s.db, pass, kdf, Date.now(), watch)
-        : { section: await exportP2p(s.db, pass, kdf, Date.now(), watch), files: null }
+        ? exportP2pWithFiles(s.db, pass, k, Date.now(), watch)
+        : { section: await exportP2p(s.db, pass, k, Date.now(), watch), files: null }
     )
     if (watch?.signal?.aborted) throw new Cancelled()
     const at = Date.now()
@@ -154,11 +158,12 @@ export const p2pTransfer = {
     if (!username) throw new Error('Sign in first')
     let dump: Dump
     let files: Unlocked['files'] = null
+    const lim = limitsFor(username)
     if (part) {
-      const got = await unlockP2pWithFiles(section, pass, part.head, undefined, watch)
+      const got = await unlockP2pWithFiles(section, pass, part.head, lim, watch)
       dump = got.dump
       files = { blob: part.blob, key: got.files }
-    } else dump = await unlockP2p(section, pass, undefined, watch)
+    } else dump = await unlockP2p(section, pass, lim, watch)
     const st = useP2p.getState()
     let kind: ImportKind = 'new'
     let already = false
@@ -185,9 +190,11 @@ export const p2pTransfer = {
     const job = async () => {
       const s = await P2pStore.open(dbFor(username))
       try {
-        const res: Imported = await applyImport(s.db, u.dump, u.kind)
+        const lim = limitsFor(username)
+        const res: Imported = await applyImport(s.db, u.dump, u.kind, { lim })
         rememberImport(username, u.dump.id)
-        if (u.files) res.files = await importFiles(s.db, u.files.blob, u.files.key, progress)
+        if (u.files)
+          res.files = await importFiles(s.db, u.files.blob, u.files.key, progress, lim.transfer)
         return res
       } finally {
         s.close()

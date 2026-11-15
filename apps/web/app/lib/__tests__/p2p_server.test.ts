@@ -3,7 +3,8 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { Hub, ManualClock } from './p2p_net'
 import { P2pStore } from '../p2p/db'
 import { keyId } from '../p2p/keys'
-import { applyImport, exportP2p, KDF_MIN, unlockP2p, type Kdf } from '../p2p/transfer'
+import { applyImport, exportP2p, kdfBounds, unlockP2p, type Kdf } from '../p2p/transfer'
+import { LOCAL } from '../p2p/limits'
 import {
   bodies,
   deliver,
@@ -101,7 +102,8 @@ describe('devices', () => {
     await joinWithCode(clock, a, room, b)
     expect(a.node.contact(b.node.ik)).toBeUndefined()
     // Bob moves to a new browser: same identity, a new device key.
-    const kdf: Kdf = { alg: 'argon2id', m: KDF_MIN.m, t: KDF_MIN.t, p: 1 }
+    const { min } = kdfBounds(LOCAL.transfer)
+    const kdf: Kdf = { alg: 'argon2id', m: min.m, t: min.t, p: 1 }
     const sec = await exportP2p(b.store.db, 'correct horse battery', kdf)
     await b.node.markExported(clock.now())
     stopMember(b)

@@ -1,10 +1,10 @@
 import { resolve as resolveNotify } from '../../notify'
 import { P2pStore } from '../db'
-import { MISSED_MAX, type MissedCall } from '../dm'
+import type { MissedCall } from '../dm'
 import { JoinAborted, RtcManager } from '../../rtc'
 import { hidesIp, relayBook } from '../../relays'
 import { Calls, type CallView } from '../calls'
-import { data, calls, useP2p, p2pHost, servers, type P2pState } from './store'
+import { data, calls, limits, useP2p, p2pHost, servers, type P2pState } from './store'
 import { p2pUser, contactName, p2pDm, timers, refreshRoom } from './dms'
 import { p2p } from './account'
 
@@ -30,7 +30,7 @@ export const readMissed = (x: unknown): MissedCall[] =>
 export const noteMissed = async (s: P2pStore, room: string, m: MissedCall) => {
   const list = readMissed(await s.meta<unknown>(missedKey(room))).filter(x => x.id !== m.id)
   list.push(m)
-  await s.setMeta(missedKey(room), list.slice(-MISSED_MAX))
+  await s.setMeta(missedKey(room), list.slice(-limits.dm.missedMax))
   data?.postMessage({ room })
   scheduleRefresh(room)
 }

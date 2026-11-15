@@ -3,7 +3,7 @@ import { serverWire, type ChanCounts, type EventRecord } from '../db'
 import { fitContent, LIMITS as EV, type Attachment, type Fwd, type MsgContent } from '../content'
 import { TOO_BIG_TEXT, slowText } from '../flows'
 import { can, isOwner, membersOf, outranks, P } from '../state'
-import { DmError, mentionsIn, PINS_MAX } from '../dm'
+import { DmError, mentionsIn } from '../dm'
 import type { ServerCtx } from './context'
 import {
   ServerError,
@@ -148,14 +148,15 @@ export async function react(cx: ServerCtx, room: string, target: string, key: st
   return cx.content(room, 'react', { target, key, on, ch: r.chan })
 }
 
-// Manage messages (owners have it), top-level messages only, at most PINS_MAX per channel.
+// Manage messages (owners have it), top-level messages only, at most `dm.pinsMax` per channel.
 export async function pin(cx: ServerCtx, room: string, target: string, on: boolean) {
   const r = await cx.message(room, target)
   if (!can(cx.sumOf(room), cx.me, P.ManageMessages)) throw new ServerError(PIN_TEXT)
   if (await cx.rootOf(r)) throw new ServerError(PIN_THREAD_TEXT)
   if (on && r.chan) {
     const pins = await cx.loadPins(room, r.chan)
-    if (pins.length >= PINS_MAX) throw new ServerError(`You can pin up to ${PINS_MAX} messages`)
+    const max = cx.local.dm.pinsMax
+    if (pins.length >= max) throw new ServerError(`You can pin up to ${max} messages`)
   }
   return cx.content(room, 'pin', { target, on, ch: r.chan })
 }

@@ -3,28 +3,29 @@ import { Hub, makeNode, ManualClock, settle, waitFor, type PipeEnd } from './p2p
 import {
   P2pNode,
   ELSEWHERE,
-  LIMITS,
   OTHER_HOST,
   TransportError,
+  type NodeLimits,
   type Visibility,
 } from '../p2p/node'
+import { LOCAL } from '../p2p/limits'
 import { P2pStore, removeP2pDb, type SelfRecord } from '../p2p/db'
 import { keyId, newKeyPair, peerId, signCert, signRevocation, withSuffix } from '../p2p/keys'
 import { encodeCard, makeCard } from '../p2p/card'
 import { requests } from '../p2p/contacts'
-import { HANDOVER_MS, TabLeader, type ChannelLike, type LockLike } from '../p2p/leader'
-import { LIMITS as SESSION_LIMITS, Session } from '../p2p/session'
+import { TabLeader, type ChannelLike, type LockLike } from '../p2p/leader'
+import { Session } from '../p2p/session'
 
 const nodes: P2pNode[] = []
 afterEach(() => {
   for (const n of nodes.splice(0)) n.stop()
 })
 
-const setup = async (names: string[], clock = new ManualClock()) => {
+const setup = async (names: string[], clock = new ManualClock(), limits?: Partial<NodeLimits>) => {
   const hub = new Hub()
   const out = []
   for (const name of names) {
-    const n = await makeNode(hub, name, { clock })
+    const n = await makeNode(hub, name, { clock, limits })
     nodes.push(n.node)
     await n.node.start()
     out.push(n)
@@ -177,14 +178,14 @@ describe('P2P node', () => {
     await befriend(a, b, clock)
     await b.block(a.ik)
     await waitFor(() => a.presence(b.ik) === 'offline', 'offline after block')
-    await clock.advance(LIMITS.backoff[1] + 1000)
+    await clock.advance(LOCAL.node.backoff[1] + 1000)
     expect(a.presence(b.ik)).toBe('offline')
     expect(b.contact(a.ik)?.state).toBe('blocked')
 
     await e.addContact(await a.myCard(), 'let me in')
     await waitFor(() => a.contact(e.ik)?.state === 'incoming', 'the request')
     await a.ignore(e.ik)
-    await clock.advance(LIMITS.backoff[1] + 1000)
+    await clock.advance(LOCAL.node.backoff[1] + 1000)
     expect(a.contact(e.ik)?.ignored).toBe(true)
     expect(a.contact(e.ik)?.intros).toEqual([])
     // An ignored requester is told the same as one still waiting.
@@ -335,7 +336,7 @@ describe('P2P node', () => {
     await waitFor(() => kept(back, low), 'the new tab')
     expect(back.presence(low.ik)).toBe('online')
     // The old session never answers its ping: the redial is kept once the ping goes unanswered.
-    await clock.advance(SESSION_LIMITS.handshakeMs)
+    await clock.advance(LOCAL.session.handshakeMs)
     await waitFor(() => kept(low, back), 'the new session at the starter')
     expect(old.state).toBe('closed')
     expect(old.reason).toBe('timeout')
@@ -344,7 +345,7 @@ describe('P2P node', () => {
     expect(heard).toEqual([true])
     expect(low.presence(back.ik)).toBe('online')
     expect(back.readySessions(low.ik)).toHaveLength(1)
-    expect(clock.now() - t0).toBe(SESSION_LIMITS.handshakeMs)
+    expect(clock.now() - t0).toBe(LOCAL.session.handshakeMs)
   })
 
   test('a redial that waits on the old session is closed when the node stops', async () => {
@@ -354,14 +355,14 @@ describe('P2P node', () => {
     await waitFor(() => kept(back, low), 'the new tab')
     low.stop()
     await waitFor(() => back.readySessions(low.ik).length === 0, 'the redial closed')
-    await clock.advance(SESSION_LIMITS.handshakeMs)
+    await clock.advance(LOCAL.session.handshakeMs)
     expect(low.readySessions(back.ik)).toEqual([])
   })
 
   test('a lost goodbye found when the old session was silent past its keepalive: back at once', async () => {
     const { clock, low, old, kill, reopen } = await lostByStarter()
     kill()
-    await clock.advance(SESSION_LIMITS.pingMs + 1)
+    await clock.advance(LOCAL.session.pingMs + 1)
     expect(old.state).toBe('ready')
     const t0 = clock.now()
     const back = await reopen()
@@ -444,7 +445,7 @@ describe('P2P node', () => {
     expect(tries).toBe(1)
     // The background retry keeps saying so instead of going back to "connecting".
     seen.length = 0
-    await clock.advance(LIMITS.backoff[1] + 1000)
+    await clock.advance(LOCAL.node.backoff[1] + 1000)
     expect(tries).toBe(2)
     expect(seen.includes('connecting')).toBe(false)
     expect(a.node.status).toBe('unreachable')
@@ -479,7 +480,7 @@ describe('P2P node', () => {
     }
     await a.node.start()
     expect(a.node.status).toBe('unsupported')
-    await clock.advance(LIMITS.backoff[4] + 1000)
+    await clock.advance(LOCAL.node.backoff[4] + 1000)
     await a.node.retry()
     expect(tries).toBe(1)
     expect(a.node.status).toBe('unsupported')
@@ -549,7 +550,7 @@ describe('P2P node', () => {
     held[0].fail()
     await settle()
     expect(a.node.status).toBe('unreachable')
-    await clock.advance(LIMITS.backoff[1] + 1000)
+    await clock.advance(LOCAL.node.backoff[1] + 1000)
     expect(held.length).toBe(2)
     expect(a.node.status).toBe('unreachable')
     await a.node.retry()
@@ -592,12 +593,12 @@ describe('P2P node', () => {
       release.splice(0).forEach(r => r())
       await settle()
     }
-    expect(peak).toBe(LIMITS.inFlight)
+    expect(peak).toBe(LOCAL.node.inFlight)
     // Everyone backs off now: no new dials until the first backoff passes.
     const before = live
-    await clock.advance(LIMITS.backoff[0] - 1000)
+    await clock.advance(LOCAL.node.backoff[0] - 1000)
     expect(live).toBe(before)
-    await clock.advance(LIMITS.tickMs + 2000)
+    await clock.advance(LOCAL.node.tickMs + 2000)
     expect(live > 0).toBe(true)
     release.splice(0).forEach(r => r())
     await settle()
@@ -631,7 +632,7 @@ describe('P2P node', () => {
 
     visible = false
     fns.forEach(f => f())
-    await clock.advance(LIMITS.hiddenPauseMs + 1000)
+    await clock.advance(LOCAL.node.hiddenPauseMs + 1000)
     await waitFor(() => a.node.status === 'paused', 'hidden pause')
     await waitFor(() => b.node.presence(a.node.ik) === 'offline', 'offline while hidden')
     visible = true
@@ -664,8 +665,8 @@ describe('P2P node', () => {
     const b = await makeNode(hub, 'Bob', { clock })
     nodes.push(a.node, b.node)
     expect(a.node.limits.hiddenPauseMs).toBe(60_000)
-    expect(b.node.limits.hiddenPauseMs).toBe(LIMITS.hiddenPauseMs)
-    expect(LIMITS.hiddenPauseMs).toBe(5 * 60_000)
+    expect(b.node.limits.hiddenPauseMs).toBe(LOCAL.node.hiddenPauseMs)
+    expect(LOCAL.node.hiddenPauseMs).toBe(5 * 60_000)
     await a.node.start()
     await b.node.start()
     await befriend(a.node, b.node, clock)
@@ -732,7 +733,7 @@ describe('P2P node', () => {
     for (let n = 0; n < 500; n += 1) failed.set(`rcp-gone-${n}`, [clock.now()])
     banned.set('rcp-banned', clock.now() + 1000)
     failed.set('rcp-recent', [clock.now() + 50_000])
-    await clock.advance(60_000 + LIMITS.tickMs)
+    await clock.advance(60_000 + LOCAL.node.tickMs)
     expect([...failed.keys()]).toEqual(['rcp-recent'])
     expect(banned.size).toBe(0)
   })
@@ -771,7 +772,7 @@ describe('P2P node', () => {
     await b.start()
     b.schedule(true)
     await settle()
-    await clock.advance(LIMITS.backoff[0] + LIMITS.tickMs)
+    await clock.advance(LOCAL.node.backoff[0] + LOCAL.node.tickMs)
     expect(a.presence(b.ik)).toBe('offline')
     expect(a.contact(b.ik)?.certs.some(c => c.dk === oldDk)).toBe(false)
     expect((await out[0].store.contact(b.ik))?.certs.some(c => c.dk === oldDk)).toBe(false)
@@ -856,61 +857,51 @@ describe('P2P node', () => {
   })
 
   test('requests are capped and rate limited across identities', async () => {
-    const saved = { ...LIMITS }
-    LIMITS.requests = 2
-    LIMITS.requestsPerHour = 3
-    try {
-      const { out, clock } = await setup(['Alice', 'E1', 'E2', 'E3', 'E4'])
-      const [a, ...es] = out.map(x => x.node)
-      const card = await a.myCard()
-      for (const e of es.slice(0, 3)) {
-        await clock.advance(1000)
-        await e.addContact(card, `hi from ${e.name}`)
-        await waitFor(() => a.view().contacts.length + a.view().dropped >= 1 + es.indexOf(e))
-      }
-      // The oldest unverified request made room; the newest are kept.
-      expect(requests(a.view().contacts).map(c => c.ik)).toEqual([es[2].ik, es[1].ik])
-      expect(a.view().dropped).toBe(1)
-      // A fourth new identity within the hour is turned away.
-      await es[3].addContact(card, 'and me')
-      await waitFor(() => a.view().dropped === 2, 'the rate limit')
-      expect(a.contact(es[3].ik)).toBeUndefined()
-      await a.clearDropped()
-      expect(a.view().dropped).toBe(0)
-    } finally {
-      Object.assign(LIMITS, saved)
+    const { out, clock } = await setup(['Alice', 'E1', 'E2', 'E3', 'E4'], undefined, {
+      requests: 2,
+      requestsPerHour: 3,
+    })
+    const [a, ...es] = out.map(x => x.node)
+    const card = await a.myCard()
+    for (const e of es.slice(0, 3)) {
+      await clock.advance(1000)
+      await e.addContact(card, `hi from ${e.name}`)
+      await waitFor(() => a.view().contacts.length + a.view().dropped >= 1 + es.indexOf(e))
     }
+    // The oldest unverified request made room; the newest are kept.
+    expect(requests(a.view().contacts).map(c => c.ik)).toEqual([es[2].ik, es[1].ik])
+    expect(a.view().dropped).toBe(1)
+    // A fourth new identity within the hour is turned away.
+    await es[3].addContact(card, 'and me')
+    await waitFor(() => a.view().dropped === 2, 'the rate limit')
+    expect(a.contact(es[3].ik)).toBeUndefined()
+    await a.clearDropped()
+    expect(a.view().dropped).toBe(0)
   })
 
   test('voice participants are dialed past the cap while a session can make room for them', async () => {
-    const saved = { ...LIMITS }
-    LIMITS.sessions = 1
-    try {
-      const { out, clock, hub } = await setup(['Alice', 'Bob', 'Carol'])
-      const [a, b, c] = out.map(x => x.node)
-      await befriend(a, b, clock)
-      c.use({ attach: () => {}, ready: () => {}, wanted: () => true })
-      let keepBob = true
-      a.use({
-        attach: () => {},
-        ready: () => {},
-        urgent: () => [{ ik: c.ik, certs: [c.cert] }],
-        keep: s => (keepBob && s.remote?.ik === b.ik) || s.remote?.ik === c.ik,
-        wanted: () => true,
-      })
-      // At the cap and Bob's session is in voice too: nothing may make room, nobody is dialed.
-      const before = hub.dialCount
-      a.schedule(true)
-      await settle()
-      expect(hub.dialCount).toBe(before)
-      // Bob's isn't: Carol is dialed past the cap and Bob's session makes room.
-      keepBob = false
-      a.schedule(true)
-      await waitFor(() => a.readySessions(c.ik).length === 1, 'the session with Carol')
-      expect(a.readySessions(b.ik)).toEqual([])
-    } finally {
-      Object.assign(LIMITS, saved)
-    }
+    const { out, clock, hub } = await setup(['Alice', 'Bob', 'Carol'], undefined, { sessions: 1 })
+    const [a, b, c] = out.map(x => x.node)
+    await befriend(a, b, clock)
+    c.use({ attach: () => {}, ready: () => {}, wanted: () => true })
+    let keepBob = true
+    a.use({
+      attach: () => {},
+      ready: () => {},
+      urgent: () => [{ ik: c.ik, certs: [c.cert] }],
+      keep: s => (keepBob && s.remote?.ik === b.ik) || s.remote?.ik === c.ik,
+      wanted: () => true,
+    })
+    // At the cap and Bob's session is in voice too: nothing may make room, nobody is dialed.
+    const before = hub.dialCount
+    a.schedule(true)
+    await settle()
+    expect(hub.dialCount).toBe(before)
+    // Bob's isn't: Carol is dialed past the cap and Bob's session makes room.
+    keepBob = false
+    a.schedule(true)
+    await waitFor(() => a.readySessions(c.ik).length === 1, 'the session with Carol')
+    expect(a.readySessions(b.ik)).toEqual([])
   })
 
   test("a voice participant's device is dialed though a session with another of its devices is up", async () => {
@@ -936,26 +927,20 @@ describe('P2P node', () => {
   })
 
   test('unauthenticated connections never push out established sessions', async () => {
-    const saved = { ...LIMITS }
-    LIMITS.sessions = 1
-    try {
-      const { out, clock, hub } = await setup(['Alice', 'Bob'])
-      const [a, b] = out.map(x => x.node)
-      await befriend(a, b, clock)
-      const t = hub.transport()
-      const pipes = []
-      for (let n = 0; n < LIMITS.handshakes; n += 1)
-        pipes.push((await t.dial(`rcp-probe${n}`, a.peerId)) as unknown as { closed: boolean })
-      await settle()
-      expect(pipes.every(p => !p.closed)).toBe(true)
-      expect(a.presence(b.ik)).toBe('online')
-      // The handshake pool is full: the next one is turned away at once.
-      const extra = (await t.dial('rcp-probe-x', a.peerId)) as unknown as { closed: boolean }
-      expect(extra.closed).toBe(true)
-      expect(a.presence(b.ik)).toBe('online')
-    } finally {
-      Object.assign(LIMITS, saved)
-    }
+    const { out, clock, hub } = await setup(['Alice', 'Bob'], undefined, { sessions: 1 })
+    const [a, b] = out.map(x => x.node)
+    await befriend(a, b, clock)
+    const t = hub.transport()
+    const pipes = []
+    for (let n = 0; n < LOCAL.node.handshakes; n += 1)
+      pipes.push((await t.dial(`rcp-probe${n}`, a.peerId)) as unknown as { closed: boolean })
+    await settle()
+    expect(pipes.every(p => !p.closed)).toBe(true)
+    expect(a.presence(b.ik)).toBe('online')
+    // The handshake pool is full: the next one is turned away at once.
+    const extra = (await t.dial('rcp-probe-x', a.peerId)) as unknown as { closed: boolean }
+    expect(extra.closed).toBe(true)
+    expect(a.presence(b.ik)).toBe('online')
   })
 
   test('sessions that never send a hello free their handshake slots', async () => {
@@ -963,7 +948,7 @@ describe('P2P node', () => {
     const [a, b] = out.map(x => x.node)
     const t = hub.transport()
     const probes: Session[] = []
-    for (let n = 0; n < LIMITS.handshakes; n += 1) {
+    for (let n = 0; n < LOCAL.node.handshakes; n += 1) {
       const ik = newKeyPair()
       const dk = newKeyPair()
       const me = { ik, dk, cert: signCert(ik, dk.pk, 1, 'test'), peer: peerId(dk.pk) }
@@ -983,7 +968,7 @@ describe('P2P node', () => {
     await waitFor(() => probes.every(s => s.state === 'ready'), 'probes past SIGMA')
     const extra = (await t.dial('rcp-probe-x', a.peerId)) as unknown as { closed: boolean }
     expect(extra.closed).toBe(true)
-    await clock.advance(SESSION_LIMITS.handshakeMs + 1000)
+    await clock.advance(LOCAL.session.handshakeMs + 1000)
     expect(probes.every(s => s.state === 'closed')).toBe(true)
     // A real contact gets through again.
     await befriend(b, a, clock)
@@ -996,7 +981,7 @@ describe('P2P node', () => {
     await a.block(b.ik)
     await waitFor(() => b.presence(a.ik) === 'offline', 'offline after block')
     const dial = (b as unknown as { dial: (c: unknown) => Promise<void> }).dial.bind(b)
-    for (let n = 0; n < LIMITS.failedHandshakes; n += 1) await dial(b.contact(a.ik))
+    for (let n = 0; n < LOCAL.node.failedHandshakes; n += 1) await dial(b.contact(a.ik))
     const probe = (await hub.transport().dial(b.peerId, a.peerId)) as unknown as {
       closed: boolean
     }
@@ -1109,7 +1094,7 @@ describe('tab leader', () => {
     two.leader.takeOver()
     await settle()
     expect(two.leader.state).toBe('waiting')
-    await clock.advance(HANDOVER_MS)
+    await clock.advance(LOCAL.misc.handoverMs)
     await waitFor(() => two.leader.state === 'leading', 'taken')
     await waitFor(() => one.leader.state === 'waiting', 'one lost it')
     expect(one.log).toEqual(['lead', 'resign', 'follow'])

@@ -27,7 +27,6 @@ import {
   type KeyPair,
 } from './keys'
 import {
-  CERTS_KEPT,
   mergeCerts,
   mergeContact,
   mergeRevocations,
@@ -71,7 +70,7 @@ import { claimedId2 } from './event_v2'
 import { fingerprint } from './keys'
 import { hashPages, partRange, readBlock } from './blobs'
 import { BLOCK, blobRootOf, blockCount, digest } from './hashing'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 import { NEUTRAL_TYPE, safeType, SNIFF_BYTES } from '../sniff'
 import { IV_BYTES, SALT_BYTES, type Kdf, type P2pSection } from './section'
 
@@ -101,27 +100,23 @@ export const EXCLUDED: ReadonlySet<string> = new Set([
 export const filesSize = async (db: P2pDatabase) =>
   (await db.getAll('blobs')).reduce((n, r) => n + (r.done ? r.size : 0), 0)
 
+// limits.ts `transfer` (the passphrase's KDF, the shortest passphrase, what a dump may inflate
+// to, the imports remembered, header sizes and the largest file an import takes), with `contacts`
+// for the contacts a file brings and `dag` for the conversations it stores into.
+export type TransferLimits = Pick<Local, 'transfer' | 'contacts' | 'dag'>
+type Tl = Local['transfer']
+
 // Desktop finishes in about a second, a mid-range phone in two to three. Files say which
 // parameters they used; unlocking refuses anything below the minimum or above the maximum.
-const TR = LOCAL.transfer
-export const KDF_DESKTOP: Kdf = {
-  alg: 'argon2id',
-  m: TR.kdfDesktopM,
-  t: TR.kdfDesktopT,
-  p: TR.kdfDesktopP,
-}
-export const KDF_MOBILE: Kdf = {
-  alg: 'argon2id',
-  m: TR.kdfMobileM,
-  t: TR.kdfMobileT,
-  p: TR.kdfMobileP,
-}
-export const KDF_MIN = { m: TR.kdfMinM, t: TR.kdfMinT, p: TR.kdfMinP }
-export const KDF_MAX = { m: TR.kdfMaxM, t: TR.kdfMaxT, p: TR.kdfMaxP }
+export const kdfFor = (t: Tl, mobile: boolean): Kdf =>
+  mobile
+    ? { alg: 'argon2id', m: t.kdfMobileM, t: t.kdfMobileT, p: t.kdfMobileP }
+    : { alg: 'argon2id', m: t.kdfDesktopM, t: t.kdfDesktopT, p: t.kdfDesktopP }
 
-export const PASS_MIN = TR.passMin
-// What a dump may inflate to.
-export const DUMP_MAX = TR.dumpMax
+export const kdfBounds = (t: Tl): KdfBounds => ({
+  min: { m: t.kdfMinM, t: t.kdfMinT, p: t.kdfMinP },
+  max: { m: t.kdfMaxM, t: t.kdfMaxT, p: t.kdfMaxP },
+})
 
 // Shown while the key is made in JavaScript, once that has run `SLOW_AFTER` ms.
 export const SLOW_KDF = 'This can take a minute or two on this device.'
@@ -174,30 +169,35 @@ export interface KdfWatch {
 
 const AAD_TAG = 'rchat-p2p-transfer1\0'
 
-export const defaultKdf = (): Kdf =>
-  typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
-    ? KDF_MOBILE
-    : KDF_DESKTOP
+export const defaultKdf = (t: Tl = LOCAL.transfer): Kdf =>
+  kdfFor(t, typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches)
 
 // ----- Passphrase -----
 
 export const passLength = (p: string) => Array.from(nfc(p)).length
 
-export const passProblem = (pass: string, again: string): string | null =>
-  passLength(pass) < PASS_MIN
-    ? `Use at least ${PASS_MIN} characters`
+export const passProblem = (
+  pass: string,
+  again: string,
+  t: Pick<Tl, 'passMin'> = LOCAL.transfer
+): string | null =>
+  passLength(pass) < t.passMin
+    ? `Use at least ${t.passMin} characters`
     : nfc(pass) !== nfc(again)
       ? "The passphrases don't match"
       : null
 
 // A rough hint, not a promise: length counts most, then mixing kinds of characters or words.
-export const passStrength = (p: string): { score: 0 | 1 | 2 | 3; label: string } => {
+export const passStrength = (
+  p: string,
+  t: Pick<Tl, 'passMin'> = LOCAL.transfer
+): { score: 0 | 1 | 2 | 3; label: string } => {
   const n = passLength(p)
   const kinds = [/\p{Ll}/u, /\p{Lu}/u, /\p{N}/u, /[^\p{L}\p{N}\s]/u].filter(r => r.test(p)).length
   const words = p.trim().split(/\s+/).filter(Boolean).length
   const distinct = new Set(Array.from(p.toLowerCase())).size
   let score: 0 | 1 | 2 | 3 =
-    n < PASS_MIN
+    n < t.passMin
       ? 0
       : n >= 20 || (n >= 14 && (kinds >= 3 || words >= 4))
         ? 3
@@ -284,7 +284,7 @@ const inWorker = (
     }
     const job: KdfJob = {
       id: 1,
-      kdf: { password, salt, m: kdf.m, t: kdf.t, p: kdf.p, maxmem: KDF_MAX.m * 1024 },
+      kdf: { password, salt, m: kdf.m, t: kdf.t, p: kdf.p, maxmem: kdf.m * 1024 },
     }
     w.postMessage(job)
   })
@@ -302,7 +302,7 @@ const onPage = (
     t: kdf.t,
     p: kdf.p,
     dkLen: 32,
-    maxmem: KDF_MAX.m * 1024,
+    maxmem: kdf.m * 1024,
     asyncTick: 8,
     onProgress: part => {
       if (signal?.aborted) throw new Cancelled()
@@ -388,7 +388,7 @@ export interface KdfBounds {
   max: { m: number; t: number; p: number }
 }
 
-export const checkKdf = (kdf: Kdf, bounds: KdfBounds = { min: KDF_MIN, max: KDF_MAX }) => {
+export const checkKdf = (kdf: Kdf, bounds: KdfBounds = kdfBounds(LOCAL.transfer)) => {
   const { min, max } = bounds
   if (kdf.m < min.m || kdf.t < min.t || kdf.p < min.p) throw new TransferError(WEAK_KDF)
   if (kdf.m > max.m || kdf.t > max.t || kdf.p > max.p) throw new TransferError(HEAVY_KDF)
@@ -621,17 +621,15 @@ const isEventRow = (x: unknown): x is EventRecord => {
   return ev.room === x.room && ev.depth === x.depth && claimedId(x.wire) === x.id
 }
 
-const HEADS_MAX = TR.headsMax
-
 const isHead = (h: unknown) =>
   isRecord(h) && isEventId(h.id) && Number.isSafeInteger(h.depth) && (h.depth as number) >= 0
 
-const isRoomRow = (x: unknown): x is RoomRecord =>
+const isRoomRow = (x: unknown, lim: TransferLimits): x is RoomRecord =>
   isRecord(x) &&
   typeof x.id === 'string' &&
   ((x.kind === 'dm' && isKeyId(x.peer)) || (x.kind === 'server' && x.peer === '')) &&
   Array.isArray(x.heads) &&
-  x.heads.length <= HEADS_MAX &&
+  x.heads.length <= lim.transfer.headsMax &&
   x.heads.every(isHead) &&
   Array.isArray(x.missing)
 
@@ -645,12 +643,13 @@ const isContactRow = (x: unknown): x is Contact =>
   ['outgoing', 'incoming', 'mutual', 'blocked'].includes(x.state as string)
 
 // A contact keeps only the devices and profile its identity signed.
-const cleanContact = (c: Contact): Contact => {
-  const revocations = mergeRevocations([], c.revocations.slice(0, CERTS_KEPT * 2), c.ik)
+const cleanContact = (c: Contact, lim: TransferLimits['contacts']): Contact => {
+  const kept = lim.certsKept
+  const revocations = mergeRevocations([], c.revocations.slice(0, kept * 2), c.ik, lim)
   return {
     ...c,
     revocations,
-    certs: mergeCerts([], c.certs.slice(0, CERTS_KEPT), c.ik, revocations),
+    certs: mergeCerts([], c.certs.slice(0, kept), c.ik, revocations, lim),
     profile: c.profile && verifyProfile(c.profile, c.ik) ? c.profile : null,
   }
 }
@@ -660,7 +659,7 @@ const isHash = (x: unknown) => typeof x === 'string' && isEventId(x)
 const isOutboxRow = (x: unknown): x is OutboxRecord =>
   isRecord(x) && typeof x.id === 'string' && Array.isArray(x.deliveredTo)
 
-const ROW_CHECKS: Record<string, (x: unknown) => boolean> = {
+const ROW_CHECKS: Record<string, (x: unknown, lim: TransferLimits) => boolean> = {
   events: isEventRow,
   rooms: isRoomRow,
   contacts: isContactRow,
@@ -716,7 +715,8 @@ const putServerRow = async (tx: LooseTx, e: EventRecord) => {
 
 // Reads the inflated lines one at a time, so memory goes to the records, never to one huge
 // string.
-export const parseDump = async (bytes: Uint8Array, max = DUMP_MAX): Promise<Dump> => {
+export const parseDump = async (bytes: Uint8Array, lim: TransferLimits = LOCAL): Promise<Dump> => {
+  const max = lim.transfer.dumpMax
   const damaged = () => new TransferError(DAMAGED_DUMP)
   const reader = new Blob([bytes as BlobPart])
     .stream()
@@ -787,12 +787,12 @@ export const parseDump = async (bytes: Uint8Array, max = DUMP_MAX): Promise<Dump
   for (const [name, rows] of stores) {
     const ok = ROW_CHECKS[name]
     if (!ok) continue
-    const kept = rows.filter(r => ok(r.value))
+    const kept = rows.filter(r => ok(r.value, lim))
     skipped += rows.length - kept.length
     stores.set(
       name,
       name === 'contacts'
-        ? kept.map(r => ({ ...r, value: cleanContact(r.value as Contact) }))
+        ? kept.map(r => ({ ...r, value: cleanContact(r.value as Contact, lim.contacts) }))
         : name === 'events'
           ? kept.map(r => ({ ...r, value: cleanEvent(r.value as EventRecord) }))
           : kept
@@ -871,22 +871,22 @@ export const exportP2pWithFiles = async (
 export const unlockP2p = async (
   sec: P2pSection,
   pass: string,
-  bounds?: KdfBounds,
+  lim: TransferLimits = LOCAL,
   watch?: KdfWatch
-) => parseDump(await open(sec, pass, bounds, watch))
+) => parseDump(await open(sec, pass, kdfBounds(lim.transfer), watch), lim)
 
 // The same, with the key for the files that follow it (from their header's salt).
 export const unlockP2pWithFiles = async (
   sec: P2pSection,
   pass: string,
   head: FilesHead,
-  bounds?: KdfBounds,
+  lim: TransferLimits = LOCAL,
   watch?: KdfWatch
 ): Promise<{ dump: Dump; files: FilesKey }> => {
   const salt = bytesOf(head.salt, SALT_BYTES)
   if (!salt) throw new TransferError(DAMAGED_DUMP)
-  const { plain, files } = await openWith(sec, pass, bounds, salt, watch)
-  const dump = await parseDump(plain)
+  const { plain, files } = await openWith(sec, pass, kdfBounds(lim.transfer), salt, watch)
+  const dump = await parseDump(plain, lim)
   if (dump.id !== head.id) throw new TransferError(DAMAGED_DUMP)
   return { dump, files: { id: head.id, salt: head.salt, key: files as CryptoKey } }
 }
@@ -903,10 +903,8 @@ export const importKind = (local: SelfRecord | undefined, dump: Dump): ImportKin
 export const alreadyImported = (local: SelfRecord | undefined, dump: Dump) =>
   !!local && importKind(local, dump) === 'merge' && (local.imports ?? []).includes(dump.id)
 
-const IMPORTS_KEPT = TR.importsKept
-
-const withImport = (list: string[] | undefined, id: string) =>
-  [...new Set([...(list ?? []).filter(x => x !== id), id])].slice(-IMPORTS_KEPT)
+const withImport = (list: string[] | undefined, id: string, lim: TransferLimits) =>
+  [...new Set([...(list ?? []).filter(x => x !== id), id])].slice(-lim.transfer.importsKept)
 
 export interface Imported {
   kind: ImportKind
@@ -925,14 +923,15 @@ export const moveSelf = (
   old: SelfRecord,
   at: number,
   label = 'Browser',
-  importId?: string
+  importId?: string,
+  lim: TransferLimits = LOCAL
 ): SelfRecord => {
   const ik = keyId(old.ik.pk)
   const dk = newKeyPair()
   const cert = signCert(old.ik, dk.pk, at, label)
   const rev = signRevocation(old.ik, keyId(old.dk.pk), at, keyId(dk.pk))
-  const revocations = mergeRevocations(old.revocations, [rev], ik)
-  const certs = mergeCerts([cert], old.certs, ik, revocations)
+  const revocations = mergeRevocations(old.revocations, [rev], ik, lim.contacts)
+  const certs = mergeCerts([cert], old.certs, ik, revocations, lim.contacts)
   return {
     ...old,
     dk,
@@ -944,7 +943,7 @@ export const moveSelf = (
     moving: null,
     exported: null,
     alert: null,
-    imports: importId ? withImport(old.imports, importId) : (old.imports ?? []),
+    imports: importId ? withImport(old.imports, importId, lim) : (old.imports ?? []),
   }
 }
 
@@ -954,7 +953,13 @@ const fire = (p: Promise<unknown>) => void p.catch(() => {})
 const asTx = (tx: LooseTx) => tx as unknown as InsertTx
 
 // One `move` event per ten heads (events reference at most ten), signed by the new device.
-const vouch = async (tx: LooseTx, self: SelfRecord, room: RoomRecord, now: number) => {
+const vouch = async (
+  tx: LooseTx,
+  self: SelfRecord,
+  room: RoomRecord,
+  now: number,
+  lim: TransferLimits
+) => {
   const author = { ik: self.ik, dk: self.dk }
   const me = keyId(self.ik.pk)
   const heads = room.heads
@@ -971,7 +976,12 @@ const vouch = async (tx: LooseTx, self: SelfRecord, room: RoomRecord, now: numbe
       depth,
       now
     )
-    const res = await insertInto(asTx(tx), id, wire, now, { me, peer: room.peer, own: true })
+    const res = await insertInto(asTx(tx), id, wire, now, {
+      me,
+      peer: room.peer,
+      lim: lim.dag,
+      own: true,
+    })
     if (res.status !== 'new') continue
     await tx.objectStore('outbox').put({ id, room: room.id, created: now, deliveredTo: [] })
     n += 1
@@ -984,7 +994,8 @@ const load = async (
   names: string[],
   dump: Dump,
   now: number,
-  label: string
+  label: string,
+  lim: TransferLimits
 ): Promise<Imported> => {
   for (const n of names) fire(tx.objectStore(n).clear())
   const meta = tx.objectStore('meta')
@@ -1062,10 +1073,10 @@ const load = async (
       const late = (oldTs.get(o.id) ?? 0) > revokedAt
       fire(tx.objectStore('outbox').put(late ? { ...o, failed: true } : o))
     }
-  const self = moveSelf(dump.self, revokedAt, label, dump.id)
+  const self = moveSelf(dump.self, revokedAt, label, dump.id, lim)
   await tx.objectStore('self').put(self)
   // Servers vouch differently: the new device posts its member event again on start.
-  for (const room of rooms) if (room.kind !== 'server') await vouch(tx, self, room, now)
+  for (const room of rooms) if (room.kind !== 'server') await vouch(tx, self, room, now, lim)
   return { kind: 'new', contacts, rooms: rooms.length, events: dms.n + srv.n, skipped }
 }
 
@@ -1074,12 +1085,13 @@ const merge = async (
   names: string[],
   dump: Dump,
   local: SelfRecord,
-  now: number
+  now: number,
+  lim: TransferLimits
 ): Promise<Imported> => {
   const ik = keyId(local.ik.pk)
   const d = dump.self
-  const revocations = mergeRevocations(local.revocations, d.revocations, ik)
-  const certs = mergeCerts(local.certs, [local.cert, ...d.certs], ik, revocations)
+  const revocations = mergeRevocations(local.revocations, d.revocations, ik, lim.contacts)
+  const certs = mergeCerts(local.certs, [local.cert, ...d.certs], ik, revocations, lim.contacts)
   // The file may come from the device this one moved to: then this one is the old device.
   const gone = revocations.find(r => r.dk === keyId(local.dk.pk) && r.successor)
   const moved =
@@ -1090,7 +1102,7 @@ const merge = async (
     revocations,
     profile: d.profile.updated > local.profile.updated ? d.profile : local.profile,
     moved,
-    imports: withImport([...(local.imports ?? []), ...(d.imports ?? [])], dump.id),
+    imports: withImport([...(local.imports ?? []), ...(d.imports ?? [])], dump.id, lim),
   }
   await tx.objectStore('self').put(moved ? withoutSecrets({ ...next, moving: null }) : next)
 
@@ -1100,7 +1112,7 @@ const merge = async (
   for (const r of rowsOf(dump, 'contacts')) {
     const c = r.value as Contact
     const cur = (await cs.get(c.ik)) as Contact | undefined
-    await cs.put(cur ? mergeContact(cur, c, now) : c)
+    await cs.put(cur ? mergeContact(cur, c, now, lim.contacts) : c)
     contacts += 1
   }
 
@@ -1151,6 +1163,7 @@ const merge = async (
     const res = await insertInto(asTx(tx), e.id, e.wire, e.receivedAt, {
       me: ik,
       peer: room.peer,
+      lim: lim.dag,
     })
     if (res.status === 'new') events += 1
     else if (res.status !== 'dup') skipped += 1
@@ -1216,9 +1229,10 @@ export const applyImport = async (
   db: P2pDatabase,
   dump: Dump,
   kind: ImportKind,
-  opts: { now?: number; label?: string } = {}
+  opts: { now?: number; label?: string; lim?: TransferLimits } = {}
 ): Promise<Imported> => {
   const now = opts.now ?? Date.now()
+  const lim = opts.lim ?? LOCAL
   const names = storeNames(db)
   const tx = db.transaction(names as StoreName[], 'readwrite') as unknown as LooseTx
   tx.done.catch(() => {})
@@ -1231,9 +1245,9 @@ export const applyImport = async (
     }
     const res =
       kind === 'merge'
-        ? await merge(tx, names, dump, local as SelfRecord, now)
+        ? await merge(tx, names, dump, local as SelfRecord, now, lim)
         : {
-            ...(await load(tx, names, dump, now, opts.label ?? 'Browser')),
+            ...(await load(tx, names, dump, now, opts.label ?? 'Browser', lim)),
             kind,
           }
     // The search index is built again from the events now stored (server.ts start).
@@ -1268,7 +1282,6 @@ const FILES_AAD = 'rchat-p2p-files1\0'
 const FRAME_LAST = 0x8000_0000
 // One block, its kind byte and the tag.
 export const FILES_FRAME_MAX = BLOCK + 1 + 16
-const HEAD_MAX = TR.headMax
 
 export const F_FILE = 1
 export const F_BLOCK = 2
@@ -1417,9 +1430,12 @@ class ByteReader {
 }
 
 // The header of the files part of a `.rchat` file, or null when there is none.
-export const filesHead = async (trailer: Blob): Promise<FilesHead | null> => {
+export const filesHead = async (
+  trailer: Blob,
+  t: Pick<Tl, 'headMax'> = LOCAL.transfer
+): Promise<FilesHead | null> => {
   if (trailer.size < FILES_MAGIC.length) return null
-  const head = new Uint8Array(await trailer.slice(0, FILES_MAGIC.length + HEAD_MAX).arrayBuffer())
+  const head = new Uint8Array(await trailer.slice(0, FILES_MAGIC.length + t.headMax).arrayBuffer())
   const text = new TextDecoder().decode(head)
   if (!text.startsWith(FILES_MAGIC)) return null
   const nl = text.indexOf('\n', FILES_MAGIC.length)
@@ -1455,15 +1471,14 @@ interface Incoming {
   had: boolean
 }
 
-// Largest file an import takes (its hash list is held while it streams in).
-const FILE_SIZE_MAX = TR.fileSizeMax
-
-const isFileMeta = (x: unknown) =>
+// Largest file an import takes (`transfer.fileSizeMax`: its hash list is held while it streams
+// in).
+const isFileMeta = (x: unknown, t: Pick<Tl, 'fileSizeMax'>) =>
   isRecord(x) &&
   isHash(x.h) &&
   Number.isSafeInteger(x.size) &&
   (x.size as number) >= 0 &&
-  (x.size as number) <= FILE_SIZE_MAX &&
+  (x.size as number) <= t.fileSizeMax &&
   typeof x.own === 'boolean' &&
   Number.isSafeInteger(x.created) &&
   Number.isSafeInteger(x.lastUsed)
@@ -1476,7 +1491,8 @@ export const importFiles = async (
   db: P2pDatabase,
   trailer: Blob,
   fk: FilesKey,
-  progress?: (done: number) => void
+  progress?: (done: number) => void,
+  t: Pick<Tl, 'headMax' | 'fileSizeMax'> = LOCAL.transfer
 ): Promise<FilesResult> => {
   const r = new ByteReader(trailer.stream().getReader())
   const out: FilesResult = { files: 0, skipped: 0, complete: false }
@@ -1518,7 +1534,7 @@ export const importFiles = async (
     // The header line, byte by byte (it is short).
     for (let i = 0; ; i += 1) {
       const b = await r.read(1)
-      if (!b || i > HEAD_MAX) return out
+      if (!b || i > t.headMax) return out
       if (b[0] === 0x0a) break
     }
     for (;;) {
@@ -1563,7 +1579,7 @@ export const importFiles = async (
         } catch {
           meta = null
         }
-        if (!isFileMeta(meta)) {
+        if (!isFileMeta(meta, t)) {
           out.skipped += 1
           continue
         }

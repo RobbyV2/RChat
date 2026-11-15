@@ -1,4 +1,4 @@
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 
 // One P2P node per identity database across tabs. The tab holding the Web Lock runs the node;
 // the others wait in line (and take over when that tab closes). "Use here" asks the holder to
@@ -47,10 +47,6 @@ export const webLeaderDeps = (): LeaderDeps => ({
   clear: h => clearTimeout(h as ReturnType<typeof setTimeout>),
 })
 
-// How long a holder that was asked to let go waits for the asking tab, and how long the asking
-// tab waits for a reply before it takes the lock anyway (a frozen tab).
-export const HANDOVER_MS = LOCAL.misc.handoverMs
-
 type State = 'idle' | 'waiting' | 'leading' | 'handing' | 'stopped'
 
 export class TabLeader {
@@ -62,10 +58,13 @@ export class TabLeader {
   private handTimer: unknown = null
   private hold = 0
 
+  // `misc.handoverMs`: how long a holder that was asked to let go waits for the asking tab, and
+  // how long the asking tab waits for a reply before it takes the lock anyway (a frozen tab).
   constructor(
     private name: string,
     private hooks: LeaderHooks,
-    private deps: LeaderDeps = webLeaderDeps()
+    private deps: LeaderDeps = webLeaderDeps(),
+    private lim: Pick<Local['misc'], 'handoverMs'> = LOCAL.misc
   ) {}
 
   start() {
@@ -95,7 +94,7 @@ export class TabLeader {
   // This tab wants the node: the holder stops its node, says so, and we take the lock.
   takeOver() {
     if (this.state !== 'waiting' || !this.deps.locks || this.asking !== null) return
-    this.asking = this.deps.set(() => this.steal(), HANDOVER_MS)
+    this.asking = this.deps.set(() => this.steal(), this.lim.handoverMs)
     if (this.bc) this.bc.postMessage({ t: 'release' })
     else this.steal()
   }
@@ -191,7 +190,7 @@ export class TabLeader {
         this.release?.()
         this.release = null
         this.queue()
-      }, HANDOVER_MS)
+      }, this.lim.handoverMs)
     } else if (t === 'released' && this.asking !== null) this.steal()
   }
 }

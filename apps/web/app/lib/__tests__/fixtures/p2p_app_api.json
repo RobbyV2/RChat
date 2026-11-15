@@ -1,12 +1,6 @@
 {
   "values": [
-    "AUTO_DAILY_OPTIONS",
-    "AUTO_DEFAULT",
-    "AUTO_DM",
-    "AUTO_SERVER",
-    "BIG_FILE",
     "CALL_ELSEWHERE",
-    "CODE_TTLS",
     "ELSEWHERE_IMPORT",
     "FILES_MAX_TEXT",
     "NEEDS_INVITER",
@@ -14,6 +8,7 @@
     "ServerError",
     "TOO_MANY_FILES",
     "autoChoices",
+    "autoDefaults",
     "autoKey",
     "banRequest",
     "callRtc",
@@ -21,6 +16,7 @@
     "channelScope",
     "chatKey",
     "chatScope",
+    "codeTtls",
     "emptySearch",
     "fitAttachments",
     "importsKey",

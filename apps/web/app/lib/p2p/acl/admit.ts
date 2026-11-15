@@ -3,7 +3,7 @@ import { deviceCertOk, genesisSrv } from './binding'
 import { AclState } from './cache'
 import { evidencePair, seenOf, type Header } from './equivocation'
 import { emptyResult, fiOf, type EvalResult } from './facts'
-import { AGREED, type Agreed } from '../limits'
+import { AGREED, LOCAL, type Agreed } from '../limits'
 import { EMPTY, type Ix } from './reach'
 import {
   aclContentOk,
@@ -24,6 +24,7 @@ import {
   type AclEv,
   type Cls,
   type Ctx,
+  type EvalLimits,
   type Rank,
   type Rec,
 } from './rules'
@@ -61,6 +62,8 @@ export interface AdmitOpts {
   binds: (e: AclEv, B?: Past, S?: EvalResult) => boolean
   // The limits the server agreed on. Default `AGREED`.
   agreed?: Agreed
+  // This device's evaluator limits (rules.ts EvalLimits). Default the registry's.
+  local?: EvalLimits
 }
 
 // The primary key of a's current epoch in B: the `pcert` of the epoch's rotation when it
@@ -502,9 +505,11 @@ export class AclReplica implements Ctx {
   private waiting = new Map<string, AclEv[]>()
   opts: AdmitOpts
   readonly lim: Agreed
+  readonly local: EvalLimits
   constructor(opts: Partial<AdmitOpts> = {}) {
     this.opts = { binds: opts.binds ?? certBinds }
     this.lim = opts.agreed ?? AGREED
+    this.local = opts.local ?? LOCAL
     this.acl = new AclState(this)
   }
   ev(id: string) {

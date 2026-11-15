@@ -1,7 +1,8 @@
 import { cmp, EVERYONE, P, type Rank } from './acl/rules'
 import type { OverSum } from './acl/summary'
 import { actParts, roleMoveWarns } from './flows'
-import { ROLE_STEP, type MemberView, type RoleView, type ServerView } from './server'
+import { type MemberView, type RoleView, type ServerView } from './server'
+import { LOCAL, type Local } from './limits'
 
 // Roles and channel permissions of P2P servers as the settings and the member list show them:
 // the permission toggles, where a dragged role lands, the member list grouped by
@@ -85,8 +86,15 @@ export interface Move {
 
 // Where `id` lands when dropped at `index` of the list without it (highest first): a position
 // strictly between its new neighbours, else the movable roles spaced out again, in the new order.
-// `top`: our rank; every role we move stays strictly below it.
-export function placeRole(roles: RoleView[], id: string, index: number, top: Rank): Move[] {
+// `top`: our rank; every role we move stays strictly below it. New gaps are `server.roleStep`.
+export function placeRole(
+  roles: RoleView[],
+  id: string,
+  index: number,
+  top: Rank,
+  lim: Pick<Local['server'], 'roleStep'> = LOCAL.server
+): Move[] {
+  const gap = lim.roleStep
   const self = roles.find(r => r.id === id)
   if (!self) return []
   const rest = roles.filter(r => r.id !== id)
@@ -98,17 +106,17 @@ export function placeRole(roles: RoleView[], id: string, index: number, top: Ran
   const pick =
     hi === null
       ? below
-        ? below.pos + ROLE_STEP
-        : ROLE_STEP * ROLE_STEP
-      : !below && hi > ROLE_STEP
-        ? hi - ROLE_STEP
+        ? below.pos + gap
+        : gap * gap
+      : !below && hi > gap
+        ? hi - gap
         : Math.floor((hi + lo) / 2)
   if (pick > lo && (hi === null || pick < hi) && pick >= 0)
     return pick === self.pos ? [] : [{ role: id, pos: pick }]
   // No room: the roles below us, in the new order, spaced out under our rank.
   const order = [...rest.slice(0, index), self, ...rest.slice(index)]
   const movable = order.filter(r => cmp(top, rankOf(r)) > 0)
-  const room = cap === Infinity ? ROLE_STEP * (movable.length + 1) : cap
+  const room = cap === Infinity ? gap * (movable.length + 1) : cap
   const step = Math.floor(room / (movable.length + 1))
   if (step < 1) return []
   const moves = movable.flatMap((r, i) => {

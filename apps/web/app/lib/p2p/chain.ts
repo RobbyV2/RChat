@@ -12,6 +12,7 @@ import {
   verifyTaggedStrict,
   type KeyPair,
 } from './keys'
+import { LOCAL } from './limits'
 
 // The key chain of an identity made with a recovery key: the creation record (n = 0, signed by
 // the identity key and the recovery key) and up to CHAIN_MAX records after it, each signed by the
@@ -83,7 +84,7 @@ const digestOf = (body: unknown) => b64u(sha256(canonicalBytes(body)))
 
 // Signature checks repeat for every reading of a chain, so their results are kept. The records the
 // instance also verifies are checked as it checks them.
-const CHECKS_MAX = 8192
+const CHECKS_MAX = LOCAL.misc.chainChecks
 const STRICT: ReadonlySet<string> = new Set([TAG2.create, TAG2.chain, TAG2.bind])
 const checks = new Map<string, boolean>()
 

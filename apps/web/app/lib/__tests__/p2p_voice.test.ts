@@ -3,8 +3,10 @@ import { ManualClock, settle } from './p2p_net'
 import { b64u, randomBytes } from '../p2p/canonical'
 import type { Message } from '../p2p/frames'
 import { keyId, newKeyPair, signTagged, type Cert, type KeyPair } from '../p2p/keys'
-import { LIMITS, victimFor, type Held } from '../p2p/node'
-import type { Session } from '../p2p/session'
+import { victimFor, type Held } from '../p2p/node'
+import { LOCAL } from '../p2p/limits'
+import type { Clock, Session } from '../p2p/session'
+import { instanceLocal } from '../p2p/user_limits'
 import {
   pastFit,
   readVoiceFrame,
@@ -15,6 +17,7 @@ import {
   voiceBody,
   VoiceRoster,
   type VoiceFrame,
+  type VoiceLimits,
   type VoiceMedia,
 } from '../p2p/voice'
 
@@ -58,7 +61,6 @@ class FakeMedia implements VoiceMedia {
 }
 
 class Net {
-  clock = new ManualClock()
   nodes: Node[] = []
   queue: (() => Promise<unknown> | unknown)[] = []
   // Frames held back (delivered later, out of order).
@@ -68,8 +70,14 @@ class Net {
   linked: (a: Node, b: Node) => boolean = () => true
   out = new Set<string>()
 
+  constructor(
+    readonly clock: Clock & { advance(ms: number): Promise<void> } = new ManualClock(),
+    // Frames go at once (each in a microtask) instead of waiting for `flush`.
+    readonly direct = false
+  ) {}
+
   // `as`: another device of that node's identity.
-  add(name: string, as?: Node) {
+  add(name: string, as?: Node, limits?: Partial<VoiceLimits>) {
     const dkKey = newKeyPair()
     const node: Node = {
       name,
@@ -99,6 +107,7 @@ class Net {
         certs: this.nodes.filter(n => n.ik === x).map(n => ({ dk: n.dk }) as unknown as Cert),
       }),
       onChange: () => {},
+      limits,
     })
     node.voice.media = node.media
     node.voice.consent = hosts => node.consent?.(hosts) ?? Promise.resolve(null)
@@ -195,6 +204,7 @@ class FakeSession {
     this.sent.push(copy)
     const run = () => to.deliver(copy)
     if (this.net.hold?.(this.owner, to.owner, copy)) this.net.held.push(run)
+    else if (this.net.direct) queueMicrotask(() => void run())
     else this.net.queue.push(run)
     return Promise.resolve()
   }
@@ -853,6 +863,113 @@ describe('voice participant sets', () => {
   })
 })
 
+// A clock moved by hand that runs what is due in order, each with everything it sets off (on a
+// `Net` that sends at once) before the next. `watch` runs before and after each.
+class QuickClock implements Clock {
+  t = 1_700_000_000_000
+  watch: () => void = () => {}
+  private timers = new Map<number, { at: number; fn: () => void }>()
+  private next = 1
+  now = () => this.t
+  set = (fn: () => void, ms: number) => {
+    this.timers.set(this.next, { at: this.t + ms, fn })
+    return this.next++
+  }
+  clear = (h: unknown) => void this.timers.delete(h as number)
+  async advance(ms: number) {
+    const end = this.t + ms
+    for (;;) {
+      const due = [...this.timers.entries()]
+        .filter(([, x]) => x.at <= end)
+        .sort((x, y) => x[1].at - y[1].at)[0]
+      if (!due) break
+      this.timers.delete(due[0])
+      this.t = Math.max(this.t, due[1].at)
+      this.watch()
+      due[1].fn()
+      await drain()
+      this.watch()
+    }
+    this.t = end
+  }
+}
+
+const drain = async () => {
+  for (let i = 0; i < 200; i += 1) await Promise.resolve()
+}
+
+describe('a quiet participant heard through others', () => {
+  // A is in voice and only refreshes. V hears it directly and through B, every device on
+  // `limits`. Right after B passes A's state on for the second time since the join, V's session
+  // with A closes, and V hears A only through B. Gives the times (from A joining) V shows and
+  // stops showing A, until lostMs and four more passes after the close.
+  const quiet = async (limits: Partial<VoiceLimits>) => {
+    const l = { ...LOCAL.voice, ...limits }
+    const clock = new QuickClock()
+    const net = new Net(clock, true)
+    const [a, b, v] = ['A', 'B', 'V'].map(name => net.add(name, undefined, l))
+    net.mesh([a, b, v])
+    await a.voice.join(ROOM, CH, { plan, muted: false })
+    await drain()
+    const start = clock.now()
+    const shown: [number, boolean][] = []
+    clock.watch = () => {
+      const on = inCh(v).includes(a.ik)
+      if (shown.at(-1)?.[1] !== on) shown.push([clock.now() - start, on])
+    }
+    clock.watch()
+    // B passes an unchanged state on at the first refresh at least relayMs after the last.
+    const passed = Math.ceil(l.relayMs / l.refreshMs) * l.refreshMs
+    await clock.advance(2 * passed)
+    const last = b.sessions.get(v.dk)!.sent.at(-1) as unknown as VoiceFrame
+    expect([last.ik, last.n]).toEqual([a.ik, clock.now()])
+    net.cut(a, v)
+    clock.watch()
+    await clock.advance(l.lostMs + 4 * passed)
+    return { shown, cut: 2 * passed }
+  }
+
+  // The voice limits a device takes from an instance that gives these.
+  const device = (given: Partial<VoiceLimits>) => {
+    const p2p = Object.fromEntries(Object.entries(given).map(([k, x]) => [`local.voice.${k}`, x]))
+    return instanceLocal({ limits: { p2p } }).voice
+  }
+
+  test('stays shown with every voice refresh rule at its edge', async () => {
+    for (const given of [
+      {},
+      { refreshMs: 30_000, lostMs: 35_000 },
+      { relayMs: 30_000, lostMs: 50_000 },
+      { lostMs: 25_000 },
+      { refreshMs: 5000, relayMs: 5001, ttlMs: 15_000, lostMs: 10_001 },
+      { refreshMs: 5000, relayMs: 1000, ttlMs: 15_000, lostMs: 6000 },
+      { refreshMs: 240_000, relayMs: 60_000, ttlMs: 480_000, lostMs: 300_000 },
+    ]) {
+      expect(device(given)).toEqual({ ...LOCAL.voice, ...given })
+      expect((await quiet(given)).shown).toEqual([[0, true]])
+    }
+  })
+
+  test('drops out past an edge, and stays shown on what the device makes of those values', async () => {
+    const { shown, cut } = await quiet({ lostMs: 10_000 })
+    expect(shown).toEqual([
+      [0, true],
+      [cut + 10_000, false],
+      [cut + 20_000, true],
+    ])
+    for (const given of [
+      { lostMs: 10_000 },
+      { refreshMs: 5000, relayMs: 5001, ttlMs: 15_000, lostMs: 9000 },
+      { refreshMs: 21_000, relayMs: 42_001, lostMs: 300_000 },
+      { refreshMs: 120_000, lostMs: 300_000 },
+    ]) {
+      expect((await quiet(given)).shown.some(([, on]) => !on)).toBe(true)
+      expect(device(given)).not.toEqual({ ...LOCAL.voice, ...given })
+      expect((await quiet(device(given))).shown).toEqual([[0, true]])
+    }
+  })
+})
+
 describe('session budget with voice', () => {
   const held = (list: [boolean, boolean, number][]): Held[] =>
     list.map(([contact, kept, lastUseful]) => ({ contact, kept, lastUseful }))
@@ -892,7 +1009,7 @@ describe('session budget with voice', () => {
   })
 
   test('the real limits: 48 in all, 32 for members', () => {
-    expect(LIMITS.sessions).toBe(48)
+    expect(LOCAL.node.sessions).toBe(48)
     const list = held(Array.from({ length: 48 }, (_, i) => [i % 2 === 0, i < 40, i]))
     expect(victimFor(list, { contact: false, kept: true })).toBe(40)
   })

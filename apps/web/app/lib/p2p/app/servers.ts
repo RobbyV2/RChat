@@ -3,7 +3,6 @@ import type { ConfirmRequest } from '../../store_types'
 import type { RoomRecord } from '../db'
 import { keyId } from '../keys'
 import { displayName } from '../contacts'
-import { PAGE } from '../dm'
 import type { WireV2 } from '../event_v2'
 import { slowChanged } from '../roles'
 import {
@@ -31,6 +30,7 @@ import {
   chatScope,
   writeHome,
   node,
+  limits,
 } from './store'
 import {
   loadPinList,
@@ -183,7 +183,8 @@ export const loadChannel = async (room: string, ch: string, keep = false) => {
   const cur = useP2p.getState().chat
   const same = keep && cur?.room === room && cur.ch === ch
   if (same && cur.newer) return refreshWindow(cur)
-  const limit = same ? Math.max(PAGE, cur.messages.length) : PAGE
+  const page = limits.dm.page
+  const limit = same ? Math.max(page, cur.messages.length) : page
   const gen = jumpGen
   try {
     const { messages, more } = await sv.loadChannel(room, ch, { limit })
@@ -201,7 +202,8 @@ const loadThread = async (keep = false) => {
   const sv = servers
   const t = useP2p.getState().thread
   if (!sv || !t) return
-  const limit = keep ? Math.max(PAGE, t.messages.length) : PAGE
+  const page = limits.dm.page
+  const limit = keep ? Math.max(page, t.messages.length) : page
   try {
     const got = await sv.loadThread(t.room, t.root, { limit })
     const now = useP2p.getState().thread

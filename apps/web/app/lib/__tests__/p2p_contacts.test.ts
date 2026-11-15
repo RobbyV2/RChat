@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { LOCAL } from '../p2p/limits'
 import {
   accept,
   addFromCard,
@@ -8,7 +9,6 @@ import {
   BLOCKED,
   dialable,
   ignore,
-  INTRO_MAX,
   markVerified,
   mergeRevocations,
   overflowRequests,
@@ -92,7 +92,7 @@ describe('contacts state machine', () => {
     const eve = person('Eve')
     const first = receiveRequest([], hello(eve, 'x'.repeat(900)), 1)
     if (first.kind !== 'new') throw new Error(first.kind)
-    expect(first.contact.intros[0]).toHaveLength(INTRO_MAX)
+    expect(first.contact.intros[0]).toHaveLength(LOCAL.contacts.introMax)
     let list: Contact[] = [first.contact]
     for (const n of [2, 3]) {
       const r = receiveRequest(list, hello(eve, `again ${n}`), n)

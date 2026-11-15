@@ -142,12 +142,17 @@ const DEFAULTS = {
     requestsWindowMs: HOUR,
   },
   session: {
+    // From the start until the hello is accepted: SIGMA, then the hello. Pings don't extend it.
     handshakeMs: 10_000,
     pingMs: 20_000,
     deadMs: 60_000,
     strikes: 20,
+    // Token bucket for incoming frames: `framesPerSec` sustained, bursts up to `frameBurst` (two
+    // full 1 MiB messages). Past it, frames wait for tokens; they are never dropped.
     framesPerSec: 50,
     frameBurst: 160,
+    // Bytes of frames waiting to be read before the session gives up on a flooding peer. Each
+    // frame counts at least `frameCost`. Past the burst an honest peer queues far less than this.
     frameBacklogBytes: 4 * MIB,
     rekeyMs: HOUR,
     rekeyBytes: GIB,
@@ -240,6 +245,10 @@ const DEFAULTS = {
     joinWaitMs: 30_000,
     saveMs: 1000,
     codeTtls: [HOUR, DAY, 7 * DAY, 30 * DAY],
+    // Entries per `migrate` chunk (chunks within the 16 KiB of a migrate event); how long a new
+    // copy links with the old copy's members after we joined it; the ACL events of a new owner's
+    // carry-over a member acknowledges with a mark; and the acknowledgements of a carry-over
+    // whose size isn't known here, as its old copy isn't.
     migratePer: 200,
     settleMs: HOUR,
     settleResample: [MIN, 5 * MIN],
@@ -298,7 +307,7 @@ const DEFAULTS = {
     ttlMs: 60_000,
     tickMs: 5000,
     // A participant whose session with its voice device went away, and who isn't heard of again
-    // (also through others), is gone after this: longer than a refresh.
+    // (also through others), is gone after this: at least refreshMs plus relayMs.
     lostMs: 30_000,
     // How long someone we have a session with has to confirm what was passed on about them.
     confirmMs: 10_000,
@@ -465,6 +474,18 @@ const DEFAULTS = {
     introsMax: 3,
     petnameMax: 32,
     certsKept: 8,
+    // What a contact keeps of a protected identity (contact_claims.ts): v2 certificates,
+    // revocations and profiles, and badge tokens for a head it doesn't hold yet.
+    certs2Kept: 32,
+    revs2Kept: 32,
+    profiles2Kept: 8,
+    badgesHeld: 4,
+    // Read from a stored contact at most: chain records, and v1 certificates and revocations.
+    storedRecords: 256,
+    storedV1: 64,
+    // Checks of what an identity key signed, kept by every account of the tab, so a hello
+    // repeating its records costs nothing.
+    v1Checks: 4096,
   },
   inbox: {
     pingsKept: 500,
@@ -482,6 +503,10 @@ const DEFAULTS = {
     safetyCache: 64,
     cutMs: 7 * DAY,
     lostTimes: [HOUR, DAY, 7 * DAY],
+    // A start without the instance's values waits this long for them (app/account.ts).
+    infoWaitMs: 5000,
+    // Signature checks of chain records kept (chain.ts), by every account of the tab.
+    chainChecks: 8192,
   },
 }
 
@@ -792,6 +817,13 @@ const RANGE_OF: { [S in keyof Local]: { [K in keyof Local[S]]: Range | readonly 
     introsMax: [1, 64],
     petnameMax: [8, 256],
     certsKept: [2, 256],
+    certs2Kept: [8, 1024],
+    revs2Kept: [8, 1024],
+    profiles2Kept: [2, 256],
+    badgesHeld: [1, 64],
+    storedRecords: [64, 4096],
+    storedV1: [8, 4096],
+    v1Checks: fixed(4096),
   },
   inbox: {
     pingsKept: [50, 100_000],
@@ -809,6 +841,8 @@ const RANGE_OF: { [S in keyof Local]: { [K in keyof Local[S]]: Range | readonly 
     safetyCache: [8, 10_000],
     cutMs: [DAY, 365 * DAY],
     lostTimes: [fixed(HOUR), fixed(DAY), fixed(7 * DAY)],
+    infoWaitMs: fixed(5000),
+    chainChecks: fixed(8192),
   },
 }
 
@@ -835,22 +869,109 @@ export const RANGES: Readonly<Record<string, Range>> = deepFreeze(
   flatten(RANGE_OF as unknown as Record<string, Record<string, unknown>>, isRange)
 )
 
+// Names a device reads once, as the app starts, instead of from the account's limits: the
+// evaluator's algorithm switches and acknowledgement counts, the wait for the instance's values
+// (read before they are known) and the signature checks every account of the tab shares, each
+// with a range that allows no other value.
+export const START_ONLY: ReadonlySet<string> = new Set([
+  'acl.raceSteps',
+  'acl.raceGrowth',
+  'acl.maskSwitch',
+  'acl.s2Events',
+  'acl.s2Ids',
+  'cache.chunk',
+  'contacts.v1Checks',
+  'misc.infoWaitMs',
+  'misc.chainChecks',
+])
+
+// Names that take whole numbers only: the default and both ends of the range are whole (a count,
+// a size or a time, not a share). The instance derives the same from its copy of the registry.
+export const WHOLE: ReadonlySet<string> = new Set(
+  Object.entries(flatLocal(DEFAULTS))
+    .filter(([name, v]) => [v, ...RANGES[name]].every(Number.isInteger))
+    .map(([name]) => name)
+)
+
+// `v` as a value of the registry name `name`, inside its range. Null when `name` isn't one or
+// `v` isn't a number it takes (a fraction where it takes whole numbers).
+export const fit = (name: string, v: unknown): number | null => {
+  if (!Object.hasOwn(RANGES, name) || typeof v !== 'number' || !Number.isFinite(v)) return null
+  if (WHOLE.has(name) && !Number.isInteger(v)) return null
+  const [lo, hi] = RANGES[name]
+  return Math.min(hi, Math.max(lo, v))
+}
+
+// A refresh and the expiry it renews: `times` refreshes, each the sum of the intervals in
+// `refresh`, fit in the expiry.
+export interface RefreshRule {
+  refresh: readonly string[]
+  expiry: string
+  times: number
+}
+
+// Most refreshes are at most half their expiry, so one that comes late still lands before it.
+// A voice participant whose session with us closed is heard of again only through others: a
+// relay passes an unchanged state on at the first refresh at least relayMs after the last one it
+// passed, which with gapMs at most refreshMs is always sooner than refreshMs plus relayMs, and
+// lostMs is at least that. An instance that breaks a rule leaves all its names at their
+// defaults.
+export const REFRESH: readonly RefreshRule[] = [
+  { refresh: ['gossip.typingRelayMs'], expiry: 'gossip.typingMs', times: 2 },
+  { refresh: ['session.pingMs'], expiry: 'session.deadMs', times: 2 },
+  { refresh: ['gossip.presenceMs'], expiry: 'gossip.presenceTtl', times: 2 },
+  { refresh: ['voice.refreshMs'], expiry: 'voice.ttlMs', times: 2 },
+  { refresh: ['voice.relayMs'], expiry: 'voice.ttlMs', times: 2 },
+  { refresh: ['voice.refreshMs', 'voice.relayMs'], expiry: 'voice.lostMs', times: 1 },
+]
+
+type Tree = Record<string, Record<string, unknown>>
+
 export const localDefaults = (instance?: Record<string, number>): Local => {
-  const out = structuredClone(DEFAULTS) as unknown as Record<string, Record<string, unknown>>
+  const out = structuredClone(DEFAULTS) as unknown as Tree
   if (!instance) return out as unknown as Local
   for (const [name, v] of Object.entries(instance)) {
-    if (!Object.hasOwn(RANGES, name) || typeof v !== 'number' || !Number.isFinite(v)) continue
-    const r = RANGES[name]
-    const x = Math.min(r[1], Math.max(r[0], v))
+    const x = fit(name, v)
+    if (x === null) continue
     const [s, k, i] = name.split('.')
     if (i === undefined) out[s][k] = x
     else (out[s][k] as number[])[Number(i)] = x
   }
+  const at = (t: Tree, name: string) => {
+    const [s, k] = name.split('.')
+    return t[s][k] as number
+  }
+  // A default brought back can break another rule that shares the name: until none is broken.
+  for (let broken = true; broken;) {
+    broken = false
+    for (const { refresh, expiry, times } of REFRESH) {
+      if (refresh.reduce((sum, name) => sum + at(out, name), 0) * times <= at(out, expiry)) continue
+      broken = true
+      for (const name of [...refresh, expiry]) {
+        const [s, k] = name.split('.')
+        out[s][k] = at(DEFAULTS as unknown as Tree, name)
+      }
+    }
+  }
   return out as unknown as Local
 }
 
-export const registryJson = (): { v: 1; local: Record<string, [number, number, number]> } => {
+export const registryJson = (): {
+  v: 1
+  local: Record<string, [number, number, number]>
+  start: string[]
+  refresh: RefreshRule[]
+} => {
   const local: Record<string, [number, number, number]> = {}
   for (const [k, v] of Object.entries(flatLocal(LOCAL))) local[k] = [v, ...RANGES[k]]
-  return { v: 1, local }
+  return {
+    v: 1,
+    local,
+    start: [...START_ONLY].sort(),
+    refresh: REFRESH.map(({ refresh, expiry, times }) => ({
+      refresh: [...refresh],
+      expiry,
+      times,
+    })),
+  }
 }

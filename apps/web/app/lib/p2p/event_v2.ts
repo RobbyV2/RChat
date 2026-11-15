@@ -75,6 +75,10 @@ export const LIMITS2 = {
   prev: 10,
 }
 
+// How many characters a field members write into an ACL event may take as it is typed: what this
+// device shows of it (limits.ts `display`), and never more than fits the event.
+export const fieldMax = (shown: number) => Math.min(shown, LIMITS2.aclContent / 4)
+
 export const eventIdBytes2 = (core: CoreV2) =>
   sha256(concat(utf8(TAG_EVENT2), canonicalBytes(core)))
 

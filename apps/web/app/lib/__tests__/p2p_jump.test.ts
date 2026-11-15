@@ -2,13 +2,13 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, waitFor } from './p2p_net'
 import { makeMember, stopAll, general } from './p2p_server_net'
 import { Dms, dmRoomId, loadAround, loadMessages } from '../p2p/dm'
-import { JUMP } from '../p2p/jump'
+import { LOCAL } from '../p2p/limits'
 import type { P2pNode } from '../p2p/node'
 
-// Jumping to a message (pins, search, reply quotes, links): the next JUMP.after messages after
-// it, never the newest ones, and `newer` while more follow.
+// Jumping to a message (pins, search, reply quotes, links): the next `misc.jumpAfter` messages
+// after it, never the newest ones, and `newer` while more follow.
 
-const COUNT = JUMP.after + 100
+const COUNT = LOCAL.misc.jumpAfter + 100
 const AT = 10
 
 const live: { node: P2pNode; dms: Dms }[] = []
@@ -52,16 +52,16 @@ describe('jumping to a message', () => {
     }
     const got = await loadAround(a.store.db, room, a.node.ik, b.node.ik, ids[AT])
     expect(got).not.toBeNull()
-    expect(bodiesOf(got!.messages)).toEqual(expected(0, AT + 1 + JUMP.after))
+    expect(bodiesOf(got!.messages)).toEqual(expected(0, AT + 1 + LOCAL.misc.jumpAfter))
     expect(got!.more).toBe(false)
     expect(got!.newer).toBe(true)
     const last = got!.messages.at(-1)!
     const rest = await loadMessages(a.store.db, room, a.node.ik, b.node.ik, {
       after: last.sortKey,
-      limit: JUMP.after,
+      limit: LOCAL.misc.jumpAfter,
       newer: true,
     })
-    expect(bodiesOf(rest.messages)).toEqual(expected(AT + 1 + JUMP.after, COUNT))
+    expect(bodiesOf(rest.messages)).toEqual(expected(AT + 1 + LOCAL.misc.jumpAfter, COUNT))
     expect(rest.more).toBe(false)
     // The window reloads in place, from its first message.
     const again = await loadMessages(a.store.db, room, a.node.ik, b.node.ik, {
@@ -74,7 +74,7 @@ describe('jumping to a message', () => {
     // Near the end: nothing missing, no gap.
     const end = await loadAround(a.store.db, room, a.node.ik, b.node.ik, ids[COUNT - 5])
     expect(end!.newer).toBe(false)
-    expect(bodiesOf(end!.messages)).toEqual(expected(COUNT - 5 - JUMP.before, COUNT))
+    expect(bodiesOf(end!.messages)).toEqual(expected(COUNT - 5 - LOCAL.misc.jumpBefore, COUNT))
     expect(end!.more).toBe(true)
   }, 120_000)
 
@@ -91,14 +91,14 @@ describe('jumping to a message', () => {
     }
     const got = await a.servers.loadAround(room, ch, ids[AT])
     expect(got).not.toBeNull()
-    expect(bodiesOf(got!.messages)).toEqual(expected(0, AT + 1 + JUMP.after))
+    expect(bodiesOf(got!.messages)).toEqual(expected(0, AT + 1 + LOCAL.misc.jumpAfter))
     expect(got!.newer).toBe(true)
     const rest = await a.servers.loadChannel(room, ch, {
       after: got!.messages.at(-1)!.sortKey,
-      limit: JUMP.after,
+      limit: LOCAL.misc.jumpAfter,
       newer: true,
     })
-    expect(bodiesOf(rest.messages)).toEqual(expected(AT + 1 + JUMP.after, COUNT))
+    expect(bodiesOf(rest.messages)).toEqual(expected(AT + 1 + LOCAL.misc.jumpAfter, COUNT))
     expect(rest.more).toBe(false)
     const end = await a.servers.loadAround(room, ch, ids[COUNT - 1])
     expect(end!.newer).toBe(false)

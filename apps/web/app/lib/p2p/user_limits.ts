@@ -1,6 +1,6 @@
 import { fmtSize, plural } from '../bytes'
 import { home, readLocal, writeLocal } from '../instances'
-import { localDefaults, RANGES, type Local } from './limits'
+import { fit, localDefaults, RANGES, type Local } from './limits'
 
 // What one account runs P2P with: the instance's P2P_LIMITS (its `local.` names), then the
 // user's own overrides from Settings > Peer-to-peer > Advanced, each clamped to its range. Read
@@ -67,10 +67,10 @@ export const applyUser = (l: Readonly<Local>, u: UserLimits): Local => {
   const out = structuredClone(l) as Local
   const tree = out as unknown as Record<string, Record<string, number>>
   for (const f of FIELDS) {
-    const x = u[f]
-    if (!finite(x)) continue
+    const x = fit(USER_LIMITS[f], u[f])
+    if (x === null) continue
     const [s, k] = USER_LIMITS[f].split('.')
-    tree[s][k] = clamp(USER_LIMITS[f], x)
+    tree[s][k] = x
   }
   return out
 }
@@ -104,10 +104,8 @@ export const writeUserLimits = (username: string, u: UserLimits) => {
   const base = instanceLocal()
   const out: UserLimits = { v: 1 }
   for (const f of FIELDS) {
-    const x = u[f]
-    if (!finite(x)) continue
-    const v = clamp(USER_LIMITS[f], x)
-    if (v !== valueOf(base, f)) out[f] = v
+    const v = fit(USER_LIMITS[f], u[f])
+    if (v !== null && v !== valueOf(base, f)) out[f] = v
   }
   return writeLocal(
     home.scoped(userLimitsKey(username)),
@@ -137,25 +135,15 @@ export const limitText = (f: UserField, v: number) =>
 export const withChoice = (list: readonly number[], v: number) =>
   [...new Set([...list, v])].sort((a, b) => a - b)
 
-// What each part of the P2P runtime takes from the account's limits.
-export const runtimeLimits = (l: Readonly<Local>) => {
-  const { fitAudio, fitVideo, ...voice } = l.voice
-  const dag = {
-    roomCap: l.dag.roomCap,
-    totalCap: l.dag.totalCap,
-    roomBytes: l.dag.roomBytes,
-    totalBytes: l.dag.totalBytes,
-  }
-  return {
-    node: { limits: l.node, session: l.session },
-    dms: { limits: l.sync, bulk: l.bulk, ...dag },
-    servers: {
-      limits: l.sync,
-      gossip: l.gossip,
-      voice,
-      ...dag,
-      serverCap: l.dag.serverCap,
-      serverBytes: l.dag.serverBytes,
-    },
-  }
-}
+// What each part of the P2P runtime takes from the account's limits: the node its sections, the
+// DMs and the servers all of them.
+export const runtimeLimits = (l: Readonly<Local>) => ({
+  node: { limits: l.node, session: l.session, contacts: l.contacts },
+  transport: l.transport,
+  calls: l.calls,
+  badge: l.badge,
+  inbox: l.inbox,
+  leader: l.misc,
+  dms: { local: l },
+  servers: { local: l },
+})

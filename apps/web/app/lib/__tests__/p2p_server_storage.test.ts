@@ -8,7 +8,8 @@ import { P, rkey } from '../p2p/acl/rules'
 import { AclRoom, IMPL, type AclItem } from '../p2p/acl_room'
 import { signDeviceCert2 } from '../p2p/acl/binding'
 import { contentEvOf, signRevocation2 } from '../p2p/event_v2'
-import { SHARE, shareAdd, shareLive, shareTotal, withinShare } from '../p2p/shares'
+import { shareAdd, shareLive, shareTotal, withinShare } from '../p2p/shares'
+import { LOCAL } from '../p2p/limits'
 import { MODEL_LIMITS, prodReplica, testBinds } from './p2p_acl_world'
 import { headerOk } from '../p2p/event_v2'
 import { messageActs, type P2pMessage } from '../p2p/dm'
@@ -679,7 +680,7 @@ describe('serving', () => {
 
 describe('per-sender shares', () => {
   test('a sender’s share counts a rolling day of receipts, in hours', () => {
-    const H = SHARE.hourMs
+    const H = LOCAL.share.hourMs
     let s = shareLive(undefined, 0)
     for (let i = 0; i < 3; i++) s = shareAdd(s, 5 * H + i, 100)
     s = shareAdd(s, 7 * H, 50)
@@ -688,7 +689,7 @@ describe('per-sender shares', () => {
     expect(withinShare(s, 10, 1 / 4, 16, 10_000)).toBe(false)
     expect(withinShare(s, 1000, 1 / 4, 1000, 4000)).toBe(false)
     // A day later the first hour is out.
-    expect(shareTotal(shareLive(s, 5 * H + SHARE.hours * H))).toEqual({ n: 1, b: 50 })
+    expect(shareTotal(shareLive(s, 5 * H + LOCAL.share.hours * H))).toEqual({ n: 1, b: 50 })
     // Whatever is stored, a bad value counts nothing.
     expect(shareLive({ x: 1 }, 0)).toEqual([])
     expect(shareLive([[1, -1, 2], 'x'], 0)).toEqual([])

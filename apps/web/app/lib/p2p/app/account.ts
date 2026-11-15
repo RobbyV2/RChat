@@ -17,6 +17,7 @@ import { Calls, type PendingCall } from '../calls'
 import { RELAY_DENIED_TEXT } from '../voice'
 import { Servers } from '../server'
 import { limitsFor, runtimeLimits } from '../user_limits'
+import { LOCAL, type Local } from '../limits'
 import {
   servers,
   calls,
@@ -264,7 +265,7 @@ export const run = (username: string, create: string | null) => {
   const mine = gen
   // Bumped on every resign, so a boot still in flight stops instead of starting a second node.
   let term = 0
-  const l: TabLeader = new TabLeader(dbFor(username), {
+  const hooks = {
     lead: (): Promise<void> => {
       const t = ++term
       return mine === gen
@@ -281,19 +282,24 @@ export const run = (username: string, create: string | null) => {
       useP2p.setState({ ...nodeless(), elsewhere: true })
       void read(username, () => mine === gen && l.state !== 'leading')
     },
-  })
+  }
+  const lim = runtimeLimits(limitsFor(username)).leader
+  const l: TabLeader = new TabLeader(dbFor(username), hooks, webLeaderDeps(), lim)
   put.leader(l)
   useP2p.setState({ loading: true })
   l.start()
 }
 
-// What the node, the DMs and the servers of `username` start with, besides the store and each
-// other: the account's limits and this page's hooks.
-export const startDeps = (username: string) => {
-  const lim = limitsFor(username)
+// What the P2P runtime of `username` starts with, besides the store and its parts: the account's
+// limits for each part, and this page's hooks.
+export const startDeps = (username: string, lim: Readonly<Local> = limitsFor(username)) => {
   const rt = runtimeLimits(lim)
   return {
     limits: lim,
+    transport: rt.transport,
+    calls: rt.calls,
+    badge: rt.badge,
+    inbox: rt.inbox,
     node: { host: home.host, visibility: pageVisibility, ...rt.node },
     dms: {
       ...rt.dms,
@@ -311,7 +317,64 @@ export const startDeps = (username: string) => {
   }
 }
 
-const INFO_WAIT_MS = 5000
+type StartDeps = ReturnType<typeof startDeps>
+
+// The account's node on its open store (null: no identity yet, and none to make).
+export const openNode = (deps: StartDeps, s: P2pStore, create?: { name: string }) =>
+  P2pNode.open({ ...deps.node, store: s, transport: new PeerTransport(deps.transport) }, create)
+
+// The rest of the account's P2P runtime on its store and node.
+export const startParts = (deps: StartDeps, s: P2pStore, n: P2pNode) => {
+  const d = new Dms({ ...deps.dms, node: n, store: s })
+  const sv = new Servers({ ...deps.servers, node: n, store: s, dms: d })
+  const pingLog = new PingLog({
+    store: s,
+    dms: d,
+    servers: sv,
+    onWrite: pingLogged,
+    limits: deps.inbox,
+  })
+  const calls = new Calls({
+    me: () => n.ik,
+    sessions: ik => n.readySessions(ik),
+    mutual: ik => n.contact(ik)?.state === 'mutual',
+    roomOf: ik => dmRoomId(n.ik, ik),
+    name: ik => contactName(ik),
+    media: callRtc,
+    plan: choice => relayBook.check(choice ?? relayBook.prefs.choice),
+    hidesIp,
+    consent: hosts => relayBook.consent(hosts),
+    log: async (room, call) => {
+      if (await s.room(room)) await d.logCall(room, call)
+    },
+    missed: (room, m) => void noteMissed(s, room, m).catch(() => {}),
+    busy: () => p2pHost.inCall() || sv.voice.current() !== null,
+    muted: () => p2pHost.muted(),
+    save: p => void s.setMeta(PENDING_CALL, p).catch(() => {}),
+    notice: text => p2pHost.toast(text),
+    leaveOthers: () => {
+      p2pHost.leaveInstanceCalls()
+      sv.voice.leave()
+    },
+    limits: deps.calls,
+  })
+  const badges = new Badges({
+    store: s,
+    verify: checkBinding,
+    contacts: () => n.contactList(),
+    warn: (ik, other) => n.warnAccount(ik, other),
+    limits: deps.badge,
+  })
+  const keeper = new BadgeKeeper({
+    node: n,
+    checkable: () => peersCanCheck(shareOrigin(null), badgeLocal),
+    request: (ik, ts, proof) => api.p2pBinding(ik, ts, proof),
+    sub: accountSub,
+    onIssued: () => void sv.refreshBadge().catch(() => {}),
+    limits: deps.badge,
+  })
+  return { dms: d, servers: sv, pingLog, calls, badges, keeper }
+}
 
 // Never waited on (keep.ts); asked again at a later start after a dismissed prompt.
 const keep = keepAsker(() => sessionStore)
@@ -335,10 +398,7 @@ export const boot = async (
     })
     if (!live()) return s.close()
     const deps = startDeps(username)
-    const n = await P2pNode.open(
-      { ...deps.node, store: s, transport: new PeerTransport() },
-      create !== null ? { name: create } : undefined
-    )
+    const n = await openNode(deps, s, create !== null ? { name: create } : undefined)
     if (!live()) {
       n?.stop()
       return s.close()
@@ -355,9 +415,15 @@ export const boot = async (
     put.node(n)
     put.limits(deps.limits)
     stopReader()
-    const d = new Dms({ ...deps.dms, node: n, store: s })
+    const {
+      dms: d,
+      servers: sv,
+      pingLog: pl,
+      calls: c,
+      badges: bs,
+      keeper: k,
+    } = startParts(deps, s, n)
     put.dms(d)
-    const sv = new Servers({ ...deps.servers, node: n, store: s, dms: d })
     put.servers(sv)
     sv.voice.media = callRtc
     sv.voice.consent = (hosts, ik) => relayBook.consent(hosts, ik)
@@ -370,36 +436,13 @@ export const boot = async (
       const was = useP2p.getState().voice
       if (cur?.room !== was?.room || cur?.ch !== was?.ch) useP2p.setState({ voice: cur })
     })
-    put.pingLog(new PingLog({ store: s, dms: d, servers: sv, onWrite: pingLogged }))
+    put.pingLog(pl)
     sv.onChange(room => {
       data?.postMessage({ room })
       scheduleServer(room)
     })
     sv.onArrive(a => serverArrived(a))
     sv.onTyping(room => scheduleServer(room))
-    const c = new Calls({
-      me: () => n.ik,
-      sessions: ik => n.readySessions(ik),
-      mutual: ik => n.contact(ik)?.state === 'mutual',
-      roomOf: ik => dmRoomId(n.ik, ik),
-      name: ik => contactName(ik),
-      media: callRtc,
-      plan: choice => relayBook.check(choice ?? relayBook.prefs.choice),
-      hidesIp,
-      consent: hosts => relayBook.consent(hosts),
-      log: async (room, call) => {
-        if (await s.room(room)) await d.logCall(room, call)
-      },
-      missed: (room, m) => void noteMissed(s, room, m).catch(() => {}),
-      busy: () => p2pHost.inCall() || sv.voice.current() !== null,
-      muted: () => p2pHost.muted(),
-      save: p => void s.setMeta(PENDING_CALL, p).catch(() => {}),
-      notice: text => p2pHost.toast(text),
-      leaveOthers: () => {
-        p2pHost.leaveInstanceCalls()
-        sv.voice.leave()
-      },
-    })
     put.calls(c)
     n.use({
       attach: x => c.attach(x),
@@ -407,24 +450,11 @@ export const boot = async (
       keep: x => c.keeps(x),
       awake: () => c.awake() || sv.voice.current() !== null,
     })
-    const bs = new Badges({
-      store: s,
-      verify: checkBinding,
-      contacts: () => n.contactList(),
-      warn: (ik, other) => n.warnAccount(ik, other),
-    })
     put.badges(bs)
     n.onBinding((ik, token) => bs.offer(ik, token))
     bs.onChange(() => {
       data?.postMessage({ badges: true })
       scheduleBadges()
-    })
-    const k = new BadgeKeeper({
-      node: n,
-      checkable: () => peersCanCheck(shareOrigin(null), badgeLocal),
-      request: (ik, ts, proof) => api.p2pBinding(ik, ts, proof),
-      sub: accountSub,
-      onIssued: () => void sv.refreshBadge().catch(() => {}),
     })
     put.keeper(k)
     c.onChange(() => publishCall(c))
@@ -461,7 +491,7 @@ export const boot = async (
     const chat = useP2p.getState().chat
     if (chat) await loadChat(chat.room, chat.peer)
     // The instance's PeerJS address, on a first visit (later ones keep it).
-    if (!home.info) await homeLookup.settled(INFO_WAIT_MS)
+    if (!home.info) await homeLookup.settled(LOCAL.misc.infoWaitMs)
     if (node !== n) return
     await n.start()
     k.start()

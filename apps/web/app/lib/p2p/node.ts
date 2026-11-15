@@ -23,6 +23,7 @@ import {
   withProfile,
   type AddResult,
   type Contact,
+  type ContactLimits,
 } from './contacts'
 import { hasSecrets, withoutSecrets, type OwnBadge, type P2pStore, type SelfRecord } from './db'
 import type { Me } from './handshake'
@@ -52,7 +53,7 @@ import {
   type Revocation,
 } from './keys'
 import type { Message } from './frames'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 import { RateWindow } from './rate'
 import {
   checkVerifyCode,
@@ -103,8 +104,6 @@ export interface OfferGuard {
   sender: (src: string, proof: unknown, relays: string[]) => string | null
 }
 
-export const OFFER_SKEW_MS = LOCAL.node.offerSkewMs
-
 export interface Visibility {
   visible: () => boolean
   onChange: (fn: () => void) => () => void
@@ -112,9 +111,8 @@ export interface Visibility {
   pauses?: () => boolean
 }
 
-export const LIMITS = { ...LOCAL.node }
-
-export type NodeLimits = typeof LIMITS
+// limits.ts `node`.
+export type NodeLimits = Local['node']
 
 export const ELSEWHERE = 'Your P2P identity changed in another tab. Reload this page.'
 
@@ -168,6 +166,7 @@ export interface NodeDeps {
   label?: string
   limits?: Partial<NodeLimits>
   session?: Partial<SessionLimits>
+  contacts?: Partial<ContactLimits>
 }
 
 type Rel = 'request' | 'mutual' | 'none' | 'pending'
@@ -256,7 +255,7 @@ export interface Held {
   lastUseful: number
 }
 
-// Which held session makes room for a new one past the budget (LIMITS): -1 when none has to,
+// Which held session makes room for a new one past the budget: -1 when none has to,
 // null when none may. The least recently useful goes first; a kept session (a voice participant)
 // never goes. At the total cap, a contact's or a kept session may push out anyone else, a
 // member's only another member's. Members have a budget of their own: a kept newcomer is let in
@@ -264,7 +263,7 @@ export interface Held {
 export const victimFor = (
   held: Held[],
   s: { contact: boolean; kept: boolean },
-  limits: { sessions: number; memberSessions: number } = LIMITS
+  limits: Pick<NodeLimits, 'sessions' | 'memberSessions'> = LOCAL.node
 ): number | null => {
   const members = held.filter(x => !x.contact).length
   const full = held.length >= limits.sessions
@@ -293,6 +292,7 @@ export class P2pNode {
   private banned = new Map<string, number>()
   private verifyNonces = new Map<string, string[]>()
   readonly limits: NodeLimits
+  private contactLimits: ContactLimits
   private requestTimes: RateWindow
   private dropped = 0
   private listener: Listener | null = null
@@ -312,7 +312,8 @@ export class P2pNode {
     private deps: NodeDeps
   ) {
     this.clock = deps.clock ?? realClock
-    this.limits = { ...LIMITS, ...deps.limits }
+    this.limits = { ...LOCAL.node, ...deps.limits }
+    this.contactLimits = { ...LOCAL.contacts, ...deps.contacts }
     this.requestTimes = new RateWindow(
       this.limits.requestsWindowMs,
       () => this.limits.requestsPerHour
@@ -1095,7 +1096,7 @@ export class P2pNode {
     if (!this.contacts.has(r.ik) && verifySuccession(m.succ) && m.succ.new === r.ik) {
       const succ = m.succ
       const moved = await this.deps.store.replaceContact(succ.old, old => {
-        const next = applySuccession([old], succ, certs, profile, now)
+        const next = applySuccession([old], succ, certs, profile, now, this.contactLimits)
         return next && recheckName(this.others(succ.old), old, next)
       })
       if (moved) {
@@ -1132,7 +1133,8 @@ export class P2pNode {
         const res = receiveRequest(
           cur ? [cur] : [],
           { ik: r.ik, certs, profile, intro: String(m.intro ?? '') },
-          now
+          now,
+          this.contactLimits
         )
         if (res.kind === 'dropped') return null
         next = res.contact
@@ -1141,7 +1143,11 @@ export class P2pNode {
         next = withProfile({ ...cur }, profile)
         if (rel === 'none') next = unfriended(next)
       } else return null
-      next = recheckName(this.others(r.ik), cur, updateDevices(next, certs, revs, now))
+      next = recheckName(
+        this.others(r.ik),
+        cur,
+        updateDevices(next, certs, revs, now, this.contactLimits)
+      )
       ok = true
       return next
     })
@@ -1457,11 +1463,17 @@ export class P2pNode {
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
-    const mine = cleanIntro(intro).trim()
+    const mine = cleanIntro(intro, this.contactLimits).trim()
     const now = this.clock.now()
     let res: AddResult = { ok: false, error: BAD_CARD }
     await this.update(card.ik, cur => {
-      res = addFromCard([...this.others(card.ik), ...(cur ? [cur] : [])], card, this.ik, now)
+      res = addFromCard(
+        [...this.others(card.ik), ...(cur ? [cur] : [])],
+        card,
+        this.ik,
+        now,
+        this.contactLimits
+      )
       if (!res.ok) return null
       const c = res.contact
       return c.state === 'outgoing' && mine ? { ...c, intros: [mine] } : c
@@ -1498,7 +1510,7 @@ export class P2pNode {
   }
 
   async rename(ik: string, petname: string) {
-    await this.update(ik, cur => (cur ? rename(cur, petname) : null))
+    await this.update(ik, cur => (cur ? rename(cur, petname, this.contactLimits) : null))
   }
 
   async markVerified(ik: string) {
@@ -1608,7 +1620,7 @@ export class P2pNode {
       ...(opts.lost ?? []).map(v => signRevocation(this.self.ik, v, now)),
     ]
     await this.writeSelf(cur => {
-      const revocations = mergeRevocations(cur.revocations, revs, ik)
+      const revocations = mergeRevocations(cur.revocations, revs, ik, this.contactLimits)
       const lost = [...new Set([...(cur.lost ?? []), ...(opts.lost ?? [])])].slice(
         -this.limits.lostKept
       )
@@ -1616,7 +1628,7 @@ export class P2pNode {
         ...cur,
         dk,
         cert,
-        certs: mergeCerts([cert], cur.certs, ik, revocations),
+        certs: mergeCerts([cert], cur.certs, ik, revocations, this.contactLimits),
         revocations,
         suffix: 0,
         ...(lost.length ? { lost } : {}),
@@ -1657,11 +1669,11 @@ export class P2pNode {
       .filter(v => v !== me && !done.has(v))
       .map(v => signRevocation(this.self.ik, v, now))
     await this.writeSelf(cur => {
-      const revocations = mergeRevocations(cur.revocations, revs, ik)
+      const revocations = mergeRevocations(cur.revocations, revs, ik, this.contactLimits)
       return {
         ...cur,
         revocations,
-        certs: mergeCerts([], cur.certs, ik, revocations),
+        certs: mergeCerts([], cur.certs, ik, revocations, this.contactLimits),
         lost: [...new Set([...(cur.lost ?? []), ...dks])].slice(-this.limits.lostKept),
       }
     })

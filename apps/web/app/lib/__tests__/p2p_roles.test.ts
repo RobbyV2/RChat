@@ -18,7 +18,8 @@ import {
 } from '../p2p/roles'
 import { serverPings, serverUnread } from '../p2p/alerts'
 import { EMPTY_NOTIFY } from '../notify'
-import { newRolePos, ROLE_STEP, type MemberView, type RoleView } from '../p2p/server'
+import { newRolePos, type MemberView, type RoleView } from '../p2p/server'
+import { LOCAL } from '../p2p/limits'
 import type { Rank } from '../p2p/acl/rules'
 
 const role = (id: string, pos: number, holders = 0, color: number | null = null): RoleView => ({
@@ -56,13 +57,13 @@ const apply = (roles: RoleView[], moves: Move[]) =>
 
 describe('role positions', () => {
   test('a new role goes below the lowest, leaving room, and never onto a taken position', () => {
-    expect(newRolePos([])).toBe(ROLE_STEP * ROLE_STEP)
-    expect(newRolePos([5000, 3000])).toBe(3000 - ROLE_STEP)
+    expect(newRolePos([])).toBe(LOCAL.server.roleStep * LOCAL.server.roleStep)
+    expect(newRolePos([5000, 3000])).toBe(3000 - LOCAL.server.roleStep)
     expect(newRolePos([600])).toBe(300)
     expect(newRolePos([1])).toBe(0)
     // The lowest role at 0: a gap, else (owners) above everything.
     expect(newRolePos([0, 1, 9])).toBe(5)
-    expect(newRolePos([0, 1, 2])).toBe(2 + ROLE_STEP)
+    expect(newRolePos([0, 1, 2])).toBe(2 + LOCAL.server.roleStep)
     // A moderator whose top role sits at 2: only below it; none left.
     expect(newRolePos([0, 2], 2)).toBe(1)
     expect(newRolePos([0, 1, 2], 2)).toBeNull()

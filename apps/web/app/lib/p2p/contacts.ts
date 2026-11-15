@@ -10,7 +10,7 @@ import {
   type Revocation,
   type Succession,
 } from './keys'
-import { LOCAL } from './limits'
+import { LOCAL, type Local } from './limits'
 
 // The contact roster (XMPP subscription model): adding someone's card makes them `outgoing`
 // until they accept; an unknown identity that reaches us lands in Message requests as
@@ -42,10 +42,9 @@ export interface Contact {
   lastSeen: number | null
 }
 
-export const INTRO_MAX = LOCAL.contacts.introMax
-export const INTROS_MAX = LOCAL.contacts.introsMax
-export const PETNAME_MAX = LOCAL.contacts.petnameMax
-export const CERTS_KEPT = LOCAL.contacts.certsKept
+// limits.ts `contacts`: the intro a request may carry and how many are kept, the petname, and the
+// certs kept per contact (twice as many revocations).
+export type ContactLimits = Local['contacts']
 
 export const displayName = (c: Pick<Contact, 'petname' | 'name'>) =>
   c.petname || c.name || 'Unknown'
@@ -131,17 +130,28 @@ export const recheckName = (contacts: Contact[], before: Contact | undefined, c:
 }
 
 // Certs of revoked devices are never kept or merged back.
-export const mergeCerts = (have: Cert[], add: Cert[], ik: string, revs: Revocation[] = []) => {
+export const mergeCerts = (
+  have: Cert[],
+  add: Cert[],
+  ik: string,
+  revs: Revocation[] = [],
+  lim: ContactLimits = LOCAL.contacts
+) => {
   const revoked = (dk: string) => revs.some(r => r.dk === dk)
   const out = have.filter(c => !revoked(c.dk))
   for (const c of add) {
     if (revoked(c.dk) || out.some(o => o.dk === c.dk) || !verifyCert(c, ik)) continue
     out.push(c)
   }
-  return out.sort((a, b) => b.created - a.created).slice(0, CERTS_KEPT)
+  return out.sort((a, b) => b.created - a.created).slice(0, lim.certsKept)
 }
 
-export const mergeRevocations = (have: Revocation[], add: Revocation[], ik: string) => {
+export const mergeRevocations = (
+  have: Revocation[],
+  add: Revocation[],
+  ik: string,
+  lim: ContactLimits = LOCAL.contacts
+) => {
   const out = [...have]
   // The first revocation of a device counts. A second one with another successor is kept as
   // evidence that two copies of the identity moved the same device (see identityConflict), and
@@ -154,7 +164,7 @@ export const mergeRevocations = (have: Revocation[], add: Revocation[], ik: stri
     if (!verifyRevocation(r, ik)) continue
     out.push(r)
   }
-  return out.slice(-CERTS_KEPT * 2)
+  return out.slice(-lim.certsKept * 2)
 }
 
 export const blank = (ik: string, now: number, host = ''): Contact => ({
@@ -187,7 +197,8 @@ export const addFromCard = (
   contacts: Contact[],
   card: Card,
   me: string,
-  now: number
+  now: number,
+  lim: ContactLimits = LOCAL.contacts
 ): AddResult => {
   if (card.ik === me) return { ok: false, error: SELF_CARD }
   const have = contacts.find(c => c.ik === card.ik)
@@ -196,7 +207,7 @@ export const addFromCard = (
   const next: Contact = {
     ...base,
     name: base.profile ? base.name : card.name,
-    certs: mergeCerts(base.certs, card.certs, card.ik, base.revocations),
+    certs: mergeCerts(base.certs, card.certs, card.ik, base.revocations, lim),
     // Only a hint: nothing on the card besides the certs is signed.
     host: card.sig_host,
     ignored: false,
@@ -212,8 +223,8 @@ export type RequestResult =
   | { kind: 'mutual'; contact: Contact }
   | { kind: 'dropped'; why: 'blocked' | 'ignored' | 'limit' }
 
-export const cleanIntro = (raw: unknown) =>
-  typeof raw === 'string' ? [...cleanText(raw)].slice(0, INTRO_MAX).join('') : ''
+export const cleanIntro = (raw: unknown, lim: ContactLimits = LOCAL.contacts) =>
+  typeof raw === 'string' ? [...cleanText(raw)].slice(0, lim.introMax).join('') : ''
 
 const cleanText = (s: string) =>
   // eslint-disable-next-line no-control-regex
@@ -227,16 +238,21 @@ export interface Hello {
 }
 
 // Someone asked to be our contact. Unknown identities become a request with their intro (at most
-// INTROS_MAX distinct intros are kept); one we added ourselves becomes mutual.
-export const receiveRequest = (contacts: Contact[], h: Hello, now: number): RequestResult => {
+// `introsMax` distinct intros are kept); one we added ourselves becomes mutual.
+export const receiveRequest = (
+  contacts: Contact[],
+  h: Hello,
+  now: number,
+  lim: ContactLimits = LOCAL.contacts
+): RequestResult => {
   const have = contacts.find(c => c.ik === h.ik)
   if (have?.state === 'blocked') return { kind: 'dropped', why: 'blocked' }
   if (have?.ignored) return { kind: 'dropped', why: 'ignored' }
-  const intro = cleanIntro(h.intro).trim()
+  const intro = cleanIntro(h.intro, lim).trim()
   if (!have) {
     const c: Contact = {
       ...withProfile(blank(h.ik, now), h.profile),
-      certs: mergeCerts([], h.certs, h.ik),
+      certs: mergeCerts([], h.certs, h.ik, [], lim),
       state: 'incoming',
       intros: intro ? [intro] : [],
     }
@@ -244,14 +260,14 @@ export const receiveRequest = (contacts: Contact[], h: Hello, now: number): Requ
     return { kind: 'new', contact: c }
   }
   const merged = withProfile(
-    { ...have, certs: mergeCerts(have.certs, h.certs, h.ik, have.revocations) },
+    { ...have, certs: mergeCerts(have.certs, h.certs, h.ik, have.revocations, lim) },
     h.profile
   )
   if (have.state === 'outgoing')
     return { kind: 'mutual', contact: { ...merged, state: 'mutual', intros: [] } }
   if (have.state === 'mutual') return { kind: 'updated', contact: merged }
   if (!intro || have.intros.includes(intro)) return { kind: 'updated', contact: merged }
-  if (have.intros.length >= INTROS_MAX) return { kind: 'dropped', why: 'limit' }
+  if (have.intros.length >= lim.introsMax) return { kind: 'dropped', why: 'limit' }
   return { kind: 'updated', contact: { ...merged, intros: [...have.intros, intro] } }
 }
 
@@ -273,8 +289,12 @@ export const block = (c: Contact): Contact => ({ ...c, state: 'blocked', intros:
 export const unfriended = (c: Contact): Contact =>
   c.state === 'mutual' ? { ...c, state: 'outgoing' } : c
 
-export const rename = (c: Contact, petname: string): Contact => {
-  const p = cleanName(petname).slice(0, PETNAME_MAX)
+export const rename = (
+  c: Contact,
+  petname: string,
+  lim: ContactLimits = LOCAL.contacts
+): Contact => {
+  const p = cleanName(petname).slice(0, lim.petnameMax)
   return { ...c, petname: p || null }
 }
 
@@ -317,10 +337,11 @@ export const updateDevices = (
   c: Contact,
   certs: Cert[],
   revocations: Revocation[],
-  now: number
+  now: number,
+  lim: ContactLimits = LOCAL.contacts
 ): Contact => {
-  const revs = mergeRevocations(c.revocations, revocations, c.ik)
-  const all = mergeCerts(c.certs, certs, c.ik, revs)
+  const revs = mergeRevocations(c.revocations, revocations, c.ik, lim)
+  const all = mergeCerts(c.certs, certs, c.ik, revs, lim)
   const moved = revs.some(r => r.successor && !c.revocations.some(o => o.dk === r.dk))
   return {
     ...c,
@@ -337,7 +358,8 @@ export const applySuccession = (
   s: Succession,
   certs: Cert[],
   profile: Profile | null,
-  now: number
+  now: number,
+  lim: ContactLimits = LOCAL.contacts
 ): Contact | null => {
   const old = contacts.find(c => c.ik === s.old)
   if (!old || old.state === 'blocked' || contacts.some(c => c.ik === s.new && !c.ignored))
@@ -346,7 +368,7 @@ export const applySuccession = (
     ...old,
     ik: s.new,
     profile: null,
-    certs: mergeCerts([], certs, s.new),
+    certs: mergeCerts([], certs, s.new, [], lim),
     revocations: [],
     verified: false,
     verifiedAt: null,
@@ -358,8 +380,16 @@ export const applySuccession = (
 
 // The same contact from another copy of this identity (a device import): devices and profile
 // merge, a block or a mutual subscription on either side wins, local names and marks stay.
-export const mergeContact = (local: Contact, other: Contact, now: number): Contact => {
-  const c = withProfile(updateDevices(local, other.certs, other.revocations, now), other.profile)
+export const mergeContact = (
+  local: Contact,
+  other: Contact,
+  now: number,
+  lim: ContactLimits = LOCAL.contacts
+): Contact => {
+  const c = withProfile(
+    updateDevices(local, other.certs, other.revocations, now, lim),
+    other.profile
+  )
   const state: ContactState =
     local.state === 'blocked' || other.state === 'blocked'
       ? 'blocked'

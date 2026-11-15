@@ -601,7 +601,7 @@ const roleActions: Action[] = [
     },
     run: ctx => {
       const p = rolePlace(ctx)
-      if (p) moveRoles(p.v, placeRole(p.v.roles, p.r.id, p.at - 1, p.v.rank))
+      if (p) moveRoles(p.v, placeRole(p.v.roles, p.r.id, p.at - 1, p.v.rank, p2p.limits().server))
     },
   },
   {
@@ -615,7 +615,7 @@ const roleActions: Action[] = [
     },
     run: ctx => {
       const p = rolePlace(ctx)
-      if (p) moveRoles(p.v, placeRole(p.v.roles, p.r.id, p.at + 1, p.v.rank))
+      if (p) moveRoles(p.v, placeRole(p.v.roles, p.r.id, p.at + 1, p.v.rank, p2p.limits().server))
     },
   },
   {

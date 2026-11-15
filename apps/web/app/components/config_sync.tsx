@@ -37,7 +37,7 @@ import {
 } from '../lib/config_transfer'
 import { FieldError, LinkPage, fieldCls, filledBtn, sectionCls, textBtn, useCopied } from './ui'
 import { fmtSize } from '../lib/bytes'
-import { p2pTransfer, useP2p, type FilesPart } from '../lib/p2p/app'
+import { p2p, p2pTransfer, useP2p, type FilesPart } from '../lib/p2p/app'
 import {
   Cancelled,
   filesHead,
@@ -719,7 +719,7 @@ function ImportBlock() {
     const split = await splitFile(file).catch(() => null)
     if (!split) return setError(`Choose a file under ${fmtSize(FILE_MAX)}`)
     const content = split.text.trim()
-    const head = await filesHead(split.rest).catch(() => null)
+    const head = await filesHead(split.rest, p2p.limits().transfer).catch(() => null)
     // Large files stay out of the text box; it would only slow the page down.
     setText(content.length > TEXT_MAX || head ? '' : content)
     await preview(content, true)
@@ -787,7 +787,11 @@ export function ConfigSyncSection() {
   const [pass, setPass] = useState<PassState>({ pass: '', again: '', files: false })
   const doc = useExport(include)
   const p2pPass =
-    !hasP2p || !withP2p ? false : passProblem(pass.pass, pass.again) ? null : pass.pass
+    !hasP2p || !withP2p
+      ? false
+      : passProblem(pass.pass, pass.again, p2p.limits().transfer)
+        ? null
+        : pass.pass
   const toggle = (key: SectionKey) =>
     setInclude(cur => {
       const next = new Set(cur)

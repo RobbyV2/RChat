@@ -50,7 +50,7 @@ import {
 import { ContentView, type ContentEv, type Hidden } from './acl/visibility'
 import type { RoomCtx } from './acl_room_ctx'
 import { aclEvOf, contentEvOf, type WireV2 } from './event_v2'
-import { AGREED, LOCAL } from './limits'
+import { AGREED } from './limits'
 import * as flows from './acl_room_flows'
 import * as storage from './acl_room_storage'
 
@@ -59,7 +59,6 @@ import * as storage from './acl_room_storage'
 // events; this decides them, plans honest events, answers visibility
 // and history questions, and sends the current state as deltas.
 
-export const HOLD_MS = LOCAL.acl.holdMs
 export const MAX_PARENTS = AGREED.ap
 
 // The version of the evaluator and of the records it stores: a record or cache of
@@ -256,9 +255,6 @@ const setApply = (base: ReadonlySet<string>, d?: [string[], string[]]): Readonly
   for (const x of d[0]) s.add(x)
   return s
 }
-
-// Rejected ACL events the evaluator remembers (by id only; a rejected parent rejects its child).
-export const KEEP = { rejected: LOCAL.acl.keepRejected }
 
 // What a cold start found to drop: stored events that are not admitted (an import), with the ids
 // of content that failed its decision.
@@ -691,7 +687,7 @@ export class AclRoom {
     }
     this.dirty.add(e.dev)
     const unknown = this.r.unknownRules
-    if (e.ts > now + HOLD_MS && unknown === undefined && e.t !== 'genesis') {
+    if (e.ts > now + this.r.local.acl.holdMs && unknown === undefined && e.t !== 'genesis') {
       const v = this.r.judge(e)
       if (v.s === 'A') return { s: 'H' }
       const out = this.out(e, v)
@@ -705,14 +701,15 @@ export class AclRoom {
     return out
   }
 
-  // The evaluator keeps no rejected or unknown-rules event: a rejected id is remembered (a
-  // bounded number), an unknown-rules event only counted; a pending one the page holds.
+  // The evaluator keeps no rejected or unknown-rules event: a rejected id is remembered (at most
+  // `acl.keepRejected`, by id only; a rejected parent rejects its child), an unknown-rules event
+  // only counted; a pending one the page holds.
   private bound(id: string, v: Verdict) {
     if (v.s === 'R') {
       this.r.forget(id, true)
       this.rejected.delete(id)
       this.rejected.add(id)
-      if (this.rejected.size > KEEP.rejected) {
+      if (this.rejected.size > this.r.local.acl.keepRejected) {
         const old = this.rejected.values().next().value as string
         this.rejected.delete(old)
         this.r.forget(old)
@@ -752,7 +749,7 @@ export class AclRoom {
     const ix = this.r.acl.ix
     const d = decideContent(m, pastOf(ix, m.ap), this.r.acl.contentStateOf(m.ap))
     if (!d.ok) return { s: 'R', why: d.why }
-    if (m.ts > now + HOLD_MS) return { s: 'H' }
+    if (m.ts > now + this.r.local.acl.holdMs) return { s: 'H' }
     this.noteContent(trimContent(m))
     this.cv?.add(this.contents.get(id)!)
     this.dirty.add(m.dev)

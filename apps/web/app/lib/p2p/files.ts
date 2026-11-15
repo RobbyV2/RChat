@@ -3,7 +3,7 @@ import { hashBlob, type Hashed } from './hashing'
 import { thumbBytes } from './blobs'
 import { downloadName, GIF_MAX, guessKind, IMAGE_HEAD, imageSize, inlineImageOk } from '../sniff'
 import { LIMITS as EV } from './content'
-import { LOCAL } from './limits'
+import type { Local } from './limits'
 
 // Browser side of P2P attachments: hashing in a worker, thumbnails made by the sender and
 // checked again by the receiver, safe download names and free space.
@@ -58,26 +58,25 @@ export interface Preview {
   dur?: number
 }
 
-const SIDE = LOCAL.files.side
-const QUALITIES = LOCAL.files.qualities
-const TIMEOUT_MS = LOCAL.files.timeoutMs
-// Where an image header is looked for (JPEG metadata may come first), and the largest image the
-// sender's own preview decodes.
-const HEAD_BYTES = LOCAL.files.headBytes
-const PREVIEW_PIXELS = LOCAL.files.previewPixels
+// limits.ts `files`: the preview's side and the JPEG qualities tried, how long decoding may take,
+// where an image header is looked for (JPEG metadata may come first), the largest image the
+// sender's own preview decodes, and the checked thumbnails kept. With `bulk.thumbSide`, the
+// largest side a thumbnail may say it has.
+export type FileLimits = Pick<Local, 'files' | 'bulk'>
 
-const withTimeout = <T>(p: Promise<T>, ms = TIMEOUT_MS) =>
+const withTimeout = <T>(p: Promise<T>, ms: number) =>
   Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('slow')), ms))])
 
 const jpegOf = async (
   src: CanvasImageSource,
   w: number,
-  h: number
+  h: number,
+  lim: Local['files']
 ): Promise<string | undefined> => {
-  const scale = Math.min(1, SIDE / Math.max(w, h))
+  const scale = Math.min(1, lim.side / Math.max(w, h))
   const tw = Math.max(1, Math.round(w * scale))
   const th = Math.max(1, Math.round(h * scale))
-  for (const q of QUALITIES) {
+  for (const q of lim.qualities) {
     let blob: Blob | null
     if (typeof OffscreenCanvas !== 'undefined') {
       const c = new OffscreenCanvas(tw, th)
@@ -99,7 +98,7 @@ const jpegOf = async (
   return undefined
 }
 
-const mediaMeta = (file: Blob, kind: 'video' | 'audio') =>
+const mediaMeta = (file: Blob, kind: 'video' | 'audio', lim: Local['files']) =>
   new Promise<Preview>((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const el = document.createElement(kind)
@@ -120,7 +119,7 @@ const mediaMeta = (file: Blob, kind: 'video' | 'audio') =>
       if (kind === 'audio' || !(el instanceof HTMLVideoElement)) return done({ dur })
       const v = el
       v.onseeked = () => {
-        void jpegOf(v, v.videoWidth, v.videoHeight)
+        void jpegOf(v, v.videoWidth, v.videoHeight, lim)
           .catch(() => undefined)
           .then(thumb =>
             done({ thumb, w: v.videoWidth || undefined, h_px: v.videoHeight || undefined, dur })
@@ -135,29 +134,30 @@ const dim = (n: number | undefined) =>
   n !== undefined && Number.isSafeInteger(n) && n >= 1 && n <= EV.dims ? n : undefined
 
 // Size, length and a small JPEG preview, made from the file here. What fails is left out.
-export const previewOf = async (file: File): Promise<Preview> => {
+export const previewOf = async (file: File, lim: Local['files']): Promise<Preview> => {
   const kind = guessKind(file.name) ?? (file.type.startsWith('image/') ? 'image' : null)
   try {
     if (kind === 'image' && typeof createImageBitmap !== 'undefined') {
       // The size from the header first: an image too large to decode safely gets no preview,
       // and the rest is decoded straight to thumbnail size.
-      const size = imageSize(new Uint8Array(await file.slice(0, HEAD_BYTES).arrayBuffer()))
-      if (!size || size.w < 1 || size.h < 1 || size.w * size.h > PREVIEW_PIXELS) return {}
-      const scale = Math.min(1, SIDE / Math.max(size.w, size.h))
+      const size = imageSize(new Uint8Array(await file.slice(0, lim.headBytes).arrayBuffer()))
+      if (!size || size.w < 1 || size.h < 1 || size.w * size.h > lim.previewPixels) return {}
+      const scale = Math.min(1, lim.side / Math.max(size.w, size.h))
       const bmp = await withTimeout(
         createImageBitmap(file, {
           resizeWidth: Math.max(1, Math.round(size.w * scale)),
           resizeHeight: Math.max(1, Math.round(size.h * scale)),
           resizeQuality: 'medium',
-        })
+        }),
+        lim.timeoutMs
       )
-      const thumb = await jpegOf(bmp, bmp.width, bmp.height).catch(() => undefined)
+      const thumb = await jpegOf(bmp, bmp.width, bmp.height, lim).catch(() => undefined)
       const out = { thumb, w: dim(size.w), h_px: dim(size.h) }
       bmp.close()
       return out
     }
     if (kind === 'video' || kind === 'audio') {
-      const p = await withTimeout(mediaMeta(file, kind))
+      const p = await withTimeout(mediaMeta(file, kind, lim), lim.timeoutMs)
       return { ...p, w: dim(p.w), h_px: dim(p.h_px) }
     }
   } catch {
@@ -171,16 +171,19 @@ const thumbUrls = new Map<string, Promise<string | null>>()
 // A sender's thumbnail is only shown after it checks out here: JPEG bytes of at most 6 KiB whose
 // header says at most 1024 px a side (checked before anything is decoded), which the browser
 // then decodes, scaled down, as an image. Cached per thumbnail.
-export const checkedThumb = (thumb: string | undefined): Promise<string | null> => {
+export const checkedThumb = (
+  thumb: string | undefined,
+  lim: FileLimits
+): Promise<string | null> => {
   if (!thumb) return Promise.resolve(null)
   const hit = thumbUrls.get(thumb)
   if (hit) return hit
   const run = (async () => {
-    const t = thumbBytes(thumb)
+    const t = thumbBytes(thumb, lim.bulk)
     if (!t || typeof createImageBitmap === 'undefined') return null
     const blob = new Blob([t.bytes as BlobPart], { type: 'image/jpeg' })
     try {
-      const scale = Math.min(1, SIDE / Math.max(t.w, t.h))
+      const scale = Math.min(1, lim.files.side / Math.max(t.w, t.h))
       const bmp = await withTimeout(
         createImageBitmap(blob, {
           resizeWidth: Math.max(1, Math.round(t.w * scale)),
@@ -197,7 +200,7 @@ export const checkedThumb = (thumb: string | undefined): Promise<string | null> 
     }
   })()
   thumbUrls.set(thumb, run)
-  if (thumbUrls.size > LOCAL.files.thumbUrls) {
+  if (thumbUrls.size > lim.files.thumbUrls) {
     const [old] = thumbUrls.keys()
     const p = thumbUrls.get(old)
     thumbUrls.delete(old)

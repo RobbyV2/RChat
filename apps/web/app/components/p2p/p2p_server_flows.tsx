@@ -17,8 +17,8 @@ import {
   DEVICES_TEXT,
   DISPUTED_TEXT,
   INVITE_AGAIN,
-  LOST_TIMES,
   lostOthersText,
+  lostTimes,
   lostText,
   MIGRATE_DIFF_TEXT,
   OWN_RESIGN_TEXT,
@@ -581,7 +581,8 @@ const localInput = (ms: number) => {
 
 export function LostDeviceDialog({ dk }: { dk: string }) {
   const [at] = useState(() => Date.now())
-  const [t, setT] = useState(() => at - LOST_TIMES[0].ms)
+  const times = lostTimes(p2p.limits().misc)
+  const [t, setT] = useState(() => at - times[0].ms)
   const [list, setList] = useState<Preview | null>(null)
   const [busy, setBusy] = useState(false)
   const servers = useP2p(s => s.servers)
@@ -624,7 +625,7 @@ export function LostDeviceDialog({ dk }: { dk: string }) {
           />
         </label>
         <div className="-mt-2 flex flex-wrap gap-1">
-          {LOST_TIMES.map(o => (
+          {times.map(o => (
             <button key={o.ms} onClick={() => setT(at - o.ms)} className={textBtn}>
               {o.label}
             </button>

@@ -1,9 +1,9 @@
 import type { MarkAllExtra } from '../../store_types'
 import { p2pUnread } from '../alerts'
-import { loadMessages, PAGE, type P2pMessage } from '../dm'
+import { loadMessages, type P2pMessage } from '../dm'
 import type { PingRec, PingText } from '../inbox'
 import { pingAlive, pingText, readPings } from '../ping_log'
-import { data, useP2p, pingLog, store, p2pHost, servers, type P2pState } from './store'
+import { data, limits, useP2p, pingLog, store, p2pHost, servers, type P2pState } from './store'
 import { dbNow, p2pDm, meNow } from './dms'
 import { ELSEWHERE_TEXT } from './calls'
 import { p2pServer, p2pThread } from './servers'
@@ -103,11 +103,12 @@ export const p2pRecent = async (room: string, ch: string | null): Promise<P2pMes
   const s = dbNow()
   const me = meNow()
   if (!s || !me) return null
+  const limit = limits.dm.page
   try {
     if (ch !== null)
-      return servers ? (await servers.loadChannel(room, ch, { limit: PAGE })).messages : null
+      return servers ? (await servers.loadChannel(room, ch, { limit })).messages : null
     const peer = useP2p.getState().rooms[room]?.peer
-    return peer ? (await loadMessages(s.db, room, me, peer, { limit: PAGE })).messages : null
+    return peer ? (await loadMessages(s.db, room, me, peer, { limit }, limits)).messages : null
   } catch {
     return null
   }

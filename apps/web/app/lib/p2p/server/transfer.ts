@@ -17,20 +17,10 @@ import {
 } from '../flows'
 import type { Message } from '../frames'
 import { keyId } from '../keys'
-import { LOCAL } from '../limits'
 import type { Session } from '../session'
 import { channelsOf, knownChannel, knownSettings, membershipOf, EVERYONE, nameOf } from '../state'
 import type { ServerCtx } from './context'
-import {
-  SERVER,
-  SYNC_TEXT,
-  OLD_GONE_TEXT,
-  ServerError,
-  MIGRATE_PER,
-  CARRY_ACK,
-  CARRY_ACKS_MAX,
-  type Migrated,
-} from './types'
+import { SYNC_TEXT, OLD_GONE_TEXT, ServerError, type Migrated } from './types'
 import { type Rt } from './rt'
 import { clip } from '../rate'
 
@@ -41,7 +31,7 @@ export function transferAsks(cx: ServerCtx) {
     from: a.from,
     room: a.room,
     to: a.to,
-    name: nameOf(cx.sumOf(a.room))?.name ?? cx.rooms.get(a.room)?.name ?? a.name,
+    name: nameOf(cx.sumOf(a.room), cx.local.display)?.name ?? cx.rooms.get(a.room)?.name ?? a.name,
   }))
 }
 
@@ -54,7 +44,7 @@ export async function transfer(cx: ServerCtx, room: string, to: string) {
     throw new ServerError(CANT_TEXT)
   const ses = await cx.sessionTo(room, to)
   if (!ses) throw new ServerError('They must be online to take it')
-  const reply = await cx.request(ses, { t: 'gxfer', room }, SERVER.coOwnerMs)
+  const reply = await cx.request(ses, { t: 'gxfer', room }, cx.local.server.coOwnerMs)
   const g = cx.successorOk(room, reply?.g, to)
   if (!g) throw new ServerError("They didn't take the transfer")
   const sigs: Record<string, string> = {}
@@ -65,7 +55,9 @@ export async function transfer(cx: ServerCtx, room: string, to: string) {
     // A co-owner who is a member is dialed for the room; one who left only as a contact.
     const os =
       membershipOf(s, o) === 'join' ? await cx.sessionTo(room, o) : cx.deps.node.readySessions(o)[0]
-    const r = os ? await cx.request(os, { t: 'gcosign', room, g, genesis }, SERVER.coOwnerMs) : null
+    const r = os
+      ? await cx.request(os, { t: 'gcosign', room, g, genesis }, cx.local.server.coOwnerMs)
+      : null
     if (typeof r?.sig !== 'string' || !upgradeSigOk(o, room, g, r.sig))
       throw new ServerError(os ? CO_OWNER_DECLINED_TEXT : CO_OWNER_OFFLINE_TEXT, cx.nameOf(o, room))
     sigs[o] = r.sig
@@ -80,8 +72,9 @@ export async function sessionTo(cx: ServerCtx, room: string, ik: string) {
   if (s) return s
   cx.prefer(room, ik)
   cx.deps.node.schedule(true)
-  for (let i = 0; i < LOCAL.server.sessionTries && !s; i++) {
-    await new Promise<void>(done => cx.clock.set(done, LOCAL.server.sessionWaitMs))
+  const lim = cx.local.server
+  for (let i = 0; i < lim.sessionTries && !s; i++) {
+    await new Promise<void>(done => cx.clock.set(done, lim.sessionWaitMs))
     s = cx.deps.node.readySessions(ik)[0]
   }
   return s
@@ -134,13 +127,13 @@ export function onTransfer(cx: ServerCtx, m: Message, s: Session, kind: 'take' |
   if (kind === 'take' && cx.myMembership(room) !== 'join') return answer(false)
   if (kind === 'cosign' && (!g || !owners.includes(cx.me))) return answer(false)
   const key = `${kind}\n${from}\n${room}`
-  if (cx.xferAsks.size >= SERVER.coOwnerAsks && !cx.xferAsks.has(key)) return answer(false)
+  if (cx.xferAsks.size >= cx.local.server.coOwnerAsks && !cx.xferAsks.has(key)) return answer(false)
   const gname = (gen.ok ? gen.wire.c?.name : undefined) ?? g?.c?.name
   cx.xferAsks.set(key, {
     kind,
     from,
     room,
-    name: typeof gname === 'string' ? clip(gname, LOCAL.server.nameMax) : 'P2P server',
+    name: typeof gname === 'string' ? clip(gname, cx.local.server.nameMax) : 'P2P server',
     to: kind === 'take' ? cx.me : (g?.ev.a ?? ''),
     ...(g ? { g } : {}),
     s,
@@ -149,7 +142,7 @@ export function onTransfer(cx: ServerCtx, m: Message, s: Session, kind: 'take' |
     if (cx.xferAsks.delete(key)) cx.changed('')
   }
   s.onClose(drop)
-  cx.clock.set(drop, SERVER.coOwnerMs)
+  cx.clock.set(drop, cx.local.server.coOwnerMs)
   cx.changed('')
 }
 
@@ -178,7 +171,7 @@ export async function successorOf(cx: ServerCtx, room: string): Promise<WireV2> 
     nonce: b64u(randomBytes(16)),
     owners: [{ ik: cx.me, dk }],
     everyone_bits: s.everyone,
-    name: nameOf(s)?.name ?? 'P2P server',
+    name: nameOf(s, cx.local.display)?.name ?? 'P2P server',
     cert: cx.deps.node.cert,
     profile: cx.deps.node.profile,
     from: { srv: room },
@@ -281,8 +274,8 @@ export async function carryOver(cx: ServerCtx, to: string) {
       if (cx.started && !cx.rooms.has(from))
         return await save({ state: 'failed', why: OLD_GONE_TEXT })
       // The old copy isn't loaded here yet: again in a moment (for an hour; then on a change).
-      if ((rt.carryTries = (rt.carryTries ?? 0) + 1) <= LOCAL.server.carryTries)
-        cx.clock.set(() => void cx.carryOver(to).catch(() => {}), LOCAL.server.carryRetryMs)
+      if ((rt.carryTries = (rt.carryTries ?? 0) + 1) <= cx.local.server.carryTries)
+        cx.clock.set(() => void cx.carryOver(to).catch(() => {}), cx.local.server.carryRetryMs)
       return carry.state === 'waiting' && carry.why === SYNC_TEXT
         ? undefined
         : await save({ state: 'waiting', why: SYNC_TEXT })
@@ -305,7 +298,7 @@ export async function carryOver(cx: ServerCtx, to: string) {
             if (now !== 'join' && now !== 'ban') cx.prefer(to, ik)
           },
         ])
-    for (const c of channelsOf({ ...emptySummary(), channels: s.channels }))
+    for (const c of channelsOf({ ...emptySummary(), channels: s.channels }, cx.local.display))
       steps.push([
         `c:${c.id}`,
         async () => {
@@ -423,9 +416,10 @@ export async function migrateChunks(cx: ServerCtx, from: string, s: Carried) {
     for (let n = 0; n < of; n++)
       out.push({ kind, n, of, list: list.slice(n * each, (n + 1) * each) })
   }
-  split('members', [...s.members].sort(), MIGRATE_PER)
-  split('bans', [...s.bans].sort(), MIGRATE_PER)
-  split('marks', Object.entries(marks), MIGRATE_PER)
+  const per = cx.local.server.migratePer
+  split('members', [...s.members].sort(), per)
+  split('bans', [...s.bans].sort(), per)
+  split('marks', Object.entries(marks), per)
   return out
 }
 
@@ -491,6 +485,7 @@ export function ackCarry(cx: ServerCtx, room: string, rt: Rt) {
   const r = cx.rooms.get(room)
   const s = cx.sumOf(room)
   const now = cx.clock.now()
+  const lim = cx.local.server
   if (cx.stopped || !r?.prev || r.carry || cx.myMembership(room) !== 'join') return
   if (s.owners.includes(cx.me)) return
   // The day counts from the last owner event that arrived, or our start: the owner may be
@@ -504,19 +499,19 @@ export function ackCarry(cx: ServerCtx, room: string, rt: Rt) {
     const kept = !!a && Number.isSafeInteger(a.base) && Number.isSafeInteger(a.n) && a.n >= 0
     // Never acknowledged before (just joined): a mark at once, as what we hold unacknowledged
     // may be all the owner can still post.
-    rt.carryAckCount = kept ? a.base : s.ownerCount - CARRY_ACK
+    rt.carryAckCount = kept ? a.base : s.ownerCount - lim.carryAck
     rt.carryAcks = kept ? a.n : 0
   }
-  if (rt.carryDone || rt.carryAcks >= (rt.carryMax ?? r.carryMax ?? CARRY_ACKS_MAX)) return
-  if (now - rt.carryAt > LOCAL.server.carryWindowMs) return
-  if (s.ownerCount - rt.carryAckCount < CARRY_ACK) return
+  if (rt.carryDone || rt.carryAcks >= (rt.carryMax ?? r.carryMax ?? lim.carryAcksMax)) return
+  if (now - rt.carryAt > lim.carryWindowMs) return
+  if (s.ownerCount - rt.carryAckCount < lim.carryAck) return
   const later = (ms: number) =>
     (rt.carryAckLater ??= cx.clock.set(() => {
       rt.carryAckLater = undefined
       cx.ackCarry(room, rt)
     }, ms))
   // Too soon after the last one: later, as the owner may be waiting for it (nothing new comes).
-  const gap = LOCAL.server.carryAckGapMs
+  const gap = lim.carryAckGapMs
   if (now - rt.carryAckAt < gap) return void later(gap - (now - rt.carryAckAt))
   const base = rt.carryAckCount
   const acks = { base: s.ownerCount, n: rt.carryAcks + 1 }
@@ -553,11 +548,11 @@ export async function checkMigrated(cx: ServerCtx, room: string, prev: string, t
   const at = up ? await cx.carriedOf(prev, up) : null
   if (!at) {
     // The old copy isn't loaded here yet: again in a moment (for a minute).
-    if (!rt.checkLater && tries < LOCAL.server.checkTries)
+    if (!rt.checkLater && tries < cx.local.server.checkTries)
       rt.checkLater = cx.clock.set(() => {
         rt.checkLater = undefined
         void cx.checkMigrated(room, prev, tries + 1).catch(() => {})
-      }, LOCAL.server.checkRetryMs)
+      }, cx.local.server.checkRetryMs)
     return
   }
   // What the carry-over posts, at most, from what the upgrade carries (known before any of it
@@ -566,7 +561,7 @@ export async function checkMigrated(cx: ServerCtx, room: string, prev: string, t
   const old = cx.sumOf(prev)
   const devices = at.members.reduce((n, ik) => n + (old.members[ik]?.devs.length || 1), 0)
   const chunks = [at.members.length, at.bans.length, devices].reduce(
-    (n, k) => n + Math.max(1, Math.ceil(k / MIGRATE_PER)),
+    (n, k) => n + Math.max(1, Math.ceil(k / cx.local.server.migratePer)),
     1
   )
   const size =
@@ -578,7 +573,7 @@ export async function checkMigrated(cx: ServerCtx, room: string, prev: string, t
     Object.values(at.overwrites ?? {}).reduce((n, o) => n + Object.keys(o).length, 0) +
     chunks +
     8
-  rt.carryMax = Math.ceil(size / CARRY_ACK) + 5
+  rt.carryMax = Math.ceil(size / cx.local.server.carryAck) + 5
   // Known from now on, also at a start that loads this copy before the old one.
   if (cx.rooms.get(room)?.carryMax !== rt.carryMax) {
     const carryMax = rt.carryMax
@@ -607,7 +602,8 @@ export async function untilAllowed(
   waiting: (why: string) => Promise<void>
 ): Promise<string | null> {
   let last = TOO_OFTEN_TEXT
-  for (let i = 0; i < LOCAL.server.stepTries && cx.rooms.has(room); i++) {
+  const lim = cx.local.server
+  for (let i = 0; i < lim.stepTries && cx.rooms.has(room); i++) {
     try {
       await step()
       return null
@@ -616,7 +612,7 @@ export async function untilAllowed(
       if (why !== LONE_TEXT && why !== QUICK_TEXT && why !== SYNC_TEXT) return why
       last = why
       await waiting(why)
-      await new Promise<void>(done => cx.clock.set(done, LOCAL.server.stepRetryMs))
+      await new Promise<void>(done => cx.clock.set(done, lim.stepRetryMs))
     }
   }
   return last

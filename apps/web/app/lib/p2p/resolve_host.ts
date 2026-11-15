@@ -15,6 +15,7 @@ import {
   type Shown,
 } from './acl_room'
 import type { AdmitOpts } from './acl/admit'
+import type { EvalLimits } from './acl/rules'
 import type { ContentEv } from './acl/visibility'
 import type { WireV2 } from './event_v2'
 
@@ -129,6 +130,8 @@ export type HostRequest =
       own?: number
     }
   | { id: number; op: 'drop'; room: string }
+  // The account's evaluator limits, for every room made after it (sent first).
+  | { id: number; op: 'local'; local: EvalLimits }
 
 export type HostReply = { id: number; ok: unknown } | { id: number; err: string }
 
@@ -215,14 +218,20 @@ export const runRequest = (
   }
 }
 
-// A request in the worker (p2p.worker.ts): an AclRoom per room, kept between requests.
+// A request in the worker (p2p.worker.ts): an AclRoom per room, kept between requests, made with
+// the limits `local` set.
 export const serveAcl = (
   rooms: Map<string, AclRoom>,
   m: HostRequest,
-  post: (r: HostReply) => void
+  post: (r: HostReply) => void,
+  opts: Partial<AdmitOpts>
 ) => {
+  if (m.op === 'local') {
+    opts.local = m.local
+    return
+  }
   try {
-    const ok = runRequest(rooms, m)
+    const ok = runRequest(rooms, m, opts)
     if (m.op !== 'drop') post({ id: m.id, ok })
   } catch (err) {
     post({ id: m.id, err: err instanceof Error ? err.message : String(err) })
@@ -354,11 +363,15 @@ export class WorkerHost extends Base {
   private local: LocalHost | null = null
   onLost: (() => void) | null = null
 
-  constructor(make: () => WorkerLike) {
+  constructor(
+    make: () => WorkerLike,
+    private limits?: EvalLimits
+  ) {
     super()
     this.worker = make()
     this.worker.onmessage = e => this.reply(e.data as HostReply)
     this.worker.onerror = () => this.fallBack()
+    if (limits) this.worker.postMessage({ id: 0, op: 'local', local: limits } satisfies HostRequest)
   }
 
   private reply(m: HostReply) {
@@ -372,7 +385,7 @@ export class WorkerHost extends Base {
   private fallBack() {
     this.worker?.terminate()
     this.worker = null
-    this.local = new LocalHost()
+    this.local = new LocalHost({ local: this.limits })
     const jobs = [...this.jobs.values()]
     this.jobs.clear()
     for (const j of jobs) j.fail(new Error('acl host lost'))

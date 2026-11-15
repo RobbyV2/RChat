@@ -1,6 +1,6 @@
 import { isRecord } from '../../bytes'
 import { bytesOf, canonical, isInt } from '../canonical'
-import { AGREED, type Agreed } from '../limits'
+import { AGREED, LOCAL, type Agreed, type Local } from '../limits'
 import type { EvalResult, Facts, FactsQ } from './facts'
 
 // The rules of P2P server ACL events: event classes, the Authority column (what
@@ -125,7 +125,14 @@ export interface Ctx {
   ev(id: string): AclEv
   rec(id: string): Rec
   readonly lim: Agreed
+  // The evaluator's device-local limits (the account's); absent, the registry's.
+  readonly local?: EvalLimits
 }
+
+// limits.ts `acl` and `cache`: what one device's evaluator keeps and walks.
+export type EvalLimits = Pick<Local, 'acl' | 'cache'>
+
+export const evalLimits = (cx: Ctx): EvalLimits => cx.local ?? LOCAL
 
 export const ownersOf = (c: AclContent): string[] => (c.owners ?? []).map(o => o.ik)
 

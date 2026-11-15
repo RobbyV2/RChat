@@ -24,7 +24,7 @@ export function VerifyDialog({ ik }: { ik: string }) {
   const [paste, setPaste] = useState('')
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
   const code = useMemo(() => (mode === 'show' ? p2p.verifyCode(ik) : null), [mode, ik])
-  const groups = useMemo(() => (me ? safetyGroups(me, ik) : []), [me, ik])
+  const groups = useMemo(() => (me ? safetyGroups(me, ik, p2p.limits().misc) : []), [me, ik])
   const mask = useMask()
   if (!contact || !me) return null
   const shield = shieldOf(contact)

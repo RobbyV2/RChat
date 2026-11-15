@@ -272,6 +272,13 @@
   "contacts.introsMax": 3,
   "contacts.petnameMax": 32,
   "contacts.certsKept": 8,
+  "contacts.certs2Kept": 32,
+  "contacts.revs2Kept": 32,
+  "contacts.profiles2Kept": 8,
+  "contacts.badgesHeld": 4,
+  "contacts.storedRecords": 256,
+  "contacts.storedV1": 64,
+  "contacts.v1Checks": 4096,
   "inbox.pingsKept": 500,
   "inbox.pingKeepMs": 2592000000,
   "inbox.pageSize": 30,
@@ -286,5 +293,7 @@
   "misc.cutMs": 604800000,
   "misc.lostTimes.0": 3600000,
   "misc.lostTimes.1": 86400000,
-  "misc.lostTimes.2": 604800000
+  "misc.lostTimes.2": 604800000,
+  "misc.infoWaitMs": 5000,
+  "misc.chainChecks": 8192
 }
