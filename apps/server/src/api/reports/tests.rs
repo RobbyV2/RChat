@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use sqlx::Row;
 
 use super::*;
+use crate::api::admin;
 use crate::api::test_util::{add_member, done, pg_done, pg_state, temp_state};
 use crate::db::{NewUser, get_user};
 use crate::limits::Limits;
@@ -1658,4 +1659,1300 @@ async fn reports_go_over_http_and_need_an_account() {
     assert_eq!(info["features"]["report_forms"], true);
     server.abort();
     done(w.state, path).await;
+}
+
+// Reading.
+
+pub(super) fn query(v: Value) -> ReportQuery {
+    serde_json::from_value(v).expect("query")
+}
+
+impl World {
+    /// A report by `by` about the member `about` of `s` to its moderators, and its id.
+    pub(super) async fn about(&self, by: &str, about: &str, t: i64) -> i64 {
+        self.send(
+            by,
+            json!({"to": "server", "target": member(about), "reason": "spam"}),
+            t,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{by} reports {about}: {e:?}"))
+        .id
+    }
+
+    /// The reports of `s` as `by` lists them.
+    pub(super) async fn listed(&self, by: &str, q: Value) -> Result<Vec<ReportRow>, ApiError> {
+        let user = who(self.db(), by).await;
+        list_reports(
+            State(self.state.clone()),
+            Authed(user),
+            Path("s".to_string()),
+            Query(query(q)),
+        )
+        .await
+        .map(|Paged(rows, _)| rows)
+    }
+
+    pub(super) async fn ids(&self, by: &str, q: Value) -> Vec<i64> {
+        self.listed(by, q)
+            .await
+            .unwrap_or_else(|e| panic!("{by} lists: {e:?}"))
+            .iter()
+            .map(|r| r.id)
+            .collect()
+    }
+
+    /// The groups of `s` as `by` sees them: key, count and open.
+    pub(super) async fn grouped(&self, by: &str, q: Value) -> Vec<(String, i64, i64)> {
+        let user = who(self.db(), by).await;
+        let Paged(groups, _) = list_groups(
+            State(self.state.clone()),
+            Authed(user),
+            Path("s".to_string()),
+            Query(query(q)),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{by} groups: {e:?}"));
+        groups
+            .into_iter()
+            .map(|g| (g.key, g.count, g.open))
+            .collect()
+    }
+
+    pub(super) async fn open(&self, by: &str) -> i64 {
+        let user = who(self.db(), by).await;
+        server_open(
+            State(self.state.clone()),
+            Authed(user),
+            Path("s".to_string()),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{by} counts: {e:?}"))
+        .0
+        .open
+    }
+
+    pub(super) async fn detail(&self, by: &str, id: i64) -> Result<ReportDetail, ApiError> {
+        let user = who(self.db(), by).await;
+        get_report(State(self.state.clone()), Authed(user), Path(id))
+            .await
+            .map(|Json(detail)| detail)
+    }
+
+    pub(super) async fn my_open(&self, by: &str) -> Vec<OpenCount> {
+        let user = who(self.db(), by).await;
+        let Paged(counts, _) = my_open(
+            State(self.state.clone()),
+            Authed(user),
+            Query(OpenQuery::default()),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{by} counts: {e:?}"));
+        counts
+    }
+
+    /// The reports the admin routes list for `by`.
+    pub(super) async fn admin_ids(
+        &self,
+        by: &str,
+        scope: Value,
+        q: Value,
+    ) -> Result<Vec<i64>, ApiError> {
+        let user = who(self.db(), by).await;
+        admin::list_reports(
+            State(self.state.clone()),
+            Authed(user),
+            Query(serde_json::from_value(scope).expect("scope")),
+            Query(query(q)),
+        )
+        .await
+        .map(|Paged(rows, _)| rows.iter().map(|r| r.id).collect())
+    }
+}
+
+/// Lets carol into #ops (the role `staff`) and has olga report a message of hers there.
+async fn ops_report(w: &World, t: i64) -> i64 {
+    let db = w.db();
+    let staff = int(
+        db,
+        "SELECT id FROM roles WHERE server = 's' AND name = 'staff'",
+    )
+    .await;
+    exec(db, &format!("INSERT INTO user_roles(server, username, role_id) VALUES('s', 'carol', {staff}) ON CONFLICT DO NOTHING")).await;
+    let secret = message(db, w.ops, "carol", "ops talk", 100).await;
+    w.send(
+        "olga",
+        json!({"to": "server", "target": {"kind": "message", "id": secret}, "reason": "hate"}),
+        t,
+    )
+    .await
+    .expect("a report in #ops")
+    .id
+}
+
+#[tokio::test]
+async fn moderators_list_and_group_server_reports() {
+    let (w, path) = world("reports_list").await;
+    let db = w.db();
+    let first = w.about("alice", "bob", T0).await;
+    let dismissed = w.about("carol", "bob", T0 + 10).await;
+    exec(
+        db,
+        &format!(
+            "UPDATE reports SET status = 'dismissed', resolved_at = {} WHERE id = {dismissed}",
+            T0 + 20
+        ),
+    )
+    .await;
+    let about_carol = w.about("dave", "carol", T0 + 30).await;
+    let in_ops = ops_report(&w, T0 + 40).await;
+    assert_eq!(
+        w.ids("olga", json!({})).await,
+        [in_ops, about_carol, dismissed, first],
+        "newest first, for someone who sees every channel"
+    );
+    assert_eq!(
+        w.ids("mo", json!({})).await,
+        [about_carol, dismissed, first],
+        "a holder of Manage reports who can't view #ops"
+    );
+    let row = &w
+        .listed("mo", json!({"limit": 1, "oldest": true}))
+        .await
+        .expect("list")[0];
+    assert_eq!(
+        (
+            row.id,
+            row.kind,
+            row.status,
+            row.reason.as_str(),
+            row.reason_label.as_deref(),
+            row.form.as_str(),
+            row.form_label.as_str(),
+        ),
+        (
+            first,
+            ReportKind::Server,
+            Status::Open,
+            "spam",
+            Some("Spam"),
+            "user",
+            "Report a user",
+        )
+    );
+    assert_eq!(
+        (
+            row.target_kind.as_str(),
+            row.target_key.as_str(),
+            row.excerpt.as_str(),
+            row.server.as_deref(),
+            row.server_name.as_deref(),
+            row.escalated,
+            row.created_at
+        ),
+        (
+            "user",
+            "u:bob",
+            "bob",
+            Some("s"),
+            Some("Server S"),
+            false,
+            T0
+        )
+    );
+    assert_eq!(
+        (
+            row.target.as_ref().map(|u| u.display_name.as_str()),
+            row.reporter.as_ref().map(|u| u.username.as_str()),
+            row.assignee.as_ref()
+        ),
+        (Some("Bob B"), Some("alice"), None),
+        "moderators see who reported"
+    );
+    assert_eq!(
+        w.grouped("mo", json!({"by": "member"})).await,
+        [("u:bob".to_string(), 2, 1), ("u:carol".to_string(), 1, 1)]
+    );
+    assert_eq!(
+        w.grouped("olga", json!({"by": "member"})).await,
+        [("u:carol".to_string(), 2, 2), ("u:bob".to_string(), 2, 1)],
+        "the most open reports first"
+    );
+    assert_eq!(
+        w.ids("mo", json!({"by": "status", "key": "dismissed"}))
+            .await,
+        [dismissed]
+    );
+    assert_eq!(
+        w.ids("mo", json!({"by": "member", "key": "u:bob"})).await,
+        [dismissed, first]
+    );
+    assert_eq!(
+        w.ids("mo", json!({"status": "open", "reason": "spam"}))
+            .await,
+        [about_carol, first]
+    );
+    assert_eq!(w.ids("olga", json!({"reason": "hate"})).await, [in_ops]);
+    assert_eq!(
+        w.ids("mo", json!({"from": T0 + 5, "to": T0 + 30})).await,
+        [about_carol, dismissed]
+    );
+    assert_eq!(
+        w.grouped("olga", json!({"by": "form"})).await,
+        [("user".to_string(), 3, 2), ("message".to_string(), 1, 1)]
+    );
+    assert_eq!(w.ids("olga", json!({"form": "message"})).await, [in_ops]);
+    assert_eq!(
+        w.grouped("olga", json!({"by": "channel"})).await,
+        [("".to_string(), 3, 2), (w.ops.to_string(), 1, 1)]
+    );
+    assert_eq!(
+        w.grouped("mo", json!({"by": "reporter"})).await,
+        [
+            ("alice".to_string(), 1, 1),
+            ("dave".to_string(), 1, 1),
+            ("carol".to_string(), 1, 0)
+        ]
+    );
+    assert_eq!(w.open("mo").await, 2);
+    assert_eq!(w.open("olga").await, 3);
+
+    let midnight = (T0 / DAY + 400) * DAY;
+    let late = w.about("frank", "dave", midnight + HOUR).await;
+    let day = |tz: i64| {
+        let w = &w;
+        async move {
+            w.grouped("mo", json!({"by": "day", "tz": tz, "from": midnight}))
+                .await
+        }
+    };
+    let (utc, west) = (
+        query::date_of(midnight / DAY),
+        query::date_of(midnight / DAY - 1),
+    );
+    assert_eq!(day(0).await, [(utc.clone(), 1, 1)]);
+    assert_eq!(day(-300).await, [(west.clone(), 1, 1)], "the local date");
+    assert_eq!(
+        w.ids("mo", json!({"by": "day", "tz": -300, "key": west}))
+            .await,
+        [late]
+    );
+    assert!(
+        w.ids("mo", json!({"by": "day", "tz": -300, "key": utc}))
+            .await
+            .is_empty()
+    );
+    for (q, message) in [
+        (json!({"by": "server"}), "Unknown grouping"),
+        (json!({"by": "day", "tz": 900}), "Invalid tz"),
+        (json!({"by": "day", "key": "tomorrow"}), "Invalid day"),
+    ] {
+        assert_eq!(
+            refusal(w.listed("mo", q.clone()).await),
+            (400, message.to_string()),
+            "{q}"
+        );
+    }
+    let user = who(db, "mo").await;
+    let no_grouping = list_groups(
+        State(w.state.clone()),
+        Authed(user.clone()),
+        Path("s".to_string()),
+        Query(query(json!({}))),
+    )
+    .await
+    .map(|Paged(groups, _)| groups);
+    assert_eq!(refusal(no_grouping), (400, "Unknown grouping".to_string()));
+
+    for n in 0..60 {
+        exec(db, &format!("INSERT INTO reports(kind, server, server_name, target_kind, target_key, target_user, reporter, form, form_label, reason, snapshot, created_at, updated_at) VALUES('server', 's', 'Server S', 'user', 'u:t{n}', 't{n}', 'alice', 'user', 'Report a user', 'other', '{{}}', {at}, {at})", at = T0 + 1000 + n)).await;
+    }
+    let Paged(page, next) = list_reports(
+        State(w.state.clone()),
+        Authed(user.clone()),
+        Path("s".to_string()),
+        Query(query(json!({"to": T0 + 2000}))),
+    )
+    .await
+    .expect("first page");
+    assert_eq!(page.len(), 50);
+    let Paged(rest, end) = list_reports(
+        State(w.state.clone()),
+        Authed(user.clone()),
+        Path("s".to_string()),
+        Query(query(
+            json!({"to": T0 + 2000, "cursor": next.expect("a cursor")}),
+        )),
+    )
+    .await
+    .expect("second page");
+    assert_eq!((rest.len(), end), (13, None));
+    let mut seen: Vec<i64> = page.iter().chain(&rest).map(|r| r.id).collect();
+    seen.dedup();
+    assert_eq!(seen.len(), 63, "no report twice");
+    assert!(seen.windows(2).all(|pair| pair[0] > pair[1]));
+    let Paged(groups, next) = list_groups(
+        State(w.state.clone()),
+        Authed(user.clone()),
+        Path("s".to_string()),
+        Query(query(json!({"by": "member"}))),
+    )
+    .await
+    .expect("groups");
+    assert_eq!(groups.len(), 50);
+    let Paged(rest, end) = list_groups(
+        State(w.state.clone()),
+        Authed(user),
+        Path("s".to_string()),
+        Query(query(
+            json!({"by": "member", "cursor": next.expect("a cursor")}),
+        )),
+    )
+    .await
+    .expect("more groups");
+    assert_eq!((rest.len(), end), (13, None));
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn reason_labels_come_from_the_report() {
+    let (w, path) = world("reports_labels").await;
+    let db = w.db();
+    let old = w.about("alice", "bob", T0).await;
+    let mut doc = serde_json::to_value(forms::ReportForms::defaults()).expect("json");
+    doc["forms"][0]["label"] = json!("Tell on someone");
+    doc["forms"][0]["fields"][1]["options"][0]["label"] = json!("Junk mail");
+    let edited = forms::ReportForms::parse(&doc.to_string()).expect("forms");
+    exec(db, "DELETE FROM settings WHERE key = 'report_forms'").await;
+    sqlx::query("INSERT INTO settings(key, value) VALUES('report_forms', $1)")
+        .bind(edited.stored())
+        .execute(db)
+        .await
+        .expect("forms");
+    Policy::load(db).await;
+    let user = who(db, "mo").await;
+    let groups = |by: &'static str| {
+        let (state, user) = (w.state.clone(), user.clone());
+        async move {
+            let Paged(groups, _) = list_groups(
+                State(state),
+                Authed(user),
+                Path("s".to_string()),
+                Query(query(json!({"by": by}))),
+            )
+            .await
+            .expect("groups");
+            groups
+                .into_iter()
+                .map(|g| (g.key, g.label, g.count))
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        groups("reason").await,
+        [("spam".to_string(), Some("Spam".to_string()), 1)],
+        "the label the reason had when the report was sent"
+    );
+    assert_eq!(
+        groups("form").await,
+        [("user".to_string(), Some("Report a user".to_string()), 1)]
+    );
+    let row = &w.listed("mo", json!({})).await.expect("list")[0];
+    assert_eq!(
+        (row.id, row.reason_label.as_deref(), row.form_label.as_str()),
+        (old, Some("Spam"), "Report a user")
+    );
+    let new = w.about("carol", "dave", T0).await;
+    let row = &w.listed("mo", json!({"limit": 1})).await.expect("list")[0];
+    assert_eq!(
+        (row.id, row.reason_label.as_deref(), row.form_label.as_str()),
+        (new, Some("Junk mail"), "Tell on someone")
+    );
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_roles(server, username, role_id) VALUES('s', 'gina', {})",
+            w.mods
+        ),
+    )
+    .await;
+    w.about("alice", "gina", T0 + 10 * DAY).await;
+    assert_eq!(
+        groups("role").await,
+        [
+            ("".to_string(), Some("No role".to_string()), 2),
+            (w.mods.to_string(), Some("mod".to_string()), 1)
+        ]
+    );
+    assert_eq!(
+        groups("assignee").await,
+        [("".to_string(), Some("Unassigned".to_string()), 3)]
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn feedback_shows_its_answers() {
+    let (w, path) = world("reports_feedback_read").await;
+    let db = w.db();
+    let bug = w
+        .send(
+            "alice",
+            json!({"to": "instance", "target": {"kind": "none"}, "form": "bug", "answers": [
+                {"id": "summary", "value": "The page is blank"},
+                {"id": "steps", "value": "1. Open the app\n2. Wait"},
+                {"id": "kind", "value": "broke"},
+            ]}),
+            T0,
+        )
+        .await
+        .expect("bug")
+        .id;
+    let short = w
+        .send("bob", json!({"to": "instance", "target": {"kind": "none"}, "form": "bug", "answers": [{"id": "summary", "value": "Slow"}]}), T0 + 1)
+        .await
+        .expect("bug")
+        .id;
+    let about_bob = w
+        .send(
+            "alice",
+            json!({"to": "instance", "target": member("bob"), "reason": "spam"}),
+            T0 + 2,
+        )
+        .await
+        .expect("abuse")
+        .id;
+    assert_eq!(
+        w.admin_ids("root", json!({}), json!({}))
+            .await
+            .expect("instance"),
+        [about_bob, short, bug]
+    );
+    let root = who(db, "root").await;
+    let Paged(groups, _) = admin::report_groups(
+        State(w.state.clone()),
+        Authed(root.clone()),
+        Query(AdminScope::default()),
+        Query(query(json!({"by": "form"}))),
+    )
+    .await
+    .expect("groups");
+    assert_eq!(
+        groups
+            .iter()
+            .map(|g| (g.key.as_str(), g.label.as_deref(), g.count))
+            .collect::<Vec<_>>(),
+        [
+            ("bug", Some("Report a bug"), 2),
+            ("user", Some("Report a user"), 1)
+        ],
+        "by category"
+    );
+    let Paged(groups, _) = admin::report_groups(
+        State(w.state.clone()),
+        Authed(root.clone()),
+        Query(AdminScope::default()),
+        Query(query(json!({"by": "server"}))),
+    )
+    .await
+    .expect("groups");
+    assert_eq!(
+        groups
+            .iter()
+            .map(|g| (g.key.as_str(), g.label.as_deref(), g.count))
+            .collect::<Vec<_>>(),
+        [("", Some("No server"), 2), ("s", Some("Server S"), 1)]
+    );
+    assert_eq!(
+        w.admin_ids(
+            "root",
+            json!({}),
+            json!({"form": "bug", "by": "reason", "key": "broke"})
+        )
+        .await
+        .expect("bugs"),
+        [bug]
+    );
+    let detail = w.detail("root", bug).await.expect("detail");
+    assert_eq!(
+        (
+            detail.report.excerpt.as_str(),
+            detail.report.reason.as_str(),
+            detail.report.reason_label.as_deref(),
+            detail.report.target_kind.as_str(),
+            detail.report.target.as_ref()
+        ),
+        (
+            "1. Open the app\n2. Wait",
+            "broke",
+            Some("Something broke"),
+            "none",
+            None
+        ),
+        "the first long answer is the excerpt"
+    );
+    assert_eq!(
+        serde_json::to_value(&detail.answers).expect("json"),
+        json!([
+            {"id": "kind", "label": "What kind", "kind": "single_choice", "value": "broke", "shown": ["Something broke"]},
+            {"id": "summary", "label": "What went wrong", "kind": "short_text", "value": "The page is blank"},
+            {"id": "steps", "label": "Steps to make it happen", "kind": "long_text", "value": "1. Open the app\n2. Wait"},
+        ])
+    );
+    assert!(
+        detail.related.is_empty(),
+        "reports without a target are not related"
+    );
+    assert_eq!(
+        w.detail("root", short)
+            .await
+            .expect("detail")
+            .report
+            .excerpt,
+        "Slow"
+    );
+    let open = admin::reports_open(
+        State(w.state.clone()),
+        Authed(root),
+        Query(AdminScope::default()),
+    )
+    .await
+    .expect("open");
+    assert_eq!(open.0, Open { open: 3 });
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn reported_moderators_never_see_their_reports() {
+    let (w, path) = world("reports_about_mods").await;
+    let db = w.db();
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_roles(server, username, role_id) VALUES('s', 'frank', {})",
+            w.mods
+        ),
+    )
+    .await;
+    let about_mo = w.about("alice", "mo", T0).await;
+    let also_mo = w.about("carol", "mo", T0 + 1).await;
+    let about_bob = w.about("alice", "bob", T0 + 2).await;
+    assert_eq!(
+        w.ids("frank", json!({})).await,
+        [about_bob, also_mo, about_mo]
+    );
+    assert_eq!(
+        w.grouped("frank", json!({"by": "member"})).await,
+        [("u:mo".to_string(), 2, 2), ("u:bob".to_string(), 1, 1)]
+    );
+    assert_eq!(w.open("frank").await, 3);
+    let detail = w.detail("frank", about_mo).await.expect("frank reads it");
+    assert_eq!(
+        detail.related.iter().map(|r| r.id).collect::<Vec<_>>(),
+        [also_mo]
+    );
+    assert_eq!(
+        w.my_open("frank").await,
+        [OpenCount {
+            server: "s".to_string(),
+            open: 3
+        }]
+    );
+
+    assert_eq!(w.ids("mo", json!({})).await, [about_bob]);
+    assert_eq!(
+        w.grouped("mo", json!({"by": "member"})).await,
+        [("u:bob".to_string(), 1, 1)]
+    );
+    assert_eq!(
+        w.grouped("mo", json!({"by": "reporter"})).await,
+        [("alice".to_string(), 1, 1)],
+        "nor who reported them"
+    );
+    assert_eq!(w.open("mo").await, 1);
+    assert_eq!(
+        w.my_open("mo").await,
+        [OpenCount {
+            server: "s".to_string(),
+            open: 1
+        }]
+    );
+    let missing = wire(w.detail("mo", 999_999).await).await;
+    assert_eq!(missing, (404, r#"{"error":"Not found"}"#.to_string()));
+    for id in [about_mo, also_mo] {
+        assert_eq!(wire(w.detail("mo", id).await).await, missing);
+    }
+    assert!(
+        w.detail("mo", about_bob)
+            .await
+            .expect("bob's")
+            .related
+            .is_empty()
+    );
+    exec(
+        db,
+        &format!("UPDATE reports SET status = 'resolved' WHERE id = {about_bob}"),
+    )
+    .await;
+    assert!(
+        w.my_open("mo").await.is_empty(),
+        "nothing open that mo can see"
+    );
+
+    add_member(db, "s", "root", 0, 0, 0).await;
+    let about_root = w
+        .send(
+            "alice",
+            json!({"to": "instance", "target": member("root"), "reason": "spam"}),
+            T0,
+        )
+        .await
+        .expect("about the admin")
+        .id;
+    let other = w
+        .send(
+            "carol",
+            json!({"to": "instance", "target": member("bob"), "reason": "spam"}),
+            T0,
+        )
+        .await
+        .expect("about bob")
+        .id;
+    assert_eq!(
+        w.admin_ids("root", json!({}), json!({}))
+            .await
+            .expect("instance"),
+        [other]
+    );
+    assert_eq!(wire(w.detail("root", about_root).await).await, missing);
+    w.detail("root", other).await.expect("the other one");
+    let open = admin::reports_open(
+        State(w.state.clone()),
+        Authed(who(db, "root").await),
+        Query(AdminScope::default()),
+    )
+    .await
+    .expect("open");
+    assert_eq!(open.0, Open { open: 1 });
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn restricted_channel_reports_follow_the_audit_rule() {
+    let (w, path) = world("reports_restricted").await;
+    let db = w.db();
+    let in_ops = ops_report(&w, T0).await;
+    let open_channel = int(
+        db,
+        "INSERT INTO channels(server, name, created_at) VALUES('s', 'lounge', 0) RETURNING id",
+    )
+    .await;
+    let said = message(db, open_channel, "bob", "lounge talk", 100).await;
+    let in_lounge = w
+        .send(
+            "alice",
+            json!({"to": "server", "target": {"kind": "message", "id": said}, "reason": "spam"}),
+            T0 + 1,
+        )
+        .await
+        .expect("lounge")
+        .id;
+    assert_eq!(
+        int(
+            db,
+            &format!("SELECT channel_private FROM reports WHERE id = {in_ops}")
+        )
+        .await,
+        1
+    );
+    let hidden = (404, r#"{"error":"Not found"}"#.to_string());
+    let check = |stage: &'static str| {
+        let w = &w;
+        let hidden = hidden.clone();
+        async move {
+            assert_eq!(w.ids("mo", json!({})).await, [in_lounge], "{stage}");
+            assert_eq!(w.open("mo").await, 1, "{stage}");
+            assert_eq!(
+                w.grouped("mo", json!({"by": "channel"})).await,
+                [(open_channel.to_string(), 1, 1)],
+                "{stage}"
+            );
+            assert_eq!(wire(w.detail("mo", in_ops).await).await, hidden, "{stage}");
+            assert_eq!(
+                w.ids("olga", json!({})).await,
+                [in_lounge, in_ops],
+                "{stage}"
+            );
+            let detail = w.detail("olga", in_ops).await.expect("a channel manager");
+            assert_eq!(
+                detail.snapshot.message.map(|m| m.content),
+                Some("ops talk".to_string()),
+                "{stage}"
+            );
+            assert_eq!(detail.report.channel.as_deref(), Some("ops"), "{stage}");
+        }
+    };
+    check("while #ops exists").await;
+    exec(db, &format!("DELETE FROM channels WHERE id = {}", w.ops)).await;
+    check("after #ops is deleted").await;
+    exec(
+        db,
+        &format!("DELETE FROM channels WHERE id = {open_channel}"),
+    )
+    .await;
+    assert_eq!(
+        w.ids("mo", json!({})).await,
+        [in_lounge],
+        "a report from an open channel stays visible when the channel goes"
+    );
+    let detail = w.detail("mo", in_lounge).await.expect("still there");
+    assert_eq!(detail.report.channel.as_deref(), Some("lounge"));
+    assert_eq!(
+        w.grouped("mo", json!({"by": "channel"})).await,
+        [(open_channel.to_string(), 1, 1)]
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn non_holders_get_uniform_answers() {
+    let (w, path) = world("reports_non_holders").await;
+    let db = w.db();
+    let id = w.about("bob", "carol", T0).await;
+    exec(
+        db,
+        "INSERT INTO servers(name, display_name, creator, created_at) VALUES('t', 'T', 'zed', 0)",
+    )
+    .await;
+    add_member(db, "t", "zed", 1, 0, 0).await;
+    add_member(db, "t", "erin", 0, 0, 0).await;
+    let elsewhere = w
+        .send("erin", json!({"to": "server", "target": {"kind": "member", "server": "t", "username": "zed"}, "reason": "spam"}), T0)
+        .await
+        .expect("in t")
+        .id;
+    let missing_permission = (403, "Missing permission".to_string());
+    let denied = (404, "Server not found or wrong password".to_string());
+    for (name, expected) in [("alice", &missing_permission), ("erin", &denied)] {
+        assert_eq!(
+            &refusal(w.listed(name, json!({})).await),
+            expected,
+            "{name} lists"
+        );
+        let user = who(db, name).await;
+        let groups = list_groups(
+            State(w.state.clone()),
+            Authed(user.clone()),
+            Path("s".to_string()),
+            Query(query(json!({"by": "member"}))),
+        )
+        .await
+        .map(|Paged(groups, _)| groups);
+        assert_eq!(&refusal(groups), expected, "{name} groups");
+        let open = server_open(State(w.state.clone()), Authed(user), Path("s".to_string()))
+            .await
+            .map(|Json(open)| open);
+        assert_eq!(&refusal(open), expected, "{name} counts");
+        assert!(w.my_open(name).await.is_empty());
+    }
+    let missing = wire(w.detail("mo", 999_999).await).await;
+    assert_eq!(missing, (404, r#"{"error":"Not found"}"#.to_string()));
+    assert_eq!(
+        wire(w.detail("mo", elsewhere).await).await,
+        missing,
+        "another server's"
+    );
+    assert_eq!(
+        wire(w.detail("alice", id).await).await,
+        missing,
+        "a plain member"
+    );
+    assert_eq!(
+        wire(w.detail("bob", id).await).await,
+        missing,
+        "the reporter"
+    );
+    assert_eq!(
+        wire(w.detail("erin", id).await).await,
+        missing,
+        "a non-member"
+    );
+    w.detail("mo", id).await.expect("a holder");
+    for name in ["mo", "olga", "alice"] {
+        assert_eq!(
+            wire(w.admin_ids(name, json!({}), json!({})).await).await,
+            missing,
+            "{name} on the admin route"
+        );
+        assert_eq!(
+            wire(
+                w.admin_ids(name, json!({"scope": "server", "server": "s"}), json!({}))
+                    .await
+            )
+            .await,
+            missing
+        );
+    }
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn timed_out_moderators_can_read() {
+    let (w, path) = world("reports_timed_out").await;
+    let db = w.db();
+    let id = w.about("alice", "bob", T0).await;
+    exec(db, &format!("INSERT INTO member_timeouts(server, username, until, created_at) VALUES('s', 'mo', {}, 0)", now() + 3600)).await;
+    assert_eq!(w.ids("mo", json!({})).await, [id]);
+    assert_eq!(w.open("mo").await, 1);
+    w.detail("mo", id).await.expect("detail");
+    let mo = who(db, "mo").await;
+    assert_eq!(
+        refusal(
+            report_scope(db, &mo, Some("s"), ReportMode::Write)
+                .await
+                .map(|s| s.viewer)
+        ),
+        (403, "You are timed out in this server".to_string())
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn site_admin_reads_any_server_read_only() {
+    let (w, path) = world("reports_staff").await;
+    let db = w.db();
+    let id = w.about("alice", "bob", T0).await;
+    let in_ops = ops_report(&w, T0 + 1).await;
+    assert_eq!(
+        w.admin_ids("root", json!({"scope": "server", "server": "S"}), json!({}))
+            .await
+            .expect("staff"),
+        [in_ops, id],
+        "every channel"
+    );
+    assert!(
+        w.admin_ids("root", json!({}), json!({}))
+            .await
+            .expect("instance")
+            .is_empty()
+    );
+    assert_eq!(
+        refusal(
+            w.admin_ids("root", json!({"scope": "nonsense"}), json!({}))
+                .await
+        ),
+        (400, "Unknown scope".to_string())
+    );
+    assert_eq!(
+        refusal(
+            w.admin_ids(
+                "root",
+                json!({"scope": "server", "server": "nowhere"}),
+                json!({})
+            )
+            .await
+        ),
+        (404, "Server not found or wrong password".to_string())
+    );
+    w.detail("root", id).await.expect("staff reads the detail");
+    let root = who(db, "root").await;
+    let read = report_scope(db, &root, Some("s"), ReportMode::Read)
+        .await
+        .expect("read");
+    assert!(read.staff && read.all_channels);
+    assert_eq!(
+        refusal(
+            report_scope(db, &root, Some("s"), ReportMode::Write)
+                .await
+                .map(|s| s.viewer)
+        ),
+        (404, "Server not found or wrong password".to_string())
+    );
+    assert!(
+        w.my_open("root").await.is_empty(),
+        "staff powers give no badge"
+    );
+    for name in ["olga", "mo", "alice"] {
+        let user = who(db, name).await;
+        assert_eq!(
+            refusal(
+                report_scope(db, &user, Some("s"), ReportMode::Staff)
+                    .await
+                    .map(|s| s.viewer)
+            ),
+            (404, "Not found".to_string()),
+            "{name}: only the site admin reads with the instance's powers"
+        );
+    }
+    add_member(db, "s", "root", 0, 0, 0).await;
+    assert_eq!(
+        refusal(
+            report_scope(db, &root, Some("s"), ReportMode::Write)
+                .await
+                .map(|s| s.viewer)
+        ),
+        (403, "Missing permission".to_string()),
+        "as a member, only their own permission counts"
+    );
+    let read = report_scope(db, &root, Some("s"), ReportMode::Read)
+        .await
+        .expect("read");
+    assert!(
+        read.staff && read.all_channels,
+        "a member without the permission reads with the instance's powers, as staff"
+    );
+    assert_eq!(w.ids("root", json!({})).await, [in_ops, id]);
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_roles(server, username, role_id) VALUES('s', 'root', {})",
+            w.mods
+        ),
+    )
+    .await;
+    let own = report_scope(db, &root, Some("s"), ReportMode::Write)
+        .await
+        .expect("write");
+    assert!(!own.staff);
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn a_site_admin_with_the_permission_reads_as_that_member() {
+    let (w, path) = world("reports_admin_member").await;
+    let db = w.db();
+    let id = w.about("alice", "bob", T0).await;
+    let in_ops = ops_report(&w, T0 + 1).await;
+    add_member(db, "s", "root", 0, 0, 0).await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_roles(server, username, role_id) VALUES('s', 'root', {})",
+            w.mods
+        ),
+    )
+    .await;
+    let root = who(db, "root").await;
+    for mode in [ReportMode::Read, ReportMode::Write] {
+        let own = report_scope(db, &root, Some("s"), mode)
+            .await
+            .expect("a holder");
+        assert_eq!(
+            (own.staff, own.all_channels, own.closed.as_slice()),
+            (false, false, [w.ops].as_slice()),
+            "{mode:?}: the membership decides what they see"
+        );
+    }
+    assert_eq!(w.ids("root", json!({})).await, [id]);
+    assert_eq!(
+        wire(w.detail("root", in_ops).await).await,
+        (404, r#"{"error":"Not found"}"#.to_string())
+    );
+    assert_eq!(
+        w.my_open("root").await,
+        [OpenCount {
+            server: "s".to_string(),
+            open: 1
+        }]
+    );
+    assert_eq!(
+        w.admin_ids("root", json!({"scope": "server", "server": "s"}), json!({}))
+            .await
+            .expect("the admin routes read with the instance's powers"),
+        [in_ops, id]
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn related_reports_leave_out_channels_the_viewer_cant_view() {
+    let (w, path) = world("reports_related_channels").await;
+    let in_ops = ops_report(&w, T0).await;
+    let about_carol = w.about("alice", "carol", T0 + 1).await;
+    let related = |by: &'static str| {
+        let w = &w;
+        async move {
+            w.detail(by, about_carol)
+                .await
+                .unwrap_or_else(|e| panic!("{by}: {e:?}"))
+                .related
+                .iter()
+                .map(|r| r.id)
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(related("olga").await, [in_ops]);
+    assert!(
+        related("mo").await.is_empty(),
+        "a report about a message in #ops stays out of what mo sees of the same account"
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn a_long_history_comes_in_pages() {
+    let (w, path) = world("reports_history_pages").await;
+    let db = w.db();
+    let id = w.about("alice", "bob", T0).await;
+    for n in 1..=120 {
+        exec(db, &format!("INSERT INTO report_events(report_id, actor, kind, detail, created_at) VALUES({id}, 'mo', 'note', '{{\"text\": \"note {n}\"}}', {})", T0 + n)).await;
+    }
+    let texts = |events: &[ReportEvent]| {
+        events
+            .iter()
+            .map(|e| match e.kind.as_str() {
+                "note" => e.detail["text"].as_str().expect("text").to_string(),
+                kind => kind.to_string(),
+            })
+            .collect::<Vec<_>>()
+    };
+    let notes = |range: std::ops::RangeInclusive<i64>| {
+        range.map(|n| format!("note {n}")).collect::<Vec<_>>()
+    };
+    let detail = w.detail("mo", id).await.expect("detail");
+    assert_eq!(
+        texts(&detail.events),
+        notes(71..=120),
+        "the newest 50 lines, oldest first"
+    );
+    let page = |by: &'static str, cursor: Option<String>| {
+        let w = &w;
+        async move {
+            let user = who(w.db(), by).await;
+            list_events(
+                State(w.state.clone()),
+                Authed(user),
+                Path(id),
+                Query(EventsQuery { cursor }),
+            )
+            .await
+        }
+    };
+    let Paged(newest, next) = page("mo", None).await.expect("the newest page");
+    assert_eq!(texts(&newest), notes(71..=120));
+    assert_eq!(next, detail.events_cursor);
+    let Paged(middle, next) = page("mo", detail.events_cursor).await.expect("earlier");
+    assert_eq!(texts(&middle), notes(21..=70));
+    let Paged(first, end) = page("mo", next).await.expect("the first lines");
+    let mut start = vec!["created".to_string()];
+    start.extend(notes(1..=20));
+    assert_eq!(texts(&first), start);
+    assert_eq!(end, None);
+    assert_eq!(
+        first[0].actor, None,
+        "the first line never names the reporter"
+    );
+
+    let short = w.about("carol", "dave", T0).await;
+    let detail = w.detail("mo", short).await.expect("detail");
+    assert_eq!((detail.events.len(), detail.events_cursor), (1, None));
+    for name in ["alice", "bob", "erin"] {
+        assert_eq!(
+            wire(page(name, None).await.map(|Paged(events, _)| events)).await,
+            (404, r#"{"error":"Not found"}"#.to_string()),
+            "{name}: a plain member, the one reported, a non-member"
+        );
+    }
+    assert_eq!(
+        refusal(
+            page("mo", Some("nonsense".to_string()))
+                .await
+                .map(|Paged(events, _)| events)
+        )
+        .0,
+        400
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn oldest_first_lists_the_oldest_open_report() {
+    let (w, path) = world("reports_oldest").await;
+    let db = w.db();
+    let closed = w.about("alice", "bob", T0).await;
+    exec(
+        db,
+        &format!("UPDATE reports SET status = 'resolved' WHERE id = {closed}"),
+    )
+    .await;
+    let oldest = w.about("carol", "bob", T0 + 1).await;
+    let newer = w.about("dave", "bob", T0 + 2).await;
+    assert_eq!(
+        w.ids("mo", json!({"status": "open", "oldest": true, "limit": 1}))
+            .await,
+        [oldest]
+    );
+    assert_eq!(
+        w.ids("mo", json!({"status": "open", "oldest": true})).await,
+        [oldest, newer]
+    );
+    let user = who(db, "mo").await;
+    let Paged(first, next) = list_reports(
+        State(w.state.clone()),
+        Authed(user.clone()),
+        Path("s".to_string()),
+        Query(query(json!({"oldest": true, "limit": 2}))),
+    )
+    .await
+    .expect("page");
+    assert_eq!(
+        first.iter().map(|r| r.id).collect::<Vec<_>>(),
+        [closed, oldest]
+    );
+    let Paged(second, _) = list_reports(
+        State(w.state.clone()),
+        Authed(user),
+        Path("s".to_string()),
+        Query(query(
+            json!({"oldest": true, "limit": 2, "cursor": next.expect("cursor")}),
+        )),
+    )
+    .await
+    .expect("page");
+    assert_eq!(second.iter().map(|r| r.id).collect::<Vec<_>>(), [newer]);
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn detail_shows_snapshot_events_and_related() {
+    let (w, path) = world("reports_detail").await;
+    let db = w.db();
+    let older = w.about("carol", "bob", T0).await;
+    message(db, w.general, "carol", "before", 100).await;
+    let said = message(db, w.general, "bob", "buy my coins", 200).await;
+    let id = w
+        .send("alice", json!({"to": "server", "target": {"kind": "message", "id": said}, "reason": "spam", "context": 5, "form": "message", "answers": [{"id": "details", "value": "third time today"}]}), T0 + 5)
+        .await
+        .expect("report")
+        .id;
+    let detail = w.detail("mo", id).await.expect("detail");
+    assert_eq!(detail.report.id, id);
+    assert_eq!(detail.report.excerpt, "buy my coins");
+    assert_eq!(detail.report.channel.as_deref(), Some("general"));
+    assert_eq!(detail.note, None);
+    assert_eq!(
+        serde_json::to_value(&detail.answers).expect("json"),
+        json!([{"id": "details", "label": "Note", "kind": "long_text", "value": "third time today"}])
+    );
+    let shown = detail.snapshot.message.as_ref().expect("message");
+    assert_eq!(shown.content, "buy my coins");
+    assert_eq!(
+        detail
+            .snapshot
+            .context
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        ["before"]
+    );
+    assert!(!detail.franked);
+    assert_eq!(
+        serde_json::to_value(&detail.events).expect("json"),
+        json!([{"kind": "created", "actor": null, "detail": {}, "created_at": T0 + 5}]),
+        "the history never repeats who reported"
+    );
+    assert_eq!(
+        detail.related.iter().map(|r| r.id).collect::<Vec<_>>(),
+        [older]
+    );
+    exec(db, &format!("INSERT INTO report_events(report_id, actor, kind, detail, created_at) VALUES({id}, 'mo', 'note', '{{\"text\": \"looking\"}}', {})", T0 + 9)).await;
+    let detail = w.detail("mo", id).await.expect("detail");
+    assert_eq!(
+        serde_json::to_value(&detail.events[1]).expect("json")["actor"]["username"],
+        "mo"
+    );
+    assert_eq!(detail.events[1].detail, json!({"text": "looking"}));
+    let mut conn = db.acquire().await.expect("conn");
+    forget_user(&mut conn, "bob").await.expect("forget");
+    drop(conn);
+    let detail = w.detail("mo", id).await.expect("after the account is gone");
+    assert_eq!(
+        (
+            detail.report.target,
+            detail.report.target_key.as_str(),
+            detail
+                .snapshot
+                .message
+                .as_ref()
+                .and_then(|m| m.author.clone())
+        ),
+        (
+            None,
+            format!("d:{id}").as_str(),
+            Some(SnapUser {
+                deleted: true,
+                ..SnapUser::default()
+            })
+        )
+    );
+    assert_eq!(
+        w.grouped("mo", json!({"by": "member"})).await,
+        [(format!("d:{older}"), 1, 1), (format!("d:{id}"), 1, 1)]
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn open_counts_cover_my_servers() {
+    let (w, path) = world("reports_open").await;
+    let db = w.db();
+    exec(
+        db,
+        "INSERT INTO servers(name, display_name, creator, created_at) VALUES('s2', 'S2', 'mo', 0)",
+    )
+    .await;
+    add_member(db, "s2", "mo", 1, 0, 0).await;
+    add_member(db, "s2", "alice", 0, 0, 0).await;
+    exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('s3', 'S3', 'olga', 0)").await;
+    add_member(db, "s3", "mo", 1, 4, 0).await;
+    w.about("alice", "bob", T0).await;
+    w.about("alice", "carol", T0).await;
+    let closed = w.about("carol", "dave", T0).await;
+    exec(
+        db,
+        &format!("UPDATE reports SET status = 'in_review' WHERE id = {closed}"),
+    )
+    .await;
+    let mo = who(db, "mo").await;
+    assert_eq!(
+        crate::api::access::report_servers(db, &mo)
+            .await
+            .expect("servers"),
+        ["s", "s2"],
+        "a role and an admin with every permission, not an admin with Kick only"
+    );
+    assert_eq!(
+        w.my_open("mo").await,
+        [OpenCount {
+            server: "s".to_string(),
+            open: 2
+        }]
+    );
+    assert!(w.my_open("alice").await.is_empty());
+    assert!(w.my_open("root").await.is_empty());
+    done(w.state, path).await;
+}
+
+#[test]
+fn days_and_dates() {
+    for (days, date) in [
+        (0, "1970-01-01"),
+        (59, "1970-03-01"),
+        (11_016, "2000-02-29"),
+        (19_358, "2023-01-01"),
+        (20_513, "2026-03-01"),
+    ] {
+        assert_eq!(query::date_of(days), date);
+        assert_eq!(query::day_of(date), Some(days));
+    }
+    for bad in [
+        "",
+        "2026",
+        "2026-02-30",
+        "2026-13-01",
+        "2026-1-1x",
+        "2026-01-01-01",
+    ] {
+        assert_eq!(query::day_of(bad), None, "{bad}");
+    }
 }

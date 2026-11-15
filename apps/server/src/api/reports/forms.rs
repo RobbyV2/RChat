@@ -743,12 +743,21 @@ pub struct Answer {
 
 /// An answer as a report keeps it, with the field's label and the labels of the chosen options
 /// at report time, so later changes of the form never change what an old report says.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct StoredAnswer {
+    /// The field's id.
     pub id: String,
+    /// The field's label when the report was sent.
     pub label: String,
+    /// The field's kind.
     pub kind: FieldKind,
+    /// The answer: a string for text fields and a single choice, a list of option ids for a
+    /// multiple choice, `true` for a checkbox, and for a reference the names it had:
+    /// `{"username", "display_name"}`, `{"server", "display_name"}` or
+    /// `{"message_id", "author"}`. `{"deleted": true}` stands for an account deleted since.
+    #[schema(value_type = Object)]
     pub value: Value,
+    /// For choices: the labels of the chosen options when the report was sent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shown: Option<Vec<String>>,
 }

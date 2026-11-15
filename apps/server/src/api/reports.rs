@@ -1,23 +1,31 @@
 pub mod forms;
 mod limits;
+mod query;
 pub mod snapshot;
 mod store;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use query::{groups as groups_in, list as list_in, open_count};
 pub(crate) use store::{forget_user, purge_server, sweep};
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path, Query, State};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::subjects::{Caller, lists_members, resolve_user};
-use crate::api::access::{Proof, Via, denied, not_found, resolve_message, resolve_server};
+use crate::api::access::{
+    Proof, ReportMode, ReportScope, Via, denied, not_found, report_scope, report_servers,
+    resolve_message, resolve_server,
+};
 use crate::api::features::Feature;
 use crate::api::policy::Policy;
-use crate::api::{ApiError, ApiErrorBody, Authed, Settings, bad, lookup};
+use crate::api::{
+    ApiError, ApiErrorBody, Authed, LIST_PAGE, Paged, Settings, UserRef, allowed, bad,
+    decode_cursor, encode_cursor, lookup,
+};
 use crate::db::{Db, User, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
@@ -718,4 +726,504 @@ pub(crate) async fn create_at(
     };
     announce(state, scope, audience);
     Ok(Created { id })
+}
+
+/// Where a report stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    Open,
+    InReview,
+    Resolved,
+    Dismissed,
+}
+
+impl Status {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Status::Open => "open",
+            Status::InReview => "in_review",
+            Status::Resolved => "resolved",
+            Status::Dismissed => "dismissed",
+        }
+    }
+
+    pub fn parse(status: &str) -> Option<Status> {
+        [
+            Status::Open,
+            Status::InReview,
+            Status::Resolved,
+            Status::Dismissed,
+        ]
+        .into_iter()
+        .find(|s| s.as_str() == status)
+    }
+}
+
+/// What was done about a resolved report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModAction {
+    /// The message was deleted.
+    Delete,
+    /// The member was timed out.
+    Timeout,
+    /// The member was kicked.
+    Kick,
+    /// The member was banned.
+    Ban,
+}
+
+impl ModAction {
+    pub const ALL: [ModAction; 4] = [
+        ModAction::Delete,
+        ModAction::Timeout,
+        ModAction::Kick,
+        ModAction::Ban,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ModAction::Delete => "delete",
+            ModAction::Timeout => "timeout",
+            ModAction::Kick => "kick",
+            ModAction::Ban => "ban",
+        }
+    }
+
+    pub fn parse(action: &str) -> Option<ModAction> {
+        ModAction::ALL.into_iter().find(|a| a.as_str() == action)
+    }
+}
+
+/// What a list of report groups sorts the reports by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupBy {
+    /// The server a report to the instance happened in. For the reports to the instance only.
+    Server,
+    /// Who or what is reported: the key is the report's `target_key`.
+    Member,
+    /// Who reported: the key is a username, or empty for deleted accounts.
+    Reporter,
+    /// The reported member's first role when the report was sent: the key is the role id, or
+    /// empty for none.
+    Role,
+    /// The channel of the reported message: the key is the channel id, or empty for none.
+    Channel,
+    /// The report's `reason`.
+    Reason,
+    /// The report's `status`.
+    Status,
+    /// Who handles it: the key is a username, or empty for nobody.
+    Assignee,
+    /// The day it was sent, `YYYY-MM-DD`, in the time zone `tz` gives.
+    Day,
+    /// The report's category: the key is the form id.
+    Form,
+}
+
+/// Filters, grouping and paging of the report lists.
+#[derive(Clone, Debug, Default, Deserialize, IntoParams)]
+pub struct ReportQuery {
+    /// Only reports with this status.
+    pub status: Option<Status>,
+    /// Only reports with this reason id.
+    pub reason: Option<String>,
+    /// Only reports of this category: a form id.
+    pub form: Option<String>,
+    /// Only reports sent at or after this time, unix seconds.
+    pub from: Option<i64>,
+    /// Only reports sent at or before this time, unix seconds.
+    pub to: Option<i64>,
+    /// The grouping: required for the group list; with `key`, it filters a report list to one
+    /// group.
+    pub by: Option<GroupBy>,
+    /// A group key of the grouping `by`, as the group list gives it.
+    pub key: Option<String>,
+    /// For `by=day`: minutes to add to UTC, -840 to 840. Default 0.
+    pub tz: Option<i64>,
+    /// List the oldest reports first.
+    pub oldest: Option<bool>,
+    /// The `X-Next-Cursor` of the page before.
+    pub cursor: Option<String>,
+    /// Page size, 1 to 50. Default 50.
+    pub limit: Option<i64>,
+}
+
+/// A report in a list.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct ReportRow {
+    /// The report's id.
+    pub id: i64,
+    /// Who it went to.
+    pub kind: ReportKind,
+    /// Where it stands.
+    pub status: Status,
+    /// What was done, on a resolved report.
+    pub action: Option<ModAction>,
+    /// The reason id. For a report without a target it is the answer to the field its form
+    /// marks as the reason, or `other`.
+    pub reason: String,
+    /// The label the reason had when the report was sent.
+    pub reason_label: Option<String>,
+    /// The category: the id of the form the report was sent with.
+    pub form: String,
+    /// The name the category had when the report was sent.
+    pub form_label: String,
+    /// `message`, `user`, `server` or `none`.
+    pub target_kind: String,
+    /// Groups the reports about the same target: `u:<username>` for an account and its
+    /// messages, `s:<server>` for a server, `d:<id>` once the account is deleted, `-` for
+    /// none.
+    pub target_key: String,
+    /// The reported account; `null` for webhooks, servers, deleted accounts and none.
+    pub target: Option<UserRef>,
+    /// The name of the webhook whose post was reported.
+    pub webhook: Option<String>,
+    /// The server it happened in.
+    pub server: Option<String>,
+    /// That server's display name when the report was sent.
+    pub server_name: Option<String>,
+    /// The channel of the reported message.
+    pub channel_id: Option<i64>,
+    /// The channel's name now, or when the report was sent if it is gone.
+    pub channel: Option<String>,
+    /// The name of the reported member's first role when the report was sent.
+    pub role: Option<String>,
+    /// Who sent it; `null` once the account is deleted.
+    pub reporter: Option<UserRef>,
+    /// Who handles it.
+    pub assignee: Option<UserRef>,
+    /// The first 200 characters of the reported message, the name of the reported account or
+    /// server, or the first text answer of a report without a target.
+    pub excerpt: String,
+    /// Whether it was passed on to the instance.
+    pub escalated: bool,
+    /// Unix seconds.
+    pub created_at: i64,
+    /// Unix seconds.
+    pub updated_at: i64,
+}
+
+/// A group of reports.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct ReportGroup {
+    /// The group's key: pass it as `key` with the same `by` to list its reports.
+    pub key: String,
+    /// A name for the group, where the key is not one: a role, channel, server, reason or
+    /// category name, `Deleted user`, `Unassigned`, `No role`, `No channel` or `No server`.
+    pub label: Option<String>,
+    /// The account the group is about, for `member`, `reporter` and `assignee`.
+    pub user: Option<UserRef>,
+    /// Reports in the group.
+    pub count: i64,
+    /// Of those, the ones with the status `open`.
+    pub open: i64,
+}
+
+/// A line of a report's history.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct ReportEvent {
+    /// `created`, `status`, `assign`, `note` or `escalate`.
+    pub kind: String,
+    /// Who did it; `null` for `created` and for deleted accounts.
+    pub actor: Option<UserRef>,
+    /// `status`: `{status, action?}`. `assign`: `{assignee}`. `note`: `{text}`. `escalate`:
+    /// `{note?, to}` on the report and `{note?, from}` on its copy.
+    #[schema(value_type = Object)]
+    pub detail: Value,
+    /// Unix seconds.
+    pub created_at: i64,
+}
+
+/// A report in full.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct ReportDetail {
+    /// The report as the list shows it.
+    pub report: ReportRow,
+    /// The reporter's note.
+    pub note: Option<String>,
+    /// The answers to the form's fields, in form order, with the labels they had when the
+    /// report was sent. Empty answers are left out.
+    pub answers: Vec<StoredAnswer>,
+    /// The reported content as it was when the report was sent.
+    pub snapshot: Snapshot,
+    /// Whether the content is proven to be what was sent. Always `false` for now.
+    pub franked: bool,
+    /// The newest 50 lines of the history, oldest first.
+    pub events: Vec<ReportEvent>,
+    /// The cursor for the lines before `events`: pass it as `cursor` to
+    /// `GET /api/v1/reports/{id}/events`. `null` when `events` is the whole history.
+    pub events_cursor: Option<String>,
+    /// The 50 newest other reports about the same target that you can see.
+    pub related: Vec<ReportRow>,
+}
+
+/// The open reports of one server.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
+pub struct OpenCount {
+    /// The server's name.
+    pub server: String,
+    /// Its reports with the status `open` that you can see.
+    pub open: i64,
+}
+
+/// A count of open reports.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
+pub struct Open {
+    /// The reports with the status `open` that you can see.
+    pub open: i64,
+}
+
+/// List a server's reports
+///
+/// The reports sent to the moderators of the server, newest first, as pages of `limit`
+/// (default and max 50). Page with `cursor` from the `X-Next-Cursor` response header. Filter
+/// by `status`, `reason`, `form` (the category) and the time range `from` to `to`; `by` with
+/// `key` lists one group of `GET /api/v1/servers/{name}/reports/groups`; `oldest=true` lists
+/// the oldest first. You never see a report about yourself, nor one about a message in a
+/// channel you can't view. Requires being a member with the Manage reports permission; a
+/// timeout does not hide the reports. General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/v1/servers/{name}/reports",
+    tag = "Reports",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ReportQuery),
+    responses(
+        (status = 200, description = "A page of reports", body = Vec<ReportRow>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
+        (status = 400, description = "`Unknown grouping` (`by=server`), `Invalid tz`, `Invalid day`, an invalid cursor (JSON), or a value of the wrong type (plain-text framework error)", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`Missing permission`: a member without Manage reports. Or banned from the server", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn list_reports(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    Query(q): Query<ReportQuery>,
+) -> Result<Paged<ReportRow>, ApiError> {
+    let db = &state.read();
+    let scope = report_scope(db, &user, Some(&name), ReportMode::Read).await?;
+    query::list(db, &scope, &q).await
+}
+
+/// List a server's reports in groups
+///
+/// The reports sent to the moderators of the server, counted by the grouping `by`: `member`
+/// (who is reported), `reporter`, `role`, `channel`, `reason`, `status`, `assignee`, `day`
+/// (with `tz`) or `form` (the category). Groups with the most open reports come first, then
+/// the largest, as pages of `limit` (default and max 50); page with `cursor` from the
+/// `X-Next-Cursor` response header. The filters of the report list apply. The counts leave out
+/// what the list leaves out for you. Requires being a member with the Manage reports
+/// permission. General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/v1/servers/{name}/reports/groups",
+    tag = "Reports",
+    params(("name" = String, Path, description = "Server name, case-insensitive"), ReportQuery),
+    responses(
+        (status = 200, description = "A page of groups", body = Vec<ReportGroup>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
+        (status = 400, description = "`Unknown grouping` (no `by`, or `by=server`), `Invalid tz`, an invalid cursor (JSON), or a value of the wrong type (plain-text framework error)", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`Missing permission`: a member without Manage reports. Or banned from the server", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn list_groups(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+    Query(q): Query<ReportQuery>,
+) -> Result<Paged<ReportGroup>, ApiError> {
+    let db = &state.read();
+    let scope = report_scope(db, &user, Some(&name), ReportMode::Read).await?;
+    query::groups(db, &scope, &q).await
+}
+
+/// Count a server's open reports
+///
+/// How many reports to the moderators of the server have the status `open`, among those you
+/// can see. Requires being a member with the Manage reports permission. General rate-limit
+/// bucket.
+#[utoipa::path(
+    get,
+    path = "/api/v1/servers/{name}/reports/open",
+    tag = "Reports",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    responses(
+        (status = 200, description = "The count", body = Open),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`Missing permission`: a member without Manage reports. Or banned from the server", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn server_open(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+) -> Result<Json<Open>, ApiError> {
+    let db = &state.read();
+    let scope = report_scope(db, &user, Some(&name), ReportMode::Read).await?;
+    Ok(Json(Open {
+        open: query::open_count(db, &scope).await?,
+    }))
+}
+
+/// Paging of `GET /api/v1/reports/open`.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+pub struct OpenQuery {
+    /// The `X-Next-Cursor` of the page before.
+    pub cursor: Option<String>,
+}
+
+/// Count the open reports of your servers
+///
+/// The servers where you hold Manage reports and at least one report you can see is `open`,
+/// by name, each with its count, 50 a page. Page with `cursor` from the `X-Next-Cursor`
+/// response header. Ask again when `reports_changed` arrives. General rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/v1/reports/open",
+    tag = "Reports",
+    params(OpenQuery),
+    responses(
+        (status = 200, description = "A page of servers with open reports", body = Vec<OpenCount>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
+        (status = 400, description = "An invalid cursor", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn my_open(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Query(q): Query<OpenQuery>,
+) -> Result<Paged<OpenCount>, ApiError> {
+    let db = &state.read();
+    let after = match q.cursor.as_deref().filter(|c| !c.trim().is_empty()) {
+        Some(cursor) => Some(decode_cursor(cursor, 1)?.remove(0)),
+        None => None,
+    };
+    let servers = report_servers(db, &user).await?;
+    let mut out = Vec::new();
+    let mut next = None;
+    for server in servers
+        .into_iter()
+        .filter(|s| after.as_ref().is_none_or(|a| s > a))
+    {
+        if out.len() as i64 == LIST_PAGE {
+            next = out
+                .last()
+                .map(|last: &OpenCount| encode_cursor(&[&last.server]));
+            break;
+        }
+        let Some(scope) = allowed(report_scope(db, &user, Some(&server), ReportMode::Read).await)?
+        else {
+            continue;
+        };
+        let open = query::open_count(db, &scope).await?;
+        if open > 0 {
+            out.push(OpenCount { server, open });
+        }
+    }
+    Ok(Paged(out, next))
+}
+
+/// Get a report
+///
+/// A report in full: its row, the reporter's note and answers, the reported content as it was
+/// when the report was sent, the newest 50 lines of its history and the other reports about
+/// the same target. `GET /api/v1/reports/{id}/events` pages through the rest of the history.
+/// For the moderators of the report's server (members with Manage reports). General
+/// rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/v1/reports/{id}",
+    tag = "Reports",
+    params(("id" = i64, Path, description = "Report id")),
+    responses(
+        (status = 200, description = "The report", body = ReportDetail),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: no such report, one you don't handle, one about you, or one about a message in a channel you can't view (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn get_report(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(id): Path<i64>,
+) -> Result<Json<ReportDetail>, ApiError> {
+    query::detail(&state.read(), &user, id).await.map(Json)
+}
+
+/// Paging of a report's history.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+pub struct EventsQuery {
+    /// The report's `events_cursor`, or the `X-Next-Cursor` of the page before.
+    pub cursor: Option<String>,
+}
+
+/// List a report's history
+///
+/// The history of a report, 50 lines a page, each page oldest first. Without `cursor` it is
+/// the newest 50 lines, as `GET /api/v1/reports/{id}` gives them in `events`; with that
+/// answer's `events_cursor`, or the `X-Next-Cursor` response header of a page, the 50 lines
+/// before. For the moderators of the report's server (members with Manage reports). General
+/// rate-limit bucket.
+#[utoipa::path(
+    get,
+    path = "/api/v1/reports/{id}/events",
+    tag = "Reports",
+    params(("id" = i64, Path, description = "Report id"), EventsQuery),
+    responses(
+        (status = 200, description = "A page of the history, oldest first", body = Vec<ReportEvent>, headers(("x-next-cursor" = String, description = "Cursor for the lines before these; absent on the first lines"))),
+        (status = 400, description = "An invalid cursor", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: no such report, one you don't handle, one about you, or one about a message in a channel you can't view (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn list_events(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(id): Path<i64>,
+    Query(EventsQuery { cursor }): Query<EventsQuery>,
+) -> Result<Paged<ReportEvent>, ApiError> {
+    query::history(&state.read(), &user, id, cursor.as_deref()).await
+}
+
+/// Which reports an admin route reads: those to the instance, or with `scope=server` those to
+/// the moderators of `server`, read-only.
+#[derive(Debug, Default, Deserialize)]
+pub struct AdminScope {
+    pub scope: Option<String>,
+    pub server: Option<String>,
+}
+
+/// The scope an admin route reads. Only for the site admin: everyone else gets `not_found()`.
+pub(crate) async fn admin_scope(
+    db: &Db,
+    user: &User,
+    which: &AdminScope,
+) -> Result<ReportScope, ApiError> {
+    if !user.is_site_admin {
+        return Err(not_found());
+    }
+    match (which.scope.as_deref(), which.server.as_deref()) {
+        (None | Some("instance"), _) => report_scope(db, user, None, ReportMode::Read).await,
+        (Some("server"), Some(server)) => {
+            report_scope(db, user, Some(server), ReportMode::Staff).await
+        }
+        (Some(_), _) => Err(invalid("scope", "Unknown scope")),
+    }
 }

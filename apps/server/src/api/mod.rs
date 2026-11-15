@@ -2234,6 +2234,15 @@ fn api_routes(
             get(upload_expiry::get_upload_expiry).put(upload_expiry::set_upload_expiry),
         )
         .route("/report_forms", get(reports::forms::get_forms))
+        .route("/servers/{name}/reports", get(reports::list_reports))
+        .route("/servers/{name}/reports/groups", get(reports::list_groups))
+        .route("/servers/{name}/reports/open", get(reports::server_open))
+        .route("/reports/open", get(reports::my_open))
+        .route("/reports/{id}", get(reports::get_report))
+        .route("/reports/{id}/events", get(reports::list_events))
+        .route("/admin/reports", get(admin::list_reports))
+        .route("/admin/reports/groups", get(admin::report_groups))
+        .route("/admin/reports/open", get(admin::reports_open))
         .route(
             "/admin/report_forms",
             get(admin::get_report_forms).put(admin::put_report_forms),

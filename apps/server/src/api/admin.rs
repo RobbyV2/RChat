@@ -669,6 +669,44 @@ pub(crate) async fn put_report_forms(
     Ok(Json(after))
 }
 
+/// The reports to the instance or, with `scope=server&server=<name>`, a server's reports,
+/// read-only: `GET /api/v1/servers/{name}/reports` for the instance.
+pub(crate) async fn list_reports(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Query(which): Query<reports::AdminScope>,
+    Query(q): Query<reports::ReportQuery>,
+) -> Result<Paged<reports::ReportRow>, ApiError> {
+    let db = &state.read();
+    let scope = reports::admin_scope(db, &user, &which).await?;
+    reports::list_in(db, &scope, &q).await
+}
+
+/// The groups of those reports. `by=server` works for the reports to the instance.
+pub(crate) async fn report_groups(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Query(which): Query<reports::AdminScope>,
+    Query(q): Query<reports::ReportQuery>,
+) -> Result<Paged<reports::ReportGroup>, ApiError> {
+    let db = &state.read();
+    let scope = reports::admin_scope(db, &user, &which).await?;
+    reports::groups_in(db, &scope, &q).await
+}
+
+/// How many of those reports are open.
+pub(crate) async fn reports_open(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Query(which): Query<reports::AdminScope>,
+) -> Result<Json<reports::Open>, ApiError> {
+    let db = &state.read();
+    let scope = reports::admin_scope(db, &user, &which).await?;
+    Ok(Json(reports::Open {
+        open: reports::open_count(db, &scope).await?,
+    }))
+}
+
 /// Request body of `POST /api/v1/admin/servers`.
 #[derive(Deserialize)]
 pub struct AdminServerReq {

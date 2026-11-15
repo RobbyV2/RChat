@@ -1810,6 +1810,124 @@ pub(crate) async fn ws_sees_timeouts(
     Ok(member_perms(db, server, username).await? & Perm::TimeoutMembers as i64 != 0)
 }
 
+/// What a caller wants with reports: to read them, to handle them, or to read them with the
+/// instance's powers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportMode {
+    Read,
+    Write,
+    Staff,
+}
+
+/// The reports a viewer may see: those to the moderators of `server`, or without one those to
+/// the instance.
+#[derive(Clone, Debug)]
+pub struct ReportScope {
+    pub server: Option<String>,
+    pub viewer: String,
+    /// The channels of the server the viewer can't view.
+    pub closed: Vec<i64>,
+    /// The viewer sees every channel, also private ones that are gone.
+    pub all_channels: bool,
+    /// A site admin reading with the instance's powers.
+    pub staff: bool,
+}
+
+impl ReportScope {
+    pub fn kind(&self) -> crate::api::reports::ReportKind {
+        match self.server {
+            Some(_) => crate::api::reports::ReportKind::Server,
+            None => crate::api::reports::ReportKind::Instance,
+        }
+    }
+}
+
+/// The reports `user` may read or handle.
+///
+/// With a server: its reports, for a member who holds Manage reports themselves. Reading keeps
+/// working during a timeout; handling does not (403). A site admin who holds the permission as
+/// a member reads and handles the reports as that member, in the channels the membership
+/// shows. A site admin who doesn't (not a member, or a member without the permission) may
+/// read with the instance's powers (`staff`: every channel) and never handle. `Staff` reads
+/// that way whatever the membership, for the site admin only: everyone else gets
+/// `not_found()`. Everyone else who is not a member gets `denied()`, a member without the
+/// permission 403.
+///
+/// Without a server: the reports to the instance, for the site admin; everyone else gets
+/// `not_found()`.
+pub async fn report_scope(
+    db: &Db,
+    user: &User,
+    server: Option<&str>,
+    mode: ReportMode,
+) -> Result<ReportScope, ApiError> {
+    let Some(name) = server else {
+        return match user.is_site_admin {
+            true => Ok(ReportScope {
+                server: None,
+                viewer: user.username.clone(),
+                closed: Vec::new(),
+                all_channels: true,
+                staff: false,
+            }),
+            false => Err(not_found()),
+        };
+    };
+    let access = resolve_server(db, name, Some(user), &Proof::none()).await?;
+    let member = access.is_member();
+    let holds =
+        member && access.member_perms(db, &user.username).await? & Perm::ManageReports as i64 != 0;
+    let staff = access.site_admin() && (mode == ReportMode::Staff || !holds);
+    match (mode, staff, member) {
+        (ReportMode::Read | ReportMode::Staff, true, _) => {}
+        (ReportMode::Staff, false, _) => return Err(not_found()),
+        (ReportMode::Read, false, true) => {
+            if !holds {
+                return Err(forbidden("Missing permission"));
+            }
+        }
+        (ReportMode::Write, _, true) => match access.as_member() {
+            Some(own) => own.require_perm(db, Perm::ManageReports).await?,
+            None => access.require_perm(db, Perm::ManageReports).await?,
+        },
+        (ReportMode::Read | ReportMode::Write, _, false) => return Err(denied()),
+    }
+    let view = match (staff, access.as_member()) {
+        (false, Some(own)) => own,
+        (true, Some(_)) | (_, None) => access,
+    };
+    let all_channels = staff || view.manages_channels(db).await?;
+    let closed = match all_channels {
+        true => Vec::new(),
+        false => view
+            .channel_rights(db)
+            .await?
+            .into_iter()
+            .filter(|(_, rights)| !rights.view)
+            .map(|(id, _)| id)
+            .collect(),
+    };
+    Ok(ReportScope {
+        server: Some(view.name().to_string()),
+        viewer: user.username.clone(),
+        closed,
+        all_channels,
+        staff,
+    })
+}
+
+/// The servers where `user` holds Manage reports through their own membership (an admin's
+/// permissions or a role), by name. Being a site admin adds none.
+pub(crate) async fn report_servers(db: &Db, user: &User) -> sqlx::Result<Vec<String>> {
+    let bit = Perm::ManageReports as i64;
+    let rows = sqlx::query("SELECT server FROM members WHERE username = $1 AND is_admin <> 0 AND (perms = 0 OR (perms & $2) <> 0) UNION SELECT ur.server FROM user_roles ur JOIN roles r ON r.id = ur.role_id JOIN members m ON m.server = ur.server AND m.username = ur.username WHERE ur.username = $1 AND m.is_admin = 0 AND (r.perms & $2) <> 0 ORDER BY 1")
+        .bind(&user.username)
+        .bind(bit)
+        .fetch_all(db)
+        .await?;
+    rows.iter().map(|r| r.try_get(0)).collect()
+}
+
 /// `reports_changed` fan-out: whether `username` handles the reports of `server`, which takes
 /// their own Manage reports permission as a member, and may see a report from `channel` (its
 /// id and whether it was private), as the report list decides it: a channel they can view, or

@@ -36,6 +36,18 @@
     "reason": "site-admin only and left out of the API document (the hidden admin)"
   },
   {
+    "route": "get /api/v1/admin/reports",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "get /api/v1/admin/reports/groups",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "get /api/v1/admin/reports/open",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
     "route": "get /api/v1/admin/config",
     "reason": "site-admin only and left out of the API document (the hidden admin)"
   },
