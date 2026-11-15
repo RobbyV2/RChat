@@ -249,6 +249,7 @@ impl Modify for Bearer {
         super::reports::list_mutes,
         super::reports::mute_reporter,
         super::reports::unmute_reporter,
+        super::reports::export::export_reports,
         super::health::health,
         super::health::ready,
         super::instance::instance,
@@ -291,7 +292,7 @@ impl Modify for Bearer {
 
 **Pagination.** List endpoints return a JSON array. When more items follow, the `X-Next-Cursor` response header holds an opaque cursor; pass it back as the `cursor` query parameter for the next page. The header is absent on the last page. Each endpoint lists its page size and limits.
 
-**Rate limits.** Every `/api` route except `/api/v1/health` and `/api/v1/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, word hints, recovery challenges, recovery sign-in, password change, backup phrase changes, guest access, server name checks, config links, P2P identity bindings, P2P backup uploads and deletes, sending reports, and media upload also share a strict per-IP bucket (2 per second, burst 30). Invite previews and joining a server each have their own bucket of the same size. Exceeding a bucket answers 429 with a plain-text body. Requests a person makes a few times a day at most (sign-ups, new display names, password changes, backup phrase changes, recovery, server name checks, new, renamed and deleted servers, server passwords, webhooks and their secrets and tests, config links, P2P backups and P2P bindings) are rare requests: each kind counts per account, or per client address for sign-ups and recovery, at most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day by default. Password and backup phrase changes count only once the current password or phrase is confirmed. Past them the answer is `429 {\"error\": \"You've done this too often. Try again later.\", \"reason\": {\"kind\": \"rate\", \"retry_after\": n}}` with `Retry-After`.
+**Rate limits.** Every `/api` route except `/api/v1/health` and `/api/v1/ready` shares a general per-client-IP bucket (`RATE_LIMIT_PER_SECOND`, default 10 per second, burst `RATE_LIMIT_BURST`, default 60). The `/.well-known` routes have their own general bucket of the same size, separate from the `/api` one. Register, login, word hints, recovery challenges, recovery sign-in, password change, backup phrase changes, guest access, server name checks, config links, P2P identity bindings, P2P backup uploads and deletes, sending and exporting reports, and media upload also share a strict per-IP bucket (2 per second, burst 30). Invite previews and joining a server each have their own bucket of the same size. Exceeding a bucket answers 429 with a plain-text body. Requests a person makes a few times a day at most (sign-ups, new display names, password changes, backup phrase changes, recovery, server name checks, new, renamed and deleted servers, server passwords, webhooks and their secrets and tests, config links, P2P backups and P2P bindings) are rare requests: each kind counts per account, or per client address for sign-ups and recovery, at most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day by default. Password and backup phrase changes count only once the current password or phrase is confirmed. Past them the answer is `429 {\"error\": \"You've done this too often. Try again later.\", \"reason\": {\"kind\": \"rate\", \"retry_after\": n}}` with `Retry-After`.
 
 **Errors.** Errors raised by the API come as JSON `{\"error\": \"...\"}` (`ApiErrorBody`). Many also carry `reason`, an object for programs: `kind` says what happened (`off_site`: turned off for this site; `off_account`: turned off for your account; `off_server`: turned off in this server; `off_app` and `app`: an app's setting or rule; `limit`: you reached a limit; `capacity`: the site is full right now; `invalid`: a value is wrong; `rate`: too many requests; `conflict`: someone else changed it or the name is taken; `sign_in`: the session ended; `unavailable`: the server can't do it right now), `control` names the setting or limit, `retry_after` is the wait in seconds (also sent as the `Retry-After` header) and `field` names the wrong value. Status codes and `error` texts are the same with and without it. An error without `reason` is a denial about a server, channel or message you cannot open, or an error that has no kind yet. When the database does not answer in time, an endpoint answers `503 {\"error\": \"Server busy, try again in a moment\", \"reason\": {\"kind\": \"unavailable\", \"retry_after\": 1}}` with `Retry-After: 1`: retry the request. Any other server error is `500 {\"error\": \"Something went wrong\"}`. Malformed JSON bodies are rejected by the framework with a plain-text 400, 415 or 422.
 
@@ -389,13 +390,14 @@ pub(crate) mod tests {
         ),
     ];
 
-    const ADMIN_ROUTES: [(&str, &str); 22] = [
+    const ADMIN_ROUTES: [(&str, &str); 23] = [
         ("patch", "/api/v1/admin/settings"),
         ("get", "/api/v1/admin/report_forms"),
         ("put", "/api/v1/admin/report_forms"),
         ("get", "/api/v1/admin/reports"),
         ("get", "/api/v1/admin/reports/groups"),
         ("get", "/api/v1/admin/reports/open"),
+        ("get", "/api/v1/admin/reports/export"),
         ("post", "/api/v1/admin/reports/resolve"),
         ("get", "/api/v1/admin/report_mutes"),
         ("put", "/api/v1/admin/report_mutes/{username}"),

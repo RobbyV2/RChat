@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 use sqlx::Row;
 
+use super::export::{ExportQuery, Format};
 use super::*;
 use crate::api::admin;
 use crate::api::test_util::{add_member, done, pg_done, pg_state, temp_state};
@@ -4662,4 +4663,450 @@ async fn reports_changed_after_status_changes() {
         .expect("assign");
     assert!(events.try_recv().is_err(), "an assignment changes no count");
     done(w.state, path).await;
+}
+
+// Export.
+
+impl World {
+    /// The export of the reports of `s` for `by`: its media type and its text.
+    pub(super) async fn export(
+        &self,
+        by: &str,
+        format: Option<Format>,
+        q: Value,
+    ) -> Result<(String, String), ApiError> {
+        let user = who(self.db(), by).await;
+        let res = export::export_reports(
+            State(self.state.clone()),
+            Authed(user),
+            Path("s".to_string()),
+            Query(ExportQuery { format }),
+            Query(query(q)),
+        )
+        .await?;
+        Ok(file(res).await)
+    }
+}
+
+async fn file(res: axum::response::Response) -> (String, String) {
+    let kind = res.headers()["content-type"]
+        .to_str()
+        .expect("type")
+        .to_string();
+    assert!(
+        res.headers()["content-disposition"]
+            .to_str()
+            .expect("disposition")
+            .starts_with("attachment; filename=\"reports."),
+    );
+    let bytes = axum::body::to_bytes(res.into_body(), 64 << 20)
+        .await
+        .expect("body");
+    (kind, String::from_utf8(bytes.to_vec()).expect("utf8"))
+}
+
+async fn set_forms(db: &Db, doc: &Value) {
+    let forms = forms::ReportForms::parse(&doc.to_string()).expect("forms");
+    exec(db, "DELETE FROM settings WHERE key = 'report_forms'").await;
+    sqlx::query("INSERT INTO settings(key, value) VALUES('report_forms', $1)")
+        .bind(forms.stored())
+        .execute(db)
+        .await
+        .expect("forms");
+    Policy::load(db).await;
+}
+
+#[tokio::test]
+async fn csv_has_the_fixed_columns_then_the_fields() {
+    let (w, path) = world("reports_csv").await;
+    let db = w.db();
+    let mut doc = serde_json::to_value(forms::ReportForms::defaults()).expect("json");
+    doc["forms"][0]["fields"]
+        .as_array_mut()
+        .expect("fields")
+        .push(json!({"id": "seen", "kind": "multiple_choice", "label": "Where, \"exactly\"", "options": [{"id": "dm", "label": "In a DM"}, {"id": "voice", "label": "In voice"}]}));
+    set_forms(db, &doc).await;
+    let said = message(db, w.general, "bob", "look", 100).await;
+    let first = w
+        .send("alice", json!({"to": "server", "target": member("bob"), "reason": "harassment", "form": "user", "answers": [
+            {"id": "details", "value": "=SUM(A1), \"quoted\"\nsecond line"},
+            {"id": "seen", "value": ["voice", "dm"]},
+            {"id": "evidence", "value": {"message_id": said}},
+        ]}), T0)
+        .await
+        .expect("report")
+        .id;
+    let second = w
+        .send("carol", json!({"to": "server", "target": {"kind": "message", "id": said}, "reason": "spam", "note": "-1 for this"}), T0 + 61)
+        .await
+        .expect("report")
+        .id;
+    w.patch(
+        "mo",
+        second,
+        json!({"status": "resolved", "action": "delete", "assignee": "mo"}),
+    )
+    .await
+    .expect("resolve");
+    let (kind, csv) = w.export("mo", None, json!({})).await.expect("export");
+    assert_eq!(kind, "text/csv; charset=utf-8");
+    let fixed =
+        "id,created,category,reason,status,action,target,reporter,assignee,server,channel,excerpt";
+    let lines: Vec<&str> = csv.split("\r\n").collect();
+    assert_eq!(
+        lines[0],
+        format!(
+            "{fixed},A message that shows it,What happened,\"Where, \"\"exactly\"\"\",What kind,What went wrong,Steps to make it happen,What you expected,App and device,Topic"
+        ),
+        "the fixed columns, then a column per field of the forms under its label"
+    );
+    assert_eq!(
+        lines[1],
+        format!(
+            "{second},2033-05-18T03:34:21Z,Report message,Spam,resolved,delete,bob,carol,mo,Server S,general,look,,'-1 for this,,,,,,,"
+        ),
+        "newest first; a text that starts like a formula gets a quote in front"
+    );
+    assert_eq!(
+        lines[2],
+        format!(
+            "{first},2033-05-18T03:33:20Z,Report a user,Harassment,open,,bob,alice,,Server S,,bob,{said},\"'=SUM(A1), \"\"quoted\"\"\nsecond line\",In voice; In a DM,,,,,,"
+        ),
+        "commas, quotes and line breaks are quoted"
+    );
+    assert_eq!(lines[3..], [""], "every line ends with CR LF");
+
+    doc["forms"][0]["fields"]
+        .as_array_mut()
+        .expect("fields")
+        .pop();
+    doc["forms"][0]["fields"][4]["label"] = json!("=Details");
+    set_forms(db, &doc).await;
+    let (_, csv) = w
+        .export("mo", Some(Format::Csv), json!({"status": "open"}))
+        .await
+        .expect("export");
+    let lines: Vec<&str> = csv.split("\r\n").collect();
+    assert_eq!(
+        lines[0],
+        format!(
+            "{fixed},A message that shows it,'=Details,What kind,What went wrong,Steps to make it happen,What you expected,App and device,Topic,field:seen"
+        ),
+        "a field no form has any more keeps a column under its id"
+    );
+    assert!(
+        lines[1].ends_with(",,,,,,In voice; In a DM"),
+        "{}",
+        lines[1]
+    );
+    assert_eq!(lines.len(), 3, "the filters of the list apply: {csv}");
+
+    let (kind, text) = w
+        .export("mo", Some(Format::Json), json!({}))
+        .await
+        .expect("json");
+    assert_eq!(kind, "application/json");
+    let rows: Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(rows.as_array().map(Vec::len), Some(2));
+    assert_eq!(rows[0]["id"], second);
+    assert_eq!(rows[0]["note"], Value::Null);
+    assert_eq!(
+        rows[0]["answers"],
+        json!([{"id": "details", "label": "Note", "kind": "long_text", "value": "-1 for this"}])
+    );
+    assert_eq!(rows[1]["id"], first);
+    assert_eq!(rows[1]["reporter"]["username"], "alice");
+    assert_eq!(
+        rows[1]["answers"][2]["shown"],
+        json!(["In voice", "In a DM"])
+    );
+    assert!(
+        rows[1].get("snapshot").is_none(),
+        "the evidence stays in the report"
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn an_export_holds_what_the_list_shows() {
+    let (w, path) = world("reports_export_scope").await;
+    let db = w.db();
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_roles(server, username, role_id) VALUES('s', 'frank', {})",
+            w.mods
+        ),
+    )
+    .await;
+    let about_bob = w.about("alice", "bob", T0).await;
+    let about_mo = w.about("alice", "mo", T0 + 1).await;
+    let in_ops = ops_report(&w, T0 + 2).await;
+    let ids = |text: String| {
+        let rows: Value = serde_json::from_str(&text).expect("json");
+        rows.as_array()
+            .expect("rows")
+            .iter()
+            .map(|r| r["id"].as_i64().expect("id"))
+            .collect::<Vec<_>>()
+    };
+    let json = Some(Format::Json);
+    assert_eq!(
+        ids(w.export("mo", json, json!({})).await.expect("mo").1),
+        [about_bob],
+        "never a report about the moderator or from a channel they can't view"
+    );
+    assert_eq!(
+        ids(w.export("frank", json, json!({})).await.expect("frank").1),
+        [about_mo, about_bob]
+    );
+    assert_eq!(
+        ids(w
+            .export("olga", json, json!({"oldest": true}))
+            .await
+            .expect("olga")
+            .1),
+        [about_bob, about_mo, in_ops]
+    );
+    let (_, csv) = w.export("mo", None, json!({})).await.expect("csv");
+    assert!(!csv.contains("ops talk") && !csv.contains(",mo,"), "{csv}");
+    assert_eq!(
+        refusal(w.export("alice", None, json!({})).await),
+        (403, "Missing permission".to_string())
+    );
+    assert_eq!(
+        refusal(w.export("erin", None, json!({})).await),
+        (404, "Server not found or wrong password".to_string())
+    );
+    assert_eq!(
+        refusal(w.export("mo", None, json!({"by": "server"})).await),
+        (400, "Unknown grouping".to_string())
+    );
+    assert_eq!(
+        w.audit().await,
+        [
+            r#"report.export|mo|0|-|-|-|{"count":1,"format":"json"}"#,
+            r#"report.export|frank|0|-|-|-|{"count":2,"format":"json"}"#,
+            r#"report.export|olga|0|-|-|-|{"count":3,"format":"json"}"#,
+            r#"report.export|mo|0|-|-|-|{"count":1,"format":"csv"}"#,
+        ],
+        "every export is logged with its size, naming nobody but who exported"
+    );
+
+    let root = who(db, "root").await;
+    let staff = admin::export_reports(
+        State(w.state.clone()),
+        Authed(root.clone()),
+        Query(AdminScope {
+            scope: Some("server".to_string()),
+            server: Some("s".to_string()),
+        }),
+        Query(ExportQuery { format: json }),
+        Query(query(json!({}))),
+    )
+    .await
+    .expect("staff");
+    assert_eq!(ids(file(staff).await.1), [in_ops, about_mo, about_bob]);
+    assert_eq!(
+        w.audit().await[4..],
+        [r#"report.export|-|1|-|-|-|{"count":3,"format":"json"}"#],
+        "logged as the unnamed staff"
+    );
+    w.send("alice", json!({"to": "instance", "target": {"kind": "none"}, "form": "bug", "answers": [{"id": "summary", "value": "Blank page"}]}), T0)
+        .await
+        .expect("bug");
+    let instance = admin::export_reports(
+        State(w.state.clone()),
+        Authed(root),
+        Query(AdminScope::default()),
+        Query(ExportQuery { format: None }),
+        Query(query(json!({}))),
+    )
+    .await
+    .expect("instance");
+    let (_, csv) = file(instance).await;
+    let lines: Vec<&str> = csv.split("\r\n").collect();
+    assert_eq!(lines.len(), 3);
+    assert!(
+        lines[1].contains(",Report a bug,other,open,,,alice,,,,Blank page,")
+            && lines[1].contains(",Blank page,,"),
+        "{}",
+        lines[1]
+    );
+    assert_eq!(
+        w.instance_audit().await,
+        [r#"report.export|root|-|{"count":1,"format":"csv"}"#]
+    );
+    let mo = who(db, "mo").await;
+    let refused = admin::export_reports(
+        State(w.state.clone()),
+        Authed(mo),
+        Query(AdminScope::default()),
+        Query(ExportQuery { format: None }),
+        Query(query(json!({}))),
+    )
+    .await
+    .map(|_| ());
+    assert_eq!(
+        wire(refused).await,
+        (404, r#"{"error":"Not found"}"#.to_string())
+    );
+    done(w.state, path).await;
+}
+
+/// The ids of the reports in a JSON export.
+fn exported(text: &str) -> Vec<i64> {
+    let rows: Value = serde_json::from_str(text).expect("json");
+    rows.as_array()
+        .expect("rows")
+        .iter()
+        .map(|r| r["id"].as_i64().expect("id"))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_member_reading_through_the_instances_powers_exports_as_staff() {
+    let (w, path) = world("reports_export_staff_member").await;
+    let db = w.db();
+    let about_bob = w.about("alice", "bob", T0).await;
+    let in_ops = ops_report(&w, T0 + 1).await;
+    add_member(db, "s", "root", 0, 0, 0).await;
+    let (_, sent) = w
+        .export("root", Some(Format::Json), json!({}))
+        .await
+        .expect("the site admin as a member without Manage reports");
+    assert_eq!(exported(&sent), [in_ops, about_bob]);
+    assert_eq!(
+        w.audit().await,
+        [r#"report.export|-|1|-|-|-|{"count":2,"format":"json"}"#],
+        "logged as the unnamed staff, so the log never shows a member exporting without the permission"
+    );
+    assert!(w.instance_audit().await.is_empty());
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn a_site_admin_with_the_permission_exports_as_that_member() {
+    let (w, path) = world("reports_export_admin_member").await;
+    let db = w.db();
+    let about_bob = w.about("alice", "bob", T0).await;
+    let in_ops = ops_report(&w, T0 + 1).await;
+    add_member(db, "s", "root", 0, 0, 0).await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user_roles(server, username, role_id) VALUES('s', 'root', {})",
+            w.mods
+        ),
+    )
+    .await;
+    let (_, sent) = w
+        .export("root", Some(Format::Json), json!({}))
+        .await
+        .expect("the site admin as a member with Manage reports");
+    assert_eq!(
+        exported(&sent),
+        [about_bob],
+        "what any member with the role exports: nothing from #ops"
+    );
+    assert_eq!(
+        w.audit().await,
+        [r#"report.export|root|0|-|-|-|{"count":1,"format":"json"}"#],
+        "by name, as any member"
+    );
+    let root = who(db, "root").await;
+    let staff = admin::export_reports(
+        State(w.state.clone()),
+        Authed(root),
+        Query(AdminScope {
+            scope: Some("server".to_string()),
+            server: Some("s".to_string()),
+        }),
+        Query(ExportQuery {
+            format: Some(Format::Json),
+        }),
+        Query(query(json!({}))),
+    )
+    .await
+    .expect("the admin route");
+    assert_eq!(exported(&file(staff).await.1), [in_ops, about_bob]);
+    assert_eq!(
+        w.audit().await[1..],
+        [r#"report.export|-|1|-|-|-|{"count":2,"format":"json"}"#],
+        "the admin route reads with the instance's powers and is logged as the unnamed staff"
+    );
+    done(w.state, path).await;
+}
+
+#[tokio::test]
+async fn exports_are_capped_and_paced() {
+    let (w, path) = world("reports_export_caps").await;
+    let db = w.db();
+    exec(db, "INSERT INTO reports(kind, server, server_name, target_kind, target_key, target_user, reporter, form, form_label, reason, snapshot, created_at, updated_at) WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5005) SELECT 'server', 's', 'Server S', 'user', 'u:x', 'x', 'alice', 'user', 'Report a user', 'other', '{}', i, i FROM n").await;
+    let (_, csv) = w.export("mo", None, json!({})).await.expect("export");
+    let lines: Vec<&str> = csv.split("\r\n").collect();
+    assert_eq!(lines.len(), 5002, "the header, 5,000 reports and the end");
+    assert!(
+        lines[1].starts_with("5005,1970-01-01T01:23:25Z,"),
+        "{}",
+        lines[1]
+    );
+    assert!(lines[5000].starts_with("6,"), "{}", lines[5000]);
+    assert_eq!(
+        w.audit().await,
+        [r#"report.export|mo|0|-|-|-|{"count":5000,"format":"csv"}"#]
+    );
+    let (_, older) = w
+        .export("mo", None, json!({"to": 5}))
+        .await
+        .expect("a narrower range gives the rest");
+    assert_eq!(older.split("\r\n").count(), 7);
+    for n in 2..10 {
+        w.export("mo", None, json!({"to": 1}))
+            .await
+            .unwrap_or_else(|e| panic!("export {n}: {e:?}"));
+    }
+    let e = w
+        .export("mo", None, json!({"to": 1}))
+        .await
+        .expect_err("the 11th in an hour");
+    let ApiError(status, text, reason) = e;
+    assert_eq!(
+        (status.as_u16(), text.as_str()),
+        (429, export::TOO_MANY_EXPORTS)
+    );
+    let reason = reason.expect("reason");
+    assert_eq!(reason.kind, crate::api::error::ReasonKind::Rate);
+    assert!(
+        reason
+            .retry_after
+            .is_some_and(|secs| (1..=3600).contains(&secs))
+    );
+    assert_eq!(w.audit().await.len(), 10, "a refused export is not logged");
+    w.export("olga", None, json!({"to": 1}))
+        .await
+        .expect("another account has its own count");
+    done(w.state, path).await;
+}
+
+#[test]
+fn csv_cells() {
+    for (text, cell) in [
+        ("plain", "plain"),
+        ("", ""),
+        ("a,b", "\"a,b\""),
+        ("say \"hi\"", "\"say \"\"hi\"\"\""),
+        ("two\nlines", "\"two\nlines\""),
+        ("=1+1", "'=1+1"),
+        ("+1", "'+1"),
+        ("-1", "'-1"),
+        ("@cmd", "'@cmd"),
+        ("\tx", "'\tx"),
+        ("=a,b", "\"'=a,b\""),
+        ("a=b", "a=b"),
+    ] {
+        assert_eq!(export::cell(text), cell, "{text:?}");
+    }
+    assert_eq!(export::stamp(0), "1970-01-01T00:00:00Z");
+    assert_eq!(export::stamp(2_000_000_000), "2033-05-18T03:33:20Z");
 }

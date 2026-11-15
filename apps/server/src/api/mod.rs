@@ -1934,6 +1934,11 @@ pub fn routes(
             )
             .route("/servers/{name}/available", get(servers::server_available))
             .route("/reports", post(reports::create_report))
+            .route(
+                "/servers/{name}/reports/export",
+                get(reports::export::export_reports),
+            )
+            .route("/admin/reports/export", get(admin::export_reports))
             .route("/identity/p2p_binding", post(instance::p2p_binding))
             .route(
                 "/config_shares",

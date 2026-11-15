@@ -76,6 +76,7 @@ pub enum Action {
     ReportEscalate,
     ReportMute,
     ReportUnmute,
+    ReportExport,
 }
 
 pub const ACTIONS: &[Action] = &[
@@ -131,6 +132,7 @@ pub const ACTIONS: &[Action] = &[
     Action::ReportEscalate,
     Action::ReportMute,
     Action::ReportUnmute,
+    Action::ReportExport,
 ];
 
 /// Action groups, the part of an action name before the dot.
@@ -193,6 +195,7 @@ impl Action {
             Action::ReportEscalate => "report.escalate",
             Action::ReportMute => "report.mute",
             Action::ReportUnmute => "report.unmute",
+            Action::ReportExport => "report.export",
         }
     }
 
@@ -673,8 +676,8 @@ pub struct AuditEntry {
     /// `attachment_remove` (of other people's messages), `pin`, `unpin`, `poll_close` and
     /// `poll_reopen` (of other people's polls). `report`: `status`, `assign`, `note`, `escalate`
     /// (the target is the report's id, never a name; `channel` in the details is the channel
-    /// of the reported message), `mute` and `unmute` (of someone's reports to this server).
-    /// Clients should show
+    /// of the reported message), `mute` and `unmute` (of someone's reports to this server),
+    /// `export` (no target). Clients should show
     /// unknown actions generically; new ones may be added.
     #[schema(example = "member.ban")]
     pub action: String,

@@ -4,6 +4,7 @@ use serde_json::Value;
 use sqlx::Row;
 use sqlx::any::AnyRow;
 
+use super::export::ExportRow;
 use super::forms::{FieldKind, StoredAnswer};
 use super::snapshot::Snapshot;
 use super::{
@@ -747,4 +748,42 @@ pub(crate) async fn history(
         None => None,
     };
     events(db, id, before).await
+}
+
+/// The reports of `scope` that pass the filters of `q`, at most `max`, as an export holds
+/// them: newest first (oldest first with `q.oldest`), read a page at a time.
+pub(crate) async fn export(
+    db: &Db,
+    scope: &ReportScope,
+    q: &ReportQuery,
+    max: usize,
+) -> Result<Vec<ExportRow>, ApiError> {
+    const PAGE: usize = 500;
+    let oldest = q.oldest.unwrap_or(false);
+    let (after, order) = match oldest {
+        true => (">", "r.created_at, r.id"),
+        false => ("<", "r.created_at DESC, r.id DESC"),
+    };
+    let mut out: Vec<ExportRow> = Vec::new();
+    let mut last: Option<(i64, i64)> = None;
+    loop {
+        let mut clause = visible(scope);
+        filter(&mut clause, scope, q)?;
+        if let Some((at, id)) = last {
+            let (at, id) = (clause.int(at), clause.int(id));
+            clause.and(format!("(r.created_at, r.id) {after} ({at}, {id})"));
+        }
+        let take = PAGE.min(max - out.len());
+        let found = rows(db, clause, order, take as i64).await?;
+        let read = found.len();
+        last = found.last().map(|raw| (raw.row.created_at, raw.row.id));
+        out.extend(found.into_iter().map(|raw| ExportRow {
+            report: raw.row,
+            note: raw.note,
+            answers: raw.answers,
+        }));
+        if read < take || out.len() >= max {
+            return Ok(out);
+        }
+    }
 }

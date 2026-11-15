@@ -707,6 +707,19 @@ pub(crate) async fn reports_open(
     }))
 }
 
+/// The reports to the instance (or, with `scope=server&server=<name>`, a server's) as a file:
+/// `GET /api/v1/servers/{name}/reports/export` for the instance.
+pub(crate) async fn export_reports(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Query(which): Query<reports::AdminScope>,
+    Query(reports::export::ExportQuery { format }): Query<reports::export::ExportQuery>,
+    Query(q): Query<reports::ReportQuery>,
+) -> Result<axum::response::Response, ApiError> {
+    let scope = reports::admin_scope(&state.read(), &user, &which).await?;
+    reports::export::export_in(&state, &scope, &user, &q, format.unwrap_or_default()).await
+}
+
 /// Closes every report to the instance about one target: `POST
 /// /api/v1/servers/{name}/reports/resolve` for the instance.
 pub(crate) async fn resolve_reports(
