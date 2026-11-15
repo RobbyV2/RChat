@@ -259,6 +259,12 @@ export interface DmSummary {
   is_self: boolean
   // Closed by you: only lookups by id return it.
   closed?: boolean
+  // The newest message or call log, null without messages; absent from older servers.
+  last_message_id?: number | null
+  // Unix seconds.
+  last_message_at?: number | null
+  // The other person is an accepted friend; false for the self DM.
+  friend?: boolean
 }
 
 export type MediaKind = 'server' | 'p2p'

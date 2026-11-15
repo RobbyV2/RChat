@@ -16,6 +16,17 @@ import { limitsOf, tooLargeText } from '../instance_limits'
 import { api, home, writeLocal } from '../instances'
 import { staleInvites } from '../invite'
 import {
+  DEFAULT_DM_QUERY,
+  NO_DM_EDGE,
+  compareDms,
+  dmListPrefs,
+  dmQuery,
+  noteDmMessage,
+  queryKey,
+  type DmEdge,
+  type DmQuery,
+} from '../dm_list'
+import {
   type OlderState,
   type Page,
   appendUnique,
@@ -269,16 +280,59 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     toast,
   } = deps
 
-  const dmPager = createPager<DmSummary>({
+  // The query the pager's cursor belongs to; `/me` gives the first page of the default one.
+  let dmAsked: DmQuery = DEFAULT_DM_QUERY
+  // Within a query the edge only moves on, so paging again from the start hides nothing.
+  const edgeTo = (edge: DmEdge, last: DmSummary | undefined): DmEdge => {
+    if (queryKey(edge.query) !== queryKey(dmAsked)) return { query: dmAsked, last: last ?? null }
+    if (!last || (edge.last && compareDms(dmAsked.sort)(last, edge.last) <= 0)) return edge
+    return { ...edge, last }
+  }
+  const dmsPager = createPager<DmSummary>({
     read: () => get().dms,
-    write: (dms, dmsMore) => {
-      set({ dms, dmsMore })
+    write: (dms, dmsMore, items) => {
+      set(s => ({ dms, dmsMore, dmsEdge: edgeTo(s.dmsEdge, items.at(-1)) }))
       pinSelf()
     },
-    fetchPage: api.listDms,
+    fetchPage: (cursor, limit) => api.listDms(cursor, limit, dmAsked),
     keyOf: dmKey,
     page: PAGE,
   })
+  const dmPager = {
+    ...dmsPager,
+    reset: (cursor: string | null, keep?: boolean) => {
+      dmAsked = DEFAULT_DM_QUERY
+      return dmsPager.reset(cursor, keep)
+    },
+    // `/me`'s first page, in the default order. The same account keeps paging another order
+    // where it was.
+    head: (
+      fresh: Pick<Me, 'dms' | 'dms_cursor' | 'dms_more'>,
+      same: boolean,
+      steady: boolean
+    ): { resume: boolean; state: Partial<Pick<RChatState, 'dmsMore' | 'dmsEdge'>> } => {
+      if (same && queryKey(dmAsked) !== queryKey(DEFAULT_DM_QUERY))
+        return {
+          resume: dmsPager.reset(null, true),
+          state: fresh.dms_more ? {} : { dmsMore: false },
+        }
+      const was = same ? get().dmsEdge : NO_DM_EDGE
+      dmAsked = DEFAULT_DM_QUERY
+      return {
+        resume: dmsPager.reset(fresh.dms_cursor, steady),
+        state: { dmsMore: fresh.dms_more, dmsEdge: edgeTo(was, fresh.dms.at(-1)) },
+      }
+    },
+    asking: () => queryKey(dmAsked),
+  }
+  // Pages again from the start when the sort or the friends filter changed.
+  const askDms = () => {
+    const want = dmQuery(dmListPrefs(get().layout))
+    if (queryKey(want) === queryKey(dmAsked)) return
+    dmsPager.reset(null)
+    dmAsked = want
+    set({ dmsMore: true, dmsEdge: { query: want, last: null } })
+  }
 
   let dmGen = 0
   // DMs this account closed that a lookup by id returned, so their settings are kept.
@@ -739,10 +793,11 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     })
   }
 
-  const moveDmUp = (id: number) => {
+  const moveDmUp = (id: number, m?: Message) => {
     set(s => {
-      const dm = s.dms.find(d => d.id === id)
-      return dm ? { dms: bumpFront(s.dms, dm, dmKey, isSelfDm) } : {}
+      const dms = m ? noteDmMessage(s.dms, id, m.id, m.created_at) : s.dms
+      const dm = dms.find(d => d.id === id)
+      return dm ? { dms: bumpFront(dms, dm, dmKey, isSelfDm) } : {}
     })
     pinSelf()
   }
@@ -775,12 +830,12 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     pinSelf()
   }
 
-  const bumpDm = (id: number) => {
-    if (get().dms.some(d => d.id === id)) moveDmUp(id)
+  const bumpDm = (id: number, m?: Message) => {
+    if (get().dms.some(d => d.id === id)) moveDmUp(id, m)
     else
       void get()
         .ensureDms([id])
-        .then(inSession(() => moveDmUp(id)))
+        .then(inSession(() => moveDmUp(id, m)))
         .catch(() => {})
   }
 
@@ -1321,7 +1376,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     loadMoreDms: () =>
       act(async () => {
-        if (get().me && get().dmsMore) await dmPager.load()
+        if (!get().me) return
+        askDms()
+        if (get().dmsMore) await dmPager.load()
       }),
 
     ensureDms: async ids => {
@@ -1973,7 +2030,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       readQuote(m)
       const typedIn = rootId !== null ? threadKey(rootId) : messageKey(ev.channel_id, ev.dm_id)
       if (typedIn) noteTyper(typedIn, m.author.username, '', false)
-      if (ev.dm_id !== null && get().me) bumpDm(ev.dm_id)
+      if (ev.dm_id !== null && get().me) bumpDm(ev.dm_id, m)
       if (m.kind === 'call') return
       if (rootId === null) {
         const scope = messageKey(m.channel_id, m.dm_id)

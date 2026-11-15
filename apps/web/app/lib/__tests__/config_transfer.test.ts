@@ -281,6 +281,28 @@ describe('sanitizing', () => {
     ])
   })
 
+  test('the DM list sort and filters travel with the layout and are parsed defensively', async () => {
+    const dmList = { sort: 'name' as const, friends: true, unread: false, unreadTop: true }
+    const src = source()
+    const built = buildConfig({ ...src, layout: src.layout && { ...src.layout, dmList } }, ALL)
+    expect(built.layout?.dmList).toEqual(dmList)
+    const back = await decodeConfig(await encodeConfig(built), NOW)
+    if (!back.ok) throw new Error(back.error)
+    expect(back.doc.layout?.dmList).toEqual(dmList)
+    const changes = describeChanges(back.doc, source())
+    expect(changes.find(c => c.key === 'layout')?.next).toContain(
+      'DMs by name, unread on top, friends only'
+    )
+    for (const bad of [{ sort: 'size' }, 'name', ['name'], null]) {
+      const out = sanitizeConfig({ v: 1, layout: { servers: [], dmList: bad } }, NOW)
+      if (!out.ok) throw new Error('rejected')
+      expect(out.doc.layout && 'dmList' in out.doc.layout).toBe(false)
+    }
+    expect(
+      buildConfig(source(), ALL).layout && 'dmList' in buildConfig(source(), ALL).layout!
+    ).toBe(false)
+  })
+
   test('an imported folder color is validated and a bad one falls back to the default', () => {
     const folder = (color: unknown) => ({
       id: 'f',

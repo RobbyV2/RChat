@@ -10,6 +10,7 @@
 // file carry and share links never do.
 import { fromBase64Url, isRecord, toBase64Url } from './bytes'
 import type { Theme } from './types'
+import { DM_SORTS, type DmListPrefs } from './dm_list'
 import {
   collapsedCount,
   collapsedOf,
@@ -95,6 +96,7 @@ export interface ConfigLayout {
   dmPinned: number[]
   selfPin: SelfPin
   collapsed?: Collapsed
+  dmList?: DmListPrefs
   // P2P servers' order and folders in their rail group (room ids).
   p2p?: RailEntry[]
 }
@@ -173,6 +175,7 @@ export interface ConfigSource {
     dmPinned: number[]
     selfPin: SelfPin
     collapsed?: Collapsed
+    dmList?: DmListPrefs
     p2p?: RailEntry[]
   } | null
   notify: NotifyPrefs | null
@@ -201,6 +204,7 @@ const pickLayout = (l: NonNullable<ConfigSource['layout']>): ConfigLayout => ({
   dmPinned: [...l.dmPinned],
   selfPin: l.selfPin,
   ...(l.collapsed && collapsedCount(l.collapsed) ? { collapsed: collapsedOf(l.collapsed) } : {}),
+  ...(l.dmList ? { dmList: { ...l.dmList } } : {}),
   ...(l.p2p?.length ? { p2p: l.p2p.map(copyEntry) } : {}),
 })
 
@@ -285,9 +289,9 @@ const isRoomId = (n: string) => /^[A-Za-z0-9_-]{43}$/.test(n)
 
 const cleanLayout = (x: unknown): ConfigLayout | undefined => {
   if (!isRecord(x)) return undefined
-  const { servers, dmOrder, dmPinned, selfPin, collapsed, p2p } = x
+  const { servers, dmOrder, dmPinned, selfPin, collapsed, dmList, p2p } = x
   const parsed = parseLayout(
-    JSON.stringify({ v: 2, servers, dmOrder, dmPinned, selfPin, collapsed })
+    JSON.stringify({ v: 2, servers, dmOrder, dmPinned, selfPin, collapsed, dmList })
   )
   const entries = cleanEntries(parsed.servers, validName)
   const rail = Array.isArray(p2p)
@@ -305,6 +309,7 @@ const cleanLayout = (x: unknown): ConfigLayout | undefined => {
           ),
         }
       : {}),
+    ...(parsed.dmList ? { dmList: parsed.dmList } : {}),
     ...(rail.length ? { p2p: rail } : {}),
   }
 }
@@ -501,6 +506,14 @@ const onOff = (b: boolean) => (b ? 'On' : 'Off')
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
+const dmListText = (p: DmListPrefs) =>
+  [
+    `DMs by ${DM_SORTS.find(x => x.sort === p.sort)?.label.toLowerCase()}`,
+    ...(p.unreadTop ? ['unread on top'] : []),
+    ...(p.friends ? ['friends only'] : []),
+    ...(p.unread ? ['unread only'] : []),
+  ].join(', ')
+
 const layoutText = (l: ConfigLayout) => {
   const folders = l.servers.filter(e => typeof e !== 'string').length
   const servers = l.servers.reduce((n, e) => n + (typeof e === 'string' ? 1 : e.servers.length), 0)
@@ -508,6 +521,7 @@ const layoutText = (l: ConfigLayout) => {
     servers ? plural(servers, 'server') : 'Default order',
     ...(folders ? [plural(folders, 'folder')] : []),
     plural(l.dmPinned.length, 'pinned DM'),
+    ...(l.dmList ? [dmListText(l.dmList)] : []),
     ...(l.collapsed && collapsedCount(l.collapsed)
       ? [plural(collapsedCount(l.collapsed), 'collapsed category', 'collapsed categories')]
       : []),

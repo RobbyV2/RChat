@@ -1,7 +1,8 @@
 // A DM's menu, in the sidebar and on Home's pinned DMs. Marking read, muting and closing are the
 // open place's commands (place.ts), and adding or blocking the other person are member actions.
 
-import { AtSign, ExternalLink, PinOff } from 'lucide-react'
+import { ArrowDownUp, AtSign, ExternalLink, ListFilter, PinOff, X } from 'lucide-react'
+import { DM_SORTS, clearDmFilters, dmListPrefs, filtersOn, type DmListPrefs } from '../dm_list'
 import type { NotifyScope } from '../notify'
 import { sharing } from '../platform'
 import { useStore } from '../store'
@@ -26,6 +27,72 @@ const notifyScope = (ctx: ActionCtx): NotifyScope | null => {
 }
 
 const onDm = { scope: 'dm', targets: ['dm'] } as const
+
+const listPrefs = ({ s }: ActionCtx) => dmListPrefs(s.layout)
+
+// The DM list's sort and filter button shows these as its menu, with the list's own short labels;
+// the palette lists them by their titles.
+const onList = (ctx: ActionCtx) => ctx.target.kind === 'dm_list'
+
+const forList = { scope: 'dm', targets: ['dm_list'] } as const
+
+const SORT_TITLES: Record<DmListPrefs['sort'], string> = {
+  recent: 'Sort DMs by recent activity',
+  oldest: 'Sort DMs by oldest activity',
+  name: 'Sort DMs by name',
+  custom: 'Sort DMs in custom order',
+}
+
+const LIST_KEYWORDS = ['direct messages', 'sort', 'order', 'filter']
+
+const sortActions: Action[] = DM_SORTS.map(({ sort, label }) => ({
+  id: `dms_sort_${sort}`,
+  title: SORT_TITLES[sort],
+  label: ctx => (onList(ctx) ? label : SORT_TITLES[sort]),
+  subtitle: ctx => (onList(ctx) && sort === 'custom' ? 'Drag to reorder' : undefined),
+  ...forList,
+  icon: ArrowDownUp,
+  keywords: LIST_KEYWORDS,
+  radio: true,
+  checked: ctx => listPrefs(ctx).sort === sort,
+  available: ctx => signedIn(ctx.s) && (onList(ctx) || listPrefs(ctx).sort !== sort),
+  run: () => get().setDmList({ sort }),
+}))
+
+const toggle = (
+  key: 'friends' | 'unread' | 'unreadTop',
+  row: string,
+  title: string,
+  off: string
+): Action => ({
+  id: `dms_${key === 'unreadTop' ? 'unread_top' : `${key}_only`}`,
+  title,
+  label: ctx => (onList(ctx) ? row : listPrefs(ctx)[key] ? off : title),
+  ...forList,
+  icon: ListFilter,
+  keywords: LIST_KEYWORDS,
+  checked: ctx => listPrefs(ctx)[key],
+  available: ctx => signedIn(ctx.s),
+  run: ctx => get().setDmList({ [key]: !listPrefs(ctx)[key] }),
+})
+
+export const dmListActions: Action[] = [
+  ...sortActions,
+  toggle('unreadTop', 'Unread on top', 'Show unread DMs on top', 'Stop showing unread DMs on top'),
+  toggle('friends', 'Friends only', 'Show only DMs with friends', 'Show DMs with everyone'),
+  toggle('unread', 'Unread only', 'Show only unread DMs', 'Show read DMs too'),
+  {
+    id: 'dms_clear_filters',
+    title: 'Clear DM filters',
+    label: ctx => (onList(ctx) ? 'Clear filters' : 'Clear DM filters'),
+    ...forList,
+    icon: ListFilter,
+    iconFor: ctx => (onList(ctx) ? X : ListFilter),
+    keywords: LIST_KEYWORDS,
+    available: ctx => signedIn(ctx.s) && filtersOn(listPrefs(ctx)) > 0,
+    run: ctx => get().setDmList(clearDmFilters(listPrefs(ctx))),
+  },
+]
 
 export const dmActions: Action[] = [
   {

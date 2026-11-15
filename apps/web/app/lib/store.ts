@@ -7,6 +7,7 @@ import { maskFileName, maskProfanity, showText } from './profanity'
 import { EMPTY_PREFS } from './emoji'
 import { DEFAULT_ROUTE } from './call_choice'
 import { emptyLayout } from './nav_layout'
+import { NO_DM_EDGE } from './dm_list'
 import { DEFAULT_FEATURES } from './features'
 import { SELF_AUDIO_IDLE } from './voice_layout'
 import type { RChatState } from './store_types'
@@ -372,6 +373,7 @@ export const useStore = create<RChatState>()((set, get) => {
     ...selectionInitial(),
     dms: [],
     dmsMore: false,
+    dmsEdge: NO_DM_EDGE,
     serversMore: false,
     layout: emptyLayout,
     emoji: EMPTY_PREFS,
@@ -406,6 +408,7 @@ export const useStore = create<RChatState>()((set, get) => {
     slowUntil: {},
     reads: {},
     readsReady: false,
+    unreadsCut: false,
     pings: NO_PINGS,
     groupPings: NO_GROUP_PINGS,
     unreadAnchor: {},

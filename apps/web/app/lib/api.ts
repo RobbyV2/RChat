@@ -1,5 +1,6 @@
 import { apiRoot, versionedBase, type ApiPrefix } from './api_version'
 import { localUntil, type TimeoutWire } from './timeouts'
+import { DEFAULT_DM_QUERY, queryParams, type DmQuery } from './dm_list'
 import { ALL_PERMS } from './types'
 import type {
   AdminOverview,
@@ -680,8 +681,8 @@ export const endpoints = (c: ApiClient) => ({
     c.req<Message[]>('GET', `/channels/${id}/messages${pageQuery(page)}`),
   sendChannelMessage: (id: number, content: string, opts: SendOpts = {}) =>
     c.req<Message>('POST', `/channels/${id}/messages`, { content, ...opts }),
-  listDms: (cursor: string | null, limit: number) =>
-    c.page<DmSummary>(withCursor(`/dms?limit=${limit}`, cursor)),
+  listDms: (cursor: string | null, limit: number, query: DmQuery = DEFAULT_DM_QUERY) =>
+    c.page<DmSummary>(withCursor(`/dms?limit=${limit}${queryParams(query)}`, cursor)),
   dmsById: (ids: number[]) => c.req<DmSummary[]>('GET', `/dms?ids=${ids.join(',')}`),
   openDm: (username: string) => c.req<DmSummary>('POST', '/dms', { username }),
   closeDm: (id: number) => c.req<unknown>('POST', `/dms/${id}/close`),

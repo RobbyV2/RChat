@@ -134,6 +134,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
         unreadsMore = more
         placeLate(items)
         set(s => ({
+          unreadsCut: more,
           reads: mergeReads(before, s.reads, items, readQueue.pending),
           pings: mergePings(pingsBefore, s.pings, items),
           groupPings: mergeGroupPings(groupsBefore, s.groupPings, items),

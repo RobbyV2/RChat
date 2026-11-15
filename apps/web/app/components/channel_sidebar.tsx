@@ -1,12 +1,13 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
   FolderPlus,
   HeadphoneOff,
   Hash,
+  ListFilter,
   Lock,
   MicOff,
   Pin,
@@ -27,7 +28,18 @@ import { openActionMenu } from '../lib/actions/menu'
 import { useChannelEdit, type Editing } from '../lib/channel_edit'
 import { STAFF_MUTED, isGuestName, voiceSelf } from '../lib/guest_voice'
 import { useGuestMenu } from './guest_voice_menu'
-import { dmSections } from '../lib/nav_layout'
+import { dmSections, type DmSections } from '../lib/nav_layout'
+import {
+  clearDmFilters,
+  dmListPrefs,
+  dmRows,
+  filtersOn,
+  holdOrder,
+  unreadDmIds,
+  unreadListed,
+  type DmListPrefs,
+  type DmRows,
+} from '../lib/dm_list'
 import { enterKey } from '../lib/keys'
 import { rtc } from '../lib/rtc'
 import { Perm, hasPerm, type Category, type Channel, type DmSummary } from '../lib/types'
@@ -63,11 +75,14 @@ export function DmRow({
   active,
   unread,
   pings,
+  shown,
 }: {
   dm: DmSummary
   active: boolean
   unread: boolean
   pings: number
+  // The rows as the list shows them, for a drop.
+  shown?: () => DmSections<number>
 }) {
   const openDm = useStore(s => s.openDm)
   const placeDm = useStore(s => s.placeDm)
@@ -79,7 +94,8 @@ export function DmRow({
       {...longPress((x, y) => openActionMenu(x, y, { kind: 'dm', dm, where: 'sidebar' }), {
         group: 'dm',
         key: String(id),
-        onDrop: ({ zone, index }) => placeDm(id, zone === 'pinned' ? 'pinned' : 'recent', index),
+        onDrop: ({ zone, index }) =>
+          placeDm(id, zone === 'pinned' ? 'pinned' : 'recent', index, shown?.()),
       })}
       className={`mx-2 flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
         active
@@ -234,6 +250,243 @@ function VoiceMemberRow({
   )
 }
 
+const DM_LIST_MENU = 'dm-list'
+
+function DmListControl({ prefs }: { prefs: DmListPrefs }) {
+  const open = useStore(s => s.contextMenu?.owner === DM_LIST_MENU)
+  const on = filtersOn(prefs)
+  const label = on
+    ? `Sort and filter, ${on === 1 ? '1 filter' : `${on} filters`} on`
+    : 'Sort and filter'
+  return (
+    <button
+      title={label}
+      aria-label={label}
+      aria-haspopup="menu"
+      aria-expanded={open}
+      onClick={e => {
+        const r = e.currentTarget.getBoundingClientRect()
+        openActionMenu(
+          r.left,
+          r.bottom + 4,
+          { kind: 'dm_list' },
+          {
+            owner: DM_LIST_MENU,
+            header: (
+              <span className="text-xs font-medium text-on-surface-variant">Sort and filter</span>
+            ),
+          }
+        )
+      }}
+      className={`relative rounded-full p-1 hover:bg-surface-container-high hover:text-on-surface ${
+        on || open ? 'text-primary' : 'text-on-surface-variant'
+      }`}
+    >
+      <ListFilter size={16} />
+      {on > 0 && (
+        <span
+          aria-hidden
+          data-filter-mark
+          className="absolute top-0 right-0 size-2 rounded-full bg-primary ring-2 ring-surface-container-low"
+        />
+      )}
+    </button>
+  )
+}
+
+// Rows keep their places while the pointer or the keyboard focus is in the list; a layout change
+// (a drop, a pin, another sort) shows the new order at once. `tail` is never held.
+function useHeldOrder(
+  next: DmRows<number>,
+  hold: boolean,
+  reset: unknown,
+  alive: ReadonlySet<number>
+): number[] {
+  const last = useRef<{ rows: DmRows<number>; reset: unknown } | null>(null)
+  const prev = last.current
+  const rows = hold && prev && prev.reset === reset ? holdOrder(prev.rows, next, alive) : next
+  last.current = { rows, reset }
+  return rows.ids
+}
+
+function DmSidebar({ dmId }: { dmId: number }) {
+  const dms = useStore(s => s.dms)
+  const layout = useStore(s => s.layout)
+  const dmsMore = useStore(s => s.dmsMore)
+  const dmsEdge = useStore(s => s.dmsEdge)
+  const loadMoreDms = useStore(s => s.loadMoreDms)
+  const ensureDms = useStore(s => s.ensureDms)
+  const setDmList = useStore(s => s.setDmList)
+  const startDm = useStore(s => s.startDm)
+  const dmDrag = useDrag(s => s.group) === 'dm'
+  const dragKey = useDrag(s => s.key)
+  const dropZone = useDrag(s => s.zone)
+  const reads = useStore(s => s.reads)
+  const readsReady = useStore(s => s.readsReady)
+  const unreadsCut = useStore(s => s.unreadsCut)
+  useStore(s => s.notifyPrefs)
+  const pings = useStore(badgePings)
+  const unread = (scope: string) => scopeUnread(useStore.getState(), scope)
+  const pingsOf = (scope: string) => scopePings(pings, scope)
+  const [dmInput, setDmInput] = useState<string | null>(null)
+  const settled = useRef(false)
+  const [pointerIn, setPointerIn] = useState(false)
+  const [keyFocus, setKeyFocus] = useState(false)
+  const prefs = dmListPrefs(layout)
+  const { pinned, recent: order } = useMemo(() => dmSections(dms, layout), [dms, layout])
+  const marked = (d: DmSummary) => unread(`d${d.id}`) || pingsOf(`d${d.id}`) > 0
+  const unreadAll = prefs.unread && readsReady && unreadListed(reads, unreadsCut)
+  const paging = dmsMore && !unreadAll
+  const edge = paging ? dmsEdge : null
+  const byId = new Map(order.map(d => [d.id, d]))
+  const next = dmRows(order, prefs, marked, dmId, edge)
+  const held = useHeldOrder(next, pointerIn || keyFocus, layout, new Set(byId.keys()))
+  const rest = held.flatMap(id => byId.get(id) ?? [])
+  const shownRef = useRef<DmSections<number>>({ pinned: [], recent: [] })
+  shownRef.current = { pinned: pinned.map(d => d.id), recent: held }
+  const shown = () => shownRef.current
+  const wantUnread = prefs.unread || prefs.unreadTop
+  const unreadKey = useStore(s => (wantUnread ? unreadDmIds(s.reads).join(',') : ''))
+  const [looked, setLooked] = useState('')
+  useEffect(() => {
+    if (!unreadKey) return
+    void ensureDms(unreadKey.split(',').map(Number))
+      .catch(() => {})
+      .then(() => setLooked(unreadKey))
+  }, [unreadKey, ensureDms])
+  const submitDm = () => {
+    const target = (dmInput ?? '').trim().toLowerCase()
+    setDmInput(null)
+    if (settled.current) return
+    settled.current = true
+    if (target) void startDm(target)
+  }
+  const pinZone = dmDrag && pinned.length === 0
+  const pinning = dropZone === 'pinned' && !pinned.some(d => String(d.id) === dragKey)
+  const sorted = prefs.sort !== 'custom'
+  const row = (dm: DmSummary) => (
+    <DmRow
+      key={dm.id}
+      dm={dm}
+      active={dmId === dm.id}
+      unread={unread(`d${dm.id}`)}
+      pings={pingsOf(`d${dm.id}`)}
+      shown={shown}
+    />
+  )
+  return (
+    <aside className={base}>
+      <div
+        ref={dragScope}
+        onPointerEnter={() => setPointerIn(true)}
+        onPointerLeave={() => setPointerIn(false)}
+        onFocus={e => setKeyFocus(e.target.matches(':focus-visible'))}
+        onBlur={e => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setKeyFocus(false)
+        }}
+        className="flex flex-1 flex-col overflow-y-auto pb-3"
+      >
+        <FriendsEntry />
+        {pinned.length > 0 && (
+          <div
+            data-drop-zone="pinned"
+            data-drop-label="Pin"
+            className={`flex shrink-0 flex-col pb-1 transition-colors ${
+              pinning ? 'bg-primary-container/40' : ''
+            }`}
+          >
+            <div className="sticky top-0 z-10 flex items-center gap-1.5 bg-surface-container-low px-4 pt-3 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+              <Pin size={12} className="shrink-0" />
+              Pinned
+            </div>
+            {pinned.map(row)}
+          </div>
+        )}
+        <div
+          data-drop-zone={pinZone ? 'pinned' : undefined}
+          data-drop-label={pinZone ? 'Pin' : undefined}
+          className="sticky top-0 z-10 shrink-0 bg-surface-container-low"
+        >
+          {pinZone ? (
+            <div
+              className={`mx-2 my-1 flex h-8 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed text-xs font-medium transition-colors ${
+                dropZone === 'pinned'
+                  ? 'border-primary bg-primary-container text-on-primary-container'
+                  : 'border-outline text-on-surface-variant'
+              }`}
+            >
+              <Pin size={14} className="shrink-0" />
+              Drop here to pin
+            </div>
+          ) : (
+            <div className="flex items-center gap-0.5 pt-3 pr-3 pb-1 pl-4">
+              <span className="min-w-0 flex-1 truncate text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+                Direct Messages
+              </span>
+              <DmListControl prefs={prefs} />
+              <button
+                title="New direct message"
+                aria-label="New direct message"
+                onClick={() => {
+                  settled.current = false
+                  setDmInput('')
+                }}
+                className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+          )}
+        </div>
+        {dmInput !== null && (
+          <input
+            autoFocus
+            value={dmInput}
+            onChange={e => setDmInput(e.target.value)}
+            onKeyDown={e => {
+              if (enterKey(e)) submitDm()
+              if (e.key === 'Escape') {
+                settled.current = true
+                setDmInput(null)
+              }
+            }}
+            onBlur={submitDm}
+            placeholder="username"
+            className="mx-2 my-0.5 shrink-0 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+          />
+        )}
+        <div
+          data-drop-zone="recent"
+          data-drop-label="Unpin"
+          data-drop-sorted={sorted ? '' : undefined}
+          className="flex shrink-0 flex-col"
+        >
+          {rest.map(row)}
+          {rest.length === 0 &&
+            filtersOn(prefs) > 0 &&
+            !paging &&
+            (!unreadKey || looked === unreadKey) && (
+              <p
+                data-dm-none
+                className="mx-4 my-2 flex flex-wrap items-baseline gap-x-2 text-sm text-on-surface-variant"
+              >
+                <span>No conversations match</span>
+                <button
+                  onClick={() => setDmList(clearDmFilters(prefs))}
+                  className="rounded font-medium text-primary hover:underline"
+                >
+                  Clear filters
+                </button>
+              </p>
+            )}
+          {paging && <Sentinel key={dms.length} onVisible={loadMoreDms} />}
+        </div>
+      </div>
+      <VoiceDock />
+    </aside>
+  )
+}
+
 export function ChannelSidebar() {
   const view = useStore(s => s.view)
   const ownServer = useOwnServer(view?.kind === 'channel' ? view.server : null)
@@ -242,16 +495,9 @@ export function ChannelSidebar() {
     s.view?.kind === 'channel' ? serverAdminPerms(s, s.view.server) : 0
   )
   const servers = useStore(s => s.servers)
-  const dms = useStore(s => s.dms)
   const layout = useStore(s => s.layout)
-  const dmsMore = useStore(s => s.dmsMore)
-  const loadMoreDms = useStore(s => s.loadMoreDms)
-  const startDm = useStore(s => s.startDm)
   const dragGroup = useDrag(s => s.group)
-  const dmDrag = dragGroup === 'dm'
-  const dragKey = useDrag(s => s.key)
   const dropZone = useDrag(s => s.zone)
-  const { pinned, recent } = useMemo(() => dmSections(dms, layout), [dms, layout])
   const openChannel = useStore(s => s.openChannel)
   const openDialog = useStore(s => s.openDialog)
   const createChannel = useStore(s => s.createChannel)
@@ -273,8 +519,6 @@ export function ChannelSidebar() {
   useStore(s => s.me)
   const editing = useChannelEdit(e => e.editing)
   const name = useChannelEdit(e => e.name)
-  const [dmInput, setDmInput] = useState<string | null>(null)
-  const settled = useRef(false)
   const voiceServer = view?.kind === 'channel' ? view.server : null
   const voiceKey = useStore(s => {
     const channels = voiceServer ? s.servers[voiceServer]?.channels : undefined
@@ -286,104 +530,7 @@ export function ChannelSidebar() {
   })
   useAuthorMembers(voiceServer, voiceKey)
 
-  if (view?.kind === 'dm') {
-    const submitDm = () => {
-      const target = (dmInput ?? '').trim().toLowerCase()
-      setDmInput(null)
-      if (settled.current) return
-      settled.current = true
-      if (target) void startDm(target)
-    }
-    const pinZone = dmDrag && pinned.length === 0
-    const pinning = dropZone === 'pinned' && !pinned.some(d => String(d.id) === dragKey)
-    const row = (dm: DmSummary) => (
-      <DmRow
-        key={dm.id}
-        dm={dm}
-        active={view.dmId === dm.id}
-        unread={unread(`d${dm.id}`)}
-        pings={pingsOf(`d${dm.id}`)}
-      />
-    )
-    return (
-      <aside className={base}>
-        <div ref={dragScope} className="flex flex-1 flex-col overflow-y-auto pb-3">
-          <FriendsEntry />
-          {pinned.length > 0 && (
-            <div
-              data-drop-zone="pinned"
-              data-drop-label="Pin"
-              className={`flex shrink-0 flex-col pb-1 transition-colors ${
-                pinning ? 'bg-primary-container/40' : ''
-              }`}
-            >
-              <div className="sticky top-0 z-10 flex items-center gap-1.5 bg-surface-container-low px-4 pt-3 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-                <Pin size={12} className="shrink-0" />
-                Pinned
-              </div>
-              {pinned.map(row)}
-            </div>
-          )}
-          <div
-            data-drop-zone={pinZone ? 'pinned' : undefined}
-            data-drop-label={pinZone ? 'Pin' : undefined}
-            className="sticky top-0 z-10 shrink-0 bg-surface-container-low"
-          >
-            {pinZone ? (
-              <div
-                className={`mx-2 my-1 flex h-8 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed text-xs font-medium transition-colors ${
-                  dropZone === 'pinned'
-                    ? 'border-primary bg-primary-container text-on-primary-container'
-                    : 'border-outline text-on-surface-variant'
-                }`}
-              >
-                <Pin size={14} className="shrink-0" />
-                Drop here to pin
-              </div>
-            ) : (
-              <div className="flex items-center justify-between px-4 pt-3 pb-1">
-                <span className="text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-                  Direct Messages
-                </span>
-                <button
-                  title="New direct message"
-                  onClick={() => {
-                    settled.current = false
-                    setDmInput('')
-                  }}
-                  className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-                >
-                  <Plus size={16} />
-                </button>
-              </div>
-            )}
-          </div>
-          {dmInput !== null && (
-            <input
-              autoFocus
-              value={dmInput}
-              onChange={e => setDmInput(e.target.value)}
-              onKeyDown={e => {
-                if (enterKey(e)) submitDm()
-                if (e.key === 'Escape') {
-                  settled.current = true
-                  setDmInput(null)
-                }
-              }}
-              onBlur={submitDm}
-              placeholder="username"
-              className="mx-2 my-0.5 shrink-0 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
-            />
-          )}
-          <div data-drop-zone="recent" data-drop-label="Unpin" className="flex shrink-0 flex-col">
-            {recent.map(row)}
-            {dmsMore && <Sentinel key={dms.length} onVisible={loadMoreDms} />}
-          </div>
-        </div>
-        <VoiceDock />
-      </aside>
-    )
-  }
+  if (view?.kind === 'dm') return <DmSidebar dmId={view.dmId} />
 
   if (!view) return null
   const detail = servers[view.server]

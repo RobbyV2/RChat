@@ -27,6 +27,7 @@ const ROWS: Record<Target['kind'], boolean> = {
   category: true,
   dm: true,
   home: false,
+  dm_list: false,
   embed: true,
   timestamp: false,
   inbox: true,

@@ -54,6 +54,8 @@ export type Target =
   | { kind: 'dm'; dm: DmSummary; where: 'sidebar' | 'home' }
   // The rail's home button and the instance badge.
   | { kind: 'home' }
+  // The DM list's sort and filter button.
+  | { kind: 'dm_list' }
   // A link preview under a message; `banner`: it shows an image.
   | { kind: 'embed'; message: Message; ord: number; banner: boolean }
   // A timestamp in a message's text: `ts` in milliseconds, `token` as written.

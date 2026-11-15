@@ -212,7 +212,20 @@ const STATES: Record<string, () => RChatState> = {
   unloadedState,
 }
 
-const rows = (st: RChatState = useStore.getState()) => paletteCommands(paletteCtx(st))
+// The DM list's sort and filter rows (store_dm_list.test.ts covers them); the pins below leave them out.
+const DM_LIST_ROWS = new Set([
+  'dms_sort_recent',
+  'dms_sort_oldest',
+  'dms_sort_name',
+  'dms_sort_custom',
+  'dms_unread_top',
+  'dms_friends_only',
+  'dms_unread_only',
+  'dms_clear_filters',
+])
+
+const rows = (st: RChatState = useStore.getState()) =>
+  paletteCommands(paletteCtx(st)).filter(r => !DM_LIST_ROWS.has(r.id))
 const rowsById = (st: RChatState) => Object.fromEntries(rows(st).map(r => [r.id, r]))
 const ids = (st: RChatState) => rows(st).map(r => r.id)
 const order = (st: RChatState) => ids(st).join(' ')
@@ -805,7 +818,7 @@ test('the palette lists the registry: > shows the same commands', () => {
     mask: t => t,
   }
   const shown = flatItems(buildSections(selectionState(), '>', ctx)).map(i => i.id)
-  expect(shown).toEqual(ids(selectionState()))
+  expect(shown).toEqual(paletteCommands(paletteCtx(selectionState())).map(r => r.id))
 })
 
 test('registerAppActions is idempotent', () => {

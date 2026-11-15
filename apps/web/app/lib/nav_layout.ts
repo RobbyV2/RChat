@@ -1,3 +1,5 @@
+import { parseDmList, type DmListPrefs } from './dm_list'
+
 export interface Folder {
   id: string
   name: string | null
@@ -19,6 +21,8 @@ export interface Layout {
   dmSeen: number
   selfPin: SelfPin
   collapsed: Collapsed
+  // The sort and filters below the pinned DMs; absent until chosen (see `dmListPrefs`).
+  dmList?: DmListPrefs
 }
 
 // Collapsed category ids per server name.
@@ -162,11 +166,12 @@ const withCollapsed = (layout: Layout, server: string, ids: number[]): Layout =>
 export const parseLayout = (raw: string | null): Layout => {
   const data = parseJson(raw)
   if (typeof data !== 'object' || data === null) return emptyLayout
-  const { v, servers, dmOrder, dmPinned, dmSeen, selfPin, collapsed } = data as Record<
+  const { v, servers, dmOrder, dmPinned, dmSeen, selfPin, collapsed, dmList } = data as Record<
     string,
     unknown
   >
   if (v !== 1 && v !== 2) return emptyLayout
+  const list = parseDmList(dmList)
   return {
     v: 2,
     servers:
@@ -178,6 +183,7 @@ export const parseLayout = (raw: string | null): Layout => {
     dmSeen: isId(dmSeen) ? dmSeen : 0,
     selfPin: selfPin === 'unpinned' ? 'unpinned' : 'auto',
     collapsed: collapsedOf(collapsed),
+    ...(list ? { dmList: list } : {}),
   }
 }
 
@@ -308,13 +314,15 @@ export const moveAmong = <K>(full: K[], shown: K[], key: K, index: number): K[] 
   return [...base.slice(0, pos), key, ...base.slice(pos)]
 }
 
+// `order`: every unpinned DM in the custom order, when `shown.recent` is filtered or unread first.
 export const placeDm = (
   layout: Layout,
   shown: DmSections<number>,
   id: number,
   zone: DmZone,
   index: number,
-  maxId: number
+  maxId: number,
+  order: number[] = shown.recent
 ): Layout =>
   zone === 'pinned'
     ? {
@@ -324,7 +332,7 @@ export const placeDm = (
     : {
         ...layout,
         dmPinned: layout.dmPinned.filter(x => x !== id),
-        dmOrder: moveAmong(mergeOrder(layout.dmOrder, shown.recent), shown.recent, id, index),
+        dmOrder: moveAmong(mergeOrder(layout.dmOrder, order), shown.recent, id, index),
         dmSeen: Math.max(layout.dmSeen, maxId, id),
       }
 

@@ -13,6 +13,7 @@ import {
   stashConfig,
   takeStashedConfig,
 } from '../config_transfer'
+import { NO_DM_EDGE, dmListPrefs, dmQuery, queryKey } from '../dm_list'
 import { EMPTY_PREFS } from '../emoji'
 import { accountPrompt, createP2pGate, siteSettings } from '../features'
 import { forwardKey } from '../forward'
@@ -447,6 +448,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
               dmPinned: l.dmPinned,
               selfPin: l.selfPin,
               collapsed: l.collapsed ?? s.layout.collapsed,
+              ...(l.dmList ? { dmList: l.dmList } : {}),
             },
             serverNames(s),
             s.dms.map(d => d.id)
@@ -588,9 +590,10 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       servers: same && !!cur.me && samePrefix(cur.me.servers, fresh.servers, serverKey),
       dms: same && samePrefix(cur.dms, fresh.dms, dmKey),
     }
+    const dmHead = dmPager.head(fresh, same, steady.dms)
     const resume = {
       servers: serverPager.reset(fresh.servers_cursor, steady.servers) && same,
-      dms: dmPager.reset(fresh.dms_cursor, steady.dms) && same,
+      dms: dmHead.resume && same,
     }
     set({
       me: {
@@ -602,7 +605,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       },
       dms: same ? mergeHead(cur.dms, fresh.dms, fresh.dms_more, dmKey) : fresh.dms,
       serversMore: fresh.servers_more,
-      dmsMore: fresh.dms_more,
+      ...dmHead.state,
       ...(same
         ? {}
         : {
@@ -625,7 +628,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     }
     pinSelf()
     if (resume.servers) void get().loadMoreServers()
-    if (resume.dms) void get().loadMoreDms()
+    if (resume.dms || queryKey(dmQuery(dmListPrefs(get().layout))) !== dmPager.asking())
+      void get().loadMoreDms()
     if (!same) void syncLayout()
     if (!same) void loadBlocked()
     if (!same) void friendsHub.loadSummary()
@@ -1460,6 +1464,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         ...selectionInitial(),
         dms: [],
         dmsMore: false,
+        dmsEdge: NO_DM_EDGE,
         serversMore: false,
         layout: emptyLayout,
         emoji: EMPTY_PREFS,
@@ -1482,6 +1487,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         slowUntil: {},
         reads: {},
         readsReady: false,
+        unreadsCut: false,
         pings: NO_PINGS,
         groupPings: NO_GROUP_PINGS,
         unreadAnchor: {},

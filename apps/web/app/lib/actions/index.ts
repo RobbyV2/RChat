@@ -3,7 +3,7 @@ import { adminActions } from './admin'
 import { cardActions } from './cards'
 import { channelActions } from './channel'
 import { ctxFor } from './ctx'
-import { dmActions } from './dm'
+import { dmActions, dmListActions } from './dm'
 import { folderActions } from './folder'
 import { friendActions } from './friends'
 import { globalActions, goActions } from './global'
@@ -38,6 +38,7 @@ export const registerAppActions = () => {
     memberActions,
     adminActions,
     dmActions,
+    dmListActions,
     messageActions,
     embedActions,
     serverActions,

@@ -262,6 +262,7 @@ describe('dm order', () => {
   })
 
   test('after a manual reorder activity does not move dms but a new dm goes on top', async () => {
+    st().setDmList({ sort: 'custom' })
     st().placeDm(1, 'recent', 2)
     expect(recent()).toEqual([2, 3, 1])
     expect(saved('rchat_layout:alice')).toEqual({
@@ -269,6 +270,7 @@ describe('dm order', () => {
       dmOrder: [2, 3, 1],
       dmSeen: 3,
       selfPin: 'unpinned',
+      dmList: { sort: 'custom', friends: false, unread: false, unreadTop: false },
     })
     dispatch({
       type: 'message',

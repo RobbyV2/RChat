@@ -8,6 +8,7 @@ import {
   offSide,
   ontoBand,
   slotAt,
+  sortedSlot,
   type Box,
   type DropTarget,
   type Slot,
@@ -128,7 +129,9 @@ const resolve = (a: Active, rect: DOMRect): Resolved => {
       )
     ]
   const items = itemsIn(zone)
-  const slot = slotAt(boxesIn(items, a.spec.onto !== undefined), a.y, a.spec.key)
+  const at = slotAt(boxesIn(items, a.spec.onto !== undefined), a.y, a.spec.key)
+  const slot =
+    zone.dataset.dropSorted === undefined ? at : sortedSlot(at, zone.dataset.dropZone === a.from)
   const blocked = slot.onto !== null && !(a.spec.onto?.(slot.onto) ?? false)
   const onto = blocked ? null : (items.find(el => el.dataset.dragKey === slot.onto) ?? null)
   return {

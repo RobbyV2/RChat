@@ -14,7 +14,8 @@ import type { ForwardClip } from './forward'
 import type { AlertInput } from './notices'
 import type { OpenInvite } from './invite'
 import type { OlderState, ReadMark } from './lists'
-import type { DmZone, Layout } from './nav_layout'
+import type { DmEdge, DmListPrefs } from './dm_list'
+import type { DmSections, DmZone, Layout } from './nav_layout'
 import type { Blocked } from './blocks'
 import type { FriendsTab, Privacy, SendResult } from './friends'
 import type { Notice } from './notices'
@@ -259,6 +260,8 @@ export interface RChatState {
   selectionBusy: string | null
   dms: DmSummary[]
   dmsMore: boolean
+  // While `dmsMore`, the list shows rows up to here (see `arrangeDms`).
+  dmsEdge: DmEdge
   serversMore: boolean
   layout: Layout
   emoji: EmojiPrefs
@@ -301,6 +304,8 @@ export interface RChatState {
   reads: Record<string, ReadMark>
   // the first /api/unreads answer arrived (Home shows skeletons until then)
   readsReady: boolean
+  // the last /api/unreads answer was cut at its cap
+  unreadsCut: boolean
   pings: Pings
   // unread messages that ping you through @everyone, @here or your roles, by channel scope
   groupPings: GroupPings
@@ -397,7 +402,9 @@ export interface RChatState {
   renameFolder: (id: string, name: string) => void
   setFolderColor: (id: string, color: string | null) => void
   ungroupFolder: (id: string) => void
-  placeDm: (id: number, zone: DmZone, index: number) => void
+  // `shown`: the rows as the list shows them (sorted, filtered or held).
+  placeDm: (id: number, zone: DmZone, index: number, shown?: DmSections<number>) => void
+  setDmList: (patch: Partial<DmListPrefs>) => void
   pinDm: (id: number) => void
   unpinDm: (id: number) => void
   closeDm: (id: number) => Promise<void>

@@ -33,6 +33,7 @@ import {
   ungroupFolder as ungroupIn,
   unpinDm as unpinIn,
 } from '../nav_layout'
+import { dmListPrefs, dmQuery, queryKey } from '../dm_list'
 import {
   type AlertInput,
   type Notice,
@@ -351,11 +352,15 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     writeLocal(home.scoped(emojiKey(username)), JSON.stringify(next))
   }
 
+  const dmAsk = (layout: Layout) => queryKey(dmQuery(dmListPrefs(layout)))
+
   const saveLayout = (next: Layout) => {
-    if (next === get().layout) return
+    const was = get().layout
+    if (next === was) return
     set({ layout: next })
     const { me, guest } = get()
     if (me || guest) writeLocal(home.scoped(layoutKey(me?.username ?? null)), JSON.stringify(next))
+    if (me && dmAsk(next) !== dmAsk(was)) void get().loadMoreDms()
   }
 
   const selfDmId = () => get().dms.find(isSelfDm)?.id
@@ -461,6 +466,7 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     | 'setFolderColor'
     | 'ungroupFolder'
     | 'placeDm'
+    | 'setDmList'
     | 'pinDm'
     | 'unpinDm'
     | 'reloadLayout'
@@ -552,20 +558,36 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     setFolderColor: (id, color) => saveLayout(setFolderColorIn(get().layout, id, color)),
     ungroupFolder: id => saveLayout(ungroupIn(get().layout, id)),
 
-    placeDm: (id, zone, index) => {
+    placeDm: (id, zone, index, rows) => {
       const s = get()
       const { pinned, recent } = dmView(s)
-      const shown = { pinned: pinned.map(d => d.id), recent: recent.map(d => d.id) }
+      if (zone === 'recent' && dmListPrefs(s.layout).sort !== 'custom') {
+        if (s.layout.dmPinned.includes(id))
+          saveLayout(noteSelfPin(unpinIn(s.layout, id), selfDmId(), id))
+        return
+      }
+      const order = recent.map(d => d.id)
+      const shown = rows ?? { pinned: pinned.map(d => d.id), recent: order }
       const maxId = s.dms.reduce((m, d) => Math.max(m, d.id), 0)
-      saveLayout(noteSelfPin(placeIn(s.layout, shown, id, zone, index, maxId), selfDmId(), id))
+      saveLayout(
+        noteSelfPin(placeIn(s.layout, shown, id, zone, index, maxId, order), selfDmId(), id)
+      )
+    },
+
+    setDmList: patch => {
+      const layout = get().layout
+      saveLayout({ ...layout, dmList: { ...dmListPrefs(layout), ...patch } })
     },
 
     pinDm: id => saveLayout(noteSelfPin(pinIn(get().layout, id), selfDmId(), id)),
     unpinDm: id => saveLayout(noteSelfPin(unpinIn(get().layout, id), selfDmId(), id)),
 
     reloadLayout: () => {
-      const { me, guest } = get()
-      if (me || guest) set({ layout: readLayout(me?.username ?? null) })
+      const { me, guest, layout: was } = get()
+      if (!me && !guest) return
+      const layout = readLayout(me?.username ?? null)
+      set({ layout })
+      if (me && dmAsk(layout) !== dmAsk(was)) void get().loadMoreDms()
     },
 
     noteEmoji: (base, picked) => saveEmoji(noteUse(get().emoji, base, picked, Date.now())),

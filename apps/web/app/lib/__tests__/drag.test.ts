@@ -9,6 +9,7 @@ import {
   offSide,
   ontoBand,
   slotAt,
+  sortedSlot,
   type Box,
   type Span,
 } from '../drag'
@@ -50,6 +51,28 @@ describe('drop slot', () => {
   test('an empty zone accepts at index 0 without a line', () => {
     expect(slotAt([], 10, 'a')).toEqual({ index: 0, line: null, noop: false, onto: null })
     expect(slotAt(tiles('a'), 10, 'a')).toEqual({ index: 0, line: null, noop: true, onto: null })
+  })
+})
+
+describe('a sorted zone', () => {
+  const rail = tiles('a', 'b', 'c')
+
+  test('shows no line and takes no drop from its own items', () => {
+    expect(sortedSlot(slotAt(rail, 130, 'a'), true)).toEqual({
+      index: 1,
+      line: null,
+      noop: true,
+      onto: null,
+    })
+  })
+
+  test('takes an item from another zone', () => {
+    expect(sortedSlot(slotAt(rail, 60, 'zz'), false)).toEqual({
+      index: 1,
+      line: null,
+      noop: false,
+      onto: null,
+    })
   })
 })
 

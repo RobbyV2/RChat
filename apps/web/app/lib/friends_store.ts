@@ -21,6 +21,7 @@ import type { Paged, RChatState } from './store_types'
 import type { Friend, FriendRequest, Ping, UserRef, WsEvent } from './types'
 import type { Page } from './lists'
 import { mapWhere } from './window'
+import { setDmFriend } from './dm_list'
 
 type SetState = (partial: Partial<RChatState> | ((s: RChatState) => Partial<RChatState>)) => void
 
@@ -327,11 +328,15 @@ export const friendsSlice = (d: FriendsDeps) => {
         return true
       }
       case 'friend_added': {
-        if (mine(ev.username)) putFriend(ev.friend)
+        if (!mine(ev.username)) return true
+        putFriend(ev.friend)
+        set(s => ({ dms: setDmFriend(s.dms, ev.friend.user.username, true) }))
         return true
       }
       case 'friend_removed': {
-        if (mine(ev.username)) dropFriend(ev.friend)
+        if (!mine(ev.username)) return true
+        dropFriend(ev.friend)
+        set(s => ({ dms: setDmFriend(s.dms, ev.friend, false) }))
         return true
       }
       case 'friend_presence': {

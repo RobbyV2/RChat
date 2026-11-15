@@ -56,6 +56,13 @@ export const slotAt = (items: Box[], y: number, key: string): Slot => {
   return { index, line, noop, onto: null }
 }
 
+// A zone whose order is a sort: no line, and its own items stay where the sort puts them.
+export const sortedSlot = (slot: Slot, same: boolean): Slot => ({
+  ...slot,
+  line: null,
+  noop: slot.noop || same,
+})
+
 export const nearestSpan = (spans: Span[], y: number): number => {
   let best = -1
   let dist = Infinity

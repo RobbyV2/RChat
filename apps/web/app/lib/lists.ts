@@ -192,7 +192,7 @@ export interface Pager {
 
 export const createPager = <T>(opts: {
   read: () => T[]
-  write: (list: T[], more: boolean) => void
+  write: (list: T[], more: boolean, page: T[]) => void
   fetchPage: (cursor: string | null, limit: number) => Promise<Page<T>>
   keyOf: (item: T) => Key
   page: number
@@ -215,7 +215,7 @@ export const createPager = <T>(opts: {
           last = from
           cursor = page.next
           const list = appendUnique(opts.read(), page.items, opts.keyOf)
-          opts.write(list, page.next !== null)
+          opts.write(list, page.next !== null, page.items)
           if (page.next === null || list.length > had) return
         }
       } finally {
