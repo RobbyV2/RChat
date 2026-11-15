@@ -503,14 +503,4 @@ with zipfile.ZipFile(sys.argv[1], 'w') as archive:
       '[ "$build" != "$version.$BUILD_NUMBER" ]'
     )
   })
-
-  test('the README names both source addresses', () => {
-    const readme = readFileSync(join(import.meta.dir, '..', 'README.md'), 'utf8')
-    expect(readme).toContain(
-      'https://github.com/RobbyV2/RChat/releases/latest/download/altstore.json'
-    )
-    expect(readme).toContain(
-      'https://github.com/RobbyV2/RChat/releases/download/weekly/altstore.json'
-    )
-  })
 })

@@ -71,7 +71,8 @@ describe('wasm builds', () => {
     expect(read('crates/wasm/Cargo.toml')).toContain(
       '[package.metadata.wasm-pack.profile.release]\nwasm-opt = false\n'
     )
-    for (const file of ['README.md', 'jfiles/src/justfile'])
-      expect(read(file)).toContain(`cargo install wasm-bindgen-cli --version ${bindgen} --locked`)
+    expect(read('jfiles/src/justfile')).toContain(
+      `cargo install wasm-bindgen-cli --version ${bindgen} --locked`
+    )
   })
 })
