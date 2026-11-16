@@ -573,9 +573,9 @@ fn trim(read: &str, chars: &[char], masked: &mut [bool], dropped: &[bool], left:
     // Across a gap, rustrict lets a match start in the last letter of a word ("kept.txt" is
     // "t txt", read as "tit") or end in the first letters of the next ("see example" is "see
     // ex"). Such a run is no match when that word is clean, the run takes only its last letter or
-    // half or less of the word it ends in, and the rest isn't profane without it. A run that
+    // less than half of the word it ends in, and the rest isn't profane without it. A run that
     // takes more of the word it starts in stays ("xfu ck"), and so does one that ends inside a
-    // word it covers most of ("blow jobs").
+    // word it covers half or more of ("slu ts", "blow jobs").
     let joins = |run: &[(usize, usize)]| {
         let (first, last) = (stretches[run[0].0], stretches[run[run.len() - 1].0]);
         let (start, end) = (run[0].0, run[run.len() - 1].1);
@@ -593,7 +593,7 @@ fn trim(read: &str, chars: &[char], masked: &mut [bool], dropped: &[bool], left:
                 && letters((start, first.1)) <= 1
                 && ordinary(first)
                 && !after(run, head - 1))
-                || (letters((rest, last.1)) >= letters((last.0, end))
+                || (letters((rest, last.1)) > letters((last.0, end))
                     && ordinary(last)
                     && !before(run, run.len() - tail)))
     };
@@ -900,23 +900,23 @@ mod tests {
             "output.txt",
             "installer.exe",
             "banana.log",
-            "backbone.rs",
             "aiming.xml",
             "bin.tar",
             "meeting notes.docx",
             "see example",
             "env default",
-            "open json",
             "who rchat",
             "p password",
             "push it",
         ] {
             passes(text);
         }
-        for name in ["release.exe", "arena.zip", "happen.json"] {
+        for name in ["release.exe", "arena.zip", "happen.json", "backbone.rs"] {
             name_passes(name);
             caught(name);
         }
+        // A match that ends in half of the next word counts: the cost of catching "slu ts".
+        caught("open json");
         for text in ["api key", "install in", "apple per"] {
             caught(text);
         }
@@ -965,6 +965,18 @@ mod tests {
             "dic ks",
             "twa ts",
             "whor es",
+            "slu ts",
+            "you are a slu ts",
+            "shi.ts",
+            "you are a shi.ts",
+            "shi ts",
+            "coc ks",
+            "shi tty",
+            "bastar ds",
+            "pric ks",
+            "dild os",
+            "retar ds",
+            "fu ckyy",
         ] {
             caught(text);
         }

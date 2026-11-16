@@ -402,10 +402,34 @@
     "text": "you are a xbi.tch"
   },
   {
-    "file_name": "slu ts",
-    "masked": "slu ts",
-    "profane": false,
+    "file_name": "*** *s",
+    "masked": "*** *s",
+    "profane": true,
     "text": "slu ts"
+  },
+  {
+    "file_name": "shi.ts",
+    "masked": "***.*s",
+    "profane": true,
+    "text": "shi.ts"
+  },
+  {
+    "file_name": "** *kyy",
+    "masked": "** *kyy",
+    "profane": true,
+    "text": "fu ckyy"
+  },
+  {
+    "file_name": "backbone.rs",
+    "masked": "back****.*s",
+    "profane": true,
+    "text": "backbone.rs"
+  },
+  {
+    "file_name": "o*** **on",
+    "masked": "o*** **on",
+    "profane": true,
+    "text": "open json"
   },
   {
     "file_name": "https://u@***.**/",
