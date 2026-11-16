@@ -1,5 +1,8 @@
 use super::*;
-use crate::hub::replica::Index;
+use crate::hub::replica::{
+    Index, STAFF_MUTE_MS, VOICE_BLOCKS_MAX, VOICE_BLOCKS_PER_SERVER, VOICE_MUTES_MAX,
+    VOICE_MUTES_PER_SERVER,
+};
 
 fn script() -> Vec<(u32, Op, i64)> {
     let s = |v: &str| v.to_string();
@@ -740,6 +743,26 @@ fn indexes_follow_every_op() {
             cap: 0,
             addr: None,
         },
+        guest_join(
+            "@guest:0000000000000001",
+            (3 << 32) | 6,
+            "two",
+            11,
+            "10.0.0.9",
+        ),
+        hush("@guest:0000000000000001", "two", true),
+        guest_join(
+            "@guest:0000000000000002",
+            (3 << 32) | 7,
+            "one",
+            12,
+            "10.0.0.8",
+        ),
+        hush_from("@guest:0000000000000002", "one", "10.0.0.8"),
+        kick_from("@guest:0000000000000003", "two", "10.0.0.7"),
+        kick("@guest:0000000000000002", "one", STAFF, BLOCK_MS),
+        hush("@guest:0000000000000001", "two", false),
+        hush("@guest:0000000000000001", "two", true),
         Op::Broadcast {
             event: WsEvent::ServerRenamed {
                 old_name: s("two"),
@@ -811,6 +834,10 @@ fn indexes_follow_every_op() {
         replica.apply(origin, op, at);
         assert_eq!(replica.index, reindexed(&replica));
     }
+    assert_eq!(replica.voice_mutes.len(), 1);
+    replica.apply(1, Op::Heartbeat, t + STAFF_MUTE_MS + 60_000);
+    assert_eq!(replica.index, reindexed(&replica));
+    assert!(replica.voice_mutes.is_empty() && replica.voice_blocks.is_empty());
     assert!(
         replica
             .index
@@ -1592,4 +1619,152 @@ fn ops_cost_nothing_per_guest_in_voice() {
         started.elapsed()
     );
     assert_eq!(replica.voice_addrs.len(), 2_000);
+}
+
+fn hush_from(user: &str, server: &str, addr: &str) -> Op {
+    Op::VoiceHush {
+        user: user.to_string(),
+        server: server.to_string(),
+        muted: true,
+        addr: Some(addr.to_string()),
+    }
+}
+
+fn kick_from(user: &str, server: &str, addr: &str) -> Op {
+    Op::VoiceKick {
+        user: user.to_string(),
+        server: server.to_string(),
+        reason: STAFF.to_string(),
+        block_ms: BLOCK_MS,
+        addr: Some(addr.to_string()),
+    }
+}
+
+#[test]
+fn one_servers_mutes_and_blocks_never_end_anothers() {
+    let s = |v: &str| v.to_string();
+    let (a, b, first) = (
+        "@guest:00000000000000aa",
+        "@guest:00000000000000bb",
+        "@guest:00000000000000ff",
+    );
+    let mut replica = Replica::default();
+    replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0);
+    replica.apply(1, hush(a, "club", true), T0);
+    replica.apply(1, guest_join(b, 2, "club", 5, "10.0.0.2"), T0);
+    replica.apply(1, kick(b, "club", STAFF, BLOCK_MS), T0);
+    replica.apply(1, guest_join(first, 3, "evil", 1, "2001:db8:ffff::"), T0);
+    replica.apply(1, hush(first, "evil", true), T0);
+    let mut evs = Vec::new();
+    for n in 0..12_000i64 {
+        let user = format!("@guest:{:016x}", 0x1000 + n);
+        let addr = format!("2001:db8:{n:x}::");
+        let at = T0 + 1 + n / 100;
+        evs.extend(replica.apply(1, hush_from(&user, "evil", &addr), at).events);
+        replica.apply(1, kick_from(&user, "evil", &addr), at);
+    }
+    let at = T0 + 1 + 12_000 / 100;
+    assert!(
+        replica.hushed(a, "club"),
+        "12,000 mutes in another server never end club's"
+    );
+    let back = replica.apply(1, guest_join(b, 2, "club", 5, "10.0.0.2"), at);
+    assert!(blocked_for(&back).is_some(), "nor its blocks");
+    let reload = replica.apply(
+        1,
+        guest_join("@guest:00000000000000cc", 4, "club", 5, "10.0.0.2"),
+        at,
+    );
+    assert!(blocked_for(&reload).is_some());
+    assert_eq!(
+        replica.voice_mutes.len(),
+        VOICE_MUTES_PER_SERVER + 1,
+        "each server holds at most its own cap"
+    );
+    assert_eq!(replica.voice_blocks.len(), VOICE_BLOCKS_PER_SERVER + 2);
+    assert!(!replica.hushed(first, "evil"));
+    assert!(
+        hushed_of(&evs).contains(&(1, s(first), false, true)),
+        "the mute that ends first in that server ends early, and listeners hear it again"
+    );
+}
+
+#[test]
+fn snapshots_walk_only_the_mutes_of_their_servers() {
+    let s = |v: &str| v.to_string();
+    let mut replica = Replica::default();
+    let others = (VOICE_MUTES_MAX - VOICE_MUTES_PER_SERVER) as i64;
+    for n in 0..others {
+        let user = format!("@guest:{:016x}", 0x10_000 + n);
+        let addr = format!("2001:db8:{n:x}::");
+        let server = format!("evil{}", n % 10);
+        replica.apply(1, hush_from(&user, &server, &addr), T0);
+    }
+    for n in 0..VOICE_MUTES_PER_SERVER as i64 {
+        let user = format!("@guest:{:016x}", 0x20_000 + n);
+        let addr = format!("10.1.{}.{}", n / 256, n % 256);
+        replica.apply(1, hush_from(&user, "club", &addr), T0);
+    }
+    for n in 0..2_000u64 {
+        let user = format!("member{n}");
+        let channel_id = 10 + (n as i64 % 40);
+        replica.apply(1, account_join(&user, 100_000 + n, "club", channel_id), T0);
+    }
+    let muted = "@guest:00000000000000aa";
+    let other = "@guest:00000000000000bb";
+    replica.apply(1, guest_join(muted, 1, "club", 10, "10.1.0.7"), T0);
+    replica.apply(1, guest_join(other, 2, "club", 10, "2001:db8:7::"), T0);
+    let held = [s("club")];
+    let started = std::time::Instant::now();
+    for _ in 0..10 {
+        replica.voice_snapshot_for(held.iter(), None);
+    }
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(replica.voice_mutes.len(), VOICE_MUTES_MAX);
+    assert_eq!(
+        hushed_of(&replica.voice_snapshot_for(held.iter(), None)),
+        vec![(10, s(muted), true, true)],
+        "the guest from a muted address of club, not the one from another server's"
+    );
+}
+
+#[test]
+fn at_the_instance_cap_the_fullest_server_gives_way() {
+    let mut replica = Replica::default();
+    let (a, b) = ("@guest:00000000000000aa", "@guest:00000000000000bb");
+    replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0);
+    replica.apply(1, hush(a, "club", true), T0);
+    replica.apply(1, guest_join(b, 2, "club", 5, "10.0.0.2"), T0);
+    replica.apply(1, kick(b, "club", STAFF, BLOCK_MS), T0);
+    let servers = VOICE_MUTES_MAX / VOICE_MUTES_PER_SERVER + 2;
+    for s in 0..servers {
+        for n in 0..VOICE_MUTES_PER_SERVER as i64 {
+            let user = format!("@guest:{:08x}{:08x}", s, n);
+            let addr = format!("2001:db8:{s:x}:{n:x}::");
+            let server = format!("evil{s}");
+            replica.apply(1, hush_from(&user, &server, &addr), T0 + 1);
+            replica.apply(1, kick_from(&user, &server, &addr), T0 + 1);
+        }
+    }
+    assert!(replica.voice_mutes.len() <= VOICE_MUTES_MAX);
+    assert!(replica.voice_blocks.len() <= VOICE_BLOCKS_MAX);
+    assert!(replica.hushed(a, "club"), "a small server's mute stays");
+    let back = replica.apply(1, guest_join(b, 2, "club", 5, "10.0.0.2"), T0 + 2);
+    assert!(blocked_for(&back).is_some(), "and its blocks");
+    assert_eq!(replica.index, reindexed(&replica));
+}
+
+#[test]
+fn renames_keep_the_lookup() {
+    let mut replica = Replica::default();
+    let a = "@guest:00000000000000aa";
+    replica.apply(1, guest_join(a, 1, "club", 5, "10.0.0.1"), T0);
+    replica.apply(1, hush(a, "club", true), T0);
+    replica.apply(1, renamed("club", "hall"), T0);
+    assert!(replica.hushed(a, "hall") && !replica.hushed(a, "club"));
+    assert_eq!(replica.index, reindexed(&replica));
 }

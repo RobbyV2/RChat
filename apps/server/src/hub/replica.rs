@@ -127,6 +127,71 @@ pub(super) struct Index {
     user_rooms: BTreeMap<String, BTreeSet<i64>>,
     pub(super) server_rooms: BTreeMap<String, BTreeSet<i64>>,
     user_calls: BTreeMap<String, BTreeSet<i64>>,
+    voice: BTreeMap<String, ServerVoice>,
+}
+
+// One server's staff mutes and blocks, with the muted names and addresses counted for lookup.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub(super) struct ServerVoice {
+    mutes: BTreeSet<VoiceMute>,
+    guests: BTreeMap<String, usize>,
+    addrs: BTreeMap<String, usize>,
+    blocks: BTreeSet<VoiceBlock>,
+}
+
+impl ServerVoice {
+    fn mute(&mut self, mute: &VoiceMute) {
+        if self.mutes.insert(mute.clone()) {
+            *self.guests.entry(mute.guest.clone()).or_default() += 1;
+            if let Some(addr) = &mute.addr {
+                *self.addrs.entry(addr.clone()).or_default() += 1;
+            }
+        }
+    }
+
+    fn unmute(&mut self, mute: &VoiceMute) {
+        if self.mutes.remove(mute) {
+            uncount(&mut self.guests, &mute.guest);
+            if let Some(addr) = &mute.addr {
+                uncount(&mut self.addrs, addr);
+            }
+        }
+    }
+
+    fn covers(&self, user: &str, addr: Option<&str>) -> bool {
+        self.guests.contains_key(user) || addr.is_some_and(|a| self.addrs.contains_key(a))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.mutes.is_empty() && self.blocks.is_empty()
+    }
+}
+
+fn voice_index(
+    mutes: &BTreeSet<VoiceMute>,
+    blocks: &BTreeSet<VoiceBlock>,
+) -> BTreeMap<String, ServerVoice> {
+    let mut voice: BTreeMap<String, ServerVoice> = BTreeMap::new();
+    for mute in mutes {
+        voice.entry(mute.server.clone()).or_default().mute(mute);
+    }
+    for block in blocks {
+        voice
+            .entry(block.server.clone())
+            .or_default()
+            .blocks
+            .insert(block.clone());
+    }
+    voice
+}
+
+fn uncount(map: &mut BTreeMap<String, usize>, key: &str) {
+    if let Some(n) = map.get_mut(key) {
+        *n -= 1;
+        if *n == 0 {
+            map.remove(key);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -231,7 +296,11 @@ pub(super) enum Blocked {
     Addr(String),
 }
 
-const VOICE_BLOCKS_MAX: usize = 10_000;
+/// Most blocks one server holds; past it, that server's block that ends first ends.
+pub(super) const VOICE_BLOCKS_PER_SERVER: usize = 2_500;
+/// Most blocks the instance holds; past it, the block that ends first in the server holding
+/// the most ends, so one server's staff never end another's.
+pub(super) const VOICE_BLOCKS_MAX: usize = 10_000;
 
 /// A guest connection staff muted for everyone in a server's voice, with the address
 /// (`budget::group`) it came from, until when (ms). Ordered by when it ends.
@@ -252,7 +321,11 @@ impl VoiceMute {
     }
 }
 
-const VOICE_MUTES_MAX: usize = 10_000;
+/// Most mutes one server holds; past it, that server's mute that ends first ends.
+pub(super) const VOICE_MUTES_PER_SERVER: usize = 2_500;
+/// Most mutes the instance holds; past it, the mute that ends first in the server holding the
+/// most ends.
+pub(super) const VOICE_MUTES_MAX: usize = 10_000;
 
 /// How long a staff mute lasts unless staff end it.
 pub(super) const STAFF_MUTE_MS: i64 = 24 * 60 * 60 * 1000;
@@ -803,7 +876,83 @@ impl Replica {
                 link(&mut index.user_calls, user, *id);
             }
         }
+        index.voice = voice_index(&self.voice_mutes, &self.voice_blocks);
         self.index = index;
+    }
+
+    fn reindex_voice(&mut self) {
+        self.index.voice = voice_index(&self.voice_mutes, &self.voice_blocks);
+    }
+
+    fn add_mute(&mut self, mute: VoiceMute) {
+        self.index
+            .voice
+            .entry(mute.server.clone())
+            .or_default()
+            .mute(&mute);
+        self.voice_mutes.insert(mute);
+    }
+
+    fn drop_mute(&mut self, mute: &VoiceMute) {
+        if self.voice_mutes.remove(mute)
+            && let Some(voice) = self.index.voice.get_mut(&mute.server)
+        {
+            voice.unmute(mute);
+            if voice.is_empty() {
+                self.index.voice.remove(&mute.server);
+            }
+        }
+    }
+
+    fn add_block(&mut self, block: VoiceBlock) {
+        self.index
+            .voice
+            .entry(block.server.clone())
+            .or_default()
+            .blocks
+            .insert(block.clone());
+        self.voice_blocks.insert(block);
+    }
+
+    fn drop_block(&mut self, block: &VoiceBlock) {
+        if self.voice_blocks.remove(block)
+            && let Some(voice) = self.index.voice.get_mut(&block.server)
+        {
+            voice.blocks.remove(block);
+            if voice.is_empty() {
+                self.index.voice.remove(&block.server);
+            }
+        }
+    }
+
+    // The entry to end before `server` adds one: its own that ends first when it is at its cap,
+    // else at the instance's cap the one that ends first in the server holding the most.
+    fn mute_to_end(&self, server: &str) -> Option<VoiceMute> {
+        let own = self.index.voice.get(server);
+        match own.map_or(0, |v| v.mutes.len()) >= VOICE_MUTES_PER_SERVER {
+            true => own.and_then(|v| v.mutes.first().cloned()),
+            false if self.voice_mutes.len() >= VOICE_MUTES_MAX => self
+                .index
+                .voice
+                .values()
+                .max_by_key(|v| v.mutes.len())
+                .and_then(|v| v.mutes.first().cloned()),
+            false => None,
+        }
+    }
+
+    fn block_to_end(&self, server: &str) -> Option<VoiceBlock> {
+        let own = self.index.voice.get(server);
+        match own.map_or(0, |v| v.blocks.len()) >= VOICE_BLOCKS_PER_SERVER {
+            true => own.and_then(|v| v.blocks.first().cloned()),
+            false if self.voice_blocks.len() >= VOICE_BLOCKS_MAX => self
+                .index
+                .voice
+                .values()
+                .max_by_key(|v| v.blocks.len())
+                .and_then(|v| v.blocks.first().cloned()),
+            false => None,
+        }
     }
 
     pub(super) fn rooms_of(&self, user: &str) -> Vec<i64> {
@@ -830,11 +979,13 @@ impl Replica {
         addr: Option<&str>,
         t_ms: i64,
     ) -> Option<i64> {
-        self.voice_blocks
-            .iter()
+        self.index
+            .voice
+            .get(server)
+            .into_iter()
+            .flat_map(|v| &v.blocks)
             .filter(|b| {
                 b.until > t_ms
-                    && b.server == server
                     && match &b.who {
                         Blocked::Guest(name) => name == user,
                         Blocked::Addr(from) => Some(from.as_str()) == addr,
@@ -845,12 +996,22 @@ impl Replica {
     }
 
     fn block(&mut self, server: &str, who: Blocked, until: i64) {
-        self.voice_blocks
-            .retain(|b| !(b.server == server && b.who == who));
-        if self.voice_blocks.len() >= VOICE_BLOCKS_MAX {
-            self.voice_blocks.pop_first();
+        let same: Vec<VoiceBlock> = self
+            .index
+            .voice
+            .get(server)
+            .into_iter()
+            .flat_map(|v| &v.blocks)
+            .filter(|b| b.who == who)
+            .cloned()
+            .collect();
+        for old in &same {
+            self.drop_block(old);
         }
-        self.voice_blocks.insert(VoiceBlock {
+        if let Some(first) = self.block_to_end(server) {
+            self.drop_block(&first);
+        }
+        self.add_block(VoiceBlock {
             until,
             server: server.to_string(),
             who,
@@ -858,8 +1019,13 @@ impl Replica {
     }
 
     fn expire_blocks(&mut self, t_ms: i64) {
-        while self.voice_blocks.first().is_some_and(|b| b.until <= t_ms) {
-            self.voice_blocks.pop_first();
+        while let Some(first) = self
+            .voice_blocks
+            .first()
+            .filter(|b| b.until <= t_ms)
+            .cloned()
+        {
+            self.drop_block(&first);
         }
     }
 
@@ -872,9 +1038,10 @@ impl Replica {
 
     /// Whether a staff mute covers `user`, from `addr`, in the voice of `server`.
     fn hushed_at(&self, server: &str, user: &str, addr: Option<&str>) -> bool {
-        self.voice_mutes
-            .iter()
-            .any(|m| m.covers(server, user, addr))
+        self.index
+            .voice
+            .get(server)
+            .is_some_and(|v| v.covers(user, addr))
     }
 
     /// Whether a staff mute covers `user` in the voice of `server`.
@@ -897,9 +1064,8 @@ impl Replica {
     }
 
     fn hush(&mut self, mute: VoiceMute, evs: &mut Vec<WsEvent>) {
-        if self.voice_mutes.len() >= VOICE_MUTES_MAX
-            && let Some(first) = self.voice_mutes.pop_first()
-        {
+        if let Some(first) = self.mute_to_end(&mute.server) {
+            self.drop_mute(&first);
             self.unhushed(&[first], evs);
         }
         let server = &mute.server;
@@ -914,7 +1080,7 @@ impl Replica {
         for (cid, user) in fresh {
             evs.push(hush_ev(server, cid, &user, true));
         }
-        self.voice_mutes.insert(mute);
+        self.add_mute(mute);
     }
 
     // Tells the listeners of each guest in voice that `ended` muted and no other mute covers.
@@ -935,8 +1101,14 @@ impl Replica {
 
     fn expire_mutes(&mut self, t_ms: i64, evs: &mut Vec<WsEvent>) {
         let mut ended = Vec::new();
-        while self.voice_mutes.first().is_some_and(|m| m.until <= t_ms) {
-            ended.extend(self.voice_mutes.pop_first());
+        while let Some(first) = self
+            .voice_mutes
+            .first()
+            .filter(|m| m.until <= t_ms)
+            .cloned()
+        {
+            self.drop_mute(&first);
+            ended.push(first);
         }
         if !ended.is_empty() {
             self.unhushed(&ended, evs);
@@ -1431,6 +1603,7 @@ impl Replica {
                 who,
             })
             .collect();
+        self.reindex_voice();
     }
 
     fn side_effects(&mut self, ev: &WsEvent, t_ms: i64, extra: &mut Vec<WsEvent>) {
@@ -1457,6 +1630,7 @@ impl Replica {
                 }
                 self.voice_mutes.retain(|m| m.server != *name);
                 self.voice_blocks.retain(|b| b.server != *name);
+                self.index.voice.remove(name.as_str());
             }
             WsEvent::ChannelDeleted {
                 server: _,
@@ -2104,14 +2278,18 @@ impl Replica {
                         self.hush(mute, &mut evs);
                     }
                     false => {
-                        let covers = |m: &VoiceMute| m.covers(&server, &user, addr.as_deref());
                         let ended: Vec<VoiceMute> = self
-                            .voice_mutes
-                            .iter()
-                            .filter(|m| covers(m))
+                            .index
+                            .voice
+                            .get(&server)
+                            .into_iter()
+                            .flat_map(|v| &v.mutes)
+                            .filter(|m| m.covers(&server, &user, addr.as_deref()))
                             .cloned()
                             .collect();
-                        self.voice_mutes.retain(|m| !covers(m));
+                        for mute in &ended {
+                            self.drop_mute(mute);
+                        }
                         self.unhushed(&ended, &mut evs);
                     }
                 }
