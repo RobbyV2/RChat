@@ -142,7 +142,8 @@ pub struct InboxItem {
 pub struct InboxUntil {
     /// Highest ping id.
     pub pings: i64,
-    /// Highest message id (group mentions).
+    /// Id of the newest message with a group mention the reader could be shown (sent since they
+    /// joined, in a text channel they can view); 0 when there is none.
     pub groups: i64,
     /// Highest friend ping id.
     pub friends: i64,
@@ -820,12 +821,21 @@ async fn friend_items(
     Ok(out)
 }
 
-/// The newest ids the reader could have now: their pings, group mentions in the servers they
-/// are in, and their friend pings.
-async fn until_now(db: &Db, user: &User) -> Result<InboxUntil, ApiError> {
-    let max = |sql: &'static str| async move {
+/// The newest group mention of the reader's (`$1`) servers that they could be shown: sent since
+/// they joined, in a text channel they can view.
+fn until_groups_sql(gate: &Gate) -> String {
+    format!(
+        "SELECT MAX((SELECT g.message_id FROM group_pings g WHERE g.channel_id = c.id AND g.created_at >= mem.joined_at ORDER BY g.message_id DESC LIMIT 1)) FROM members mem JOIN channels c ON c.server = mem.server WHERE mem.username = $1 AND c.kind = 'text'{}",
+        Gate::not_in("c.id", &gate.hidden)
+    )
+}
+
+/// The newest ids the reader could have now: their pings, group mentions (`until_groups_sql`)
+/// and their friend pings.
+async fn until_now(db: &Db, user: &User, gate: &Gate) -> Result<InboxUntil, ApiError> {
+    let max = |sql: String| async move {
         Ok::<i64, ApiError>(
-            sqlx::query(sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(&user.username)
                 .fetch_one(db)
                 .await?
@@ -834,9 +844,9 @@ async fn until_now(db: &Db, user: &User) -> Result<InboxUntil, ApiError> {
         )
     };
     Ok(InboxUntil {
-        pings: max("SELECT MAX(id) FROM pings WHERE username = $1").await?,
-        groups: max("SELECT MAX((SELECT MAX(g.message_id) FROM group_pings g WHERE g.channel_id = c.id)) FROM members mem JOIN channels c ON c.server = mem.server WHERE mem.username = $1").await?,
-        friends: max("SELECT MAX(id) FROM friend_pings WHERE username = $1").await?,
+        pings: max("SELECT MAX(id) FROM pings WHERE username = $1".to_string()).await?,
+        groups: max(until_groups_sql(gate)).await?,
+        friends: max("SELECT MAX(id) FROM friend_pings WHERE username = $1".to_string()).await?,
     })
 }
 
@@ -845,17 +855,17 @@ async fn until_now(db: &Db, user: &User) -> Result<InboxUntil, ApiError> {
 async fn inbox_page(
     db: &Db,
     user: &User,
+    gate: &Gate,
     filter: &Filter,
     after: Option<Key>,
     limit: i64,
 ) -> Result<(Vec<InboxItem>, Option<String>), ApiError> {
-    let gate = Gate::load(db, user).await?;
     let mut all = Vec::new();
     if filter.wants(InboxSource::Ping) {
-        all.extend(ping_items(db, user, &gate, filter, after, None, limit + 1).await?);
+        all.extend(ping_items(db, user, gate, filter, after, None, limit + 1).await?);
     }
     if filter.wants(InboxSource::Group) {
-        let rows = group_page(db, user, &gate, filter, after, None, limit + 1).await?;
+        let rows = group_page(db, user, gate, filter, after, None, limit + 1).await?;
         all.extend(group_items(db, user, rows).await?);
     }
     if filter.wants(InboxSource::Friend) {
@@ -903,11 +913,12 @@ pub(crate) async fn list_inbox(
     };
     let limit = limit.unwrap_or(INBOX_PAGE).clamp(1, INBOX_PAGE);
     let db = state.read();
+    let gate = Gate::load(&db, &user).await?;
     let until = match after {
         Some(_) => None,
-        None => Some(until_now(&db, &user).await?),
+        None => Some(until_now(&db, &user, &gate).await?),
     };
-    let (items, next) = inbox_page(&db, &user, &filter, after, limit).await?;
+    let (items, next) = inbox_page(&db, &user, &gate, &filter, after, limit).await?;
     Ok(Json(InboxPage { items, next, until }))
 }
 
@@ -1248,6 +1259,11 @@ mod tests {
     /// alice (the reader), bob and carol in `rchat`; boss is an admin there.
     async fn world(tag: &str) -> (AppState, std::path::PathBuf, i64) {
         let (state, path) = temp_state(tag).await;
+        let cid = people(&state).await;
+        (state, path, cid)
+    }
+
+    async fn people(state: &AppState) -> i64 {
         let db = &state.db;
         for name in ["alice", "bob", "carol", "boss"] {
             add_user(db, name).await;
@@ -1256,8 +1272,7 @@ mod tests {
         for name in ["alice", "bob", "carol"] {
             add_member(db, "rchat", name, 0, 0, 1).await;
         }
-        let cid = general(db).await;
-        (state, path, cid)
+        general(db).await
     }
 
     #[tokio::test]
@@ -1823,6 +1838,22 @@ mod tests {
                 .any(|l| l.contains("SEARCH p USING INDEX idx_pings_user")),
             "pings are read per user: {lines:#?}"
         );
+        let lines = plan(
+            db,
+            &format!("EXPLAIN QUERY PLAN {}", until_groups_sql(&gate)),
+            &[Bind::S("alice".into())],
+        )
+        .await;
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("idx_group_pings_channel (channel_id=?)")),
+            "one seek per channel: {lines:#?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.contains("TEMP B-TREE")),
+            "{lines:#?}"
+        );
         done(state, path).await;
     }
 
@@ -2017,6 +2048,44 @@ mod tests {
             .expect("page 2");
         assert!(next.until.is_none(), "only with the first page");
         done(state, path).await;
+    }
+
+    async fn first_page(state: &AppState, who: &str) -> serde_json::Value {
+        serde_json::to_value(page(state, who, json!({})).await.expect("page")).expect("json")
+    }
+
+    async fn until_groups_by_view(state: &AppState, cid: i64) {
+        let db = &state.db;
+        let open = say(state, "boss", &format!("c{cid}"), "@everyone open").await;
+        let secret = one(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'secret', 'text', 1) RETURNING id").await;
+        exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({secret}, 'u:bob', 1, 1, 1)")).await;
+        crate::api::test_util::restrict_ruled(db).await;
+        let without = first_page(state, "alice").await;
+        assert_eq!(without["until"]["groups"], open.id);
+        let hidden = say(state, "boss", &format!("c{secret}"), "@everyone hidden").await;
+        assert!(hidden.id > open.id);
+        assert_eq!(first_page(state, "alice").await, without);
+        assert_eq!(first_page(state, "bob").await["until"]["groups"], hidden.id);
+        let newer = say(state, "boss", &format!("c{cid}"), "@everyone newer").await;
+        assert_eq!(
+            first_page(state, "alice").await["until"]["groups"],
+            newer.id
+        );
+        add_user(db, "dave").await;
+        add_member(db, "rchat", "dave", 0, 0, now() + 1000).await;
+        assert_eq!(first_page(state, "dave").await["until"]["groups"], 0);
+    }
+
+    #[tokio::test]
+    async fn until_groups_reads_only_channels_you_can_view_since_you_joined() {
+        let (state, path, cid) = world("inbox_until_view").await;
+        until_groups_by_view(&state, cid).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("inbox_until_view").await {
+            let cid = people(&state).await;
+            until_groups_by_view(&state, cid).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
     }
 
     #[tokio::test]
