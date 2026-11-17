@@ -38,8 +38,8 @@ tauri-plugin-autostart = "2.7"
 # Tauri's tray as a StatusNotifierItem over D-Bus (left click opens, no libayatana-appindicator).
 # Tauri turns on tray-icon's appindicator backend, and tray-icon prefers ksni when both are on.
 [target.'cfg(target_os = "linux")'.dependencies]
-tray-icon = { version = "0.25", default-features = false, features = ["ksni"] }
-zbus = "5"
+tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
+zbus = "6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
