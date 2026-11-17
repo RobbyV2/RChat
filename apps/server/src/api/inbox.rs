@@ -140,12 +140,12 @@ pub struct InboxItem {
 /// newer notifications stay unread.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct InboxUntil {
-    /// Highest ping id.
+    /// Id of the newest ping the inbox lists; 0 when it lists none.
     pub pings: i64,
     /// Id of the newest message with a group mention the reader could be shown (sent since they
     /// joined, in a text channel they can view); 0 when there is none.
     pub groups: i64,
-    /// Highest friend ping id.
+    /// Id of the newest friend ping the inbox lists; 0 when it lists none.
     pub friends: i64,
 }
 
@@ -397,18 +397,32 @@ fn not_blocked(col: &str) -> String {
     format!(" AND NOT EXISTS(SELECT 1 FROM blocks b WHERE b.blocker = $1 AND b.blocked = {col})")
 }
 
-fn live(col: &str) -> String {
+/// `col` (a username column) names an account that is being deleted.
+fn gone(col: &str) -> String {
     format!(
-        " AND NOT EXISTS(SELECT 1 FROM users pa WHERE pa.username = {col} AND pa.password_hash = '!purging')"
+        "EXISTS(SELECT 1 FROM users pa WHERE pa.username = {col} AND pa.password_hash = '!purging')"
     )
 }
+
+fn live(col: &str) -> String {
+    format!(" AND NOT {}", gone(col))
+}
+
+/// The pings the inbox lists: unseen and seen ones, not withdrawn ones.
+const LISTED: &str = "p.seen IN (0, 1)";
 
 /// Personal pings (`pings`) of the reader that pass the read-time gate: the message still
 /// exists and its author's account is live, neither the actor nor the author is blocked, and
 /// for a channel the reader is still a member, can view it and (without read history) the
 /// message and its thread root were sent after they joined; for a DM they are a participant
-/// and both accounts are live.
-fn ping_sql(gate: &Gate, filter: &Filter, extra: &str, binds: &mut Vec<Bind>) -> String {
+/// and both accounts are live. `seen` is the condition on `p.seen` (`LISTED` for the inbox).
+fn ping_sql(
+    gate: &Gate,
+    filter: &Filter,
+    seen: &str,
+    extra: &str,
+    binds: &mut Vec<Bind>,
+) -> String {
     let history = match gate.no_history.as_slice() {
         [] => String::new(),
         ids => format!(
@@ -433,7 +447,7 @@ fn ping_sql(gate: &Gate, filter: &Filter, extra: &str, binds: &mut Vec<Bind>) ->
         conds.push_str(" AND m.dm_id IS NOT NULL");
     }
     format!(
-        "SELECT p.id, p.kind, p.created_at, p.seen, p.actor, p.emoji, m.id, m.thread_root_id, m.content, m.media_filename, m.media_spoiler, m.channel_id, m.dm_id, c.server, c.name, s.display_name FROM pings p JOIN messages m ON m.id = p.message_id LEFT JOIN messages rt ON rt.id = m.thread_root_id LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN servers s ON s.name = c.server LEFT JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE p.username = $1 AND p.seen IN (0, 1) AND {LIVE_AUTHOR}{actor_live}{actor_blocked}{author_blocked} AND ((m.channel_id IS NOT NULL AND c.kind = 'text' AND mem.username IS NOT NULL{hidden}{history}) OR (m.dm_id IS NOT NULL AND EXISTS(SELECT 1 FROM dms d WHERE d.id = m.dm_id AND (d.user_a = $1 OR d.user_b = $1) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')))){conds}{extra}",
+        "SELECT p.id, p.kind, p.created_at, p.seen, p.actor, p.emoji, m.id, m.thread_root_id, m.content, m.media_filename, m.media_spoiler, m.channel_id, m.dm_id, c.server, c.name, s.display_name FROM pings p JOIN messages m ON m.id = p.message_id LEFT JOIN messages rt ON rt.id = m.thread_root_id LEFT JOIN channels c ON c.id = m.channel_id LEFT JOIN servers s ON s.name = c.server LEFT JOIN members mem ON mem.server = c.server AND mem.username = $1 WHERE p.username = $1 AND {seen} AND {LIVE_AUTHOR}{actor_live}{actor_blocked}{author_blocked} AND ((m.channel_id IS NOT NULL AND c.kind = 'text' AND mem.username IS NOT NULL{hidden}{history}) OR (m.dm_id IS NOT NULL AND EXISTS(SELECT 1 FROM dms d WHERE d.id = m.dm_id AND (d.user_a = $1 OR d.user_b = $1) AND NOT EXISTS(SELECT 1 FROM users pu WHERE pu.username IN (d.user_a, d.user_b) AND pu.password_hash = '!purging')))){conds}{extra}",
         actor_live = live("p.actor"),
         actor_blocked = not_blocked("p.actor"),
         author_blocked = not_blocked("m.author"),
@@ -520,7 +534,7 @@ async fn ping_items(
     let mut binds = vec![Bind::S(user.username.clone())];
     let mut extra = String::new();
     let sql = {
-        let base = ping_sql(gate, filter, "", &mut binds);
+        let base = ping_sql(gate, filter, LISTED, "", &mut binds);
         if let Some(key) = after {
             extra.push_str(&key.after(InboxSource::Ping, "p.created_at", "p.id", &mut binds));
         }
@@ -830,8 +844,23 @@ fn until_groups_sql(gate: &Gate) -> String {
     )
 }
 
-/// The newest ids the reader could have now: their pings, group mentions (`until_groups_sql`)
-/// and their friend pings.
+/// The newest ping with this `seen` value that `ping_sql` lists for the reader.
+fn until_pings_sql(gate: &Gate, seen: i64, binds: &mut Vec<Bind>) -> String {
+    format!(
+        "{} ORDER BY p.id DESC LIMIT 1",
+        ping_sql(
+            gate,
+            &Filter::default(),
+            &format!("p.seen = {seen}"),
+            "",
+            binds
+        )
+    )
+}
+
+/// The bounds of the reader's inbox now: the newest ping and friend ping it lists
+/// (`until_pings_sql`, `friend_sql`) and the newest group mention they could be shown
+/// (`until_groups_sql`).
 async fn until_now(db: &Db, user: &User, gate: &Gate) -> Result<InboxUntil, ApiError> {
     let max = |sql: String| async move {
         Ok::<i64, ApiError>(
@@ -843,10 +872,25 @@ async fn until_now(db: &Db, user: &User, gate: &Gate) -> Result<InboxUntil, ApiE
                 .unwrap_or(0),
         )
     };
+    let mut pings = 0;
+    for seen in [0, 1] {
+        let mut binds = vec![Bind::S(user.username.clone())];
+        let sql = until_pings_sql(gate, seen, &mut binds);
+        let row = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), &binds)
+            .fetch_optional(db)
+            .await?;
+        if let Some(r) = row {
+            pings = pings.max(r.try_get::<i64, _>(0)?);
+        }
+    }
     Ok(InboxUntil {
-        pings: max("SELECT MAX(id) FROM pings WHERE username = $1".to_string()).await?,
+        pings,
         groups: max(until_groups_sql(gate)).await?,
-        friends: max("SELECT MAX(id) FROM friend_pings WHERE username = $1".to_string()).await?,
+        friends: max(format!(
+            "SELECT MAX(q.id) FROM ({}) q",
+            friend_sql(&Filter::default(), "")
+        ))
+        .await?,
     })
 }
 
@@ -1044,8 +1088,9 @@ pub(crate) async fn read_item(
 /// seen: pings with an id up to `until.pings`, group mentions of messages up to `until.groups`
 /// and friend pings up to `until.friends`, so notifications that arrived later stay unread.
 /// `kind`, `server` and `dms` limit it to what that filter lists. Pings in that filter that are
-/// no longer listed (the channel can no longer be viewed, the actor is blocked) are marked too;
-/// at most 1000 group mentions are marked per call, the newest first. Read positions do not move.
+/// no longer listed (the channel can no longer be viewed, the actor is blocked) are marked too.
+/// Pings and friend pings from an account that is being deleted are marked whatever their id.
+/// At most 1000 group mentions are marked per call, the newest first. Read positions do not move.
 /// Emits `ping_count` for each scope that changed (and the `friends` scope) and
 /// `group_pings_seen`, to the user's connections only. Requires a bearer token. General
 /// rate-limit bucket.
@@ -1068,7 +1113,7 @@ pub(crate) async fn read_all(
     } = until;
     let filter = Filter::new(true, kind, server, dms.unwrap_or(false))?;
     let db = &state.db;
-    if filter.wants(InboxSource::Ping) && pings > 0 {
+    if filter.wants(InboxSource::Ping) {
         let mut binds = vec![Bind::S(user.username.clone()), Bind::I(pings)];
         let mut conds = String::new();
         if let Some(kind) = filter.ping_kind() {
@@ -1082,9 +1127,12 @@ pub(crate) async fn read_all(
         if filter.dms {
             conds.push_str(" AND server IS NULL");
         }
-        let scopes_sql = format!(
-            "SELECT DISTINCT scope FROM pings WHERE username = $1 AND seen = 0 AND id <= $2{conds}"
+        let marked = format!(
+            "username = $1 AND seen = 0 AND (id <= $2 OR {} OR EXISTS(SELECT 1 FROM messages pm WHERE pm.id = pings.message_id AND {})){conds}",
+            gone("pings.actor"),
+            gone("pm.author")
         );
+        let scopes_sql = format!("SELECT DISTINCT scope FROM pings WHERE {marked}");
         let scopes: Vec<String> = bind_all(sqlx::query(sqlx::AssertSqlSafe(scopes_sql)), &binds)
             .fetch_all(db)
             .await?
@@ -1092,9 +1140,7 @@ pub(crate) async fn read_all(
             .map(|r| r.try_get(0))
             .collect::<sqlx::Result<_>>()?;
         if !scopes.is_empty() {
-            let sql = format!(
-                "UPDATE pings SET seen = 1 WHERE username = $1 AND seen = 0 AND id <= $2{conds}"
-            );
+            let sql = format!("UPDATE pings SET seen = 1 WHERE {marked}");
             bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), &binds)
                 .execute(db)
                 .await?;
@@ -1122,15 +1168,17 @@ pub(crate) async fn read_all(
         .await?;
         mark_groups(&state, &user, &rows).await?;
     }
-    if filter.wants(InboxSource::Friend) && friends > 0 {
-        let changed = sqlx::query(
-            "UPDATE friend_pings SET seen = 1 WHERE username = $1 AND seen = 0 AND id <= $2",
-        )
-        .bind(&user.username)
-        .bind(friends)
-        .execute(db)
-        .await?
-        .rows_affected();
+    if filter.wants(InboxSource::Friend) {
+        let sql = format!(
+            "UPDATE friend_pings SET seen = 1 WHERE username = $1 AND seen = 0 AND (id <= $2 OR {})",
+            gone("friend_pings.actor")
+        );
+        let changed = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(&user.username)
+            .bind(friends)
+            .execute(db)
+            .await?
+            .rows_affected();
         if changed > 0 {
             crate::api::friends::announce_count(&state, &user.username).await?;
         }
@@ -1829,7 +1877,7 @@ mod tests {
         let mut binds = vec![Bind::S("alice".into())];
         let ping_plan = format!(
             "EXPLAIN QUERY PLAN {} ORDER BY p.created_at DESC, p.id DESC LIMIT 51",
-            ping_sql(&gate, &Filter::default(), "", &mut binds)
+            ping_sql(&gate, &Filter::default(), LISTED, "", &mut binds)
         );
         let lines = plan(db, &ping_plan, &binds).await;
         assert!(
@@ -1838,6 +1886,24 @@ mod tests {
                 .any(|l| l.contains("SEARCH p USING INDEX idx_pings_user")),
             "pings are read per user: {lines:#?}"
         );
+        for seen in [0, 1] {
+            let mut binds = vec![Bind::S("alice".into())];
+            let sql = format!(
+                "EXPLAIN QUERY PLAN {}",
+                until_pings_sql(&gate, seen, &mut binds)
+            );
+            let lines = plan(db, &sql, &binds).await;
+            assert!(
+                lines
+                    .iter()
+                    .any(|l| l.contains("SEARCH p USING INDEX idx_pings_user")),
+                "{lines:#?}"
+            );
+            assert!(
+                !lines.iter().any(|l| l.contains("TEMP B-TREE")),
+                "walks the reader's pings newest first: {lines:#?}"
+            );
+        }
         let lines = plan(
             db,
             &format!("EXPLAIN QUERY PLAN {}", until_groups_sql(&gate)),
@@ -2084,6 +2150,129 @@ mod tests {
         if let Some((state, pg)) = crate::api::test_util::pg_state("inbox_until_view").await {
             let cid = people(&state).await;
             until_groups_by_view(&state, cid).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
+    }
+
+    async fn until_pings_and_friends_as_listed(state: &AppState, cid: i64) {
+        let db = &state.db;
+        say(state, "bob", &format!("c{cid}"), "@alice open").await;
+        let secret = one(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'secret', 'text', 1) RETURNING id").await;
+        let without = first_page(state, "alice").await;
+        assert!(without["until"]["pings"].as_i64() > Some(0));
+        say(state, "bob", &format!("c{secret}"), "@alice soon hidden").await;
+        let _ = crate::api::friends::send_request(
+            State(state.clone()),
+            me("carol"),
+            Json(serde_json::from_value(json!({ "username": "alice" })).expect("req")),
+        )
+        .await
+        .expect("request");
+        let listed = first_page(state, "alice").await;
+        assert_eq!(listed["items"].as_array().map(Vec::len), Some(3));
+        assert!(listed["until"]["pings"].as_i64() > without["until"]["pings"].as_i64());
+        assert!(listed["until"]["friends"].as_i64() > Some(0));
+        exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({secret}, 'u:bob', 1, 1, 1)")).await;
+        crate::api::test_util::restrict_ruled(db).await;
+        exec(
+            db,
+            "UPDATE users SET password_hash = '!purging' WHERE username = 'carol'",
+        )
+        .await;
+        assert_eq!(first_page(state, "alice").await, without);
+    }
+
+    #[tokio::test]
+    async fn until_pings_and_friends_read_only_what_the_inbox_lists() {
+        let (state, path, cid) = world("inbox_until_listed").await;
+        until_pings_and_friends_as_listed(&state, cid).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("inbox_until_listed").await {
+            let cid = people(&state).await;
+            until_pings_and_friends_as_listed(&state, cid).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
+    }
+
+    async fn unseen(db: &Db, table: &str) -> i64 {
+        one(
+            db,
+            &format!("SELECT COUNT(*) FROM {table} WHERE username = 'alice' AND seen = 0"),
+        )
+        .await
+    }
+
+    async fn mark_all(state: &AppState, until: InboxUntil) {
+        let req = serde_json::from_value(json!({ "until": until })).expect("body");
+        let _ = read_all(State(state.clone()), me("alice"), Json(req))
+            .await
+            .expect("read all");
+    }
+
+    async fn read_all_with_accounts_being_deleted(state: &AppState, cid: i64) {
+        let db = &state.db;
+        let c = format!("c{cid}");
+        add_user(db, "dave").await;
+        add_member(db, "rchat", "dave", 0, 0, 1).await;
+        let deleting = |name: &'static str| async move {
+            exec(
+                db,
+                &format!("UPDATE users SET password_hash = '!purging' WHERE username = '{name}'"),
+            )
+            .await;
+        };
+        say(state, "carol", &c, "@alice from carol").await;
+        let _ = crate::api::friends::send_request(
+            State(state.clone()),
+            me("carol"),
+            Json(serde_json::from_value(json!({ "username": "alice" })).expect("req")),
+        )
+        .await
+        .expect("request");
+        deleting("carol").await;
+        let shown = page(state, "alice", json!({})).await.expect("page");
+        assert!(shown.items.is_empty());
+        assert_eq!(shown.until, Some(InboxUntil::default()));
+        assert_eq!(
+            (unseen(db, "pings").await, unseen(db, "friend_pings").await),
+            (1, 1)
+        );
+        mark_all(state, InboxUntil::default()).await;
+        assert_eq!(
+            (unseen(db, "pings").await, unseen(db, "friend_pings").await),
+            (0, 0),
+            "nothing listed, and the badges of the account being deleted are cleared"
+        );
+        let kept = say(state, "bob", &c, "@alice from bob").await;
+        say(state, "dave", &c, "@alice from dave").await;
+        deleting("dave").await;
+        let shown = page(state, "alice", json!({})).await.expect("page");
+        assert_eq!(
+            shown.items.iter().map(|i| i.message_id).collect::<Vec<_>>(),
+            [Some(kept.id)]
+        );
+        let later = say(state, "bob", &c, "@alice later").await;
+        assert_eq!(unseen(db, "pings").await, 3);
+        mark_all(state, shown.until.expect("bounds")).await;
+        assert_eq!(
+            one(
+                db,
+                "SELECT message_id FROM pings WHERE username = 'alice' AND seen = 0"
+            )
+            .await,
+            later.id,
+            "only the mention that came after the page stays unread"
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_all_read_clears_what_accounts_being_deleted_sent() {
+        let (state, path, cid) = world("inbox_read_all_gone").await;
+        read_all_with_accounts_being_deleted(&state, cid).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("inbox_read_all_gone").await {
+            let cid = people(&state).await;
+            read_all_with_accounts_being_deleted(&state, cid).await;
             crate::api::test_util::pg_done(state, pg).await;
         }
     }

@@ -992,6 +992,44 @@ async fn forgetting_an_author_locks_only_the_jobs_naming_them() {
 }
 
 #[tokio::test]
+async fn the_newest_counted_id_is_a_message_the_caller_can_read() {
+    let c = club("bulk_upto").await;
+    let state = &c.state;
+    let db = &state.db;
+    let scope = format!("c{}", c.general);
+    let count = |user: &'static str| {
+        let scope = scope.clone();
+        async move {
+            let counted = call(
+                state,
+                user,
+                json!({ "scope": scope, "all": true, "dry_run": true }),
+            )
+            .await
+            .expect("count");
+            (counted.total, counted.upto)
+        }
+    };
+    let early = post(db, c.general, "bob", 100).await;
+    assert_eq!(count("erin").await, (0, Some(0)), "sent before erin joined");
+    assert_eq!(count("bob").await, (1, Some(early)));
+    let late = post(db, c.general, "carol", 600).await;
+    assert_eq!(count("erin").await, (1, Some(late)));
+    exec(
+        db,
+        "UPDATE users SET password_hash = '!purging' WHERE username = 'carol'",
+    )
+    .await;
+    assert_eq!(
+        count("erin").await,
+        (0, Some(0)),
+        "its author is being deleted"
+    );
+    assert_eq!(count("bob").await, (1, Some(early)));
+    done(c.state, c.path).await;
+}
+
+#[tokio::test]
 async fn a_closed_database_keeps_no_job_marked_as_running() {
     let (state, path) = temp_state("bulk_forget").await;
     let (other, other_path) = temp_state("bulk_forget_other").await;

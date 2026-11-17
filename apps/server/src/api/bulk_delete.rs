@@ -619,14 +619,21 @@ fn next_bind(bounds: &Bounds) -> usize {
     4 + usize::from(bounds.floor.is_some()) + usize::from(bounds.author.is_some())
 }
 
-async fn newest(db: &Db, place: &Place) -> Result<i64, ApiError> {
+/// The newest message of the place that the caller may read (at or after `floor`, by a live
+/// account), 0 when there is none.
+async fn newest(db: &Db, place: &Place, floor: Option<i64>) -> Result<i64, ApiError> {
     let (cond, key) = place.condition();
-    let sql = format!("SELECT COALESCE(MAX(m.id), 0) FROM messages m WHERE {cond}");
+    let sql = format!(
+        "SELECT m.id FROM messages m WHERE {cond} AND m.created_at >= $2 AND {LIVE_AUTHOR} ORDER BY m.id DESC LIMIT 1"
+    );
     Ok(sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(key)
-        .fetch_one(db)
+        .bind(floor.unwrap_or(i64::MIN))
+        .fetch_optional(db)
         .await?
-        .try_get(0)?)
+        .map(|r| r.try_get(0))
+        .transpose()?
+        .unwrap_or(0))
 }
 
 fn dedup(ids: &[i64]) -> Vec<i64> {
@@ -807,14 +814,16 @@ async fn start_all(
     } = range;
     let db = &state.db;
     let moderator = place.moderator(db).await;
+    let floor = place.floor(db).await?;
+    let top = newest(db, place, floor).await?;
     let upto = match before {
-        Some(b) => b.saturating_sub(1).min(newest(db, place).await?),
-        None => newest(db, place).await?,
+        Some(b) => b.saturating_sub(1).min(top),
+        None => top,
     };
     let bounds = Bounds {
         after: after.unwrap_or(0),
         upto,
-        floor: place.floor(db).await?,
+        floor,
         author: author.clone(),
     };
     let (total, own) = count_all(db, place, &bounds, &except, &user.username).await?;
