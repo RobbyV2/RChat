@@ -1,3 +1,7 @@
+use std::collections::BTreeMap;
+
+use serde::Deserialize;
+
 use crate::api::media::{DEFAULT_BUDGET_MIB, DEFAULT_BUFFER_MIB};
 use crate::bus::DEFAULT_HUB_MAXLEN;
 use crate::hub::{
@@ -67,6 +71,103 @@ const RANGES: [(&str, i64, i64); 53] = [
     ("RARE_REQUESTS_PER_DAY", 0, 100_000),
 ];
 
+/// The P2P limits registry, generated from the web app's `p2p/limits.ts`: each device-local name
+/// (`section.key`) with its default, smallest and largest value.
+const P2P_REGISTRY: &str = include_str!("../../../assets/p2p_limits.json");
+
+#[derive(Deserialize)]
+struct P2pRegistry {
+    local: BTreeMap<String, [f64; 3]>,
+    #[serde(default)]
+    agreed: BTreeMap<String, [f64; 3]>,
+    #[serde(default)]
+    refresh: Vec<P2pRefresh>,
+}
+
+/// A refresh and the expiry it renews, as registry names: `times` refreshes, each the sum of the
+/// intervals in `refresh`, fit in the expiry.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct P2pRefresh {
+    pub refresh: Vec<String>,
+    pub expiry: String,
+    pub times: u32,
+}
+
+/// What a `P2P_LIMITS` name takes: its default, smallest and largest value, and whole numbers
+/// only when its default and both ends are whole (a count, a size or a time, not a share).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct P2pRange {
+    pub default: f64,
+    pub lo: f64,
+    pub hi: f64,
+    pub whole: bool,
+}
+
+/// Every `P2P_LIMITS` name (`local.<section>.<key>`, and `agreed.<key>` where the registry has
+/// an `agreed` part) with what it takes.
+pub fn p2p_ranges() -> anyhow::Result<BTreeMap<String, P2pRange>> {
+    let P2pRegistry {
+        local,
+        agreed,
+        refresh: _,
+    } = serde_json::from_str(P2P_REGISTRY)?;
+    let named = |part: &'static str, of: BTreeMap<String, [f64; 3]>| {
+        of.into_iter().map(move |(name, [default, lo, hi])| {
+            let whole = [default, lo, hi].iter().all(|v| v.fract() == 0.0);
+            let range = P2pRange {
+                default,
+                lo,
+                hi,
+                whole,
+            };
+            (format!("{part}.{name}"), range)
+        })
+    };
+    Ok(named("local", local)
+        .chain(named("agreed", agreed))
+        .collect())
+}
+
+/// Each refresh with the expiry it renews, as `P2P_LIMITS` names.
+pub fn p2p_refresh() -> anyhow::Result<Vec<P2pRefresh>> {
+    let P2pRegistry {
+        local: _,
+        agreed: _,
+        refresh,
+    } = serde_json::from_str(P2P_REGISTRY)?;
+    let named = |name: String| format!("local.{name}");
+    Ok(refresh
+        .into_iter()
+        .map(
+            |P2pRefresh {
+                 refresh,
+                 expiry,
+                 times,
+             }| P2pRefresh {
+                refresh: refresh.into_iter().map(named).collect(),
+                expiry: named(expiry),
+                times,
+            },
+        )
+        .collect())
+}
+
+/// `text` in printable ASCII: every other character as its JSON `\u` escapes.
+fn ascii(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            ' '..='~' => out.push(c),
+            _ => {
+                for unit in c.encode_utf16(&mut [0; 2]) {
+                    out.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The operator's instance limits, one field per env name (the name lowercased).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Limits {
@@ -125,6 +226,10 @@ pub struct Limits {
     pub lookup_misses_per_hour: u32,
     pub rare_requests_per_hour: u32,
     pub rare_requests_per_day: u32,
+    /// `P2P_LIMITS`: the names given that the P2P registry has, with their values.
+    pub p2p: BTreeMap<String, f64>,
+    /// Names in `P2P_LIMITS` the registry doesn't have, left out of `p2p`.
+    pub p2p_unknown: Vec<String>,
 }
 
 impl Default for Limits {
@@ -185,6 +290,8 @@ impl Default for Limits {
             lookup_misses_per_hour: 200,
             rare_requests_per_hour: 20,
             rare_requests_per_day: 100,
+            p2p: BTreeMap::new(),
+            p2p_unknown: Vec::new(),
         }
     }
 }
@@ -218,6 +325,86 @@ impl Env<'_> {
         Ok(self.opt(name)?.unwrap_or(default))
     }
 
+    /// `P2P_LIMITS`: a JSON object of P2P limit names to numbers, each in its registry range and
+    /// whole where the name takes whole numbers. Names the registry doesn't have come back apart,
+    /// in order.
+    fn p2p(&self) -> anyhow::Result<(BTreeMap<String, f64>, Vec<String>)> {
+        const NAME: &str = "P2P_LIMITS";
+        let Some(raw) = self.raw(NAME) else {
+            return Ok((BTreeMap::new(), Vec::new()));
+        };
+        let given = match serde_json::from_str(&raw) {
+            Ok(serde_json::Value::Object(given)) => given,
+            Ok(_) => anyhow::bail!("{NAME}: expected a JSON object of names to numbers"),
+            Err(e) => anyhow::bail!("{NAME}: expected a JSON object of names to numbers ({e})"),
+        };
+        let ranges = p2p_ranges()?;
+        let (mut values, mut unknown) = (BTreeMap::new(), Vec::new());
+        for (name, value) in given {
+            let Some(&P2pRange {
+                default: _,
+                lo,
+                hi,
+                whole,
+            }) = ranges.get(&name)
+            else {
+                unknown.push(name);
+                continue;
+            };
+            let fits = |v: &f64| (lo..=hi).contains(v) && (!whole || v.fract() == 0.0);
+            let got = || ascii(&value.to_string());
+            match (value.as_f64().filter(fits), whole) {
+                (Some(v), _) => values.insert(name, v),
+                (None, true) => anyhow::bail!(
+                    "{NAME}: {name}: expected a whole number from {lo} to {hi}, got {}",
+                    got()
+                ),
+                (None, false) => {
+                    anyhow::bail!("{NAME}: {name}: expected {lo} to {hi}, got {}", got())
+                }
+            };
+        }
+        for P2pRefresh {
+            refresh,
+            expiry,
+            times,
+        } in p2p_refresh()?
+        {
+            let at = |name: &str| match (values.get(name), ranges.get(name)) {
+                (Some(&v), _) => Ok((v, format!("{v}"))),
+                (
+                    None,
+                    Some(&P2pRange {
+                        default,
+                        lo: _,
+                        hi: _,
+                        whole: _,
+                    }),
+                ) => Ok((default, format!("{default}, the default"))),
+                (None, None) => Err(anyhow::anyhow!("{NAME}: {name} is not in the registry")),
+            };
+            let (mut sum, mut parts) = (0.0, Vec::new());
+            for name in &refresh {
+                let (v, shown) = at(name)?;
+                sum += v;
+                parts.push(format!("{name} ({shown})"));
+            }
+            let (e, e_shown) = at(&expiry)?;
+            if sum * f64::from(times) > e {
+                let share = match times {
+                    1 => String::new(),
+                    2 => "half of ".to_string(),
+                    n => format!("1/{n} of "),
+                };
+                anyhow::bail!(
+                    "{NAME}: {} must be at most {share}{expiry} ({e_shown})",
+                    parts.join(" plus ")
+                );
+            }
+        }
+        Ok((values, unknown))
+    }
+
     pub(crate) fn switch(&self, name: &str, default: bool) -> anyhow::Result<bool> {
         let Some(raw) = self.raw(name) else {
             return Ok(default);
@@ -236,6 +423,7 @@ impl Limits {
     pub fn load(env: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<Limits> {
         let d = Limits::default();
         let e = Env(env);
+        let (p2p, p2p_unknown) = e.p2p()?;
         let limits = Limits {
             rate_limit_per_second: e.num("RATE_LIMIT_PER_SECOND", d.rate_limit_per_second)?,
             rate_limit_burst: e.num("RATE_LIMIT_BURST", d.rate_limit_burst)?,
@@ -303,6 +491,8 @@ impl Limits {
             lookup_misses_per_hour: e.num("LOOKUP_MISSES_PER_HOUR", d.lookup_misses_per_hour)?,
             rare_requests_per_hour: e.num("RARE_REQUESTS_PER_HOUR", d.rare_requests_per_hour)?,
             rare_requests_per_day: e.num("RARE_REQUESTS_PER_DAY", d.rare_requests_per_day)?,
+            p2p,
+            p2p_unknown,
         };
         limits.validate()?;
         Ok(limits)
@@ -367,6 +557,8 @@ impl Limits {
             lookup_misses_per_hour,
             rare_requests_per_hour,
             rare_requests_per_day,
+            p2p: _,
+            p2p_unknown: _,
         } = *self;
         fn set<T: TryInto<i64>>(value: T) -> Option<i64> {
             value.try_into().ok()
@@ -554,6 +746,14 @@ impl Limits {
         u64::from(self.p2p_backup_total_mib) * MIB as u64
     }
 
+    /// The warnings to log at start for names in `P2P_LIMITS` the registry doesn't have.
+    pub fn p2p_warnings(&self) -> Vec<String> {
+        self.p2p_unknown
+            .iter()
+            .map(|name| format!("P2P_LIMITS: unknown name {} ignored", ascii(name)))
+            .collect()
+    }
+
     /// Seconds an unused guest grant lives (`GUEST_GRANT_DAYS`, at least one day).
     pub fn guest_grant_ttl(&self) -> i64 {
         self.guest_grant_days.max(1) * 86400
@@ -568,9 +768,9 @@ impl Limits {
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
 
-    use super::{Limits, RANGES};
+    use super::{Limits, P2pRange, P2pRefresh, RANGES, p2p_ranges, p2p_refresh};
 
     fn load(pairs: &[(&str, String)]) -> anyhow::Result<Limits> {
         let set: HashMap<String, String> = pairs
@@ -616,12 +816,19 @@ mod tests {
         for name in read {
             let numeric = RANGES.iter().any(|(n, _, _)| *n == name);
             let default = load(&[]).expect("defaults");
-            match numeric {
-                true => {
+            match (numeric, name.as_str()) {
+                (true, _) => {
                     let err = load(&[(&name, "1.5".to_string())]).unwrap_err();
                     assert!(err.to_string().starts_with(&format!("{name}: expected ")));
                 }
-                false => {
+                (false, "P2P_LIMITS") => {
+                    let err = load(&[(&name, "on".to_string())]).unwrap_err();
+                    assert!(
+                        err.to_string()
+                            .starts_with("P2P_LIMITS: expected a JSON object")
+                    );
+                }
+                (false, _) => {
                     let on = load(&[(&name, " On ".to_string())]).expect("on");
                     let off = load(&[(&name, "FALSE".to_string())]).expect("off");
                     assert_ne!(on, off, "{name}");
@@ -822,6 +1029,384 @@ mod tests {
     }
 
     #[test]
+    fn the_p2p_registry_is_the_web_apps() {
+        let ranges = p2p_ranges().expect("the registry parses");
+        assert!(ranges.len() > 250, "{}", ranges.len());
+        assert!(ranges.keys().all(|n| n.starts_with("local.")));
+        let range = |default, lo, hi, whole| {
+            Some(P2pRange {
+                default,
+                lo,
+                hi,
+                whole,
+            })
+        };
+        let of = |name: &str| ranges.get(name).copied();
+        assert_eq!(of("local.gossip.perRoom"), range(8.0, 2.0, 32.0, true));
+        assert_eq!(of("local.share.room"), range(0.25, 0.015625, 1.0, false));
+        assert_eq!(
+            of("local.node.backoff.1"),
+            range(60_000.0, 10_000.0, 1_800_000.0, true)
+        );
+        for (
+            name,
+            P2pRange {
+                default,
+                lo,
+                hi,
+                whole: _,
+            },
+        ) in &ranges
+        {
+            assert!(lo <= default && default <= hi, "{name}");
+        }
+        let rule = |refresh: &[&str], expiry: &str, times| P2pRefresh {
+            refresh: refresh.iter().map(|n| n.to_string()).collect(),
+            expiry: expiry.to_string(),
+            times,
+        };
+        let rules = p2p_refresh().expect("the registry parses");
+        assert_eq!(
+            rules,
+            [
+                rule(&["local.gossip.typingRelayMs"], "local.gossip.typingMs", 2),
+                rule(&["local.session.pingMs"], "local.session.deadMs", 2),
+                rule(&["local.gossip.presenceMs"], "local.gossip.presenceTtl", 2),
+                rule(&["local.voice.refreshMs"], "local.voice.ttlMs", 2),
+                rule(&["local.voice.relayMs"], "local.voice.ttlMs", 2),
+                rule(
+                    &["local.voice.refreshMs", "local.voice.relayMs"],
+                    "local.voice.lostMs",
+                    1
+                ),
+            ]
+        );
+        for P2pRefresh {
+            refresh,
+            expiry,
+            times,
+        } in &rules
+        {
+            let sum: f64 = refresh.iter().map(|n| ranges[n].default).sum();
+            assert!(
+                sum * f64::from(*times) <= ranges[expiry].default,
+                "{refresh:?} {expiry}"
+            );
+        }
+    }
+
+    fn with<'a>(roomy: &[(&'a str, f64)], given: &[(&'a str, f64)]) -> Vec<(&'a str, f64)> {
+        [roomy, given].concat()
+    }
+
+    #[test]
+    fn a_p2p_refresh_that_does_not_fit_its_expiry_stops_the_start() {
+        let p2p = |given: &[(&str, f64)]| {
+            let json = serde_json::Map::from_iter(
+                given
+                    .iter()
+                    .map(|(name, v)| (name.to_string(), serde_json::json!(v))),
+            );
+            load(&[("P2P_LIMITS", serde_json::Value::Object(json).to_string())])
+        };
+        let refused = |given: &[(&str, f64)]| {
+            let err = p2p(given).unwrap_err().to_string();
+            assert!(err.is_ascii(), "{err}");
+            err
+        };
+        let taken = |given: &[(&str, f64)]| {
+            let l = p2p(given).unwrap_or_else(|e| panic!("{given:?}: {e}"));
+            for (name, v) in given {
+                assert_eq!(l.p2p.get(*name), Some(v), "{given:?}");
+            }
+        };
+        assert_eq!(
+            refused(&[("local.gossip.typingMs", 1000.0)]),
+            "P2P_LIMITS: local.gossip.typingRelayMs (3000, the default) must be at most half of \
+             local.gossip.typingMs (1000)"
+        );
+        assert_eq!(
+            refused(&[("local.voice.lostMs", 10_000.0)]),
+            "P2P_LIMITS: local.voice.refreshMs (20000, the default) plus local.voice.relayMs \
+             (5000, the default) must be at most local.voice.lostMs (10000)"
+        );
+        let ranges = p2p_ranges().expect("the registry parses");
+        let rules = p2p_refresh().expect("the registry parses");
+        let d = |name: &str| ranges[name].default;
+        let in_range = |name: &str, v: f64| (ranges[name].lo..=ranges[name].hi).contains(&v);
+        for P2pRefresh {
+            refresh,
+            expiry,
+            times,
+        } in &rules
+        {
+            let (expiry, t) = (expiry.as_str(), f64::from(*times));
+            let names: Vec<&str> = refresh.iter().map(String::as_str).chain([expiry]).collect();
+            // Every other rule's expiry at its largest, so only this rule decides.
+            let roomy: Vec<(&str, f64)> = rules
+                .iter()
+                .map(|r| r.expiry.as_str())
+                .filter(|e| !names.contains(e))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .map(|e| (e, ranges[e].hi))
+                .collect();
+            let sum = |of: &dyn Fn(&str) -> f64| refresh.iter().map(|n| of(n)).sum::<f64>();
+            // `name` alone at the edge of the rule, the others at their defaults.
+            let edge = |name: &str| {
+                if name == expiry {
+                    sum(&d) * t
+                } else {
+                    d(expiry) / t - (sum(&d) - d(name))
+                }
+            };
+            let rule = |given: &[(&str, f64)]| {
+                let shown = |name: &str| match given.iter().find(|(n, _)| *n == name) {
+                    Some((_, v)) => v.to_string(),
+                    None => format!("{}, the default", d(name)),
+                };
+                let parts: Vec<String> = refresh
+                    .iter()
+                    .map(|n| format!("{n} ({})", shown(n)))
+                    .collect();
+                let share = match times {
+                    2 => "half of ",
+                    _ => "",
+                };
+                format!(
+                    "P2P_LIMITS: {} must be at most {share}{expiry} ({})",
+                    parts.join(" plus "),
+                    shown(expiry)
+                )
+            };
+            let wider: Vec<(&str, f64)> = refresh
+                .iter()
+                .map(|n| (n.as_str(), d(n) + 20_000.0))
+                .collect();
+            let wide = wider.iter().map(|(_, v)| v).sum::<f64>() * t;
+            let mut cases = 0;
+            for (name, v) in refresh
+                .iter()
+                .map(|n| (n.as_str(), edge(n) + 1.0))
+                .chain([(expiry, edge(expiry) - 1.0)])
+                .filter(|(n, v)| in_range(n, *v))
+            {
+                assert_eq!(refused(&with(&roomy, &[(name, v)])), rule(&[(name, v)]));
+                cases += 1;
+            }
+            assert!(cases >= refresh.len(), "{expiry}: {cases}");
+            let over = [wider.as_slice(), &[(expiry, wide - 1.0)]].concat();
+            assert_eq!(refused(&with(&roomy, &over)), rule(&over));
+            for name in &names {
+                if in_range(name, edge(name)) {
+                    taken(&with(&roomy, &[(name, edge(name))]));
+                }
+            }
+            taken(&with(
+                &roomy,
+                &[wider.as_slice(), &[(expiry, wide)]].concat(),
+            ));
+            let inside: Vec<(&str, f64)> = refresh
+                .iter()
+                .map(|n| (n.as_str(), d(n) - 1.0))
+                .chain([(expiry, d(expiry) + 1.0)])
+                .collect();
+            taken(&with(&roomy, &inside));
+        }
+    }
+
+    #[test]
+    fn p2p_limits_validate_against_the_registry() {
+        let p2p = |json: &str| load(&[("P2P_LIMITS", json.to_string())]);
+        let ranges = p2p_ranges().expect("the registry parses");
+        for name in [
+            "local.gossip.perRoom",
+            "local.share.room",
+            "local.node.backoff.1",
+        ] {
+            let P2pRange {
+                default: _,
+                lo,
+                hi,
+                whole,
+            } = ranges[name];
+            let expected = match whole {
+                true => format!("expected a whole number from {lo} to {hi}"),
+                false => format!("expected {lo} to {hi}"),
+            };
+            for edge in [lo, hi] {
+                let l = p2p(&format!("{{\"{name}\": {edge}}}"))
+                    .unwrap_or_else(|e| panic!("{name}={edge}: {e}"));
+                assert_eq!(l.p2p.get(name), Some(&edge), "{name}={edge}");
+                assert!(l.p2p_unknown.is_empty());
+            }
+            for past in [lo - 1.0, hi + 1.0] {
+                let err = p2p(&format!("{{\"{name}\": {past}}}")).unwrap_err();
+                assert_eq!(
+                    err.to_string(),
+                    format!("P2P_LIMITS: {name}: {expected}, got {past}")
+                );
+            }
+        }
+        for bad in ["\"16\"", "null", "true", "[16]", "{}"] {
+            let err = p2p(&format!("{{\"local.gossip.perRoom\": {bad}}}")).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "P2P_LIMITS: local.gossip.perRoom: expected a whole number from 2 to 32, got {bad}"
+                )
+            );
+        }
+        let both =
+            p2p(r#"{"local.gossip.perRoom": 16, "local.sync.horizon": 3000}"#).expect("both");
+        assert_eq!(
+            both.p2p.into_iter().collect::<Vec<_>>(),
+            [
+                ("local.gossip.perRoom".to_string(), 16.0),
+                ("local.sync.horizon".to_string(), 3000.0)
+            ]
+        );
+        assert_eq!(load(&[]).expect("defaults").p2p, Default::default());
+        assert_eq!(p2p(" {} ").expect("empty").p2p, Default::default());
+    }
+
+    #[test]
+    fn p2p_limits_that_count_take_whole_numbers() {
+        let p2p = |json: &str| load(&[("P2P_LIMITS", json.to_string())]);
+        let ranges = p2p_ranges().expect("the registry parses");
+        for (name, value) in [
+            ("local.gossip.perRoom", "4.5"),
+            ("local.transfer.kdfDesktopT", "3.5"),
+            ("local.node.backoff.1", "60000.25"),
+        ] {
+            let P2pRange {
+                default: _,
+                lo,
+                hi,
+                whole,
+            } = ranges[name];
+            assert!(whole, "{name}");
+            let err = p2p(&format!("{{\"{name}\": {value}}}")).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "P2P_LIMITS: {name}: expected a whole number from {lo} to {hi}, got {value}"
+                )
+            );
+        }
+        let whole = p2p(r#"{"local.gossip.perRoom": 16.0, "local.dag.roomBytes": 5.36870912e8}"#)
+            .expect("whole numbers written with a point or an exponent");
+        assert_eq!(whole.p2p.get("local.gossip.perRoom"), Some(&16.0));
+        assert_eq!(whole.p2p.get("local.dag.roomBytes"), Some(&536_870_912.0));
+        let share = p2p(r#"{"local.share.room": 0.5}"#).expect("a share is a fraction");
+        assert_eq!(share.p2p.get("local.share.room"), Some(&0.5));
+        let fractions: Vec<&str> = ranges
+            .iter()
+            .filter(|(_, r)| !r.whole)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(
+            fractions,
+            [
+                "local.files.qualities.0",
+                "local.files.qualities.1",
+                "local.files.qualities.2",
+                "local.files.qualities.3",
+                "local.files.qualities.4",
+                "local.share.room",
+                "local.share.server"
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_p2p_limit_names_are_dropped() {
+        let l = load(&[(
+            "P2P_LIMITS",
+            r#"{"local.no.such": 3, "sync.horizon": "x", "local.gossip.perRoom": 4}"#.to_string(),
+        )])
+        .expect("unknown names don't stop the start");
+        assert_eq!(
+            l.p2p.into_iter().collect::<Vec<_>>(),
+            [("local.gossip.perRoom".to_string(), 4.0)]
+        );
+        assert_eq!(l.p2p_unknown, ["local.no.such", "sync.horizon"]);
+        let warnings = Limits {
+            p2p_unknown: vec!["local.no.such".to_string(), "sync.horizon".to_string()],
+            ..Limits::default()
+        }
+        .p2p_warnings();
+        assert_eq!(
+            warnings,
+            [
+                "P2P_LIMITS: unknown name local.no.such ignored",
+                "P2P_LIMITS: unknown name sync.horizon ignored"
+            ]
+        );
+        assert!(Limits::default().p2p_warnings().is_empty());
+    }
+
+    #[test]
+    fn p2p_limit_messages_are_plain_ascii() {
+        let p2p = |json: &str| load(&[("P2P_LIMITS", json.to_string())]);
+        let err = p2p("{\"local.gossip.perRoom\": \"zw\u{f6}lf \u{1f600}\"}")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            err,
+            "P2P_LIMITS: local.gossip.perRoom: expected a whole number from 2 to 32, \
+             got \"zw\\u00f6lf \\ud83d\\ude00\""
+        );
+        let err = p2p("{\"local.share.room\": [\"\u{e9}\"]}")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            err,
+            "P2P_LIMITS: local.share.room: expected 0.015625 to 1, got [\"\\u00e9\"]"
+        );
+        for (name, shown) in [
+            ("local.gr\u{f6}\u{df}e", "local.gr\\u00f6\\u00dfe"),
+            ("local.a\\nb", "local.a\\u000ab"),
+            ("local.no such", "local.no such"),
+        ] {
+            let l = p2p(&format!("{{\"{name}\": 1}}")).expect("unknown names don't stop the start");
+            assert_eq!(
+                l.p2p_warnings(),
+                [format!("P2P_LIMITS: unknown name {shown} ignored")]
+            );
+        }
+    }
+
+    #[test]
+    fn bad_p2p_limits_json_stops_the_start() {
+        for bad in [
+            "{",
+            "[]",
+            "16",
+            "\"local.gossip.perRoom\"",
+            "{\"a\": 1,}",
+            "on",
+            "{\"a\": zw\u{f6}lf}",
+            "{\"gr\u{f6}\u{df}e\" 1}",
+        ] {
+            let err = load(&[("P2P_LIMITS", bad.to_string())])
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.starts_with("P2P_LIMITS: expected a JSON object"),
+                "{bad}: {err}"
+            );
+            assert!(err.is_ascii(), "{err}");
+        }
+        assert_eq!(
+            load(&[("P2P_LIMITS", "  ".to_string())])
+                .expect("blank")
+                .p2p,
+            Default::default()
+        );
+    }
+
+    #[test]
     fn every_limit_is_documented_with_its_range_and_default() {
         let example = include_str!("../../../.env.local.example");
         let lines: Vec<&str> = example.lines().collect();
@@ -844,6 +1429,46 @@ mod tests {
                     about.iter().any(|l| l.contains(&format!("{lo} to {hi}"))),
                     "{name}: the comment above it gives {lo} to {hi}"
                 ),
+                None if name == "P2P_LIMITS" => {
+                    assert!(
+                        about.iter().any(|l| l.contains("JSON")),
+                        "{name}: the comment above it says JSON"
+                    );
+                    let example = about
+                        .iter()
+                        .find_map(|l| l.split('\'').nth(1))
+                        .expect("P2P_LIMITS: the comment above it has an example in single quotes");
+                    let line = format!("{name}='{example}'");
+                    let read: Vec<(String, String)> = dotenvy::from_read_iter(line.as_bytes())
+                        .collect::<Result<_, _>>()
+                        .expect("the example is a line of an env file");
+                    assert_eq!(read, [(name.clone(), example.to_string())]);
+                    let shown = load(&[(&name, example.to_string())]).expect("the example loads");
+                    assert!(
+                        !shown.p2p.is_empty() && shown.p2p_unknown.is_empty(),
+                        "{example}"
+                    );
+                    for P2pRefresh {
+                        refresh,
+                        expiry,
+                        times,
+                    } in p2p_refresh().expect("the registry parses")
+                    {
+                        let (said, half) = match times {
+                            2 => (format!("{} of {expiry}", refresh.join(" plus ")), true),
+                            _ => (
+                                format!("{} is at most {expiry}", refresh.join(" plus ")),
+                                false,
+                            ),
+                        };
+                        assert!(
+                            about
+                                .iter()
+                                .any(|l| l.contains(&said) && (!half || l.contains("at most half"))),
+                            "{name}: the comment above it says {said}"
+                        );
+                    }
+                }
                 None => assert!(
                     about.iter().any(|l| l.contains("on or off")),
                     "{name}: the comment above it says on or off"

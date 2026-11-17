@@ -162,6 +162,7 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
     ]
     .into_iter()
     .flatten()
+    .chain(config.limits.p2p_warnings())
     {
         tracing::warn!("{warning}");
     }

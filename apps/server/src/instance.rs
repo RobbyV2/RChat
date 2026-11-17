@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -463,7 +464,7 @@ pub struct Features {
 }
 
 /// Limits of this instance.
-#[derive(Clone, Copy, Serialize, ToSchema)]
+#[derive(Clone, Serialize, ToSchema)]
 pub struct Limits {
     /// Longest message text, in characters: by default 4000 (`MESSAGE_MAX_CHARS`).
     #[schema(example = 4000)]
@@ -496,6 +497,11 @@ pub struct Limits {
     /// 256 MiB (`P2P_BACKUP_TOTAL_MIB`); 0 for no total.
     #[schema(example = 268435456)]
     pub p2p_backup_total_bytes: u64,
+    /// The P2P device limits this instance sets (`P2P_LIMITS`), by name (`local.` and a name of
+    /// the P2P limits registry), each inside its range. P2P devices start with them in place of
+    /// the defaults. Empty when it sets none.
+    #[schema(example = json!({"local.gossip.perRoom": 16}))]
+    pub p2p: BTreeMap<String, f64>,
 }
 
 impl Limits {
@@ -511,6 +517,7 @@ impl Limits {
             assertion_ttl_secs: crate::identity::ASSERTION_TTL_SECS,
             p2p_backup_bytes: limits.p2p_backup_bytes(),
             p2p_backup_total_bytes: limits.p2p_backup_total_bytes(),
+            p2p: limits.p2p.clone(),
         }
     }
 }

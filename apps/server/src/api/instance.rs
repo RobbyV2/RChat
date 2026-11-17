@@ -599,6 +599,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn instance_reports_p2p_limits() {
+        let (state, path) = temp_state("instance_p2p_limits").await;
+        let (addr, server) = serve(state.clone()).await;
+        let url = format!("http://{addr}/api/v1/instance");
+        let info = json(reqwest::get(&url).await.unwrap()).await;
+        assert_eq!(info["limits"]["p2p"], serde_json::json!({}));
+        server.abort();
+        let limits = crate::limits::Limits::load(&|name| {
+            (name == "P2P_LIMITS").then(|| {
+                r#"{"local.gossip.perRoom": 16, "local.share.room": 0.5, "local.no.such": 1}"#
+                    .to_string()
+            })
+        })
+        .expect("loads");
+        let state = state.with_limits(std::sync::Arc::new(limits));
+        let (addr, server) = serve(state.clone()).await;
+        let info = json(
+            reqwest::get(format!("http://{addr}/api/v1/instance"))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(
+            info["limits"]["p2p"],
+            serde_json::json!({"local.gossip.perRoom": 16.0, "local.share.room": 0.5})
+        );
+        server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn discovery_jwks_and_assertion_round_trip() {
         let (state, path) = temp_state("instance_http").await;
         let (addr, server) = serve(state.clone()).await;
