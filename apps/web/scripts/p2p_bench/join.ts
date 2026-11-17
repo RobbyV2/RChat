@@ -1,4 +1,4 @@
-// A new member's join on the production path (recon-p2p-scale §2.2): at sampled sizes k, a
+// A new member's join on the production path: at sampled sizes k, a
 // replica restored from the first k stored records (a cold start: restore, first evaluation, first
 // summary), then the next `--arrivals` events each through AclRoom.receiveAcl and delta(), as the
 // host's `acl` op does for every arriving ACL event. The join's worker time integrates the cost per

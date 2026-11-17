@@ -152,7 +152,7 @@ test('a footnote whose label holds a marker gets a plain label and keeps its tex
   ])
 })
 
-test('a marker that a table cut at its pipe still counts', () => {
+test('a marker that a table cut at its pipe counts', () => {
   const cell = (...c: MdNode[]) => node('tableCell', c)
   const tree = root(
     node('table', [

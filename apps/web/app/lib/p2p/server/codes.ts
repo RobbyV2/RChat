@@ -70,7 +70,7 @@ export function codeText(cx: ServerCtx, room: string, secret: string) {
   })
 }
 
-// The live code with this hash (codes are named by their event id, spec 1.4).
+// The live code with this hash (codes are named by their event id).
 export function codeByHash(cx: ServerCtx, room: string, hash: string) {
   for (const [id, c] of Object.entries(cx.sumOf(room).codes)) if (c.h === hash) return { id, ...c }
   return null
@@ -242,7 +242,7 @@ export async function takeInvite(cx: ServerCtx, room: string) {
 }
 
 // Someone redeems a code with us: we check it by our own clock and, if it holds, post an
-// invite for them that names the code (spec 8.1), send it to them and let them sync the ACL for
+// invite for them that names the code, send it to them and let them sync the ACL for
 // a while. The invite is withdrawn if they don't join by then (lapseRedeems).
 export async function onRedeem(cx: ServerCtx, m: Message, s: Session) {
   const r = s.remote

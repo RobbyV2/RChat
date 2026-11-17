@@ -401,7 +401,7 @@ describe('P2P node', () => {
     }
   })
 
-  test('a squatted peer id moves to a suffix that contacts still find', async () => {
+  test('a squatted peer id moves to a suffix that contacts find', async () => {
     const hub = new Hub()
     const clock = new ManualClock()
     const a = await makeNode(hub, 'Alice', { clock })

@@ -56,13 +56,13 @@ import * as storage from './acl_room_storage'
 
 // One P2P server's evaluator state, where the host runs it (a worker in the browser): the ACL
 // replica, the content it holds, and what the page mirrors of the current state. The page stores
-// events; this decides them (spec §2.1), plans honest events (§1.2), answers visibility (§3.5)
-// and history (§3.6) questions, and sends the current state as deltas.
+// events; this decides them, plans honest events, answers visibility
+// and history questions, and sends the current state as deltas.
 
 export const HOLD_MS = LOCAL.acl.holdMs
 export const MAX_PARENTS = AGREED.ap
 
-// The version of the evaluator and of the records it stores (spec 2.4): a record or cache of
+// The version of the evaluator and of the records it stores: a record or cache of
 // another version is not read; its events are admitted again. A header's record (its event can't
 // be admitted again) is read from these versions too: its admission fields never changed.
 export const IMPL = 3
@@ -105,7 +105,7 @@ export interface AclItem {
   id: string
   w: WireV2
   rec?: PackedRec
-  // A dropped event's header (spec 2.3): restored from its record, never admitted again.
+  // A dropped event's header: restored from its record, never admitted again.
   hdr?: true
 }
 
@@ -126,7 +126,7 @@ export interface Shown {
   reactions: { id: string; a: string; key: string }[]
   pin: { id: string; on: boolean } | null
   everyone: boolean
-  // A pin: its author held Manage messages where it was posted (it counts, spec 3.5).
+  // A pin: its author held Manage messages where it was posted (it counts).
   pins?: boolean
 }
 
@@ -138,7 +138,7 @@ export interface PlanReq {
   // kick, ban, revoke: the member the watermark covers
   to?: string
   // A position to sign at instead of the heads (a revocation positioned at the last trusted
-  // point, spec 3.9); this device's last ACL event is kept in its closure.
+  // point); this device's last ACL event is kept in its closure.
   ap?: string[]
 }
 
@@ -271,14 +271,14 @@ export interface Restored {
   lost: string[]
 }
 
-// What storage drops (spec 2.3, 4.2): ACL events (their headers kept as `acl/` decides), and
+// What storage drops: ACL events (their headers kept as `acl/` decides), and
 // content with its header (only the id stays).
 export interface Drops {
   acl: Drop[]
   content: string[]
 }
 
-// Evidence a proof can carry now (spec 2.3, 4.1): the pair against `dev` with the lowest fork
+// Evidence a proof can carry now: the pair against `dev` with the lowest fork
 // point, which a proof posted from the asking device would have admitted.
 export interface ProofCand {
   dev: string
@@ -287,7 +287,7 @@ export interface ProofCand {
   y: string
 }
 
-// A cause hiding held content that still has its body (spec 4.3), with S2 and S3; S1 holds (it
+// A cause hiding held content that still has its body, with S2 and S3; S1 holds (it
 // hides that content now). `self`: a counted redaction by the content's own author.
 export interface Cause {
   id: string
@@ -300,7 +300,7 @@ export interface Reapply {
   id: string
   t: string
   c: AclContent
-  // From an old copy (spec 3.8 step 7): the role it names (not @everyone) as the upgrade carried
+  // From an old copy: the role it names (not @everyone) as the upgrade carried
   // it over, to find the role the carry-over made from it in the new copy.
   roleWas?: RoleSum
 }
@@ -316,7 +316,7 @@ export interface Disowned {
   seen: Record<string, number>
 }
 
-// Spec 3.8 step 4: what an upgrade carries over, the old copy's state at the upgrade's parents.
+// What an upgrade carries over, the old copy's state at the upgrade's parents.
 export interface Carried {
   members: string[]
   bans: string[]
@@ -408,7 +408,7 @@ export class AclRoom {
   // build reads is indexed as it was admitted (its St(e) rebuilt, sharing its base's chunks, only
   // when read); one without (an import, another version) is admitted again. Then a few recorded
   // states are checked against their evaluation (the newest, and a sample): a mismatch admits
-  // every event again (spec 2.4). `check`: content to decide (an import), not only to hold.
+  // every event again. `check`: content to decide (an import), not only to hold.
   restore(
     items: readonly AclItem[],
     contents: readonly ContentEv[],
@@ -669,7 +669,7 @@ export class AclRoom {
     return out
   }
 
-  // ----- Receipt (§2.1; the page checked the wire and that every ACL parent is held) -----
+  // ----- Receipt (the page checked the wire and that every ACL parent is held) -----
 
   receiveAcl(id: string, w: WireV2, now: number): Received {
     const e = aclEvOf(id, w)
@@ -822,7 +822,7 @@ export class AclRoom {
     this.sent = emptySummary()
   }
 
-  // ----- Honest events (§1.2, §3.5) -----
+  // ----- Honest events -----
 
   // Maximal admitted ACL events among those `ok` keeps, newest first.
   private heads(ok: (i: number) => boolean): string[] {
@@ -854,7 +854,7 @@ export class AclRoom {
     const citable = (i: number) => {
       if (!fe.inS(i)) return false
       const e = ix.ev[i]
-      // our own chain, and an upgrade even in X (it freezes the old server, spec 1.5, 3.8)
+      // our own chain, and an upgrade even in X (it freezes the old server)
       if (e.dev === q.dev || e.t === 'upgrade') return true
       if (fe.X[i] || fe.tail[i] || fe.candidateIn(i, fe.F, fe.FI, fe.RF, fe.PC)) return false
       // A member's own effective leave is the last event of a member, not a non-member's.
@@ -957,7 +957,7 @@ export class AclRoom {
     })
   }
 
-  // §3.6: which of `ids` belong to X's history under history `joined`: content whose position
+  // Which of `ids` belong to X's history under history `joined`: content whose position
   // holds the live join that starts X's membership (and, for an edit, reaction or pin, its
   // target too), and ACL events (join and leave lines) that have it in their past.
   history(X: string, ids: readonly string[]): boolean[] {
@@ -1015,7 +1015,7 @@ export class AclRoom {
     return gt(rank(F, ik), rank(F, other))
   }
 
-  // ----- Flows (spec 3.9, 9 rule 18) -----
+  // ----- Flows -----
 
   counted(ids: readonly string[]): boolean[] {
     return flows.counted(ctx(this), ids)
@@ -1045,7 +1045,7 @@ export class AclRoom {
     return flows.disown(ctx(this), ik, dk, witnesses, own)
   }
 
-  // ----- Storage (spec 2.3, 4.2, 4.3) -----
+  // ----- Storage -----
 
   drops(mine?: string): Drops {
     return storage.drops(ctx(this), mine)
@@ -1087,13 +1087,13 @@ export class AclRoom {
     return storage.acks(ctx(this), me)
   }
 
-  // The time of `a`'s latest held message in `ch` (slow mode, spec 3.5), or null.
+  // The time of `a`'s latest held message in `ch` (slow mode), or null.
   lastSent(a: string, ch: string): number | null {
     if (this.r.acl.ix.genesis < 0 || this.r.unknownRules !== undefined) return null
     return this.view().lastIn(a, ch)
   }
 
-  // Whether `ik` may be sent content of these channels (spec 3.7, Discord order: owners and
+  // Whether `ik` may be sent content of these channels (Discord order: owners and
   // Manage channels see every channel); '': content of no channel; null: a copy without its body,
   // whose channel can't be read, goes only to those who can view every channel.
   viewable(ik: string, chs: readonly (string | null)[]): boolean[] {

@@ -880,7 +880,7 @@ describe('css: text only on the plugin own surfaces', () => {
     expect(out('.a::before{c\\6fntent:"";color:red}')).toBe(`${APP} .a::before{color:red}`)
   })
 
-  test("the reviewer's inputs write nothing", () => {
+  test('counters, attr() and escapes that would write text write nothing', () => {
     expect(
       out(
         '.message::after{counter-reset:a 8 b 9;content:counter(a,upper-alpha) counter(b,upper-alpha)}'

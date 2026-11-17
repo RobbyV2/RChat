@@ -64,7 +64,7 @@ const state = (entries: InboxEntry[], next: string | null): SourceState => ({
 })
 
 describe('merging sources', () => {
-  test('entries come newest first and stop where a source may still fill in', () => {
+  test('entries come newest first and stop where a source may fill in', () => {
     const a = state([entry('a', 1, 100), entry('a', 2, 90)], 'more')
     const b = state([entry('b', 3, 95), entry('b', 4, 80), entry('b', 5, 70)], null)
     const merged = mergeEntries({ a, b })

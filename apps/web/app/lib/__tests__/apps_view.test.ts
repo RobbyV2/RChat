@@ -6,7 +6,7 @@ import apps from './apps_vectors/view_pages.json'
 
 type Row = [string, CatalogRow['group'], CatalogRow['release'], CatalogRow['binds'], string, string]
 
-// The catalog table of the Apps spec, section 5.7.2: component, group, release, binds, the phone
+// The catalog table: component, group, release, binds, the phone
 // rule, the accessibility rule.
 const TABLE: Row[] = [
   ['stack', 'layout', 'first', 'none', 'unchanged', 'no role; children in reading order'],
@@ -354,7 +354,7 @@ const check = (view: unknown, over: Partial<ViewContext> = {}) =>
 const whats = (view: unknown, over: Partial<ViewContext> = {}) => check(view, over).map(p => p.what)
 
 describe('the catalog', () => {
-  test('is the table of the spec, row for row', () => {
+  test('is the table, row for row', () => {
     expect(CATALOG.length).toBe(52)
     expect(CATALOG.map(r => [r.c, r.group, r.release, r.binds, r.phone, r.a11y])).toEqual(TABLE)
   })
@@ -419,7 +419,7 @@ describe('a valid view', () => {
     }
   })
 
-  test('the two operations of revision 2 are operations', () => {
+  test('share and mark are operations', () => {
     const share: On = { op: 'share' }
     const mark: On = { op: 'mark', kind: 'star', value: 'true' }
     expect(check({ c: 'button', label: 'Share', on: share })).toEqual([])
@@ -647,7 +647,7 @@ describe('what is not a view at all', () => {
     ])
   })
 
-  test('parts under a component that takes none are still checked', () => {
+  test('parts under a component that takes none are checked', () => {
     expect(check({ c: 'text', text: 'x', children: [text, { c: 'nope' }] })).toEqual([
       { where: 'pages[/]/1', what: 'nope is not a component' },
     ])

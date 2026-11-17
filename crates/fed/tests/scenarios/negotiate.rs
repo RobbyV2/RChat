@@ -119,7 +119,7 @@ fn the_shipped_table_follows_the_release_rules() {
 }
 
 #[test]
-fn the_table_is_spec_4_4_3_with_sealed_letters() {
+fn the_release_table_lists_its_features_with_sealed_letters() {
     let table = levels::releases();
     let names = |r: &Release| {
         r.caps
@@ -296,7 +296,7 @@ fn every_method_in_the_schema_belongs_to_one_service_of_the_table() {
 }
 
 #[test]
-fn dropping_a_feature_that_a_continuing_service_still_requires_fails() {
+fn dropping_a_feature_that_a_continuing_service_requires_fails() {
     let history = [
         rel(
             "r0",
@@ -405,7 +405,7 @@ fn a_service_can_be_dropped_together_with_its_feature() {
 }
 
 #[test]
-fn a_feature_still_required_cant_go_and_a_service_cant_go_while_its_features_stay() {
+fn a_required_feature_cant_go_and_a_service_cant_go_while_its_features_stay() {
     let base: &[(&str, u32, u32)] = &[("core", 1, 1), ("x", 1, 1)];
     let kept = [
         rel(

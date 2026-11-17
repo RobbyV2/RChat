@@ -2,7 +2,7 @@ import { EVERYONE } from './acl/rules'
 import type { Summary } from './acl/summary'
 import { LOCAL } from './limits'
 
-// The user-facing flows of P2P servers (spec p2p-acl-spec §8.2, §9): their copy, and the pure
+// The user-facing flows of P2P servers: their copy, and the pure
 // decisions behind them. server.ts runs the flows; the components show this copy.
 
 export const OWNER_TEXT = 'The owner is set when the server is created and never changes.'
@@ -82,7 +82,7 @@ export const TOO_OFTEN_TEXT = "You've done that too often. Try again later."
 export const CANT_TEXT = "You can't do that here"
 export const TOO_BIG_TEXT = 'Too long to send. Make it shorter.'
 
-// What a refusal of one of our own events says (spec 4.1): W3(a) and a ban of someone who never
+// What a refusal of one of our own events says: W3(a) and a ban of someone who never
 // joined (charged to the same window) are the hourly message; W3(b) is the lone device's; a join
 // that waits for a third member (W3(e)); other limits are the generic one.
 export const refusalText = (why: string) => {
@@ -107,14 +107,14 @@ export const refusalText = (why: string) => {
   }
 }
 
-// ----- Removals that reach invitees (§8.2) -----
+// ----- Removals that reach invitees -----
 
 export interface Reached {
   by: string
   lost: string[]
 }
 
-// Two readings of "taken along" by a cascade (spec 3.1): a member out with no removal of their
+// Two readings of "taken along" by a cascade: a member out with no removal of their
 // own whose join came through an invite (or a code) of someone removed.
 // - takenAlong: for the note to whoever removed them (Invite them again): someone *we* removed
 //   (kick, ban or leave) within the last day.
@@ -161,7 +161,7 @@ export const reachedBy = (before: Summary, after: Summary, me: string, now: numb
   return [...out].map(([by, lost]) => ({ by, lost: lost.sort() }))
 }
 
-// ----- Moderation waits for sync (§8.2, §9 rule 2) -----
+// ----- Moderation waits for sync -----
 
 export interface HeadsReport {
   ik: string
@@ -178,7 +178,7 @@ export const syncedSince = (
   member: (ik: string) => boolean
 ) => reports.some(r => r.at >= since && r.missing === 0 && member(r.ik))
 
-// ----- Devices (§3.9) -----
+// ----- Devices -----
 
 export const LOST_TIMES = ['1 hour ago', '1 day ago', '1 week ago'].map((label, i) => ({
   label,
@@ -219,12 +219,12 @@ export const actParts = (t: string, to?: string): { act: string; who?: string } 
   return { act: plain[t] ?? named[t] ?? 'Sync' }
 }
 
-// What a waiting carry-over waits for (spec 3.8, 4.1): the reason the last step was refused.
+// What a waiting carry-over waits for: the reason the last step was refused.
 export const carryWaitText = (why: string | undefined) =>
   why === QUICK_TEXT ? CARRY_HOURLY_TEXT : why === LONE_TEXT ? CARRY_WAIT_TEXT : CARRY_SYNC_TEXT
 
 // Whether the effect of our ACL event `id` (type `t`, content `c`) holds in `s`: what signing it
-// again would bring back after a lost device's removal (spec 3.9). Cut or superseded changes
+// again would bring back after a lost device's removal. Cut or superseded changes
 // don't hold; types the summary can't show are never signed again.
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
 
@@ -291,7 +291,7 @@ export const effectHolds = (
   }
 }
 
-// An event's content signed again from a new key (spec 3.9): the ids it names that were signed
+// An event's content signed again from a new key: the ids it names that were signed
 // again too (its target, reply, thread root, role or code) mapped to their new ones.
 export const signedAgain = (c: Record<string, unknown>, ids: ReadonlyMap<string, string>) => {
   const out: Record<string, unknown> = { ...c }
@@ -300,12 +300,12 @@ export const signedAgain = (c: Record<string, unknown>, ids: ReadonlyMap<string,
   return out
 }
 
-// ----- Roles (§1.6) -----
+// ----- Roles -----
 
 // A move that lowers a role (a deny against its holders) warns first.
 export const roleMoveWarns = (from: number, to: number) => to < from
 
-// ----- Invite codes posted to the instance (note section 6) -----
+// ----- Invite codes posted to the instance -----
 
 export const INVITE_CODE = /\brci1\.[A-Za-z0-9_-]{20,}/
 export const hasInviteCode = (text: string) => INVITE_CODE.test(text)

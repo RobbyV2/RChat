@@ -3,8 +3,8 @@ import { gt, poster, type AclContent, type AclEv, type Rank } from './rules'
 import { LOCAL } from '../limits'
 
 // What storage may do with admitted events, decided here so storage applies it as given: the
-// orphan rule's drops and the headers they keep (spec §2.3, §4.2), and the deterministic parts of
-// a cause's stability (§4.3 S2, S3).
+// orphan rule's drops and the headers they keep, and the deterministic parts of
+// a cause's stability (S2, S3).
 
 // An ACL event the orphan rule lets storage drop; its header stays when `header`.
 export interface Drop {
@@ -18,13 +18,13 @@ const NEVER: readonly string[] = ['genesis', 'upgrade', 'proof']
 // whether each kept its header.
 export type Gone = ReadonlyMap<string, boolean>
 
-// The orphan rule (§2.3) on everything held: an X event other than the genesis, an upgrade or a
-// proof, a candidate by structural evidence (not only pool evidence: that can end, revision 7),
+// The orphan rule on everything held: an X event other than the genesis, an upgrade or a
+// proof, a candidate by structural evidence (not only pool evidence: that can end),
 // may go when nothing held is built on it. Held descendants are the ACL events that stay and the
 // content that holds its position (`cited`: visible content cites the event; hidden content holds
-// nothing, controller ruling). `keep`: events storage keeps whatever (this device's own chain,
+// nothing). `keep`: events storage keeps whatever (this device's own chain,
 // which it cites). Its header stays unless it is past its device's fork point, no identity op, in
-// no kept header's past, and the device's fork point stays the same without it (revision 7). The
+// no kept header's past, and the device's fork point stays the same without it. The
 // drops are decided in the reference's order (`equivocation.ts` orphanDrops: rounds over the
 // candidates in descending id order), so the same headers stay. `gone`: what earlier drops
 // decided (an event dropped without its header is no evidence any more).
@@ -106,7 +106,7 @@ export function orphanDrops(
   return out
 }
 
-// The evidence behind each device's fork point (§2.3 E1, E2, proofs): which events may go
+// The evidence behind each device's fork point (E1, E2, proofs): which events may go
 // without their header and leave it where it is.
 class ForkEvidence {
   private seqN = new Map<string, number>()
@@ -198,7 +198,7 @@ export function underDroppable(fe: FastEval, keep: (i: number) => boolean): Uint
   return out
 }
 
-// A dropped event's header (§2.3): its core with what indexing and evidence read of its content
+// A dropped event's header: its core with what indexing and evidence read of its content
 // (targets, roles, bits, codes, devices, watermarks), without bulk such as certificates and
 // profiles. A header counts as every kind of evidence; it never takes effect.
 export function headerContent(c: Record<string, unknown> | null): Record<string, unknown> {
@@ -226,7 +226,7 @@ export const headerOf = (e: AclEv): AclEv => ({
   c: headerContent(e.c as Record<string, unknown>) as AclContent,
 })
 
-// S2 (§4.3): at least 3 admitted ACL events, none void by equivocation, by at least 2 identities
+// S2: at least 3 admitted ACL events, none void by equivocation, by at least 2 identities
 // other than `not`, acknowledge the cause (`acks`, tried from index `from` on).
 export function witnessed(
   fe: FastEval,
@@ -248,7 +248,7 @@ export function witnessed(
   return false
 }
 
-// S3 (§4.3): no admitted deny at a stratum above `k`, concurrent with the cause (`conc`), takes
+// S3: no admitted deny at a stratum above `k`, concurrent with the cause (`conc`), takes
 // away something in the authority the cause relied on (its anchor: an ACL deny's admission state,
 // or a redaction's position).
 export function uncontested(

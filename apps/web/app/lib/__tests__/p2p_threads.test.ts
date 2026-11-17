@@ -43,7 +43,7 @@ const forge = (m: Member, room: string, t: string, c: Record<string, unknown>) =
     }
   ).emit(room, t, () => c, { L: 'c' })
 
-// Threads, pins and local search in P2P servers (Task 24).
+// Threads, pins and local search in P2P servers.
 
 afterEach(stopAll)
 
@@ -477,7 +477,7 @@ describe('threads', () => {
         true
       )
     ).toBe('View thread')
-    // From the copy a server was transferred from (spec 3.8): no thread here.
+    // From the copy a server was transferred from: no thread here.
     expect(threadAct({ ...main.find(m => m.id === root)!, archived: true }, true)).toBeNull()
     expect((await a.servers.loadChannel(room, other)).messages.map(m => m.body)).toEqual(['cross'])
     expect((await a.servers.loadThread(room, root))?.messages.map(m => m.body)).toEqual([
@@ -569,7 +569,7 @@ describe('threads', () => {
 })
 
 describe('thread pings that stop counting', () => {
-  test('reading the channel takes off pings whose reply or root no longer shows', async () => {
+  test('reading the channel takes off pings whose reply or root does not show', async () => {
     const { clock, hub, a, room, ch } = await solo()
     const b = await makeMember(hub, 'Bob', clock)
     await joinWithCode(clock, a, room, b)

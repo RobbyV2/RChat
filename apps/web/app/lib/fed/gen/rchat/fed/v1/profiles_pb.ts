@@ -70,7 +70,7 @@ export type Profile = Message<"rchat.fed.v1.Profile"> & {
   avatarSha256: Uint8Array;
 
   /**
-   * Identicon background (N10), `#rrggbb`, when the person has no picture.
+   * Identicon background, `#rrggbb`, when the person has no picture.
    *
    * @generated from field: string identicon_bg = 4;
    */
@@ -136,7 +136,7 @@ export const AvatarResponseSchema: GenMessage<AvatarResponse> = /*@__PURE__*/
   messageDesc(file_rchat_fed_v1_profiles, 4);
 
 /**
- * Feature `profiles` (0.9.0): public cards of people the caller's users write to.
+ * Feature `profiles`: public cards of people the caller's users write to.
  *
  * @generated from service rchat.fed.v1.ProfilesService
  */

@@ -168,7 +168,7 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// indexes or data conversions), or older binaries of this line keep starting on a database they
 /// do not understand. A database marked with a newer version was upgraded by a newer binary,
 /// and this one refuses to start on it.
-/// 1: hashed secrets and the 0.3.0 indexes. 2: `channel_perms.restrict_set` and
+/// 1: hashed secrets and indexes. 2: `channel_perms.restrict_set` and
 /// `guest_grants.network`. 3: channel categories and channel positions. 4: group mentions
 /// (`group_pings`, `here_pings`, `roles.mentionable`, `messages.group_mentions`) and the Mention
 /// everyone permission bit. 5: the audit log (`audit_log`) and the View audit log permission bit.
@@ -633,7 +633,7 @@ async fn grant_manage_reports(conn: &mut AnyConnection) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Names of files uploaded before 0.3.0 were stored as sent. Cleans them like new uploads
+/// Stored file names may be as their uploader sent them. Cleans them like new uploads
 /// (`media::clean_filename`: no control or bidi override characters, at most 255 bytes). P2P
 /// file names stay as their sender wrote them.
 async fn clean_file_names(conn: &mut AnyConnection) -> anyhow::Result<()> {

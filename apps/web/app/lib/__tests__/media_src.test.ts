@@ -24,7 +24,7 @@ const setup = (keep: number, bytes = Infinity) => {
 }
 
 describe('guest media cache', () => {
-  test('entries still mounted are never revoked past the cap', async () => {
+  test('mounted entries are never revoked past the cap', async () => {
     const { cache, load, revoked, finish } = setup(1)
     const a = cache.acquire('a', load)
     await finish('a')

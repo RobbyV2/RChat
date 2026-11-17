@@ -28,7 +28,7 @@ const sum = (members: Record<string, Partial<MemberSum>>): Summary => ({
   members: Object.fromEntries(Object.entries(members).map(([k, v]) => [k, m(v)])),
 })
 
-describe('P2P server flows: copy (spec 8.2)', () => {
+describe('P2P server flows: copy', () => {
   test('every line is plain: no em dashes, and the app never names itself', () => {
     const lines = Object.values(flows).flatMap(v =>
       typeof v === 'string'
@@ -44,7 +44,7 @@ describe('P2P server flows: copy (spec 8.2)', () => {
     }
   })
 
-  test('the exact wording of the spec', () => {
+  test('the copy, word for word', () => {
     expect(flows.OWNER_TEXT).toBe('The owner is set when the server is created and never changes.')
     expect(flows.CO_OWNERS_TEXT).toBe(
       'Co-owners (optional). Co-owners can do everything the owner can. You can only add them now.'
@@ -207,7 +207,7 @@ describe('P2P server flows: devices and roles', () => {
 describe('P2P server flows: what a lost device removal signs again', () => {
   const holds = (t: string, c: Record<string, unknown>, s: Summary, id = 'e1') =>
     flows.effectHolds(t, c, id, 'me', s)
-  test('our changes whose effect still holds, never cut or superseded ones', () => {
+  test('our changes whose effect holds, never cut or superseded ones', () => {
     const s: Summary = {
       ...sum({
         me: { m: 'join', profile: { name: 'Me' } as unknown as AclContent },

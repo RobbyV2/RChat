@@ -18,7 +18,7 @@ import {
 
 // ----- Format v1 (direct messages) -----
 
-// Signed room events (note section 3). The hashed core links the event into its room's DAG and
+// Signed room events. The hashed core links the event into its room's DAG and
 // binds the content through `ch`; the content sits outside the core, so a redaction can drop it
 // and the event stays verifiable. Every event is validated in full before it is stored.
 // Forward compatibility: fields this version doesn't know are kept (they are signed and hashed)

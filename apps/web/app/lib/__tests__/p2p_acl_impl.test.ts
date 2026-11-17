@@ -25,8 +25,8 @@ import {
   testBinds,
 } from './p2p_acl_world'
 
-// Implementation vectors of the P2P ACL spec (§7.6 "Impl"): content visibility (§3.5), content
-// admission, history (§3.6), proofs (§2.3) and registers, which the reference model leaves out.
+// Implementation vectors of the P2P ACL: content visibility, content
+// admission, history, proofs and registers, which the reference model leaves out.
 // The ACL part of every universe is still replayed through the model (except where it uses a
 // type the model lacks).
 
@@ -48,7 +48,7 @@ const join = (w: AclWorld, dev: string, by = 'O1') => {
 const give = (w: AclWorld, to: string, r: string, by = 'O1') => w.ok(by, 'assign', { to, role: r })
 const aclMax = (w: AclWorld, dev: string) => w.latestOwn(dev)?.seq ?? -1
 
-describe('content visibility (§3.5)', () => {
+describe('content visibility', () => {
   test('ban default: content the banner held stays, content past its watermark is hidden', () => {
     const w = base()
     join(w, 'U1')
@@ -83,7 +83,7 @@ describe('content visibility (§3.5)', () => {
     expect(w.act('M1', 'ban', { to: 'U' }).v.s).toBe('A')
   })
 
-  test('P1-M2: a message hidden by a ban stays hidden after unban and rejoin', () => {
+  test('a message hidden by a ban stays hidden after unban and rejoin', () => {
     const w = base()
     join(w, 'U1')
     const P = w.heads()
@@ -95,7 +95,7 @@ describe('content visibility (§3.5)', () => {
     expect(w.view().hidden(t)?.why).toBe('removed')
   })
 
-  test('P1-I2 / R2-M5: a moderator demoted with revoke{seen}: its concurrent redaction and pin past seen are hidden, the message shows again', () => {
+  test('a moderator demoted with revoke{seen}: its concurrent redaction and pin past seen are hidden, the message shows again', () => {
     const w = base()
     const MOD = role(w, 5, MESSAGES)
     join(w, 'M1')
@@ -147,7 +147,7 @@ describe('content visibility (§3.5)', () => {
     expect(v.hidden(t)).toEqual({ why: 'redacted', by: r.id })
   })
 
-  test('I6: a demoted ex-moderator backdates a redaction and a pin of a message posted after the demotion: no effect', () => {
+  test('a demoted ex-moderator backdates a redaction and a pin of a message posted after the demotion: no effect', () => {
     const w = base()
     const MOD = role(w, 5, MESSAGES)
     join(w, 'M1')
@@ -192,7 +192,7 @@ describe('content visibility (§3.5)', () => {
     expect(v.visible(t4)).toBe(true)
   })
 
-  test('R3-M3: content at or past the content fork point is hidden (one seq twice; a position missing its own ACL event)', () => {
+  test('content at or past the content fork point is hidden (one seq twice; a position missing its own ACL event)', () => {
     const w = base(INVITE)
     join(w, 'U1')
     const t1 = w.content('U1')
@@ -218,7 +218,7 @@ describe('content visibility (§3.5)', () => {
     expect(v.hidden(y)?.why).toBe('fork')
   })
 
-  test("M7 / R3-C1: a device revocation hides the old copy's content past the watermark, on the heads and from the past", () => {
+  test("a device revocation hides the old copy's content past the watermark, on the heads and from the past", () => {
     const w = base(INVITE)
     join(w, 'A1')
     w.ok('A2', 'device_add')
@@ -329,7 +329,7 @@ describe('content visibility (§3.5)', () => {
     expect(asked(fe)).toBe(false)
   })
 
-  test('R2-S-I3: a ban by a moderator whose role the owner revoked concurrently is ineffective; the message stays visible', () => {
+  test('a ban by a moderator whose role the owner revoked concurrently is ineffective; the message stays visible', () => {
     const w = base()
     const MOD = role(w, 5, BAN | KICK)
     join(w, 'M1')
@@ -346,7 +346,7 @@ describe('content visibility (§3.5)', () => {
   })
 })
 
-describe('production evaluator (§5.4)', () => {
+describe('production evaluator', () => {
   test("B: a concurrent bit clear cuts a reader whose rank bound is above the stratum when the reader's author is exposed to it", () => {
     const w = base()
     const MOD = role(w, 5, ROLES)
@@ -417,7 +417,7 @@ describe('production evaluator (§5.4)', () => {
   })
 })
 
-describe('display rules (§3.5)', () => {
+describe('display rules', () => {
   test("edits: only the author's, latest by (ts, id); reactions: latest per author and key", () => {
     const w = base()
     join(w, 'U1')
@@ -486,7 +486,7 @@ describe('display rules (§3.5)', () => {
     expect(v.mentionsEveryone(b)).toBe(true)
   })
 
-  test("history joined (§3.6): content belongs to X's history iff its position holds X's join, or X wrote it", () => {
+  test("history joined: content belongs to X's history iff its position holds X's join, or X wrote it", () => {
     const w = base()
     join(w, 'U1')
     const before = w.content('U1')
@@ -500,7 +500,7 @@ describe('display rules (§3.5)', () => {
   })
 })
 
-describe('content admission (§2.2)', () => {
+describe('content admission', () => {
   test('the device chain, W4, the causal ts bound and Mem and Dev at the position', () => {
     const w = base()
     join(w, 'U1')
@@ -524,7 +524,7 @@ describe('content admission (§2.2)', () => {
 })
 
 describe('production-only types (not in the model)', () => {
-  test('M4: a proof is admitted only if it lowers a fork point below an admitted event in its past, and E3 needs the content position in it', () => {
+  test('a proof is admitted only if it lowers a fork point below an admitted event in its past, and E3 needs the content position in it', () => {
     const w = base(INVITE, false)
     join(w, 'U1')
     const P = w.heads()
@@ -582,7 +582,7 @@ describe('production-only types (not in the model)', () => {
     expect(evaluate(kept, w.ref, [...drops]).F.get('W1')).toBe(w1.seq)
   })
 
-  test('P1-I4: channels, overwrites and settings are registers; unknown enum values and bits are inert', () => {
+  test('channels, overwrites and settings are registers; unknown enum values and bits are inert', () => {
     const w = base(0, false)
     const CH = role(w, 5, CHANNELS | ROLES)
     const LO = role(w, 2, 0)
@@ -615,7 +615,7 @@ describe('production-only types (not in the model)', () => {
     expect(w.act('A1', 'x_newer', { anything: [1, 2] }).v.s).toBe('A')
   })
 
-  test("P1-M5: a device revocation known only to contacts changes nothing until a member relays it; then it acts for the record's identity", () => {
+  test("a device revocation known only to contacts changes nothing until a member relays it; then it acts for the record's identity", () => {
     const w = base(INVITE, false)
     const HI = role(w, 7, KICK)
     join(w, 'A1')
@@ -648,7 +648,7 @@ describe('production-only types (not in the model)', () => {
     })
   })
 
-  test('a primary_rotate is never relayed: two relays of one record would contest it (§2.3)', () => {
+  test('a primary_rotate is never relayed: two relays of one record would contest it', () => {
     const w = base(INVITE, false)
     join(w, 'A1')
     w.ok('A2', 'device_add')
@@ -703,7 +703,7 @@ describe('production-only types (not in the model)', () => {
       false,
     ])
     // the copies are past their relayer's device fork point: void whatever the pool, and in no
-    // P(x) (revision 7), so none is a pool candidate
+    // P(x), so none is a pool candidate
     const ys = w.ref.order.filter(id => w.ref.ev(id).relay === 'Y')
     expect([ys.length, ys.every(id => S.X.has(id)), ys.some(id => S.PC.has(id))]).toEqual([
       32,
@@ -863,7 +863,7 @@ describe('production-only types (not in the model)', () => {
         why: 'W3g',
       })
       // the relays it left out are concurrent with the held head, but past Y1's fork point: they
-      // count in no pool (revision 7), so the head is no candidate; they are void and dropped
+      // count in no pool, so the head is no candidate; they are void and dropped
       const S = w.state()
       expect([L.every(id => S.X.has(id)), S.PC.has(held), S.X.has(held)]).toEqual([
         true,
@@ -926,7 +926,7 @@ describe('production-only types (not in the model)', () => {
       const h = [...heads.values()]
       return {
         heads: [h.some(x => S.PC.has(x)), h.every(x => S.PC.has(x) && S.X.has(x))],
-        // forked relays: past their device's fork point, void whatever the pool (revision 7)
+        // forked relays: past their device's fork point, void whatever the pool
         rel: rel.every(x => S.X.has(x)),
         kept: [...rel, ...marks].filter(x => !drops.has(x)).length,
       }
@@ -937,7 +937,7 @@ describe('production-only types (not in the model)', () => {
     }
     return { gather, state, ik, all: () => rel.length + marks.length }
   }
-  test("a relayer's relays share its pool across devices: two views past poolU make the heads pool candidates, which stay stored (revision 7); a kicked relayer's too", () => {
+  test("a relayer's relays share its pool across devices: two views past poolU make the heads pool candidates, which stay stored; a kicked relayer's too", () => {
     for (const kicked of [false, true]) {
       const v = gatherViews(['Y2', 'Y3'], kicked)
       v.gather('Y2', 24)
@@ -946,14 +946,14 @@ describe('production-only types (not in the model)', () => {
       v.gather('Y3', 3)
       const S = v.state()
       expect([S.heads, S.rel]).toEqual([[true, true], true])
-      // revision 7: a candidate only by pool evidence stays stored, with its past; each view is
-      // bounded by W3(g) at admission (spec 4.1 growth bound, per device chain)
+      // a candidate only by pool evidence stays stored, with its past; each view is
+      // bounded by W3(g) at admission (the growth bound, per device chain)
       expect([S.kept, S.kept <= 2 * AGREED.poolU]).toEqual([v.all(), true])
       expect(v.ik()).toBe(false)
     }
   }, 120_000)
 
-  test("a relayer's relays share its pool across devices: three views, one on a device revoked later, past poolU make the heads pool candidates, which stay stored (revision 7); a kicked relayer's too", () => {
+  test("a relayer's relays share its pool across devices: three views, one on a device revoked later, past poolU make the heads pool candidates, which stay stored; a kicked relayer's too", () => {
     for (const kicked of [false, true]) {
       const v = gatherViews(['Y2', 'Y3', 'Y4'], kicked)
       for (const d of ['Y2', 'Y3', 'Y4']) v.gather(d, 12)

@@ -200,7 +200,7 @@ export const ReportReasonSchema: GenEnum<ReportReason> = /*@__PURE__*/
   enumDesc(file_rchat_fed_v1_reports, 1);
 
 /**
- * Feature `reports` (0.9.0): a report about one of the callee's users, forwarded by the
+ * Feature `reports`: a report about one of the callee's users, forwarded by the
  * reporter's instance. Nothing in it names the reporter: letter evidence is sent as references to
  * messages the callee itself sealed and stores, never as the cores (which list their recipients).
  *

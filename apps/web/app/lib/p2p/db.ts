@@ -124,7 +124,7 @@ export interface RoomRecord {
   // The room reached its event or byte cap on this device.
   full: boolean
   fullWhy?: 'events' | 'bytes'
-  // Bytes of the events stored (rooms from before this count start at 0).
+  // Bytes of the events stored (a room stored without it starts at 0).
   bytes?: number
   // When the other side last said its storage is full (cleared once it stores again).
   peerFull?: number | null
@@ -141,7 +141,7 @@ export interface RoomRecord {
   since?: number
   // When a cascade took our membership (no removal of ours): an invite brings us back in.
   cascade?: number | null
-  // Spec 3.8 transfer: the new copy this server was transferred to, and the copy a new one
+  // Transfer: the new copy this server was transferred to, and the copy a new one
   // follows (its messages show above this one's).
   next?: string
   prev?: string
@@ -151,26 +151,26 @@ export interface RoomRecord {
   // A member's acknowledgements of the carry-over into this copy (server.ts ackCarry): the
   // owners' ACL count at the last one, and how many.
   acks?: { base: number; n: number; max?: number }
-  // P2P servers, an old copy after a transfer (spec 3.8): each device's last message seq we held
+  // P2P servers, an old copy after a transfer: each device's last message seq we held
   // when we heard of the upgrade.
   archive?: Record<string, number>
-  // P2P servers, a new copy (spec 3.8): the most acknowledgements its carry-over may get.
+  // P2P servers, a new copy: the most acknowledgements its carry-over may get.
   carryMax?: number
-  // P2P servers: this device's key (spec 3.9) conflicts with another copy of it here.
+  // P2P servers: this device's key conflicts with another copy of it here.
   conflict?: string
   // P2P servers: when each channel became viewable to us while we were in (its history from
   // before then arrives as nothing new).
   viewFrom?: Record<string, number>
   // An invite from a contact we haven't answered: who sent it and their invite (`add`) event.
   invite?: { from: string; at: number; wire: WireV2 } | null
-  // Causes that hide content (spec 4.3: removals, bans that hide everything, moderators'
+  // Causes that hide content (removals, bans that hide everything, moderators'
   // redactions): since when (by our clock) each has stood in the state here (S4).
   causes?: Record<string, number>
-  // A server made under rules this build no longer runs (test builds): shown read-only.
+  // A server made under rules this build doesn't run (test builds): shown read-only.
   legacy?: true
 }
 
-// A stored event. DMs hold v1 events (`wire` a Wire); P2P servers hold v2 events (spec 1.2), read
+// A stored event. DMs hold v1 events (`wire` a Wire); P2P servers hold v2 events, read
 // through `serverWire`, with `layer`, the signing device and its seq, and for an admitted ACL event
 // its admission order and record.
 export interface EventRecord {
@@ -201,11 +201,11 @@ export interface EventRecord {
   // Imported from a transfer file: checked and decided on the next start.
   imp?: true
   // P2P servers: the content of a hidden event was purged here, or evicted for space (only its
-  // header is left; spec 4.3). Never served: a peer asks someone else. `evicted`: a body that
-  // showed, evicted for space (spec 4.2 step 3): fetched again only when it is viewed.
+  // header is left). Never served: a peer asks someone else. `evicted`: a body that
+  // showed, evicted for space: fetched again only when it is viewed.
   purged?: true
   evicted?: true
-  // P2P servers: when a purged or evicted body came back (spec 4.2: not evicted again for
+  // P2P servers: when a purged or evicted body came back (not evicted again for
   // DAG.backGraceMs).
   back?: number
   // Root hashes of the files a live message carries (dropped when it is redacted), and the same
@@ -214,7 +214,7 @@ export interface EventRecord {
   files?: string[]
 }
 
-// What storage keeps of a P2P server event it dropped (spec 2.3, 4.2): its id, and for an ACL
+// What storage keeps of a P2P server event it dropped: its id, and for an ACL
 // event whose header stays, the header (its core and signature, the content `acl/` keeps) with
 // its admission order and record. A dropped id is fetched again only when something cites it.
 export interface DroppedRecord {
@@ -236,7 +236,7 @@ export const withFiles = (r: EventRecord, atts: string[]): EventRecord => {
   return atts.length ? { ...rest, atts, files: atts.map(h => fileKey(r.room, r.sender, h)) } : rest
 }
 
-// A file this browser holds or is fetching (note section 5). The sender's own file is kept
+// A file this browser holds or is fetching. The sender's own file is kept
 // whole in `file`; a downloaded one lives in `blob_parts`, one verified 1 MiB block per record,
 // and is put together only when it is opened or saved.
 export interface BlobRecord {

@@ -116,7 +116,7 @@ describe('read coalescing', () => {
     expect(posts).toEqual([['c1', 20]])
   })
 
-  test('steady traffic still flushes within the max wait', () => {
+  test('steady traffic flushes within the max wait', () => {
     const { clock, posts, q } = setup()
     for (let id = 1; id <= 60; id += 1) {
       q.mark('c1', id)

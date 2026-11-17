@@ -5,17 +5,17 @@ import { MAX_PARENTS } from '../p2p/acl_room'
 import { LIMITS2 } from '../p2p/event_v2'
 import { AGREED, flatLocal, LOCAL, localDefaults, RANGES, registryJson } from '../p2p/limits'
 import { LIMITS as STATE_LIMITS } from '../p2p/state'
-import before from './fixtures/p2p_local_before.json'
+import pinned from './fixtures/p2p_local_limits.json'
 
-// The P2P limits registry: AGREED is spec 4.1, the copies outside it follow it, LOCAL holds
-// every device-local value at what it was before the registry (but for the P2P server
-// auto-download, 10 MB since C2), and the instance's copy of the registry is current.
+// The P2P limits registry: AGREED holds the agreed values, the copies outside it follow it, LOCAL holds
+// every device-local value as fixtures/p2p_local_limits.json pins it (but for the P2P server
+// auto-download, 10 MB), and the instance's copy of the registry is current.
 
 const ASSET = fileURLToPath(new URL('../../../../../assets/p2p_limits.json', import.meta.url))
 const flat = flatLocal
 
 describe('P2P limits registry', () => {
-  test('AGREED is spec 4.1', () =>
+  test('AGREED holds the agreed values', () =>
     expect(AGREED).toEqual({
       devCap: 8,
       w3: 60,
@@ -45,8 +45,8 @@ describe('P2P limits registry', () => {
     expect(STATE_LIMITS.codesPerMember).toBe(AGREED.codesPerDev)
   })
 
-  test('LOCAL keeps every value it had', () =>
-    expect(flat(LOCAL)).toEqual({ ...before, 'files.autoServer': 10 * 1024 * 1024 }))
+  test('LOCAL holds the pinned values, with a 10 MB server auto-download', () =>
+    expect(flat(LOCAL)).toEqual({ ...pinned, 'files.autoServer': 10 * 1024 * 1024 }))
 
   test('every default is inside its range', () => {
     expect(Object.keys(RANGES).sort()).toEqual(Object.keys(flat(LOCAL)).sort())

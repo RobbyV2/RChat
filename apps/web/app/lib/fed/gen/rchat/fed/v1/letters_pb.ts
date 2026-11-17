@@ -40,14 +40,14 @@ export type LetterObject = Message<"rchat.fed.v1.LetterObject"> & {
 
   /**
    * A P2P author's device certificate and, for protected identities, its creation record and
-   * chain head (0.4.0 r8's introduction format).
+   * chain head.
    *
    * @generated from field: bytes certs = 4;
    */
   certs: Uint8Array;
 
   /**
-   * The badge binding (the 0.3.0 JWT) of a P2P author writing to accounts, issued by the
+   * The badge binding (a JWT) of a P2P author writing to accounts, issued by the
    * instance that delivers it.
    *
    * @generated from field: string binding = 5;
@@ -98,7 +98,7 @@ export type LetterCore = Message<"rchat.fed.v1.LetterCore"> & {
   author: string;
 
   /**
-   * The author's registration id (spec B 5.7); empty for P2P authors.
+   * The author's registration id; empty for P2P authors.
    *
    * @generated from field: string uid = 6;
    */
@@ -167,7 +167,7 @@ export type LetterCore = Message<"rchat.fed.v1.LetterCore"> & {
   /**
    * Replies only: SHA-256("rchat-letter-pp2" || 0x00 || the parent's core bytes as authored ||
    * 0x00 || author || 0x00 || uid). Proves this author holds the parent: knowing its id, or
-   * another reply's proof, is not enough to reply into a letter (R1, n1).
+   * another reply's proof, is not enough to reply into a letter.
    *
    * @generated from field: bytes parent_proof = 16;
    */
@@ -397,7 +397,7 @@ export type P2pEntry = Message<"rchat.fed.v1.P2pEntry"> & {
   /**
    * base64url(SHA-256("rchat-letter-p2p2" || 0x00 || key || 0x00 || identity id))[0..22], where
    * key is the root's salt (plain letters) or HKDF-SHA256(root content key, "rchat-letter-blind1")
-   * (sealed letters). No name: instances never read P2P names (R8).
+   * (sealed letters). No name: instances never read P2P names.
    *
    * @generated from field: string blind = 1;
    */
@@ -591,7 +591,7 @@ export type LetterAnnotation = Message<"rchat.fed.v1.LetterAnnotation"> & {
 
   /**
    * The callee's local holders it is for: the author's known holders (edits, unsends) or the
-   * actor's witnesses (reactions). Never landed on anyone else (R2). Empty when it travels with
+   * actor's witnesses (reactions). Never landed on anyone else. Empty when it travels with
    * a chain: then only an edit or unsend by the target's author, applied to whoever lands its
    * target from this bundle; a reaction with no `to` lands nowhere.
    *
@@ -699,7 +699,7 @@ export type LeaveNotice = Message<"rchat.fed.v1.LeaveNotice"> & {
   seal: Uint8Array;
 
   /**
-   * The callee's local holders it is for: the leaver's witnesses (R2).
+   * The callee's local holders it is for: the leaver's witnesses.
    *
    * @generated from field: repeated string to = 3;
    */
@@ -753,7 +753,7 @@ export const LeaveCoreSchema: GenMessage<LeaveCore> = /*@__PURE__*/
   messageDesc(file_rchat_fed_v1_letters, 16);
 
 /**
- * A forwarded message as the forwarder held it (R3): content addressed and sealed by the
+ * A forwarded message as the forwarder held it: content addressed and sealed by the
  * forwarder's instance (SealBody.typ "snap").
  * id = base64url(SHA-256("rchat-letter-snap1" || 0x00 || core))[0..43].
  *
@@ -918,7 +918,7 @@ export const DeliverRequestSchema: GenMessage<DeliverRequest> = /*@__PURE__*/
  */
 export type DeliverResponse = Message<"rchat.fed.v1.DeliverResponse"> & {
   /**
-   * Always true when the call is valid: one uniform answer per bundle (spec B D23). Nothing
+   * Always true when the call is valid: one uniform answer per bundle. Nothing
    * here depends on what the callee stores or what its users hold or accept.
    *
    * @generated from field: bool accepted = 1;
@@ -1189,9 +1189,9 @@ export const GetKeyResponseSchema: GenMessage<GetKeyResponse> = /*@__PURE__*/
   messageDesc(file_rchat_fed_v1_letters, 28);
 
 /**
- * A sealed-letters key (lane S): `binding` is LetterKeyBinding bytes as the owner encoded them;
- * sig = Ed25519(aek, "rchat-letter-key2" || 0x00 || binding), where aek is the account's 0.4.0
- * encryption identity key (m7).
+ * A sealed-letters key: `binding` is LetterKeyBinding bytes as the owner encoded them;
+ * sig = Ed25519(aek, "rchat-letter-key2" || 0x00 || binding), where aek is the account's
+ * encryption identity key.
  *
  * @generated from message rchat.fed.v1.LetterKey
  */
@@ -1346,13 +1346,13 @@ export const AnnotationKindSchema: GenEnum<AnnotationKind> = /*@__PURE__*/
   enumDesc(file_rchat_fed_v1_letters, 2);
 
 /**
- * Feature `letters` (0.8.0), final for v1 and frozen (0.8.0 spec B revision 4, section 6). Built on the
- * instance protocol core (0.9.0 spec A): every call carries its CallHead, every signed thing
+ * Feature `letters`, final for v1 and frozen. Built on the
+ * instance protocol core: every call carries its CallHead, every signed thing
  * travels as bytes as authored and is stored and passed on as those bytes.
  *
  * Who decides what travels: the sender's instance. The receiver's answers are uniform and never
  * say what it stores or what a recipient holds; whatever a recipient still lacks, the receiver
- * pulls, and the sender serves it only to that recipient (spec B 6.4, R1).
+ * pulls, and the sender serves it only to that recipient.
  *
  * Features: `letters` (Deliver, PutObjects, Pull), `letters.files` (PullFile),
  * `letters.keys` (GetKey), `letters.sealed` (sealed objects: `kc`, `sealed`, `wraps`). A sender
@@ -1410,7 +1410,7 @@ export const LettersService: GenService<{
     output: typeof PullFileResponseSchema;
   },
   /**
-   * A local user's letter key (lane S). Uniform: absent for no key and no user.
+   * A local user's letter key. Uniform: absent for no key and no user.
    *
    * @generated from rpc rchat.fed.v1.LettersService.GetKey
    */

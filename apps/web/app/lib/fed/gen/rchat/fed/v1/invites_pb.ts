@@ -239,7 +239,7 @@ export const InviteStatusSchema: GenEnum<InviteStatus> = /*@__PURE__*/
   enumDesc(file_rchat_fed_v1_invites, 0);
 
 /**
- * Feature `invites` (0.9.0): invite cards fetched by the reader's own instance.
+ * Feature `invites`: invite cards fetched by the reader's own instance.
  *
  * @generated from service rchat.fed.v1.InvitesService
  */

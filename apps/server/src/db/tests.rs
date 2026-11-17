@@ -1183,7 +1183,7 @@ async fn existing_servers_get_empty_color_columns() {
 }
 
 #[tokio::test]
-async fn an_interrupted_migration_still_backfills_on_the_next_boot() {
+async fn an_interrupted_migration_backfills_on_the_next_boot() {
     let path = crate::db::temp_db_path("migrate");
     let wipe = || {
         for suffix in ["", "-wal", "-shm"] {

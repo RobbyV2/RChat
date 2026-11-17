@@ -101,7 +101,7 @@ const muteActions = (
   ]
 }
 
-// Withdrawing an invite (spec 8.2): the inviter, or a moderator who may kick.
+// Withdrawing an invite: the inviter, or a moderator who may kick.
 export const withdrawRequest = (v: ServerView, m: MemberView): ConfirmRequest => ({
   title: 'Withdraw Invite',
   body: WITHDRAW_TEXT,
@@ -109,7 +109,7 @@ export const withdrawRequest = (v: ServerView, m: MemberView): ConfirmRequest =>
   action: () => void p2pServer.withdraw(v.id, m.ik),
 })
 
-// Spec 3.8: the member takes the new copy; every other owner must approve.
+// The member takes the new copy; every other owner must approve.
 export const transferRequest = (v: ServerView, m: MemberView): ConfirmRequest => ({
   title: 'Transfer Ownership',
   body: `${transferText(who(m.name))}${v.owners.length > 1 ? ` ${TRANSFER_CO_OWNERS_TEXT}` : ''}`,
@@ -152,12 +152,12 @@ export const deleteRole = (v: ServerView, r: RoleView) =>
     action: () => void p2pServer.deleteRole(v.id, r.id),
   })
 
-// Whether we may give `r` to `m` (spec 1.4 assign): Manage roles, ranked above the role and the
+// Whether we may give `r` to `m` (assign): Manage roles, ranked above the role and the
 // member.
 const mayGive = (v: ServerView, m: MemberView, r: RoleView) =>
   can(v, P.ManageRoles) && r.below && m.m === 'join' && m.ik !== me() && m.below && !m.owner
 
-// Taking a role; one's own asks first (nobody can give themselves a role back, spec 1.6).
+// Taking a role; one's own asks first (nobody can give themselves a role back).
 export const takeRole = (v: ServerView, m: MemberView, r: RoleView) => {
   if (m.ik !== me()) return void p2pServer.revokeRole(v.id, m.ik, r.id)
   get().askConfirm({
@@ -619,7 +619,7 @@ const roleActions: Action[] = [
     },
   },
   {
-    // Its channel rows hold its holders back: deleting it needs Manage channels (spec 1.4).
+    // Its channel rows hold its holders back: deleting it needs Manage channels.
     id: 'p2p_role_delete',
     title: 'Delete Role',
     danger: true,

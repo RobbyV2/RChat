@@ -62,7 +62,7 @@ fn the_health_thresholds_are_the_models() {
 }
 
 #[test]
-fn the_warmth_numbers_are_the_amendments() {
+fn the_warmth_numbers_are_pinned() {
     assert_eq!(established::WRITERS, 2);
     assert_eq!(established::AFTER_DAYS, 7);
     assert_eq!(established::DECAY_DAYS, 30);

@@ -420,7 +420,7 @@ describe('empty-state accents', () => {
     ).toBe('🎃')
   })
 
-  test('seasons switched off: no accent, the owl still comes out', () => {
+  test('seasons switched off: no accent, the owl comes out', () => {
     expect(
       emptyAccent({ active: on(2026, 10, 31), now: noon, seasonsOn: false, momentsOn: true })
     ).toBeNull()

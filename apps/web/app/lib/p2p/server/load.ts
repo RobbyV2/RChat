@@ -111,7 +111,7 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
   }
   await tx.done.catch(() => {})
   if (old) return legacy()
-  // Dropped events whose header stays (spec 2.3): evidence, restored from their records. A
+  // Dropped events whose header stays: evidence, restored from their records. A
   // record of an event stored whole (a merged import) goes; an imported header must check out.
   const stale: string[] = []
   const checked: string[] = []
@@ -252,7 +252,7 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
   const rt = cx.ensureRt(room)
   storeDue(rt)
   rt.views.clear()
-  // A channel we may view now that we couldn't (spec 3.7): what peers held back can come.
+  // A channel we may view now that we couldn't: what peers held back can come.
   const seen = (s: Summary) => {
     const F = chanFactsOf(s)
     return channelsOf(s).filter(c => channelPermsOf(s, cx.me, c.id, F) & P.ViewChannel)
@@ -280,11 +280,11 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
     }))
   // We are in now: everything the gates held back may come.
   if (now === 'join' && was !== 'join') cx.sync.loadOlder(room)
-  // A new copy (spec 3.8): links are drawn again soon, once we know more of who is in.
+  // A new copy: links are drawn again soon, once we know more of who is in.
   if (now === 'join' && was !== 'join' && r?.prev)
     for (const ms of SETTLE_RESAMPLE) cx.clock.set(() => cx.gossip.resample(), ms)
-  // Out without a removal of our own (a cascade took our join, spec 3.1): we keep syncing the
-  // ACL with members, and join again by ourselves if someone invites us again (spec 8.2).
+  // Out without a removal of our own (a cascade took our join): we keep syncing the
+  // ACL with members, and join again by ourselves if someone invites us again.
   if (
     was === 'join' &&
     now === 'leave' &&
@@ -313,7 +313,7 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
     cx.maybeJoin(room)
   }
   if (now === 'join' && r?.cascade) await cx.updateRoom(room, cur => ({ ...cur, cascade: null }))
-  // Spec 3.8: an upgrade is followed; roles go to members who joined the new copy. What we
+  // An upgrade is followed; roles go to members who joined the new copy. What we
   // hold of the old copy then is its archive.
   if (cx.sumOf(room).upgraded && !cx.rooms.get(room)?.archive) await cx.markArchive(room)
   if (cx.sumOf(room).upgrades?.length) void cx.follow(room).catch(() => {})
@@ -324,12 +324,12 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
     await cx.checkMigrated(room, r.prev)
     cx.ackCarry(room, rt)
   }
-  // Spec 3.9: evidence against this device stops it signing here.
+  // Evidence against this device stops it signing here.
   const dev = cx.myDev()
   if (dev && cx.sumOf(room).forks?.includes(dev)) cx.conflicted(room)
-  // Spec 9 rule 18 (I2): our denies the state doesn't count that we may still make.
+  // Our denies the state doesn't count that we may still make.
   rt.reapply = now === 'join' && !cx.frozen(room) ? await cx.reapplyOf(room) : []
-  // A change in an old copy can be one of ours the new copy didn't get (spec 3.8 step 7).
+  // A change in an old copy can be one of ours the new copy didn't get.
   const nx = cx.rooms.get(room)?.next
   if (nx && cx.rooms.has(nx) && cx.myMembership(nx) === 'join' && !cx.frozen(nx)) {
     cx.ensureRt(nx).reapply = await cx.reapplyOf(nx)

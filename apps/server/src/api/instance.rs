@@ -921,7 +921,7 @@ mod tests {
         done(state, path).await;
     }
 
-    // R8-badge and R8-badge-stale, the instance's half: a request with the chain, signed by the
+    // The instance's half of a badge: a request with the chain, signed by the
     // head's primary, gives a token naming ik and the head; the instance keeps nothing, so the
     // creation record alone is issued for head 0, whatever came after it.
     #[tokio::test]
@@ -1019,7 +1019,7 @@ mod tests {
         const SIZE: &str = "cr and chain must be at most 9 records and 7 KiB";
         let t = now();
         let h0 = head_of(&cr);
-        // r8c completeness I3 and the older epoch's primary: the chain holds a later record.
+        // An older epoch's primary, an older head, and the recovery and identity keys: refused.
         for (key, head, why) in [
             ("pk0", &cr, "the old primary, the old head"),
             ("pk1", &cr, "the head's primary, an older head"),
@@ -1031,7 +1031,7 @@ mod tests {
             assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{why}");
             assert_eq!(json(res).await["error"], PROOF, "{why}");
         }
-        // r8d completeness I4: sub is username@host, ts is Unix seconds within 5 minutes.
+        // sub is username@host, ts is Unix seconds within 5 minutes.
         for other in [
             format!("bob@{addr}"),
             "alice".to_string(),

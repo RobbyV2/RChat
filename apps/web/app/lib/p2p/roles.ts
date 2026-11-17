@@ -3,13 +3,13 @@ import type { OverSum } from './acl/summary'
 import { actParts, roleMoveWarns } from './flows'
 import { ROLE_STEP, type MemberView, type RoleView, type ServerView } from './server'
 
-// Roles and channel permissions of P2P servers as the settings and the member list show them
-// (spec 1.4, 1.6): the permission toggles, where a dragged role lands, the member list grouped by
+// Roles and channel permissions of P2P servers as the settings and the member list show them:
+// the permission toggles, where a dragged role lands, the member list grouped by
 // top role, and the allow-list rows of a channel.
 
 // Whether we may take role `r` from member `m`: ours we may always drop, others' with Manage roles
 // above both; a role a channel's overwrites hold its holders back with only with Manage channels
-// too (spec 1.4: the instance rule).
+// too (the instance rule).
 export const mayTakeRole = (
   v: Pick<ServerView, 'me' | 'perms'>,
   m: Pick<MemberView, 'ik' | 'roles' | 'below'>,
@@ -21,7 +21,7 @@ export const mayTakeRole = (
   return m.ik === me || (can(P.ManageRoles) && r.below && m.below)
 }
 
-// Whether we may write an overwrite for `subj` (spec 1.4 chperm: ranked above its subject). A
+// Whether we may write an overwrite for `subj` (chperm: ranked above its subject). A
 // member who left or a deleted role ranks below everyone: its rows can always be cleared.
 export const mayWriteRow = (v: Pick<ServerView, 'rank' | 'roles' | 'members'>, subj: string) => {
   if (subj === `r:${EVERYONE}`) return v.rank[0] > -1
@@ -75,7 +75,7 @@ export const reapplyLine = (
   }
 }
 
-// A role's rank (spec 1.6).
+// A role's rank.
 const rankOf = (r: Pick<RoleView, 'id' | 'pos'>): Rank => [r.pos, r.id]
 
 export interface Move {
@@ -122,7 +122,7 @@ export function placeRole(roles: RoleView[], id: string, index: number, top: Ran
   return [...down, ...up].map(({ role, pos }) => ({ role, pos }))
 }
 
-// Whether moves lower a role someone holds (spec 8.2 role order): ask first.
+// Whether moves lower a role someone holds: ask first.
 export const movesWarn = (roles: RoleView[], moves: Move[]) =>
   moves.some(m => {
     const r = roles.find(x => x.id === m.role)

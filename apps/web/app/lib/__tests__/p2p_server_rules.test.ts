@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { genCase } from './acl_model/gen'
+import { genCase } from './acl_model_rules2/gen'
 import type { EvalResult } from '../p2p/acl/facts'
 import { P, rkey } from '../p2p/acl/rules'
 import {
@@ -18,8 +18,8 @@ import { signRevocation2 } from '../p2p/event_v2'
 import { HOLD_MS } from '../p2p/acl_room'
 import { MIN, ServerWorld } from './p2p_server_world'
 
-// The rules of P2P servers as the host's evaluator applies them to real signed events (spec
-// 2.1 receipt outcomes, 1.2 honest parents, 3.5 watermarks and visibility, 4.2 storage): the
+// The rules of P2P servers as the host's evaluator applies them to real signed events
+// (receipt outcomes, honest parents, watermarks and visibility, storage): the
 // semantics themselves are the ACL core's (p2p_acl_*); these test the wiring around it.
 
 // Everything a recorded state holds.
@@ -36,7 +36,7 @@ const sets = (s: EvalResult) =>
     [...s.PC].sort(),
   ])
 
-describe('receipt outcomes (spec 2.1)', () => {
+describe('receipt outcomes', () => {
   test('malformed, rejected, pending, admitted, held and unknown rules', () => {
     const w = ServerWorld.create('O')
     const ch = w.channel('O')
@@ -88,7 +88,7 @@ describe('receipt outcomes (spec 2.1)', () => {
   })
 })
 
-describe('honest parents (spec 1.2)', () => {
+describe('honest parents', () => {
   test('at most 10, newest first, with our own last ACL event in their closure', () => {
     const w = ServerWorld.create('O')
     const names = Array.from({ length: 12 }, (_, i) => `M${i}`)
@@ -143,7 +143,7 @@ describe('honest parents (spec 1.2)', () => {
   })
 })
 
-describe('the remover’s watermark (spec 1.4, 3.5)', () => {
+describe('the remover’s watermark', () => {
   test('kick, ban and leave cover every live device of their target, content included', () => {
     const w = ServerWorld.create('O')
     const ch = w.channel('O')
@@ -203,7 +203,7 @@ describe('genesis and content', () => {
   })
 })
 
-describe('admission records (spec 4.2, the evaluation cache)', () => {
+describe('admission records (the evaluation cache)', () => {
   const busy = () => {
     const w = ServerWorld.create('O')
     const ch = w.channel('O')
@@ -274,7 +274,7 @@ describe('admission records (spec 4.2, the evaluation cache)', () => {
     const live = w.room.summary()
     const all = new Set(w.acl.map(x => x.id))
     const ids = (f: { id: string }[]) => new Set(f.map(x => x.id))
-    // Written by another implementation version (spec 2.4).
+    // Written by another implementation version.
     const old = w.restore(it => ({ ...it, rec: { ...it.rec!, v: IMPL - 1 } }))
     expect(ids(old.fresh)).toEqual(all)
     expect(old.r.summary()).toEqual(live)
@@ -342,7 +342,7 @@ describe('admission records (spec 4.2, the evaluation cache)', () => {
   })
 })
 
-describe('ACL backfill (spec 4.2)', () => {
+describe('ACL backfill', () => {
   test('complete and oldest first: a joiner replaying it reaches the same state', () => {
     const w = ServerWorld.create('O')
     w.channel('O')
@@ -365,7 +365,7 @@ describe('ACL backfill (spec 4.2)', () => {
   })
 })
 
-describe('visibility through the host (spec 3.5, 3.6)', () => {
+describe('visibility through the host', () => {
   test('edits, reactions, pins and redactions as the core decides them', () => {
     const w = ServerWorld.create('O')
     const ch = w.channel('O')

@@ -1535,10 +1535,10 @@ mod tests {
         assert_eq!(queued(&realm), 0, "a closed connection frees what it held");
     }
 
-    /// The reviewer's case: one client that does not read fills what its address may hold, and
+    /// One client that does not read fills what its address may hold, and
     /// everyone else's frames still go through.
     #[test]
-    fn one_address_holds_only_its_share_and_others_still_relay() {
+    fn one_address_holds_only_its_share_and_others_relay() {
         let mut realm = Realm::default();
         let big = Value::String("y".repeat(FRAME_MAX / 2));
         let mut alice = member(&mut realm, "alice");
@@ -1702,10 +1702,10 @@ mod tests {
         assert!(!backlog.take(OUT_BYTES_MAX), "a connection's own cap stays");
     }
 
-    /// The reviewer's R2 case: the shared budget is full, and peers that read promptly still
+    /// The shared budget is full, and peers that read promptly still
     /// get small frames, also at an address that holds all it may.
     #[test]
-    fn a_full_shared_budget_still_relays_small_frames_to_peers_that_read() {
+    fn a_full_shared_budget_relays_small_frames_to_peers_that_read() {
         let mut realm = Realm::default();
         let big = Value::String("y".repeat(FRAME_MAX / 2));
         let mut alice = member(&mut realm, "alice");
@@ -2037,7 +2037,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn frames_past_the_pace_are_refused_and_heartbeats_still_count() {
+    async fn frames_past_the_pace_are_refused_and_heartbeats_count() {
         let served = serve(Settings {
             burst: 3,
             per_sec: 0,
@@ -2226,7 +2226,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_client_that_stops_reading_is_dropped_and_others_still_relay() {
+    async fn a_client_that_stops_reading_is_dropped_and_others_relay() {
         let served = serve(Settings {
             stale: Duration::from_millis(800),
             ..Settings::default()

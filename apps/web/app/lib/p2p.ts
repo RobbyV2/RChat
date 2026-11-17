@@ -493,7 +493,7 @@ export class P2pManager {
   // still being picked for an earlier call is dropped instead of joining
   // the next one.
   private gen = 0
-  // A 0.2.0 peer, told apart by its cam messages, which lack screen.
+  // A legacy peer, told apart by its cam messages, which lack screen.
   private remoteLegacy = false
   local: MediaStream | null = null
   camView: MediaStream | null = null
@@ -1671,7 +1671,7 @@ export class P2pManager {
   }
 
   // on is whether the camera slot shows something: the camera, or for a
-  // 0.2.0 peer, which reads it as "show the video", the screen in its place.
+  // legacy peer, which reads it as "show the video", the screen in its place.
   private sendCam() {
     const { control } = this
     if (control?.open)

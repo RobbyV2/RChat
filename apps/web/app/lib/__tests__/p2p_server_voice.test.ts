@@ -154,7 +154,7 @@ describe('P2P server voice channels', () => {
     await joinWithCode(clock, a, room, b)
     const ch = await a.servers.addChannel(room, 'Office', { kind: 'voice', restrictView: true })
     await pump(clock, () => !!b.servers.sumOf(room).channels[ch], 'the channel arrives')
-    // A channel Bob may not view isn't listed for him at all (Task 23 view gate).
+    // A channel Bob may not view isn't listed for him at all (the view gate).
     expect(b.servers.view(room)?.channels.some(x => x.id === ch)).toBe(false)
     a.servers.voice.media = new FakeMedia()
     b.servers.voice.media = new FakeMedia()

@@ -1,4 +1,4 @@
-// The gossip overlay of one server room (recon-p2p-scale §2.8) and real frame sizes. Frames: a
+// The gossip overlay of one server room and real frame sizes. Frames: a
 // full `heads`, a 120-character message pushed and served, a full `want` and a one-id `ack`, each
 // through the session's own encoding (chunks, AES-GCM, data frames). Overlay: each of `--members`
 // M dials gossip.outTarget random others, accepted while the callee has fewer than gossip.perRoom

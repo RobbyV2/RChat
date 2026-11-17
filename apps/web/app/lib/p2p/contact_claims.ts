@@ -39,9 +39,9 @@ import {
   type Succession,
 } from './keys'
 
-// What one contact holds about an identity's protection (spec r8f 1.7): its creation-record
+// What one contact holds about an identity's protection: its creation-record
 // state (known, none, unknown) with the pending claims, the chain and the devices it trusts by
-// the epoch rule, the succession claims (v1, 0.3.0's, v2) with the held ones, and the badge
+// the epoch rule, the succession claims (v1 with or without `new_cr`, v2) with the held ones, and the badge
 // against the chain's heads. A pure state machine over verified records: it signs nothing,
 // stores nothing and applies no move by itself.
 
@@ -92,7 +92,7 @@ export interface SuccClaim {
   new: string
   v: 1 | 2
   succ: Succession | SuccessionV1 | SuccessionV2
-  // the new identity's creation record; none for 0.3.0's v1
+  // the new identity's creation record; none for a v1 without `new_cr`
   cr?: CreationRecord
   // v2: the head it names and the key in force there, which signed it
   head?: Head
@@ -145,7 +145,7 @@ const revOf = ({ dk, pk, n, revoked_at, successor, sig }: RevocationV2) =>
   `${dk} ${pk} ${n} ${revoked_at} ${successor ?? ''} ${sig}`
 
 // A v1 succession's old half: the old identity key signed it, whoever signed the new half. Both
-// forms: 0.3.0's (no `new_cr`) and the one that names the new creation record.
+// forms: without `new_cr`, and the one that names the new creation record.
 const signedByOld = (x: Record<string, unknown>): boolean => {
   if (isSuccessionV1(x)) {
     const { v, old, new: next, new_cr, at } = x
@@ -852,7 +852,7 @@ const heldOk = (x: unknown, ik: string): x is HeldSucc =>
   srcOk(x.src) &&
   isInt(x.at)
 
-// A badge token against the chain a contact holds for its identity: with no chain 0.3.0's rule
+// A badge token against the chain a contact holds for its identity: with no chain, any token
 // (take); else ignore a token with no head, one whose head is older than a record held, and one
 // naming an unknown head that isn't deeper; a deeper unknown head waits for the chain.
 export const tokenOk = (

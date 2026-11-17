@@ -13,7 +13,7 @@ export const file_rchat_fed_v1_call: GenFile = /*@__PURE__*/
   fileDesc("ChdyY2hhdC9mZWQvdjEvY2FsbC5wcm90bxIMcmNoYXQuZmVkLnYxIsYBCghDYWxsSGVhZBILCgNpc3MYASABKAkSCwoDYXVkGAIgASgJEg4KBm1ldGhvZBgDIAEoCRILCgNpYXQYBCABKAMSCwoDZXhwGAUgASgDEgsKA2p0aRgGIAEoDBITCgtib2R5X3NoYTI1NhgHIAEoDBIQCghib2R5X2xlbhgIIAEoBBILCgNraWQYCSABKAkSEwoLaW5zdGFuY2VfaWQYCiABKAkSEQoJaGVsbG9fcmV2GAsgASgEEg0KBXN0YW1wGAwgASgMIjgKDEZlYXR1cmVMZXZlbBIMCgRuYW1lGAEgASgJEg0KBWxldmVsGAIgASgNEgsKA21pbhgDIAEoDSKTAQoHUmVmdXNhbBIrCgZyZWFzb24YASABKA4yGy5yY2hhdC5mZWQudjEuUmVmdXNhbFJlYXNvbhINCgV1bnRpbBgCIAEoAxIoCgRuZWVkGAMgAygLMhoucmNoYXQuZmVkLnYxLkZlYXR1cmVMZXZlbBIOCgZub3RpY2UYBCABKAkSEgoKc3RhbXBfd29yaxgFIAEoBCr6AQoNUmVmdXNhbFJlYXNvbhIeChpSRUZVU0FMX1JFQVNPTl9VTlNQRUNJRklFRBAAEhoKFlJFRlVTQUxfUkVBU09OX1JFRlVTRUQQARIZChVSRUZVU0FMX1JFQVNPTl9QQVVTRUQQAhIaChZSRUZVU0FMX1JFQVNPTl9WRVJTSU9OEAMSGwoXUkVGVVNBTF9SRUFTT05fSURFTlRJVFkQBBIfChtSRUZVU0FMX1JFQVNPTl9IRUxMT19ORUVERUQQBRIXChNSRUZVU0FMX1JFQVNPTl9CVVNZEAYSHwobUkVGVVNBTF9SRUFTT05fU1RBTVBfTkVFREVEEAdiBnByb3RvMw");
 
 /**
- * The signed head of every instance-to-instance call (spec 4.3). It travels in the header
+ * The signed head of every instance-to-instance call. It travels in the header
  * `Authorization: RChat-Fed <base64url(head bytes)>.<base64url(sig)>`; the HTTP body is the
  * request message itself (Connect unary, `application/proto`).
  * sig = Ed25519 under the caller's call key `kid` over "rchat-fed-call1" || 0x00 || head bytes.
@@ -45,7 +45,7 @@ export type CallHead = Message<"rchat.fed.v1.CallHead"> & {
   method: string;
 
   /**
-   * Unix seconds, on the callee's clock as the caller estimates it (spec 4.3.4). The callee
+   * Unix seconds, on the callee's clock as the caller estimates it. The callee
    * accepts |iat - now| <= 30.
    *
    * @generated from field: int64 iat = 4;
@@ -100,7 +100,7 @@ export type CallHead = Message<"rchat.fed.v1.CallHead"> & {
   helloRev: bigint;
 
   /**
-   * A proof-of-work stamp over `jti` (0.5.0's scheme), sent on a Hello when the callee asked for
+   * A proof-of-work stamp over `jti`, sent on a Hello when the callee asked for
    * one (REFUSAL_REASON_STAMP_NEEDED) because its key-fetch budget is under pressure.
    *
    * @generated from field: bytes stamp = 12;
@@ -116,7 +116,7 @@ export const CallHeadSchema: GenMessage<CallHead> = /*@__PURE__*/
   messageDesc(file_rchat_fed_v1_call, 0);
 
 /**
- * A feature the instance speaks, with its level window (spec 4.4).
+ * A feature the instance speaks, with its level window.
  *
  * @generated from message rchat.fed.v1.FeatureLevel
  */
@@ -243,7 +243,7 @@ export enum RefusalReason {
 
   /**
    * A cap the caller shares with others (its domain or network) is full: hold every call to this
-   * instance until `until`. Never counted against the caller (spec 4.5.1).
+   * instance until `until`. Never counted against the caller.
    *
    * @generated from enum value: REFUSAL_REASON_BUSY = 6;
    */

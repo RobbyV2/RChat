@@ -6,7 +6,7 @@ import { isKeyId } from './keys'
 import { LOCAL } from './limits'
 import { realClock, type Clock } from './session'
 
-// The account badge (note section 2): "Confirmed as alice@host". With it on, the instance signs
+// The account badge: "Confirmed as alice@host". With it on, the instance signs
 // a binding (a JWT) of our identity key to our account, fetched again every day and carried in
 // hellos, profile frames and our server member events. Peers check it against the issuer's keys
 // when it arrives and again once their check is a day old. A check the issuer can't answer keeps

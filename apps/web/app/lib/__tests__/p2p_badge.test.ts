@@ -291,7 +291,7 @@ describe('Badges', () => {
     expect(b.get(ik)?.ok?.checked).toBe(checked as number)
   }, 30_000)
 
-  test('confirmed before they became a contact (a server member): the warning still comes', async () => {
+  test('confirmed before they became a contact (a server member): the warning comes', async () => {
     const { clock, b, calls, warned, contacts } = await setup(async (_t, ik) => {
       const iat = Math.floor(clock.now() / 1000)
       return claims({ ik, iat, exp: iat + BINDING_MAX_TTL })

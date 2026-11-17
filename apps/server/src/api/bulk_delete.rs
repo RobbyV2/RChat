@@ -1045,7 +1045,7 @@ async fn fail(state: &AppState, id: i64) -> Result<(), ApiError> {
 
 /// Moves the authors in `tally` whose account is gone (or being purged and already forgotten)
 /// into `unnamed`, inside the transaction that writes the tally, so a purged name is never
-/// written again (Task 35's deleted-user rule).
+/// written again.
 async fn resolve_authors(
     tx: &mut sqlx::Transaction<'_, sqlx::Any>,
     tally: &mut Tally,

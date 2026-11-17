@@ -121,7 +121,7 @@ describe('self audio transitions', () => {
 })
 
 describe('voice and call mic state', () => {
-  test('deafen, then switch channel: still deafened and the new mic starts muted', async () => {
+  test('deafen, then switch channel: deafened carries over and the new mic starts muted', async () => {
     await st().joinVoice('lounge', 1)
     expect(lastTrack().enabled).toBe(true)
     st().toggleDeafen()

@@ -303,7 +303,7 @@ describe('sanitizing', () => {
     ])
   })
 
-  test('a config exported before folder colors still loads', async () => {
+  test('a config without folder colors loads', async () => {
     const old = {
       v: 1,
       theme: 'dark',
@@ -573,7 +573,7 @@ describe('links and stash', () => {
   })
 })
 
-describe('the P2P rail (Task 22 leftover)', () => {
+describe('the P2P rail', () => {
   const R1 = 'A'.repeat(43)
   const R2 = 'B'.repeat(42) + '_'
   const R3 = 'C'.repeat(42) + '-'

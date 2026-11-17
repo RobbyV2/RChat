@@ -53,9 +53,8 @@ export interface AclHost {
   restorable(room: string, ids: string[], viewed: boolean): Promise<boolean[]>
   viewable(room: string, ik: string, chs: (string | null)[]): Promise<boolean[]>
   lastSent(room: string, a: string, ch: string): Promise<number | null>
-  // Flows (spec 3.9, 9 rule 18): our denies to re-apply, and what a lost device did after `t`.
-  // `from`: an old copy and its upgrade, whose concurrent kicks and bans of ours count too (spec
-  // 3.8 step 7).
+  // Flows: our denies to re-apply, and what a lost device did after `t`.
+  // `from`: an old copy and its upgrade, whose concurrent kicks and bans of ours count too.
   reapply(
     room: string,
     me: string,

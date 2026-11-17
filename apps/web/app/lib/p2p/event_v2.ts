@@ -17,9 +17,9 @@ import {
   type Content,
 } from './content'
 
-// ----- Format v2 (P2P servers, ACL spec §1.2) -----
+// ----- Format v2 (P2P servers) -----
 
-// The known content kinds, all posted in a channel (§1.4); other kinds are opaque.
+// The known content kinds, all posted in a channel; other kinds are opaque.
 export const CHANNEL_CONTENT: readonly string[] = [
   'msg',
   'edit',
@@ -30,7 +30,7 @@ export const CHANNEL_CONTENT: readonly string[] = [
   'move',
 ]
 
-// What this browser signs again from a new key when a rotation drops its old one (spec 3.9).
+// What this browser signs again from a new key when a rotation drops its old one.
 export const RESIGN_CONTENT = ['msg', 'edit', 'redact', 'react', 'pin']
 
 // A v2 core: every server event, ACL (`L` "a") or content (`L` "c"), signed by a device. Nothing
@@ -196,7 +196,7 @@ export const TAG_UPGRADE = 'rchat-p2p-upgrade2\0'
 const upgradeInput = (srv: string, g: unknown) =>
   concat(utf8(TAG_UPGRADE), utf8(srv), utf8('\0'), canonicalBytes(g))
 
-// A co-owner's countersignature of an upgrade of server `srv` to the new genesis `g` (§3.8).
+// A co-owner's countersignature of an upgrade of server `srv` to the new genesis `g`.
 export const signUpgrade = (ik: KeyPair, srv: string, g: unknown) =>
   b64u(sign(ik.sk, upgradeInput(srv, g)))
 
@@ -210,11 +210,11 @@ export const upgradeSigOk = (ik: string, srv: string, g: unknown, sig: unknown) 
   }
 }
 
-// Identity records (§1.1): a device revocation is signed by the identity's primary or recovery
+// Identity records: a device revocation is signed by the identity's primary or recovery
 // key over (srv, dk, seen), any member may relay it; a rotation by its recovery key over the
 // record, its position (iprev) and the device that posts it, which must be the identity's (two
-// relayed copies of one record would contest it, §2.3). Until identities have separate recovery
-// and primary keys, the identity key plays both.
+// relayed copies of one record would contest it). On rules 2 the identity key is both the
+// recovery and the primary key.
 export const TAG_REVOKE = 'rchat-p2p-revoke2\0'
 
 export const TAG_ROTATE = 'rchat-p2p-rotate2\0'
@@ -396,7 +396,7 @@ const proofHeaderOf = (x: { ev: CoreV2 }): ProofHeader => {
 }
 
 // A validated v2 ACL event as the ACL core reads it (a proof's sides as headers; a relayed
-// device revocation acting for its `ik`, §1.6).
+// device revocation acting for its `ik`).
 export const aclEvOf = (id: string, w: WireV2): AclEv => {
   const ik = w.c?.ik
   const relay = w.ev.t === 'device_revoke' && typeof ik === 'string' && ik !== w.ev.a

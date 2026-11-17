@@ -227,7 +227,7 @@ describe('the online section', () => {
     expect(shown()).toEqual(['alice'])
   })
 
-  test('a list read to its end still finds the people its cursor skipped', async () => {
+  test('a list read to its end finds the people its cursor skipped', async () => {
     directory = { alice: member('alice', { online: true }), dave: member('dave') }
     for (const n of named('u', 60, 2)) directory[n] = member(n)
     serveDirectory()
@@ -295,7 +295,7 @@ describe('the online section', () => {
       expect(shown()).toEqual(['alice', ...early, ...named('o', 59, 2)])
     })
 
-    test('a list still paging its online section is left to its own pages', async () => {
+    test('a list that is paging its online section is left to its own pages', async () => {
       const o = named('o', 59, 2)
       directory = { alice: member('alice', { online: true }) }
       for (const n of [...o, ...names]) directory[n] = member(n)

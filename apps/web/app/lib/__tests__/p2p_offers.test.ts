@@ -11,7 +11,7 @@ import {
 import { PROMPTS, RelayBook, defaultRelays, relayBook, type Decision } from '../relays'
 import { ice } from '../ice'
 
-// Offers that declare relays we don't know (transport I3): only a signed device of someone we
+// Offers that declare relays we don't know: only a signed device of someone we
 // would talk to may cause a relay prompt, a few at most.
 
 const nodes: P2pNode[] = []

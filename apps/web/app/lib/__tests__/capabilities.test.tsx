@@ -206,7 +206,7 @@ describe('the profanity filter without WebAssembly', () => {
     expect(html.includes('Couldn')).toBe(false)
   })
 
-  test('with WebAssembly the switch is as before', () => {
+  test('with WebAssembly the switch is on and enabled', () => {
     setCapabilities({ wasm: true })
     Object.assign(initial, { me: me('alice'), profanityOn: true, profanityFailed: false })
     const html = renderToStaticMarkup(<ProfanitySwitch />)
@@ -587,7 +587,7 @@ describe('P2P passphrase protection without WebAssembly', () => {
       expect(dropped instanceof Cancelled).toBe(true)
       expect(useP2p.getState().movingAt).toBeNull()
       expect(await stored()).toEqual([null, null])
-      // Without a Cancel, sending pauses as before.
+      // Without a Cancel, sending pauses.
       const done = await p2pTransfer.exportSection(PASS, SMALL, false, {})
       expect(done.section.kdf).toEqual(SMALL)
       expect(useP2p.getState().movingAt).not.toBeNull()

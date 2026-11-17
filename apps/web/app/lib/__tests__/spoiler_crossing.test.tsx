@@ -255,7 +255,7 @@ describe('the message view keeps a crossed spoiler hidden', () => {
     }
   })
 
-  test('formatting still applies around and inside the hidden part', () => {
+  test('formatting applies around and inside the hidden part', () => {
     const html = render('**a ||secret** b|| c')
     expect(html).toContain('<strong>a <span data-spoiler="hidden"')
     expect(html).toContain('<span class="invisible" aria-hidden="true">secret</span>')

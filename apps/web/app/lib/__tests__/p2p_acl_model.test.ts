@@ -1,14 +1,14 @@
 import { expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { genCase } from './acl_model/gen'
-import type { Ev } from './acl_model/model'
-import { World } from './acl_model/world'
+import { genCase } from './acl_model_rules2/gen'
+import type { Ev } from './acl_model_rules2/model'
+import { World } from './acl_model_rules2/world'
 import { FastEval, type StratumInfo } from '../p2p/acl/eval'
 import { diffModelWorld, prodReplica } from './p2p_acl_world'
 
-// The production ACL modules against the executable reference model (spec §7.2, §8.1): random
-// adversarial universes from the model's generator (a copy of notes/acl-model/gen.ts, model
+// The production ACL modules against the executable reference model: random
+// adversarial universes from the model's generator (model
 // constants), replayed through both; every verdict, admission record, admission state, the
 // incremental final state and a batch evaluation must be equal.
 
@@ -43,15 +43,15 @@ test('seed 8414: a stray content field of a profile write is not part of the mod
   expect(run([8414], s => genCase(s).w)).toEqual([])
 })
 
-// Revision 7b's final-fuzz findings (O5-senior, O6-join, O11-growth (d)), regenerated.
+// Seeds whose universes exercise O5-senior, O6-join and O11-growth (d).
 for (const s of [9_043_909, 8_868_407, 10_016_903])
-  test(`seed ${s} (revision 7b): production equals the model`, () => {
+  test(`seed ${s}: production equals the model`, () => {
     expect(run([s], x => genCase(x).w)).toEqual([])
   })
 
-// The saved universes behind the failures of §7.7 (revision-2 format converted as the model's
+// Saved universes (event format 2 converted as the model's
 // fixtures test does).
-const toR3 = (events: Ev[]): Ev[] => {
+const toFormat3 = (events: Ev[]): Ev[] => {
   const codeByH = new Map<string, string>()
   for (const e of events)
     if (e.t === 'code' && (!codeByH.has(e.c.h) || e.id < codeByH.get(e.c.h)!))
@@ -66,7 +66,7 @@ const toR3 = (events: Ev[]): Ev[] => {
     return x
   })
 }
-const dir = fileURLToPath(new URL('./acl_model/fixtures', import.meta.url))
+const dir = fileURLToPath(new URL('./acl_model_rules2/fixtures', import.meta.url))
 for (const f of readdirSync(dir)
   .filter(x => x.endsWith('.json'))
   .sort())
@@ -75,14 +75,14 @@ for (const f of readdirSync(dir)
     const w = new World()
     for (const e of fx.events[0]?.t === 'genesis' && fx.format === 3
       ? fx.events
-      : toR3(fx.events)) {
+      : toFormat3(fx.events)) {
       w.all.push(e)
       w.ref.receive(e)
     }
     expect(diffModelWorld(w)).toEqual([])
   }, 600_000)
 
-// §3.5 cascadeCut asks a stratum's in(x, W) for content authors' worlds after the stratum loop:
+// cascadeCut asks a stratum's in(x, W) for content authors' worlds after the stratum loop:
 // those answers must equal the ones the loop itself would give (higher strata only in k*).
 test('content worlds asked after the stratum loop equal those asked inside it', () => {
   const fails: string[] = []

@@ -55,7 +55,7 @@ describe('layout issues', () => {
     expect(layoutIssues([list, row], frame)).toEqual([])
   })
 
-  test('a parent that scrolls only vertically still bounds its width', () => {
+  test('a parent that scrolls only vertically bounds its width', () => {
     next = 0
     const list = node([0, 0, 280, 400], { clipX: true, clipY: true, scrollY: true })
     const card = node([0, 0, 320, 100], { parent: list.id, label: 'card' })

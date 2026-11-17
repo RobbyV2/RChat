@@ -217,7 +217,7 @@ export const plainText = (list: Message[], stamp: (ts: number) => string) =>
 
 export const EXPORT_VERSION = 1
 
-// One exported message (see the Task 42 report for the schema).
+// One exported message.
 export interface ExportedMessage {
   id: number
   author: { username: string; display_name: string }

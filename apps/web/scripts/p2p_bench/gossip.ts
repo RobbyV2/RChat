@@ -1,4 +1,4 @@
-// Gossip-shaped ACL universes built with the production admission (the r5 review's syncbench):
+// Gossip-shaped ACL universes built with the production admission:
 // `--members` M join, then each step a random member posts a mark (3/4) or a profile (1/4) citing
 // its own latest event and the latest of 2 random members, until `--events` N. `--chan` adds a
 // channel with @everyone View and Send, so content is admitted. Each event is admitted in its own

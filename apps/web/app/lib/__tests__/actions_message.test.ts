@@ -304,7 +304,7 @@ test("another member's message, as a plain member", () => {
   ])
 })
 
-test('as a moderator: moderation after DM, Assign Role as a submenu (rule 2)', () => {
+test('as a moderator: moderation after DM, Assign Role as a submenu', () => {
   state({ perms: MOD })
   expect(labels(at(bobs))).toEqual([
     'Reply',
@@ -335,7 +335,7 @@ test('as a moderator: moderation after DM, Assign Role as a submenu (rule 2)', (
   ])
 })
 
-test('admin rows on a message: never on your own, Revoke Admin is danger (rule 2)', () => {
+test('admin rows on a message: never on your own, Revoke Admin is danger', () => {
   state({ owner: true, bob: { is_admin: true, perms: Perm.Kick } })
   expect(
     items(at(bobs))
@@ -892,7 +892,7 @@ const DELETE =
   'Delete this message for everyone? Hold Shift while clicking the trash icon to skip this.'
 const bobRef = user('bob', { display_name: 'Bobby' })
 
-test('each message row does what it did', async () => {
+test('each message row runs its action', async () => {
   state({ perms: MOD })
   expect(await effects(items(at(bobs)))).toEqual([
     ['Reply', [['startReply', 'c1', bobs]]],
@@ -977,7 +977,7 @@ test('each message row does what it did', async () => {
   ])
 })
 
-test('each embed and timestamp row does what it did', async () => {
+test('each embed and timestamp row runs its action', async () => {
   state()
   const t: Target = { kind: 'embed', message: withEmbeds, ord: 1, banner: true }
   expect(await effects(items(t))).toEqual([
@@ -1094,7 +1094,7 @@ test('an embed is gone with its message or once removed; its banner once removed
   expect(refreshCtx(c)).toBeNull()
 })
 
-test('message, embed, timestamp and inbox actions stay out of the palette (rule 10)', () => {
+test('message, embed, timestamp and inbox actions stay out of the palette', () => {
   state({ siteAdmin: true, perms: MOD, thread: root })
   useStore.setState({ selection: null })
   const ids = new Set(paletteCommands(paletteCtx(useStore.getState())).map(r => r.id))

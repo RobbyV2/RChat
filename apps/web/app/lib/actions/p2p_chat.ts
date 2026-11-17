@@ -53,7 +53,7 @@ const seconds = (ms: number) => Math.floor(ms / 1000)
 // "Create thread" on a message without replies that we may answer, "View thread" once it has
 // some.
 // A message whose body isn't here ("Message unavailable") keeps its thread reachable; one from
-// the copy a server was transferred from (spec 3.8) has none here.
+// the copy a server was transferred from has none here.
 export const threadAct = (p: P2pMessage, canAct: boolean) =>
   p.system || p.call || p.thread || p.noThread || p.archived
     ? null

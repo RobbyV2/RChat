@@ -2,8 +2,8 @@ import { fiOf, type EvalResult } from './facts'
 import { EMPTY, firstTrue, Ix, popcount, pushM } from './reach'
 import { introduces, poster, relayed, type AclEv, type Ctx, type Rec } from './rules'
 
-// Equivocation (spec §2.3): device and identity fork points (FI per epoch), rotation and race
-// evidence, pool candidates (W3(g)), candidates, the void set X, and the revocation tails of §3.1.
+// Equivocation: device and identity fork points (FI per epoch), rotation and race
+// evidence, pool candidates (W3(g)), candidates, the void set X, and the revocation tails.
 
 // A header that counts as device evidence: a dropped event's, or one side of a proof.
 export interface Header {
@@ -12,11 +12,11 @@ export interface Header {
   aprev?: string
 }
 
-// x and y (two headers of one device) are evidence against it (E1 or E2 of §2.3).
+// x and y (two headers of one device) are evidence against it (E1 or E2).
 export const evidencePair = (x: Header, y: Header) =>
   x.dev === y.dev && (x.seq === y.seq || (x.aprev ?? '') === (y.aprev ?? ''))
 
-// The headers of dropped events (orphan rule, §2.3), outside the index. They count as every kind
+// The headers of dropped events (orphan rule), outside the index. They count as every kind
 // of evidence and set no fact. A header is read only against events of its own identity: an
 // indexed x is in its past when x is in C(f) for one of its maximal indexed ancestors `fr`, and
 // headers are ordered by their header parents `hp`. No held event has a header in its past.
@@ -125,7 +125,7 @@ export class Equiv {
   tail!: Uint8Array
   tailBy = new Map<number, number[]>()
   order: number[]
-  // Headers of dropped events: evidence only (§2.3).
+  // Headers of dropped events: evidence only.
   hdrs: Hdrs | null = null
 
   constructor(
@@ -247,8 +247,8 @@ export class Equiv {
 
   // Pool candidates (W3(g)): a non-owner's event x other than a rotation or its identity's own
   // device_revoke whose pool P(x) = U(x) ∪ ⋃ U(y) over the events y of its poster concurrent with
-  // x, held or headers, before their device's fork point (revision 7), exceeds poolU (a relay is
-  // its relayer's event here, §1.6). Per poster and device chain: on a linear chain the events
+  // x, held or headers, before their device's fork point, exceeds poolU (a relay is
+  // its relayer's event here). Per poster and device chain: on a linear chain the events
   // concurrent with x are one segment (two binary searches); prefix sums of |U| bound the union
   // from above, U(x) ∪ conc(x) from below, and the union is formed only between the bounds. A
   // chain that isn't linear is counted by popcount below x and one by one above it.
@@ -549,7 +549,7 @@ export class Equiv {
       if (!this.candidateIn(i, F, FI, this.RF, this.PC)) continue
       // witnessed: a descendant by another identity, clean, in good faith. Structural candidacy
       // only grows with the set, so the search stops at a w in whose St(w) i is a structural
-      // candidate; a pool candidacy there makes w no witness but can end later (revision 7), so
+      // candidate; a pool candidacy there makes w no witness but can end later, so
       // the search goes on past it. A witness is of another identity than the candidate's, and
       // than its relayer's.
       const a = ix.ev[i].a
@@ -623,14 +623,14 @@ export const seenOf = (e: AclEv, v: string): number => {
   return typeof x === 'number' ? x : -1
 }
 
-// The orphan rule of §2.3 (storage only) on the held set `ids` with state `st`: X events with no
+// The orphan rule (storage only) on the held set `ids` with state `st`: X events with no
 // held descendant, other than the genesis, upgrades and proofs (a kept header doesn't hold the
 // pair a proof carries, so dropping one could raise F), that are structural candidates (a
-// candidate only by pool evidence can stop being one, revision 7), and whose drop leaves FI (on
+// candidate only by pool evidence can stop being one), and whose drop leaves FI (on
 // the genesis epoch and every epoch whose rotation is not contested) and the contested identity
 // ops among the held events unchanged; tried in descending id order until nothing more can go.
-// Returns the dropped ids; their headers stay as evidence (`ghosts`), except those `bare` gets
-// (revision 7): past their device's fork point, no identity op, in no kept header's past, and
+// Returns the dropped ids; their headers stay as evidence (`ghosts`), except those `bare`
+// gets: past their device's fork point, no identity op, in no kept header's past, and
 // with F, FI and the contested ops unchanged without the header.
 export function orphanDrops(
   ids: readonly string[],

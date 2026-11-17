@@ -71,7 +71,7 @@ test('values are shown as written: empty reads nothing, long lists are cut', () 
   )
 })
 
-test('a detail without the expected fields still reads as a sentence', () => {
+test('a detail without the expected fields reads as a sentence', () => {
   for (const detail of [null, 'text', 7, [], {}, { key: 5, from: 'on' }]) {
     expect(text(entry({ detail }))).toBe('root changed p2p')
   }

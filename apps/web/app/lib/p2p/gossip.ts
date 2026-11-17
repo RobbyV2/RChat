@@ -6,7 +6,7 @@ import type { Link } from './sync'
 import { isShortId } from './state'
 import { isEventId } from './content'
 
-// Which members a P2P server room syncs with (note section 5, "Connection budget"). Nobody
+// Which members a P2P server room syncs with. Nobody
 // connects to everyone: each member links a room with at most `perRoom` sessions (a hard cap,
 // dials in flight and members being let in included), asks for `outTarget` of them itself (the
 // rest are others asking it), and events spread hop by hop. Candidates are drawn at random,

@@ -22,9 +22,9 @@ import {
   type Rank,
 } from './rules'
 
-// Content visibility (spec §3.5): content never affects the ACL state; whether a held content
+// Content visibility: content never affects the ACL state; whether a held content
 // event shows is a function of the final ACL state and the content held. Also the display rules
-// of redactions, pins, edits and reactions, and the history point of §3.6.
+// of redactions, pins, edits and reactions, and the history point.
 
 export interface ContentEv {
   id: string
@@ -47,7 +47,7 @@ export type Hidden =
   | { why: 'redacted'; by: string }
   | { why: 'slow' }
 
-// An evidence pair against one device, across both layers (§2.3 E1, E2, E3), with the fork point
+// An evidence pair against one device, across both layers (E1, E2, E3), with the fork point
 // it gives (`f`), as a proof carries it.
 export interface Evidence {
   f: number
@@ -358,7 +358,7 @@ export class ContentView {
     return h
   }
 
-  // Slow mode (§3.5, a display rule): a message sent inside its channel's slow-mode interval at its
+  // Slow mode (a display rule): a message sent inside its channel's slow-mode interval at its
   // position (`slow`, in seconds), measured by ts from its author's previous held message in that
   // channel, is hidden. Owners, Manage channels and Manage messages there are exempt. A previous
   // message counts unless it is hidden for its device or membership (`base`): a stolen or forked
@@ -376,9 +376,9 @@ export class ContentView {
     return prev !== undefined && m.ts - prev.ts < (slow as number) * 1000
   }
 
-  // The step-4 rule of §3.1 applied to m after Eval: at a stratum with cuts in C(m.ap), the cuts
+  // The step-4 rule of Eval applied to m afterwards: at a stratum with cuts in C(m.ap), the cuts
   // that the causes m's author is exposed to make on their own break m's authority (Mem, Dev;
-  // a redaction's or pin's Manage messages is read in St(m), §3.5), which the cuts above left
+  // a redaction's or pin's Manage messages is read in St(m)), which the cuts above left
   // intact, at an effective stratum below the stratum's.
   private cascadeCut(m: ContentEv): Rank | null {
     const fe = this.fe
@@ -525,7 +525,7 @@ export class ContentView {
     return m.c?.everyone === true && (permsQ(this.stateOf(m).facts, m.a) & P.MentionEveryone) !== 0
   }
 
-  // §3.6: m belongs to X's history under `joined` if m is X's own or its position holds the live
+  // m belongs to X's history under `joined` if m is X's own or its position holds the live
   // join (or genesis) that starts X's current membership.
   inHistory(m: ContentEv, X: string): boolean {
     if (m.a === X) return true
@@ -544,9 +544,9 @@ export class ContentView {
     return this.byId.get(id)
   }
 
-  // ----- Storage (§2.3, §4.2, §4.3) -----
+  // ----- Storage -----
 
-  // Why m goes from storage with its header (§4.2): at or past its device's fork point, or past
+  // Why m goes from storage with its header: at or past its device's fork point, or past
   // the watermark of a revocation of its device in force.
   dropKind(m: ContentEv): 'fork' | 'revoked' | null {
     if (m.seq >= this.forkPoint(m.dev)) return 'fork'
@@ -614,7 +614,7 @@ export class ContentView {
   }
 
   // The content of the evidence pair that defines Fc(dev) below the ACL fork point: kept with its
-  // header when the rest past Fc goes (§4.2).
+  // header when the rest past Fc goes.
   fcPair(dev: string): Set<string> {
     const out = new Set<string>()
     const ev = this.evidence(dev)
@@ -624,7 +624,7 @@ export class ContentView {
   }
 
   // A visible redaction of t by t's own author, positioned at or after t, whatever else hides t
-  // (self-redactions purge at once, §4.3).
+  // (self-redactions purge at once).
   selfRedacted(t: ContentEv): boolean {
     return (this.aimed.get(t.id) ?? []).some(
       r => r.t === 'redact' && r.a === t.a && sameCh(t, r) && this.after(t, r) && this.visible(r)
@@ -656,8 +656,8 @@ export class ContentView {
     return out
   }
 
-  // S2 and S3 of a moderator's redaction r of t (§4.3): ACL events of others than r's and t's
-  // authors that hold r acknowledge it (controller ruling: an ACL event holds content only by
+  // S2 and S3 of a moderator's redaction r of t: ACL events of others than r's and t's
+  // authors that hold r acknowledge it (an ACL event holds content only by
   // naming it, `ack`, and must have r's whole position in its past), and no more senior deny
   // concurrent with that position takes away its authority.
   stableRedaction(r: ContentEv, t: ContentEv): boolean {
@@ -691,7 +691,7 @@ export class ContentView {
   }
 }
 
-// The remover's watermark of device v (§3.5): its `seen` entry; a self-deny without one covers
+// The remover's watermark of device v: its `seen` entry; a self-deny without one covers
 // its own device up to itself; otherwise -1.
 export function seenFor(d: AclEv, v: string): number {
   const s = d.c.seen

@@ -9,7 +9,7 @@ import { keyId, newKeyPair, type KeyPair } from '../p2p/keys'
 import type { Agreed } from '../p2p/limits'
 import { EVERYONE_BITS } from '../p2p/server'
 
-// Server worlds for the rules tests: real signed v2 events (spec 1.2) received by the evaluator
+// Server worlds for the rules tests: real signed v2 events received by the evaluator
 // the host serves (acl_room.ts), built as honest clients build them (its plan) unless a test
 // overrides the chain fields (a stale position, a reused seq, a future date).
 

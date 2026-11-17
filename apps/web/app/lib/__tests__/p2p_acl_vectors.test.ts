@@ -1,4 +1,4 @@
-// Regression vectors of the P2P ACL spec (§7.6), ported from notes/acl-model/vectors.test.ts with
+// The model's vectors.test.ts with
 // their names, against the production modules. After each test every world it built is replayed
 // through the reference model, which must give the same verdicts, records and states.
 import { describe, expect, setDefaultTimeout, test } from 'bun:test'
@@ -8,7 +8,7 @@ import { orphanDrops } from '../p2p/acl/equivocation'
 import type { EvalResult } from '../p2p/acl/facts'
 import { BAN, EVERYONE, gt, INVITE, KICK, rank, rankOf, ROLES, SERVER } from '../p2p/acl/rules'
 import type { Agreed } from '../p2p/limits'
-import * as M from './acl_model/model'
+import * as M from './acl_model_rules2/model'
 import {
   AclWorld,
   devOwner,
@@ -22,11 +22,8 @@ import {
 modelDiffAfterEach()
 setDefaultTimeout(300_000)
 
-const R3 = true
-const R4 = true
-const R5 = true
 const TOT = true
-// the model's unacknowledged day budget of dispatch 5a (24), which the 5b total replaced
+// the model's unacknowledged day budget (24), read only where a vector has no total
 const DAY_U = 24
 const dayBudget = () => DAY_U
 
@@ -41,11 +38,11 @@ function base(everyone = 0, agreed?: Agreed) {
   return w
 }
 /**
- * [H18] W3(e) (§4.1, revision 5 dispatch 5b): a join through a non-owner's add needs a good-faith acknowledgement of
+ * W3(e): a join through a non-owner's add needs a good-faith acknowledgement of
  * that add by a third identity. The vectors model it with a bystander, Vch, whose client saw the add (a deceived honest
  * member in the attack vectors): Vch's mark citing the add. Vch joined right after genesis and only ever posts these
  * marks, so its chain carries nothing but the adds it acknowledged and their pasts. On a model without the rule
- * (revision 4 and earlier) vouch() returns the add itself.
+ * vouch() returns the add itself.
  */
 const VOUCH = true
 const vouch = <E extends { id: string }>(w: AclWorld, ...adds: E[]): { id: string } =>
@@ -74,8 +71,8 @@ function orderIndependent(w: AclWorld) {
     expect(evalSummary(evaluate(shuffled(w.ref.order, s), w.ref))).toBe(ref)
 }
 
-describe('review Criticals', () => {
-  test("S1 / C3: equivocation does not launder a banned member's backdated invite", () => {
+describe('equivocation, revocation and same-stratum denies', () => {
+  test("equivocation does not launder a banned member's backdated invite", () => {
     const w = base()
     const R1 = role(w, 1, INVITE)
     join(w, 'V1')
@@ -94,7 +91,7 @@ describe('review Criticals', () => {
     expect(S.facts.ban.has('V')).toBe(true)
   })
 
-  test('C3 B: a demoted moderator cannot void a witnessed ban by equivocating', () => {
+  test('a demoted moderator cannot void a witnessed ban by equivocating', () => {
     const w = base()
     const MOD = role(w, 3, BAN)
     join(w, 'M1')
@@ -109,7 +106,7 @@ describe('review Criticals', () => {
     expect(F(w).ban.has('S')).toBe(true)
   })
 
-  test("S2 / C2: device revocation cuts the stolen device's backdated grants and their cascade", () => {
+  test("device revocation cuts the stolen device's backdated grants and their cascade", () => {
     const w = base()
     const R3 = role(w, 3, INVITE)
     join(w, 'A1')
@@ -127,7 +124,7 @@ describe('review Criticals', () => {
     expect(S.facts.devs.get('A')!.has('A2')).toBe(false)
   })
 
-  test('S3 / C1: same-author same-stratum denies from two devices are order independent (both stand)', () => {
+  test('same-author same-stratum denies from two devices are order independent (both stand)', () => {
     const w = base()
     const MOD = role(w, 5, BAN | ROLES | KICK)
     const R1 = role(w, 1, 0)
@@ -144,7 +141,7 @@ describe('review Criticals', () => {
     orderIndependent(w)
   })
 
-  test('C1 review example: clear-Kick on laptop vs kick on phone, both at stratum 5', () => {
+  test('clear-Kick on laptop vs kick on phone, both at stratum 5', () => {
     const w = base()
     const R5 = role(w, 5, ROLES)
     const R2 = role(w, 3, KICK)
@@ -160,7 +157,7 @@ describe('review Criticals', () => {
     orderIndependent(w)
   })
 
-  test('C4: quiet server, 2 h idle, real-clock invite and ban are admitted', () => {
+  test('quiet server, 2 h idle, real-clock invite and ban are admitted', () => {
     const w = base()
     const MOD = role(w, 3, BAN | KICK)
     join(w, 'M1')
@@ -173,7 +170,7 @@ describe('review Criticals', () => {
     expect(w.act('O1', 'mark', {}, { ts: 5 }).v).toEqual({ s: 'R', why: 'ts' })
   })
 
-  test('C5: concurrent device_adds fork the identity chain; unwitnessed extra devices are void', () => {
+  test('concurrent device_adds fork the identity chain; unwitnessed extra devices are void', () => {
     const w = base()
     join(w, 'A1')
     const P = w.heads()
@@ -182,7 +179,7 @@ describe('review Criticals', () => {
     const S = w.state()
     expect([...S.facts.devs.get('A')!]).toEqual(['A1'])
     for (const x of [...adds, ...marks]) expect(S.X.has(x.id)).toBe(true)
-    // no further identity ops for A, and the void devices can't post (revision 7: citing the fork
+    // no further identity ops for A, and the void devices can't post (citing the fork
     // explicitly, since an honest client's default parents leave the void events out)
     expect(w.act('A5', 'device_add', {}, { ap: w.heads() }).v).toEqual({
       s: 'R',
@@ -191,7 +188,7 @@ describe('review Criticals', () => {
     expect(w.act('A2', 'mark', {}, { ap: w.heads() }).v.s).toBe('R')
   })
 
-  test('C5: W3 is per device and deterministic', () => {
+  test('W3 is per device and deterministic', () => {
     const w = base(INVITE)
     join(w, 'A1')
     const v = [1, 2, 3, 4, 5].map(i => w.act('A1', 'mark', {}, { ts: 100 + i }).v.s)
@@ -199,8 +196,8 @@ describe('review Criticals', () => {
   })
 })
 
-describe('review Importants', () => {
-  test("I1a: a junior's concurrent role move-down loses to the senior's move-up (stratified register)", () => {
+describe('registers, rank, duels and upgrades', () => {
+  test("a junior's concurrent role move-down loses to the senior's move-up (stratified register)", () => {
     const w = base()
     const Q = role(w, 3, ROLES | KICK)
     const R = role(w, 1, 0)
@@ -217,7 +214,7 @@ describe('review Importants', () => {
     expect(S.mem.has('T')).toBe(true)
   })
 
-  test("I1b: moving a role down is a deny that cuts its holders' backdated ops", () => {
+  test("moving a role down is a deny that cuts its holders' backdated ops", () => {
     const w = base()
     const QR = role(w, 8, BAN)
     const WR = role(w, 5, 0)
@@ -234,7 +231,7 @@ describe('review Importants', () => {
     expect(rank(S.facts, 'Q')).toEqual(rankOf(S.facts, QR))
   })
 
-  test('I2: rank is part of support (revoking the high role cuts a kick that needed it)', () => {
+  test('rank is part of support (revoking the high role cuts a kick that needed it)', () => {
     const w = base()
     const HIGH = role(w, 5, 0)
     const LOW = role(w, 1, KICK)
@@ -252,7 +249,7 @@ describe('review Importants', () => {
     expect(S.facts.mem.has('X')).toBe(true)
   })
 
-  test('S4 / I3: an ineffective kick stays ineffective when the target is demoted later', () => {
+  test('an ineffective kick stays ineffective when the target is demoted later', () => {
     const w = base()
     const R3 = role(w, 3, KICK)
     const R5 = role(w, 5, 0)
@@ -267,7 +264,7 @@ describe('review Importants', () => {
     expect(F(w).mem.has('T')).toBe(true)
   })
 
-  test("S5 / I4: the remover's other device can't resurrect a cut invitee by citing it", () => {
+  test("the remover's other device can't resurrect a cut invitee by citing it", () => {
     const w = base()
     const R = role(w, 1, INVITE)
     w.ok('O2', 'device_add')
@@ -282,7 +279,7 @@ describe('review Importants', () => {
     expect(F(w).mem.has('N')).toBe(false)
   })
 
-  test("S6 / I5: duel at the same top role: both out, the loser's later grants are cut", () => {
+  test("duel at the same top role: both out, the loser's later grants are cut", () => {
     const w = base()
     const R5 = role(w, 5, KICK | BAN | INVITE)
     w.ok('O2', 'device_add')
@@ -300,14 +297,14 @@ describe('review Importants', () => {
     const S = w.state()
     expect(S.facts.mem.has('X') || S.facts.mem.has('Y')).toBe(false)
     expect(S.facts.mem.has('N')).toBe(false)
-    expect(S.facts.ban.has('Z')).toBe(true) // same-stratum denies stay mutually invisible (documented)
+    expect(S.facts.ban.has('Z')).toBe(true) // same-stratum denies stay mutually invisible
     // the repair: an owner ban cuts everything Y does on its stale branch
     w.ok('O1', 'ban', { to: 'Y' })
     w.ok('Y1', 'ban', { to: 'W' }, { ap: [an.id] })
     expect(F(w).ban.has('W')).toBe(false)
   })
 
-  test("I7: an upgrade can't be voided by owner equivocation; S is frozen except leave", () => {
+  test("an upgrade can't be voided by owner equivocation; S is frozen except leave", () => {
     const w = base()
     join(w, 'R1')
     const P = w.heads()
@@ -321,7 +318,7 @@ describe('review Importants', () => {
     expect(w.act('R1', 'leave').v.s).toBe('A')
   })
 
-  test('I8 analogue: honest concurrent use of two devices of one identity is never equivocation', () => {
+  test('honest concurrent use of two devices of one identity is never equivocation', () => {
     const w = base(INVITE)
     join(w, 'A1')
     w.ok('A2', 'device_add')
@@ -334,7 +331,7 @@ describe('review Importants', () => {
 })
 
 describe('minors and worked outcomes', () => {
-  test("M1: a junior unban doesn't lift a senior ban that is effective globally", () => {
+  test("a junior unban doesn't lift a senior ban that is effective globally", () => {
     const w = base()
     const H = role(w, 5, BAN)
     const M = role(w, 7, ROLES | BAN)
@@ -354,7 +351,7 @@ describe('minors and worked outcomes', () => {
     expect(F(w).ban.has('T')).toBe(true)
   })
 
-  test('P1-M4: unban by someone junior to the banner is rejected', () => {
+  test('unban by someone junior to the banner is rejected', () => {
     const w = base()
     const H = role(w, 5, BAN)
     const J = role(w, 2, BAN)
@@ -367,7 +364,7 @@ describe('minors and worked outcomes', () => {
     expect(w.act('O1', 'unban', { to: 'T' }).v.s).toBe('A')
   })
 
-  test('M2: a revoked device never returns', () => {
+  test('a revoked device never returns', () => {
     const w = base()
     join(w, 'A1')
     w.ok('A2', 'device_add')
@@ -375,7 +372,7 @@ describe('minors and worked outcomes', () => {
     expect(w.act('A2', 'device_add', {}, { aprev: w.latestOwn('A2')!.id }).v.s).toBe('R')
   })
 
-  test('M5: an owner device fork never puts genesis in X; owners are constant', () => {
+  test('an owner device fork never puts genesis in X; owners are constant', () => {
     const w = base()
     const P = w.heads()
     const a = w.ok('O1', 'mark')
@@ -386,7 +383,7 @@ describe('minors and worked outcomes', () => {
     expect(S.facts.mem.has('O')).toBe(true)
   })
 
-  test("§3.4-1: owner's stale phone kicks X; laptop's ban and invite stand", () => {
+  test("owner's stale phone kicks X; laptop's ban and invite stand", () => {
     const w = base()
     const R = role(w, 1, INVITE)
     w.ok('O2', 'device_add')
@@ -403,10 +400,10 @@ describe('minors and worked outcomes', () => {
     expect(S.facts.ban.has('S')).toBe(true)
     expect(S.facts.mem.has('N')).toBe(true)
     expect(S.facts.mem.has('X')).toBe(false)
-    expect(S.cut.has(xa.id)).toBe(true) // N2: concurrent work by the removed member is cut
+    expect(S.cut.has(xa.id)).toBe(true) // concurrent work by the removed member is cut
   })
 
-  test("§3.4-4 / R2-I2: banned member's backdated invites admit nobody", () => {
+  test("banned member's backdated invites admit nobody", () => {
     const w = base()
     const R = role(w, 1, INVITE)
     join(w, 'V1')
@@ -422,7 +419,7 @@ describe('minors and worked outcomes', () => {
     expect(S.mem.has('N') || S.mem.has('M')).toBe(false)
   })
 
-  test("§3.4-5: a member's later equivocation doesn't unwind its witnessed invitee", () => {
+  test("a member's later equivocation doesn't unwind its witnessed invitee", () => {
     const w = base(INVITE)
     const MOD = role(w, 4, BAN)
     join(w, 'M1')
@@ -439,7 +436,7 @@ describe('minors and worked outcomes', () => {
     expect(S.facts.ban.has('Z')).toBe(true)
   })
 
-  test('R3-I4a: three siblings at one (dev, seq) converge in all 6 delivery orders', () => {
+  test('three siblings at one (dev, seq) converge in all 6 delivery orders', () => {
     const w = base(INVITE)
     join(w, 'A1')
     const P = w.heads()
@@ -512,11 +509,11 @@ describe('minors and worked outcomes', () => {
   })
 })
 
-describe('r2 review (revision 3): every Critical and Important counterexample', () => {
-  // [R2V C1] (its RV-3, RV-3b): two moderators share one role (same stratum). P's unrelated earlier deny has the owner's promotion
+describe('cascade protection, backdating, stolen devices and rate limits', () => {
+  // Two moderators share one role (same stratum). P's unrelated earlier deny has the owner's promotion
   // of N in its future; Q's backdated kick of V (N's inviter) must not reach N, whom the owner ranked above Q.
   for (const variant of ['kick', 'leave'] as const) {
-    test(`R2V-C1 (${variant}): an unrelated same-stratum deny never strips a senior's protection in the cascade`, () => {
+    test(`${variant}: an unrelated same-stratum deny never strips a senior's protection in the cascade`, () => {
       const w = base(INVITE)
       const QR = role(w, 2, KICK | BAN)
       const R5 = role(w, 5, 0)
@@ -544,8 +541,8 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
     })
   }
 
-  // [R2V C2] (its CV-B): a plain member's backdated own uninvite expels an equal member it invited, with the subtree.
-  test('R2V-C2: a backdated own uninvite does not expel a member who joined long ago (no Kick, no rank)', () => {
+  // The attack: a plain member's backdated own uninvite, to expel an equal member it invited, with the subtree.
+  test('a backdated own uninvite does not expel a member who joined long ago (no Kick, no rank)', () => {
     const w = base(INVITE)
     join(w, 'A1')
     const add = w.ok('A1', 'add', { to: 'N' })
@@ -561,9 +558,9 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
     orderIndependent(w)
   })
 
-  // C2, same root (removal needs strictly higher rank): a plain member with @everyone Ban bans an equal member by
+  // Same root (removal needs strictly higher rank): a plain member with @everyone Ban bans an equal member by
   // positioning the ban before the member's join.
-  test("R2V-C2b: a plain member can't ban an equal member by backdating to before that member's join", () => {
+  test("a plain member can't ban an equal member by backdating to before that member's join", () => {
     const w = base(INVITE | BAN)
     join(w, 'A1')
     const P = w.heads()
@@ -576,9 +573,9 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
     expect(S.facts.mem.has('N') && !S.facts.ban.has('N')).toBe(true)
   })
 
-  // C2, same root: a plain member's backdated leave from a second device cuts its own invite and, through the cascade,
+  // Same root: a plain member's backdated leave from a second device cuts its own invite and, through the cascade,
   // the equal member who joined through it.
-  test("R2V-C2c: a plain member's backdated leave does not expel the equal members it invited", () => {
+  test("a plain member's backdated leave does not expel the equal members it invited", () => {
     const w = base(INVITE)
     join(w, 'A1')
     w.ok('A2', 'device_add')
@@ -593,8 +590,8 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
     expect(S.mem.has('N') && S.mem.has('M')).toBe(true)
   })
 
-  // C2, ranked variant: an inviter ranked above the invitee but without Kick.
-  test("R2V-C2d: a ranked inviter without Kick can't expel its invitee by a backdated uninvite", () => {
+  // Ranked variant: an inviter ranked above the invitee but without Kick.
+  test("a ranked inviter without Kick can't expel its invitee by a backdated uninvite", () => {
     const w = base()
     const IR = role(w, 3, INVITE)
     join(w, 'A1')
@@ -607,11 +604,11 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
     expect(F(w).mem.has('N')).toBe(true)
   })
 
-  // [R2V C3] (its RV-5, REM2): a thief on A's stolen device A2 plants a backdated invite at stratum 8 (N joins), then forks A's
+  // A thief on A's stolen device A2 plants a backdated invite at stratum 8 (N joins), then forks A's
   // identity chain by replaying A2's device certificate at an old position. Recovery must still be admissible and must
   // cut the planted invite and its join.
   for (const remedy of ['device_revoke', 'primary_rotate'] as const) {
-    test(`R2V-C3 (${remedy}): an identity fork can't block recovery from a stolen device`, () => {
+    test(`${remedy}: an identity fork can't block recovery from a stolen device`, () => {
       const w = base(INVITE)
       const R8 = role(w, 8, 0)
       const ja = join(w, 'A1')
@@ -641,7 +638,7 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
       for (const e of w.all) hv.receive(e)
       hv.receive(heads)
       expect(hv.status.get(heads.id)?.s).toBe('A')
-      // To disown what the thief already signed, the client positions the revocation at the last point it trusts (§3.9).
+      // To disown what the thief already signed, the client positions the revocation at the last point it trusts.
       const rec =
         remedy === 'device_revoke'
           ? w.act('A1', 'device_revoke', { dk: 'A2', seen: a2.seq }, { ap: Q })
@@ -658,8 +655,8 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
     })
   }
 
-  // [R2V C4] (its CV-A): genesis owners [O, B]; O posts upgrade as its first act, concurrently with B's first join.
-  test("R2V-C4: one co-owner can't transfer the server alone by placing the upgrade before the other's join", () => {
+  // Genesis owners [O, B]; O posts upgrade as its first act, concurrently with B's first join.
+  test("one co-owner can't transfer the server alone by placing the upgrade before the other's join", () => {
     const w = new AclWorld()
     w.genesis('O1', ['O', 'B'], INVITE)
     const G = w.heads()
@@ -672,29 +669,29 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
     expect(w.act('O1', 'upgrade', { g: 'G2', sigs: { B: 'sig' } }).v.s).toBe('A') // with B's countersignature
   })
 
-  // [R2V I1] (its RV-2): member A registers its own code with the owner's hash at an older position, then revokes it.
-  test("R2V-I1: holding a code's hash grants no authority over it", () => {
+  // Member A registers its own code with the owner's hash at an older position, then revokes it.
+  test("holding a code's hash grants no authority over it", () => {
     const w = base(INVITE)
     join(w, 'A1')
     const P0 = w.heads()
     const oc = w.ok('O1', 'code', { h: 'h1' })
-    const oa = w.ok('O1', 'add', { to: 'N', code: R3 ? oc.id : 'h1' })
+    const oa = w.ok('O1', 'add', { to: 'N', code: oc.id })
     const jn = w.ok('N1', 'join', {}, { ap: [oa.id] })
     const ac = w.ok('A1', 'code', { h: 'h1' }, { ap: P0 }) // a copy of the published hash, positioned before the owner's
     const rv = w.act('A1', 'code_revoke', { h: 'h1', code: ac.id }, { ap: [ac.id] })
     expect(rv.v.s).toBe('A') // A may revoke its own code
     const S = w.state()
-    expect(S.facts.codes.has(R3 ? oc.id : 'h1')).toBe(true) // the owner's code is untouched
+    expect(S.facts.codes.has(oc.id)).toBe(true) // the owner's code is untouched
     expect(S.cut.has(jn.id)).toBe(false)
     expect(S.facts.mem.has('N')).toBe(true)
-    expect(w.act('O1', 'add', { to: 'K', code: R3 ? oc.id : 'h1' }).v.s).toBe('A')
+    expect(w.act('O1', 'add', { to: 'K', code: oc.id }).v.s).toBe('A')
   })
 
-  // [R2V I2] (its RV-8): the server runs for 100 windows; a member idle since its join then replays the elapsed ts range.
-  // Revision 4 ([R3V I1], [R3V I3]): revision 3 asserted "at most two caps", which only an anchor that blocks quiet servers
-  // can give; this burst is the same DAG as a lone member posting at that rate on a server whose others are idle (§4.1).
-  // The realized bound: events nobody else acknowledged are within the day budget (dayMul × cap per day of ts span).
-  test("R2V-I2: an idle member's backlog is bounded by the day budget per day of its own ts span", () => {
+  // The server runs for 100 windows; a member idle since its join then replays the elapsed ts range.
+  // Only an anchor that blocks quiet servers could hold it to two caps:
+  // this burst is the same DAG as a lone member posting at that rate on a server whose others are idle.
+  // The realized bound: events nobody else acknowledged are within the day budget (dayU per day of ts span).
+  test("an idle member's backlog is bounded by the day budget per day of its own ts span", () => {
     const w = base(INVITE)
     join(w, 'B1')
     const ja = join(w, 'A1')
@@ -707,18 +704,18 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
     for (let i = 0; i < 400; i++, ts += 3)
       if (w.act('A1', 'mark', {}, { ap: [ja.id], ts }).v.s === 'A') admitted++
     const days = Math.ceil((ts - ja.ts) / MODEL_LIMITS.day)
-    expect(admitted).toBeLessThanOrEqual(R4 ? dayBudget() * days : 2 * MODEL_LIMITS.w3)
-    // revision 5 (§7.7, changed assertion): the model's day budget is one event per window for everyone (production 24
-    // per day), 24 per model day instead of revision 4's 16 for members; the backlog stays below a third of the burst
-    expect(admitted).toBeLessThan(R5 ? 400 / 3 : 400 / 4)
+    expect(admitted).toBeLessThanOrEqual(dayBudget() * days)
+    // the model's day budget is one event per window for everyone (production 24
+    // per day), 24 per model day; the backlog stays below a third of the burst
+    expect(admitted).toBeLessThan(400 / 3)
   })
 
-  // [R2V I3] (its RV-9): the owner posts 300 inert events at one ts.
-  test('R2V-I3: owners are rate-limited for events that are not moderation', () => {
+  // The owner posts 300 inert events at one ts.
+  test('owners are rate-limited for events that are not moderation', () => {
     const w = base(INVITE)
-    // revision 4: the moderation the owner keeps is against a member; a ban of a stranger is charged to W3 ([R3V I2])
-    if (R4) join(w, 'T1')
-    const t0 = R4 ? 5 + w.state().facts.mem.size : 5
+    // the moderation the owner keeps is against a member; a ban of a stranger is charged to W3
+    join(w, 'T1')
+    const t0 = 5 + w.state().facts.mem.size
     let admitted = 0
     for (let i = 0; i < 300; i++)
       if (w.act('O1', i % 2 ? 'mark' : 'x_future', {}, { ts: t0 }).v.s === 'A') admitted++
@@ -727,10 +724,10 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
     expect(w.act('O1', 'ban', { to: 'T' }, { ts: t0 }).v.s).toBe('A')
   })
 
-  // [R2V I4] (its RV-11): a member with ManageRoles builds a chain of role_creates from a position before the owner's four.
-  // Revision 3 corrects the stated bound (§4.1): each device chain stays within the cap on its own, so the live total is
+  // A member with ManageRoles builds a chain of role_creates from a position before the owner's four.
+  // Each device chain stays within the cap on its own, so the live total is
   // at most cap × (device chains creating roles); the next role_create that sees them all is refused.
-  test('R2V-I4: a backdated chain can overshoot a global cap only up to cap per device chain, and the next one is refused', () => {
+  test('a backdated chain can overshoot a global cap only up to cap per device chain, and the next one is refused', () => {
     const w = base()
     const MR = role(w, 9, ROLES)
     join(w, 'M1')
@@ -749,8 +746,8 @@ describe('r2 review (revision 3): every Critical and Important counterexample', 
   })
 })
 
-describe('revision 3: boundaries of the fixes', () => {
-  test('C1 attribution: a join that only two same-stratum causes break together is cut (two removed inviters)', () => {
+describe('boundaries', () => {
+  test('attribution: a join that only two same-stratum causes break together is cut (two removed inviters)', () => {
     const w = base(INVITE)
     const QR = role(w, 3, KICK)
     join(w, 'Q1')
@@ -771,10 +768,10 @@ describe('revision 3: boundaries of the fixes', () => {
     orderIndependent(w)
   })
 
-  test('C1 joint break (revision 4, N19 closed): a support that falls only to two causes together does not reach an author protected against one of them', () => {
+  test('joint break: a support that falls only to two causes together does not reach an author protected against one of them', () => {
     // P holds Invite through two roles given by V1 and V2; two moderators at stratum 3 remove V1 and V2 concurrently, so
     // P's invite falls only to both together. The owner promoted N above 3 concurrently with the first removal but after
-    // the second: N is protected against the first. Revision 3 cut N's join (N19, attribution to the second removal);
+    // the second: N is protected against the first. Attribution to the second removal would cut N's join;
     // the exact rule keeps it: the causes N is exposed to (the second removal) alone break nothing N relied on.
     const w = base()
     const QR = role(w, 3, KICK)
@@ -798,8 +795,8 @@ describe('revision 3: boundaries of the fixes', () => {
     w.ok('O1', 'assign', { to: 'N', role: HR }, { ap: [j.id, k2.id] })
     const S = w.state()
     expect(S.cut.has(g1.id) && S.cut.has(g2.id) && S.cut.has(add.id)).toBe(true)
-    expect(S.cut.has(j.id)).toBe(!R4) // revision 3: cut (N19); revision 4: kept
-    expect(S.facts.mem.has('N')).toBe(R4)
+    expect(S.cut.has(j.id)).toBe(false) // kept
+    expect(S.facts.mem.has('N')).toBe(true)
     orderIndependent(w)
     // control: with the promotion concurrent with both removals, N is protected against both and keeps its join
     const c = new TestReplica()
@@ -814,7 +811,7 @@ describe('revision 3: boundaries of the fixes', () => {
   })
 
   for (const later of ['leave', 'owner kick'] as const) {
-    test(`H8 (${later}): a later departure never exposes what a member did while ranked (seed 5263)`, () => {
+    test(`${later}: a later departure never exposes what a member did while ranked (seed 5263)`, () => {
       const w = base()
       const VR = role(w, 1, INVITE)
       const QR = role(w, 4, BAN)
@@ -840,7 +837,7 @@ describe('revision 3: boundaries of the fixes', () => {
     })
   }
 
-  test("H9: a senior's concurrent demotion lowers the effective stratum of what the member did meanwhile (seed 14605)", () => {
+  test("a senior's concurrent demotion lowers the effective stratum of what the member did meanwhile (seed 14605)", () => {
     const w = base(INVITE)
     const R7 = role(w, 7, 0)
     const JR = role(w, 5, KICK)
@@ -860,7 +857,7 @@ describe('revision 3: boundaries of the fixes', () => {
     orderIndependent(w)
   })
 
-  test('C2 boundary: an inviter holding Kick and ranked above its invitee still wins the race (N9)', () => {
+  test('boundary: an inviter holding Kick and ranked above its invitee wins the race', () => {
     const w = base()
     const Q = role(w, 3, INVITE | KICK)
     join(w, 'Q1')
@@ -872,7 +869,7 @@ describe('revision 3: boundaries of the fixes', () => {
     expect(F(w).mem.has('N')).toBe(false)
   })
 
-  test("C2 boundary: a moderator's ban of a non-member beats the concurrent join of a member ranked below it", () => {
+  test("boundary: a moderator's ban of a non-member beats the concurrent join of a member ranked below it", () => {
     const w = base(INVITE)
     const MOD = role(w, 3, BAN)
     join(w, 'A1')
@@ -885,7 +882,7 @@ describe('revision 3: boundaries of the fixes', () => {
     expect(S.ban.has('N') && !S.mem.has('N')).toBe(true)
   })
 
-  test("C3 boundary: a revocation's watermark covers what its position holds; thief acts after it are cut (H2 path)", () => {
+  test("boundary: a revocation's watermark covers what its position holds; thief acts after it are cut", () => {
     const w = base(INVITE)
     join(w, 'A1')
     w.ok('A2', 'device_add')
@@ -898,7 +895,7 @@ describe('revision 3: boundaries of the fixes', () => {
     expect(w.act('A2', 'mark').v.s).toBe('R') // the dropped device is gone
   })
 
-  test("C3 boundary: a rotation's watermark must cover every device it drops, also one revoked before (O3-heads)", () => {
+  test("boundary: a rotation's watermark must cover every device it drops, also one revoked before (O3-heads)", () => {
     const w = base(INVITE)
     join(w, 'A1')
     w.ok('A2', 'device_add')
@@ -916,7 +913,7 @@ describe('revision 3: boundaries of the fixes', () => {
     expect(w.state().cut.size).toBe(0)
   })
 
-  test('M3: two concurrent primary_rotates leave no primary until a rotation that sees both', () => {
+  test('two concurrent primary_rotates leave no primary until a rotation that sees both', () => {
     const w = base(INVITE)
     join(w, 'A1')
     w.ok('A2', 'device_add')
@@ -931,7 +928,7 @@ describe('revision 3: boundaries of the fixes', () => {
     expect(w.act('A3', 'device_add').v.s).toBe('A')
   })
 
-  test('C4 boundary: a co-owner who left must still countersign (owners are a genesis constant)', () => {
+  test('boundary: a co-owner who left must countersign (owners are a genesis constant)', () => {
     const w = new AclWorld()
     w.genesis('O1', ['O', 'B'], INVITE)
     w.ok('B1', 'join')
@@ -940,7 +937,7 @@ describe('revision 3: boundaries of the fixes', () => {
     expect(w.act('O1', 'upgrade', { g: 'G2', sigs: { B: 'sig' } }).v.s).toBe('A')
   })
 
-  test("I1 boundary: a moderator ranked above the issuer, with ManageServer, may revoke another's code", () => {
+  test("boundary: a moderator ranked above the issuer, with ManageServer, may revoke another's code", () => {
     const w = base(INVITE)
     const MS = role(w, 4, SERVER)
     join(w, 'A1')
@@ -952,12 +949,12 @@ describe('revision 3: boundaries of the fixes', () => {
   })
 })
 
-describe('r3 review (revision 4): every Critical and Important counterexample', () => {
-  // [R3V C1] (its RV3-C1): moderators Q and P share role QR (stratum 2). Z posts an ACL event; P removes Z (or leaves) from a
+describe('shared-past cuts, backlog budgets and class caps', () => {
+  // Moderators Q and P share role QR (stratum 2). Z posts an ACL event; P removes Z (or leaves) from a
   // position before it, so that event is cut at stratum 2. After that, U invites V, V invites N, the owner promotes N
   // above stratum 2, N invites M. Q kicks U from before U's invite. N is protected against Q's kick (the promotion is
-  // concurrent with it); it is exposed to P's unrelated cut only (the promotion is after it). Revision 3 relabelled the
-  // cuts of V's join and invite with P's cause, because Z's cut event lay in their causal past, and so cut N and M.
+  // concurrent with it); it is exposed to P's unrelated cut only (the promotion is after it). Labelling the
+  // cuts of V's join and invite with P's cause, because Z's cut event lies in their causal past, would cut N and M.
   type C1 = {
     hi?: number
     sibling?: 'kick' | 'ban' | 'leave'
@@ -1018,7 +1015,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     ],
   ]
   for (const [name, o] of cases) {
-    test(`RV3-C1 (${name}): an unrelated same-stratum cut in the shared past never strips a senior's protection`, () => {
+    test(`${name}: an unrelated same-stratum cut in the shared past never strips a senior's protection`, () => {
       const { w, RH, am } = rv3c1(o)
       const S = w.state()
       expect(S.facts.mem.has('U') || S.facts.mem.has('V')).toBe(false) // the chain above N falls to Q's kick
@@ -1028,17 +1025,17 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
       orderIndependent(w)
     })
   }
-  test('RV3-C1 control: without the promotion, N and M are exposed and fall with the chain', () => {
+  test('control: without the promotion, N and M are exposed and fall with the chain', () => {
     const { w } = rv3c1({ promote: false })
     const S = w.state()
     expect(S.facts.mem.has('N') || S.facts.mem.has('M')).toBe(false)
     orderIndependent(w)
   })
 
-  // [R3V I1] (its RV3-I2): the server is busy for 100 windows; a member idle since its join emits 400 marks across the
-  // elapsed range, each citing the newest honest event dated at or before it. Revision 3's anchor followed the cited
-  // events, so 344 were admitted (7 with a fixed anchor). The budget must not depend on what the backlog cites.
-  test('RV3-I1: anchor-shopping grants nothing: a backlog gets the same budget whatever honest events it cites', () => {
+  // The server is busy for 100 windows; a member idle since its join emits 400 marks across the
+  // elapsed range, each citing the newest honest event dated at or before it. An anchor that follows the cited
+  // events would admit 344 (7 with a fixed anchor). The budget must not depend on what the backlog cites.
+  test('anchor-shopping grants nothing: a backlog gets the same budget whatever honest events it cites', () => {
     const run = (shop: boolean) => {
       const w = base(INVITE)
       join(w, 'B1')
@@ -1059,7 +1056,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     const shop = run(true),
       fixed = run(false)
     if (TOT) {
-      // revision 5, dispatch 5b: a total of totU unacknowledged events per device, whatever the backlog cites. The only
+      // a total of totU unacknowledged events per device, whatever the backlog cites. The only
       // difference is A's join, which the honest events (made after it, citing it) really acknowledged in the shopping
       // run and nobody acknowledged in the other; none of the 400 marks is ever acknowledged in either
       expect(fixed.admitted).toBe(MODEL_LIMITS.totU - 1)
@@ -1070,9 +1067,9 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     }
   })
 
-  // [R3V I3] (its RV3-live): an owner alone posting profile writes, and a member whose only peer (the owner) is idle,
-  // were capped for good by revision 3's anchor (8 of 100, 4 of 100).
-  test('RV3-I3: a quiet server never blocks honestly spaced posting (owner alone; a member whose only peer is idle)', () => {
+  // An owner alone posting profile writes, and a member whose only peer (the owner) is idle,
+  // must not be capped for good (an anchor at the newest event of another identity admits 8 of 100, 4 of 100).
+  test('a quiet server never blocks honestly spaced posting (owner alone; a member whose only peer is idle)', () => {
     const own = (spacing: number) => {
       const w = base(INVITE)
       let n = 0
@@ -1081,12 +1078,12 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
       return n
     }
     if (!TOT) {
-      expect(own(100)).toBe(100) // the reviewer's spacing
+      expect(own(100)).toBe(100)
       expect(own(10)).toBe(100) // one per window, no other author ever
     } else {
-      // revision 5, dispatch 5b (controller ruling on growth): a lone device is blocked after totU ACL events that no
+      // a lone device is blocked after totU ACL events that no
       // other identity acknowledged, however they are spaced; the first event of another identity that has them in its
-      // past lets it go on (spec §4.1, §6.2 N12)
+      // past lets it go on
       expect(own(100)).toBe(MODEL_LIMITS.totU)
       expect(own(10)).toBe(MODEL_LIMITS.totU)
     }
@@ -1108,8 +1105,8 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     }
   })
 
-  // [R3V I2] (its RV3-I2-ban): a moderator bans 60 never-seen principals at one ts; a member posts 500 no-op rotations.
-  test('RV3-I2: bans of principals never seen are charged to W3; bans and kicks of members stay exempt', () => {
+  // A moderator bans 60 never-seen principals at one ts; a member posts 500 no-op rotations.
+  test('bans of principals never seen are charged to W3; bans and kicks of members stay exempt', () => {
     const w = base(INVITE)
     const MOD = role(w, 5, BAN | KICK)
     join(w, 'M1')
@@ -1129,7 +1126,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     for (const T of mem) {
       let r = w.act('M1', T < 'T5' ? 'kick' : 'ban', { to: T }, { ts })
       if (TOT && r.v.s === 'R' && (r.v as { why?: string }).why === 'W3b') {
-        // revision 5, dispatch 5b ([H18]): moderation is exempt from the hourly cap but counted in the unacknowledged
+        // moderation is exempt from the hourly cap but counted in the unacknowledged
         // total; another member's ACL event that has the removals in its past lets the moderator go on
         w.ok('O1', 'mark', {}, { ap: [w.latestOwn('M1')!.id], ts })
         acks++
@@ -1141,7 +1138,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     expect(members).toBeGreaterThan(MODEL_LIMITS.w3mod)
     if (TOT) expect(acks).toBeGreaterThan(0)
   })
-  test('RV3-M2: a no-op primary_rotate is refused (W6); rotations and device churn are capped per identity', () => {
+  test('a no-op primary_rotate is refused (W6); rotations and device churn are capped per identity', () => {
     const w = base(INVITE)
     join(w, 'A1')
     w.ok('A2', 'device_add')
@@ -1170,7 +1167,7 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
   // Q's kick only, and P concurrently with S's kick only. X's grant falls (to R and S together). P is exposed to Q and R;
   // in that world X keeps A's grant (only Q, which X is protected against, takes it), so X's grant to P stands and P's
   // invite stays. Judging X in P's world without X's own exposure cuts the invite (mutant world-flat).
-  test('C1 exact boundary: an earlier op counts in a world only through causes its own author is exposed to', () => {
+  test('exact boundary: an earlier op counts in a world only through causes its own author is exposed to', () => {
     const w = base()
     w.ok('O2', 'device_add')
     const QR = role(w, 3, KICK)
@@ -1200,29 +1197,29 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     orderIndependent(w)
   })
 
-  // the class cap (§3.1 step 4): beyond MODEL_LIMITS.classes protection classes at one stratum, the sound fallback. Q kicks A, who
+  // the class cap: beyond MODEL_LIMITS.classes protection classes at one stratum, the sound fallback. Q kicks A, who
   // gave X a ManageRoles role; X gave P an Invite role; P invites N. R and S remove Z and Y, who gave K and L an Invite
   // role concurrently; K and L invite. The owner promotes P after Q's kick, concurrently with R's and S's: P is exposed
   // to Q's kick only, which breaks P's support, so the exact rule cuts P's invite. With K and L promoted concurrently with
   // different removals, their invites (which the removals of Z and Y can cut) make 3 classes; the fallback then counts
   // X's cut grant for P only if X's own world lies inside P's, which it doesn't (X is exposed to all three), so P's
-  // invite stays: the documented residual (fail-open for an author a senior protected against some cause of the stratum;
-  // N19). The fallback never cuts what the exact rule keeps. (Revision 5, dispatch 5b, [H16]: classes are counted among
-  // the ops the causes could cut; K's and L's invites are such ops, the marks of the revision-4 version were not.)
-  // Revision 5, dispatch 5b ([H17] (c)): the fallback's subset test is projected onto G(x), the causes with a direct cut
-  // in x's causal past (an op's cut in a world depends only on that part). Revision 7c (r7 re-review C1): classes are
-  // U ∩ Γ⁺ for the whole stratum, no longer U ∩ G(q) per op (which an author picks with its parents, vectors "r7c"). In
+  // invite stays: the documented residual (fail-open for an author a senior protected against some cause of the
+  // stratum). The fallback never cuts what the exact rule keeps. (Classes are counted among
+  // the ops the causes could cut; K's and L's invites are such ops.)
+  // The fallback's subset test is projected onto G(x), the causes with a direct cut
+  // in x's causal past (an op's cut in a world depends only on that part). Classes are
+  // U ∩ Γ⁺ for the whole stratum, not U ∩ G(q) per op (which an author picks with its parents). In
   // the "extra" shape P, K and L are each protected against two of the three kicks: three classes, the fallback, which
   // still cuts P's invite because X's grant, cut in its own world {Q's kick}, lies inside P's (mutant class-proj-off,
-  // whose fallback test is unprojected, keeps it; revisions 5–7 counted no class here and ran the exact rule). In the
+  // whose fallback test is unprojected, keeps it). In the
   // "multi" shape the invites and X's grant cite the other removed members' grants too: X's world is all three kicks, not
-  // inside P's, and the fallback keeps P's invite (N19).
+  // inside P's, and the fallback keeps P's invite.
   for (const [extra, multi] of [
     [false, false],
     [true, false],
     [true, true],
   ]) {
-    test(`C1 class cap (${multi ? "3 classes: fallback keeps P's invite" : extra ? "3 classes: the projected fallback still cuts P's invite" : "1 class: exact rule cuts P's invite"})`, () => {
+    test(`class cap (${multi ? "3 classes: fallback keeps P's invite" : extra ? "3 classes: the projected fallback cuts P's invite" : "1 class: exact rule cuts P's invite"})`, () => {
       const w = base(INVITE)
       w.ok('O2', 'device_add')
       const QR = role(w, 3, KICK | BAN)
@@ -1261,12 +1258,12 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     })
   }
 
-  // [H16] (revision 5, dispatch 5b): an event on the heads can never be cut, so it must not decide which branch of step 4
-  // runs. Counted over the whole region (revisions 4 and 5a), L's mark on the heads gave the stratum a third protection
-  // class (L was promoted concurrently with Q's and R's kicks, after S's): the stratum switched to the fallback and P's
-  // invite, cut before, came back, although nothing was concurrent with the mark (O3-heads, G4). Now classes are counted
-  // among the ops the causes could cut (the flat closure) and causes without direct cuts are left out of Γ.
-  test('Class cap: an event on the heads never changes the branch or any earlier status ([H16])', () => {
+  // An event on the heads can never be cut, so it must not decide which branch of step 4
+  // runs. Counted over the whole region, L's mark on the heads would give the stratum a third protection
+  // class (L was promoted concurrently with Q's and R's kicks, after S's): the stratum would switch to the fallback and
+  // P's invite, cut before, would come back, although nothing is concurrent with the mark (O3-heads, G4). Classes are
+  // counted among the ops the causes could cut (the flat closure) and causes without direct cuts are left out of Γ.
+  test('Class cap: an event on the heads never changes the branch or any earlier status', () => {
     const w = base(INVITE)
     w.ok('O2', 'device_add')
     const QR = role(w, 3, KICK | BAN),
@@ -1301,9 +1298,9 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     orderIndependent(w)
   })
 
-  // [H11] a role_move can step a role down through unboundedly many positions, each a deny that changes a fact (W6);
-  // revision 4 charges every role_move to W3, while demoting a member stays exempt through revoke or kick.
-  test('H11: role moves are charged to W3; a revoke of the role from its holder stays exempt', () => {
+  // a role_move can step a role down through unboundedly many positions, each a deny that changes a fact (W6);
+  // every role_move is charged to W3, while demoting a member stays exempt through revoke or kick.
+  test('role moves are charged to W3; a revoke of the role from its holder stays exempt', () => {
     const w = base(INVITE)
     const SR = role(w, 900, ROLES | KICK)
     const R = role(w, 800, 0)
@@ -1319,10 +1316,10 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
     expect(w.act('M1', 'revoke', { to: 'T', role: R }, { ts }).v.s).toBe('A')
   })
 
-  // "newly broken" (§3.1), the shape of seed 70137 rebuilt by hand: revision 4's rules change that saved universe, so the
-  // mutant uses-stale was no longer caught there. V invites N; the owner promotes N to pos 6 and later revokes it. M (pos
+  // "newly broken", the shape of seed 70137 rebuilt by hand (it catches the
+  // mutant uses-stale). V invites N; the owner promotes N to pos 6 and later revokes it. M (pos
   // 5) kicks V from before V's invite, so N's join is broken at stratum 5; N is protected there by its standing when it
-  // joined ([H8]: the later revoke doesn't count for the earlier join), so the join stays uncut. A (pos 3) bans N from
+  // joined (the later revoke doesn't count for the earlier join), so the join stays uncut. A (pos 3) bans N from
   // before its join: the ban is effective (in its view the revoke has demoted N), but the join is not newly broken.
   test("Newly broken (seed 70137 shape): a lower ban never cuts its target's join that a higher cut already broke", () => {
     const w = base(INVITE)
@@ -1362,14 +1359,14 @@ describe('r3 review (revision 4): every Critical and Important counterexample', 
   })
 })
 
-describe('r4 review (revision 5): every Critical and Important counterexample', () => {
-  // [R4V C1] NM1/NM2: SA and SB (role RS, pos 18, each with a second device) raise Rs (P's and Y's role) to 15 and Ry
-  // to 6 at one position. Y (Rs, and RY5 at 5) gives T the role Ry; P (Rs) then gives T the Invite role RI (NM2) or
-  // kicks T (NM1); T invites N, N joins. SA leaves from a stale device; the owner promotes P after that leave and before
-  // SB's, which SB posts from its stale device. Revision 4 kept Y's grant (in the result SB's leave also moves Ry back
-  // below Y) and cut P's operation, which no set of causes P is exposed to cut on its own (O5-safe). Revision 5 judges
-  // obstacles (T's rank, Ry's position) before this stratum's cuts: SA's leave alone takes P's and Y's rank (Rs back to
-  // 3, below T at 6 and Ry at 6), so both grants fall to a cause their authors are exposed to.
+describe('monotone authority, cut denies and unacknowledged budgets', () => {
+  // SA and SB (role RS, pos 18, each with a second device) raise Rs (P's and Y's role) to 15 and Ry
+  // to 6 at one position. Y (Rs, and RY5 at 5) gives T the role Ry; P (Rs) then gives T the Invite role RI or
+  // kicks T; T invites N, N joins. SA leaves from a stale device; the owner promotes P after that leave and before
+  // SB's, which SB posts from its stale device. Obstacles (T's rank, Ry's position) are judged
+  // before this stratum's cuts: SA's leave alone takes P's and Y's rank (Rs back to
+  // 3, below T at 6 and Ry at 6), so both grants fall to a cause their authors are exposed to. (Keeping Y's grant and
+  // cutting P's operation, which no set of causes P is exposed to cuts on its own, would break O5-safe.)
   function nm2(kick: boolean) {
     const w = base()
     w.ok('O2', 'device_add')
@@ -1403,20 +1400,20 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
     return { w, z, z2, y, p, add, jn }
   }
   for (const kick of [false, true]) {
-    test(`NM${kick ? 1 : 2}: an obstacle is judged before the stratum's cuts, so the world of P's own cause decides P's ${kick ? 'kick' : 'grant'}`, () => {
+    test(`an obstacle is judged before the stratum's cuts, so the world of P's own cause decides P's ${kick ? 'kick' : 'grant'}`, () => {
       const { w, z, z2, y, p, jn } = nm2(kick)
       const S = w.state()
       expect(S.cut.has(z.id) && S.cut.has(z2.id)).toBe(true)
-      expect(S.cut.has(y.id)).toBe(true) // revision 4: live (Ry also fell back, to 4 < Y's 5, through SB's leave)
+      expect(S.cut.has(y.id)).toBe(true)
       expect(S.cut.has(p.id)).toBe(true)
       if (jn) expect(S.facts.mem.has('N')).toBe(false)
       orderIndependent(w)
     })
   }
-  // [R4V C1] NM3: as NM2 without P; Ry carries Invite; the owner promotes T after SA's leave, concurrently with SB's.
-  // T is exposed to SA's leave only, which alone takes Y's grant of Ry (Y at 5 against Ry at 6): T's invite falls.
-  // Revision 4 kept it although the causes T is exposed to alone cut it (O5-complete).
-  test('NM3: everything the causes an author is exposed to cut on their own is cut', () => {
+  // As the grant shape above without P; Ry carries Invite; the owner promotes T after SA's leave, concurrently with SB's.
+  // T is exposed to SA's leave only, which alone takes Y's grant of Ry (Y at 5 against Ry at 6): T's invite falls
+  // (O5-complete).
+  test('everything the causes an author is exposed to cut on their own is cut', () => {
     const w = base()
     w.ok('O2', 'device_add')
     const RS = role(w, 18, ROLES),
@@ -1443,16 +1440,15 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
     w.ok('O1', 'mark')
     const S = w.state()
     expect(S.cut.has(y.id) && S.cut.has(add.id) && S.cut.has(jn.id)).toBe(true)
-    expect(S.facts.mem.has('N')).toBe(false) // revision 4: N stayed a member
+    expect(S.facts.mem.has('N')).toBe(false)
     expect(S.facts.holds.get('T')?.has(RH)).toBe(true)
     orderIndependent(w)
   })
-  // [R4V C1] NM4/NM5: moderators QA, QB, QC (pos 20) kick SA (who raised Rs to 15), Z and V at one position. Y (Rs) gave
-  // T the role Ry (6); P (Rs) then gives T the Invite role RI (NM5) or kicks T (NM4); T invites N. The owner promotes P
+  // Moderators QA, QB, QC (pos 20) kick SA (who raised Rs to 15), Z and V at one position. Y (Rs) gave
+  // T the role Ry (6); P (Rs) then gives T the Invite role RI or kicks T; T invites N. The owner promotes P
   // after QA's kick; with `KL`, also K and L (who cited Z's and V's marks) after QB's and QC's kicks: 3 protection
-  // classes, above the model's cap. Revision 4: with KL the fallback cut P's grant and N (O5-sound), without KL the exact
-  // rule kept them, so N's membership depended on unrelated promotions. Revision 5: QA's kick alone takes P's rank
-  // (3, below T's 6), both branches cut, and the outcome no longer depends on K and L.
+  // classes, above the model's cap. QA's kick alone takes P's rank
+  // (3, below T's 6), so both branches cut, and the outcome doesn't depend on K and L (O5-sound).
   function nm5(kl: boolean, kick: boolean) {
     const w = base()
     w.ok('O2', 'device_add')
@@ -1492,23 +1488,23 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
     return { w, p, jn }
   }
   for (const kick of [false, true]) {
-    test(`NM${kick ? 4 : 5}: the class-cap fallback and the exact rule agree; unrelated promotions don't decide P's ${kick ? 'kick' : 'grant'}`, () => {
+    test(`the class-cap fallback and the exact rule agree; unrelated promotions don't decide P's ${kick ? 'kick' : 'grant'}`, () => {
       const out = [true, false].map(kl => {
         const { w, p, jn } = nm5(kl, kick)
         const S = w.state()
         orderIndependent(w)
         return { cutP: S.cut.has(p.id), memN: jn ? S.facts.mem.has('N') : undefined }
       })
-      expect(out[0]).toEqual(out[1]) // revision 4: different (fallback with K and L, exact without)
+      expect(out[0]).toEqual(out[1]) // the fallback (with K and L) and the exact rule (without) agree
       expect(out[0].cutP).toBe(true)
     })
   }
-  // [R4V C1] the position register's tie-break: role R (pos 1) is held by H. Movers MA and MB (pos 10) raise R to 4 and
+  // The position register's tie-break: role R (pos 1) is held by H. Movers MA and MB (pos 10) raise R to 4 and
   // 2 concurrently (equal strata: the lower wins); senior SV (pos 15) raises it to 9 after MA's write. H kicks T (role at
   // pos 3). Moderator Q (pos 20) kicks SV and MB from before their writes. Cutting SV's write alone leaves R at 2, cutting
-  // both leaves it at 4: the plain rank is not monotone in the cut set. Revision 5's resource rank is the lowest
-  // position any subset of the world's cuts could leave R at (2), so H's kick falls; revision 4 (and the review's
-  // proposed clamp, mutant clamp-r4) kept it.
+  // both leaves it at 4: the plain rank is not monotone in the cut set. The resource rank is the lowest
+  // position any subset of the world's cuts could leave R at (2), so H's kick falls (mutant clamp-min, a clamp to the
+  // smaller of two ranks, keeps it).
   test("Position hull: more cuts never raise the author's rank, whatever the register's tie-break", () => {
     const w = base()
     const R = role(w, 1, KICK | ROLES),
@@ -1536,11 +1532,11 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
     expect(S.facts.mem.has('T')).toBe(true)
     orderIndependent(w)
   })
-  // [R4V M2] S (pos 10) moves T's role R from 8 to 3; J (pos 5), having seen it, turns Kick on for R (or gives R to U);
+  // S (pos 10) moves T's role R from 8 to 3; J (pos 5), having seen it, turns Kick on for R (or gives R to U);
   // the owner kicks S from before the move. The move is cut, R is back at 8 above J: J's operation relied on the move
-  // and falls with it (revision 4 kept it: views never removed a cut deny).
+  // and falls with it (views remove a cut deny).
   for (const variant of ['role_bits', 'assign'] as const) {
-    test(`M2 (${variant}): an operation that relied on a deny loses its effect when a senior cuts the deny`, () => {
+    test(`${variant}: an operation that relied on a deny loses its effect when a senior cuts the deny`, () => {
       const w = base()
       const RSr = role(w, 10, ROLES),
         RJ = role(w, 5, ROLES | KICK),
@@ -1564,12 +1560,11 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
       orderIndependent(w)
     })
   }
-  // [R4V C2] TD: B's device forks (an assign of R1 to T and a sibling mark at the same seq); A's second device A2 posts a
-  // mark citing the assign; A1 revokes A2 with a watermark below that mark. The mark is in Tail. Revision 4 let it
-  // witness B's assign (T held R1) and §4.2 dropped it, after which the assign was in X: dropping changed Eval. Revision
-  // 5: an event past an admitted revocation's watermark of its device is never a witness, so the tail mark is inert and
-  // the assign is in X with or without it; tail events are not dropped (§4.2).
-  test("TD: a revoked device's tail event witnesses nothing, so its presence never changes X or the facts", () => {
+  // B's device forks (an assign of R1 to T and a sibling mark at the same seq); A's second device A2 posts a
+  // mark citing the assign; A1 revokes A2 with a watermark below that mark. The mark is in Tail.
+  // An event past an admitted revocation's watermark of its device is never a witness, so the tail mark is inert and
+  // the assign is in X with or without it; tail events are not dropped.
+  test("a revoked device's tail event witnesses nothing, so its presence never changes X or the facts", () => {
     const w = base()
     w.ok('O1', 'role_bits', { role: EVERYONE, bit: INVITE, on: true })
     const RR = role(w, 3, ROLES),
@@ -1586,7 +1581,7 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
     w.ok('O1', 'mark', {}, { ap: [rv.id, sib.e.id] })
     const S = w.state()
     expect(S.tail.has(tw.id)).toBe(true)
-    expect(S.X.has(x.id)).toBe(true) // revision 4: false (witnessed by the tail mark)
+    expect(S.X.has(x.id)).toBe(true) // the tail mark is no witness
     expect(S.facts.holds.get('T')?.has(R1) ?? false).toBe(false)
     const S2 = evaluate(
       w.ref.order.filter(id => id !== tw.id),
@@ -1603,19 +1598,19 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
     )
     orderIndependent(w)
   })
-  // [R4V I2] the unacknowledged day budget is the same for every author: an owner (or moderator) alone, posting every 3
-  // units, gets dayU per day (revision 4: 4 × the moderators' hourly cap, 32 per model day, 2,400 in production).
-  test('I2: the unacknowledged day budget has no moderator multiplier (owner alone, burst)', () => {
+  // The unacknowledged day budget is the same for every author: an owner (or moderator) alone, posting every 3
+  // units, gets dayU per day.
+  test('the unacknowledged day budget has no moderator multiplier (owner alone, burst)', () => {
     const w = base(INVITE)
     let n = 0
     for (let i = 1; i <= 160; i++)
       if (w.act('O1', 'profile', { name: i % 3 }, { ts: 3 * i }).v.s === 'A') n++
     const days = Math.ceil((3 * 160) / MODEL_LIMITS.day)
-    expect(n).toBeLessThanOrEqual((DAY_U ?? 24) * days) // revision 4 admits 64
+    expect(n).toBeLessThanOrEqual((DAY_U ?? 24) * days)
   })
-  // [R4V I2] device churn: device_adds are counted per identity per day across epochs. Revision 4 counted the current
-  // epoch only, so each rotation opened a new allowance of fresh devices.
-  test('I2: a rotation does not reset the device_add allowance of the day', () => {
+  // Device churn: device_adds are counted per identity per day across epochs, so a rotation opens no new
+  // allowance of fresh devices.
+  test('a rotation does not reset the device_add allowance of the day', () => {
     const w = base(INVITE)
     join(w, 'A1')
     let adds = 0,
@@ -1634,12 +1629,12 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
         w.act('A1', 'primary_rotate', { keep: [], seen: { ...seen }, pcert: `p${r}` }).v.s
       ).toBe('A')
     }
-    expect(adds).toBeLessThanOrEqual(MODEL_LIMITS.idCap) // revision 4 admits 3 per epoch
+    expect(adds).toBeLessThanOrEqual(MODEL_LIMITS.idCap)
   })
-  // [R4V I2] W3(d): a removed member's fresh devices dated early would each backfill the whole idle range at dayU per day
-  // (the backlog grew with the square of the idle time). A device whose device_add no other identity acknowledged posts
+  // W3(d): a removed member's fresh devices dated early must not each backfill the whole idle range at dayU per day
+  // (a backlog that grows with the square of the idle time). A device whose device_add no other identity acknowledged posts
   // at most freshU non-exempt events in total. A device the server acknowledged keeps the day budget.
-  test('I2: an unacknowledged fresh device posts at most freshU events in total; an acknowledged one keeps the day budget', () => {
+  test('an unacknowledged fresh device posts at most freshU events in total; an acknowledged one keeps the day budget', () => {
     const w = base(INVITE)
     const ja = join(w, 'A1')
     const P0 = w.heads()
@@ -1649,8 +1644,8 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
     let n = 0
     for (let i = 1; i <= 120; i++)
       if (w.act('A3', 'mark', {}, { ap: [da.id], ts: ja.ts + 1 + 20 * i }).v.s === 'A') n++
-    expect(n).toBeLessThanOrEqual((TOT ? MODEL_LIMITS.totU : 24) - 1) // the device_add is the first; revision 4 admits 120
-    // and A can mint at most freshCap such devices in total, whatever their dates (revision 4: 3 per day of the range)
+    expect(n).toBeLessThanOrEqual((TOT ? MODEL_LIMITS.totU : 24) - 1) // the device_add is the first
+    // and A can mint at most freshCap such devices in total, whatever their dates
     let fresh = 1
     for (let i = 4; i < 30; i++) {
       const last = w.latestOwn('A3')!
@@ -1668,16 +1663,16 @@ describe('r4 review (revision 5): every Critical and Important counterexample', 
       if (v.act('B2', 'mark', {}, { ts: db.ts + 20 * i }).v.s === 'A') m++
     if (!TOT) expect(m).toBe(60)
     else {
-      // revision 5, dispatch 5b: there is no day budget left; every device, acknowledged or not, has totU events that no
+      // there is no day budget left; every device, acknowledged or not, has totU events that no
       // other identity acknowledged (the device_add itself is acknowledged by the owner's mark)
       expect(m).toBe(MODEL_LIMITS.totU)
     }
   })
 })
 
-// Revision 5, dispatch 5b: the growth bound for a removed identity ([H17], [H18]). Each vector fails under the mutant
-// that restores the dispatch-5a rule (named in the test and in spec §7.7).
-describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
+// The growth bound for a removed identity. Each vector fails under the mutant
+// named in its test.
+describe('growth bound', () => {
   const kicked = (everyone = 0) => {
     const w = base(everyone)
     const ax = w.ok('O1', 'add', { to: 'X' })
@@ -1691,13 +1686,13 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     const drops = orphanDrops(w.ref.order, w.state(), w.ref)
     return w.ref.order.slice(from).filter(id => w.ref.ev(id).a === a && !drops.has(id))
   }
-  // [H17] every introduction is the first event of a fresh device, so nothing it is concurrent with is in its B(e): a
+  // every introduction is the first event of a fresh device, so nothing it is concurrent with is in its B(e): a
   // removed member could post any number of rotations, device_adds or joins at one position, each with a fresh device's
   // budget. Concurrent rotations are rotation evidence, concurrent device_adds and joins identity evidence (FI): all are
   // candidates, nobody witnesses them, and the orphan rule drops them with their devices' events, except the two lowest
-  // ids of each group (mutants orphan-5a, no-rot-evidence).
+  // ids of each group (mutants orphan-nonid, no-rot-evidence).
   for (const kind of ['primary_rotate', 'device_add', 'join'] as const) {
-    test(`H17: concurrent ${kind}s of a removed member are void and dropped`, () => {
+    test(`concurrent ${kind}s of a removed member are void and dropped`, () => {
       const { w, ax, P, start } = kicked()
       let intro = 0,
         marks = 0
@@ -1730,12 +1725,12 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       expect(storedOf(w, start).length).toBeLessThanOrEqual(2)
     })
   }
-  // [H17] a device's events are candidates when every introduction of the device is a candidate (structural), not when
-  // every introduction is in X (dispatch 5a): a deceived member that saw one of two concurrent device_adds witnesses it
+  // a device's events are candidates when every introduction of the device is a candidate (structural), not when
+  // every introduction is in X: a deceived member that saw one of two concurrent device_adds witnesses it
   // in good faith, so it is not in X, but it stays a candidate; the device's later events, which nobody witnessed, stay
   // void and droppable. With "in X", that one citation of the introduction kept every later event of the device
   // (mutant intro-x).
-  test("H17: a witnessed but contested introduction does not make its device's later events non-void", () => {
+  test("a witnessed but contested introduction does not make its device's later events non-void", () => {
     const { w, P, start } = kicked()
     join(w, 'G1')
     const a1 = w.ok('X10', 'device_add', {}, { ap: P })
@@ -1752,10 +1747,10 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     expect(marks.every(id => S.X.has(id))).toBe(true)
     expect(storedOf(w, start).length).toBeLessThanOrEqual(2)
   })
-  // [H17] a rotation in X (two of one identity over one iprev, nobody witnessed either) is not in force: it drops no
-  // device. Before, every admitted rotation was in force, so a member's void rotations still cut its other devices'
+  // a rotation in X (two of one identity over one iprev, nobody witnessed either) is not in force: it drops no
+  // device. If every admitted rotation were in force, a member's void rotations would still cut its other devices'
   // concurrent events as tails (mutant drops-all).
-  test('H17: void concurrent rotations drop no device', () => {
+  test('void concurrent rotations drop no device', () => {
     const w = base(INVITE)
     join(w, 'M1')
     const m0 = w.ok('M1', 'mark')
@@ -1773,11 +1768,11 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     expect(S.cut.has(a.id)).toBe(false)
     expect(S.facts.devs.get('M')?.has('M1')).toBe(true)
   })
-  // [H17] (b) a clean rotation concurrent with three void device_adds: the orphan rule drops the third (FI stays defined
+  // (b) a clean rotation concurrent with three void device_adds: the orphan rule drops the third (FI stays defined
   // by the two lowest). If a rotation also dropped devices that only an X event introduced, that drop would change its
   // revoked set and Eval(S) ≠ Eval(S \ dropped) (mutant drops-all). The rule: rotations drop only devices with a
   // non-X introduction.
-  test('H17: an orphan drop of a void introduction leaves Eval unchanged next to a concurrent rotation', () => {
+  test('an orphan drop of a void introduction leaves Eval unchanged next to a concurrent rotation', () => {
     const w = base(INVITE)
     join(w, 'M1')
     const m0 = w.ok('M1', 'mark')
@@ -1808,13 +1803,13 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       })
     expect(restrict(R)).toBe(restrict(S))
   })
-  // [H19] the identity chain as a tree: at each position a removed member posts one rotation child and one device_add
+  // the identity chain as a tree: at each position a removed member posts one rotation child and one device_add
   // child (each from a fresh device that then posts its budget), down to the per-view caps (freshCap adds, rotTot
   // rotations). No view holds two siblings, so admission takes every node (23 fresh devices at model scale, 54 at
-  // production values), and before [H19] nothing was evidence: a rotation and a device_add over one iprev never paired,
-  // and rotations over different iprevs neither. Now any two concurrent rotations are rotation evidence (mutant
+  // production values). Without evidence between them (a rotation and a device_add over one iprev unpaired,
+  // rotations over different iprevs too) the tree would stay. Any two concurrent rotations are rotation evidence (mutant
   // rot-same-iprev), and the orphan rule need not keep FI of an epoch whose rotation is contested (mutant fi-all).
-  test("H19: a removed member's identity-chain tree is void and dropped", () => {
+  test("a removed member's identity-chain tree is void and dropped", () => {
     const { w, start } = kicked()
     let fresh = 0,
       n = 30,
@@ -1839,7 +1834,7 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
               )
         if (r.v.s !== 'A') continue
         fresh++
-        // revision 5, dispatch 5b-ii: 2 marks per node (11 before); a root-to-leaf path is one view, which W3(g) caps at
+        // 2 marks per node; a root-to-leaf path is one view, which W3(g) caps at
         // poolU unacknowledged events, and the shape is about the identity chain, not the marks
         for (let i = 0; i < 2; i++)
           w.act(dev, 'mark', {}, { ap: [w.latestOwn(dev)!.id], ts: (ts += 11) })
@@ -1854,11 +1849,11 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     expect(fresh).toBeGreaterThanOrEqual(20)
     expect(storedOf(w, start).length).toBeLessThanOrEqual(2 * MODEL_LIMITS.totU)
   })
-  // [H19] race: a device_add over the same iprev as a rotation of its identity lost the race to the recovery key. Before,
-  // it stayed non-void; the rotation dropped its device, so the device's events were tails, cut and stored for good, one
-  // full budget per position of the identity chain. Now it is identity evidence for its own epoch (the rotation is not
-  // affected): the add and its device's events are void and dropped (mutant no-race).
-  test("H19: a device_add that races a rotation of its identity is void; its device's events are dropped", () => {
+  // race: a device_add over the same iprev as a rotation of its identity loses the race to the recovery key. Under
+  // mutant no-race it stays non-void; the rotation drops its device, so the device's events are tails, cut and stored for good, one
+  // full budget per position of the identity chain. It is identity evidence for its own epoch (the rotation is not
+  // affected): the add and its device's events are void and dropped.
+  test("a device_add that races a rotation of its identity is void; its device's events are dropped", () => {
     const { w, P, start } = kicked()
     const r = w.act(
       'X10',
@@ -1878,11 +1873,11 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       1
     )
   })
-  // [H18] W3(f) no pinning: the concurrent device_adds above are dropped because nothing held cites them. A later event
+  // W3(f) no pinning: the concurrent device_adds above are dropped because nothing held cites them. A later event
   // of the identity that cites them all (here a rotation, the one kind W3(d) never refuses) would pin every one with its
   // device's events, each with a full budget. W3(f) refuses an event whose B(e) holds more than one unacknowledged
   // evidence pair per key of its own identity (a rotation may resolve one: recovery); mutant pin-ok.
-  test("H18: a removed member can't pin its concurrent introductions by citing them (W3(f))", () => {
+  test("a removed member can't pin its concurrent introductions by citing them (W3(f))", () => {
     const { w, P, start } = kicked()
     for (let i = 0; i < 6; i++) {
       const dev = `X${10 + i}`
@@ -1906,10 +1901,10 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     expect(r.v).toEqual({ s: 'R', why: 'W3f' })
     expect(storedOf(w, start).length).toBeLessThanOrEqual(2)
   })
-  // [H17] sequential rotations: W3(d) never refuses a rotation (recovery), so a removed member could rotate rotCap times a
-  // day over its whole idle range, each rotation a fresh device with a full budget. W3(c) now caps the rotations nobody
+  // sequential rotations: W3(d) never refuses a rotation (recovery), so a removed member could rotate rotCap times a
+  // day over its whole idle range, each rotation a fresh device with a full budget. W3(c) caps the rotations nobody
   // else acknowledged at rotTot in total; acknowledged ones don't count (mutant id-totals-off).
-  test("H17: a removed member's sequential rotations are capped in total; a member others acknowledge is not", () => {
+  test("a removed member's sequential rotations are capped in total; a member others acknowledge is not", () => {
     const { w, P } = kicked()
     let rots = 0,
       ap = P,
@@ -1956,10 +1951,10 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     }
     expect(ok).toBe(6)
   })
-  // [H18] a kicked member that held Invite (through @everyone) at its old position adds a sybil there; the two would
+  // a kicked member that held Invite (through @everyone) at its old position adds a sybil there; the two would
   // acknowledge each other's events, so the W3(b) total would never bind (800 of 800 marks admitted before). W3(e): the
   // sybil's join needs a third identity's acknowledgement of the add, which honest members never give (mutant sybil-join).
-  test("H18: a removed member can't let in a sybil at its old position (W3(e)); alone it posts at most totU events", () => {
+  test("a removed member can't let in a sybil at its old position (W3(e)); alone it posts at most totU events", () => {
     const { w, P, start } = kicked(INVITE)
     const ay = w.ok('X1', 'add', { to: 'Y' }, { ap: P })
     expect(w.act('Y1', 'join', {}, { ap: [ay.id] }).v.s).toBe('R')
@@ -1972,12 +1967,12 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     expect(n + 1).toBeLessThanOrEqual(MODEL_LIMITS.totU) // the add and the marks; its join and first mark were acknowledged before
     expect(storedOf(w, start).length).toBeLessThanOrEqual(MODEL_LIMITS.totU)
   })
-  // [H18] a member forks its device into branches and lets in sybils on each; each sybil's join witnessed its branch in
-  // good faith, so every branch kept its budgets and its sybils: unboundedly many members at once, no removal needed
-  // (N14 claimed one extra branch per deceived or colluding witness device). With W3(e) no sybil joins, every branch is
+  // a member forks its device into branches and lets in sybils on each; if each sybil's join witnessed its branch in
+  // good faith, every branch would keep its budgets and its sybils: unboundedly many members at once, no removal
+  // needed. With W3(e) no sybil joins, every branch is
   // void and dropped (mutant sybil-join).
   for (const removed of [false, true]) {
-    test(`H18: fork branches can't let in their own witnesses (${removed ? 'removed member' : 'live member'})`, () => {
+    test(`fork branches can't let in their own witnesses (${removed ? 'removed member' : 'live member'})`, () => {
       const w = base(INVITE)
       w.ok('O1', 'add', { to: 'M' })
       w.ok('M1', 'join')
@@ -2009,11 +2004,11 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       expect(storedOf(w, start, 'M').length).toBeLessThanOrEqual(2)
     })
   }
-  // [H18] good faith: a member whose view already shows the fork does not vouch for a branch's invites by citing the
+  // good faith: a member whose view already shows the fork does not vouch for a branch's invites by citing the
   // heads (honest clients cite every head); only a member that saw one branch before the fork evidence does, which is
-  // N14's deceived witness. W3(e) needs a live add in St(e), and a live candidate add has a good-faith witness in B(e),
-  // so good faith needs no separate test (§4.1 W3(e)).
-  test("H18: a member that saw the fork does not vouch for a branch's invite", () => {
+  // a deceived witness. W3(e) needs a live add in St(e), and a live candidate add has a good-faith witness in B(e),
+  // so good faith needs no separate test.
+  test("a member that saw the fork does not vouch for a branch's invite", () => {
     const w = base(INVITE)
     join(w, 'M1')
     join(w, 'H1')
@@ -2029,13 +2024,13 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     const h = w.ok('H1', 'mark', {}, { ap: [a1.id, a2.id] }) // sees both branches: the adds are candidates in St(h)
     expect(w.act('Y1', 'join', {}, { ap: [h.id] }).v.s).toBe('R')
     expect(w.act('Z1', 'join', {}, { ap: [h.id] }).v.s).toBe('R')
-    // a member that saw only one branch vouches for it in good faith (N14)
+    // a member that saw only one branch vouches for it in good faith
     const g = w.ok('G1', 'mark', {}, { ap: [a1.id] })
     expect(w.act('Y1', 'join', {}, { ap: [g.id] }).v.s).toBe('A')
   })
-  // [H18] moderation is exempt from the hourly cap, but a removed moderator's removals at its old position were bounded
+  // moderation is exempt from the hourly cap, so a removed moderator's removals at its old position would be bounded
   // only by the members it outranked there, per device chain. The W3(b) total counts them (mutant w3b-mod).
-  test("H18: a removed moderator's removals at its old position are counted in the unacknowledged total", () => {
+  test("a removed moderator's removals at its old position are counted in the unacknowledged total", () => {
     const w = base(INVITE)
     const MOD = role(w, 3, KICK | BAN)
     join(w, 'X1')
@@ -2059,10 +2054,10 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     expect(n).toBeLessThan(mem.length)
     expect(w.state().facts.mem.size).toBe(mem.length + 2) // every member stays (the kicks are cut with X's removal)
   })
-  // [H20] (revision 5, dispatch 5b-ii, controller ruling: the bound must not grow with device churn). A device the
+  // The bound must not grow with device churn. A device the
   // identity revoked while a member still posts from its own chain tip after the removal: its B(e) is that of an honest
-  // device that went offline at the tip, so admission gives every such chain its own W3(b) budget (dispatch 5b-i: one
-  // budget per device ever acknowledged, I in §4.1). W3(g) pools them: every event lies in its own U, so an event is a
+  // device that went offline at the tip, so admission gives every such chain its own W3(b) budget (one
+  // budget per device ever acknowledged). W3(g) pools them: every event lies in its own U, so an event is a
   // pool candidate once its concurrent events of the identity and their pools exceed poolU (mutant pool-off).
   const oldDevices = (n: number) => {
     const w = base()
@@ -2085,10 +2080,10 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       w.act(d.dev, 'mark', {}, { ap: [w.latestOwn(d.dev)!.id, d.ack], ts: (ts += 11) })
     return { w, olds, post, start: w.ref.order.length }
   }
-  // Revision 7 (controller ruling on r6.1, C1 option 2): a candidate only by pool evidence is never dropped, so the
-  // pool no longer caps what a removed member stores: each old device keeps its own W3(b) total (about 24 per old device
-  // at production values; revision 6: poolU in total). Mutant pool-drop (drop pool candidates) keeps poolU.
-  test("H20 (revision 7): a removed member's old devices each keep their W3(b) total stored (totU per old device, cut)", () => {
+  // A candidate only by pool evidence is never dropped, so the
+  // pool does not cap what a removed member stores: each old device keeps its own W3(b) total (about 24 per old device
+  // at production values). Mutant pool-drop (drop pool candidates) keeps poolU.
+  test("a removed member's old devices each keep their W3(b) total stored (totU per old device, cut)", () => {
     const { w, olds, post, start } = oldDevices(6)
     let admitted = 0
     for (const d of olds) for (let k = 0; k < 30; k++) if (post(d).v.s === 'A') admitted++
@@ -2096,21 +2091,21 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     const S = w.state()
     expect(admitted).toBe(6 * MODEL_LIMITS.totU) // each chain keeps its own W3(b) budget at admission
     expect(stored.every(id => S.cut.has(id))).toBe(true)
-    expect(stored.length).toBe(6 * MODEL_LIMITS.totU) // revision 6: at most poolU; dispatch 5b-i: 6 × totU = 72
+    expect(stored.length).toBe(6 * MODEL_LIMITS.totU) // 6 × totU = 72, above poolU
     expect(stored.filter(x => S.PC.has(x)).length).toBeGreaterThan(0)
   })
   // The boundary, restated independently from the recorded pools: x is a pool candidate iff |U(x) ∪ ⋃ U(y)| > poolU over
   // the events y of its identity concurrent with x. A backdated chain is also concurrent with the identity's own later
   // events before the removal (here the revocations and the later devices), which count too. Posting round-robin, the
   // first overflow voids only maximal events, and the stored events never exceed poolU.
-  test('H20: the pool boundary: an event is a pool candidate iff its concurrent pool exceeds poolU; stored ≤ totU per old device throughout', () => {
+  test('the pool boundary: an event is a pool candidate iff its concurrent pool exceeds poolU; stored ≤ totU per old device throughout', () => {
     const { w, olds, post, start } = oldDevices(3)
     let firstPC = -1
     for (let k = 0; k < MODEL_LIMITS.totU; k++)
       for (const d of olds) {
         post(d)
         const S = w.state()
-        // revision 7: pool candidates stay stored (revision 6: stored ≤ poolU)
+        // pool candidates stay stored
         expect(storedOf(w, start).length).toBeLessThanOrEqual(olds.length * MODEL_LIMITS.totU)
         if (firstPC < 0 && S.PC?.size) {
           firstPC = w.ref.order.length
@@ -2123,10 +2118,10 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       ref = w.ref
     const xs = ref.order.filter(id => ref.ev(id).a === 'X' && ref.rec(id).pool)
     for (const x of xs) {
-      // revision 6 (r5 review C1 (c)): device_revokes are never pool candidates, as rotations
+      // device_revokes are never pool candidates, as rotations
       if (ref.ev(x).t === 'primary_rotate' || ref.ev(x).t === 'device_revoke') continue
       const P = new Set(ref.rec(x).pool)
-      // revision 7: only concurrent events before their device's fork point count
+      // only concurrent events before their device's fork point count
       const pre = (y: string) => ref.ev(y).seq < (S.F.get(ref.ev(y).dev) ?? Infinity)
       for (const y of xs)
         if (y !== x && pre(y) && !ref.anc(x).has(y) && !ref.anc(y).has(x))
@@ -2142,10 +2137,10 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     expect(r.v.s).toBe('R')
     expect((r.v as { why?: string }).why).toBe('W3g')
   })
-  // [H20] a dropped event's header counts as every kind of evidence (F, FI, RF and the pool), so the orphan rule drops the
-  // events that define an identity fork point too (dispatch 5b-i kept the lowest ids of each such group, with their
-  // unacknowledged ancestors; mutant ghost-dev)
-  test("H20: the events that define a removed member's identity fork are dropped; their headers stay as evidence", () => {
+  // a dropped event's header counts as every kind of evidence (F, FI, RF and the pool), so the orphan rule drops the
+  // events that define an identity fork point too (mutant ghost-dev keeps the lowest ids of each such group, with their
+  // unacknowledged ancestors)
+  test("the events that define a removed member's identity fork are dropped; their headers stay as evidence", () => {
     const { w, start } = kicked()
     let ts = 1000
     for (let k = 0; k < 6; k++)
@@ -2161,11 +2156,11 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
     expect(stored.includes(a.id) || stored.includes(b.id)).toBe(false)
     expect(stored.length).toBe(6) // X1's marks
   })
-  // [H20] the honest cost: an event is a pool candidate when its concurrent events of the same identity exceed the pool,
+  // the honest cost: an event is a pool candidate when its concurrent events of the same identity exceed the pool,
   // acknowledged or not. A device offline while its sibling posted more than poolU ACL events loses the ACL events it
   // made meanwhile (nobody can acknowledge them in good faith: every member already holds the sibling's events). Devices
   // that are online, or offline together, are never pool candidates.
-  test('H20 (cost): a device offline while its sibling posted more than poolU ACL events loses its offline ACL events', () => {
+  test('cost: a device offline while its sibling posted more than poolU ACL events loses its offline ACL events', () => {
     for (const many of [false, true]) {
       const w = base(INVITE)
       join(w, 'M1')
@@ -2188,9 +2183,9 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       expect(w.state().X.has(r.id)).toBe(false)
     }
   })
-  // The bound itself (spec §4.1): every route of dispatch 5b-i (live devices, fresh devices, rotations, leaves and
+  // The bound itself, over every route (live devices, fresh devices, rotations, leaves and
   // revocations, concurrent introductions, fork branches); with W3(g) a removed identity alone keeps at most poolU
-  // unacknowledged events ([H20]).
+  // unacknowledged events.
   for (const forks of [false, true]) {
     test(`Growth bound: a removed member alone leaves at most poolU stored events (${forks ? 'with' : 'without'} forks and concurrent joins)`, () => {
       const w = base(INVITE)
@@ -2282,14 +2277,14 @@ describe('revision 5, dispatch 5b: growth bound (H17, H18)', () => {
       const admitted = w.ref.order.slice(start).filter(id => w.ref.ev(id).a === 'X').length
       const stored = storedOf(w, start)
       expect(admitted).toBeGreaterThan(stored.length)
-      // [H20]: poolU (spec §4.1), whatever the devices; dispatch 5b-i's per-device bound was D × (totU + 1 + DEV) + rotTot
+      // poolU, whatever the devices (a per-device bound would be D × (totU + 1 + DEV) + rotTot)
       expect(stored.length).toBeLessThanOrEqual(MODEL_LIMITS.poolU)
       expect(w.state().facts.mem.has('X')).toBe(false)
     })
   }
 })
 
-// The vectors of revisions 6, 7, 7b and 7c (notes/acl-model vectors.test.ts, same names). The
+// More of the model's vectors (same names). The
 // model's own property checks (checkCase) stay in the model; here every world is replayed
 // through the model after each test, and header evaluations are compared with it directly.
 const modelOf = (w: AclWorld) => {
@@ -2308,10 +2303,10 @@ const classStats = (w: AclWorld) => {
   return { S, st: [fe.stats.maxClasses, fe.stats.fallbacks] }
 }
 
-// Revision 6: the r5 review. C1 (c) [device_revoke], M2 [ap cap] and I1 fail on revision 5 and
-// pass here; I2 pins today's outcome (N21); "I3 (b)" pins why the ruled work bound is not adopted.
-describe('r5 review (revision 6)', () => {
-  test('C1 (c): a thief’s sibling flood does not void the revocation of the stolen device (device_revoke is no pool candidate)', () => {
+// Sibling floods never void a device_revoke, events have at most `ap` parents, kept headers count as
+// evidence, a stale-device leave undoes a ban that relied on its promotions, and no work bound.
+describe('sibling floods, the parent cap, pool candidacy and kept headers', () => {
+  test('a thief’s sibling flood does not void the revocation of the stolen device (device_revoke is no pool candidate)', () => {
     const w = base(INVITE)
     const MOD = role(w, 3, KICK | BAN)
     for (const d of ['A1', 'B1', 'C1']) join(w, d)
@@ -2338,7 +2333,7 @@ describe('r5 review (revision 6)', () => {
     orderIndependent(w)
   })
 
-  test('M2 (C1 b): at most 10 ACL parents; an honest client caps its heads and keeps its own chain', () => {
+  test('at most 10 ACL parents; an honest client caps its heads and keeps its own chain', () => {
     const w = base(INVITE)
     for (const d of ['A1', 'B1']) join(w, d)
     for (let i = 0; i < 12; i++) join(w, `m${i}x1`)
@@ -2356,7 +2351,7 @@ describe('r5 review (revision 6)', () => {
     expect(w.act('B1', 'mark', {}, { ap: ms.slice(0, 10) }).v.s).toBe('A')
   })
 
-  test('poolmono (revision 7): pool candidacy can end, so a candidate only by pool evidence is never dropped and replicas agree', () => {
+  test('poolmono: pool candidacy can end, so a candidate only by pool evidence is never dropped and replicas agree', () => {
     const w = base(INVITE)
     join(w, 'A1')
     const a2 = w.ok('A2', 'device_add')
@@ -2409,7 +2404,7 @@ describe('r5 review (revision 6)', () => {
   })
 
   for (const kicked of [false, true]) {
-    test(`I1 (GH${kicked ? ', kicked' : ''}): kept headers count as identity, rotation and pool evidence, as the reference does`, () => {
+    test(`GH${kicked ? ', kicked' : ''}: kept headers count as identity, rotation and pool evidence, as the reference does`, () => {
       const w = base(INVITE)
       join(w, 'X1')
       w.ok('O1', 'mark')
@@ -2431,7 +2426,7 @@ describe('r5 review (revision 6)', () => {
     })
   }
 
-  test('I2 (N21-ban): a senior’s stale-device leave undoes a ban that relied on its promotions; the moderator re-applies it (N21: fail-open for denies)', () => {
+  test('a senior’s stale-device leave undoes a ban that relied on its promotions; the moderator re-applies it (fail-open for denies)', () => {
     const w = base(INVITE)
     const RS = role(w, 20, ROLES)
     const R15 = role(w, 15, 0)
@@ -2461,7 +2456,7 @@ describe('r5 review (revision 6)', () => {
     orderIndependent(w)
   })
 
-  test('I3 (b): a junior’s ops never switch a senior stratum to the fallback (no work bound on the flat closure)', () => {
+  test('a junior’s ops never switch a senior stratum to the fallback (no work bound on the flat closure)', () => {
     const w = base(INVITE)
     w.ok('O2', 'device_add')
     const QR = role(w, 3, KICK | BAN)
@@ -2501,12 +2496,12 @@ describe('r5 review (revision 6)', () => {
   })
 })
 
-// Revision 7: P(x) counts only concurrent events before their device's fork point, a candidate
+// P(x) counts only concurrent events before their device's fork point, a candidate
 // only by pool evidence is never dropped, events past their device's fork point that are not
 // identity ops go without their headers, and honest clients never cite a candidate, X or Tail
-// event (§2.3, §1.2, §4.1).
-describe('revision 7 (C1, option 2)', () => {
-  test('r7 C1 (a): a removed member’s sibling flood is dropped with at most two headers; honest clients don’t cite it', () => {
+// event.
+describe('sibling floods and dropped identity ops', () => {
+  test('a removed member’s sibling flood is dropped with at most two headers; honest clients don’t cite it', () => {
     const w = base(INVITE)
     w.ok('O1', 'add', { to: 'X' })
     w.ok('X1', 'join')
@@ -2538,7 +2533,7 @@ describe('revision 7 (C1, option 2)', () => {
   })
 
   for (const cite of ['all heads', 'client rule'] as const) {
-    test(`r7 C1 (c): a thief’s sibling flood no longer voids the victim’s ACL events (honest marks cite ${cite})`, () => {
+    test(`a thief’s sibling flood does not void the victim’s ACL events (honest marks cite ${cite})`, () => {
       const w = base(INVITE)
       const MOD = role(w, 3, KICK | BAN)
       for (const d of ['A1', 'B1', 'C1']) join(w, d)
@@ -2568,7 +2563,7 @@ describe('revision 7 (C1, option 2)', () => {
     })
   }
 
-  test('r7 C1 (c), after a rotation: a batch positioned before it voids neither the new primary’s kick nor the leave', () => {
+  test('after a rotation: a batch positioned before it voids neither the new primary’s kick nor the leave', () => {
     const w = base(INVITE)
     const MOD = role(w, 3, KICK | BAN)
     for (const d of ['A1', 'B1', 'C1', 'D1', 'E1']) join(w, d)
@@ -2605,7 +2600,7 @@ describe('revision 7 (C1, option 2)', () => {
     expect(S.facts.mem.has('A')).toBe(false)
   })
 
-  test('r7: a dropped identity op keeps its header (a later rotation concurrent with it is contested on every replica)', () => {
+  test('a dropped identity op keeps its header (a later rotation concurrent with it is contested on every replica)', () => {
     const w = base(INVITE)
     join(w, 'X1')
     w.ok('O1', 'mark')
@@ -2645,10 +2640,10 @@ describe('revision 7 (C1, option 2)', () => {
   })
 })
 
-// r7.6: colluding identities layer their forked events; the proposed admission rule is not
-// adopted. This pins today's outcome (spec §2.3, §6.2 N22).
-describe('r7.6 (colluders layering forked events)', () => {
-  test('r7.6: one held event keeps 110 void siblings of two colluders (10 per parent, two layers)', () => {
+// Colluding identities layer their forked events; refusing a forked parent would refuse honest
+// clients too. This pins the outcome.
+describe('colluders layering forked events', () => {
+  test('one held event keeps 110 void siblings of two colluders (10 per parent, two layers)', () => {
     const w = base(INVITE)
     let ts = 10
     for (const x of ['Y', 'Z']) {
@@ -2677,9 +2672,9 @@ describe('r7.6 (colluders layering forked events)', () => {
   })
 })
 
-// r7.9: the witness search may stop only at a structural candidacy (a pool candidacy can end).
-describe('r7.9 (witness search)', () => {
-  test('r7.9: a witness in good faith after an event where the candidate was only a pool candidate counts', () => {
+// The witness search may stop only at a structural candidacy (a pool candidacy can end).
+describe('witness search', () => {
+  test('a witness in good faith after an event where the candidate was only a pool candidate counts', () => {
     const w = base(INVITE)
     for (const d of ['A1', 'B1', 'C1']) join(w, d)
     const a2 = w.ok('A2', 'device_add')
@@ -2728,10 +2723,10 @@ describe('r7.9 (witness search)', () => {
   })
 })
 
-// r7.3's shape keeps the device_revoke exemption necessary: concurrent introductions of fresh
+// This shape keeps the device_revoke exemption necessary: concurrent introductions of fresh
 // devices fill the pool.
-describe('r7.3 (concurrent introductions)', () => {
-  test('r7.3: a device_revoke stays out of pool candidacy when concurrent introductions fill the pool', () => {
+describe('concurrent introductions', () => {
+  test('a device_revoke stays out of pool candidacy when concurrent introductions fill the pool', () => {
     const w = base(INVITE)
     for (const d of ['A1', 'B1', 'C1']) join(w, d)
     const m0 = w.ok('O1', 'mark')
@@ -2758,10 +2753,10 @@ describe('r7.3 (concurrent introductions)', () => {
   })
 })
 
-// r7b: the two older oracle findings of revision 7's final fuzz, and two readings.
-describe('r7b (older oracle findings, readings)', () => {
+// Two oracle counterexamples and two readings of the client rule.
+describe('oracle counterexamples and the client rule', () => {
   for (const via of ['revoke', 'kick'] as const) {
-    test(`r7b O5-senior (seed 9043909, ${via}): removing the grant that protected C lets a junior ban cut C’s stratum-9 profile`, () => {
+    test(`O5-senior (seed 9043909, ${via}): removing the grant that protected C lets a junior ban cut C’s stratum-9 profile`, () => {
       const w = base()
       const RA = role(w, 7, ROLES | INVITE)
       const RC = role(w, 4, INVITE)
@@ -2793,7 +2788,7 @@ describe('r7b (older oracle findings, readings)', () => {
     })
   }
   for (const shape of ['rejoin', 'fork'] as const) {
-    test(`r7b O6-join (seed 8868407, ${shape}): a duel ban keeps its target’s racing join uncut; it gives no membership and keeps its add consumed`, () => {
+    test(`O6-join (seed 8868407, ${shape}): a duel ban keeps its target’s racing join uncut; it gives no membership and keeps its add consumed`, () => {
       const w = base()
       const o2 = w.ok('O2', 'device_add')
       const R = role(w, 8, KICK | BAN | ROLES | INVITE)
@@ -2831,7 +2826,7 @@ describe('r7b (older oracle findings, readings)', () => {
       else expect(S.facts.devs.get('T')?.has('T2') ?? false).toBe(true)
     })
   }
-  test('r7b reading 1: the client rule’s upgrade exception (honest clients cite an upgrade in X, so the old server freezes)', () => {
+  test('the client rule’s upgrade exception (honest clients cite an upgrade in X, so the old server freezes)', () => {
     const w = base()
     join(w, 'R1')
     join(w, 'Q1')
@@ -2852,7 +2847,7 @@ describe('r7b (older oracle findings, readings)', () => {
     expect(S.facts.upgraded).toEqual([u.id])
     expect(w.act('Q1', 'mark').v).toEqual({ s: 'R', why: 'auth' })
   })
-  test('r7b reading 2: W3(e) counts a vouch made where the add was a pool candidate; structural fork evidence still blocks', () => {
+  test('W3(e) counts a vouch made where the add was a pool candidate; structural fork evidence blocks', () => {
     {
       const w = base(INVITE)
       join(w, 'A1')
@@ -2918,12 +2913,12 @@ describe('r7b (older oracle findings, readings)', () => {
   })
 })
 
-// r7c: protection classes are distinct U(p) ∩ Γ⁺ over Fl \ X, Γ⁺ = the causes with a direct cut
-// on an event outside X (the r7 re-review's C1). Revisions 5–7 projected each op's exposure onto
+// Protection classes are distinct U(p) ∩ Γ⁺ over Fl \ X, Γ⁺ = the causes with a direct cut
+// on an event outside X, not a projection of each op's exposure onto
 // G(p), which its author picks with its parents.
-describe('r7c (class count from senior-made data)', () => {
+describe('class count from senior-made data', () => {
   for (const cap of [2, 3]) {
-    test(`r7c pclass (cap ${cap}): a protected author’s extra invites citing other cut grants make no class; the exact rule still cuts P’s invite`, () => {
+    test(`pclass (cap ${cap}): a protected author’s extra invites citing other cut grants make no class; the exact rule cuts P’s invite`, () => {
       const w = base(0, { ...MODEL_LIMITS, classes: cap })
       const QR = role(w, 3, KICK | BAN)
       const AR = role(w, 2, ROLES)
@@ -2964,7 +2959,7 @@ describe('r7c (class count from senior-made data)', () => {
       expect(ex.map(e => S.cut.has(e))).toEqual(ex.map(() => true))
     })
   }
-  test('r7c jclass: three juniors’ revoked devices give their two-hop invitees’ joins one class at ⊥; the exact rule cuts them all', () => {
+  test('jclass: three juniors’ revoked devices give their two-hop invitees’ joins one class at ⊥; the exact rule cuts them all', () => {
     const w = base(INVITE)
     join(w, 'L1')
     w.ok('L2', 'device_add')
@@ -3009,7 +3004,7 @@ describe('r7c (class count from senior-made data)', () => {
       expect(S.facts.mem.has(`M${i}`) || S.facts.mem.has(`N${i}`)).toBe(false)
     }
   })
-  test('r7c header read: a header is read only against its own identity’s events, through its maximal held ancestors, equal to the reference', () => {
+  test('header read: a header is read only against its own identity’s events, through its maximal held ancestors, equal to the reference', () => {
     const w = base(INVITE)
     join(w, 'X1')
     join(w, 'Y1')
@@ -3083,7 +3078,7 @@ describe('r7c (class count from senior-made data)', () => {
     expect(RF.length).toBeGreaterThanOrEqual(2)
     expect(RF.includes(R0.id)).toBe(false)
   })
-  test('r7c N19 residual (realization): above the cap, a protected author’s backdated op that adds a senior-made class switches the stratum', () => {
+  test('residual (realization): above the cap, a protected author’s backdated op that adds a senior-made class switches the stratum', () => {
     const w = base(INVITE)
     w.ok('O2', 'device_add')
     const QR = role(w, 3, KICK | BAN)
@@ -3115,7 +3110,7 @@ describe('r7c (class count from senior-made data)', () => {
     expect(S.cut.has(p.id)).toBe(false)
     expect(S.cut.has(l.id)).toBe(true)
   })
-  test('r7c N19 residual (refinement): above the cap, a junior’s op that a quiet cause cuts makes the cause count and switches the stratum', () => {
+  test('residual (refinement): above the cap, a junior’s op that a quiet cause cuts makes the cause count and switches the stratum', () => {
     const w = new AclWorld()
     w.genesis('O1', ['O', 'B'], 0)
     w.ok('O1', 'add', { to: 'Vch' })

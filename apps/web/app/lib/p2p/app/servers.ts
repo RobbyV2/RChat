@@ -511,7 +511,7 @@ export const withServers = async <T>(fn: (s: Servers) => Promise<T>): Promise<T 
 // The channel opened last in each server, for this tab.
 const lastChannel = new Map<string, string>()
 
-// The ban confirmation: with Manage messages, "Also hide all their messages" (spec 3.5).
+// The ban confirmation: with Manage messages, "Also hide all their messages".
 export const banRequest = (v: ServerView, ik: string, name: string): ConfirmRequest => {
   const wipe = (v.perms & P.ManageMessages) !== 0
   return {
@@ -687,7 +687,7 @@ export const p2pServer = {
     withServers(s => s.editChannel(room, id, patch)),
   setOverwrite: (room: string, ch: string, subj: string, o: { allow: number; deny: number }) =>
     withServers(s => s.setOverwrite(room, ch, subj, o.allow, o.deny)),
-  // Roles (spec 1.4, 1.6). Taking a role from someone is a removal: it waits for sync too.
+  // Roles. Taking a role from someone is a removal: it waits for sync too.
   createRole: (room: string, role: { name: string; color: number | null; bits: number }) =>
     withServers(s => s.createRole(room, role)),
   async moveRoles(room: string, moves: { role: string; pos: number }[]) {
@@ -709,7 +709,7 @@ export const p2pServer = {
     ),
   removeChannel: (room: string, id: string) =>
     withServers(s => s.editChannel(room, id, { gone: true })),
-  // Moderation waits for sync (spec 8.2): signed after a fresh heads exchange with a member, or
+  // Moderation waits for sync: signed after a fresh heads exchange with a member, or
   // once Apply anyway is chosen.
   kick: (room: string, ik: string) =>
     withServers(s => s.moderate(room, { act: 'Kick', who: ik }, () => s.kick(room, ik))),
@@ -735,7 +735,7 @@ export const p2pServer = {
     ),
   answerCoOwner: (key: string, yes: boolean) => servers?.answerCoOwner(key, yes),
   retryCarry: (room: string) => servers?.retryCarry(room),
-  // Transfer by upgrade (spec 3.8).
+  // Transfer by upgrade.
   async transfer(room: string, ik: string) {
     const co = (useP2p.getState().servers[room]?.owners.length ?? 1) > 1
     p2pHost.toast(
@@ -776,7 +776,7 @@ export const p2pServer = {
   peek: (code: string) => parseCode(code),
 }
 
-// Our devices in P2P servers (spec 3.9, 8.2): the list, a lost or stolen one, and recovery.
+// Our devices in P2P servers: the list, a lost or stolen one, and recovery.
 export const p2pDevices = {
   list: () => servers?.myDevices() ?? [],
   current: () => {

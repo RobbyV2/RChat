@@ -123,7 +123,7 @@ fn two_hundred_minted_cold_callers_on_one_free_suffix_and_network_get_one_allowa
 }
 
 #[test]
-fn the_same_minted_names_on_many_networks_are_still_one_cold_domain() {
+fn the_same_minted_names_on_many_networks_are_one_cold_domain() {
     let mut w = WrongPasswords::default();
     let mut guesses = 0;
     for i in 0..200 {

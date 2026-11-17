@@ -267,10 +267,7 @@ pub const NOT_OFFERED: [(&str, &str); 5] = [
     ("bot", "RChat has no bots"),
     ("applications.commands", "RChat has no bots"),
     ("connections", "RChat has no linked accounts to show"),
-    (
-        "gdm.join",
-        "RChat has no group DMs (0.8.0 Letters may add one)",
-    ),
+    ("gdm.join", "RChat has no group DMs"),
 ];
 
 pub fn not_offered(scope: &str) -> Option<&'static str> {

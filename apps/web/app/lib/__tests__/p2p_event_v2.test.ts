@@ -21,7 +21,7 @@ import { keyId, newKeyPair, sign } from '../p2p/keys'
 import { P } from '../p2p/acl/rules'
 import { genesisBundle, genesisSrv, signDeviceCert2 } from '../p2p/acl/binding'
 
-// The v2 event format of P2P servers (ACL spec §1.2): cores, ids, signatures, schemas, and the
+// The v2 event format of P2P servers: cores, ids, signatures, schemas, and the
 // way into the ACL core.
 
 const author = (): Author => ({ ik: newKeyPair(), dk: newKeyPair() })
@@ -218,7 +218,7 @@ describe('v2 events', () => {
     expect(decideContent(mx, pastOf(r.acl.ix, mx.ap), r.acl.stateOf(mx.ap)).ok).toBe(false)
   })
 
-  test("relayed device revocations (§1.4, §1.6): any member may carry an identity's signed record; the core reads it as that identity's; rotations are never relayed", () => {
+  test("relayed device revocations: any member may carry an identity's signed record; the core reads it as that identity's; rotations are never relayed", () => {
     const R = author()
     const R_ = keyId(R.ik.pk)
     const O_ = keyId(O.ik.pk)
@@ -292,7 +292,7 @@ describe('v2 events', () => {
     expect(withC(genesisOf([O, C], { nonce: other }).owners[1])).toEqual(genesisRefused)
     expect(gen(OC)).toEqual({ s: 'A' })
     // a bundle binds the one genesis it was made for: another server's nonce and owner bundles
-    // copied into a new genesis, or any other field changed, are refused (re-review probe)
+    // copied into a new genesis, or any other field changed, are refused
     const M = author()
     const skelM = { ...OC, owners: [entry(M), entry(C), entry(O)] }
     const copycat = { ...skelM, owners: [genesisBundle(M.ik, keyId(M.dk.pk), skelM), cb, ob] }

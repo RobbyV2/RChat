@@ -73,7 +73,7 @@ import { Servers } from '../p2p/server'
 // Real-time tests (sessions, IndexedDB): budgets for a loaded machine.
 setDefaultTimeout(60_000)
 
-// Device move (note section 7): the encrypted section, the dump of every store, the three
+// Device move: the encrypted section, the dump of every store, the three
 // import cases, and what contacts and the old device see afterwards.
 
 const KDF: Kdf = { alg: 'argon2id', m: KDF_MIN.m, t: KDF_MIN.t, p: 1 }
@@ -203,7 +203,7 @@ const scene = async (opts: { server?: boolean } = {}) => {
       if (Date.now() > end) throw new Error('timed out waiting for Bob to join')
       await clock.advance(5_000)
     }
-    // Something storage dropped here (spec 4.2): only its id stays.
+    // Something storage dropped here: only its id stays.
     await a.store.db.put('dropped', { id: 'A'.repeat(43), room: server, layer: 'c' })
   }
   await b.node.setPaused(true)
@@ -445,7 +445,7 @@ describe('dump and encryption', () => {
 
   test('a large export streams one block at a time and has no size cap', async () => {
     const { a } = await scene()
-    // 130 MiB (over the old 128 MiB cap) made of one repeated block, so the test stays fast.
+    // 130 MiB made of one repeated block, so the test stays fast.
     const block = new Uint8Array(BLOCK).map((_, i) => (i * 13) % 256)
     const n = 130
     const big = new Blob(Array.from({ length: n }, () => block as BlobPart))
@@ -836,7 +836,7 @@ const failure = (p: Promise<unknown>) =>
     (e: Error) => e.message
   )
 
-// Review round 1: a moved browser keeps no secret and makes no files; one file makes at most
+// A moved browser keeps no secret and makes no files; one file makes at most
 // one device here; an export pauses sending; and the limits of a move (every device holds the
 // identity key) are visible to the user.
 describe('moving safely', () => {
@@ -974,7 +974,7 @@ describe('moving safely', () => {
     expect(await bodies(b, a.node.ik)).not.toContain('no')
   }, 60_000)
 
-  test('what arrives after the export still reaches the new device', async () => {
+  test('what arrives after the export reaches the new device', async () => {
     const { a, b, room, clock, hub } = await scene()
     await b.node.setPaused(false)
     b.node.schedule(true)

@@ -6,7 +6,7 @@ import { AclReplica, type Verdict } from '../p2p/acl/admit'
 import type { AclEv } from '../p2p/acl/rules'
 import { AclWorld, MODEL_LIMITS, testBinds } from './p2p_acl_world'
 
-// Agreed limits are per replica (spec 4.1): every room is built with its server's limits, and
+// Agreed limits are per replica: every room is built with its server's limits, and
 // nothing in the P2P code reads a module-wide limit.
 
 const P2P = fileURLToPath(new URL('../p2p/', import.meta.url))

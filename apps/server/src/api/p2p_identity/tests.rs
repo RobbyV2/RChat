@@ -174,7 +174,7 @@ async fn rows(state: &AppState, who: &str) -> i64 {
 }
 
 #[tokio::test]
-async fn r8_identity_record() {
+async fn identity_record() {
     each_db("p2p_identity_record", |state| async move {
         add_user(&state, "alice", None).await;
         let Vera {
@@ -247,7 +247,7 @@ async fn r8_identity_record() {
 // A stolen session: it can't delete the record, drop a record of it or put another creation
 // record in its place (mutant ct-record-truncate: a PUT without re-auth replaces the record).
 #[tokio::test]
-async fn r8_identity_record_delete() {
+async fn identity_record_delete() {
     each_db("p2p_identity_delete", |state| async move {
         add_user(&state, "alice", None).await;
         let Vera {

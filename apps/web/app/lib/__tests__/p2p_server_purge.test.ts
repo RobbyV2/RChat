@@ -29,8 +29,8 @@ import {
   type Member,
 } from './p2p_server_net'
 
-// Storage of P2P servers on real members over the in-memory hub (spec 2.3 orphan drops, 4.1
-// proofs, 4.2 shares and dropped headers, 4.3 stability, purges and restores, 3.7 serving).
+// Storage of P2P servers on real members over the in-memory hub (orphan drops,
+// proofs, shares and dropped headers, stability, purges and restores, serving).
 
 afterEach(stopAll)
 
@@ -100,7 +100,7 @@ const extJoin = async (o: Member, room: string, x: Ext, clock: ManualClock) => {
   return j.id
 }
 
-describe('orphan drops in storage (spec 2.3, controller ruling)', () => {
+describe('orphan drops in storage', () => {
   test('a kicked member’s second device posts content at an old position, each citing 10 void relays: all of it is dropped, the two headers that keep the fork point stay as evidence, and a cold start keeps the state', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -174,7 +174,7 @@ describe('orphan drops in storage (spec 2.3, controller ruling)', () => {
     expect(await bodies(o, room, ch)).toEqual(['w 1'])
     const count = (await o.store.room(room))!.count
     await pump(clock, async () => !(await stored(o, relays[0].id)), 'relays dropped')
-    // Revision 7: siblings past the fork point go without their headers, but the two that keep
+    // Siblings past the fork point go without their headers, but the two that keep
     // Y's fork point where it is.
     const hdrIds: string[] = []
     for (const r of relays) {
@@ -270,7 +270,7 @@ describe('orphan drops in storage (spec 2.3, controller ruling)', () => {
   }, 120_000)
 })
 
-describe('proofs (spec 2.3, 4.1)', () => {
+describe('proofs', () => {
   test('a member that holds content evidence against a device posts a proof after a random delay, at most a few an hour', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -284,7 +284,7 @@ describe('proofs (spec 2.3, 4.1)', () => {
       for (const x of [ext(), ext()]) {
         const join = await extJoin(o, room, x, clock)
         const at = await heads(o, room)
-        // Two messages at one seq (spec 2.3 E1), then an ACL event past them.
+        // Two messages at one seq (E1), then an ACL event past them.
         for (const body of ['one', 'two'])
           expect(
             await deliver(
@@ -319,8 +319,8 @@ describe('proofs (spec 2.3, 4.1)', () => {
   }, 90_000)
 })
 
-describe('per-sender shares (spec 4.2)', () => {
-  test('one sender can’t take more than its share of a room’s budget in a day; others still can', async () => {
+describe('per-sender shares', () => {
+  test('one sender can’t take more than its share of a room’s budget in a day; others can', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock, { servers: { roomCap: 40 } })
@@ -375,8 +375,8 @@ const modRoom = async (names: string[]) => {
   return { clock, hub, a, others, room, ch, role }
 }
 
-describe('eviction under pressure (spec 4.2)', () => {
-  test('a room at its content budget still takes a member’s message and ours: the oldest bodies of the sender who takes the most go, and come back when viewed', async () => {
+describe('eviction under pressure', () => {
+  test('a room at its content budget takes a member’s message and ours: the oldest bodies of the sender who takes the most go, and come back when viewed', async () => {
     const share = { ...SHARE }
     SHARE.room = 2
     SHARE.server = 2
@@ -478,7 +478,7 @@ describe('eviction under pressure (spec 4.2)', () => {
   }, 120_000)
 })
 
-describe('eviction details (spec 4.2)', () => {
+describe('eviction details', () => {
   type Purge = { purge: (room: string, ids: string[], evict?: boolean) => Promise<number> }
   const lifted = async (fn: () => Promise<void>) => {
     const share = { ...SHARE }
@@ -641,7 +641,7 @@ describe('eviction details (spec 4.2)', () => {
   }
 
   test(
-    'a body stored below where its sender’s last eviction walk stopped is still the first to go',
+    'a body stored below where its sender’s last eviction walk stopped is the first to go',
     () =>
       lifted(async () => {
         const clock = new ManualClock()
@@ -907,7 +907,7 @@ describe('eviction details (spec 4.2)', () => {
   )
 })
 
-describe('stability and purges (spec 4.3)', () => {
+describe('stability and purges', () => {
   test('a moderator’s redaction purges its target and its author’s edits only once S1 to S4 hold: holders acknowledge it with a mark naming it, and it stood a week', async () => {
     const { clock, a, others, room, ch } = await modRoom(['Mod', 'Zoe', 'Carol', 'Dan'])
     const [m, z, c, d] = others
@@ -992,7 +992,7 @@ describe('stability and purges (spec 4.3)', () => {
     expect(await bodies(a, room, ch)).toEqual(['second'])
   }, 90_000)
 
-  test('a purge that a later event overturns gets its body back from a peer that still holds it; until then it is unavailable', async () => {
+  test('a purge that a later event overturns gets its body back from a peer that holds it; until then it is unavailable', async () => {
     const { clock, a, others, room, ch, role } = await modRoom([
       'Mod',
       'Bob',
@@ -1057,7 +1057,7 @@ describe('stability and purges (spec 4.3)', () => {
   }, 90_000)
 })
 
-describe('serving (spec 3.7)', () => {
+describe('serving', () => {
   test('content of a view-restricted channel goes only to who may view it; a copy without its body only to who may view every channel', async () => {
     const clock = new ManualClock()
     const hub = new Hub()

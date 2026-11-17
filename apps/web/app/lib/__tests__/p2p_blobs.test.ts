@@ -26,7 +26,7 @@ import { keyId, newKeyPair, signCert } from '../p2p/keys'
 // Real-time tests (sessions, IndexedDB): budgets for a loaded machine.
 setDefaultTimeout(60_000)
 
-// P2P attachments (note section 5): block hashing, the bulk pipe, multi-source downloads with
+// P2P attachments: block hashing, the bulk pipe, multi-source downloads with
 // per-block checks, resume, the serving gate and deletion on redaction.
 
 interface Node {
@@ -652,7 +652,7 @@ describe('bulk transfers', () => {
     expect((await bb.file(EMPTY_ROOT))?.size).toBe(0)
   }, 60_000)
 
-  test('pipes still opening count against the cap, per session and per identity', async () => {
+  test('pipes that are opening count against the cap, per session and per identity', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await node(hub, 'Alice', clock)
@@ -1046,7 +1046,7 @@ describe('attachments in direct messages', () => {
   }, 60_000)
 })
 
-// ----- Fix round 2 -----
+// ----- Images, the gate, forwards, late chunks, auto-download limits -----
 
 const peerWith = async (
   hub: Hub,
@@ -1178,7 +1178,7 @@ describe('many files from one holder, with a slow gate', () => {
   }, 60_000)
 })
 
-describe('fix round 2: images, the gate, forwards, late chunks, auto-download limits', () => {
+describe('images, the gate, forwards, late chunks, auto-download limits', () => {
   const png = (w: number, h: number) => {
     const b = new Uint8Array(33)
     b.set(PNG)

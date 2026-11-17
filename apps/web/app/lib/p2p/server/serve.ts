@@ -125,7 +125,7 @@ export async function getFor(cx: ServerCtx, link: Link, ids: string[]) {
 }
 
 // Whether `ik` may be sent these content events: each one's channel must be one they may view
-// (spec 3.7, Discord order); a copy without its body only to who may view every channel.
+// (Discord order); a copy without its body only to who may view every channel.
 export function viewable(cx: ServerCtx, room: string, ik: string, recs: EventRecord[]) {
   if (!recs.length) return Promise.resolve([])
   return cx.host.viewable(

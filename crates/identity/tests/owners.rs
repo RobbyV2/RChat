@@ -83,7 +83,7 @@ fn invited_owners_do_not_count_suspended_ones_do() {
 }
 
 #[test]
-fn agreement_changes_still_need_two_and_the_suspended_owner_can_not_be_removed() {
+fn agreement_changes_need_two_and_the_suspended_owner_can_not_be_removed() {
     let ms = with(owners(&[1]), &[inactive(2)]);
     let application = Application::new(&ms);
     assert_eq!(
@@ -570,7 +570,7 @@ fn while_an_owner_is_lapsed_adding_owners_or_a_seat_the_subject_group_and_deleti
 }
 
 #[test]
-fn suspend_wait_30_days_add_owners_restore_remove_ends_with_the_original_owner_still_an_owner() {
+fn suspend_wait_30_days_add_owners_restore_remove_ends_with_the_original_owner_an_owner() {
     let ms = with(owners(&[1]), &[suspended_since(2, 0)]);
     let later = lapse(&ms, LAPSE_SECS);
     let lapsed = Application::new(&later);
@@ -716,7 +716,7 @@ fn the_seat_counts_again_as_soon_as_someone_who_doesnt_vote_as_an_owner_manages_
 }
 
 #[test]
-fn a_seat_nobody_manages_any_more_doesnt_freeze_its_one_person() {
+fn a_seat_nobody_manages_doesnt_freeze_its_one_person() {
     let ms = with(owners(&[1]), &[server_seat("lobby")]);
     let frozen = Application::new(&ms);
     assert_eq!(frozen.direct(1, Change::Leave), Err(Refusal::NeedsPerson));

@@ -75,7 +75,7 @@ import { LOCAL } from './limits'
 import { NEUTRAL_TYPE, safeType, SNIFF_BYTES } from '../sniff'
 import { IV_BYTES, SALT_BYTES, type Kdf, type P2pSection } from './section'
 
-// Moving P2P to another device (note section 7): every store except the excluded ones is dumped
+// Moving P2P to another device: every store except the excluded ones is dumped
 // as JSON lines, deflated, and sealed with AES-256-GCM under a key from Argon2id over a
 // passphrase. The section goes into the config string and the `.rchat` file only.
 //

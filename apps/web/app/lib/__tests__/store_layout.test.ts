@@ -261,7 +261,7 @@ describe('dm order', () => {
     expect(recent()).toEqual([1, 3, 2])
   })
 
-  test('after a manual reorder activity no longer moves dms but a new dm goes on top', async () => {
+  test('after a manual reorder activity does not move dms but a new dm goes on top', async () => {
     st().placeDm(1, 'recent', 2)
     expect(recent()).toEqual([2, 3, 1])
     expect(saved('rchat_layout:alice')).toEqual({

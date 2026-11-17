@@ -144,7 +144,7 @@ describe('the server clock', () => {
     expect(before).toEqual([1, 2])
   })
 
-  test('a device clock 2 hours fast still sees an expired token as expired', () => {
+  test('a device clock 2 hours fast sees an expired token as expired', () => {
     const device = at(TRUST.expiresAt + 60) + 7_200_000
     const offset = offsetOf(
       pushOffset([], clockOffset(new Date(at(TRUST.expiresAt + 60)).toUTCString(), device)!)

@@ -1,7 +1,7 @@
 use crate::settings::{Boot, Settings};
 
 pub const AUTOSTART: &str = "--autostart";
-// Login entries written before 0.4.0.
+// Login entries on disk may carry this flag.
 const LEGACY_HIDDEN: &str = "--hidden";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

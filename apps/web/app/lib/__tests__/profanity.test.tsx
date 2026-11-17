@@ -176,7 +176,7 @@ describe('masking rules', () => {
     expect(maskOutsideCode('no code shit', fake)).toBe('no code ****')
   })
 
-  test('words split by formatting are masked, code still splits them', () => {
+  test('words split by formatting are masked, code splits them', () => {
     const html = mdText('f**u**ck, sh*i*t and [fu](https://example.com/x)ck but fu`x`ck', fake)
     expect(html).toContain('*<strong>*</strong>**, **<em>*</em>* and ')
     expect(html).toContain('<a href="https://example.com/x">**</a>** but fu<code>x</code>ck')

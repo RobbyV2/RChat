@@ -71,7 +71,7 @@ export function stopped(cx: RoomCtx, ids: readonly string[]): boolean[] {
   })
 }
 
-// Spec 3.8 step 4: project(Eval_S(B(u))) for the upgrade `up`: the members, bans, roles (and
+// Project(Eval_S(B(u))) for the upgrade `up`: the members, bans, roles (and
 // who holds them), channels and settings at its parents. Null when it isn't admitted here.
 export function carried(cx: RoomCtx, up: string): Carried | null {
   const ix = cx.r.acl.ix
@@ -94,10 +94,10 @@ export function carried(cx: RoomCtx, up: string): Carried | null {
   }
 }
 
-// I2: our own denies the current state doesn't count (cut, void by a fork, past a revocation's
+// Our own denies the current state doesn't count (cut, void by a fork, past a revocation's
 // watermark) that we may still make at the heads: the same act, checked against the current
 // state's authority and guards. One per act, newest first.
-// Spec 3.8 step 7: our denies in this (old) copy that the upgrade `up` doesn't have in its past
+// Our denies in this (old) copy that the upgrade `up` doesn't have in its past
 // (made concurrently with the transfer, so not carried over), to re-apply in the new copy
 // (`admissible` there decides). A role is named as the upgrade carried it over.
 export function outside(
@@ -195,7 +195,7 @@ export function reapply(cx: RoomCtx, me: string, exclude: readonly string[] = []
   return out
 }
 
-// Spec 3.9, 8.2 lost or stolen device: what device `dk` of `ik` did after its last trusted event
+// Lost or stolen device: what device `dk` of `ik` did after its last trusted event
 // (its ACL events with a higher seq, and how much content; `witnesses`: the ACL events received
 // here by the cut-off; `own`: the highest seq this browser itself signed with it by then), who
 // joined

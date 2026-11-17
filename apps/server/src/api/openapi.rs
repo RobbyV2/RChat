@@ -826,7 +826,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn me_still_serializes_is_site_admin() {
+    fn me_serializes_is_site_admin() {
         let me = Me {
             username: "alice".to_string(),
             display_name: "Alice".to_string(),

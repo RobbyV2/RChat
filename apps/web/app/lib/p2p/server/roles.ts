@@ -38,14 +38,14 @@ export async function createRole(
   }))
 }
 
-// A role's name and color (spec 1.4 `role_meta`).
+// A role's name and color (`role_meta`).
 export async function editRole(
   cx: ServerCtx,
   room: string,
   role: string,
   meta: { name: string; color: number | null }
 ) {
-  // Admitted by the generic rule (spec 1.4): one we may not make would show nothing.
+  // Admitted by the generic rule: one we may not make would show nothing.
   const s = cx.sumOf(room)
   if (!can(s, cx.me, P.ManageRoles) || !s.roles[role] || !gt(rankOf(s, cx.me), roleRank(s, role)))
     throw new ServerError(CANT_TEXT)
@@ -74,13 +74,13 @@ export function assignRole(cx: ServerCtx, room: string, ik: string, role: string
   return cx.emit(room, 'assign', () => ({ to: ik, role }))
 }
 
-// Taking a role from someone else carries the watermark of a removal (spec 3.5).
+// Taking a role from someone else carries the watermark of a removal.
 export function revokeRole(cx: ServerCtx, room: string, ik: string, role: string) {
   if (ik === cx.me) return cx.emit(room, 'revoke', () => ({ to: ik, role }))
   return cx.emit(room, 'revoke', plan => ({ to: ik, role, seen: plan.seen ?? {} }), { to: ik })
 }
 
-// How long until we may post in `ch` again (slow mode, spec 3.5): 0 when it's off or leaves us
+// How long until we may post in `ch` again (slow mode): 0 when it's off or leaves us
 // out.
 export async function slowLeft(cx: ServerCtx, room: string, ch: string) {
   const s = cx.sumOf(room)
@@ -97,7 +97,7 @@ export function kick(cx: ServerCtx, room: string, ik: string) {
   return cx.emit(room, 'kick', plan => ({ to: ik, seen: plan.seen ?? {} }), { to: ik })
 }
 
-// `wipe`: "Also hide all their messages" (spec 3.5, needs Manage messages).
+// `wipe`: "Also hide all their messages" (needs Manage messages).
 export function ban(cx: ServerCtx, room: string, ik: string, reason?: string, wipe = false) {
   return cx.emit(
     room,
@@ -163,7 +163,7 @@ export async function forget(cx: ServerCtx, room: string) {
   for (const k of await tx.objectStore('dropped').index('room').getAllKeys(room))
     await tx.objectStore('dropped').delete(k)
   const meta = tx.objectStore('meta')
-  // Its per-sender counters and cache; this device's chains stay (spec 3.9).
+  // Its per-sender counters and cache; this device's chains stay.
   for (const lo of [`held\n${room}\n`, `share\n${room}\n`])
     await meta.delete(IDBKeyRange.bound(lo, `${lo}\uffff`))
   await meta.delete(cacheKey(room))

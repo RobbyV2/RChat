@@ -217,7 +217,7 @@ test('server icon while signed out, and the previewed server', () => {
   expect(labels(serverAt('p'))).toEqual(['Join Server', 'Copy Server ID'])
 })
 
-test('server rows do what the old menu did', async () => {
+test('each server row item runs its store action', async () => {
   railState({ perms: Perm.ManageChannels })
   const out = await effects(items(serverAt('s', 'f1', 3)))
   expect(out).toEqual([

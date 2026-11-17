@@ -17,7 +17,7 @@ import {
   type RtcFrame,
 } from './signal'
 
-// Voice and video calls with a contact (Task 21). Media runs through rtc.ts like an instance
+// Voice and video calls with a contact. Media runs through rtc.ts like an instance
 // call; everything that sets it up rides the encrypted session with the contact. A call is bound
 // to the conversation's room, both identities and, once answered, the one device that answered.
 // Only the tab that runs P2P (the leader) has a node, so only it rings and handles calls.

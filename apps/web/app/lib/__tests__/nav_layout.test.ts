@@ -190,7 +190,7 @@ describe('folder colors in the layout', () => {
     }
   })
 
-  test('a layout saved before folder colors loads unchanged', () => {
+  test('a layout without folder colors loads unchanged', () => {
     const old =
       '{"v":2,"servers":["x",{"id":"f1","name":"Games","servers":["a","b"],"open":true}],"dmOrder":[2],"dmPinned":[],"dmSeen":2,"selfPin":"auto","collapsed":{}}'
     const layout = parseLayout(old)
@@ -612,7 +612,7 @@ describe('order helpers', () => {
     expect(moveAmong(['a'], [], 'n', 0)).toEqual(['a', 'n'])
   })
 
-  test('prune drops entries that no longer exist and keeps identity when nothing changes', () => {
+  test('prune drops entries that are gone and keeps identity when nothing changes', () => {
     const layout = L({ servers: ['a', 'b'], dmOrder: [1, 2], dmPinned: [3], dmSeen: 3 })
     expect(pruneLayout(layout, ['a', 'b'], [1, 2, 3])).toBe(layout)
     expect(pruneLayout(layout, ['b'], null)).toEqual({ ...layout, servers: ['b'] })

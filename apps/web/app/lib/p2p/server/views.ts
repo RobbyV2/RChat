@@ -184,7 +184,7 @@ export function channelViews(s: Summary, myIk: string, me: Membership | null): C
   return out
 }
 
-// Whether we may view `ch` (spec 1.4).
+// Whether we may view `ch`.
 export function canViewCh(cx: ServerCtx, room: string, ch: string) {
   const s = cx.sumOf(room)
   return (channelPermsOf(s, cx.me, ch) & P.ViewChannel) !== 0
@@ -209,7 +209,7 @@ export async function loadChannel(
   const limit = opts.limit ?? 100
   if (cx.readOnly(room)) return { messages: [], more: false }
   if (!opts.keep && !cx.canViewCh(room, ch)) return { messages: [], more: false }
-  // A transferred copy shows only its archive (spec 3.8 step 6), opened by itself too.
+  // A transferred copy shows only its archive, opened by itself too.
   if (!opts.keep && cx.sumOf(room).upgraded) {
     const keep = await cx.archiveKeep(room, cx.rooms.get(room)?.next)
     if (keep) opts = { ...opts, keep }
@@ -233,7 +233,7 @@ export async function loadChannel(
   let cursor = await store.index('room_chan_sort').openCursor(range, up ? 'next' : 'prev')
   while (cursor && recs.length < limit + 1) {
     const r = cursor.value
-    // Thread replies show in their thread only; an archive (spec 3.8) only what `keep` keeps,
+    // Thread replies show in their thread only; an archive only what `keep` keeps,
     // without its pin lines.
     if (r.type === 'msg' && !(await cx.rootOf(r, get)) && (!opts.keep || opts.keep(r))) recs.push(r)
     else if (r.type === 'pin' && !opts.keep) pins.push(r)
@@ -250,11 +250,11 @@ export async function loadChannel(
   )
   rows.push(...pinRows)
   const sys = systemOf(cx.sumOf(room))
-  // An archive (spec 3.8) brings no join and leave lines of the old copy.
+  // An archive brings no join and leave lines of the old copy.
   if (sys.ch === ch && (sys.join || sys.leave) && !opts.keep)
     rows.push(...(await cx.systemRows(room, lo, hi, sys)))
   rows.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0))
-  // Spec 3.8: a new copy shows the old copy's messages of the same channel above its own, as
+  // A new copy shows the old copy's messages of the same channel above its own, as
   // they are there (read-only).
   const prev = cx.rooms.get(room)?.prev
   const keep = prev && cx.rooms.has(prev) ? await cx.archiveKeep(prev, room) : null
@@ -269,7 +269,7 @@ export async function loadChannel(
   return { messages: rows, more }
 }
 
-// What an old copy shows after its transfer (spec 3.8 step 6): each device's messages up to
+// What an old copy shows after its transfer: each device's messages up to
 // its last one at the transfer, by what the new owner carried over or, at the latest, what we
 // held when we heard of the upgrade (the new owner's holdings are partial: history, backfill
 // horizon, channels it can't view), and nothing by someone banned in the new copy. Null before
@@ -289,7 +289,7 @@ export async function archiveKeep(cx: ServerCtx, old: string, next?: string) {
 }
 
 // Each device's last message we hold in a copy, when we first hear it was transferred: what
-// comes later at positions from before the upgrade never shows (spec 3.8 step 6).
+// comes later at positions from before the upgrade never shows.
 export async function markArchive(cx: ServerCtx, room: string) {
   const archive = Object.create(null) as Record<string, number>
   const range = IDBKeyRange.bound([room, -Infinity], [room, Infinity])
@@ -391,7 +391,7 @@ export async function loadThread(
     !!opts.after,
     !!opts.before
   )
-  // A transferred copy: its archive only (spec 3.8 step 6).
+  // A transferred copy: its archive only.
   const keep = cx.sumOf(room).upgraded ? await cx.archiveKeep(room, cx.rooms.get(room)?.next) : null
   if (keep && !keep(r)) return null
   const recs: EventRecord[] = []
@@ -471,7 +471,7 @@ export async function systemRows(
   return out
 }
 
-// Message rows: what shows, with its last edit, its reactions and its pin (spec 3.5).
+// Message rows: what shows, with its last edit, its reactions and its pin.
 export async function rows(cx: ServerCtx, room: string, recs: EventRecord[]) {
   if (!recs.length) return []
   const box = new Map<string, OutboxRecord>(
@@ -495,8 +495,8 @@ export async function rows(cx: ServerCtx, room: string, recs: EventRecord[]) {
     const sh = shown[i]
     const thread = await cx.rootOf(r, getRoot)
     const c = serverWire(r).c as MsgContent | null
-    // Shows, but its body was purged or evicted here: until a peer sends it back (spec 4.3);
-    // an evicted one is asked for now that it is viewed (spec 4.2).
+    // Shows, but its body was purged or evicted here: until a peer sends it back;
+    // an evicted one is asked for now that it is viewed.
     if (sh && !sh.hidden && r.purged) {
       if (r.evicted) viewed.push(r.id)
       out.push({
@@ -507,7 +507,7 @@ export async function rows(cx: ServerCtx, room: string, recs: EventRecord[]) {
       })
       continue
     }
-    // Sent by a member around the time they were removed, and after it (spec 3.5, 8.2): a line
+    // Sent by a member around the time they were removed, and after it: a line
     // in its place says so.
     if (sh?.hidden?.why === 'removed' && r.type === 'msg') {
       // One line for a run of them by the same member.
@@ -592,7 +592,7 @@ export async function loadAround(cx: ServerCtx, room: string, ch: string, id: st
   const r = await cx.db.get('events', id)
   if (!r || r.room !== room || r.chan !== ch || (await cx.rootOf(r))) return null
   if (!cx.canViewCh(room, ch)) return null
-  // A transferred copy shows only its archive (spec 3.8 step 6), at a jump too.
+  // A transferred copy shows only its archive, at a jump too.
   if (cx.sumOf(room).upgraded) {
     const keep = await cx.archiveKeep(room, cx.rooms.get(room)?.next)
     if (keep && !keep(r)) return null
@@ -604,7 +604,7 @@ export async function loadAround(cx: ServerCtx, room: string, ch: string, id: st
   )
 }
 
-// Pinned messages of a channel, newest pin first (spec 3.5: the latest visible pin by someone
+// Pinned messages of a channel, newest pin first (the latest visible pin by someone
 // with Manage messages in its admission state decides).
 export async function loadPins(cx: ServerCtx, room: string, ch: string) {
   if (!cx.canViewCh(room, ch)) return []
@@ -627,7 +627,7 @@ export async function loadPins(cx: ServerCtx, room: string, ch: string) {
   if (!targets.length) return []
   const shown = await cx.host.display(room, targets)
   const on = targets.filter((_t, i) => shown[i]?.pin?.on && !shown[i]?.hidden)
-  // A transferred copy pins only what its archive shows (spec 3.8 step 6).
+  // A transferred copy pins only what its archive shows.
   const keep = cx.sumOf(room).upgraded ? await cx.archiveKeep(room, cx.rooms.get(room)?.next) : null
   const recs: EventRecord[] = []
   for (const r of await getEvents(cx.db, room, on))

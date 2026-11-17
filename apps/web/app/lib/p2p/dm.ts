@@ -100,7 +100,7 @@ export interface P2pMessage {
   // join or leave line made from a member event. A mention of everyone by someone allowed to.
   system?: { kind: 'join' | 'leave' | 'pin'; ik: string; target?: string | null } | null
   everyone?: boolean
-  // P2P servers: it shows, but its body was purged here and is on its way back (spec 4.3).
+  // P2P servers: it shows, but its body was purged here and is on its way back.
   unavailable?: boolean
   // P2P servers: a thread reply's root; on a top-level message, its thread's replies that show
   // and when the last one was sent.
@@ -109,11 +109,11 @@ export interface P2pMessage {
   lastReply?: number
   // Names a thread root that isn't one here: shown in the channel, and starts no thread.
   noThread?: true
-  // P2P servers: hidden, sent around the time its author was removed (spec 3.5, 8.2).
+  // P2P servers: hidden, sent around the time its author was removed.
   removed?: boolean
-  // P2P servers: ours, hidden by slow mode (spec 3.5): a line says so, to us only.
+  // P2P servers: ours, hidden by slow mode: a line says so, to us only.
   slowHidden?: boolean
-  // P2P servers: from the copy this one was transferred from (spec 3.8), shown read-only.
+  // P2P servers: from the copy this one was transferred from, shown read-only.
   archived?: boolean
 }
 

@@ -484,7 +484,7 @@ describe('p2p transfer', () => {
     expect([...kept.keys()].filter(k => k.startsWith('d:'))).toEqual([])
   })
 
-  test('older peers still get and send a single base64 message, capped', async () => {
+  test('older peers get and send a single base64 message, capped', async () => {
     const { m, x } = manager()
     await m.storeFile('f', new File([bytes(10)], 'f.bin', { type: 'a/b' }), null)
     const { client, host } = pipe()

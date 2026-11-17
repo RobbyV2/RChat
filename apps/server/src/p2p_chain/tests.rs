@@ -191,7 +191,7 @@ const VECTORS: &str = include_str!("../../../../assets/p2p_chain_vectors.json");
 fn every_chain_vector_reads_as_the_client_reads_it() {
     let Vectors { cases, bind2: _ } = serde_json::from_str(VECTORS).expect("vectors");
     assert!(cases.len() >= 35, "{}", cases.len());
-    // review n-k-server r1 m1: the instance's verify_strict and the client give one answer
+    // the instance's verify_strict and the client give one answer
     let case = |name: &str| cases.iter().find(|c| c.name == name).expect(name);
     let torsion = case("a signature whose R has a small-order part is refused");
     assert_eq!(
@@ -417,7 +417,7 @@ fn the_test_keys_are_the_generators() {
 }
 
 #[test]
-fn r8_chain() {
+fn a_chain_reads_its_heads_and_refuses_bad_records() {
     let Vera {
         ik,
         rk,

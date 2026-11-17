@@ -1,4 +1,4 @@
-// The same arrivals with one delta() per arrival (today's host) and with one per batch (D2 item 1):
+// The same arrivals with one delta() per arrival (as the host does) and with one per batch:
 // a replica restored from the first k records, then `--arrivals` S events through
 // AclRoom.receiveAcl. `--reps` alternates the two modes, each on a fresh replica.
 // Usage: bun apps/web/scripts/p2p_bench/batch.ts [--events N] [--members M] [--arrivals 30]

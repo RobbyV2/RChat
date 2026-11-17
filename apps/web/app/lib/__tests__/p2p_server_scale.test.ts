@@ -220,8 +220,8 @@ describe('gossip at scale', () => {
           }
         }
         // Sessions with room links stay within the budget; the rest are dials of the last
-        // period whose answer is pending, and close if they find no use. Before the fix the
-        // owner held a session with everyone online (29 to 48).
+        // period whose answer is pending, and close if they find no use: the
+        // owner holds no session with everyone online.
         const sizes = [...sim.nodes.values()].map(n => n.sessions.size)
         expect(sizes.reduce((a, b) => a + b, 0) / sizes.length).toBeLessThanOrEqual(GOSSIP.perRoom)
         expect(worst).toBeLessThanOrEqual(GOSSIP.perRoom + DIALS)

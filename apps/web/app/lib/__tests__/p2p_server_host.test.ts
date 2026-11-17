@@ -4,7 +4,7 @@ import { applySummary, emptySummary, type Summary } from '../p2p/acl/summary'
 import { LocalHost, WorkerHost, type AclHost, type WorkerLike } from '../p2p/resolve_host'
 import { ServerWorld } from './p2p_server_world'
 
-// The evaluator off the page's thread (spec 5.7: in a worker): the same events give the same
+// The evaluator off the page's thread (in a worker): the same events give the same
 // verdicts, records and state in the worker, in this thread and after a cold start from the
 // records; replies are deltas the page applies to its copy; a failing worker loses its rooms and
 // the page loads them again into this thread.

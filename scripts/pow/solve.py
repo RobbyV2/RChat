@@ -1,4 +1,4 @@
-"""Reference solver for scripts (spec "The puzzle"). Standard library only.
+"""Reference solver for scripts. Standard library only.
 
 python3 -I scripts/pow/solve.py checks it against crates/pow/tests/vectors.json.
 """

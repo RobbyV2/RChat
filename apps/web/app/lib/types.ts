@@ -552,7 +552,7 @@ export interface SiteSettings {
   profanity_strict_file_names?: boolean
   asset_previews: boolean
   asset_uploads: boolean
-  // Absent on servers before 0.3.0, where P2P attachments are always on.
+  // A server that doesn't send it has P2P attachments on.
   p2p_attachments: boolean
   guests_enabled: boolean
   // Absent on servers before webhooks: off.
@@ -650,7 +650,7 @@ export type CallPhase = 'ringing' | 'active' | 'ended'
 export type CallKind = 'rtc' | 'p2p'
 
 // Whether a hoster is online and which of their files we can read. Peer ids are never shared
-// this way any more; a download asks for one with `p2p_peer`.
+// this way; a download asks for one with `p2p_peer`.
 export interface P2pAvailability {
   ids: string[]
   online: boolean
@@ -958,7 +958,7 @@ export type Theme = 'dark' | 'light'
 export interface InstanceFeatures {
   guests: boolean
   uploads: boolean
-  // Absent before 0.3.0.
+  // A server that doesn't send it has P2P attachments on.
   p2p_attachments?: boolean
   previews: boolean
   identity_assertions: boolean
@@ -971,10 +971,10 @@ export interface InstanceLimits {
   media_retention_secs: number
   page_size: number
   assertion_ttl_secs: number
-  // Whether the instance limits how much is kept longer than the default lifetime. Absent before
-  // those limits.
+  // Whether the instance limits how much is kept longer than the default lifetime. Not every
+  // server sends it.
   upload_kept_limited?: boolean
-  // P2P_LIMITS: `local.<section>.<key>` and `agreed.<key>` to a number. Absent before 0.4.0.
+  // P2P_LIMITS: `local.<section>.<key>` and `agreed.<key>` to a number. Not every server sends it.
   p2p?: Record<string, number>
 }
 
@@ -997,7 +997,7 @@ export interface InstanceInfo {
   ice?: InstanceIce
   features: InstanceFeatures
   limits: InstanceLimits
-  // Absent before 0.4.0.
+  // Not every server sends it.
   e2ee?: boolean
   sfu?: boolean
   widgets?: boolean

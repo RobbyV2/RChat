@@ -16,7 +16,7 @@ const WHO: Record<Levels, LimitRow['who']> = {
   'site, server, app': 'operator, owner, author',
 }
 
-// The limits table of the Apps spec, section 5.9.1: env name, default, range, levels.
+// The limits table: env name, default, range, levels.
 const TABLE: [string, number, number, number, Levels][] = [
   ['APP_FILE_MAX_MIB', 25, 1, 512, 'site, server, app'],
   ['APP_MEMBER_MIB', 2048, 0, 1_048_576, 'site, server, app'],
@@ -112,7 +112,7 @@ describe('the limit rows', () => {
       expect(row(key)).toMatchObject({ env, def })
   })
 
-  test('the six rows of revision 3, each with who may change it', () => {
+  test('the scan, pacer, late-sign, recheck-write, trigger-queue and per-DM rows, each with who may change it', () => {
     const added: [LimitKey, string, number, LimitRow['who']][] = [
       ['changes_scan', 'APP_CHANGES_SCAN', 5000, 'operator'],
       ['pacer_slice', 'APP_PACER_SLICE', 250, 'operator'],
@@ -124,7 +124,7 @@ describe('the limit rows', () => {
     for (const [key, env, def, who] of added) expect(row(key)).toMatchObject({ env, def, who })
   })
 
-  test('the recheck row keeps its key and numbers and has the words of revision 3', () => {
+  test('the recheck row: its key, numbers and words', () => {
     expect(row('recheck_max')).toEqual({
       key: 'recheck_max',
       env: 'APP_RECHECK_MAX',

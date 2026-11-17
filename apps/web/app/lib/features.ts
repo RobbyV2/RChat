@@ -55,7 +55,7 @@ const joiningOf = (value: unknown): ServerJoining => {
 }
 
 // The settings as clients use them: missing or malformed switches read as an older instance's.
-// Servers before 0.3.0 send no p2p_attachments: P2P was always on there.
+// A server that sends no p2p_attachments has P2P attachments on.
 export const siteSettings = (s: SiteSettings): SiteSettings => {
   const sent = s as unknown as Record<string, unknown>
   const switches = Object.fromEntries(

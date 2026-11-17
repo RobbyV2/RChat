@@ -413,7 +413,7 @@ fn grace_0_restricts_at_once() {
 }
 
 #[test]
-fn met_or_no_longer_required_the_row_goes_and_the_restriction_with_it() {
+fn met_or_not_required_the_row_goes_and_the_restriction_with_it() {
     let rows = row(0, None);
     let codes = Account {
         totp_on: true,
@@ -429,7 +429,7 @@ fn met_or_no_longer_required_the_row_goes_and_the_restriction_with_it() {
 }
 
 #[test]
-fn temporary_passwords_follow_design_c() {
+fn a_temporary_password_must_be_changed_or_is_in_grace() {
     let t = temp(Some(100 * H));
     let strict = judge(&ctl(), &t, 0, &none());
     assert!(strict.restricted);

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package rchat.fed.v1;
 
-// Feature `directory` (0.9.0): the callee's public servers, as its guests see them.
+// Feature `directory`: the callee's public servers, as its guests see them.
 service DirectoryService {
   rpc Search(SearchRequest) returns (SearchResponse);
 }

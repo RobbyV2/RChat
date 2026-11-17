@@ -601,7 +601,7 @@ describe('derivation inputs: increased contrast and saturation', () => {
     expect(outlineWidth('2')).toBe(1)
   })
 
-  test("the increased-contrast tones equal the personal spec's vectors", () => {
+  test('the increased-contrast tones equal the vectors', () => {
     expect(MORE.light).toEqual((vectors.more_contrast as unknown as typeof MORE).light)
     expect(MORE.dark).toEqual((vectors.more_contrast as unknown as typeof MORE).dark)
   })

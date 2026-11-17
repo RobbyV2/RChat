@@ -9,7 +9,7 @@ import type { Cause, Drops, Plan, ProofCand, Purgeable } from './acl_room'
 // What storage drops now, beyond what it dropped before: the orphan rule's ACL events (held
 // descendants: the ACL events that stay and visible content), and content with its header:
 // past its device's fork point (but the pair defining it), past a revocation's watermark, or
-// hidden and citing a dropped event (controller ruling). `mine`: this device, whose own events
+// hidden and citing a dropped event. `mine`: this device, whose own events
 // stay (it cites them).
 export function drops(cx: RoomCtx, mine?: string): Drops {
   const ix = cx.r.acl.ix
@@ -49,7 +49,7 @@ export function drops(cx: RoomCtx, mine?: string): Drops {
   return { acl, content }
 }
 
-// Evidence worth a proof (spec 2.3, 4.1), for the devices with new events since the last call
+// Evidence worth a proof, for the devices with new events since the last call
 // (or `devs`): the held pair with the lowest fork point against each, when a proof of it that
 // `q` posts now would be admitted (it lowers F below an ACL event of the device there).
 export function proofs(
@@ -87,7 +87,7 @@ export function proofs(
   return out
 }
 
-// Spec 4.3: the causes hiding held content that still has its body (of `only`, when given),
+// The causes hiding held content that still has its body (of `only`, when given),
 // with S2 and S3 worked out once per state.
 export function purgeable(cx: RoomCtx, only?: readonly string[]): Purgeable {
   const ix = cx.r.acl.ix
@@ -158,7 +158,7 @@ export function purgeable(cx: RoomCtx, only?: readonly string[]): Purgeable {
 }
 
 // Content held without its body (purged, or evicted for space) that shows now: its body is
-// wanted from peers (spec 4.3 restore).
+// wanted from peers.
 // An edit is wanted only while its target shows; a body evicted for space only when viewed (the
 // page asks for those itself).
 export function wanted(cx: RoomCtx): string[] {
@@ -230,7 +230,7 @@ export function evict(cx: RoomCtx, id: string, on: boolean) {
   }
 }
 
-// Moderators' redactions `me` may acknowledge with a mark (spec 4.3 S2; controller ruling): each
+// Moderators' redactions `me` may acknowledge with a mark (S2): each
 // hides its target here, isn't acknowledged yet, isn't by `me` or of `me`'s message, `me` hasn't
 // named it in a mark, and at least 2 members other than its two authors could acknowledge it.
 export function acks(cx: RoomCtx, me: string): string[] {

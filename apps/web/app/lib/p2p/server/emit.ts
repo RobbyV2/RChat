@@ -74,9 +74,9 @@ export async function emitNow(
   if (cx.readOnly(room)) throw new ServerError(cx.readOnly(room) as string)
   const rt = cx.ensureRt(room)
   await rt.loading
-  // Spec 3.9: a device whose history conflicts with another copy of it stops signing.
+  // A device whose history conflicts with another copy of it stops signing.
   if (rt.conflict) throw new ServerError(CONFLICT_TEXT)
-  // Spec 3.8: a copy transferred to a new one takes nothing but leaving.
+  // A copy transferred to a new one takes nothing but leaving.
   if (cx.sumOf(room).upgraded && t !== 'leave') throw new ServerError(TRANSFERRED_TEXT)
   const dev = keyId(author.dk.pk)
   const L = opts.L ?? 'a'
@@ -90,7 +90,7 @@ export async function emitNow(
     // Never sign from a position without this device's last ACL event (a room removed here
     // and joined again, a backfill under way): that would fork the device.
     if ((chain?.aprev ?? plan.aprev) !== plan.aprev) {
-      // Spec 3.9: this device's key signed past what this device stored: another copy of it.
+      // This device's key signed past what this device stored: another copy of it.
       if (plan.aclSeq > (chain?.seq ?? -1)) {
         cx.conflicted(room)
         throw new ServerError(CONFLICT_TEXT)
@@ -98,7 +98,7 @@ export async function emitNow(
       if (chain?.aprev) rt.need.add(chain.aprev)
       throw new ServerError(SYNC_TEXT)
     }
-    // W4 (spec 4.1): a mark at least every 500 content events of this device.
+    // W4: a mark at least every 500 content events of this device.
     if (L === 'c' && Math.max(chain?.seq ?? -1, plan.seq) + 1 - plan.aclSeq > AGREED.w4) {
       const mp = await cx.host.plan(room, { t: 'mark', L: 'a', a: cx.me, dev })
       await cx.emitOne(room, 'mark', {}, 'a', chain, mp)
@@ -135,7 +135,7 @@ export async function emitOne(
   // The wire checks peers apply (a strike there): one of ours that fails them is never kept.
   const v = validate2(wire, room, cx.sumOf(room).rules ?? RULES_VERSION)
   if (!v.ok) throw new ServerError(v.why === 'size' ? TOO_BIG_TEXT : CANT_TEXT)
-  // Our own content needs room too (spec 4.2): evicted for in the stated order.
+  // Our own content needs room too: evicted for in the stated order.
   for (let full = L === 'c' ? await cx.contentFull(room, wire) : null; full;) {
     if (!(await cx.evictForSpace(room, sizeOfWire(wire), full === 'total'))) break
     full = await cx.contentFull(room, wire)
@@ -195,7 +195,7 @@ export async function reload(cx: ServerCtx, room: string) {
   if (r) await cx.load(r)
 }
 
-// A new server (spec 3.8): its owners are fixed in its genesis. With co-owners it takes two
+// A new server: its owners are fixed in its genesis. With co-owners it takes two
 // rounds over a session with each (each agrees when asked, answerCoOwner): the creator assembles the
 // whole genesis content without the owners' device certificates, naming each co-owner's
 // device of that session, and sends it; each co-owner checks it and returns its certificate
@@ -326,7 +326,7 @@ export function answerBundle(
   void s.send({ t: 'gbundled', room, ok: !!b, ...(b ? { b } : {}) }).catch(() => {})
 }
 
-// Contacts asking to list us as co-owner of a server they are creating (spec 8.2).
+// Contacts asking to list us as co-owner of a server they are creating.
 export function coOwnerAsks(cx: ServerCtx) {
   return [...cx.coAsks].map(([key, a]) => ({ key, from: a.from, name: a.name }))
 }
@@ -362,8 +362,7 @@ export function setSystem(cx: ServerCtx, room: string, sys: SystemContent) {
   return cx.settings(room, { system: sys })
 }
 
-// `restrictView`: only owners, Manage channels and overwrites that allow it may view it (spec
-// 1.4; the editor for overwrites is Task 23's).
+// `restrictView`: only owners, Manage channels and overwrites that allow it may view it.
 export function addChannel(
   cx: ServerCtx,
   room: string,
@@ -395,7 +394,7 @@ export function editChannel(cx: ServerCtx, room: string, id: string, patch: Chan
   return cx.emit(room, 'channel', () => next)
 }
 
-// A channel overwrite (spec 1.4 `chperm`): `subj` is `r:<role>` or `u:<ik>`; allow and deny 0
+// A channel overwrite (`chperm`): `subj` is `r:<role>` or `u:<ik>`; allow and deny 0
 // clear it.
 export function setOverwrite(
   cx: ServerCtx,

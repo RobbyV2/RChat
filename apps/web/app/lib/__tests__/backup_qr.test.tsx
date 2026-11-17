@@ -21,7 +21,7 @@ describe('backup phrase QR', () => {
     ['short words', W],
     ['the longest words', LONG],
   ] as const) {
-    test(`the QR with its logo hole still decodes to the payload (${name})`, () => {
+    test(`the QR with its logo hole decodes to the payload (${name})`, () => {
       const m = qrMatrix(words)
       const scale = 4
       const side = m.size * scale

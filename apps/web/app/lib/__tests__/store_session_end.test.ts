@@ -149,7 +149,7 @@ test('an upload that answers after the session ended is never posted', async () 
   expect(st().error).toBeNull()
 })
 
-test('reactions still queued when the session ends are never sent, nor a failure shown', async () => {
+test('reactions queued when the session ends are never sent, nor a failure shown', async () => {
   signedIn('alice')
   let open = () => {}
   gate = new Promise<void>(r => {

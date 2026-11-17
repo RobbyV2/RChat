@@ -4,7 +4,7 @@
 // images, link targets, mentions and channel links, custom emoji codes. Hidden text is dropped by
 // its position in the source: a character counts only if its offset, mapped back through the
 // spoiler markers, lies outside every span `spoilerSpans` hides. So text hidden by the previews
-// (and by the view once its 0.4.0 fix hides the same spans) never cues, and nothing is rewritten
+// never cues, and nothing is rewritten
 // before the parse (blanking spoilers first could unclose an HTML comment).
 import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'

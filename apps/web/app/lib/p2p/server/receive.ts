@@ -55,7 +55,7 @@ export function insert(
   return cx.locked(room, () => cx.take(room, id, wire as unknown as WireV2, receivedAt, true))
 }
 
-// A peer's event (now, or released once its parents are here). Spec 3.9: one signed with this
+// A peer's event (now, or released once its parents are here). One signed with this
 // device's key (checked by `check`), admitted and stored here, past this device's own chain:
 // another copy of this device (a profile restored from a backup) signs too.
 export async function decidePeer(cx: ServerCtx, room: string, id: string, w: WireV2, now: number) {
@@ -94,7 +94,7 @@ export async function take(
   await rt.loading
   const have = await cx.db.get('events', id)
   if (have) {
-    // A purged body that shows again, fetched back (spec 4.3).
+    // A purged body that shows again, fetched back.
     if (
       have.purged &&
       (rt.want.has(id) || rt.viewed.has(id)) &&
@@ -109,7 +109,7 @@ export async function take(
     }
     return { status: 'dup', rec: have }
   }
-  // Dropped here (spec 2.3, 4.2): an ACL event is taken again only when something cites it.
+  // Dropped here: an ACL event is taken again only when something cites it.
   const gone = await cx.db.get('dropped', id)
   if (gone?.room === room && !(gone.layer === 'a' && (rt.waits.has(id) || rt.need.has(id)))) {
     if ((await cx.deps.store.room(room))?.missing.includes(id))
@@ -152,7 +152,7 @@ export function reject(cx: ServerCtx, room: string, id: string, why: string): In
   return { status: 'rejected', why }
 }
 
-// The pending store (spec 4.2): bounded per room; the oldest goes first.
+// The pending store: bounded per room; the oldest goes first.
 export function park(cx: ServerCtx, room: string, id: string, w: WireV2, missing: string[]) {
   const rt = cx.ensureRt(room)
   if (rt.pending.has(id)) return
@@ -221,7 +221,7 @@ export async function decide(
   retried = false
 ): Promise<Inserted> {
   const rt = cx.ensureRt(room)
-  // Someone else's content past its share of the budgets (spec 4.2): not now, no strike.
+  // Someone else's content past its share of the budgets: not now, no strike.
   if (
     w.ev.L === 'c' &&
     w.ev.a !== cx.me &&
@@ -316,7 +316,7 @@ export function evictBelow(cx: ServerCtx, room: string, rec: EventRecord) {
   if (at !== undefined && rec.sortKey < at) starts.delete(rec.sender)
 }
 
-// Purges at arrival (spec 4.3): a counted redaction by its target's author strips the target at
+// Purges at arrival: a counted redaction by its target's author strips the target at
 // once, asked when the redaction or the target arrives, whichever comes last (any such
 // redaction, whatever else came first); content of someone out of the server whose cause is
 // already due goes at once too. A moderator's redaction we applied gets acknowledged.
@@ -399,7 +399,7 @@ export async function contentFull(
   return null
 }
 
-// The hold store (spec 2.1): admitted, dated more than 5 minutes ahead of our clock; kept
+// The hold store: admitted, dated more than 5 minutes ahead of our clock; kept
 // until our clock reaches it, at most SERVER.heldPerDevice per device.
 export function hold(cx: ServerCtx, room: string, id: string, w: WireV2): Inserted {
   const rt = cx.ensureRt(room)
@@ -515,7 +515,7 @@ export async function stored(cx: ServerCtx, room: string, added: Inserted[]) {
         .catch(() => {})
     }
   if (!news.length) return cx.changed(room)
-  // Spec 3.8: an old copy counts and announces nothing new (what shows of it is its archive).
+  // An old copy counts and announces nothing new (what shows of it is its archive).
   if (s.upgraded) return cx.changed(room)
   const shown = await cx.host.display(
     room,

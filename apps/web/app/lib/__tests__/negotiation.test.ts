@@ -283,9 +283,9 @@ describe('p2p slots', () => {
     })
   })
 
-  test("a 0.2.0 peer's two-track call maps to the mic and camera", () => {
+  test("a legacy peer's two-track call maps to the mic and camera", () => {
     expect(slotLayout(['audio', 'video'], true)).toEqual({ mic: 0, cam: 1 })
-    // Answering a 0.2.0 offer: the two offered m-lines first, then the
+    // Answering a two-track offer: the two offered m-lines first, then the
     // tracks it didn't offer, which never get negotiated.
     expect(slotLayout(['audio', 'video', 'audio', 'video'], true)).toEqual({
       mic: 0,

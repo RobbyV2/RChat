@@ -117,7 +117,7 @@ describe('media / embeds patching via patchMessage', () => {
     expect(st().messages.c1[0].embeds.map(e => e.ord)).toEqual([0])
   })
 
-  test('embeds_resolved before the message is inserted still lands on the later insert', () => {
+  test('embeds_resolved before the message is inserted lands on the later insert', () => {
     useStore.setState({ messages: { c1: [msg(10)] }, view: viewing })
     dispatch({ type: 'embeds_resolved', ...scoped, message_id: 80, embeds: [embed(0)] })
     dispatch({ type: 'message', ...scoped, message: msg(80, { channel_id: 1 }) })
@@ -170,7 +170,7 @@ describe('presence_changed', () => {
   })
 })
 
-describe('site-wide presence (regression guard: the reducer already followed server counts)', () => {
+describe('site-wide presence', () => {
   test('joins and leaves follow the online count the server sends, whatever is open', async () => {
     useStore.setState({
       me: me('alice'),

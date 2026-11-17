@@ -107,7 +107,7 @@ describe('engine', () => {
     expect(JSON.stringify(a.snapshot())).toBe(JSON.stringify(b.snapshot()))
   })
 
-  test('reduced motion: a still scatter that never moves', () => {
+  test('reduced motion: a scatter that never moves', () => {
     const w = new FxWorld(800, 600, DESKTOP, mulberry32(5))
     w.start({ ...rain, still: true })
     w.step(1 / 60)
@@ -327,7 +327,7 @@ describe('the shared throttle', () => {
   })
 })
 
-describe('a burst that could not spawn in full still ends', () => {
+describe('a burst that could not spawn in full ends', () => {
   const burst = () => effectSpec('fireworks', {})
   for (const step of [1, 2] as const)
     test(`throttled to step ${step}: the world goes idle`, () => {

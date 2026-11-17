@@ -12,7 +12,7 @@ import {
   type Rec,
 } from '../p2p/acl/rules'
 
-// Bit(R, b) and Pos(R) read per chain (spec §5.4 A) against their definitions (§3.2, §1.5): the
+// Bit(R, b) and Pos(R) read per chain against their definitions: the
 // bit is set iff a live setter has every effective clear of it in its past; the position is the
 // best of the maximal counted writes. Random DAGs of concurrent toggles and moves (a single chain,
 // a DAG over three devices, two lanes that never see each other, two lanes that sometimes do),

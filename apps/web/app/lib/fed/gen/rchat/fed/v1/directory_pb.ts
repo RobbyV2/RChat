@@ -103,7 +103,7 @@ export const DirectoryServerSchema: GenMessage<DirectoryServer> = /*@__PURE__*/
   messageDesc(file_rchat_fed_v1_directory, 2);
 
 /**
- * Feature `directory` (0.9.0): the callee's public servers, as its guests see them.
+ * Feature `directory`: the callee's public servers, as its guests see them.
  *
  * @generated from service rchat.fed.v1.DirectoryService
  */

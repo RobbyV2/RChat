@@ -56,7 +56,7 @@ fn one_network_gets_at_most_its_share_of_key_fetches_then_a_trickle() {
 }
 
 #[test]
-fn six_networks_of_five_hellos_no_longer_stop_an_honest_new_instance() {
+fn six_networks_of_five_hellos_do_not_stop_an_honest_new_instance() {
     let mut g = KeyFetchGuard::default();
     for n in 0..6 {
         for i in 0..5 {

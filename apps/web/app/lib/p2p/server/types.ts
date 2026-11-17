@@ -26,11 +26,11 @@ import type { VoiceLimits, VoiceUser } from '../voice'
 import type { Dms, P2pMessage } from '../dm'
 import { clip } from '../rate'
 
-// P2P servers (spec p2p-acl-spec §1 to §4): groups whose membership, permissions, channels and
+// P2P servers: groups whose membership, permissions, channels and
 // messages live only on their members' devices. Every event is a signed v2 event of one of two
 // layers: ACL events (membership, roles, channels, settings) form a DAG every member holds
 // whole; content events (messages) hang off an ACL position. The evaluator (acl_room.ts, in a
-// worker in the browser) decides every event (spec §2.1: admitted, rejected, pending, held) and
+// worker in the browser) decides every event (admitted, rejected, pending, held) and
 // works out the current state and what each message shows; this module stores, syncs and serves
 // events, builds our own, and keeps the page's mirror of the state. Rooms sync over the same
 // sessions as DMs, with their own message types (prefix `s`), on at most 8 links per room
@@ -96,7 +96,7 @@ export interface InviteCode {
   v: 1
   room: string
   name: string
-  // The code's event id (spec 8.2: links carry the code's id and its secret).
+  // The code's event id (links carry the code's id and its secret).
   code?: string
   secret: string
   peers: string[]
@@ -187,19 +187,19 @@ export interface MemberView {
   owner: boolean
   online: boolean
   contact: boolean
-  // We outrank them (kick and ban need it, spec 1.6).
+  // We outrank them (kick and ban need it).
   below: boolean
-  // Invited, and their join waits for a third member (spec 9 rule 14); invited only by us.
+  // Invited, and their join waits for a third member; invited only by us.
   waits: boolean
   myInvite: boolean
-  // Banned, and our rank is at least that of every ban of them (spec 8.2 unban).
+  // Banned, and our rank is at least that of every ban of them (unban).
   unban: boolean
   // Their roles, the highest first, and the highest (the member list groups by it).
   roles: string[]
   top: string | null
 }
 
-// A role (spec 1.4, 1.6), and whether we outrank it: we may change, give and take it.
+// A role, and whether we outrank it: we may change, give and take it.
 export interface RoleView {
   id: string
   name: string
@@ -208,19 +208,19 @@ export interface RoleView {
   bits: number
   holders: number
   below: boolean
-  // A channel's overwrites hold its holders back: taking it away needs Manage channels (spec 1.4).
+  // A channel's overwrites hold its holders back: taking it away needs Manage channels.
   held: boolean
 }
 
-// A channel we may view, what we may do there (spec 1.4, Discord order), whether slow mode leaves
-// us out (spec 3.5), and its overwrites by subject.
+// A channel we may view, what we may do there (Discord order), whether slow mode leaves
+// us out, and its overwrites by subject.
 export type ChannelView = { id: string } & ChannelContent & {
     send: boolean
     exempt: boolean
     over: Record<string, OverSum>
   }
 
-// A moderation action waiting for a fresh heads exchange (spec 8.2).
+// A moderation action waiting for a fresh heads exchange.
 export interface ModView {
   id: number
   // What it does ("Kick"), and to whom.
@@ -228,7 +228,7 @@ export interface ModView {
   who: string | null
 }
 
-// Members a removal of ours took along (spec 8.2), by the member we removed.
+// Members a removal of ours took along, by the member we removed.
 export interface ReachedView {
   by: string
   lost: string[]
@@ -269,20 +269,20 @@ export interface ServerView {
   voice: Record<string, VoiceUser[]>
   mods: ModView[]
   reached: ReachedView[]
-  // Our denies the current state doesn't count that we may still make (spec 9 rule 18, I2).
+  // Our denies the current state doesn't count that we may still make.
   reapply: Reapply[]
-  // Why our join waits (spec 9 rule 14), whether this device conflicts with another copy of it
-  // (spec 3.9), and, while the ACL syncs, how many changes we hold (spec 9 rule 19).
+  // Why our join waits, whether this device conflicts with another copy of it, and, while the
+  // ACL syncs, how many changes we hold.
   joinWait: string | null
   conflict: boolean
   syncing: number | null
-  // Spec 3.8: transferred to a new copy (read-only now), more than one upgrade (the user picks),
+  // Transferred to a new copy (read-only now), more than one upgrade (the user picks),
   // the copy we followed, and the copy a new one follows.
   upgraded: boolean
   disputed: boolean
   next: string | null
   prev: string | null
-  // The new owner's carry-over while it isn't done (spec 3.8), and how the member list the new
+  // The new owner's carry-over while it isn't done, and how the member list the new
   // owner carried over differs from the old copy's.
   carry: { state: Carry['state']; why: string | null } | null
   migrateDiff: { added: string[]; removed: string[] } | null
@@ -342,7 +342,7 @@ export const MENTION_EVERYONE = /(^|[^\p{L}\p{N}\p{M}_])@everyone(?![\p{L}\p{N}\
 export interface EmitOpts {
   L?: 'a' | 'c'
   to?: string
-  // A position to sign at instead of the heads (spec 3.9).
+  // A position to sign at instead of the heads.
   ap?: string[]
 }
 
@@ -379,11 +379,11 @@ export const systemRow = (rec: EventRecord, ik: string): P2pMessage => ({
   call: null,
 })
 
-// Entries per `migrate` chunk (spec 3.8: chunks within the 16 KiB of a migrate event), and the
+// Entries per `migrate` chunk (chunks within the 16 KiB of a migrate event), and the
 // ACL events of a new owner's carry-over a member acknowledges with a mark.
 export const MIGRATE_PER = LOCAL.server.migratePer
 
-// A new copy links with the old copy's members this long after we joined it (spec 3.8).
+// A new copy links with the old copy's members this long after we joined it.
 export const SETTLE_MS = LOCAL.server.settleMs
 
 export const ARCHIVE_LINKS = {
@@ -425,7 +425,7 @@ export const RESIGN_ACL = [
   'code_revoke',
 ]
 
-// A server in the lost-device preview (spec 8.2): what the device did, when we received each of
+// A server in the lost-device preview: what the device did, when we received each of
 // its ACL events, and whether this browser's key there came after the trusted point (what it
 // signed that stops counting is signed again from the new key).
 export interface LostRoom extends Disowned {
@@ -465,7 +465,7 @@ export type ChannelPatch = {
 
 export const ROLE_NAME_MAX = LOCAL.server.roleNameMax
 
-// Positions are absolute (spec 1.6): a new role goes below the lowest, leaving room between, else
+// Positions are absolute: a new role goes below the lowest, leaving room between, else
 // into a gap below `cap` (our own top role's position), else (owners) above every role; never onto a
 // position a role has. Null: no room below `cap`.
 export const ROLE_STEP = LOCAL.server.roleStep

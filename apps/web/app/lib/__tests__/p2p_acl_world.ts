@@ -21,12 +21,12 @@ import {
   type AclEv,
 } from '../p2p/acl/rules'
 import type { Agreed } from '../p2p/limits'
-import * as M from './acl_model/model'
+import * as M from './acl_model_rules2/model'
 // the model's orphan rule (props.ts, vendored with the model)
-import { orphanDrops as modelOrphanDrops } from './acl_model/props'
-import type { World as ModelWorld } from './acl_model/world'
+import { orphanDrops as modelOrphanDrops } from './acl_model_rules2/props'
+import type { World as ModelWorld } from './acl_model_rules2/world'
 
-// Test bridge between the executable reference model (acl_model/, a copy of notes/acl-model) and
+// Test bridge between the executable reference model (acl_model_rules2/) and
 // the production ACL modules: event formats both ways, a production world with the model's
 // World API, and checks that replay a universe through both and compare every verdict, every
 // admission record and state, and the final state.
@@ -320,7 +320,7 @@ export function prodReplica(mw: ModelWorld): AclReplica {
   return pr
 }
 
-// The orphan rule on the final state (§2.3), through both: the same drops and the same drops
+// The orphan rule on the final state, through both: the same drops and the same drops
 // without headers, and the kept events with the kept headers as ghosts evaluate alike.
 function compareOrphans(pr: AclReplica, mr: M.Replica, out: string[]) {
   const order = [...pr.order]
@@ -422,7 +422,7 @@ export class AclWorld {
     }
     return B
   }
-  // The events an honest client never cites in its own state (revision 7, §1.2): candidates, X
+  // The events an honest client never cites in its own state: candidates, X
   // and Tail events, other than upgrades.
   excluded(): Set<string> {
     const st = this.ref.state()
@@ -441,7 +441,7 @@ export class AclWorld {
     for (const id of out) if (this.ref.ev(id).t === 'upgrade') out.delete(id)
     return out
   }
-  // An honest client's parents (§1.2): the heads of the events it may cite, at most `ap` of
+  // An honest client's parents: the heads of the events it may cite, at most `ap` of
   // them (the most recently admitted), with its device's own latest event in their closure.
   capHeads(dev: string): string[] {
     let hs = this.heads()

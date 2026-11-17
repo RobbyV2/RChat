@@ -1,6 +1,6 @@
 // The index's memory: bytes held by the ancestor bitsets (Ix.anc), and for each event the lowest
 // index not among its ancestors (lo), so what a "prefix plus window" encoding keeping only [lo, i)
-// as bits would hold (D2 item 6). Also the cold replica's heap after a restore.
+// as bits would hold. Also the cold replica's heap after a restore.
 // Usage: bun apps/web/scripts/p2p_bench/ancwin.ts [--events N] [--members M]
 import { AclRoom } from '../../app/lib/p2p/acl_room'
 import { universe } from './gossip'

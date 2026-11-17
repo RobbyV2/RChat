@@ -1829,7 +1829,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_kept_space_reads_full_when_the_largest_upload_no_longer_fits() {
+    async fn the_kept_space_reads_full_when_the_largest_upload_does_not_fit() {
         let (state, path) = temp_state("kept_reads_full").await;
         let state = kept_limit(state, 4);
         let cid = club(&state).await;
@@ -1988,7 +1988,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_limit_at_0_keeps_every_file_and_still_counts_them() {
+    async fn the_limit_at_0_keeps_every_file_and_counts_them() {
         let (state, path) = temp_state("kept_no_limit").await;
         let gib = 1024 * 1024 * KIB;
         let cid = club(&state).await;

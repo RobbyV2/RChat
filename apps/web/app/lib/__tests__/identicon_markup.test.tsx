@@ -10,7 +10,7 @@ const src = (svg: string) =>
 const noop = () => {}
 
 describe('identicon avatar markup', () => {
-  test('the default identicon is unchanged and has no inline background', () => {
+  test('the default identicon is the plain minidenticon and has no inline background', () => {
     const html = renderToStaticMarkup(
       <UserAvatar username="carol" avatarKind="identicon" avatarColor={null} />
     )
@@ -37,7 +37,7 @@ describe('identicon avatar markup', () => {
     expect(html).not.toContain('style=')
   })
 
-  test('a color avatar still shows its color', () => {
+  test('a color avatar shows its color', () => {
     const html = renderToStaticMarkup(
       <UserAvatar username="carol" avatarKind="color" avatarColor="#123456" />
     )

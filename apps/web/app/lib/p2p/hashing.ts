@@ -1,7 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import { b64u, utf8 } from './canonical'
 
-// Block hashing for P2P attachments (note section 5): a file is split into 1 MiB blocks,
+// Block hashing for P2P attachments: a file is split into 1 MiB blocks,
 // `blocks[i] = SHA-256(block i)`, and the root is
 // `h = SHA-256("rchat-p2p-blob1\0" || size (u64, big endian) || blocks...)`. Used by the hash
 // worker and directly where there is no worker (tests).

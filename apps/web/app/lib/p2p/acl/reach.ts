@@ -11,8 +11,8 @@ import {
   type Rec,
 } from './rules'
 
-// The index of a causally closed set of admitted ACL events (spec §5): topological numbering,
-// strict-ancestor bitsets built from `ap`, and one event list per fact key of §3.2.
+// The index of a causally closed set of admitted ACL events: topological numbering,
+// strict-ancestor bitsets built from `ap`, and one event list per fact key.
 
 export const pushM = <K, V>(m: Map<K, V[]>, k: K, v: V) => {
   const a = m.get(k)
@@ -33,7 +33,7 @@ export interface BitW {
   ch?: WChains
 }
 
-// A register's writes as causal chains (§5.4 A): per (author, device), split by the chain cover;
+// A register's writes as causal chains: per (author, device), split by the chain cover;
 // `of` gives each write's chain. Extended as the writes grow.
 export interface WChains {
   k: number
@@ -355,7 +355,7 @@ export class Ix {
   bitCov(l: BitW): boolean[] {
     return this.extendCov(l.w, l.cov)
   }
-  // The chains of a register's writes `ws` (§5.4 A), extended lazily.
+  // The chains of a register's writes `ws`, extended lazily.
   chainsOf(ws: readonly number[], c: WChains): WChains {
     for (; c.k < ws.length; c.k++) {
       const x = ws[c.k]
@@ -403,7 +403,7 @@ export class Ix {
   }
 
   // The events of one (author, device) as chains, extended lazily: on a chain the events in B(d)
-  // are a prefix and those with d in their past a suffix (§5 "Move storms").
+  // are a prefix and those with d in their past a suffix.
   private runM = new Map<string, { k: number; runs: number[][] }>()
   runsOf(key: string): number[][] {
     const l = this.byAD.get(key) ?? EMPTY
@@ -414,7 +414,7 @@ export class Ix {
   }
 
   // Events x with the code in B(x) whose admission state lacks the issuer's Mem or Invite (sticky
-  // code death, §1.5).
+  // code death).
   deathList(code: string): number[] {
     let l = this.deathMemo.get(code)
     if (l) return l

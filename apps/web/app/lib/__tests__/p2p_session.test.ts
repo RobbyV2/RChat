@@ -269,7 +269,7 @@ describe('session', () => {
     expect(got.a[0]).toHaveLength(40_000)
   })
 
-  test('what was sent right before a close of ours still goes out, ahead of the goodbye', async () => {
+  test('what was sent right before a close of ours goes out, ahead of the goodbye', async () => {
     const { sa, sb, got } = pair()
     await settle()
     void sa.send({ t: 'text', body: 'last words' })

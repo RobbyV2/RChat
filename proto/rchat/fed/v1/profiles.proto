@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package rchat.fed.v1;
 
-// Feature `profiles` (0.9.0): public cards of people the caller's users write to.
+// Feature `profiles`: public cards of people the caller's users write to.
 service ProfilesService {
   rpc Get(GetRequest) returns (GetResponse);
   // At most 256 KiB.
@@ -23,7 +23,7 @@ message Profile {
   string username = 1;
   string display_name = 2;
   bytes avatar_sha256 = 3;
-  // Identicon background (N10), `#rrggbb`, when the person has no picture.
+  // Identicon background, `#rrggbb`, when the person has no picture.
   string identicon_bg = 4;
   // Unix seconds of the last change, for caching.
   int64 updated_at = 5;

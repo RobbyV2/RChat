@@ -250,7 +250,7 @@ test('member list, someone blocked, a friend or asking to be one', () => {
   expect(labels(at('bob'))).toEqual([DM, 'Block', COPY])
 })
 
-test('Assign Role is a submenu now (rule 2)', () => {
+test('Assign Role is a submenu', () => {
   state({ owner: true })
   const roles = row(at('bob'), 'Assign Role')
   expect(roles?.action).toBeUndefined()
@@ -393,7 +393,7 @@ test('a home pinned DM', () => {
   expect(row(dmAt(bobDm, 'home'), 'Mark as read')?.disabled).toBe(false)
 })
 
-test('one definition per behaviour: unified icons and danger (rule 2)', () => {
+test('one definition per behaviour: unified icons and danger', () => {
   state({ owner: true, bob: { is_admin: true, perms: Perm.Kick } })
   const list = items(at('bob'))
   const byLabel = (rows: ContextMenuItem[], label: string) => rows.find(i => i.label === label)
@@ -490,7 +490,7 @@ const BAN = "Ban this user? They are removed from the server and can't join agai
 const TRANSFER =
   "Make this member the server admin? You lose your admin rights and can't take them back."
 
-test('each member row does what it did', async () => {
+test('each member row runs its action', async () => {
   state({ siteAdmin: true, bob: { is_admin: true, perms: Perm.Kick } })
   expect(await effects(items(at('bob')))).toEqual([
     [DM, [['startDm', 'bob']]],
@@ -558,7 +558,7 @@ test('each member row does what it did', async () => {
   ])
 })
 
-test('each friend, request and DM row does what it did', async () => {
+test('each friend, request and DM row runs its action', async () => {
   const dave = { username: 'dave', display_name: 'dave' }
   state({ friends: ['dave'] })
   expect(await effects(items(at('dave', 'friend', null)))).toEqual([
@@ -653,7 +653,7 @@ test('a member, friend, request or DM gone before its row runs runs nothing and 
   )
 })
 
-test('a role that can no longer be changed is not changed', async () => {
+test('a role that cannot be changed is not changed', async () => {
   state({ owner: true })
   const [assign] = row(at('bob'), 'Assign Role')!.submenu!
   const calls = recorder()
@@ -663,7 +663,7 @@ test('a role that can no longer be changed is not changed', async () => {
   expect(calls).toEqual([['showToast', "That's no longer available"]])
 })
 
-test('a stale role row runs nothing, a fresh one still does', async () => {
+test('a stale role row runs nothing, a fresh one does', async () => {
   state({ owner: true })
   const [r1, moderator, helper] = row(at('bob'), 'Assign Role')!.submenu!
   const calls = recorder()
@@ -751,7 +751,7 @@ test('moderation is not offered on an author who left', () => {
   expect(row(said(), 'Kick') ?? null).toBeNull()
 })
 
-test('member and DM actions stay out of the palette until it has a target (rule 10)', () => {
+test('member and DM actions stay out of the palette until it has a target', () => {
   state({ siteAdmin: true, owner: true, friends: ['bob'], pinned: [9] })
   useStore.setState({ view: { kind: 'dm', dmId: 9 } })
   const ids = new Set(paletteCommands(paletteCtx(useStore.getState())).map(r => r.id))

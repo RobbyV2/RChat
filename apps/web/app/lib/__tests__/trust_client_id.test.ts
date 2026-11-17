@@ -97,7 +97,7 @@ describe('clientId', () => {
     }
   })
 
-  test('storage that throws still gives an id for this run', () => {
+  test('storage that throws gives an id for this run', () => {
     const broken = {
       get: () => {
         throw new Error('denied')

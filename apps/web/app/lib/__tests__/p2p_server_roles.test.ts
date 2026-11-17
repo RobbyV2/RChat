@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { AclWorld, devOwner, diffProdWorld, TestReplica, toModel } from './p2p_acl_world'
 import { AGREED } from '../p2p/limits'
-import * as M from './acl_model/model'
+import * as M from './acl_model_rules2/model'
 import {
   bodies,
   deliver,
@@ -38,9 +38,9 @@ import { evalSummary } from './p2p_acl_world'
 import { ServerWorld } from './p2p_server_world'
 import { applySummary, diffSummary, emptySummary, fromStored, toStored } from '../p2p/acl/summary'
 
-// Roles and moderation in P2P servers (Task 23) on the production ACL modules: the rank rules,
-// races between moderation and role changes, channel registers, slow mode (spec 3.5) and the
-// view gate (spec 3.7).
+// Roles and moderation in P2P servers on the production ACL modules: the rank rules,
+// races between moderation and role changes, channel registers, slow mode and the
+// view gate.
 
 const world = () => {
   const w = new AclWorld({ model: false, agreed: AGREED })
@@ -60,7 +60,7 @@ const F = (w: AclWorld) => w.state().facts
 const verdict = (w: AclWorld, dev: string, t: string, c: Record<string, unknown>) =>
   w.act(dev, t, c).v.s
 
-describe('the rank rules (spec 1.4, 1.6)', () => {
+describe('the rank rules', () => {
   test('equal rank cannot kick; nobody grants above their own rank or bits, or edits their own top role', () => {
     const w = world()
     const MOD = role(w, 5, KICK | BAN | ROLES)
@@ -97,7 +97,7 @@ describe('the rank rules (spec 1.4, 1.6)', () => {
   })
 })
 
-describe('dropping a role that holds its holders back in a channel (spec 1.4, 10.21)', () => {
+describe('dropping a role that holds its holders back in a channel', () => {
   test('a muted member can’t drop the muting role; a member with Manage channels can, and anyone can once nothing is held back', () => {
     const w = world()
     const MUTED = role(w, 2, 0)
@@ -134,7 +134,7 @@ describe('dropping a role that holds its holders back in a channel (spec 1.4, 10
   })
 })
 
-describe('races between moderation and role changes (spec 3.1, 8.2)', () => {
+describe('races between moderation and role changes', () => {
   test("a ban racing the banned member's role change: the ban stands and the member's concurrent assign is cut", () => {
     const w = world()
     const MOD = role(w, 5, KICK | BAN)
@@ -244,7 +244,7 @@ describe('races between moderation and role changes (spec 3.1, 8.2)', () => {
   })
 })
 
-describe('channel permissions (spec 1.4, Discord order)', () => {
+describe('channel permissions (Discord order)', () => {
   test('restrictions and overwrites: allow lists, read-only channels, and Manage channels sees all', () => {
     const w = world()
     const STAFF = role(w, 4, 0)
@@ -298,7 +298,7 @@ describe('channel permissions (spec 1.4, Discord order)', () => {
   })
 })
 
-describe('slow mode (spec 3.5, a display rule)', () => {
+describe('slow mode (a display rule)', () => {
   const S = 1000
   test("a message inside its author's interval is hidden; owners and Manage messages are exempt", () => {
     const w = world()
@@ -428,7 +428,7 @@ describe('slow mode (spec 3.5, a display rule)', () => {
   })
 })
 
-describe('role_meta (spec 1.4, 1.5): a role keeps its name and color in a register', () => {
+describe('role_meta: a role keeps its name and color in a register', () => {
   const meta = (w: AclWorld, R: string) => F(w).roleMeta.get(R)?.name ?? null
 
   test('admitted by the generic rule; only Manage roles ranked above the role changes it', () => {
@@ -494,7 +494,7 @@ describe('role_meta (spec 1.4, 1.5): a role keeps its name and color in a regist
     w.ok('B1', 'role_meta', { role: R, name: 'delta' })
     expect(meta(w, R)).toBe('delta')
     // D renames while the owner, concurrently, takes D's role: the rename doesn't count, though
-    // it stays live (cuts are the generic rule's, §1.4).
+    // it stays live (cuts are the generic rule's).
     const P1 = w.heads()
     w.ok('O1', 'revoke', { to: 'D', role: MID })
     const d = w.ok('D1', 'role_meta', { role: R, name: 'epsilon' }, { ap: P1 })
@@ -517,8 +517,8 @@ describe('role_meta (spec 1.4, 1.5): a role keeps its name and color in a regist
     expect(meta(w, R)).toBe('eta')
   })
 
-  // The re-review's reproductions: a role_meta whose liveness differed from an older client's
-  // changed sticky code death, so the two admitted different `add`s. Both ways: production and
+  // A role_meta whose liveness differed from an older client's
+  // would change sticky code death, so the two would admit different `add`s. Both ways: production and
   // the reference model (an older client) agree on every verdict, record and state.
   const deathWorld = (variant: 'demoted' | 'unauthorized') => {
     const w = new AclWorld({ model: false })
@@ -576,7 +576,7 @@ describe('role_meta (spec 1.4, 1.5): a role keeps its name and color in a regist
   })
 })
 
-describe('the fuzz of Task 22 with role, channel and overwrite events', () => {
+describe('the rules fuzz with role, channel and overwrite events', () => {
   // Random universes: members, roles and their moves, bits and holders, kicks, bans, channel
   // registers (names, restrictions, slow mode), overwrites and messages, a third of them signed at
   // an older position (concurrent). Every delivery order must give the same state, the same
@@ -908,7 +908,7 @@ describe('roles in the app (server.ts)', () => {
   }, 120_000)
 })
 
-describe('restricted channels (spec 1.4, 3.7)', () => {
+describe('restricted channels', () => {
   test('a view-restricted channel is served only to members allowed to view it, and absent for others', async () => {
     const { clock, a, b, c, room } = await three('Staff')
     const staff = await a.servers.createRole(room, { name: 'Staff', color: null, bits: 0 })
@@ -961,7 +961,7 @@ describe('restricted channels (spec 1.4, 3.7)', () => {
   }, 120_000)
 })
 
-describe('transfer (spec 3.8)', () => {
+describe('transfer', () => {
   test('a restricted channel keeps its allow list in the new copy, mapped to the new roles', async () => {
     const { clock, a, b, c, room } = await three('Moved')
     const staff = await a.servers.createRole(room, { name: 'Staff', color: null, bits: 0 })
@@ -1002,7 +1002,7 @@ describe('transfer (spec 3.8)', () => {
   }, 240_000)
 })
 
-describe('slow mode (spec 3.5)', () => {
+describe('slow mode', () => {
   test('our client refuses a message inside the interval; one signed anyway is hidden everywhere', async () => {
     const { clock, a, b, c, room } = await three('Slow')
     const ch = general(a, room)

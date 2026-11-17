@@ -68,15 +68,15 @@ const scratch = <T>(use: (dir: string) => T): T => {
 
 const sha256 = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
 
-// The first version of the schema: the reference models' files, byte for byte.
+// The first version of the schema, byte for byte.
 const FIRST_VERSION: Record<string, string> = {
-  'call.proto': '62df988f655cb28aa04b42bb44e39488d83a643a8d167d59d9c4719aa16300c4',
-  'directory.proto': '53909635828190d56d3bf0878a97b7fa9bc66d66465ac3e773bdb3e7b86dfadf',
-  'instance.proto': 'b4f651db31969aa547373a2db2cccdae27dea565a825a3f96082c4a99d5a2ceb',
-  'invites.proto': 'b30727bcce837aadf3a6df0255f65c4be96ce39a42603204ea92432a240182ac',
-  'letters.proto': '3701ba56a346eed3af45149d21094fc07afbc16728d54691fd9b34d3958ef250',
-  'profiles.proto': '7d3bfd81f413bd6c5dfe5c402075ff7817feab8c19f23f3883899ffa9a2e589c',
-  'reports.proto': '74142ca39cee47088f0f216696a74bd29baa6b1b26f7ebdabc1768e1e08e0e74',
+  'call.proto': '2f1cc76adecf174b0b2291aa7087f80849dccb8888e71020bc29bbdfe38cf689',
+  'directory.proto': '32f639023643bd2260ce25586a44a2be710e7f363f7adf0e51609db4cffc065d',
+  'instance.proto': '89cb376f8199ee65493e1f3814e9e340589e7d12388777a2e0a83cec318aac5f',
+  'invites.proto': '92e0e0db080cab120b050ea4e90ef35aa465b293d7215125c21ea1c332dd36ad',
+  'letters.proto': '3501e24660c2938acfe23e294f576eec4e022437391ae835d18dd3663e345483',
+  'profiles.proto': 'dcb9407be9f7d55540ca3fb7f1839aac7e3ef837b2bc478bef646c9e2c539cab',
+  'reports.proto': '41b0ab56f1d77772cf5b182dcd22c5409bb8ceb4de688d06c84fad93f7b55ed4',
 }
 
 const SERVICES: Record<string, string[]> = {
@@ -256,7 +256,7 @@ if (existsSync(baselines)) {
 } else {
   describe('before the first release baseline', () => {
     for (const [name, hash] of Object.entries(FIRST_VERSION)) {
-      test(`${name} is the reference model's file`, () => {
+      test(`${name} is the first version's file`, () => {
         expect(sha256(join(pkg, name))).toBe(hash)
       })
     }

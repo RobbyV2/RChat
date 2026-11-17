@@ -6,13 +6,13 @@ import { Ix } from './reach'
 import { poster, type AclEv, type Ctx } from './rules'
 import { snapPacked, packedOfSets, subsetResult, snapResult, type Packed } from './packed'
 
-// Recorded states and the client's incremental evaluator (spec §5). Every admitted event records
+// Recorded states and the client's incremental evaluator. Every admitted event records
 // St(e). On the head path St(e) is the current state, and an event on the heads changes no
 // earlier status, so the state after `len` events is the evaluator's arrays read below `len`: a
 // snapshot costs O(1) memory. Off the heads, St(e) = Eval(C(ap)) is one evaluation of the downset
 // over the shared index, kept in a merge cache keyed by the sorted parents.
 
-// The client's evaluator state (§5): one append-only index of every admitted ACL event, the
+// The client's evaluator state: one append-only index of every admitted ACL event, the
 // current Eval(S), and the admission states St(e) = Eval(C(ap)) through a merge cache.
 export class AclState {
   ix: Ix
@@ -20,7 +20,7 @@ export class AclState {
   private cur?: EvalResult
   cache = new Map<string, EvalResult>()
   cap = LOCAL.cache.mergeCap
-  // Admission states of content positions (spec 5.7), kept for rendering within a count and a byte
+  // Admission states of content positions, kept for rendering within a count and a byte
   // budget (a packed state takes about five bits per indexed event).
   content = new Map<string, EvalResult>()
   contentCap = LOCAL.cache.contentCap
@@ -29,7 +29,7 @@ export class AclState {
   constructor(public cx: Ctx) {
     this.ix = new Ix(cx)
   }
-  // Headers of events storage dropped (spec 2.3), outside the index: evidence for the current
+  // Headers of events storage dropped, outside the index: evidence for the current
   // state only (no held event has one in its past, so no St(e) reads them).
   private hdrIds = new Set<string>()
   private hdrSet: Hdrs | null = null

@@ -47,7 +47,7 @@ import {
 import { dangerBtn, fieldCls, Masked, textBtn } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 
-// Roles and channel permissions of a P2P server (spec 1.4, 1.6): the role editor (drag order,
+// Roles and channel permissions of a P2P server: the role editor (drag order,
 // names, colors, permission toggles), a member's roles (menu and card), and a channel's
 // restrictions, allow list and slow mode, on the controls instance servers use. Every change is a
 // signed event members check against the rules.
@@ -68,7 +68,7 @@ const swatch = (c: number | null) => ({ backgroundColor: hex(c) ?? 'var(--color-
 const stop = (e: SyntheticEvent) => e.stopPropagation()
 const keepPress = { onPointerDown: stop, onTouchStart: stop, onContextMenu: stop }
 
-// Toggles of a role's bits: a turned-on bit needs it ourselves (spec 1.4 role_bits).
+// Toggles of a role's bits: a turned-on bit needs it ourselves (role_bits).
 const bitChecks = (v: ServerView, role: string, value: number) => ({
   value,
   allowed: (next: number) => (next & ~value & ~v.perms) === 0,
@@ -163,7 +163,7 @@ export function RolesTab({ v }: { v: ServerView }) {
   const edit = can(v, P.ManageRoles)
   const fixed = v.roles.filter(r => !edit || !r.below)
   const movable = edit ? v.roles.filter(r => r.below) : []
-  // @everyone ranks lowest (spec 1.6): anyone ranked with Manage roles may change it.
+  // @everyone ranks lowest: anyone ranked with Manage roles may change it.
   const everyoneLocked = !edit ? 'Needs Manage roles' : v.rank[0] > -1 ? null : ROLE_LOCKED
   return (
     <div className="flex flex-col gap-2">

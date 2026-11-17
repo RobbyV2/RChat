@@ -114,7 +114,7 @@ describe('signaler contract', () => {
       }
     })
 
-  test('the instance manager still sends rtc_signal through the WS', () => {
+  test('the instance manager sends rtc_signal through the WS', () => {
     const sent: VoiceMsg[] = []
     const m = new RtcManager({ send: msg => sent.push(msg) })
     const s = (m as unknown as { signaler: Signaler }).signaler
@@ -650,7 +650,7 @@ describe('P2P calls', () => {
     expect(b.calls.view()).toBeNull()
   }, 60_000)
 
-  test('a contact that is no longer mutual cannot ring', async () => {
+  test('a contact that is not mutual cannot ring', async () => {
     const { a, b } = await pair({}, { mutual: false })
     await a.calls.start(b.node.ik, false)
     await drained(sessionOf(a, b), sessionOf(b, a))

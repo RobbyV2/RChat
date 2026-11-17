@@ -306,7 +306,7 @@ describe('P2P inbox: the noted pings', () => {
     })
   })
 
-  test('only places still open show: blocked people, left servers and gone channels drop out', () => {
+  test('only open places show: blocked people, left servers and gone channels drop out', () => {
     const w = world()
     expect(pingVisible(ping('a'), w)).toBe(true)
     expect(pingVisible(ping('a'), world({ blocked: new Set([ALICE]) }))).toBe(false)
@@ -481,7 +481,7 @@ describe('P2P switched off on the instance', () => {
   const stored = async () => (await indexedDB.databases()).some(d => d.name === db())
   const settings = (p2p: boolean) => ({ ...saved.settings, p2p })
 
-  test('Settings still removes P2P data from this browser, and the database is gone', async () => {
+  test('Settings removes P2P data from this browser, and the database is gone', async () => {
     localStorage.setItem(home.scoped(p2pKey('bob')), JSON.stringify({ v: 1, on: true }))
     ;(await openDB(db(), 1)).close()
     expect(await stored()).toBe(true)
@@ -500,7 +500,7 @@ describe('P2P switched off on the instance', () => {
     expect(render(<P2pOffSection />)).toBe('')
   })
 
-  test('after a failed remove, Settings still offers removing the data that is left', async () => {
+  test('after a failed remove, Settings offers removing the data that is left', async () => {
     localStorage.setItem(home.scoped(p2pKey('bob')), JSON.stringify({ v: 1, on: true }))
     ;(await openDB(db(), 1)).close()
     await p2pAccount(null)

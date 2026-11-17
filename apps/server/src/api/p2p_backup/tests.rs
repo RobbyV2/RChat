@@ -250,8 +250,8 @@ async fn rows(state: &AppState, table: &str, who: &str) -> i64 {
 }
 
 #[tokio::test]
-async fn r8_backup_overwrite() {
-    each_db("r8_backup_overwrite", |state| async move {
+async fn backup_overwrite() {
+    each_db("backup_overwrite", |state| async move {
         add_user(&state, "alice", None).await;
         let v = ik(1);
         let blobs: [&[u8]; 3] = [b"full", b"full2", b"empty"];
@@ -404,13 +404,13 @@ async fn r8_backup_overwrite() {
 }
 
 #[tokio::test]
-async fn r8_backup_size() {
+async fn backup_size() {
     let small = Limits {
         p2p_backup_max_mib: 1,
         p2p_backup_total_mib: 4,
         ..Limits::default()
     };
-    each_db("r8_backup_size", |state| {
+    each_db("backup_size", |state| {
         let state = sized(small.clone())(state);
         async move {
             for name in ["alice", "bob"] {
@@ -448,7 +448,7 @@ async fn r8_backup_size() {
         p2p_backup_total_mib: 0,
         ..Limits::default()
     };
-    each_db("r8_backup_no_total", |state| {
+    each_db("backup_no_total", |state| {
         let state = sized(no_total.clone())(state);
         async move {
             add_user(&state, "alice", None).await;
@@ -478,8 +478,8 @@ async fn r8_backup_size() {
 }
 
 #[tokio::test]
-async fn r8_backup_delete() {
-    each_db("r8_backup_delete", |state| async move {
+async fn backup_delete() {
+    each_db("backup_delete", |state| async move {
         add_user(&state, "alice", None).await;
         let v = ik(1);
         for n in 0..3 {
@@ -1465,11 +1465,11 @@ fn kept_versions_follow_the_reference() {
     );
 }
 
-/// Hourly honest uploads for 60 days under the default limits (r8e completeness review M4,
-/// probe `rv/backup-honest.ts`): (MiB per version, refused uploads, first refused day, most
+/// Hourly honest uploads for 60 days under the default limits:
+/// (MiB per version, refused uploads, first refused day, most
 /// hours since the newest stored version, versions kept at the end, MiB kept).
 #[test]
-fn honest_hourly_uploads_stall_where_the_spec_says() {
+fn honest_hourly_uploads_stall_on_the_expected_days() {
     let limits = Limits::default();
     let total = limits.p2p_backup_total_bytes();
     let mut got = Vec::new();

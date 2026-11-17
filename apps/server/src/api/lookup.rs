@@ -642,7 +642,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_refusal_says_how_long_to_wait_and_the_general_bucket_still_applies() {
+    async fn a_refusal_says_how_long_to_wait_and_the_general_bucket_applies() {
         let (state, path) = temp_state("lookup_http").await;
         let state = state.with_limits(Arc::new(Limits {
             rate_limit_per_second: 1,

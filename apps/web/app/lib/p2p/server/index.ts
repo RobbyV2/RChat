@@ -330,7 +330,7 @@ export class Servers {
     this.voice.start()
     for (const id of this.rooms.keys()) void this.refreshMe(id).catch(() => {})
     this.indexing = this.indexPass()
-    // Spec 3.8: a new copy loaded before its old one is checked and carried again now.
+    // A new copy loaded before its old one is checked and carried again now.
     for (const r of this.rooms.values()) {
       if (r.prev) void this.checkMigrated(r.id, r.prev).catch(() => {})
       if (r.carry && r.carry.state !== 'done' && r.carry.state !== 'failed')
@@ -480,7 +480,7 @@ export class Servers {
     return run
   }
 
-  // Signing is serialized per device key across tabs (spec 3.9): a Web Lock where there is one.
+  // Signing is serialized per device key across tabs: a Web Lock where there is one.
   private withDevice<T>(dk: string, fn: () => Promise<T>): Promise<T> {
     const locks = webLocks()
     if (locks) return locks.request(`rchat-p2p-dev:${dk}`, fn) as Promise<T>
@@ -585,7 +585,7 @@ export class Servers {
     const list = membersOf(rt.sum)
       .filter(m => m.m === 'join' && m.ik !== this.me)
       .map(m => m.ik)
-    // Following a transfer, on our way in: the old copy's members (spec 3.8), who may hold the
+    // Following a transfer, on our way in: the old copy's members, who may hold the
     // new one already.
     const r = this.rooms.get(room)
     if (r?.prev && r.joining && membershipOf(rt.sum, this.me) !== 'join')
@@ -595,12 +595,12 @@ export class Servers {
     return list
   }
 
-  // A joined member of the old copy of a new copy we follow (spec 3.8).
+  // A joined member of the old copy of a new copy we follow.
   private oldMember(r: RoomRecord, ik: string) {
     return !!r.prev && membershipOf(this.sumOf(r.prev), ik) === 'join'
   }
 
-  // A new copy we joined lately (spec 3.8): we may still know few of its members.
+  // A new copy we joined lately: we may still know few of its members.
   private settling(r: RoomRecord | undefined) {
     if (!r?.prev) return false
     const me = memberOf(this.sumOf(r.id), this.me)
@@ -630,7 +630,7 @@ export class Servers {
     return out
   }
 
-  // Whether the new copy `r` brings `ik` over (spec 3.8): its carry-over names them, or before
+  // Whether the new copy `r` brings `ik` over: its carry-over names them, or before
   // that is here, the old copy's members at the upgrade do. False while neither is known.
   private carriedHere(r: RoomRecord, ik: string) {
     if (!r.prev || !this.oldMember(r, ik)) return false
@@ -642,7 +642,7 @@ export class Servers {
     return at.set.has(ik)
   }
 
-  // An old copy whose new copy we are in (spec 3.8): it keeps a link or two, so members who were
+  // An old copy whose new copy we are in: it keeps a link or two, so members who were
   // away hear of the transfer, and takes no more of the session budget.
   private archived(room: string) {
     const next = this.rooms.get(room)?.next
@@ -670,7 +670,7 @@ export class Servers {
     return false
   }
 
-  // Whether we link `room` with `ik`, and what we may serve them there (spec 3.7).
+  // Whether we link `room` with `ik`, and what we may serve them there.
   may(room: string, ik: string): LinkKind {
     const r = this.rooms.get(room)
     if (!r || r.legacy) return false
@@ -688,7 +688,7 @@ export class Servers {
     if (mine !== 'join' && mine !== 'invite' && !r.joining) return false
     if (m === 'join') return 'full'
     if (m === 'invite') return 'state'
-    // A member of the old copy this one doesn't know yet (spec 3.8): the state, so who is in
+    // A member of the old copy this one doesn't know yet: the state, so who is in
     // spreads from those who hold it; only one the carry-over names (before it is here, the
     // upgrade's member list).
     if (m === null && (mine === 'join' || mine === 'invite') && this.carriedHere(r, ik))
@@ -739,7 +739,7 @@ export class Servers {
     return map
   }
 
-  // What each code made us post here (spec 4.1): invites not used yet, by our clock, and lapses in
+  // What each code made us post here: invites not used yet, by our clock, and lapses in
   // a row.
   private codeUse = new Map<string, { adds: number[]; lapses: number; until: number }>()
 
@@ -771,7 +771,7 @@ export class Servers {
     return !!r && r.until > this.clock.now()
   }
 
-  // Housekeeping (spec 8.1): an invite posted for a redeemer who didn't join within the redeem
+  // Housekeeping: an invite posted for a redeemer who didn't join within the redeem
   // time is withdrawn.
   private async lapseRedeems(room: string) {
     const map = this.redeemersOf(room)
@@ -894,7 +894,7 @@ export class Servers {
     return loader.maybeJoin(ctx(this), room)
   }
 
-  // ----- Storage (spec 2.3, 4.2, 4.3) -----
+  // ----- Storage -----
 
   private storePass(room: string) {
     return storage.storePass(ctx(this), room)
@@ -972,7 +972,7 @@ export class Servers {
     return storage.refreshBadge(ctx(this))
   }
 
-  // ----- Receiving (spec 2.1) -----
+  // ----- Receiving -----
 
   check(room: string, raw: unknown): Promise<Check> {
     return receive.check(ctx(this), room, raw)
@@ -1090,7 +1090,7 @@ export class Servers {
     return receive.autoFetch(ctx(this), rec, m)
   }
 
-  // ----- Serving (spec 3.6, 3.7) -----
+  // ----- Serving -----
 
   private gate(room: string, ik: string): 'all' | 'joined' | 'acl' | 'none' {
     return serve.gate(ctx(this), room, ik)
@@ -1237,7 +1237,7 @@ export class Servers {
     return emitter.setOverwrite(ctx(this), room, ch, subj, allow, deny)
   }
 
-  // ----- Roles (spec 1.4, 1.6) -----
+  // ----- Roles -----
 
   createRole(room: string, role: { name: string; color: number | null; bits: number }) {
     return roles.createRole(ctx(this), room, role)
@@ -1291,7 +1291,7 @@ export class Servers {
     return roles.forget(ctx(this), room)
   }
 
-  // ----- Moderation waits for sync (spec 8.2, 9 rule 2) -----
+  // ----- Moderation waits for sync -----
 
   private modSeq = 0
 
@@ -1323,7 +1323,7 @@ export class Servers {
     return moderation.syncedSince(ctx(this), room, since)
   }
 
-  // ----- Removals that reach invitees (spec 8.2) -----
+  // ----- Removals that reach invitees -----
 
   private noteReached(rt: Rt, list: Reached[]) {
     return moderation.noteReached(ctx(this), rt, list)
@@ -1337,7 +1337,7 @@ export class Servers {
     return moderation.inviteAgain(ctx(this), room, by)
   }
 
-  // ----- Cut denies (spec 9 rule 18, 3.9) -----
+  // ----- Cut denies -----
 
   reapplyAll(room: string) {
     return devices.reapplyAll(ctx(this), room)
@@ -1347,7 +1347,7 @@ export class Servers {
     return devices.reapplyOf(ctx(this), room)
   }
 
-  // ----- Devices (spec 3.9) -----
+  // ----- Devices -----
 
   myDevices() {
     return devices.myDevices(ctx(this))
@@ -1393,7 +1393,7 @@ export class Servers {
     return devices.newDevice(ctx(this))
   }
 
-  // ----- Transfer (spec 3.8) -----
+  // ----- Transfer -----
 
   // Questions about a transfer from an owner: take ownership of a new copy, or (a co-owner)
   // approve it. Answered from the UI, or nothing in time.

@@ -284,7 +284,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_error_without_a_reason_reads_as_before() {
+    async fn an_error_without_a_reason_has_only_the_error_field() {
         let plain = ApiError(StatusCode::NOT_FOUND, "Not found".to_string(), None);
         assert_eq!(
             sent(plain).await,

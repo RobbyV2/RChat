@@ -23,7 +23,7 @@ export async function search(
     .filter(r => !r.invite && !cx.readOnly(r.id) && (q.room === null || r.id === q.room))
     .map(r => r.id)
   const from = q.from ? new Set(q.from) : null
-  // A transferred copy: its archive only (spec 3.8 step 6).
+  // A transferred copy: its archive only.
   const keeps = new Map<string, (r: EventRecord) => boolean>()
   for (const room of rooms)
     if (cx.sumOf(room).upgraded) {
@@ -48,7 +48,7 @@ export async function search(
       if (q.hasFile && !r.atts?.length) continue
       if (q.beforeTs !== null && r.effTs >= q.beforeTs * 1000) continue
       if (q.afterTs !== null && r.effTs <= q.afterTs * 1000) continue
-      // A channel we may no longer view (spec 1.4) isn't searched either.
+      // A channel we may no longer view isn't searched either.
       if (!cx.isChannel(r.room, r.chan) || !cx.canViewCh(r.room, r.chan)) continue
       const keep = keeps.get(r.room)
       if (keep && !keep(r)) continue

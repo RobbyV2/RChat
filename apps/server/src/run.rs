@@ -957,7 +957,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn the_web_role_still_proxies_to_the_frontend() {
+    async fn the_web_role_proxies_to_the_frontend() {
         let _one = ONE.lock().await;
         let path = crate::db::temp_db_path("run_proxy");
         wipe(&path);

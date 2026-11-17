@@ -313,7 +313,7 @@ describe('a path fails only by itself', () => {
     expect(log).toEqual(['start wasm-workers', 'solve wasm-workers', 'solve wasm-workers'])
   })
 
-  test('a path that failed for one instance is still used for the others', async () => {
+  test('a path that failed for one instance is used for the others', async () => {
     const log: string[] = []
     const solver = new Solver([
       fake('wasm-workers', log, {

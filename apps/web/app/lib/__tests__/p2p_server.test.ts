@@ -47,7 +47,7 @@ describe('P2P servers', () => {
   }, 60_000)
 })
 
-describe('co-owners (spec 3.8)', () => {
+describe('co-owners', () => {
   test('two rounds: the content without certificates goes out, each co-owner certifies its digest', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -90,7 +90,7 @@ describe('co-owners (spec 3.8)', () => {
   }, 60_000)
 })
 
-describe('devices (spec 3.9)', () => {
+describe('devices', () => {
   test('a new device introduces itself over its own session: a peer that never met it takes it', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -124,7 +124,7 @@ describe('devices (spec 3.9)', () => {
       async () => (await bodies(a, room, ch)).includes('from the new device'),
       'a has it'
     )
-    // The device it moved from is revoked (spec 3.9): only the new one is Bob's in the server.
+    // The device it moved from is revoked: only the new one is Bob's in the server.
     const dk1 = keyId(b.node.author()!.dk.pk)
     await pump(
       clock,
@@ -150,7 +150,7 @@ describe('gossip', () => {
     await a.node.setPaused(true)
     const c = await makeMember(hub, 'Carol', clock)
     // Bob can invite (@everyone may), so Carol joins through him while Alice is away; Dave's
-    // client acknowledges Bob's invite (a third member, spec 4.1 W3(e)).
+    // client acknowledges Bob's invite (a third member, W3(e)).
     const code = await b.servers.issueCode(room, 60 * 60_000)
     await c.servers.redeem(code)
     await pump(clock, () => c.servers.myMembership(room) === 'join', 'Carol joined')
@@ -217,7 +217,7 @@ describe('moderation and soft-fail', () => {
     )
     expect(await bodies(a, room, ch)).toEqual(['before'])
     expect(await bodies(b, room, ch)).toEqual(['before'])
-    // In their place: one "Hidden: sent around the time Carol was removed" (spec 8.2), no body.
+    // In their place: one "Hidden: sent around the time Carol was removed", no body.
     for (const m of [a, b]) {
       const rows = (await m.servers.loadChannel(room, ch)).messages.filter(x => x.removed)
       expect(rows.map(x => [x.sender, x.body])).toEqual([[c.node.ik, '']])
@@ -362,7 +362,7 @@ describe('invite codes', () => {
     const code = await a.servers.issueCode(room, 60_000)
     const { parseCode } = await import('../p2p/server')
     const parsed = parseCode(code)!
-    // The code's id and its secret (spec 8.2).
+    // The code's id and its secret.
     expect(Object.keys(parsed).sort()).toEqual(['code', 'name', 'peers', 'room', 'secret', 'v'])
     expect(Object.keys(a.servers.sumOf(room).codes)).toEqual([parsed.code as string])
     expect(parsed.peers).toEqual([a.node.peerId])
@@ -692,7 +692,7 @@ describe('checks before storage', () => {
     const ch = general(a, room)
     await joinWithCode(clock, a, room, b)
     const now = () => clock.now()
-    // Malformed (spec 2.1): a bad signature, another server, a known type's content wrong.
+    // Malformed: a bad signature, another server, a known type's content wrong.
     const ok = await signed(b, room, 'msg', { body: 'x', ch })
     const forged = { ...ok.wire, sig: ok.wire.sig.replace(/^./, c => (c === 'A' ? 'B' : 'A')) }
     expect(await deliver(a, room, forged, now())).toBe('malformed')

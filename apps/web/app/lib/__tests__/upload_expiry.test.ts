@@ -173,7 +173,7 @@ describe('upload expiry', () => {
     )
   })
 
-  test('the usage line shows when the server keeps files longer, or still holds some', () => {
+  test('the usage line shows when the server keeps files longer, or holds some', () => {
     const kept = (bytes: number) => ({ bytes, limit: GIB, full: false })
     expect(keptShown(null, null, DAY)).toBe(false)
     expect(keptShown(kept(0), DAY, DAY)).toBe(false)

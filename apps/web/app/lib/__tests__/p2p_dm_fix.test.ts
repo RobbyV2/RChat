@@ -595,7 +595,7 @@ describe('events a peer pushes', () => {
     expect((await a.store.room(room))?.pings).toBe(0)
   })
 
-  test('deleting a message that still waits to go out drops its content', async () => {
+  test('deleting a message that waits to go out drops its content', async () => {
     const { a, room } = await pair({ limits: { pushEvents: 1 } })
     const sess = sessionOf(a, room)
     const realSend = sess.send.bind(sess)

@@ -145,7 +145,7 @@ export interface P2pState {
   thread: P2pThread | null
   search: P2pSearch
   drafts: Record<string, string>
-  // When we may post again in a slow-mode channel (spec 3.5), by draft key.
+  // When we may post again in a slow-mode channel, by draft key.
   slowUntil: Record<string, number>
   replying: { room: string; id: string } | null
   editing: { room: string; id: string; text: string; focus: number } | null
@@ -179,7 +179,7 @@ export interface P2pState {
   servers: Record<string, ServerView>
   serverInvites: { room: string; name: string; from: string; at: number }[]
   // Contacts asking to list us as co-owner of a server they are creating, and owners asking us
-  // to take a server over or to approve its transfer (spec 8.2).
+  // to take a server over or to approve its transfer.
   coOwnerAsks: { key: string; from: string; name: string }[]
   transferAsks: {
     key: string

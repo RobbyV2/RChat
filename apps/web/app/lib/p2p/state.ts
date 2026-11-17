@@ -24,7 +24,7 @@ export type HistoryVis = 'shared' | 'joined'
 
 export const LIMITS = {
   ...LOCAL.display,
-  // Live codes of a member without Manage server (the rules cap them per device, spec 4.1).
+  // Live codes of a member without Manage server (the rules cap them per device).
   codesPerMember: AGREED.codesPerDev,
 }
 
@@ -38,7 +38,7 @@ export interface ChannelContent {
   gone?: true
   restrict_view?: true
   restrict_send?: true
-  // Slow mode, in seconds (spec 3.5).
+  // Slow mode, in seconds.
   slow?: number
 }
 
@@ -95,7 +95,7 @@ export const can = (s: Summary, ik: string, bits: number) => (permsOf(s, ik) & b
 
 export const rankOf = (s: Summary, ik: string): Rank => s.members[ik]?.rank ?? [-Infinity, '']
 
-// Whether `ik` outranks `other` (acting on a member needs it, spec 1.6).
+// Whether `ik` outranks `other` (acting on a member needs it).
 export const outranks = (s: Summary, ik: string, other: string) =>
   cmp(rankOf(s, ik), rankOf(s, other)) > 0
 
@@ -151,7 +151,7 @@ export const systemOf = (s: Summary): SystemContent => {
 // Members who can moderate (gossip weighs them up).
 export const MOD_BITS = P.Kick | P.Ban | P.ManageMessages
 
-// The summary as channel permissions read it (acl/rules.ts channelPerms, spec 1.4).
+// The summary as channel permissions read it (acl/rules.ts channelPerms).
 // Built once per summary (summaries are replaced, never changed): search and every page load ask.
 const facts = new WeakMap<Summary, ChanFacts>()
 export const chanFactsOf = (s: Summary): ChanFacts => {
@@ -177,13 +177,13 @@ const buildChanFacts = (s: Summary): ChanFacts => ({
 export const channelPermsOf = (s: Summary, ik: string, ch: string, F = chanFactsOf(s)) =>
   channelPerms(F, ik, ch)
 
-// Roles, the highest first (rank order, spec 1.6: position, then id).
+// Roles, the highest first (rank order, position, then id).
 export const rolesOf = (s: Summary): ({ id: string } & RoleSum)[] =>
   Object.entries(s.roles)
     .map(([id, r]) => ({ id, ...r }))
     .sort((a, b) => b.pos - a.pos || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
 
-// A role's rank (spec 1.6).
+// A role's rank.
 export const roleRank = (s: Summary, id: string): Rank => [s.roles[id]?.pos ?? -1, id]
 
 // The highest of `ik`'s roles, or null.

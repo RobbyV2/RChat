@@ -45,7 +45,7 @@ export function transferAsks(cx: ServerCtx) {
   }))
 }
 
-// An owner transfers the server to member `to` (spec 3.8): `to` builds the new copy's genesis
+// An owner transfers the server to member `to`: `to` builds the new copy's genesis
 // and signs it, every other genesis owner countersigns it (also ones who left), and the upgrade
 // goes out. This copy becomes read-only; everyone follows to the new one.
 export async function transfer(cx: ServerCtx, room: string, to: string) {
@@ -87,7 +87,7 @@ export async function sessionTo(cx: ServerCtx, room: string, ik: string) {
   return s
 }
 
-// The new copies the upgrades of `room` name (more than one: the user picks, spec 3.8).
+// The new copies the upgrades of `room` name (more than one: the user picks).
 // With who transferred it (`by`), so two copies with the same owner can be told apart.
 export async function successors(cx: ServerCtx, room: string) {
   const out: { id: string; owner: string; by: string; g: WireV2 }[] = []
@@ -168,7 +168,7 @@ export async function answerTransfer(cx: ServerCtx, key: string, yes: boolean) {
 }
 
 // The genesis of a new copy of `room` that we own, with the room's name and what @everyone may
-// do (spec 3.8: `from` names the room it follows).
+// do (`from` names the room it follows).
 export async function successorOf(cx: ServerCtx, room: string): Promise<WireV2> {
   const author = await cx.author()
   const dk = keyId(author.dk.pk)
@@ -193,7 +193,7 @@ export async function successorOf(cx: ServerCtx, room: string): Promise<WireV2> 
     .wire as WireV2
 }
 
-// The follow rule (spec 3.8): with exactly one upgrade, the new copy is followed: its owner
+// The follow rule: with exactly one upgrade, the new copy is followed: its owner
 // creates it and carries members, roles, channels and bans over; everyone else joins it when
 // invited. With more than one, the user chooses (disputed). One at a time per room.
 export async function follow(cx: ServerCtx, room: string) {
@@ -249,14 +249,14 @@ export async function followTo(cx: ServerCtx, room: string, g: WireV2) {
   cx.changed(next)
 }
 
-// The new owner carries the old copy over (spec 3.8 steps 4 and 6, as owner events), as it
+// The new owner carries the old copy over (as owner events), as it
 // was at the upgrade (project(Eval_S(B(u))), not as it is now): first the `migrate` content
 // (who was a member, who banned, and each device's last message at the transfer: the old copy
 // shows here only up to there, without the new copy's banned members), then an invite for each
 // member, so they join and acknowledge the rest; then the channels with their ids, the
 // settings, the roles and the bans, and a last `migrate` chunk that says it is done. Finished
 // steps are recorded, so a start resumes after them and never redoes one that was changed
-// since; limits that clear by themselves (spec 4.1 W3) are waited out, and anything else stops
+// since; limits that clear by themselves (W3) are waited out, and anything else stops
 // it with the reason shown.
 export async function carryOver(cx: ServerCtx, to: string) {
   const rt = cx.ensureRt(to)
@@ -383,7 +383,7 @@ export function retryCarry(cx: ServerCtx, room: string) {
   if (r?.carry && r.carry.state === 'failed') void cx.carryOver(room).catch(() => {})
 }
 
-// The upgrade of `from` that names the new copy `to` (spec 3.8).
+// The upgrade of `from` that names the new copy `to`.
 export async function upgradeOf(cx: ServerCtx, from: string, to: string) {
   for (const id of cx.sumOf(from).upgrades ?? []) {
     const up = await cx.db.get('events', id)
@@ -394,7 +394,7 @@ export async function upgradeOf(cx: ServerCtx, from: string, to: string) {
   return null
 }
 
-// The old copy as the upgrade `up` carries it (spec 3.8 step 4), kept while it is in use.
+// The old copy as the upgrade `up` carries it, kept while it is in use.
 export async function carriedOf(cx: ServerCtx, from: string, up: string) {
   const rt = cx.ensureRt(from)
   if (rt.carried?.up !== up) {
@@ -405,7 +405,7 @@ export async function carriedOf(cx: ServerCtx, from: string, up: string) {
   return rt.carried.s
 }
 
-// `migrate` content (spec 3.8): the members and bans the upgrade carries, and the last message
+// `migrate` content: the members and bans the upgrade carries, and the last message
 // seq of each device we hold in the old copy, in chunks within the size of an ACL event.
 export async function migrateChunks(cx: ServerCtx, from: string, s: Carried) {
   const marks: Record<string, number> = {}
@@ -429,7 +429,7 @@ export async function migrateChunks(cx: ServerCtx, from: string, s: Carried) {
   return out
 }
 
-// The `migrate` content an owner of this copy posted (spec 3.8), once every chunk is here, and
+// The `migrate` content an owner of this copy posted, once every chunk is here, and
 // whether the carry-over said it is done.
 export async function migratedOf(cx: ServerCtx, room: string): Promise<Migrated | null> {
   const rt = cx.ensureRt(room)
@@ -481,7 +481,7 @@ export async function readMigrated(cx: ServerCtx, room: string): Promise<Migrate
   return { members: strs(members), bans: strs(bans), marks: map, done: parts.has('done') }
 }
 
-// A member of a new copy acknowledges the owner's carry-over (spec 4.1 W3(b): an owner alone
+// A member of a new copy acknowledges the owner's carry-over (W3(b): an owner alone
 // waits after 24 changes nobody else acknowledged): a mark once 20 more ACL events of an owner
 // arrived (other members' marks never count), at most one a minute, until the carry-over says
 // it is done. An owner who stops (gone, stalled, failed) gets no more, nor one who goes on past
@@ -538,7 +538,7 @@ export function ackCarry(cx: ServerCtx, room: string, rt: Rt) {
     .catch(() => {})
 }
 
-// Spec 3.8 step 5: the member list the new owner carried over, against the old copy's at the
+// The member list the new owner carried over, against the old copy's at the
 // upgrade (not its members now: leaving the archive changes nothing here).
 export async function checkMigrated(cx: ServerCtx, room: string, prev: string, tries = 0) {
   const rt = cx.ensureRt(room)
@@ -648,8 +648,8 @@ export async function giveRoles(cx: ServerCtx, room: string) {
   const old = await cx.carriedOf(c.from, c.up)
   if (!old) return
   const given = new Set(c.given ?? [])
-  // What the old copy says now: a role taken away concurrently with the transfer (spec 3.8
-  // step 7) isn't given back.
+  // What the old copy says now: a role taken away concurrently with the transfer isn't given
+  // back.
   const now = cx.sumOf(c.from)
   for (const [ik, held] of Object.entries(old.holds))
     for (const r of held) {

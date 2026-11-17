@@ -116,7 +116,7 @@ describe('the permission catalog', () => {
     expect(suffixes.license).toBe('MPL-2.0')
   })
 
-  test('a wildcard over a public suffix is refused when a manifest asks, and still reads as a way out', () => {
+  test('a wildcard over a public suffix is refused when a manifest asks, and reads as a way out', () => {
     for (const p of ['net:*.co.uk', 'net:*.github.io', 'net:*.kobe.jp', 'net:*.foo.ck']) {
       expect(netPattern(p, shared)).toBeNull()
       expect(known(p, shared)).toBe(false)

@@ -88,7 +88,7 @@ describe('boot under rate limits', () => {
     expect(path).toBe('/s/s/77/')
   })
 
-  test('when the last retry still gets 429 it falls back', async () => {
+  test('when the last retry gets 429 it falls back', async () => {
     const waits = [...BOOT_RETRY_MS]
     BOOT_RETRY_MS.splice(0, waits.length, 20, 20, 20)
     try {

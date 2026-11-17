@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package rchat.fed.v1;
 
-// The signed head of every instance-to-instance call (spec 4.3). It travels in the header
+// The signed head of every instance-to-instance call. It travels in the header
 // `Authorization: RChat-Fed <base64url(head bytes)>.<base64url(sig)>`; the HTTP body is the
 // request message itself (Connect unary, `application/proto`).
 // sig = Ed25519 under the caller's call key `kid` over "rchat-fed-call1" || 0x00 || head bytes.
@@ -15,7 +15,7 @@ message CallHead {
   string aud = 2;
   // The full method path, for example `/rchat.fed.v1.LettersService/Deliver`.
   string method = 3;
-  // Unix seconds, on the callee's clock as the caller estimates it (spec 4.3.4). The callee
+  // Unix seconds, on the callee's clock as the caller estimates it. The callee
   // accepts |iat - now| <= 30.
   int64 iat = 4;
   // iat < exp <= iat + 60, and now <= exp + 30.
@@ -31,12 +31,12 @@ message CallHead {
   string instance_id = 10;
   // The caller's current Hello revision; the callee refetches the caller's Hello when it differs.
   uint64 hello_rev = 11;
-  // A proof-of-work stamp over `jti` (0.5.0's scheme), sent on a Hello when the callee asked for
+  // A proof-of-work stamp over `jti`, sent on a Hello when the callee asked for
   // one (REFUSAL_REASON_STAMP_NEEDED) because its key-fetch budget is under pressure.
   bytes stamp = 12;
 }
 
-// A feature the instance speaks, with its level window (spec 4.4).
+// A feature the instance speaks, with its level window.
 message FeatureLevel {
   // Lowercase, dot separated: `core`, `letters`, `letters.files`.
   string name = 1;
@@ -72,7 +72,7 @@ enum RefusalReason {
   // The callee has no current Hello for the caller: say Hello, then call again.
   REFUSAL_REASON_HELLO_NEEDED = 5;
   // A cap the caller shares with others (its domain or network) is full: hold every call to this
-  // instance until `until`. Never counted against the caller (spec 4.5.1).
+  // instance until `until`. Never counted against the caller.
   REFUSAL_REASON_BUSY = 6;
   // Key fetches are under pressure: say Hello again with a stamp of `stamp_work`.
   REFUSAL_REASON_STAMP_NEEDED = 7;

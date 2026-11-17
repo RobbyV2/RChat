@@ -87,7 +87,7 @@ import { safetyDigits } from '../p2p/safety'
 import { VOICE_TAG } from '../p2p/voice'
 import { ServerWorld } from './p2p_server_world'
 
-// Spec r8f 1.7: the key chain as real records. V is made with a recovery key (rkV, the epoch-0
+// The key chain as real records. V is made with a recovery key (rkV, the epoch-0
 // primary p0, the creating device D1); a thief holds D1 and p0, never ik or rkV.
 
 const ASSET = fileURLToPath(
@@ -142,7 +142,7 @@ const smallR = (key: KeyPair, msg: Uint8Array, R: Uint8Array) => {
   const { scalar: a } = ed25519.utils.getExtendedPublicKey(key.sk)
   return concat(R, numberToBytesLE((scalarOf(R, key.pk, msg) * a) % Point.Fn.ORDER, 32))
 }
-// 0.3.0's rule: noble's cofactored check.
+// noble's cofactored check.
 const cofactored = (pk: Uint8Array, msg: Uint8Array, sig: Uint8Array) =>
   ed25519.verify(sig, msg, pk, { zip215: false })
 const torsionCases = (key: KeyPair, msg: Uint8Array): [string, Uint8Array, Uint8Array][] => {
@@ -168,7 +168,7 @@ const STRICT_ANSWERS: [string, boolean][] = [
 ]
 
 describe('P2P chain records', () => {
-  test('R8-chain: a creation record, a recovery and a reset verify; dropping sig_rk, pk = ik, a record signed by the old rk after the reset, a prev that does not match, or a record with an unknown field: refused; a copy with an extra field has the same identity', () => {
+  test('chain: a creation record, a recovery and a reset verify; dropping sig_rk, pk = ik, a record signed by the old rk after the reset, a prev that does not match, or a record with an unknown field: refused; a copy with an extra field has the same identity', () => {
     const reset = makeReset(I, rkV, rkV2, headOf(r1), id('pk2'), [id('D2')], AT)
     expect(isCreation(crV)).toBe(true)
     const view = readChain(crV, [r1, reset])
@@ -272,7 +272,7 @@ describe('P2P chain records', () => {
     expect(readChain(crV, [late, early, next]).heads).toEqual([headOf(next)])
   })
 
-  test('B3 records are closed formats: every field of a record is checked, and no field is optional but rk and sig_next', () => {
+  test('records are closed formats: every field of a record is checked, and no field is optional but rk and sig_next', () => {
     const reset = makeReset(I, rkV, rkV2, h0, id('pk1'), [id('D2')], AT)
     const removal = makeRemoval(I, rkV, h0, id('pk1'), [id('D2')], AT)
     expect([isChainRecord(r1), isChainRecord(reset), isChainRecord(removal)]).toEqual([
@@ -321,7 +321,7 @@ describe('P2P chain records', () => {
     expect(isChainRecord([r1])).toBe(false)
   })
 
-  test('B3 reset and removal are chain records signed by the key in force', () => {
+  test('reset and removal are chain records signed by the key in force', () => {
     const reset = makeReset(I, rkV, rkV2, h0, id('pk1'), [id('D2')], AT)
     const afterReset = readChain(crV, [reset])
     expect(afterReset.inForce(afterReset.heads[0])).toBe(keyId(rkV2.pk))
@@ -347,7 +347,7 @@ describe('P2P chain records', () => {
     expect(readChain(crV, [removal, byHot]).heads).toEqual([headOf(byHot)])
   })
 
-  test('B3 a reset installs a new primary', () => {
+  test('a reset installs a new primary', () => {
     const reset = makeReset(I, rkV, rkV2, h0, id('pk1'), [id('D2')], AT)
     const view = readChain(crV, [reset])
     expect(view.primary(h0)).toBe(keyId(p0.pk))
@@ -359,7 +359,7 @@ describe('P2P chain records', () => {
     expect([atHead(readChain(crV, []), cert), atHead(view, cert)]).toEqual([true, false])
   })
 
-  test('R8-same-n: two recoveries with the same n both count until a record cites one; n + 1 accepted whichever it cites', () => {
+  test('same-n: two recoveries with the same n both count until a record cites one; n + 1 accepted whichever it cites', () => {
     const ra = makeRecovery(I, rkV, h0, id('pkA'), [id('A')], AT)
     const rb = makeRecovery(I, rkV, h0, id('pkB'), [id('B')], AT)
     const two = readChain(crV, [rb, ra])
@@ -378,7 +378,7 @@ describe('P2P chain records', () => {
     }
   })
 
-  test("R8-rival-reset: the user's reset and a thief's reset, both by the old key: no device trusted", () => {
+  test("rival-reset: the user's reset and a thief's reset, both by the old key: no device trusted", () => {
     const mine = makeReset(I, rkV, rkV2, h0, id('pk1'), [id('D2')], AT)
     const theirs = makeReset(I, rkV, K('rkZ'), h0, id('pZ'), [id('Z1')], AT)
     const view = readChain(crV, [mine, theirs])
@@ -409,7 +409,7 @@ describe('P2P chain records', () => {
     ])
   })
 
-  test('R8-rk-revoke: a revocation signed by the recovery key applies after a recovery; after a reset one signed by the old key is ignored (key death)', () => {
+  test('rk-revoke: a revocation signed by the recovery key applies after a recovery; after a reset one signed by the old key is ignored (key death)', () => {
     const rx = makeRecovery(I, rkV, h0, id('pk1'), [id('D2'), id('D5')], AT)
     const rev = signRevocationV2(rkV, I, keyId(p0.pk), 0, id('D5'), AT)
     expect(verifyRevocationV2(rev, keyId(rkV.pk), I)).toBe(true)
@@ -423,7 +423,7 @@ describe('P2P chain records', () => {
     expect(trustedDevices(readChain(crV, [reset]), [id('D1')], [], [fresh])).toEqual([id('D2')])
   })
 
-  test('R8-epoch: after a recovery the certificate and revocation of the old primary are ignored; a certificate under the head primary counts', () => {
+  test('epoch: after a recovery the certificate and revocation of the old primary are ignored; a certificate under the head primary counts', () => {
     const view = readChain(crV, [makeRecovery(I, rkV, h0, keyId(K('pk1').pk), [id('D2')], AT)])
     const stolen = signCertV2(p0, I, 0, id('T9'), AT, 'Browser')
     const revoke = signRevocationV2(p0, I, keyId(p0.pk), 0, id('D2'), AT)
@@ -448,7 +448,7 @@ describe('P2P chain records', () => {
     expect(trustedDevices(view, [], [wrongEpoch], [])).toEqual([id('D2')])
   })
 
-  test('R8-succession-cap: at the cap a ninth record is refused, and a v2 succession at the cap counts', () => {
+  test('succession-cap: at the cap a ninth record is refused, and a v2 succession at the cap counts', () => {
     const recs: ChainRecord[] = []
     for (let n = 1, prev = h0; n <= CHAIN_MAX + 1; n += 1) {
       const body = {
@@ -476,7 +476,7 @@ describe('P2P chain records', () => {
     expect(verifySuccessionV2(move, crW, view.inForce(view.heads[0]))).toBe(true)
   })
 
-  test('R8-succession-size: at n = 8 with 8 keeps, real keys, digests and signatures: a profile with succ, succ_cr and a badge fits 4 KiB, the old card with them fits CARD_MAX with 3 certs2; with the old chain neither fits; the chain fits 6 KiB', () => {
+  test('succession-size: at n = 8 with 8 keeps, real keys, digests and signatures: a profile with succ, succ_cr and a badge fits 4 KiB, the old card with them fits CARD_MAX with 3 certs2; with the old chain neither fits; the chain fits 6 KiB', () => {
     const chain: ChainRecord[] = []
     for (let n = 1, prev = h0; n <= CHAIN_MAX; n += 1) {
       const keep = Array.from({ length: 8 }, (_, i) => id(`dev ${n}.${i}`))
@@ -522,7 +522,7 @@ describe('P2P chain records', () => {
     expect([len(crV), len(certs2(1)[0])].every(n => n > 300 && n < 420)).toBe(true)
   })
 
-  test('R8-safety-rk: two creation records with one ik give different halves; an unprotected identity keeps its 0.3.0 half', () => {
+  test('safety-rk: two creation records with one ik give different halves; the half of an unprotected identity comes from its identity key alone', () => {
     expect(safetyHalf(I, keyId(rkV.pk))).not.toBe(safetyHalf(I, keyId(rkV2.pk)))
     expect(safetyHalf(I, keyId(rkV.pk))).not.toBe(safetyHalf(I))
     expect(/^\d{30}$/.test(safetyHalf(I, keyId(rkV.pk)))).toBe(true)
@@ -553,7 +553,7 @@ describe('P2P chain records', () => {
     expect(() => safetyKey(I, 'x')).toThrow()
   })
 
-  test('R8-contexts: every record of the signature-context table verifies only under its own tag; a v1 certificate or a creation record presented as a server dcert, rec, rsig or upgrade signature fails to verify', () => {
+  test('contexts: every record of the signature-context table verifies only under its own tag; a v1 certificate or a creation record presented as a server dcert, rec, rsig or upgrade signature fails to verify', () => {
     const tags = [
       TAG2.create,
       TAG2.chain,
@@ -847,7 +847,7 @@ describe('P2P chain records', () => {
     expect(results.filter(x => x !== false && x !== null)).toEqual([])
   })
 
-  test('r8e completeness M3: succ and succ_cr are sibling fields, never succ_cr inside the closed succession; keys, keys_old and the yours echo are {cr, chain}', () => {
+  test('succ and succ_cr are sibling fields, never succ_cr inside the closed succession; keys, keys_old and the yours echo are {cr, chain}', () => {
     const W = K('W')
     const rkW = K('rkW')
     const crW = makeCreation(W, rkW, id('pW'), AT)
@@ -906,7 +906,7 @@ describe('P2P chain records', () => {
     expect(bindingHead2(sub, null)).toBeNull()
   })
 
-  test('a badge request holds at most 9 records and 7 KiB (review n-p2p-ahead r2 M3, review n-k-server r1 owner question 1): more is refused before a record is read, and the largest valid chain fits', () => {
+  test('a badge request holds at most 9 records and 7 KiB: more is refused before a record is read, and the largest valid chain fits', () => {
     const sub = 'vera@chat.example.org'
     const siblings = Array.from({ length: CHAIN_MAX + 1 }, (_, i) =>
       makeRecovery(I, rkV, h0, id(`s${i}`), [id('D2')], AT)
@@ -960,7 +960,7 @@ describe('P2P chain records', () => {
     expect(bindingHead2(sub, { ...fits, chain: 'x' })).toBeNull()
   })
 
-  test('torsion_sig (review n-k-server r1 m1): creation records, chain records and bind2 proofs, which the instance also verifies, verify as its verify_strict does, so an old phrase can no longer hand the user a record the instance refuses', () => {
+  test('torsion_sig: creation records, chain records and bind2 proofs, which the instance also verifies, verify as its verify_strict does, so an old phrase never hands the user a record the instance refuses', () => {
     const body = { v: 1, x: 'y' }
     for (const tag of [TAG2.create, TAG2.chain, TAG2.bind]) {
       const msg = concat(utf8(tag), canonicalBytes(body))
@@ -984,7 +984,7 @@ describe('P2P chain records', () => {
       expect([i, strict(sig), strict(bad)]).toEqual([i, true, cofactored(key.pk, m, bad)])
     }
 
-    // the probe: after the user's reset, a thief with the old phrase signs a sibling with R + T
+    // after the user's reset, a thief with the old phrase signs a sibling with R + T
     const rk = K('torsion rk')
     const rk2 = K('torsion rk2')
     const ik = K('torsion ik')
@@ -1034,7 +1034,7 @@ describe('P2P chain records', () => {
     expect(bindingHead2(sub, { ...mine, cr: tRk })).toBeNull()
   })
 
-  test('torsion_split (review n-k-server r2 I1): every other P2P signature verifies as 0.3.0 verifies it, so a replica of a rules-2 server admits an event and a device certificate signed with R + T as an older replica does', () => {
+  test('torsion_split: every other P2P signature takes the cofactored check, so every replica of a rules-2 server admits an event and a device certificate signed with R + T', () => {
     const msg = utf8('rchat torsion')
     const cases = torsionCases(V, msg)
     expect(cases.map(([name, pk, sig]) => [name, cofactored(pk, msg, sig)])).toEqual(
@@ -1074,7 +1074,7 @@ describe('P2P chain records', () => {
       cases.filter(([name]) => name.startsWith('key A + T')).map(([, pk]) => isKeyId(keyId(pk)))
     ).toEqual([true, true])
 
-    // the probe: a rules-2 server; N joins with a device certificate signed with R + T, M leaves
+    // a rules-2 server; N joins with a device certificate signed with R + T, M leaves
     // with its own leave signed with R + T, and the owner's next event cites it
     const w = ServerWorld.create('O', { rules: 2 })
     expect(w.sum.rules).toBe(2)

@@ -2635,7 +2635,7 @@ mod tests {
     }
 
     #[test]
-    fn links_off_skips_urls_and_still_reads_prose() {
+    fn links_off_skips_urls_and_reads_prose() {
         let s = settings_with(
             true,
             ProfanityTargets {
@@ -3516,7 +3516,7 @@ mod tests {
     }
 
     #[test]
-    fn forward_origins_are_structured_and_old_labels_still_read() {
+    fn forward_origins_are_structured_and_old_labels_read() {
         let channel = Origin::Channel {
             channel: "general".to_string(),
             server: "Rust \u{b7} Club".to_string(),

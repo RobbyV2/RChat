@@ -16,7 +16,7 @@ import {
 import { EMPTY, Ix } from './reach'
 import { EVERYONE, introduces, rkey, type AclContent, type Rank } from './rules'
 
-// The packed state codec (spec 2.4, 5): snapshot and subset views of an evaluation, packed
+// The packed state codec: snapshot and subset views of an evaluation, packed
 // statuses in chunked bitsets and ordinals, their deltas, and the facts views over them.
 
 // The final state of `fe` after its first `len` events.
@@ -663,7 +663,7 @@ export interface Packed {
   T: Bits
   V: Bits
   E: Bits
-  // null: not kept (a content position's state, spec 5.7: rendering never reads its cuts);
+  // null: not kept (a content position's state, rendering never reads its cuts);
   // `recut` works them out again when asked.
   cut: Ords | null
   recut?: () => Ords

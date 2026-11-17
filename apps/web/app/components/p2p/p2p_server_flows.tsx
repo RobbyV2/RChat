@@ -36,7 +36,7 @@ import { Dialog, dangerBtn, filledBtn, Masked, textBtn } from '../ui'
 import { KeyAvatar } from './p2p_badge'
 import { andMore, fewOf, nextPage, page, PAGE } from '../../lib/paging'
 
-// The flows of P2P servers the user takes part in (spec 8.2): actions waiting for sync, removals
+// The flows of P2P servers the user takes part in: actions waiting for sync, removals
 // that took others along, moderation to apply again, a device that conflicts with a copy of
 // itself, sync progress, co-owner requests, and our devices.
 
@@ -116,7 +116,7 @@ function Capped({ items }: { items: ReactNode[] }) {
   )
 }
 
-// A sentence of the spec's copy, written with a marker for the name, with the name put in.
+// A sentence of the flows' copy, written with a marker for the name, with the name put in.
 const withNames = (text: string, name: ReactNode) => {
   const parts = text.split('\u0000')
   return parts.flatMap((p, i) => (i === 0 ? [p] : [<span key={i}>{name}</span>, p]))
@@ -227,7 +227,7 @@ function ConflictNote() {
   )
 }
 
-// More than one upgrade (spec 3.8): the user picks the copy to follow.
+// More than one upgrade: the user picks the copy to follow.
 function DisputedNote({ v }: { v: ServerView }) {
   const [list, setList] = useState<Successor[] | null>(null)
   useEffect(() => {
@@ -268,7 +268,7 @@ type Successor = {
   g: Parameters<typeof p2pServer.followTo>[1]
 }
 
-// The new owner's carry-over of the old copy (spec 3.8): waiting for members, or stopped.
+// The new owner's carry-over of the old copy: waiting for members, or stopped.
 function CarryNote({ v }: { v: ServerView }) {
   const c = v.carry
   if (!c || c.state === 'running') return null
@@ -288,7 +288,7 @@ function CarryNote({ v }: { v: ServerView }) {
   )
 }
 
-// Spec 3.8 step 5: the member list the new owner carried over isn't the old copy's.
+// The member list the new owner carried over isn't the old copy's.
 function MigrateDiffNote({ v }: { v: ServerView }) {
   const d = v.migrateDiff
   if (!d) return null
@@ -344,7 +344,7 @@ export function ServerNotices({ v }: { v: ServerView }) {
   )
 }
 
-// ----- Transfer (spec 3.8) -----
+// ----- Transfer -----
 
 // Owners asking us to take a server over, or (co-owners) to approve its transfer.
 export function TransferAsks({ room }: { room?: string }) {
@@ -397,7 +397,7 @@ export function TransferAsks({ room }: { room?: string }) {
   )
 }
 
-// ----- Co-owners (spec 8.2) -----
+// ----- Co-owners -----
 
 // Contacts creating a server who want us as a co-owner: agree or decline while they wait.
 export function CoOwnerAsks() {
@@ -500,7 +500,7 @@ export function CoOwnerPicker({
   )
 }
 
-// ----- Devices (spec 3.9, 8.2) -----
+// ----- Devices -----
 
 const when = (ms: number) =>
   ms ? new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Unknown'

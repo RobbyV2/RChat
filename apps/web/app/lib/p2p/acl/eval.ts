@@ -28,9 +28,8 @@ import {
   type Rank,
 } from './rules'
 
-// Eval(S) (spec §3.1, §5): the stratified evaluation over an index, a port of
-// notes/acl-model/fast.ts. Views are keyed and lazy (facts.ts); every authority check of §3.1 is
-// such a view.
+// Eval(S): the stratified evaluation over an index, a port of the reference model's fast.ts.
+// Views are keyed and lazy (facts.ts); every authority check is such a view.
 
 const B0 = BigInt(0)
 const B1 = BigInt(1)
@@ -92,7 +91,7 @@ class OpAnchor implements Anchor {
   }
 }
 
-// V_o(K ∪ N, +D) (mode R, resources) and V°_o(K, N) (mode O, obstacles) of §3.1.
+// V_o(K ∪ N, +D) (mode R, resources) and V°_o(K, N) (mode O, obstacles).
 export class OpView extends View {
   ovX = -1
   ovP = 0
@@ -212,7 +211,7 @@ export function beatsI(ix: Ix, w: number, w2: number): boolean {
 
 // The position hull over L* (`star`) and its non-removable writes (`tops`): a write w is the
 // value for some removal set iff every top that beats w is below w or below a write of L* that
-// is not after w and does not beat w (§3.1 PosHull, §5).
+// is not after w and does not beat w (PosHull).
 export function hullFromStar(
   ix: Ix,
   star: number[],
@@ -241,7 +240,7 @@ export function hullFromStar(
   return undefined
 }
 
-// The monotone authority context of §3.1 (authorized_{K,N}(o, +D)) over keyed lazy views.
+// The monotone authority context (authorized_{K,N}(o, +D)) over keyed lazy views.
 export class Mono {
   Fr: OpView
   Fo: OpView
@@ -396,7 +395,7 @@ export class Mono {
     return deviceOk(e, this.Fr.facts()) && authCore(e, this.ctx())
   }
   // Authorized with the author's rank at its floor and every obstacle rank at its ceiling: if
-  // this holds, the op is authorized under any cuts that are all role moves (§5 "Flat closure").
+  // this holds, the op is authorized under any cuts that are all role moves.
   floorAuthorized(): boolean {
     const ix = this.ix
     const e = this.an.e
@@ -431,7 +430,7 @@ export interface EvalStats {
   floorSkips: number
 }
 
-// What a stratum leaves for content visibility (§3.5 cascadeCut): its causes, which of the
+// What a stratum leaves for content visibility (cascadeCut): its causes, which of the
 // stratum's cuts a world of causes makes on its own, and the exposure of an author to a cause.
 export interface StratumInfo {
   s: number
@@ -609,7 +608,7 @@ export class FastEval extends Equiv {
     }
     const usesExact = (o: number, d: number) =>
       !new Mono(ix, anchorOf(ix, o), st, null, new Set([d])).authorized()
-    // (§5 "Role-wide denies") a deny on a role that o has not seen changes o's resources only
+    // a deny on a role that o has not seen changes o's resources only
     // through the role: memoized per op and per (R, b) or R; a covering move is monotone in its
     // position, so each op keeps the highest position known to break it and the lowest not to.
     const sigMemo = new Map<number, Map<string, boolean>>()
@@ -791,7 +790,7 @@ export class FastEval extends Equiv {
       monoK
     )
 
-    // 4. the cascade with exact per-cause protection (§3.1 step 4, §3.1.1)
+    // 4. the cascade with exact per-cause protection
     const causeSet = new Set<number>(
       [...selves, ...effNS].filter(g => direct.has(g) || mv.cutBy.has(g))
     )
@@ -825,7 +824,7 @@ export class FastEval extends Equiv {
       }
       this.strataInfo.push(info)
       this.onStratum?.(info)
-      // what the stratum kept for content visibility (§3.5) holds only results; its caches are
+      // what the stratum kept for content visibility holds only results; its caches are
       // built again by what asks
       drop()
       authKMono.clear()
@@ -841,7 +840,7 @@ export class FastEval extends Equiv {
     }
   }
 
-  // Step 3 for the effective moves, bit clears and deletions at this stratum (§5.2, §5.4 B): per
+  // Step 3 for the effective moves, bit clears and deletions at this stratum: per
   // role (per role and bit, for clears) they are split into chains per author and device, and
   // each reader is matched against each chain by binary search. The cuts of a mover chain's
   // covering range are a range term (chain, lo, hi, r) found by probes; those of a clearer
@@ -1181,7 +1180,7 @@ export class FastEval extends Equiv {
     }
   }
 
-  // protectedTarget (§3.1 step 2), skipping the view when the target's rank bound decides it.
+  // protectedTarget, skipping the view when the target's rank bound decides it.
   protectedFast(d: number, kk: Rank, Vof: (g: number) => View): boolean {
     const ix = this.ix
     const de = ix.ev[d]
@@ -1196,7 +1195,7 @@ export class FastEval extends Equiv {
     return protectedTarget(de, St, Vof(d).facts(), kk)
   }
 
-  // The operations whose resources a deny d can change (§5 authority index): step 3 visits only these.
+  // The operations whose resources a deny d can change (the authority index): step 3 visits only these.
   private readers(d: number, visit: (o: number) => void) {
     const ix = this.ix
     const e = ix.ev[d]
@@ -1358,7 +1357,7 @@ export class FastEval extends Equiv {
       if (g !== B0) Gm.set(i, g)
     }
     const G = (q: number) => Gm.get(q) ?? B0
-    // Protection classes (revision 7c): distinct U(q) ∩ Γ⁺ over the flat ops outside X, Γ⁺ the
+    // Protection classes: distinct U(q) ∩ Γ⁺ over the flat ops outside X, Γ⁺ the
     // causes with a direct cut on an event outside X (one set for the stratum, so what q cites
     // can't split q's exposure).
     let Gp = B0
@@ -1407,7 +1406,7 @@ export class FastEval extends Equiv {
       const Wx = W & U(x)
       return Wx !== B0 && cascadeIn(x, Wx)
     }
-    // (§5.4 C) per op, the minimal worlds known to break it and the maximal ones known not to
+    // Per op, the minimal worlds known to break it and the maximal ones known not to
     // (cascadeIn is monotone in the world), and what each broken test asked of the world: the
     // events N was consulted on, with the answers, in order. A test is a deterministic function
     // of those answers, so a world that gives the same ones gets the same result.
@@ -1497,7 +1496,7 @@ export class FastEval extends Equiv {
     }
   }
 
-  // An event on the heads (C(ap) = S): Eval(S ∪ {e}) = Eval(S) ⊕ e (§5). What is left: whether e
+  // An event on the heads (C(ap) = S): Eval(S ∪ {e}) = Eval(S) ⊕ e. What is left: whether e
   // is void, whether e, if a deny, is effective at k(e), and the facts.
   appendHead(i: number) {
     const ix = this.ix

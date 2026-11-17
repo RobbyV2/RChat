@@ -16,7 +16,7 @@ import { gcmOpen, gcmSeal, nonceOf } from './frames'
 import { baseId, keyBytes, peerId, sign, verify, verifyCert, type Cert, type KeyPair } from './keys'
 import { NONCE_LEN } from './acl/rules'
 
-// SIGMA-I over the PeerJS data channel (note section 4). The signaling server relays the SDP and
+// SIGMA-I over the PeerJS data channel. The signaling server relays the SDP and
 // could sit in the middle of DTLS, so confidentiality never relies on DTLS: both sides prove
 // possession of their device key over a transcript bound to both peer ids, and the initiator's
 // identity travels encrypted, so an active prober learns nothing about who dialed.

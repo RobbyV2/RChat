@@ -663,7 +663,7 @@ describe('sessions', () => {
     expect(offersFrom('alice')).toHaveLength(0)
   })
 
-  test('a legacy peer without session ids still connects', async () => {
+  test('a legacy peer without session ids connects', async () => {
     const { alice, bob } = await room()
     tamper = w => {
       if (w.from !== 'bob') return w

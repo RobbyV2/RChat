@@ -30,8 +30,8 @@ export async function reapplyAll(cx: ServerCtx, room: string) {
     )
 }
 
-// Our denies to apply again (spec 9 rule 18); in a new copy, our kicks and bans in the old one
-// that its upgrade didn't have in its past too (spec 3.8 step 7: not carried over).
+// Our denies to apply again; in a new copy, our kicks and bans in the old one
+// that its upgrade didn't have in its past too (not carried over).
 export async function reapplyOf(cx: ServerCtx, room: string) {
   const prev = cx.rooms.get(room)?.prev
   const rt = cx.ensureRt(room)
@@ -72,7 +72,7 @@ export function joinedRooms(cx: ServerCtx) {
 }
 
 // The ACL events of `room` this replica held by `t`, other than device `dk`'s: a lost device's
-// last trusted event is the newest of its own that one of them has in its past (spec 3.9). A
+// last trusted event is the newest of its own that one of them has in its past. A
 // thief can backdate an event but can't make us hold it, or others cite it, before it exists.
 // Also the highest seq of what this browser itself signed with `dk` by `t` (its own outbox: a
 // copy of the key can't put events there), when `dk` is an earlier key of this browser.
@@ -107,7 +107,7 @@ export async function ownEvents(cx: ServerCtx, room: string, dev: string) {
 }
 
 // This browser's own work with key `dev` that a rotation dropping `dev` would undo, so the new
-// key signs it again (spec 3.9): messages that show, and ACL changes whose effect holds (never
+// key signs it again: messages that show, and ACL changes whose effect holds (never
 // what a moderator redacted, removed or cut, or a change cut or superseded since).
 export async function resignable(cx: ServerCtx, room: string, dev: string) {
   const own = await cx.ownEvents(room, dev)
@@ -124,8 +124,8 @@ export async function resignable(cx: ServerCtx, room: string, dev: string) {
   })
 }
 
-// What a lost or stolen device `dk` did after it stopped being ours at `t`, per server (spec
-// 8.2): its ACL events after its last trusted one (with when we received each), how many
+// What a lost or stolen device `dk` did after it stopped being ours at `t`, per server:
+// its ACL events after its last trusted one (with when we received each), how many
 // messages, who joined through its invites from then on, and what of this browser's own work
 // the new key may sign again (when this browser's key came after the trusted point).
 export async function lostPreview(cx: ServerCtx, dk: string, t: number): Promise<LostRoom[]> {
@@ -156,8 +156,8 @@ export async function lostPreview(cx: ServerCtx, dk: string, t: number): Promise
   return out
 }
 
-// Removes device `dk` from every server and undoes what it signed after its last trusted event
-// (spec 3.9). This browser moves to a new device key, which posts a rotation (signed with the
+// Removes device `dk` from every server and undoes what it signed after its last trusted
+// event. This browser moves to a new device key, which posts a rotation (signed with the
 // recovery key) positioned at the last point it trusts. The rotation drops `dk` at that point
 // and keeps this browser's old key, which is then revoked on the heads, so this browser's own
 // work stands. Where the old key came after that point the rotation can't keep it: what it
@@ -240,7 +240,7 @@ export async function disownDevice(cx: ServerCtx, dk: string, t: number) {
   return { late, failed, unsent }
 }
 
-// Signs our own events again from this device (spec 3.9: `recs`, what `resignable` found before
+// Signs our own events again from this device (`recs`, what `resignable` found before
 // a rotation dropped this browser's old key), in their order, where the rotation stopped them
 // counting: content hidden by it, ACL changes no longer in force whose effect is gone; ids they
 // name that were signed again are mapped. What still counts is left alone.
@@ -262,7 +262,7 @@ export async function resign(cx: ServerCtx, room: string, recs: EventRecord[]) {
     const content = w.ev.L === 'c'
     const to = !content && typeof c.to === 'string' ? c.to : undefined
     const seen = ['kick', 'ban', 'revoke'].includes(w.ev.t)
-    // A message goes through the slow-mode check (spec 3.5): one it would hide isn't sent.
+    // A message goes through the slow-mode check: one it would hide isn't sent.
     const id = await (
       content
         ? cx.content(room, w.ev.t, c)
@@ -276,15 +276,15 @@ export async function resign(cx: ServerCtx, room: string, recs: EventRecord[]) {
   return unsent
 }
 
-// Recovery (spec 3.9, 8.2): a rotation signed with the recovery key (the identity key until Task
-// 17 splits them) in every server, keeping `keep` and this device; every other device of ours
+// Recovery: a rotation signed with the identity key, which is the recovery key on rules 2, in
+// every server, keeping `keep` and this device; every other device of ours
 // is signed out. Copies transferred to a new one are left alone. Returns the servers where it
 // failed, with why.
 export async function recover(cx: ServerCtx, keep: string[]) {
   const author = await cx.author()
   const dev = keyId(author.dk.pk)
   const failed: { room: string; why: string }[] = []
-  // Signed out: not ours any more, so what they did is never offered to re-apply (I2).
+  // Signed out: not ours any more, so what they did is never offered to re-apply.
   const out = new Set<string>()
   for (const room of cx.joinedRooms()) {
     const live = memberOf(cx.sumOf(room), cx.me)?.devs ?? []
@@ -306,7 +306,7 @@ export async function recover(cx: ServerCtx, keep: string[]) {
   return failed
 }
 
-// Spec 3.9: this device's history conflicts with another copy of it. It stops signing in the
+// This device's history conflicts with another copy of it. It stops signing in the
 // server where that shows; set up as a new device (a new key, introduced in every server), the
 // copy's voided moderation can be applied again.
 export function conflicted(cx: ServerCtx, room: string) {

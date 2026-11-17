@@ -10,13 +10,13 @@ import {
   type Head,
 } from '../chain'
 
-// The protection state of spec §2.5 (rules 3): for every identity whose creation record a set of
+// The protection state (rules 3): for every identity whose creation record a set of
 // admitted ACL events holds, whether the record is void or the identity frozen, the keys of its
 // chain heads, the head each of its records was made under, and the records that are inert. A
 // function of the set alone: the causal order, the records' signers and the chain records they
 // carry.
 
-// ----- Rules-3 content fields (§8.1) -----
+// ----- Rules-3 content fields -----
 
 export interface Idb3 {
   ik: string
@@ -73,7 +73,8 @@ export interface Upgrade3 {
 
 // ----- Input -----
 
-// What §2.5 reads of an event: its type, acting identity, signing device and content.
+// What the protection state reads of an event: its type, acting identity, signing device and
+// content.
 export interface KeyEv {
   id: string
   t: string
@@ -494,7 +495,7 @@ export const sameHead = (
   )
 }
 
-// The devices an in-force rotation r drops (§3.9): every device of its identity that an event of
+// The devices an in-force rotation r drops: every device of its identity that an event of
 // E introduces, that r neither keeps nor is posted by, and whose introduction is not after r. A
 // rotation in keep doesn't drop what a sibling carrier in E introduces or keeps.
 export function droppedBy(
@@ -520,7 +521,7 @@ export function droppedBy(
   return [...out].sort()
 }
 
-// A void device of identity `a` (§3.5): some event of the set introduces it, and every one of its
+// A void device of identity `a`: some event of the set introduces it, and every one of its
 // introductions is in X.
 export function voidDevice(
   X: ReadonlySet<string>,

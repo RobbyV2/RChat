@@ -43,13 +43,13 @@ export interface MemberSum {
   binding?: string
   // Who let a member in: the author of the invite its live join used (for one out with no removal
   // of its own, its latest join), and the issuer of the code that invite named (removals that
-  // reach invitees, spec 8.2).
+  // reach invitees).
   via?: string
   code?: string
   // The highest rank among the effective bans of a banned member (unban needs at least it).
   banRank?: Rank
   // An invitee whose invites are all a non-owner's that no third member acknowledged yet: its
-  // join waits (spec 4.1 W3(e), 9 rule 14).
+  // join waits (W3(e)).
   waits?: true
 }
 
@@ -60,7 +60,7 @@ export interface RoleSum {
   color?: number
 }
 
-// A channel overwrite (spec 1.4 `chperm`) that allows or denies something.
+// A channel overwrite (`chperm`) that allows or denies something.
 export interface OverSum {
   allow: number
   deny: number
@@ -87,7 +87,7 @@ export interface Summary {
   settings: AclContent | null
   codes: Record<string, CodeSum>
   upgraded: boolean
-  // Admitted upgrades (spec 3.8), and devices with a fork point (evidence against them).
+  // Admitted upgrades, and devices with a fork point (evidence against them).
   upgrades: string[]
   forks: string[]
   heads: string[]
@@ -197,7 +197,7 @@ export const applySummary = (s: Summary, d: SumDelta | null | undefined): Summar
   return next
 }
 
-// The roles: position, bits, and the name and color of their latest `role_meta` (spec 1.5), else
+// The roles: position, bits, and the name and color of their latest `role_meta`, else
 // of their creation.
 export const rolesOf = (F: EvalResult['facts'], ix: Ix) => {
   const roles = dict<RoleSum>()

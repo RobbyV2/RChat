@@ -32,7 +32,7 @@ export function mentionables(cx: ServerCtx, room: string) {
   return out
 }
 
-// A message inside our slow-mode interval would be hidden (spec 3.5): it isn't signed.
+// A message inside our slow-mode interval would be hidden: it isn't signed.
 export function content(cx: ServerCtx, room: string, t: string, c: Record<string, unknown>) {
   const ch = c.ch
   if (t !== 'msg' || typeof ch !== 'string') return cx.emit(room, t, () => c, { L: 'c' })

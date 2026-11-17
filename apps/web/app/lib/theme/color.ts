@@ -56,7 +56,7 @@ export const gray = (tone: number): Rgb => {
   return [v, v, v]
 }
 
-// CIE Lab (D65) and the CIE76 color difference.
+// CIE Lab (illuminant D65) and the CIE76 color difference.
 const WHITE = [95.047, 100, 108.883]
 const f = (t: number) => (t > E ? Math.cbrt(t) : (K * t + 16) / 116)
 export const lab = (c: Rgb) => {

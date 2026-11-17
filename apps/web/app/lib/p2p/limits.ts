@@ -1,7 +1,7 @@
 import type { AclContent } from './acl/rules'
 
 // Every P2P limit outside the wire and protocol constants. AGREED: what every replica of a server
-// must use to admit and evaluate its ACL (spec 4.1; ts in ms). LOCAL: what one device may pick on
+// must use to admit and evaluate its ACL (ts in ms). LOCAL: what one device may pick on
 // its own. RANGES bound each LOCAL value by `section.key` (array items by `section.key.i`).
 
 export interface Agreed {
@@ -75,7 +75,7 @@ const DEFAULTS = {
     pushPerMin: 600,
     // Events pulled per session before older history waits for "Load older".
     horizon: 2000,
-    // Servers: the ACL DAG comes whole (spec 4.2, no horizon), within a rate, so a peer can't flood
+    // Servers: the ACL DAG comes whole (no horizon), within a rate, so a peer can't flood
     // us through pulls.
     statePerMin: 2000,
     headsDebounceMs: 250,
@@ -170,7 +170,7 @@ const DEFAULTS = {
     roomBytes: 200 * MIB,
     totalBytes: GIB,
     // P2P servers have a budget of their own, so a server can never crowd out DMs. It bounds their
-    // content; ACL events are always stored (spec 4.2).
+    // content; ACL events are always stored.
     serverCap: 400_000,
     serverBytes: 768 * MIB,
     // Steps of any walk over prev links.
@@ -194,21 +194,21 @@ const DEFAULTS = {
     // Redeem attempts a session may make.
     redeems: 3,
     redeemMs: 15_000,
-    // Spec 4.3 S4: a hidden body is purged once its cause has stood this long here (and S1 to S3
+    // S4: a hidden body is purged once its cause has stood this long here (and S1 to S3
     // hold), or at once when the room or the device runs out of space.
     purgeAfter: 7 * DAY,
-    // Storage passes (spec 2.3, 4.2, 4.3: drops, purges, bodies wanted back, proofs) run at most
+    // Storage passes (drops, purges, bodies wanted back, proofs) run at most
     // this often per room, and while causes stand at least once per `causesMs`.
     storeMs: 5000,
     causesMs: 60_000,
-    // Proofs (spec 4.1): posted after a random delay up to this, at most proofsPerHour per room.
+    // Proofs: posted after a random delay up to this, at most proofsPerHour per room.
     proofDelayMs: 30_000,
     proofsPerHour: 6,
-    // A mark that acknowledges a moderator's redaction (spec 4.3 S2): within this of applying it,
+    // A mark that acknowledges a moderator's redaction (S2): within this of applying it,
     // at most one per room per `ackMs`.
     ackDelayMs: 60_000,
     ackMs: 10 * MIN,
-    // Evicted bodies someone viewed, wanted back at once (spec 4.2 step 3), and the least an
+    // Evicted bodies someone viewed, wanted back at once, and the least an
     // eviction of the oldest bodies frees.
     viewedMax: 500,
     evictBytes: 64 * KIB,
@@ -229,7 +229,7 @@ const DEFAULTS = {
     codePauseMs: DAY,
     // A session with someone who isn't a contact, left without room links, closes after this.
     idleMs: 5000,
-    // Local limits (spec 4.2): events waiting for their ACL parents, per room, and events dated
+    // Local limits: events waiting for their ACL parents, per room, and events dated
     // in the future, per device. Overflow is dropped and fetched again later.
     pendingEvents: 2000,
     pendingBytes: 8 * MIB,

@@ -30,7 +30,7 @@ import {
 } from './p2p_server_net'
 import { Hub, ManualClock } from './p2p_net'
 
-// The user-facing flows of P2P servers (spec 8.2, 9) on real members over the in-memory hub.
+// The user-facing flows of P2P servers on real members over the in-memory hub.
 
 afterEach(stopAll)
 
@@ -72,7 +72,7 @@ const giveRole = async (by: Member, room: string, to: Member, bits: number, pos 
 const sees = (clock: ManualClock, m: Member, room: string, ik: string, want: string) =>
   pump(clock, () => state(m, room, ik) === want, `${m.name} sees ${want}`)
 
-describe('moderation waits for sync (spec 8.2, 9 rule 2)', () => {
+describe('moderation waits for sync', () => {
   test('a kick is signed only after a member sent fresh heads and we hold them; or Apply anyway', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -131,7 +131,7 @@ describe('moderation waits for sync (spec 8.2, 9 rule 2)', () => {
   }, 90_000)
 })
 
-describe('unban (spec 8.2)', () => {
+describe('unban', () => {
   test('only someone ranked at least as high as every ban of them can lift it', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -163,8 +163,8 @@ describe('unban (spec 8.2)', () => {
   }, 90_000)
 })
 
-describe('limits (spec 8.2 W3)', () => {
-  test('too many changes in an hour: the hourly message; leaving still works', async () => {
+describe('limits (W3)', () => {
+  test('too many changes in an hour: the hourly message; leaving works', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
@@ -199,7 +199,7 @@ describe('limits (spec 8.2 W3)', () => {
   }, 120_000)
 })
 
-describe('invite codes (spec 8.2)', () => {
+describe('invite codes', () => {
   test('a link carries the code id and its secret; a link naming another code with it is refused', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -244,7 +244,7 @@ describe('invite codes (spec 8.2)', () => {
   }, 60_000)
 })
 
-describe('removed members (spec 8.2)', () => {
+describe('removed members', () => {
   test('someone removed from one server who joins another of ours with a code keeps the session', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -266,7 +266,7 @@ describe('removed members (spec 8.2)', () => {
   }, 60_000)
 })
 
-describe('vouched invites (spec 9 rule 14)', () => {
+describe('vouched invites', () => {
   test("a join through a member's invite waits for a third member; both sides see it", async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -295,7 +295,7 @@ describe('vouched invites (spec 9 rule 14)', () => {
   }, 90_000)
 })
 
-describe('removals that reach invitees (spec 8.2)', () => {
+describe('removals that reach invitees', () => {
   test('removing Bob takes along whom he let in at the same time; Invite them again brings them back', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -344,7 +344,7 @@ describe('removals that reach invitees (spec 8.2)', () => {
   }, 120_000)
 })
 
-describe('cut denies are listed to apply again (spec 9 rule 18, I2)', () => {
+describe('cut denies are listed to apply again', () => {
   test("a moderator's ban cut by a concurrent demotion comes back once the role does", async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -388,7 +388,7 @@ describe('cut denies are listed to apply again (spec 9 rule 18, I2)', () => {
   }, 120_000)
 })
 
-describe('devices (spec 3.9, 8.2)', () => {
+describe('devices', () => {
   test('a copy whose history conflicts stops signing; set up as a new device it signs again', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -801,7 +801,7 @@ describe('devices (spec 3.9, 8.2)', () => {
     expect(b.servers.view(room)?.reapply).toEqual([])
   }, 120_000)
 
-  test("a lost device: this browser's key that came after the cut-off can't be kept, so what of its work still holds is signed again", async () => {
+  test("a lost device: this browser's key that came after the cut-off can't be kept, so what of its work holds is signed again", async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
@@ -886,7 +886,7 @@ describe('devices (spec 3.9, 8.2)', () => {
   }, 120_000)
 })
 
-describe('transfer (spec 3.8)', () => {
+describe('transfer', () => {
   test('every co-owner must approve; then everyone follows to the new copy with what it had', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -989,7 +989,7 @@ describe('transfer (spec 3.8)', () => {
       ['carol before', true],
       ['new', false],
     ])
-    // The member list moved over as it was; one the new owner changed shows (spec 3.8 step 5).
+    // The member list moved over as it was; one the new owner changed shows.
     expect(a.servers.view(next)?.migrateDiff).toBeNull()
     const list = Object.entries(a.servers.sumOf(room).members)
       .filter(([ik, x]) => x.m === 'join' && ik !== c.node.ik)
@@ -1001,7 +1001,7 @@ describe('transfer (spec 3.8)', () => {
       'alice sees the changed list'
     )
     expect(a.servers.view(next)?.migrateDiff?.added).toEqual([])
-    // Spec 3.8 step 6: a message put into the old copy after the transfer, at a position from
+    // A message put into the old copy after the transfer, at a position from
     // before it, doesn't show; nor does anything by someone the new copy bans.
     const late = await signed(c, room, 'msg', { body: 'late in the old copy', ch }, { ap: preAp })
     for (const m of [a, b]) await deliver(m, room, late.wire, clock.now())
@@ -1158,7 +1158,7 @@ describe('transfer (spec 3.8)', () => {
     expect((await a.servers.loadPins(room, ch)).map(m => m.body)).toEqual(['before'])
   }, 120_000)
 
-  test('a ban made at the same time as the transfer is offered to re-apply in the new copy (spec 3.8 step 7)', async () => {
+  test('a ban made at the same time as the transfer is offered to re-apply in the new copy', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
@@ -1201,7 +1201,7 @@ describe('transfer (spec 3.8)', () => {
     expect(c.servers.view(next)?.reapply).toEqual([])
   }, 120_000)
 
-  test('a demotion made at the same time as the transfer stays; a role change then is offered to re-apply (spec 3.8 step 7)', async () => {
+  test('a demotion made at the same time as the transfer stays; a role change then is offered to re-apply', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
@@ -1356,7 +1356,7 @@ describe('transfer (spec 3.8)', () => {
     expect(offered()).toEqual([])
   }, 120_000)
 
-  test('a lockdown made during a transfer (@everyone may no longer send) is offered and applied in the new copy', async () => {
+  test('a lockdown made during a transfer (@everyone may not send) is offered and applied in the new copy', async () => {
     const { c, next, clock } = await changedAway('Locked', (c, room) =>
       c.servers.setRoleBit(room, EVERYONE, P.SendMessages, false)
     )
@@ -1683,7 +1683,7 @@ describe('transfer (spec 3.8)', () => {
     expect(wa.linkCandidates(next)).not.toContain(fay)
   }, 120_000)
 
-  test('an old copy whose links all go to members who moved still lets in one who was away', async () => {
+  test('an old copy whose links all go to members who moved lets in one who was away', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     // No re-sampling, which could free a link by chance.
@@ -1913,7 +1913,7 @@ describe('transfer (spec 3.8)', () => {
     return { lone, due: () => due }
   }
 
-  test('a lone member who reloads mid-carry still acknowledges it, and it finishes', async () => {
+  test('a lone member who reloads mid-carry acknowledges it, and it finishes', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const away = awayAt10(clock, hub)
@@ -2009,7 +2009,7 @@ describe('transfer (spec 3.8)', () => {
     const room = await a.servers.create('Rows')
     await joinWithCode(clock, a, room, b)
     await joinWithCode(clock, a, room, c)
-    // Carol acknowledges what Alice did (spec 4.1 W3(b)), so Alice can go on.
+    // Carol acknowledges what Alice did (W3(b)), so Alice can go on.
     const ack = async () => {
       await pump(
         clock,
@@ -2167,7 +2167,7 @@ describe('transfer (spec 3.8)', () => {
     await joinWithCode(clock, a, room, c)
     for (let i = 0; i < 30; i++) {
       await a.servers.addChannel(room, `room-${i}`)
-      // Others acknowledge now and then (spec 4.1 W3(b)).
+      // Others acknowledge now and then (W3(b)).
       if (i % 10 === 9) {
         const ack = await emit(c)(room, 'mark', () => ({}))
         await pump(clock, async () => !!(await a.store.event(ack)), 'alice holds it', 1_000)

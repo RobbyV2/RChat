@@ -1,14 +1,14 @@
 import { afterAll, afterEach, expect } from 'bun:test'
-import { World } from './acl_model_r8f/world'
-import { worldDiff } from './p2p_acl_r3'
-import './acl_model_r8f/vectors-r8.test'
-import './acl_model_r8f/vectors-r8d.test'
-import './acl_model_r8f/vectors-r8e.test'
-import './acl_model_r8f/vectors-r8f.test'
+import { World } from './acl_model_rules3/world'
+import { worldDiff } from './p2p_acl_rules3'
+import './acl_model_rules3/vectors-limits-keys.test'
+import './acl_model_rules3/vectors-recovery.test'
+import './acl_model_rules3/vectors-old-phrase.test'
+import './acl_model_rules3/vectors-client.test'
 
 // Run by p2p_acl_keys.test.ts in a process of its own (`bun test ./p2p_acl_keys_vectors.ts`): a
 // test file that another one imports runs once, in whichever loads it first, and test files share
-// their modules. Here the r8 vectors of the model (B3 among them: the recovery key from creation,
+// their modules. Here the rules-3 vectors of the model (among them the recovery key from creation,
 // the void rule and the freeze, sibling carriers, upgrades as records, an upgrade that dies only
 // through carriers signed by a recovery key) run under their own names, and after each one the
 // protection state production reads from every world it built, at its end and after each of its

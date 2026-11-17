@@ -1,4 +1,4 @@
-// Reference solver for scripts and self-bots (spec "The puzzle"). No dependencies: node or bun.
+// Reference solver for scripts and self-bots. No dependencies: node or bun.
 // const { token } = await trust(base, session) gives the X-Trust-Token value for later requests.
 import { createHash } from 'node:crypto'
 

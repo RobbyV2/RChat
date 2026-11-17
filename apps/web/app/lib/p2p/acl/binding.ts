@@ -3,7 +3,7 @@ import { isRecord } from '../../bytes'
 import { b64u, bytesOf, canonicalBytes, concat, utf8 } from '../canonical'
 import { keyBytes, keyId, sign, verify, type KeyPair } from '../keys'
 
-// Device certificates of introductions (spec §1.1, §1.4): the identity's primary key signs the
+// Device certificates of introductions: the identity's primary key signs the
 // server, the identity, the device and the identity-chain position (`iprev`) of the event that
 // introduces the device. A genesis has no server id yet: its owners' bundles name the digest of
 // the genesis content, and no position.
@@ -32,9 +32,9 @@ export const genesisDigest = (c: Record<string, unknown>) => {
 
 export const genesisSrv = (c: Record<string, unknown>) => `genesis:${genesisDigest(c)}`
 
-// A genesis owner bundle (§1.1 `idb`) for the genesis content `c`, whose owners list this owner
-// with `dk`: its certificate binds `dk` to its identity, which plays primary until Task 17 gives
-// identities separate keys. Every owner, co-owners included, signs its own.
+// A genesis owner bundle (`idb`) for the genesis content `c`, whose owners list this owner
+// with `dk`: its certificate, signed with the identity key, binds `dk` to its identity. Every
+// owner, co-owners included, signs its own.
 export const genesisBundle = (ik: KeyPair, dk: string, c: Record<string, unknown>) => {
   const id = keyId(ik.pk)
   return { ik: id, dk, dcert: signDeviceCert2(ik, genesisSrv(c), id, dk) }

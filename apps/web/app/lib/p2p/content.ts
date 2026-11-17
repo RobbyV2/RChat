@@ -27,7 +27,7 @@ export type EvType = 'msg' | 'edit' | 'redact' | 'react' | 'pin' | 'move' | 'cal
 export const isTypeName = (x: unknown): x is string =>
   typeof x === 'string' && /^[a-z][a-z0-9_]{0,31}$/.test(x)
 
-// A file in a message (note section 5): its root hash `h` over the 1 MiB block hashes, its
+// A file in a message: its root hash `h` over the 1 MiB block hashes, its
 // size and block count, and what the sender says about it. `name`, `mime` and the thumbnail are
 // claims: what a received file is shown as is decided from its bytes only.
 export interface Attachment {

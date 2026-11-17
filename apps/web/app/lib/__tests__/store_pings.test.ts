@@ -132,7 +132,7 @@ describe('incoming pings', () => {
     expect(reads()).toEqual([{ scope: 't5', last_read: 0, pings_until: 3 }])
   })
 
-  test('scrolled up in the scope still badges', () => {
+  test('scrolled up in the scope badges', () => {
     useStore.setState({ atBottom: { c2: false } })
     dispatch(pinged(ping({ scope: 'c2' })))
     expect(scopePings(st().pings, 'c2')).toBe(1)
@@ -202,7 +202,7 @@ describe('clearing pings', () => {
     expect(st().pings).toEqual({})
   })
 
-  test('reaching the bottom of a read scope with pings still tells the server', async () => {
+  test('reaching the bottom of a read scope with pings tells the server', async () => {
     useStore.setState({
       reads: { c1: { lastRead: 20, latest: 20, server: 's' } },
       pings: { c1: counted('c1', 's', 1, 6), t5: counted('c1', 's', 1, 7) },

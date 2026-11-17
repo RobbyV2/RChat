@@ -10,7 +10,7 @@ import type { Clock, Session } from './session'
 import { isRoomId, readPayload } from './signal'
 import { isShortId } from './state'
 
-// Voice channels of P2P servers (note section 5, "Calls and voice"): a full mesh, like instance
+// Voice channels of P2P servers: a full mesh, like instance
 // voice. Who is in a channel travels in `gvoice {room, ch, on, n, dk, sig}` frames, signed by the
 // device the participant is in voice on (one of its devices in the room), so a frame passed on
 // can't be forged or changed. They are sent to every session with a member of the room who may

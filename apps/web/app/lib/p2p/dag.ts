@@ -34,9 +34,9 @@ export type Inserted =
   | { status: 'full'; why: FullWhy }
   // P2P servers: not stored for now (pending, held, or past a local limit): no strike.
   | { status: 'quota' }
-  // P2P servers: refused by the rules (spec 2.1 Reject): never stored or relayed, no strike.
+  // P2P servers: refused by the rules (Reject): never stored or relayed, no strike.
   | { status: 'rejected'; why: string }
-  // P2P servers: dropped from storage here before (spec 2.3, 4.2) and not wanted again: taken as
+  // P2P servers: dropped from storage here before and not wanted again: taken as
   // had, so the sender's push is done.
   | { status: 'dropped' }
 
@@ -60,7 +60,7 @@ export const SERVER_TOTAL = 'sevents'
 export const SERVER_ACL = 'sacl'
 export { SERVER_TOTAL_BYTES }
 
-// What a stored server record counts (spec 4.2): an event that isn't purged; an ACL one apart.
+// What a stored server record counts: an event that isn't purged; an ACL one apart.
 export const countOf = (e: Pick<EventRecord, 'layer' | 'purged'>) => ({
   n: e.purged ? 0 : 1,
   acl: !e.purged && e.layer === 'a' ? 1 : 0,
@@ -318,7 +318,7 @@ export const insertInto = async (
 
 const sameSender = (r: EventRecord, t: Pick<EventRecord, 'sender'>) => r.sender === t.sender
 
-// ----- P2P servers (spec 1.3, 4.2): two layers in one store -----
+// ----- P2P servers: two layers in one store -----
 
 // A device's chain in a server as this device stored it (meta store): its highest seq and its
 // last ACL and content events. Read and written in the transaction that stores an event of it.
@@ -350,7 +350,7 @@ export interface ServerInsert {
   unknown?: boolean
 }
 
-// Limits of a server whose rules this build doesn't know (stored unchecked, spec 1.2).
+// Limits of a server whose rules this build doesn't know (stored unchecked).
 export const UNKNOWN = { events: LOCAL.dag.unknownEvents, bytes: LOCAL.dag.unknownBytes }
 
 export type ServerInserted = Inserted | { status: 'stale' }
@@ -407,8 +407,8 @@ export const refitFull = async (
   return out
 }
 
-// Bytes of content bodies (and their search rows) each sender has stored in a room (spec 4.2
-// eviction step 3 picks the largest), in `meta`.
+// Bytes of content bodies (and their search rows) each sender has stored in a room (eviction
+// picks the largest), in `meta`.
 export const heldKey = (room: string, ik: string) => `held\n${room}\n${ik}`
 const heldAdd = async (
   meta: { get(k: string): Promise<unknown>; put(v: unknown, k: string): Promise<unknown> },
@@ -429,7 +429,7 @@ export interface Caps {
   serverBytes?: number
 }
 
-// The sender's share (spec 4.2) of the room's and of every server's content budget, over the day
+// The sender's share of the room's and of every server's content budget, over the day
 // before `now`: whether one more event of `size` bytes fits, and the buckets to write if stored.
 const shareOf = async (
   get: (k: string) => Promise<unknown>,
@@ -586,7 +586,7 @@ export const insertServer = async (
   const depth = acl ? (ctx.aseq ?? 0) : 1 + Math.max(-1, ...parents.map(x => x.depth))
   const tid = !acl && c && TARGETED.includes(ev.t) && typeof c.target === 'string' ? c.target : null
   const target = tid ? await events.get(tid) : undefined
-  // An edit of a message purged here by its author goes without its body too (spec 4.3).
+  // An edit of a message purged here by its author goes without its body too.
   const gone = ev.t === 'edit' && !!target?.purged && target.sender === ev.a && c !== null
   const stored = gone ? redacted(wire as unknown as Wire) : (wire as unknown as Wire)
   const isRedacted = c === null || gone
@@ -610,7 +610,7 @@ export const insertServer = async (
   if (acl && ctx.acl) rec.acl = ctx.acl
   if (!acl && typeof c?.ch === 'string') rec.chan = c.ch
   // Aimed at an event of another room held here: what we hold decides it, not the wire, so the
-  // relay may be honest (spec 2.1): refused, no strike.
+  // relay may be honest: refused, no strike.
   if (tid && target?.room !== undefined && target.room !== room) {
     tx.abort()
     return { status: 'rejected', why: 'target' }
@@ -628,7 +628,7 @@ export const insertServer = async (
   // The search index's rows count as the room's storage.
   const indexed = !acl && !ctx.unknown ? await indexEvent(tx.objectStore('search'), events, rec) : 0
   const storedBytes = (gone ? storedSize(stored) : size) + indexed
-  // Only a body eviction can free counts (spec 4.2 step 3).
+  // Only a body eviction can free counts.
   if (!acl && !ctx.unknown && !isRedacted) await heldAdd(meta, room, ev.a, size + indexed)
   const next: DevChain = { seq: Math.max(chain?.seq ?? -1, ev.seq) }
   const keep = (x: string | undefined, mine: boolean) => (mine ? id : x)
@@ -671,7 +671,7 @@ export const insertServer = async (
   return { status: 'new', rec, ping: null, unread: false, freed: [] }
 }
 
-// Applies what the ACL core lets storage drop (spec 2.3, 4.2): each event goes; an ACL event whose
+// Applies what the ACL core lets storage drop: each event goes; an ACL event whose
 // header stays keeps its core, signature, the content `acl/` keeps, its admission order and record;
 // anything else keeps only its id. The room's counts and space come back, and its gaps and heads
 // forget the dropped ids. Returns the files of dropped content (they may be deleted here now).
@@ -731,10 +731,10 @@ export const dropServer = async (db: P2pDatabase, room: string, drops: Drops) =>
   return freed
 }
 
-// Purges the bodies of `ids` (spec 4.3: a stable cause, a counted self-redaction, or room
+// Purges the bodies of `ids` (a stable cause, a counted self-redaction, or room
 // needed), with the edits their authors made of them: each keeps only its header, is never
-// served, and its space and files come back. `evict`: bodies that show, evicted for space (spec
-// 4.2 step 3). Returns the ids purged and their files (`mine`: of our own messages).
+// served, and its space and files come back. `evict`: bodies that show, evicted for space.
+// Returns the ids purged and their files (`mine`: of our own messages).
 export const purgeServer = async (
   db: P2pDatabase,
   room: string,
@@ -784,7 +784,7 @@ export const purgeServer = async (
   return { done, freed, mine }
 }
 
-// A purged body fetched again (spec 4.3 restore): the same id, so the same core, and its content
+// A purged body fetched again: the same id, so the same core, and its content
 // checked against `ch` by the wire checks. The record gets its body and files back.
 export const restoreBody = async (
   db: P2pDatabase,
@@ -816,7 +816,7 @@ export const restoreBody = async (
   return next
 }
 
-// Spec 4.2 eviction step 3: whose bodies to look at, in order: the senders whose content bodies
+// Eviction: whose bodies to look at, in order: the senders whose content bodies
 // take the most bytes in `room`, or (`room` null: every server's budget is full) summed over
 // every server, each in the rooms where it holds the most first. Our own content (`me`) comes
 // last: we are the one holder our messages are sure to have.
@@ -901,8 +901,8 @@ export const oldestBodies = async (
   return { ids, late, seen, from: first ?? last }
 }
 
-// Recomputes the bytes each sender's content bodies take in a room (a cold start; counts kept
-// before this build are rebuilt too).
+// Recomputes the bytes each sender's content bodies take in a room (a cold start; stored counts
+// are rebuilt too).
 export const resetHeld = async (db: P2pDatabase, room: string, held: Map<string, number>) => {
   const tx = db.transaction('meta', 'readwrite')
   const lo = `held\n${room}\n`

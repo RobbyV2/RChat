@@ -1,8 +1,8 @@
-// The contact, badge, succession and restore vectors of spec r8f 1.7 (R8-*) and the fuzzes of
+// The contact, badge, succession and restore vectors and the fuzzes of
 // message orders (FZ-*), as the model's contacts.test.ts has them, run on production's
 // `ContactClaims` over real keys and records (p2p_contact_claims_model.ts turns the model's
 // names into them and runs the model beside every step). The instance's vectors (backups, the
-// identity record) are plan K's. Then the r8e review's attack cases, and what the model leaves
+// identity record) are in the server's tests. Then attack cases, and what the model leaves
 // to the implementation. FZ_ORDERS multiplies the orders each fuzz tries, FZ_SEED moves them.
 import { describe, expect, test } from 'bun:test'
 import { deflateRawSync } from 'node:zlib'
@@ -61,8 +61,8 @@ const card = (extra: Msg[] = []): Msg[] => [{ k: 'cr', cr: crV }, cert1D1, ...ex
 const stripped = (): Msg[] => [cert1D1] // a card with `cr`, `head` and `certs2` removed (only the certs are signed)
 const known = () => new Contact('V', 'card', card())
 
-describe('contacts: the creation-record states (ruling 7; attack review C1)', () => {
-  test("R8-cr-tofu: a known contact refuses another creation record for V's ik, with the warning; its devices are never trusted", () => {
+describe('contacts: the creation-record states', () => {
+  test("cr-tofu: a known contact refuses another creation record for V's ik, with the warning; its devices are never trusted", () => {
     const c = known()
     c.recv({ k: 'cr', cr: { ...crV, rk: 'rkT' } }, 'hello')
     c.recv({ k: 'cert2', ik: 'V', dk: 'T1', n: 0, pk: 'p0', by: 'pT' }, 'hello')
@@ -70,7 +70,7 @@ describe('contacts: the creation-record states (ruling 7; attack review C1)', ()
       ['known', crV, true, ['D1']]
     )
   })
-  test("R8-cr-stripped-card: a card without its creation record gives unknown (no proof), V's record then is a pending claim; Accept or a QR check pins it and the recovery applies", () => {
+  test("cr-stripped-card: a card without its creation record gives unknown (no proof), V's record then is a pending claim; Accept or a QR check pins it and the recovery applies", () => {
     for (const how of ['accept', 'qr'] as const) {
       const c = new Contact('V', 'card', stripped())
       expect([c.st, c.safetyHalf()]).toEqual(['unknown', 'scan'])
@@ -91,14 +91,14 @@ describe('contacts: the creation-record states (ruling 7; attack review C1)', ()
       ])
     }
   })
-  test("R8-cr-thief-request: a keyless hello from the stolen creating device after the recovery gives unknown; V's record then pins as above", () => {
+  test("cr-thief-request: a keyless hello from the stolen creating device after the recovery gives unknown; V's record then pins as above", () => {
     const c = new Contact('V', 'hello', [cert1D1]) // the thief's request, accepted by the user: no profile1 (ik erased)
     expect(c.st).toBe('unknown')
     c.recv({ k: 'cr', cr: crV }, 'qr')
     c.recv({ k: 'rec', rec: r1 }, 'hello')
     expect([c.st, c.trusted()]).toEqual(['known', ['D2']])
   })
-  test("R8-cr-legacy-proof: a 0.3.0 hello's profile1 gives none; a thief's creation record made with L's ik, in a hello or a QR, is refused", () => {
+  test("cr-legacy-proof: a keyless hello's profile1 gives none; a thief's creation record made with L's ik, in a hello or a QR, is refused", () => {
     const c = new Contact('L', 'hello', [
       { k: 'profile1', ik: 'L', byIk: true },
       { k: 'cert1', ik: 'L', dk: 'L1', byIk: true },
@@ -111,7 +111,7 @@ describe('contacts: the creation-record states (ruling 7; attack review C1)', ()
       ['none', undefined, ['L1'], true]
     )
   })
-  test("R8-cr-proof-late: an unknown contact holding a thief's claim gets L's profile1: none, the claim refused, the warning", () => {
+  test("cr-proof-late: an unknown contact holding a thief's claim gets L's profile1: none, the claim refused, the warning", () => {
     const c = new Contact('L', 'carried', [{ k: 'cert1', ik: 'L', dk: 'L1', byIk: true }])
     c.recv({ k: 'cr', cr: { ik: 'L', rk: 'rkZ', pk: 'pZ', byIk: true, byRk: true } }, 'hello')
     expect([c.st, c.claims.length]).toEqual(['unknown', 1])
@@ -128,7 +128,7 @@ describe('contacts: the creation-record states (ruling 7; attack review C1)', ()
     k.recv({ k: 'profile1', ik: 'L', byIk: true }, 'hello')
     expect([k.st, k.cr]).toEqual(['none', undefined])
   })
-  test("R8-cr-legacy-thief: a thief holding a 0.3.0 identity's ik sends a creation record and a recovery to an unknown contact; nothing applies, and the user's ik-signed records refuse the claim and still count", () => {
+  test("cr-legacy-thief: a thief holding a legacy identity's ik sends a creation record and a recovery to an unknown contact; nothing applies, and the user's ik-signed records refuse the claim and count", () => {
     const c = new Contact('L', 'carried', [{ k: 'cert1', ik: 'L', dk: 'L1', byIk: true }])
     const crZ: CR = { ik: 'L', rk: 'rkZ', pk: 'pZ', byIk: true, byRk: true }
     c.recv({ k: 'cr', cr: crZ }, 'hello')
@@ -141,7 +141,7 @@ describe('contacts: the creation-record states (ruling 7; attack review C1)', ()
     c.recv({ k: 'cert1', ik: 'L', dk: 'L2', byIk: true }, 'hello')
     expect([c.st, c.claims.length, c.trusted()]).toEqual(['none', 0, ['L1', 'L2']])
   })
-  test('R8-cr-late: a contact in state none (proof that ik is in use) refuses a creation record', () => {
+  test('cr-late: a contact in state none (proof that ik is in use) refuses a creation record', () => {
     const c = new Contact('L', 'card', [
       { k: 'cert1', ik: 'L', dk: 'L1', byIk: true },
       { k: 'rev1', ik: 'L', dk: 'L0', byIk: true },
@@ -150,7 +150,7 @@ describe('contacts: the creation-record states (ruling 7; attack review C1)', ()
     c.recv({ k: 'cr', cr: { ik: 'L', rk: 'rkL', pk: 'pL', byIk: true, byRk: true } }, 'card')
     expect([c.st, c.cr]).toEqual(['none', undefined])
   })
-  test("R8-cr-after-update: a contact carried over from 0.3.0 (unknown) holds V's record as a pending claim; trust stays until Accept (N26 (c)); then the recovery applies", () => {
+  test("cr-after-update: a contact with no creation-record state (unknown) holds V's record as a pending claim; trust stays until Accept; then the recovery applies", () => {
     const c = new Contact('V', 'carried', [cert1D1])
     c.recv({ k: 'cr', cr: crV }, 'card')
     c.recv({ k: 'rec', rec: r1 }, 'hello')
@@ -158,7 +158,7 @@ describe('contacts: the creation-record states (ruling 7; attack review C1)', ()
     c.accept(crV)
     expect([c.st, c.trusted()]).toEqual(['known', ['D2']])
   })
-  test("R8-cr-server-intro: a server introduction never pins: an unknown contact holds it as a claim; V's card later shows both and neither can be accepted until one is verified", () => {
+  test("cr-server-intro: a server introduction never pins: an unknown contact holds it as a claim; V's card later shows both and neither can be accepted until one is verified", () => {
     const c = new Contact('V', 'carried', [cert1D1])
     const other: CR = { ik: 'V', rk: 'rkT', pk: 'pT', byIk: true, byRk: true }
     c.recv({ k: 'cr', cr: other }, 'server')
@@ -172,13 +172,13 @@ describe('contacts: the creation-record states (ruling 7; attack review C1)', ()
     c.recv({ k: 'cr', cr: crV }, 'safety')
     expect([c.st, c.cr]).toEqual(['known', crV])
   })
-  test("R8-safety-rk: two creation records with one ik give different halves; an unprotected identity's half is 0.3.0's", () => {
+  test("safety-rk: two creation records with one ik give different halves; an unprotected identity's half comes from its identity key alone", () => {
     expect(halfOf('V', 'rkV')).not.toBe(halfOf('V', 'rkT'))
     expect(new Contact('L', 'hello', [{ k: 'profile1', ik: 'L', byIk: true }]).safetyHalf()).toBe(
       halfOf('L')
     )
   })
-  test("R8-chain: a creation record without the recovery key's signature, or naming ik as its primary, is refused; a chain record with an unknown field is refused (attack review M4)", () => {
+  test("chain: a creation record without the recovery key's signature, or naming ik as its primary, is refused; a chain record with an unknown field is refused", () => {
     const c = new Contact('V', 'card', [{ k: 'cr', cr: { ...crV, byRk: false } }, cert1D1])
     expect(c.st).toBe('unknown')
     expect(new Contact('V', 'card', [{ k: 'cr', cr: { ...crV, pk: 'V' } }]).st).toBe('unknown')
@@ -191,7 +191,7 @@ describe('contacts: the creation-record states (ruling 7; attack review C1)', ()
 })
 
 describe('contacts: the epoch rule over chains', () => {
-  test("R8-epoch: after V's recovery the thief's epoch-0 revocation and certificate (by p0) are ignored", () => {
+  test("epoch: after V's recovery the thief's epoch-0 revocation and certificate (by p0) are ignored", () => {
     const c = known()
     c.recv({ k: 'rec', rec: r1 }, 'hello')
     c.recv({ k: 'cert2', ik: 'V', dk: 'D3', n: 1, pk: 'pk1', by: 'pk1' }, 'hello')
@@ -199,7 +199,7 @@ describe('contacts: the epoch rule over chains', () => {
     c.recv({ k: 'cert2', ik: 'V', dk: 'D4', n: 0, pk: 'p0', by: 'p0' }, 'hello')
     expect(c.trusted()).toEqual(['D2', 'D3'])
   })
-  test("R8-epoch-before: the thief's epoch-0 revocation of D2 before the recovery; the recovery keeps D2", () => {
+  test("epoch-before: the thief's epoch-0 revocation of D2 before the recovery; the recovery keeps D2", () => {
     const c = known()
     c.recv({ k: 'cert2', ik: 'V', dk: 'D2', n: 0, pk: 'p0', by: 'p0' }, 'hello')
     c.recv({ k: 'rev2', ik: 'V', dk: 'D2', n: 0, pk: 'p0', by: 'p0' }, 'hello')
@@ -207,7 +207,7 @@ describe('contacts: the epoch rule over chains', () => {
     c.recv({ k: 'rec', rec: r1 }, 'hello')
     expect(c.trusted()).toEqual(['D2'])
   })
-  test("R8-cert-v2: after a recovery a v2 certificate under the new primary is trusted; a v1 certificate received after it is ignored; the creating device's v1 certificate counts only while a head keeps it", () => {
+  test("cert-v2: after a recovery a v2 certificate under the new primary is trusted; a v1 certificate received after it is ignored; the creating device's v1 certificate counts only while a head keeps it", () => {
     const c = known()
     c.recv({ k: 'rec', rec: { ...r1, keep: ['D1', 'D2'] } }, 'hello')
     c.recv({ k: 'cert2', ik: 'V', dk: 'D5', n: 1, pk: 'pk1', by: 'pk1' }, 'hello')
@@ -217,7 +217,7 @@ describe('contacts: the epoch rule over chains', () => {
     c2.recv({ k: 'rec', rec: r1 }, 'hello')
     expect(c2.trusted().includes('D1')).toBe(false)
   })
-  test("R8-profile: a protected identity's name comes from its v2 profile under the head's primary; one by an earlier epoch's primary is ignored; without one, and on an older peer, the card's name", () => {
+  test("profile: a protected identity's name comes from its v2 profile under the head's primary; one by an earlier epoch's primary is ignored; without one, and on an older peer, the card's name", () => {
     const c = known()
     c.cardName = 'Vee'
     c.recv({ k: 'rec', rec: r1 }, 'hello')
@@ -236,7 +236,7 @@ describe('contacts: the epoch rule over chains', () => {
     )
     expect(shownName(old)).toBe('Vee')
   })
-  test('R8-rk-revoke: a revocation signed by the recovery key applies after a recovery; after a reset one signed by the old key is ignored (key death)', () => {
+  test('rk-revoke: a revocation signed by the recovery key applies after a recovery; after a reset one signed by the old key is ignored (key death)', () => {
     const c = known()
     const rx: Rec = { ...r1, keep: ['D2', 'D5'] }
     c.recv({ k: 'rec', rec: rx }, 'hello')
@@ -256,13 +256,13 @@ describe('contacts: the epoch rule over chains', () => {
     c2.recv({ k: 'rev2', ik: 'V', dk: 'D5', n: 0, pk: 'p0', by: 'rkV' }, 'hello')
     expect(c2.trusted()).toEqual(['D2', 'D5'])
   })
-  test("R8-cr-after-recovery: a second creation record after V's recovery is refused; the recovery stays", () => {
+  test("cr-after-recovery: a second creation record after V's recovery is refused; the recovery stays", () => {
     const c = known()
     c.recv({ k: 'rec', rec: r1 }, 'hello')
     c.recv({ k: 'cr', cr: { ...crV, rk: 'rkT' } }, 'hello')
     expect([c.trusted(), c.chain()!.top]).toEqual([['D2'], 1])
   })
-  test("R8-restore-contact: V restores (keep {N}); the thief's epoch-0 records are ignored", () => {
+  test("restore-contact: V restores (keep {N}); the thief's epoch-0 records are ignored", () => {
     const c = known()
     c.recv(
       { k: 'rec', rec: { ik: 'V', n: 1, prev: crD(crV), by: 'rkV', pk: 'pkN', keep: ['N'] } },
@@ -272,7 +272,7 @@ describe('contacts: the epoch rule over chains', () => {
     c.recv({ k: 'cert1', ik: 'V', dk: 'T9', byIk: false }, 'hello')
     expect(c.trusted()).toEqual(['N'])
   })
-  test('R8-same-n: two recoveries with the same n both count until a record cites one', () => {
+  test('same-n: two recoveries with the same n both count until a record cites one', () => {
     const c = known()
     const ra: Rec = { ik: 'V', n: 1, prev: crD(crV), by: 'rkV', pk: 'pkA', keep: ['A'] },
       rb: Rec = { ik: 'V', n: 1, prev: crD(crV), by: 'rkV', pk: 'pkB', keep: ['B'] }
@@ -285,7 +285,7 @@ describe('contacts: the epoch rule over chains', () => {
     )
     expect([c.chain()!.top, c.trusted()]).toEqual([2, ['A', 'B']])
   })
-  test("R8-rival-reset: the user's reset and a thief's reset, both by the old key: no device trusted, the warning", () => {
+  test("rival-reset: the user's reset and a thief's reset, both by the old key: no device trusted, the warning", () => {
     const c = known()
     c.recv(
       {
@@ -305,9 +305,9 @@ describe('contacts: the epoch rule over chains', () => {
   })
 })
 
-describe('contacts: succession claims (ruling 6; attack review I4)', () => {
+describe('contacts: succession claims', () => {
   const crW: CR = { ik: 'W', rk: 'rkW', pk: 'pW', byIk: true, byRk: true }
-  test('R8-succession: two v1 claims of a legacy identity are both held; nothing applies automatically; Accept is a merge, Verify adds the mark', () => {
+  test('succession: two v1 claims of a legacy identity are both held; nothing applies automatically; Accept is a merge, Verify adds the mark', () => {
     const c = new Contact('L', 'hello', [
       { k: 'profile1', ik: 'L', byIk: true },
       { k: 'cert1', ik: 'L', dk: 'L1', byIk: true },
@@ -345,7 +345,7 @@ describe('contacts: succession claims (ruling 6; attack review I4)', () => {
     )
     expect(c.succ.some(x => x.new === 'W3')).toBe(false)
   })
-  test('R8-succession-accept: Accept one of two claims merges it (unverified) and leaves the other a claim; Verify adds the mark', () => {
+  test('succession-accept: Accept one of two claims merges it (unverified) and leaves the other a claim; Verify adds the mark', () => {
     const c = new Contact('L', 'hello', [{ k: 'profile1', ik: 'L', byIk: true }])
     c.recv(
       { k: 'succ1', old: 'L', new: crW, newCr: crD(crW), byOldIk: true, byNewRk: true },
@@ -370,7 +370,7 @@ describe('contacts: succession claims (ruling 6; attack review I4)', () => {
     ])
     expect(c.acceptSucc('W', true)?.verified).toBe(true)
   })
-  test("R8-succession-server: members show every distinct verified succ value of a member's profile writes, the later thief's claim included", () => {
+  test("succession-server: members show every distinct verified succ value of a member's profile writes, the later thief's claim included", () => {
     expect(
       serverSuccClaims([
         { succ: { new: 'W', verified: true } },
@@ -380,7 +380,7 @@ describe('contacts: succession claims (ruling 6; attack review I4)', () => {
       ])
     ).toEqual(['T', 'W'])
   })
-  test("R8-succession-protected: a v2 claim verifies against the chain and the recovery key in force; a device thief can't sign one; after a reset the old phrase's claim is ignored; after rival resets both show", () => {
+  test("succession-protected: a v2 claim verifies against the chain and the recovery key in force; a device thief can't sign one; after a reset the old phrase's claim is ignored; after rival resets both show", () => {
     const c = known()
     c.recv({ k: 'rec', rec: r1 }, 'hello')
     const h1 = recD(r1)
@@ -512,7 +512,7 @@ describe('contacts: succession claims (ruling 6; attack review I4)', () => {
     )
     expect(c4.succ.map(x => x.new).sort()).toEqual(['W', 'WZ'])
   })
-  test("R8-succession-cap: at the chain's cap a ninth record is refused, and the move needs no chain slot", () => {
+  test("succession-cap: at the chain's cap a ninth record is refused, and the move needs no chain slot", () => {
     let prev = crD(crV)
     const recs: Rec[] = []
     for (let n = 1; n <= CHAIN_MAX + 1; n++) {
@@ -548,7 +548,7 @@ describe('contacts: succession claims (ruling 6; attack review I4)', () => {
     )
     expect(c.succ.length).toBe(1)
   })
-  test("R8-succession-overflow: a thief holding a legacy ik fills the claims first; the genuine one is told 'Many moves claimed'; a scanned card of the new identity attaches it", () => {
+  test("succession-overflow: a thief holding a legacy ik fills the claims first; the genuine one is told 'Many moves claimed'; a scanned card of the new identity attaches it", () => {
     const c = new Contact('L', 'hello', [{ k: 'profile1', ik: 'L', byIk: true }])
     for (let i = 0; i < 6; i++) {
       const nw = { ...crW, ik: `J${i}`, rk: `rkJ${i}` }
@@ -577,10 +577,10 @@ describe('contacts: succession claims (ruling 6; attack review I4)', () => {
   })
 })
 
-describe('contacts: badges against heads (completeness review I3)', () => {
+describe('contacts: badges against heads', () => {
   const tokU: Token = { sub: 'v@inst', ik: 'V', head: { n: 1, d: recD(r1) }, iat: 10 }
   const tokT: Token = { sub: 'mallory@inst', ik: 'V', head: { n: 0, d: crD(crV) }, iat: 20 } // the thief, by p0, after
-  test('R8-badge-stale: a contact holding record 1 ignores a token for an older head; one that took it before learning record 1 drops it then; a token with no head is ignored', () => {
+  test('badge-stale: a contact holding record 1 ignores a token for an older head; one that took it before learning record 1 drops it then; a token with no head is ignored', () => {
     const c = known()
     c.recv({ k: 'rec', rec: r1 }, 'hello')
     c.recv({ k: 'badge', tok: tokT }, 'hello')
@@ -601,15 +601,15 @@ describe('contacts: badges against heads (completeness review I3)', () => {
     c3.recv({ k: 'rec', rec: r1 }, 'hello')
     expect(c3.badge?.sub).toBe('v@inst')
   })
-  test("R8-badge: a legacy contact keeps 0.3.0's badge rule (no head)", () => {
+  test("badge: a legacy contact's badge needs no head", () => {
     const c = new Contact('L', 'hello', [{ k: 'profile1', ik: 'L', byIk: true }])
     c.recv({ k: 'badge', tok: { sub: 'l@inst', ik: 'L', iat: 1 } }, 'hello')
     expect(c.badge?.sub).toBe('l@inst')
   })
 })
 
-describe("contacts: restore and the account's records (ruling 9; attack review C5)", () => {
-  test("R8-restore-noaccount: the identity id from a contact's code, the creation record and chain fetched from peers (one peer stale, one a thief's minted record for a legacy-looking id)", () => {
+describe("contacts: restore and the account's records", () => {
+  test("restore-noaccount: the identity id from a contact's code, the creation record and chain fetched from peers (one peer stale, one a thief's minted record for a legacy-looking id)", () => {
     const fetched: Msg[] = [
       { k: 'cr', cr: crV },
       { k: 'rec', rec: r1 },
@@ -648,16 +648,16 @@ describe("contacts: restore and the account's records (ruling 9; attack review C
         'pkN'
       )
     ).toMatchObject({ ok: true, head: recD(reset) })
-    // no id from any source: the app makes a new identity and says the old one can't be found (R8-restore-nobackup)
+    // no id from any source: the app makes a new identity and says the old one can't be found
     expect(restore('rkV', [], fetched, 'N', 'pkN')).toEqual({ ok: false, why: 'no-id' })
     expect(restore('rkV', ['V'], [], 'N', 'pkN')).toEqual({ ok: false, why: 'no-record' })
   })
 })
 
-describe("contacts: fix round 4 (the controller's rulings 3 and 4 on the r8d reviews; completeness review I2, I3, M1; attack review M3, M6)", () => {
+describe('contacts: claim caps, server sources, restore and held successions', () => {
   const crW: CR = { ik: 'W', rk: 'rkW', pk: 'pW', byIk: true, byRk: true }
-  // I2 (b): creation-record claims are capped like succession claims
-  test("R8-cr-claims-overflow: a hot-ik holder's made-up records stop at the cap, the first kept, never FIFO; a card the user opens still attaches", () => {
+  // creation-record claims are capped like succession claims
+  test("cr-claims-overflow: a hot-ik holder's made-up records stop at the cap, the first kept, never FIFO; a card the user opens attaches", () => {
     const c = new Contact('L', 'carried', [{ k: 'cert1', ik: 'L', dk: 'L1', byIk: true }])
     const mk = (i: number): CR => ({ ik: 'L', rk: `rkZ${i}`, pk: `pZ${i}`, byIk: true, byRk: true })
     for (let i = 0; i < 10; i++) c.recv({ k: 'cr', cr: mk(i) }, 'hello')
@@ -665,8 +665,8 @@ describe("contacts: fix round 4 (the controller's rulings 3 and 4 on the r8d rev
     c.recv({ k: 'cr', cr: { ik: 'L', rk: 'rkL', pk: 'pL', byIk: true, byRk: true } }, 'card')
     expect(c.claims.length).toBe(5)
   })
-  // I2 (c): a contact made from a server source holds its record as a claim
-  test("R8-cr-server-intro (fix round 4): a contact created from a server source holds the record as a pending claim, never pinned; V's card makes two claims; a QR pins V's", () => {
+  // a contact made from a server source holds its record as a claim
+  test("cr-server-intro: a contact created from a server source holds the record as a pending claim, never pinned; V's card makes two claims; a QR pins V's", () => {
     const other: CR = { ik: 'V', rk: 'rkT', pk: 'pT', byIk: true, byRk: true }
     const c = new Contact('V', 'server', [{ k: 'cr', cr: other }])
     expect([c.st, c.claims.length, c.cr]).toEqual(['unknown', 1, undefined])
@@ -675,8 +675,8 @@ describe("contacts: fix round 4 (the controller's rulings 3 and 4 on the r8d rev
     c.recv({ k: 'cr', cr: crV }, 'qr')
     expect([c.st, c.cr]).toEqual(['known', crV])
   })
-  // I2 (d): restore tries every id; a frozen identity is offered the move
-  test("R8-restore-noaccount (fix round 4): every id is tried, a wrong first id doesn't hide V; after rival resets restore ends in frozen at the phrase's branch, never keep-fetching", () => {
+  // restore tries every id; a frozen identity is offered the move
+  test("restore-noaccount: every id is tried, a wrong first id doesn't hide V; after rival resets restore ends in frozen at the phrase's branch, never keep-fetching", () => {
     const fetched: Msg[] = [
       { k: 'cr', cr: crV },
       { k: 'rec', rec: r1 },
@@ -718,7 +718,7 @@ describe("contacts: fix round 4 (the controller's rulings 3 and 4 on the r8d rev
       )
     ).toEqual({ ok: false, why: 'frozen', ik: 'V', head: recD(reset) })
   })
-  // I3: succession formats, transport and held claims (the verifier's vectors, with new_cr)
+  // succession formats, transport and held claims (with new_cr)
   const v2 = (
     o: Partial<{ head: string; by: string; chain: Rec[]; new: CR }> = {}
   ): Extract<Msg, { k: 'succ2' }> => {
@@ -734,7 +734,7 @@ describe("contacts: fix round 4 (the controller's rulings 3 and 4 on the r8d rev
     }
     return { ...m, newCr: crD(m.new) }
   }
-  test("R8-succession-unknown: a carried contact holds V's v2 with the creation-record claim; Accept applies both; a thief's held v2 never applies once V's record is pinned by QR; held v2s are refused on proof", () => {
+  test("succession-unknown: a carried contact holds V's v2 with the creation-record claim; Accept applies both; a thief's held v2 never applies once V's record is pinned by QR; held v2s are refused on proof", () => {
     const c = new Contact('V', 'carried', [cert1D1])
     c.recv({ k: 'cr', cr: crV }, 'hello')
     c.recv({ k: 'rec', rec: r1 }, 'hello')
@@ -759,7 +759,7 @@ describe("contacts: fix round 4 (the controller's rulings 3 and 4 on the r8d rev
     l.recv({ k: 'profile1', ik: 'L', byIk: true }, 'hello')
     expect([l.st, l.succ.length, l.succTodo.length]).toEqual(['none', 0, 0])
   })
-  test("R8-succession-chain-late: a card's v2 (no old chain) before the chain is held, and counts when the old identity's hello brings it; refused if the arriving chain kills its key", () => {
+  test("succession-chain-late: a card's v2 (no old chain) before the chain is held, and counts when the old identity's hello brings it; refused if the arriving chain kills its key", () => {
     const c = new Contact('V', 'card', card())
     c.recv(v2(), 'card')
     expect(c.succ.length).toBe(0)
@@ -782,7 +782,7 @@ describe("contacts: fix round 4 (the controller's rulings 3 and 4 on the r8d rev
     d.recv({ k: 'rec', rec: rOld }, 'hello')
     expect(d.succ.length).toBe(0)
   })
-  test("R8-succession-030: a 0.3.0 v1 (no new_cr, sig_new by the new ik) is a legacy claim with Verify and Accept, never applied, and proof that the old ik is in use; a v1 with new_cr whose sig_new verifies only under ik' stays refused; a new_cr that doesn't match the record is refused", () => {
+  test("succession-v1: a v1 without new_cr (sig_new by the new ik) is a legacy claim with Verify and Accept, never applied, and proof that the old ik is in use; a v1 with new_cr whose sig_new verifies only under ik' stays refused; a new_cr that doesn't match the record is refused", () => {
     const c = new Contact('L', 'carried', [{ k: 'cert1', ik: 'L', dk: 'L1', byIk: true }])
     c.recv(
       {
@@ -824,7 +824,7 @@ describe("contacts: fix round 4 (the controller's rulings 3 and 4 on the r8d rev
       c.trusted(),
     ]).toEqual(['none', [['L2', true, false]], ['L1']])
   })
-  test('R8-succession-held-cap: held v2 claims are bounded, never FIFO; a direct source attaches; a v2 at none is refused with no new warning', () => {
+  test('succession-held-cap: held v2 claims are bounded, never FIFO; a direct source attaches; a v2 at none is refused with no new warning', () => {
     const c = new Contact('V', 'carried', [cert1D1])
     c.recv({ k: 'cr', cr: crV }, 'hello')
     for (let i = 0; i < 6; i++) c.recv(v2({ new: { ...crW, ik: `J${i}`, rk: `rkJ${i}` } }), 'hello')
@@ -837,7 +837,7 @@ describe("contacts: fix round 4 (the controller's rulings 3 and 4 on the r8d rev
     n.recv(v2(), 'hello')
     expect([n.st, n.succ.length, n.succTodo.length, n.warning]).toEqual(['none', 0, 0, ''])
   })
-  test("R8-succession-size: at n = 8 with 8 keeps, a profile's succ (the succession and the new creation record, no old chain) with a badge fits 4 KiB, the old identity's card with it fits CARD_MAX with up to 3 certs2; with the old chain neither fits", () => {
+  test("succession-size: at n = 8 with 8 keeps, a profile's succ (the succession and the new creation record, no old chain) with a badge fits 4 KiB, the old identity's card with it fits CARD_MAX with up to 3 certs2; with the old chain neither fits", () => {
     let seed = 7
     const bytes = (n: number) => {
       const b = new Uint8Array(n)
@@ -899,7 +899,7 @@ describe("contacts: fix round 4 (the controller's rulings 3 and 4 on the r8d rev
       sig_new: sig(),
     }
     const binding = 'x'.repeat(600)
-    // fix round 5 (r8e completeness review M3): `succ` and `succ_cr` are sibling fields of the profile content and of the
+    // `succ` and `succ_cr` are sibling fields of the profile content and of the
     // card, never `succ_cr` inside the closed succession
     const profile = (x: { succ_cr?: unknown; chain?: unknown } & Record<string, unknown>) => {
       const { succ_cr, chain, ...sc } = x
@@ -944,8 +944,8 @@ describe("contacts: fix round 4 (the controller's rulings 3 and 4 on the r8d rev
     expect(oldCard(0, { ...succ, succ_cr: cr(Wk), chain: chain.slice(1) })).toBeGreaterThan(2048)
     expect(len(chain)).toBeLessThanOrEqual(6 * 1024) // the hello's keys (and the new identity's keys_old): 9 records, 6 KiB
   })
-  // completeness review M1: three proof rules the vectors missed (the reviewer's surviving mutants)
-  test('R8-cr-proof-kinds: two distinct v1 certificates are proof that ik is in use, and so is a succession v1; a repeated v1 certificate is not; succession claims are deduplicated by (old, new)', () => {
+  // three proof rules, each pinned against the mutant that drops it
+  test('cr-proof-kinds: two distinct v1 certificates are proof that ik is in use, and so is a succession v1; a repeated v1 certificate is not; succession claims are deduplicated by (old, new)', () => {
     const a = new Contact('L', 'carried', [{ k: 'cert1', ik: 'L', dk: 'L1', byIk: true }])
     a.recv({ k: 'cert1', ik: 'L', dk: 'L1', byIk: true }, 'hello')
     expect(a.st).toBe('unknown')
@@ -962,8 +962,8 @@ describe("contacts: fix round 4 (the controller's rulings 3 and 4 on the r8d rev
     )
     expect([b.st, b.succ.length]).toEqual(['none', 1])
   })
-  // attack review M6: an unknown contact's held chain records are bounded per claim and go with the claims
-  test('R8-held-records: an unknown contact holds at most CHAIN_MAX + 1 records per claim (and as many attached to none); proof drops them with the claims', () => {
+  // an unknown contact's held chain records are bounded per claim and go with the claims
+  test('held-records: an unknown contact holds at most CHAIN_MAX + 1 records per claim (and as many attached to none); proof drops them with the claims', () => {
     const c = new Contact('L', 'carried', [{ k: 'cert1', ik: 'L', dk: 'L1', byIk: true }])
     const crT: CR = { ik: 'L', rk: 'rkT', pk: 'pT', byIk: true, byRk: true }
     c.recv({ k: 'cr', cr: crT }, 'hello')
@@ -1011,7 +1011,7 @@ describe('contacts: a fuzz of message orders', () => {
     ],
     [{ k: 'badge', tok: { sub: 'v@inst', ik: 'V', head: { n: 1, d: recD(r1) }, iat: 5 } }, 'hello'],
   ]
-  test("FZ-contacts: in every order a known contact ends with the same trusted devices (D2, D3) and the user's badge, and trusts no thief device once record 1 is held", () => {
+  test("FZ-contacts: in every order a known contact ends with the same trusted devices D2 and D3 and the user's badge, and trusts no thief device once record 1 is held", () => {
     let runs = 0
     for (const seed of seeds(1, 400)) {
       const r = lcg(seed)
@@ -1051,7 +1051,7 @@ describe('contacts: a fuzz of message orders', () => {
       expect([c.st, c.trusted()]).toEqual(['known', ['D2', 'D3']])
     }
   }, 1_200_000)
-  test("FZ-succession (fix round 4): in every order, a known contact and a carried one (after Accept) end with V's own v2 move only: the old phrase's v2 dies once the reset is held, the stolen primary's never counts, nothing stays held", () => {
+  test("FZ-succession: in every order, a known contact and a carried one (after Accept) end with V's own v2 move only: the old phrase's v2 dies once the reset is held, the stolen primary's never counts, nothing stays held", () => {
     const crW: CR = { ik: 'W', rk: 'rkW', pk: 'pW', byIk: true, byRk: true }
     const r2: Rec = {
       ik: 'V',
@@ -1131,7 +1131,7 @@ describe('contacts: a fuzz of message orders', () => {
   }, 1_200_000)
 })
 
-describe("contacts, fix round 5 (the controller's ruling 5; r8e attack review I4, M1, M2; completeness review M2, M5)", () => {
+describe('contacts: accepted moves, held floods and claim dedupe', () => {
   const lcg = (s: number) => () => (s = (Math.imul(s, 1103515245) + 12345) >>> 0) / 2 ** 32
   const shuffle = <X>(xs: X[], r: () => number) => {
     const a = [...xs]
@@ -1162,7 +1162,7 @@ describe("contacts, fix round 5 (the controller's ruling 5; r8e attack review I4
   const r2: Rec = { ik: 'V', n: 2, prev: recD(r1), by: 'rkV', rk: 'rkV2', pk: 'pk2', keep: ['D2'] }
   const DEAD =
     'This move was signed with a backup phrase V has since replaced. Verify it in person.'
-  test("R8-succession-accepted-dead (attack review I4): the old phrase's v2 accepted before the reset arrives is marked dead with the warning, still listed; Accept can't bring it back, Verify can; a verified one stays (mutant ct-acc-keep)", () => {
+  test("succession-accepted-dead: the old phrase's v2 accepted before the reset arrives is marked dead with the warning, and stays listed; Accept can't bring it back, Verify can; a verified one stays (mutant ct-acc-keep)", () => {
     const c = new Contact('V', 'card', card([{ k: 'rec', rec: r1 }]))
     c.recv(mv(recD(r1), 'rkV', WT), 'hello')
     c.acceptSucc('WT', false)
@@ -1180,7 +1180,7 @@ describe("contacts, fix round 5 (the controller's ruling 5; r8e attack review I4
     v.recv({ k: 'rec', rec: r2 }, 'hello')
     expect([v.succ.map(x => [x.new, !!x.dead]), v.warning]).toEqual([[['WT', false]], ''])
   })
-  test("FZ-succession-accept (attack review I4): in every order, the user accepting every claim it sees, once the reset is attached the old phrase's move is gone or dead (with the warning), and V's own move is never dead", () => {
+  test("FZ-succession-accept: in every order, the user accepting every claim it sees, once the reset is attached the old phrase's move is gone or dead (with the warning), and V's own move is never dead", () => {
     const ms: [Msg, 'hello' | 'card'][] = [
       [{ k: 'rec', rec: r1 }, 'hello'],
       [{ k: 'rec', rec: r2 }, 'hello'],
@@ -1223,7 +1223,7 @@ describe("contacts, fix round 5 (the controller's ruling 5; r8e attack review I4
     }
     expect(acceptedThenDead).toBeGreaterThan(50)
   }, 1_200_000)
-  test("R8-succession-chain-order (attack review M1): V's move naming its reset, with its old chain, survives every order of the chain records arriving one at a time (mutant ct-succ-chain-drop)", () => {
+  test("succession-chain-order: V's move naming its reset, with its old chain, survives every order of the chain records arriving one at a time (mutant ct-succ-chain-drop)", () => {
     const rr: Rec = {
       ik: 'V',
       n: 2,
@@ -1252,7 +1252,7 @@ describe("contacts, fix round 5 (the controller's ruling 5; r8e attack review I4
       expect([p.join(''), c.succ.map(x => x.new)]).toEqual([p.join(''), ['W']])
     }
   })
-  test("R8-succession-held-flood (attack review M2): four strangers' v2s fill a carried contact's held slots; V's genuine v2 is still held (the oldest held one goes), with its chain at a known contact it checks at once, and held claims expire after 30 days (mutants ct-held-block, ct-held-forever)", () => {
+  test("succession-held-flood: four strangers' v2s fill a carried contact's held slots; V's genuine v2 is held (the oldest held one goes), with its chain at a known contact it checks at once, and held claims expire after 30 days (mutants ct-held-block, ct-held-forever)", () => {
     const fake = (i: number) => mv(`kFAKE${i}`, `rkF${i}`, { ...crW, ik: `F${i}`, rk: `rkF${i}` })
     const c = new Contact('V', 'carried', [cert1D1])
     c.recv({ k: 'cr', cr: crV }, 'hello')
@@ -1270,20 +1270,20 @@ describe("contacts, fix round 5 (the controller's ruling 5; r8e attack review I4
     k.recv({ k: 'profile2', ik: 'V', n: 1, pk: 'pk1', by: 'pk1', name: 'V', updated: 1 }, 'hello')
     expect(k.succTodo.length).toBe(0)
   })
-  test('R8-cr-claims-dedupe (completeness review M5): the same creation record from a hello and then a card is one claim, with no impersonation warning, and Accept works (mutant ct-cr-nodedupe)', () => {
+  test('cr-claims-dedupe: the same creation record from a hello and then a card is one claim, with no impersonation warning, and Accept works (mutant ct-cr-nodedupe)', () => {
     const c = new Contact('V', 'carried', [cert1D1])
     c.recv({ k: 'cr', cr: crV }, 'hello')
     c.recv({ k: 'cr', cr: crV }, 'card')
     expect([c.claims.length, c.warning]).toEqual([1, ''])
     expect(c.accept(crV)).toBe(true)
   })
-  test("R8-safety-two-claims (completeness review M5): with two pending claims the safety screen shows no number ('Scan their code'), never the first claim's (mutant ct-safety-two)", () => {
+  test("safety-two-claims: with two pending claims the safety screen shows no number ('Scan their code'), never the first claim's (mutant ct-safety-two)", () => {
     const c = new Contact('V', 'carried', [cert1D1])
     c.recv({ k: 'cr', cr: crV }, 'hello')
     c.recv({ k: 'cr', cr: { ...crV, rk: 'rkT' } }, 'hello')
     expect([c.claims.length, c.safetyHalf()]).toEqual([2, 'scan'])
   })
-  test('R8-restore-noaccount (completeness review M5): a frozen id beside a stale one restores as frozen with the move, not keep-fetching (mutant ct-restore-rank)', () => {
+  test('restore-noaccount: a frozen id beside a stale one restores as frozen with the move, not keep-fetching (mutant ct-restore-rank)', () => {
     const reset: Rec = {
       ik: 'V',
       n: 1,
@@ -1321,9 +1321,9 @@ describe("contacts, fix round 5 (the controller's ruling 5; r8e attack review I4
   })
 })
 
-// ----- The r8e review's attack cases -----
+// ----- Attack cases -----
 
-describe('r8e attack cases on contacts', () => {
+describe('attacks on contacts', () => {
   const WT: CR = { ik: 'WT', rk: 'rkWT', pk: 'pWT', byIk: true, byRk: true }
   const W: CR = { ik: 'W', rk: 'rkW', pk: 'pW', byIk: true, byRk: true }
   const DEAD =
@@ -1343,7 +1343,7 @@ describe('r8e attack cases on contacts', () => {
       c => `${c.new}${c.accepted ? '+acc' : ''}${c.verified ? '+ver' : ''}${c.dead ? '+dead' : ''}`
     )
 
-  test('r8e attack I4 (k1-succ-accepted): a move by the old phrase accepted before the reset arrives is marked dead with the warning; unaccepted it is dropped', () => {
+  test('a move by the old phrase accepted before the reset arrives is marked dead with the warning; unaccepted it is dropped', () => {
     const reset: Rec = {
       ik: 'V',
       n: 1,
@@ -1371,7 +1371,7 @@ describe('r8e attack cases on contacts', () => {
     expect([K.trusted(), K.warning]).toEqual([['D1'], ''])
   })
 
-  test("r8e attack I4 (the verifier's repro): the leak before the reset, a carried contact, rival resets, and a backdated reset at the cap", () => {
+  test('the leak before the reset, a carried contact, rival resets, and a backdated reset at the cap', () => {
     const r1: Rec = { ik: 'V', n: 1, prev: crD(crV), by: 'rkV', pk: 'pk1', keep: ['D2'] }
     const r2: Rec = {
       ik: 'V',
@@ -1474,7 +1474,7 @@ describe('r8e attack cases on contacts', () => {
     }
   })
 
-  test('r8e attack M1 (k3-succ-order): a v2 with its chain, and the chain arriving one record at a time: the claim shows in all 6 orders', () => {
+  test('a v2 with its chain, and the chain arriving one record at a time: the claim shows in all 6 orders', () => {
     const p1: Rec = { ik: 'V', n: 1, prev: crD(crV), by: 'rkV', pk: 'pV1', keep: ['D2'] }
     const p2: Rec = {
       ik: 'V',
@@ -1503,7 +1503,7 @@ describe('r8e attack cases on contacts', () => {
     }
   })
 
-  test("r8e attack M2 (k2-held-flood): four strangers' held claims never keep V's own move out", () => {
+  test("four strangers' held claims never keep V's own move out", () => {
     const p1: Rec = {
       ik: 'V',
       n: 1,
@@ -1546,7 +1546,7 @@ describe('r8e attack cases on contacts', () => {
         }
   })
 
-  test('r8e completeness M5 (ct-survivors): the claims dedupe, the two-claims safety screen, the accepted move after a reset, the restore ranking', () => {
+  test('the claims dedupe, the two-claims safety screen, the accepted move after a reset, the restore ranking', () => {
     const a = new Contact('V', 'carried', [cert1D1])
     a.recv({ k: 'cr', cr: crV }, 'hello')
     a.recv({ k: 'cr', cr: crV }, 'card')
@@ -1630,7 +1630,7 @@ describe('contact claims over real records', () => {
   const carried = (first: Msg[] = [cert1D1]) => new ContactClaims(V, 'carried', real(first))
   const crId = recordId(creation(crV))
 
-  test('the copy is the spec wording', () => {
+  test('the copy, word for word', () => {
     expect(warningText('impersonation', 'Vee')).toBe(
       'Someone may be impersonating Vee. Check their safety number.'
     )
@@ -1750,7 +1750,7 @@ describe('contact claims over real records', () => {
     expect(take(badNew)).toBe(0)
   })
 
-  test("a 0.3.0 succession whose new half doesn't verify is no claim, and still proof that the old key is in use", () => {
+  test("a v1 succession without new_cr whose new half doesn't verify is no claim, yet is proof that the old key is in use", () => {
     const c = new Contact('L', 'carried', [{ k: 'cert1', ik: 'L', dk: 'L1', byIk: true }])
     c.recv({ k: 'cr', cr: { ik: 'L', rk: 'rkZ', pk: 'pZ', byIk: true, byRk: true } }, 'hello')
     const legacy = { ik: 'L2', rk: '', pk: '', byIk: true, byRk: false }
@@ -2194,7 +2194,7 @@ describe('contact claims over real records', () => {
     expect([c.trusted(), c.name('Vee')]).toEqual([[dkOf('D2'), dkOf('D4')].sort(), 'Vera'])
   })
 
-  test("a known contact's slots for records that don't attach yet take the newest: a record that comes before its parent still gets in after junk filled them", () => {
+  test("a known contact's slots for records that don't attach yet take the newest: a record that comes before its parent gets in after junk filled them", () => {
     const rs: Rec = {
       ik: 'V',
       n: 2,
@@ -2235,7 +2235,7 @@ describe('contact claims over real records', () => {
     ])
   })
 
-  test('a held move keeps at most HELD_RECORDS of the chain it carries, so it is still held after a reload', () => {
+  test('a held move keeps at most HELD_RECORDS of the chain it carries, so it is held after a reload', () => {
     const long = Array.from({ length: 3 * HELD_RECORDS }, (_, i): Rec => ({
       ik: 'V',
       n: 1,
@@ -2255,7 +2255,7 @@ describe('contact claims over real records', () => {
     expect(u.claims()).toMatchObject([{ kind: 'succ', new: ikOf('W'), v: 2 }])
   })
 
-  // Review n-p2p-ahead r2, M1 and M2: what an unknown contact holds is bounded at every step.
+  // What an unknown contact holds is bounded at every step.
   // The most records held for one pending claim, or reaching none.
   const fullest = (u: ContactClaims) => {
     const byD = new Map(u.heldRecs.map(x => [recordId(x), x] as const))

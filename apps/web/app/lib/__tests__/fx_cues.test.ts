@@ -26,7 +26,7 @@ describe('message phrases', () => {
     expect(fx('HAPPY NEW YEAR')).toBe('fireworks')
     expect(fx('let it snow')).toBe('snow')
   })
-  test('stretched letters and punctuation still match; shorter words never do', () => {
+  test('stretched letters and punctuation match; shorter words never do', () => {
     expect(fx('happpppy birthdayyyy')).toBe('balloons')
     expect(fx('GGGG')).toBe('trophy')
     expect(fx('gg wp')).toBe('trophy')
@@ -213,7 +213,7 @@ describe('reaction decisions', () => {
 })
 
 describe('the app parse decides what is prose', () => {
-  test("the reviewer's cases", () => {
+  test('escaped spoilers, code, quotes, mentions, comments, images and links are not prose', () => {
     // `spoilerParts` hides the whole text of this one: so must the cues.
     expect(
       spoilerParts('||a \\|| congrats||').every(p => p.spoiler || !/congrats/.test(p.text))
@@ -231,7 +231,7 @@ describe('the app parse decides what is prose', () => {
     expect(fx('![congrats](https://x.y/a.png)')).toBeNull()
     expect(fx('www.congrats.example')).toBeNull()
   })
-  test('prose around those still counts', () => {
+  test('prose around those counts', () => {
     expect(fx('- congrats on it')).toBe('confetti')
     expect(fx('# Happy birthday')).toBe('balloons')
     expect(fx('**congrats**')).toBe('confetti')
@@ -330,12 +330,12 @@ describe('P2P live', () => {
 })
 
 describe('one parse, hidden by source position', () => {
-  test("the reviewer's leak: blanking first unclosed an HTML comment", () => {
+  test('a spoiler marker inside an HTML comment does not unclose it', () => {
     expect(fx('hi <!-- congrats ||-->|| there')).toBeNull()
     expect(viewProse('hi <!-- congrats ||-->|| there')).not.toContain('congrats')
   })
-  test('markup crossing the markers: the fixed 0.4.0 view hides these, so cues never fire', () => {
-    // Today's view shows them (the tracked 0.4.0 bug); the previews hide them.
+  test('markup crossing the markers: the previews hide these, so cues never fire', () => {
+    // The view shows them; the previews hide them.
     expect(fx('**||congrats**||')).toBeNull()
     expect(fx('||a *congrats|| c*')).toBeNull()
     expect(fx('*||congrats*||')).toBeNull()

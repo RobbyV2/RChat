@@ -634,7 +634,7 @@ export const sendBlock = (
     movedAt: number | null
     movingAt: number | null
   },
-  // The channel: may we send there (spec 1.4)?
+  // The channel: may we send there?
   channel?: { send: boolean }
 ): ReactNode => {
   const out = v.readOnly

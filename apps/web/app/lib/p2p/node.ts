@@ -1592,7 +1592,7 @@ export class P2pNode {
     this.changed()
   }
 
-  // A new device key for this browser, under the same identity (spec 3.9). A copy whose history
+  // A new device key for this browser, under the same identity. A copy whose history
   // conflicts with another copy of it becomes a new device: the old key stays the other copy's.
   // `moved`: this browser leaves its old key (it is revoked, a move to the new one); `lost`:
   // other devices of ours revoked too.
@@ -1633,7 +1633,7 @@ export class P2pNode {
     return this.self.revocations.find(r => r.successor === dk)?.dk ?? null
   }
 
-  // The device keys this identity moved away from (Task 19 moves and imports).
+  // The device keys this identity moved away from (moves and imports).
   movedFrom() {
     return this.self.revocations.filter(r => r.successor !== undefined).map(r => r.dk)
   }

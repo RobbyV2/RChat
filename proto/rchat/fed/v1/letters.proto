@@ -2,13 +2,13 @@ syntax = "proto3";
 
 package rchat.fed.v1;
 
-// Feature `letters` (0.8.0), final for v1 and frozen (0.8.0 spec B revision 4, section 6). Built on the
-// instance protocol core (0.9.0 spec A): every call carries its CallHead, every signed thing
+// Feature `letters`, final for v1 and frozen. Built on the
+// instance protocol core: every call carries its CallHead, every signed thing
 // travels as bytes as authored and is stored and passed on as those bytes.
 //
 // Who decides what travels: the sender's instance. The receiver's answers are uniform and never
 // say what it stores or what a recipient holds; whatever a recipient still lacks, the receiver
-// pulls, and the sender serves it only to that recipient (spec B 6.4, R1).
+// pulls, and the sender serves it only to that recipient.
 //
 // Features: `letters` (Deliver, PutObjects, Pull), `letters.files` (PullFile),
 // `letters.keys` (GetKey), `letters.sealed` (sealed objects: `kc`, `sealed`, `wraps`). A sender
@@ -30,7 +30,7 @@ service LettersService {
   // At the sender's instance: one chunk of a file of such a message, for that recipient, under
   // the same rule.
   rpc PullFile(PullFileRequest) returns (PullFileResponse);
-  // A local user's letter key (lane S). Uniform: absent for no key and no user.
+  // A local user's letter key. Uniform: absent for no key and no user.
   rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
 }
 
@@ -44,9 +44,9 @@ message LetterObject {
   // Ed25519(dk, "rchat-letter-p2p-sig1" || 0x00 || core) with `certs`.
   bytes seal = 3;
   // A P2P author's device certificate and, for protected identities, its creation record and
-  // chain head (0.4.0 r8's introduction format).
+  // chain head.
   bytes certs = 4;
-  // The badge binding (the 0.3.0 JWT) of a P2P author writing to accounts, issued by the
+  // The badge binding (a JWT) of a P2P author writing to accounts, issued by the
   // instance that delivers it.
   string binding = 5;
 }
@@ -60,7 +60,7 @@ message LetterCore {
   string parent = 4;
   // `user@host` (lowercase), or `p2p:<identity id>`.
   string author = 5;
-  // The author's registration id (spec B 5.7); empty for P2P authors.
+  // The author's registration id; empty for P2P authors.
   string uid = 6;
   repeated LetterEntry to = 7;
   repeated LetterEntry cc = 8;
@@ -82,7 +82,7 @@ message LetterCore {
   bytes kc = 15;
   // Replies only: SHA-256("rchat-letter-pp2" || 0x00 || the parent's core bytes as authored ||
   // 0x00 || author || 0x00 || uid). Proves this author holds the parent: knowing its id, or
-  // another reply's proof, is not enough to reply into a letter (R1, n1).
+  // another reply's proof, is not enough to reply into a letter.
   bytes parent_proof = 16;
   // Sealed objects only: nonce (12 bytes) || AES-256-GCM ciphertext and tag of SealedContent
   // bytes, under HKDF-SHA256(K, "rchat-letter-enc1"); `subject` and `body` are then empty.
@@ -154,7 +154,7 @@ message P2pEntry {
   reserved "name";
   // base64url(SHA-256("rchat-letter-p2p2" || 0x00 || key || 0x00 || identity id))[0..22], where
   // key is the root's salt (plain letters) or HKDF-SHA256(root content key, "rchat-letter-blind1")
-  // (sealed letters). No name: instances never read P2P names (R8).
+  // (sealed letters). No name: instances never read P2P names.
   string blind = 1;
 }
 
@@ -215,7 +215,7 @@ message LetterAnnotation {
   // Seal bytes.
   bytes seal = 3;
   // The callee's local holders it is for: the author's known holders (edits, unsends) or the
-  // actor's witnesses (reactions). Never landed on anyone else (R2). Empty when it travels with
+  // actor's witnesses (reactions). Never landed on anyone else. Empty when it travels with
   // a chain: then only an edit or unsend by the target's author, applied to whoever lands its
   // target from this bundle; a reaction with no `to` lands nowhere.
   repeated string to = 4;
@@ -251,7 +251,7 @@ message LeaveNotice {
   bytes core = 1;
   // Seal bytes.
   bytes seal = 2;
-  // The callee's local holders it is for: the leaver's witnesses (R2).
+  // The callee's local holders it is for: the leaver's witnesses.
   repeated string to = 3;
 }
 
@@ -264,7 +264,7 @@ message LeaveCore {
   string uid = 5;
 }
 
-// A forwarded message as the forwarder held it (R3): content addressed and sealed by the
+// A forwarded message as the forwarder held it: content addressed and sealed by the
 // forwarder's instance (SealBody.typ "snap").
 // id = base64url(SHA-256("rchat-letter-snap1" || 0x00 || core))[0..43].
 message Snapshot {
@@ -310,7 +310,7 @@ message DeliverRequest {
 }
 
 message DeliverResponse {
-  // Always true when the call is valid: one uniform answer per bundle (spec B D23). Nothing
+  // Always true when the call is valid: one uniform answer per bundle. Nothing
   // here depends on what the callee stores or what its users hold or accept.
   bool accepted = 1;
   reserved 2, 3;
@@ -389,9 +389,9 @@ message GetKeyResponse {
   LetterKey letter_key = 2;
 }
 
-// A sealed-letters key (lane S): `binding` is LetterKeyBinding bytes as the owner encoded them;
-// sig = Ed25519(aek, "rchat-letter-key2" || 0x00 || binding), where aek is the account's 0.4.0
-// encryption identity key (m7).
+// A sealed-letters key: `binding` is LetterKeyBinding bytes as the owner encoded them;
+// sig = Ed25519(aek, "rchat-letter-key2" || 0x00 || binding), where aek is the account's
+// encryption identity key.
 message LetterKey {
   bytes binding = 1;
   bytes aek = 2;

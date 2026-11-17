@@ -114,7 +114,7 @@ describe('parseInvite', () => {
     ).toEqual({ server: 'club', password: 'pw' })
   })
 
-  test('reads the password from the fragment and still accepts old query links', () => {
+  test('reads the password from the fragment and accepts query links', () => {
     expect(parseInvite('/invite/club/#password=pw', ORIGIN)).toEqual({
       server: 'club',
       password: 'pw',
@@ -378,7 +378,7 @@ describe('invite refresh pacing', () => {
     expect(refreshDelay(0, 1_500, -INVITE_GAP, 2_000)).toBe(INVITE_QUIET - 500)
   })
 
-  test('a steady stream of changes still refreshes after the max wait', () => {
+  test('a steady stream of changes refreshes after the max wait', () => {
     const since = 0
     const bump = INVITE_MAX_WAIT - 100
     expect(refreshDelay(since, bump, -INVITE_GAP, bump)).toBe(100)

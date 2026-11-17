@@ -65,7 +65,7 @@ describe('env reads', () => {
     expect(offenders).toEqual([])
   })
 
-  test('every allowed read is still there', () => {
+  test('every allowed read is there', () => {
     const found = scan().map(({ read }) => read)
     expect(allowed.filter(read => !found.includes(read))).toEqual([])
   })
@@ -110,7 +110,7 @@ describe('env reads', () => {
     expect(reads('let root = env!("CARGO_MANIFEST_DIR");')).toEqual([])
   })
 
-  test('code after a test module is still scanned', () => {
+  test('code after a test module is scanned', () => {
     const code = [
       '#[cfg(test)]',
       'pub(crate) mod util {',

@@ -151,7 +151,7 @@ describe('palette registry', () => {
 })
 
 describe('jump back in', () => {
-  test('keeps only places still open to the user', () => {
+  test('keeps only places open to the user', () => {
     const at = {
       servers: new Set(['s']),
       serversMore: false,

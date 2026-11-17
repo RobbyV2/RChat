@@ -42,7 +42,7 @@ import {
   type Member,
 } from './p2p_server_net'
 
-// Abuse limits and local storage of P2P servers (spec 2.1, 4.1, 4.2, 4.3) on real members over
+// Abuse limits and local storage of P2P servers on real members over
 // the in-memory hub.
 
 afterEach(stopAll)
@@ -85,8 +85,8 @@ const run = async (m: Member, room: string, ap: string[], bodies_: string[], ch:
   return out
 }
 
-describe('storage (spec 4.2)', () => {
-  test('a full room still takes the owner’s ban; the banned member’s hidden content is evicted at once, giving room back', async () => {
+describe('storage', () => {
+  test('a full room takes the owner’s ban; the banned member’s hidden content is evicted at once, giving room back', async () => {
     // One sender fills the room here: no share limits this test.
     const share = { ...SHARE }
     SHARE.room = 2
@@ -208,7 +208,7 @@ describe('storage (spec 4.2)', () => {
     }
   }, 60_000)
 
-  test('a device alone can make only so many changes nobody acknowledged; moderation still fits', async () => {
+  test('a device alone can make only so many changes nobody acknowledged; moderation fits', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
@@ -306,7 +306,7 @@ describe('storage (spec 4.2)', () => {
     expect(await bodies(a, room, ch)).toEqual([])
   }, 60_000)
 
-  test('content storage refuses after the evaluator took it raises no removal watermark: a later kick still hides what comes after what is held', async () => {
+  test('content storage refuses after the evaluator took it raises no removal watermark: a later kick hides what comes after what is held', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
@@ -384,7 +384,7 @@ describe('storage (spec 4.2)', () => {
     await pump(clock, async () => (await bodies(a, room, ch)).includes('secret'), 'a has it')
     await a.servers.redact(room, id)
     expect(await bodies(a, room, ch)).toEqual([])
-    // Not stable: the body stays here and can be fetched again (spec 4.3).
+    // Not stable: the body stays here and can be fetched again.
     expect((await stored(a, id))?.wire.c).not.toBeNull()
     await b.node.setPaused(true)
     await joinWithCode(clock, a, room, c)
@@ -565,7 +565,7 @@ describe('storage (spec 4.2)', () => {
       return rec
     }
     await inStep()
-    // A purged row that turns out not to be admitted takes its bytes along (B1b drift).
+    // A purged row that turns out not to be admitted takes its bytes along.
     const s = a.servers as unknown as {
       purge(room: string, ids: string[]): Promise<number>
       dropRows(room: string, ids: string[]): Promise<void>
@@ -838,7 +838,7 @@ describe('imports', () => {
   }, 60_000)
 })
 
-describe('rules versions (spec 1.2, 8)', () => {
+describe('rules versions', () => {
   test('a server of unknown rules is stored unchecked within its limits, and read-only', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -894,7 +894,7 @@ describe('rules versions (spec 1.2, 8)', () => {
     expect(await failure(a.servers.send(room, { ch: 'AAAAAAAAAAA', body: 'x' }))).toBe(UPDATE_TEXT)
   }, 60_000)
 
-  test('a server made under the old test rules is read-only and can be removed', async () => {
+  test('a server made under test rules this build does not run is read-only and can be removed', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
     const a = await makeMember(hub, 'Alice', clock)
@@ -1211,7 +1211,6 @@ describe('removals sent to us directly', () => {
 })
 
 describe('gossip abuse', () => {
-  // e6f0fa9: every gtyping frame was relayed to every other link.
   test('a typing flood is relayed at most once per few seconds', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -1244,7 +1243,6 @@ describe('gossip abuse', () => {
     expect(toA.state).toBe('ready')
   }, 60_000)
 
-  // e6f0fa9: invited members got presence and typing over their state link.
   test('someone invited who never joins gets no presence or typing', async () => {
     const clock = new ManualClock()
     const hub = new Hub()
@@ -1273,7 +1271,6 @@ describe('gossip abuse', () => {
     expect(seen).toEqual([])
   }, 60_000)
 
-  // e6f0fa9: the list named every member we had any session with (DM contacts included).
   test('a presence report names only members linked in that room', () => {
     const clock = new ManualClock()
     const room = 'R'.repeat(43)

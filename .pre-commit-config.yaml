@@ -27,7 +27,7 @@ repos:
 
       - id: eslint
         name: eslint
-        entry: bunx eslint . --ignore-pattern '.superpowers/**'
+        entry: bunx eslint .
         language: system
         types_or: [javascript, jsx, ts, tsx]
         pass_filenames: false

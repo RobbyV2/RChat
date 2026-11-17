@@ -42,7 +42,7 @@ describe('mergeHead', () => {
 })
 
 describe('lostServers', () => {
-  test('lists every known server the user is no longer in, once', () => {
+  test('lists every known server the user has left, once', () => {
     expect(lostServers(['a', 'b', 'c', 'b'], new Set(['a']), () => false)).toEqual(['b', 'c'])
   })
 

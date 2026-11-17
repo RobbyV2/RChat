@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package rchat.fed.v1;
 
-// Feature `invites` (0.9.0): invite cards fetched by the reader's own instance.
+// Feature `invites`: invite cards fetched by the reader's own instance.
 service InvitesService {
   // What `GET /api/v1/invites/{server}` shows a guest, for an invite link someone pasted.
   rpc Preview(PreviewRequest) returns (PreviewResponse);

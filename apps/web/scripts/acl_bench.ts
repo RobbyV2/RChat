@@ -1,10 +1,10 @@
-// Benchmark of the production ACL evaluator (spec §5, §7.7): builds each worst-case shape of
-// notes/acl-model/bench.ts (copied below) with the production admission and evaluator, and times,
+// Benchmark of the production ACL evaluator: builds each worst-case shape of
+// the model's benchmark (copied below) with the production admission and evaluator, and times,
 // single-threaded: a full evaluation from scratch (index plus stratum loop), an honest event on the
 // heads (admission, append, new state), and a backdated deny (admission, append, re-run), then the
 // re-run alone. Production limits, with ts in minutes as in the model's benchmark.
 // Usage: bun apps/web/scripts/acl_bench.ts <shape|all> [events=20000] [seed=1] [reps=3]
-// `visibility [events=20000] [seed=1] [contents=1000000] [cacheMiB=64]`: §5.7's content target on
+// `visibility [events=20000] [seed=1] [contents=1000000] [cacheMiB=64]`: the content target on
 // the `tree` universe with a channel @everyone may view and post in: every content event admitted
 // (decideContent in St(m), which the bounded content-position cache keeps), then visibility per
 // rendered message (windows of 50 consecutive messages, first render).
@@ -54,7 +54,7 @@ const okF =
   }
 
 /**
- * Revision 4's universe (§7.7 history): an invite tree (everyone has Invite; each member invites up to two and posts a
+ * An invite tree (everyone has Invite; each member invites up to two and posts a
  * chain of spaced events citing its own chain and its inviter's latest), members' forks, backlogs, 30 removals at
  * stratum 3 positioned before members' invite subtrees by six moderator devices, senior promotions of subtree members
  * citing random subsets of the removals (distinct protection views: many protection classes), removals at strata 7 and
@@ -196,7 +196,7 @@ const treeOf = (w: W, N: number, rng: Rng, classes: number, chan = false) => {
     })
   let promos = 0
   // `classes`: every promotion cites one of `classes` nested subsets of the removals, so the stratum has exactly that
-  // many protection classes (2^classes + 1 worlds in the exact branch at the cap; 5a's class-cap worst case)
+  // many protection classes (2^classes + 1 worlds in the exact branch at the cap; the class cap's worst case)
   const subsets = Array.from({ length: classes }, (_, c) =>
     causes.slice(0, Math.round(((c + 1) * causes.length) / (classes + 1))).map(x => x.id)
   )
@@ -262,18 +262,18 @@ const treeOf = (w: W, N: number, rng: Rng, classes: number, chan = false) => {
   }
 }
 
-/** 5a's class-cap worst case: the tree with exactly CLASSES (production 6) protection classes at the removals' stratum */
+/** The class cap's worst case: the tree with exactly CLASSES (production 6) protection classes at the removals' stratum */
 const classes: Shape = (w, N, rng) => treeOf(w, N, rng, LIM.classes)
 
 /**
- * [R4V I1] role-move storm, which is also 5a's position-hull worst case: six moderators (pos 10) move a role R (pos 1,
+ * Role-move storm, which is also the position hull's worst case: six moderators (pos 10) move a role R (pos 1,
  * Kick | Ban) held by 300 members thousands of times, interleaved with the holders' rank-reading ops (bans of strangers,
  * which read the author's rank); a senior (pos 20) then kicks three of the moderators from a position before the storm,
  * so their moves are cut and the register is read through the position hull for every holder op.
  */
 const storm: Shape = (w, N, rng) => stormOf(w, N, rng, false)
 /**
- * 5a's position-hull worst case with the longest hull: as `storm`, but the three moderators that are kicked later post
+ * The position hull's worst case with the longest hull: as `storm`, but the three moderators that are kicked later post
  * every move of the last 60% alone, so every holder op after them reads the register through a hull over all of those
  * removable writes (|L*| ≈ 0.6 × moves).
  */
@@ -326,7 +326,7 @@ const stormOf = (w: W, N: number, rng: Rng, top: boolean, bitsMode = false) => {
 }
 
 /**
- * [R4V I1] many-strata ladder: the owner steps role H (held by Hd, Kick) down one position at a time, and Hd kicks one
+ * Many-strata ladder: the owner steps role H (held by Hd, Kick) down one position at a time, and Hd kicks one
  * member after each step, so every kick is its own stratum; filler members post marks. The backdated deny is the
  * owner's second device kicking Hd from before the ladder (every stratum's kick falls).
  */
@@ -359,7 +359,7 @@ const ladder: Shape = (w, N, rng) => {
 
 /**
  * Members' maximum forks: every member forks its device at its join into 4 branches of 8 events each (no branch sees
- * another), and for half of them another member's mark witnesses one branch in good faith (N14's deceived witness);
+ * another), and for half of them another member's mark witnesses one branch in good faith (a deceived witness);
  * moderators then remove 30 members from before their forks.
  */
 const forks: Shape = (w, N, rng) => {
@@ -402,7 +402,7 @@ const forks: Shape = (w, N, rng) => {
       m.tips.push(prev)
       branches++
     }
-    // N14's deceived witness, in good faith: another member's mark cites one branch tip and its own chain only
+    // a deceived witness, in good faith: another member's mark cites one branch tip and its own chain only
     if (mems.length && rng.chance(0.5)) {
       if (ok(`${rng.pick(mems).id}1`, 'mark', {}, { ap: [m.tips[rng.int(4)]], ts: tick() }))
         witnessed++
@@ -423,7 +423,7 @@ const forks: Shape = (w, N, rng) => {
 }
 
 /**
- * The maximum stored growth W3(g) allows ([H20], spec §4.1): 40 removed members, each with 8 devices revoked while it
+ * The maximum stored growth W3(g) allows: 40 removed members, each with 8 devices revoked while it
  * was a member and 8 live ones; after its removal each of the 16 chains posts its W3(b) budget of 24 marks from its old
  * tip, citing the owner's acknowledgement of the tip, round-robin: 384 = poolU unacknowledged events per member, the
  * most the bound allows (those whose concurrent pool overflows are pool candidates). Honest members fill the rest.
@@ -477,7 +477,7 @@ const growth: Shape = (w, N, rng) => {
         )
           post++
       }
-  // revision 7 (client rule, §4.1): honest members cite only the heads of the honest events
+  // the client rule: honest members cite only the heads of the honest events
   const isRem = new Set(rem)
   const hh = new Set(w.ref.order.filter(id => !isRem.has(w.ref.ev(id).a)))
   for (const id of [...hh]) for (const q of w.ref.ev(id).ap) hh.delete(q)
@@ -507,7 +507,7 @@ const growth: Shape = (w, N, rng) => {
 }
 
 /**
- * [R4V I1] role-move storm at one rank, its worst form under 5b's rules: two colluding members acknowledge each other
+ * Role-move storm at one rank, in its worst form: two colluding members acknowledge each other
  * (W3(b) then binds neither; W3(a) is the only limit), and the mover M (role MV, pos 5000, ROLES) steps role R
  * (pos 2100, ROLES | KICK) down one position per move from a position P0 before every holder op, so every move is a
  * deny at M's one stratum and concurrent with every holder op. The holders' ops are rank-reading: toggles of a bit of
@@ -566,7 +566,7 @@ const movestorm: Shape = (w, N, rng) => {
 }
 
 /**
- * Colluders' backlog (N12, the bound W3(a) leaves): two members kicked from P0 acknowledge each other's marks from
+ * Colluders' backlog (the bound W3(a) leaves): two members kicked from P0 acknowledge each other's marks from
  * their old position, as fast as W3(a) allows (60 per hour per device, dated across the idle range), every event cut
  * by the kicks; honest members fill the rest.
  */
@@ -738,10 +738,10 @@ const exact6: Shape = (w, N) => {
 }
 
 /**
- * Revision 6 (r5 review I3 (a)): a bit storm from two toggle lanes that never see each other. Moderators Ma and Mb
+ * A bit storm from two toggle lanes that never see each other. Moderators Ma and Mb
  * toggle Invite on role R (300 holders); each lane cites only its own chain and its acknowledger's latest mark, so
  * W3(a) alone binds. Holders post rank-reading bans on the heads; Q kicks Ma and Mb from before the storm. Only the
- * per-chain read of §5.4 A bounds it.
+ * per-chain read bounds it.
  */
 const bitlanes: Shape = (w, N, rng) => {
   const ok = okF(w)
@@ -797,8 +797,8 @@ const bitlanes: Shape = (w, N, rng) => {
 }
 
 /**
- * Revision 6 (r5 review C1 (b)): one member device's same-seq siblings at one position until the universe has N
- * events; honest members don't cite them (orphans). §5.2 step 2 counts per-device concurrency by popcount.
+ * One member device's same-seq siblings at one position until the universe has N
+ * events; honest members don't cite them (orphans). Step 2 counts per-device concurrency by popcount.
  */
 const siblings: Shape = (w, N) => {
   const ok = okF(w)
@@ -825,9 +825,9 @@ const siblings: Shape = (w, N) => {
 }
 
 /**
- * Revision 6 (r5 review I3 (b)): exact6 with multi-cause root supports and a deep ancestor chain (§5.4 C's worst case):
+ * Exact6 with multi-cause root supports and a deep ancestor chain (the worst case of the per-op world memos):
  * Z's ManageRoles role R0 comes from the removed V7 through a chain of D grants, and Z also holds C rank roles, P_c
- * granted by V_c, so every test of Z's ops consults C + 1 supports and neither memo of §5.4 C saves a test.
+ * granted by V_c, so every test of Z's ops consults C + 1 supports and neither memo saves a test.
  */
 const exact6m: Shape = (w, N) => {
   const ok = okF(w)
@@ -974,8 +974,8 @@ const exact6m: Shape = (w, N) => {
 }
 
 /**
- * Revision 7c (r7 re-review I1 (a)): a kicked member X posts concurrent device_adds over one iprev, positioned before
- * its kick, each followed by 23 marks on its fresh device; all admitted and in X, held. §5.2 step 2's linear branch
+ * A kicked member X posts concurrent device_adds over one iprev, positioned before
+ * its kick, each followed by 23 marks on its fresh device; all admitted and in X, held. Step 2's linear branch
  * stops once the lower bound passes poolU.
  */
 const idbench: Shape = (w, N) => {
@@ -1010,9 +1010,9 @@ const idbench: Shape = (w, N) => {
 }
 
 /**
- * Revision 7c (r7 re-review I1 (b)): an honest server of N held events and a kicked member's sibling introductions
+ * An honest server of N held events and a kicked member's sibling introductions
  * (24 counted events each), dropped with their headers: BENCH_HDRS headers (default 48,000). The full evaluation is
- * of the held set with the headers, read only against their own identity's events (§5.2 step 1); the honest event and
+ * of the held set with the headers, read only against their own identity's events; the honest event and
  * the backdated deny are not measured here.
  */
 let benchGhosts: string[] | undefined
@@ -1250,7 +1250,7 @@ function visibilityBench(N: number, seed: number, nContent: number, cacheMiB: nu
   )
 }
 
-// A cold start from stored records (§2.4, §4.2): the shape built with production admission, every
+// A cold start from stored records: the shape built with production admission, every
 // event's record packed as the live evaluator stores it (timed), the live replica dropped, then a
 // fresh evaluator restored from the records (index, sampled check), its first full evaluation,
 // and the state compared with the live one. RSS after a forced collection.
@@ -1391,7 +1391,7 @@ for (const name of shapeArg === 'all'
   w.state()
   const bdDev = probeOf()?.dev
   const maxTs = () => Math.max(...w.ref.order.map(x => w.ref.ev(x).ts))
-  // the measured honest event follows the client rule (§1.2); the client picks its parents before
+  // the measured honest event follows the client rule; the client picks its parents before
   // the timed admission and evaluation
   w.clientRule = true
   for (let r = 0; r < reps && !gh; r++) {

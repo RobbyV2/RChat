@@ -37,14 +37,14 @@ describe('tuneScreen', () => {
     expect(s.params.degradationPreference).toBe('maintain-resolution')
   })
 
-  test('a browser that rejects the degradation preference still gets the caps', async () => {
+  test('a browser that rejects the degradation preference gets the caps', async () => {
     const s = sender({ rejectDegradation: true })
     await tuneScreen(s as unknown as RTCRtpSender)
     expect(s.params.encodings[0].maxBitrate).toBe(SCREEN_BITRATE)
     expect(s.params.degradationPreference).toBeUndefined()
   })
 
-  test('caps set up front still get the degradation preference, once', async () => {
+  test('caps set up front get the degradation preference, once', async () => {
     const s = sender({ preset: true })
     await tuneScreen(s as unknown as RTCRtpSender)
     expect(s.params.degradationPreference).toBe('maintain-resolution')
@@ -141,7 +141,7 @@ describe('captureScreen', () => {
     expect(got?.audio).toBe(null)
   })
 
-  test('a closed picker resolves to null, other errors still throw', async () => {
+  test('a closed picker resolves to null, other errors throw', async () => {
     for (const name of ['NotAllowedError', 'AbortError']) {
       display(() => {
         throw Object.assign(new Error('closed'), { name })

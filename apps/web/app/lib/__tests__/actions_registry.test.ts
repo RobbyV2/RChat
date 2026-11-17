@@ -464,7 +464,7 @@ test('refreshCtx: channels, categories and DMs on fresh state, or gone', () => {
   expect(refreshCtx(open.category)?.target).toBe(cat)
 })
 
-test('a gone action or an unavailable one is no longer available', async () => {
+test('a gone action or an unavailable one is not available', async () => {
   let ok = true
   def({ id: 't_flip', title: 'Flip', scope: 'global', available: () => ok, run: () => {} })
   ok = false

@@ -1249,7 +1249,7 @@ fn a_disconnect_takes_out_every_guest_from_that_address() {
 }
 
 #[test]
-fn a_disconnect_racing_the_guests_reload_still_covers_its_address() {
+fn a_disconnect_racing_the_guests_reload_covers_its_address() {
     let s = |v: &str| v.to_string();
     let (a, b, c) = (
         "@guest:00000000000000aa",

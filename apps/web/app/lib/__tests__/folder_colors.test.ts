@@ -218,7 +218,7 @@ describe('derived folder colors', () => {
     }
   })
 
-  test('the badge glyph, hover, drop highlight, unread dot and mini grid still read', () => {
+  test('the badge glyph, hover, drop highlight, unread dot and mini grid read', () => {
     for (const theme of THEMES) {
       const dot = themeToken(theme, 'error')
       const mini = themeToken(theme, 'surface-container-high')

@@ -25,7 +25,7 @@ describe('viewPath / parsePath round-trips', () => {
     expect(parsePath(path)).toEqual({ kind: 'channel', server: 'café & co', channelId: 3 })
   })
 
-  test('missing trailing slash still parses', () => {
+  test('missing trailing slash parses', () => {
     expect(parsePath('/s/rchat/5')).toEqual({ kind: 'channel', server: 'rchat', channelId: 5 })
     expect(parsePath('/dm/8')).toEqual({ kind: 'dm', dmId: 8 })
   })

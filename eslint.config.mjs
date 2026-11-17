@@ -1,7 +1,33 @@
 import eslint from '@eslint/js'
+import { includeIgnoreFile } from 'eslint/config'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import tseslint from 'typescript-eslint'
 
+const root = dirname(fileURLToPath(import.meta.url))
+
+// The repository's git directory, also from a linked worktree (where `.git` is a file).
+const gitDir = () => {
+  const dot = join(root, '.git')
+  if (!existsSync(dot)) return null
+  if (statSync(dot).isDirectory()) return dot
+  const own = /^gitdir: (.+)$/m.exec(readFileSync(dot, 'utf8'))?.[1]
+  if (!own) return null
+  const dir = resolve(root, own)
+  const common = join(dir, 'commondir')
+  return existsSync(common) ? resolve(dir, readFileSync(common, 'utf8').trim()) : dir
+}
+
+// Untracked files this checkout tells git to leave alone are not linted either.
+const excluded = () => {
+  const dir = gitDir()
+  const file = dir && join(dir, 'info', 'exclude')
+  return file && existsSync(file) ? [includeIgnoreFile(file, 'git info/exclude')] : []
+}
+
 export default tseslint.config(
+  ...excluded(),
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {

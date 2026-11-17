@@ -6,7 +6,7 @@ import { bytesOf, hasKeys, pickKeys } from './canonical'
 import { isCallId } from './content'
 import { isKeyId } from './keys'
 
-// Call signaling over the encrypted session with a contact (note section 4): the media SDP and
+// Call signaling over the encrypted session with a contact: the media SDP and
 // candidates never pass the instance, so the DTLS fingerprints they carry are authenticated by
 // the session's device keys. Two message types:
 // - `rtc {to, target, call, payload}`: one negotiation step of the call `call` in `target`;

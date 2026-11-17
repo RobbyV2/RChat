@@ -54,7 +54,7 @@ const apply = (roles: RoleView[], moves: Move[]) =>
     .sort((a, b) => b.pos - a.pos || (a.id < b.id ? 1 : -1))
     .map(r => r.id)
 
-describe('role positions (spec 1.6)', () => {
+describe('role positions', () => {
   test('a new role goes below the lowest, leaving room, and never onto a taken position', () => {
     expect(newRolePos([])).toBe(ROLE_STEP * ROLE_STEP)
     expect(newRolePos([5000, 3000])).toBe(3000 - ROLE_STEP)
@@ -136,7 +136,7 @@ describe('role positions (spec 1.6)', () => {
     expect(apply(roles, moves).join('')).toBe('ywx')
   })
 
-  test('moving a held role down asks first (spec 8.2 role order)', () => {
+  test('moving a held role down asks first', () => {
     const roles = [role('a', 3000, 2), role('b', 2000, 0)]
     expect(movesWarn(roles, placeRole(roles, 'a', 1, OWNER))).toBe(true)
     expect(movesWarn(roles, placeRole(roles, 'b', 0, OWNER))).toBe(false)
@@ -204,7 +204,7 @@ describe('slow mode and pings of the open server', () => {
     expect(slowChanged(undefined, { exempt: false })).toBe(false)
   })
 
-  test('pings and unread of channels that no longer show (deleted, or not viewable), or of a server we are out of, do not count', () => {
+  test('pings and unread of channels that do not show (deleted, or not viewable), or of a server we are out of, do not count', () => {
     const v = {
       id: 'srv',
       me: 'join',
@@ -223,7 +223,7 @@ describe('slow mode and pings of the open server', () => {
   })
 })
 
-describe('taking roles in the UI (spec 1.4)', () => {
+describe('taking roles in the UI', () => {
   test('a role a channel holds its holders back with comes off only with Manage channels', () => {
     const v = { me: 'join' as const, perms: 0 }
     const mine = { ik: 'me', roles: ['muted', 'fun'], below: false }
@@ -241,7 +241,7 @@ describe('taking roles in the UI (spec 1.4)', () => {
   })
 })
 
-describe('allow-list rows (spec 1.4 chperm)', () => {
+describe('allow-list rows (chperm)', () => {
   test('rows of a member who left or a deleted role can be cleared; others need rank above them', () => {
     const v = {
       rank: [5, 'r'] as Rank,

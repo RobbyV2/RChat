@@ -13,7 +13,7 @@ afterEach(async () => {
 })
 
 describe('turning P2P on', () => {
-  test('starts the node while persistent storage is still being asked for', async () => {
+  test('starts the node while persistent storage is being asked for', async () => {
     let asked = 0
     g.navigator = {
       storage: {

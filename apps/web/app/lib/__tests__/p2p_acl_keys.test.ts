@@ -27,9 +27,9 @@ import {
   type KeysCtx,
 } from '../p2p/acl/keys'
 
-// Spec r8f 2.5 in production (`acl/keys.ts`) against the model's `resolveProtection` and the
+// The protection state in production (`acl/keys.ts`) against the model's `resolveProtection` and the
 // second reference `protectionOracle`, function by function, on the model's own worlds: the seven
-// b3 templates, the model's r8 vectors, and the r8e attack C1 cases. Everything that builds a
+// recovery-key templates, the model's rules-3 vectors, and the stolen later-epoch device cases. Everything that builds a
 // model world runs in a process of its own, because test files share their modules: the model's
 // vector files check every world built in their process, and the model reads its mutant when it
 // loads. Below them, the rules-3 fields read without the model.
@@ -40,21 +40,21 @@ const FROM = Number(process.env.ACL_SEED_FROM ?? 1)
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const exec = promisify(execFile)
 const TEMPLATES = [
-  'b3-thief',
-  'b3-newsrv',
-  'b3-leak',
-  'b3-legacy',
-  'b3-rejoin',
-  'b3-upgrade',
-  'b3-left',
+  'rk-thief',
+  'rk-newsrv',
+  'rk-leak',
+  'rk-legacy',
+  'rk-rejoin',
+  'rk-upgrade',
+  'rk-left',
 ]
 
-// `bun p2p_acl_r3.ts <template> <from> <n>`: the differences on those seeds, and the templates the
+// `bun p2p_acl_rules3.ts <template> <from> <n>`: the differences on those seeds, and the templates the
 // model has.
 const sweep = async (template: string, from: number, n: number, mutant = '') => {
   const { stdout } = await exec(
     process.execPath,
-    [`${HERE}p2p_acl_r3.ts`, template, String(from), String(n)],
+    [`${HERE}p2p_acl_rules3.ts`, template, String(from), String(n)],
     { env: { ...process.env, ACL_MUT: mutant }, maxBuffer: 1 << 24 }
   )
   return JSON.parse(stdout.trim()) as { differences: string[]; templates: string[] }
@@ -76,7 +76,7 @@ const run = async (file: string) => {
   }
 }
 
-describe('the b3 templates: production equals the model and the oracle', () => {
+describe('the recovery-key templates: production equals the model and the oracle', () => {
   let all: Map<string, ReturnType<typeof sweep>> | undefined
   const started = () =>
     (all ??= new Map(TEMPLATES.map(template => [template, sweep(template, FROM, SEEDS)])))
@@ -89,7 +89,7 @@ describe('the b3 templates: production equals the model and the oracle', () => {
     }, 3_600_000)
 })
 
-test("the model's r8 vectors, under their own names: production equals the model and the oracle on every world they build", async () => {
+test("the model's rules-3 vectors, under their own names: production equals the model and the oracle on every world they build", async () => {
   const got = await run('p2p_acl_keys_vectors.ts')
   expect(got.failed).toEqual([])
   expect([got.pass, got.fail]).toEqual([118, 0])
@@ -99,7 +99,7 @@ test("the model's r8 vectors, under their own names: production equals the model
   ])
 }, 1_200_000)
 
-test('r8e attack C1 and the saved seed 93,100,183: a stolen later-epoch device undoes no transfer (0 in 1,000 shapes)', async () => {
+test('a stolen later-epoch device undoes no transfer (the saved seed 93,100,183; 0 in 1,000 shapes)', async () => {
   const got = await run('p2p_acl_keys_attacks.ts')
   expect(got.failed).toEqual([])
   expect([got.pass, got.fail]).toEqual([16, 0])
@@ -108,16 +108,16 @@ test('r8e attack C1 and the saved seed 93,100,183: a stolen later-epoch device u
 // ----- The model's mutants -----
 
 const MUTANTS: [string, string][] = [
-  ['b3-upg-any-carrier', 'b3-upgrade'],
-  ['b3-upg-intro-any', 'b3-upgrade'],
-  ['b3-sigchain-off', 'b3-upgrade'],
-  ['b3-key-alive', 'b3-leak'],
-  ['b3-epoch-alive', 'b3-thief'],
-  ['b3-branch-alive', 'b3-leak'],
-  ['b3-rival-ok', 'b3-leak'],
-  ['b3-void-off', 'b3-legacy'],
-  ['b3-sh-off', 'b3-thief'],
-  ['b3-reset-pk', 'b3-leak'],
+  ['rk-upg-any-carrier', 'rk-upgrade'],
+  ['rk-upg-intro-any', 'rk-upgrade'],
+  ['rk-sigchain-off', 'rk-upgrade'],
+  ['rk-key-alive', 'rk-leak'],
+  ['rk-epoch-alive', 'rk-thief'],
+  ['rk-branch-alive', 'rk-leak'],
+  ['rk-rival-ok', 'rk-leak'],
+  ['rk-void-off', 'rk-legacy'],
+  ['rk-sh-off', 'rk-thief'],
+  ['rk-reset-pk', 'rk-leak'],
 ]
 
 test('each mutant of these rules, applied to the model, makes the comparison fail', async () => {

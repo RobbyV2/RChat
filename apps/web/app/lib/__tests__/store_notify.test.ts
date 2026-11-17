@@ -143,7 +143,7 @@ afterEach(() => {
 })
 
 describe('muting', () => {
-  test('a muted channel: no dot and no toast, but pings still badge', () => {
+  test('a muted channel: no dot and no toast, but pings badge', () => {
     st().muteScope(chan, 'forever')
     dispatch(inChannel(10))
     expect(scopeUnread(st(), 'c1')).toBe(false)
@@ -393,7 +393,7 @@ describe('membership', () => {
     expect(Object.keys(st().notifyPrefs.servers)).toEqual(['z'])
   })
 
-  test('signing in drops rules for servers and DMs the account is no longer in', async () => {
+  test('signing in drops rules for servers and DMs the account has left', async () => {
     const g = globalThis as { document?: unknown }
     const realDocument = g.document
     g.document = { cookie: '' }

@@ -222,7 +222,7 @@ describe('link cards', () => {
     expect(st().linkCards[2500]?.id).toBe(2500)
   })
 
-  test('jumping still uses the single lookup', async () => {
+  test('jumping uses the single lookup', async () => {
     readable[40] = card()
     await st().openMessage(40)
     expect(lookups).toEqual([40])
@@ -262,7 +262,7 @@ describe('link cards', () => {
     }
   })
 
-  test('links still queued when the session ends are never looked up', async () => {
+  test('links queued when the session ends are never looked up', async () => {
     readable[40] = card()
     st().resolveLinkCard(40)
     resetSessionCaches()

@@ -159,7 +159,7 @@ describe('session', () => {
     expect(st().me?.appear_offline).toBe(true)
   })
 
-  test('a failed login without an error text still says something', async () => {
+  test('a failed login without an error text says something', async () => {
     reply = () => new Response('{}', { status: 500, statusText: '' })
     await st().login({ username: 'bob', password: 'x' } as never)
     expect(st().error).toBe('HTTP 500')

@@ -29,14 +29,14 @@ import {
   TAG,
   type KeyPair,
 } from '../p2p/keys'
-import * as M from './acl_model_r8f/contacts'
+import * as M from './acl_model_rules3/contacts'
 
-// The model's contact vocabulary (contacts.ts of the r8f model: keys, devices and identities are
+// The model's contact vocabulary (contacts.ts of the rules-3 model: keys, devices and identities are
 // names, a record "verifies" by a flag) over production's `ContactClaims` with real keys and
 // records. `Contact` here has the model class's surface, so the model's tests run on production
 // as they are written; every step also runs the model itself beside it and compares the two.
 
-export type { CR, Rec, Msg, Token } from './acl_model_r8f/contacts'
+export type { CR, Rec, Msg, Token } from './acl_model_rules3/contacts'
 export { CHAIN_MAX, serverSuccClaims }
 type CR = M.CR
 type Rec = M.Rec
@@ -237,7 +237,7 @@ export const realMsg = (m: Msg): ClaimMsg =>
       case 'succ1': {
         const old = by(m.byOldIk, ikPair(m.old))
         if (m.newCr === undefined) {
-          // 0.3.0's form: no new_cr, the new half signed by the new identity key
+          // the form without new_cr: the new half signed by the new identity key
           const body = { v: 1, old: ikOf(m.old), new: ikOf(m.new.ik), at: AT }
           return {
             k: 'succ',

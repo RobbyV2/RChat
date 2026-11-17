@@ -29,11 +29,11 @@ import {
 } from './rules'
 import { CHANNEL_CONTENT } from '../event_v2'
 
-// Admission (spec §2): a pure function of an event and its causal past. `decide` is the port of
-// the model's; `AclReplica.receive` is §2.1 without the wire checks (signatures, sizes) and the
-// local hold, which the caller does.
+// Admission: a pure function of an event and its causal past. `decide` is the port of
+// the model's; `AclReplica.receive` decides receipt without the wire checks (signatures,
+// sizes) and the local hold, which the caller does.
 
-// U: the server's genesis has a rules version this client doesn't know (§1.2): stored, no strike,
+// U: the server's genesis has a rules version this client doesn't know: stored, no strike,
 // shown read-only.
 export type Verdict =
   | { s: 'A' }
@@ -59,12 +59,12 @@ export interface AdmitOpts {
   // A1 device binding, a pure function of the event and its causal past (B(e), St(e); none for a
   // genesis): an event whose device isn't bound to its poster is refused. Default `certBinds`.
   binds: (e: AclEv, B?: Past, S?: EvalResult) => boolean
-  // The limits the server agreed on (spec 4.1). Default `AGREED`.
+  // The limits the server agreed on. Default `AGREED`.
   agreed?: Agreed
 }
 
-// The primary key of a's current epoch in B (§1.5 Primary): the `pcert` of the epoch's rotation
-// when it names a key, else the identity key, which plays primary until Task 17 (§1.1).
+// The primary key of a's current epoch in B: the `pcert` of the epoch's rotation when it
+// names a key, else the identity key.
 function primaryOf(a: string, B: Past): string {
   const ix = B.ix
   const rots = inPast(B, ix.rotBy.get(a))
@@ -73,7 +73,7 @@ function primaryOf(a: string, B: Past): string {
   return isKeyId(pc) ? pc : a
 }
 
-// A1 for introductions (§1.1, §1.4): every genesis owner's bundle verifies to its identity over
+// A1 for introductions: every genesis owner's bundle verifies to its identity over
 // the digest of the genesis content (binding.ts), and the author's names the posting device; an
 // introducing join's `idb` and a device_add's `dcert` certify the posting device for the author,
 // signed by its primary over the server and the event's identity-chain position. A rotation's
@@ -104,7 +104,7 @@ export function certBinds(e: AclEv, B?: Past, S?: EvalResult): boolean {
   return deviceCertOk(primaryOf(e.a, B), srv, e.a, e.dev, e.iprev ?? '', cert)
 }
 
-// The identity-chain position for a new identity op of `a` with causal past B (§2.2, §2.3).
+// The identity-chain position for a new identity op of `a` with causal past B.
 export function identityHead(
   a: string,
   B: Past,
@@ -144,7 +144,7 @@ export function identityHead(
 // T is known in B: B holds a join by T or an add naming T.
 const known = (T: string, B: Past) =>
   inPast(B, B.ix.joinEv.get(T)).length > 0 || inPast(B, B.ix.addEv.get(T)).length > 0
-// W3 charges the denies that remove nothing from a member or invitee (§4.1).
+// W3 charges the denies that remove nothing from a member or invitee.
 export const chargedDeny = (e: AclEv, B: Past) =>
   (e.t === 'ban' && !known(e.c.to, B)) || e.t === 'role_move'
 const exemptOf = (e: AclEv, cls: Cls, B: Past) =>
@@ -189,7 +189,7 @@ export function decide(
   const ix = B.ix
   const L = ix.cx.lim
   const F = S.facts
-  // §1.2: at most `ap` (10) ACL parents
+  // at most `ap` (10) ACL parents
   if (e.ap.length > L.ap) return { ok: false, why: 'ap' }
   if (!opts.binds(e, B, S)) return { ok: false, why: 'dev' }
   // A1 device, device chain, identity chain
@@ -223,7 +223,7 @@ export function decide(
       for (const v of introduces(ix.ev[x])) if (!keep.has(v)) dropped.add(v)
     for (const v of dropped) if (!(seenOf(e, v) >= maxSeqIn(v))) return { ok: false, why: 'seen' }
   }
-  // the remover's watermark covers the target's live devices (§1.4, §3.5)
+  // the remover's watermark covers the target's live devices
   const seenTarget =
     e.t === 'kick' || e.t === 'ban' || (e.t === 'revoke' && e.c.to !== e.a)
       ? e.c.to
@@ -240,7 +240,7 @@ export function decide(
   if (e.t === 'proof' && !proofOk(e, B, S)) return { ok: false, why: 'proof' }
   // A2 timestamps: a causal lower bound only
   for (const p of e.ap) if (e.ts < ix.ev[ix.at.get(p)!].ts) return { ok: false, why: 'ts' }
-  // A relayed revocation (§1.6) acts for its `ik` only in facts, k, self-deny and protection;
+  // A relayed revocation acts for its `ik` only in facts, k, self-deny and protection;
   // otherwise it is its relayer's event (device chain, W3, pool, acknowledgements) and never `ik`'s.
   // A relay of a record whose revocation B(e) already holds is a duplicate.
   const relay = relayed(e)
@@ -279,7 +279,7 @@ export function decide(
   const pool = [...poolFor(A), e.id].sort()
   const unacked = new Set(pool.filter(x => x !== e.id))
   const unackedIdx = [...unacked].map(x => ix.at.get(x)!)
-  // A4 deterministic windows (§4.1)
+  // A4 deterministic windows
   if (!exempt) {
     const cap = perms(F, A) & MODBITS ? L.w3mod : L.w3
     let n = 0
@@ -392,7 +392,7 @@ function thirdAck(g: number, a1: string, a2: string, B: Past) {
   return false
 }
 
-// A proof's headers: an evidence pair against one device (§2.3) that lowers F(v) below an
+// A proof's headers: an evidence pair against one device that lowers F(v) below an
 // admitted ACL event of v in B(e). E3 (an ACL event and a later content event that does not
 // have it in its position) needs the content header's parents in B(e). The headers are trusted
 // here: the wire layer verified both signatures and computed them (event.ts validate2, aclEvOf).
@@ -444,7 +444,7 @@ export interface ContentHead {
   c: Record<string, unknown> | null
 }
 
-// Content admission (§2.2, §3.5): the same decide with B = C(m.ap) (content never introduces a
+// Content admission: the same decide with B = C(m.ap) (content never introduces a
 // device, so its binding is Dev in St(m)): the device's chain (seq past
 // its last ACL event in B, at most W4 events past it), the causal ts bound, and the content
 // authority in St(m): Mem, Dev, the server not upgraded, and for the known kinds with content a
@@ -492,7 +492,7 @@ export const genesisOk = (e: AclEv) =>
   !e.aprev &&
   !e.iprev
 
-// A replica of one server's ACL events: §2.1 receipt outcomes over the incremental state.
+// A replica of one server's ACL events: receipt outcomes over the incremental state.
 export class AclReplica implements Ctx {
   evs = new Map<string, AclEv>()
   status = new Map<string, Verdict>()
@@ -521,7 +521,7 @@ export class AclReplica implements Ctx {
     return this.acl.state()
   }
 
-  // The rules version of an unknown-rules genesis received (§1.2).
+  // The rules version of an unknown-rules genesis received.
   unknownRules?: number
 
   receive(e: AclEv): Verdict {
@@ -543,7 +543,7 @@ export class AclReplica implements Ctx {
     return v
   }
 
-  // The verdict e would get now, without admitting it (an event to hold, §2.1): its parents are
+  // The verdict e would get now, without admitting it (an event to hold): its parents are
   // admitted; a rejection is recorded, since it never changes.
   judge(e: AclEv): Verdict {
     const known = this.status.get(e.id)
@@ -568,7 +568,7 @@ export class AclReplica implements Ctx {
     this.admit(e)
   }
 
-  // A dropped event's header from storage (spec 2.3): admitted before, evidence only, outside the
+  // A dropped event's header from storage: admitted before, evidence only, outside the
   // index until the whole event is fetched again.
   restoreHeader(e: AclEv, rec: Rec) {
     if (this.status.has(e.id)) return

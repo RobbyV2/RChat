@@ -179,8 +179,7 @@ export const chainVectors = () => {
   })()
   const { sig_next, ...resetNoNext } = reset1
   const forged = { ...r1, sig: makeRecovery(I, thief, h0, id('pk1'), [id('d2')], AT + 1).sig }
-  // After the user's reset, a thief with the old phrase signs a sibling with R + T (review
-  // n-k-server r1 m1).
+  // After the user's reset, a thief with the old phrase signs a sibling with R + T.
   const torsioned = (() => {
     const { sig, ...body } = makeRecovery(I, rk, h0, id('pkT'), [id('dT')], AT + 1)
     void sig

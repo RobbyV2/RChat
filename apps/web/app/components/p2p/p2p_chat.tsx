@@ -225,7 +225,7 @@ export const P2pRow = memo(function P2pRow({
   onJump,
 }: RowProps) {
   const actions: ToolbarAction[] = []
-  // From the old copy (spec 3.8): read-only here.
+  // From the old copy: read-only here.
   const act = canAct && !p.archived
   const can = messageActs(p, act, mine)
   const thread = threads ? threadAct(p, act) : null
@@ -462,7 +462,7 @@ export function useP2pFlash(
   return flash
 }
 
-// In place of a message sent around the time its author was removed (spec 8.2).
+// In place of a message sent around the time its author was removed.
 export function P2pHiddenRow({ m, divider }: { m: Message; divider: boolean }) {
   const [before, after] = hiddenRemovedText('\u0000').split('\u0000')
   return (
@@ -489,7 +489,7 @@ export function P2pHiddenRow({ m, divider }: { m: Message; divider: boolean }) {
   )
 }
 
-// In place of our own message slow mode hides (spec 3.5).
+// In place of our own message slow mode hides.
 export function P2pSlowRow({ m, divider }: { m: Message; divider: boolean }) {
   return (
     <div data-row data-mid={m.id}>
@@ -556,7 +556,7 @@ export function P2pComposer({
   const emojiRef = useRef<HTMLButtonElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const files = useP2p(s => s.attaching[key]?.length ?? 0)
-  // A thread's replies count in its channel's slow mode (spec 3.5): the channel's countdown.
+  // A thread's replies count in its channel's slow mode: the channel's countdown.
   const slowLeft = useCountdown(useP2p(s => s.slowUntil[key.split('#')[0]] ?? 0))
   const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
   const sel = useRef({ start: 0, end: 0 })

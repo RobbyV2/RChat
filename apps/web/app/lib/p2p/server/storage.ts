@@ -30,7 +30,7 @@ export const heldBare = (rt: Rt, ids: Iterable<string>) => {
   rt.bodiless = new Set(ids)
 }
 
-// A tick's storage work in room `r`: a storage pass when due (spec 2.3, 4.2, 4.3), bodies still
+// A tick's storage work in room `r`: a storage pass when due, bodies still
 // wanted asked for again while some are, proofs, and the mark acknowledging a redaction.
 export function tick(cx: ServerCtx, r: RoomRecord, rt: Rt, now: number) {
   const every = Object.keys(r.causes ?? {}).length ? SERVER.causesMs : Infinity
@@ -89,7 +89,7 @@ export async function refreshRoom(cx: ServerCtx, room: string) {
   if (after) cx.rooms.set(room, after)
 }
 
-// Spec 4.3: a hidden body goes when its cause is stable (S1 to S4; S4 is the time it has stood
+// A hidden body goes when its cause is stable (S1 to S4; S4 is the time it has stood
 // here, kept per cause), or under `pressure` when S1 to S3 hold; a counted redaction by the
 // content's own author at once. Under pressure with nothing stable, every hidden body goes
 // (they can be fetched again), keeping its files as an eviction does. `only`: just these
@@ -183,7 +183,7 @@ export async function restoreBody(
   return { status: 'dup', rec }
 }
 
-// Proofs (spec 2.3, 4.1): evidence that lowers a device's fork point below an ACL event of it
+// Proofs: evidence that lowers a device's fork point below an ACL event of it
 // is posted after a random delay, unless what arrived meanwhile already lowered it as far.
 export async function proofPass(cx: ServerCtx, room: string) {
   const author = cx.deps.node.author()
@@ -230,7 +230,7 @@ export async function postProof(cx: ServerCtx, room: string, dev: string) {
 }
 
 // A moderator's redaction we applied: a mark naming it within a minute, so it can be
-// acknowledged (spec 4.3 S2), at most one per room per SERVER.ackMs, and only while some
+// acknowledged (S2), at most one per room per SERVER.ackMs, and only while some
 // redaction still needs it (ackRedactions).
 export function noteRedaction(cx: ServerCtx, room: string) {
   const rt = cx.ensureRt(room)
@@ -240,7 +240,7 @@ export function noteRedaction(cx: ServerCtx, room: string) {
   rt.ackDue = Math.max(at, rt.ackAt + SERVER.ackMs)
 }
 
-// Controller ruling: a mark only names redactions not yet acknowledged that can still be
+// A mark only names redactions not yet acknowledged that can still be
 // (at least 2 identities other than their authors, us among them); with none, no mark.
 export function ackRedactions(cx: ServerCtx, room: string, rt: Rt, now: number) {
   rt.ackDue = null
@@ -255,7 +255,7 @@ export function ackRedactions(cx: ServerCtx, room: string, rt: Rt, now: number) 
     .catch(() => {})
 }
 
-// Out of space (spec 4.2): purgeable bodies go first, then hidden ones that can be fetched
+// Out of space: purgeable bodies go first, then hidden ones that can be fetched
 // again, then the oldest bodies of the sender whose bodies take the most here (`total`: in
 // every server), until `size` more bytes fit, at least SERVER.evictBytes. Bodies fetched back
 // lately go only when nothing else can. `restore`: making room for a body fetched back, which
@@ -307,7 +307,7 @@ export async function postJoin(cx: ServerCtx, room: string) {
     cx.deps.node.schedule()
   } catch (e) {
     rt.joinPosted = false
-    // Spec 9 rule 14: the join waits for a third member's acknowledgement (shown, retried).
+    // The join waits for a third member's acknowledgement (shown, retried).
     const wait = e instanceof ServerError && e.message === VOUCH_WAIT_TEXT ? e.message : null
     if (wait !== rt.joinWait) {
       rt.joinWait = wait
@@ -317,9 +317,8 @@ export async function postJoin(cx: ServerCtx, room: string) {
   }
 }
 
-// A join that introduces this device carries its certificate (spec 1.1), signed by the
-// identity key (it plays primary until Task 17), and the v1 certificate and profile peers use
-// to reach and name us.
+// A join that introduces this device carries its certificate, signed by the identity key,
+// and the v1 certificate and profile peers use to reach and name us.
 export function joinContent(cx: ServerCtx, room: string, plan: Plan): Record<string, unknown> {
   const author = cx.deps.node.author()
   if (!author) throw new ServerError(MOVED_TEXT)
@@ -347,7 +346,7 @@ export async function refreshMe(cx: ServerCtx, room: string) {
       cert: cx.deps.node.cert,
       profile: cx.deps.node.profile,
     }))
-  // Spec 3.9: a move or import makes a new device; the one it moved from is revoked with the
+  // A move or import makes a new device; the one it moved from is revoked with the
   // watermark of what we hold of it, so whatever it signs later doesn't count.
   const live = memberOf(cx.sumOf(room), cx.me)?.devs ?? []
   for (const old of cx.deps.node.movedFrom())

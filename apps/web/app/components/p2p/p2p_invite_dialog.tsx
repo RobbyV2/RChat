@@ -23,7 +23,7 @@ import {
 const IP_NOTE =
   'Members you connect with can see your IP address unless you use relay only (Settings, Voice and P2P).'
 
-// Invite codes of P2P servers (note section 6): a code names the server, a secret and a few
+// Invite codes of P2P servers: a code names the server, a secret and a few
 // members who can let people in; it expires and can be revoked. Joining with one needs one of
 // those members online.
 

@@ -705,7 +705,7 @@ describe('voice participant sets', () => {
     expect(net.queue.length).toBe(before + 1)
   })
 
-  test('someone whose session closes without a word is gone after lostMs, unless still heard', async () => {
+  test('someone whose session closes without a word is gone after lostMs, unless heard', async () => {
     const net = new Net()
     const [a, b, c] = ['A', 'B', 'C'].map(n => net.add(n))
     net.mesh([a, b, c])

@@ -364,7 +364,7 @@ describe("a P2P server's menu (rail tile and header)", () => {
     )
   })
 
-  test('invited: leave; no longer a member: remove from this device', async () => {
+  test('invited: leave; not a member: remove from this device', async () => {
     state()
     expect(labels(onServer(server({ me: 'invite' }))).slice(3)).toEqual([
       'Copy Server ID',
@@ -514,7 +514,7 @@ describe("a P2P member's menu", () => {
     ])
   })
 
-  test('as a moderator owner: roles, kick, transfer and ban; transfer is danger now', () => {
+  test('as a moderator owner: roles, kick, transfer and ban; transfer is danger', () => {
     state()
     const v = server({ perms: MOD, owner: ME, owners: [ME] })
     const list = items(onMember(v, MEMBERS.carol))
@@ -663,7 +663,7 @@ describe("a P2P role's menu", () => {
   })
 })
 
-test('P2P server, channel, member and role rows stay out of the palette (rule 10)', () => {
+test('P2P server, channel, member and role rows stay out of the palette', () => {
   state()
   useP2p.setState({ servers: { [SRV]: server({ perms: 0x7fffffff, owner: ME, owners: [ME] }) } })
   const ids = new Set(paletteCommands(paletteCtx(useStore.getState())).map(r => r.id))
@@ -980,7 +980,7 @@ test("the P2P tile's menu lists the storage settings", () => {
   expect(labels({ kind: 'p2p_home' })).toEqual(['P2P storage settings'])
 })
 
-test('P2P chat rows stay out of the palette (rule 10)', () => {
+test('P2P chat rows stay out of the palette', () => {
   chatState()
   const ids = new Set(paletteCommands(paletteCtx(useStore.getState())).map(r => r.id))
   const added = allActions()

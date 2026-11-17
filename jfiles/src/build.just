@@ -53,8 +53,8 @@ check:
 gates: deps
   cd {{ROOT}} && cargo fmt --all --check
   cd {{ROOT}} && cargo clippy --workspace {{DESKTOP_CRATES}} --all-targets -- -D warnings
-  cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt --check
-  cd {{ROOT}} && bunx eslint . --ignore-pattern '.superpowers/**'
+  cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt --check $(git ls-files '*.toml')
+  cd {{ROOT}} && bunx eslint .
   cd {{ROOT}} && bunx tsc --noEmit --incremental false -p apps/web
   cd {{ROOT}} && bunx prettier --check "**/*.{ts,tsx,js,jsx,json,md,mjs}" {{PRETTIER_IGNORES}}
   cd {{ROOT}} && cargo test --workspace {{DESKTOP_CRATES}}
@@ -66,27 +66,27 @@ gates: deps
 fmt: deps
   cd {{ROOT}} && cargo clippy --workspace {{DESKTOP_CRATES}} --all-targets --fix --allow-dirty -- -D warnings
   cd {{ROOT}} && cargo fmt --all
-  cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt
-  cd {{ROOT}} && bunx eslint . --ignore-pattern '.superpowers/**' --fix
+  cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt $(git ls-files '*.toml')
+  cd {{ROOT}} && bunx eslint . --fix
   cd {{ROOT}} && bunx prettier --write "**/*.{ts,tsx,js,jsx,json,md,mjs}" {{PRETTIER_IGNORES}}
 
 # Check formatting and linting without changes
 fmt-check: deps
   cd {{ROOT}} && cargo fmt --check --all
   cd {{ROOT}} && cargo clippy --workspace {{DESKTOP_CRATES}} --all-targets -- -D warnings
-  cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt --check
-  cd {{ROOT}} && bunx eslint . --ignore-pattern '.superpowers/**'
+  cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt --check $(git ls-files '*.toml')
+  cd {{ROOT}} && bunx eslint .
   cd {{ROOT}} && bunx prettier --check "**/*.{ts,tsx,js,jsx,json,md,mjs}" {{PRETTIER_IGNORES}}
 
 # Format Rust only
 fmt-rust:
   cd {{ROOT}} && cargo clippy --workspace {{DESKTOP_CRATES}} --all-targets --fix --allow-dirty -- -D warnings
   cd {{ROOT}} && cargo fmt --all
-  cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt
+  cd {{ROOT}} && bunx @taplo/cli@0.7.0 fmt $(git ls-files '*.toml')
 
 # Format TypeScript/frontend only
 fmt-ts: deps
-  cd {{ROOT}} && bunx eslint . --ignore-pattern '.superpowers/**' --fix
+  cd {{ROOT}} && bunx eslint . --fix
   cd {{ROOT}} && bunx prettier --write "**/*.{ts,tsx,js,jsx,json,md,mjs}" {{PRETTIER_IGNORES}}
 
 # Build Docker image

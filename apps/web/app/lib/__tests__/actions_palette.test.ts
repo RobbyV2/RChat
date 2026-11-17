@@ -217,7 +217,7 @@ const rowsById = (st: RChatState) => Object.fromEntries(rows(st).map(r => [r.id,
 const ids = (st: RChatState) => rows(st).map(r => r.id)
 const order = (st: RChatState) => ids(st).join(' ')
 
-// Today's ids (palette_commands.ts), all reachable from fixture states: alice moderates
+// The palette's ids (palette_commands.ts), all reachable from fixture states: alice moderates
 // server s with ViewAuditLog | ManageWebhooks | TimeoutMembers, views #general, has bob
 // timed out, carol's incoming request, friend dave, blocked erin.
 const IDS = [
@@ -677,7 +677,7 @@ const runAll = async (make: () => RChatState, want: string[]) => {
   return out
 }
 
-test('every palette command id of 0.3 is still offered (usage counts key on them)', () => {
+test('every pinned palette command id is offered (usage counts key on them)', () => {
   expect(IDS.filter(id => !ids(channelState()).includes(id))).toEqual([])
   expect(DM_IDS.filter(id => !ids(dmState()).includes(id))).toEqual([])
   expect(VOICE_IDS.filter(id => !ids(voiceState()).includes(id))).toEqual([])
@@ -685,7 +685,7 @@ test('every palette command id of 0.3 is still offered (usage counts key on them
   expect(SELECTION_IDS.filter(id => !ids(selectionState()).includes(id))).toEqual([])
 })
 
-test('titles, hints and danger are unchanged', () => {
+test('titles, hints and danger of the rows', () => {
   const byId = rowsById(channelState())
   expect(byId.mark_read_here.title).toBe('Mark #general as read')
   expect(byId.select.hint).toBe('Mod+Shift+S')
@@ -695,7 +695,7 @@ test('titles, hints and danger are unchanged', () => {
   expect(rowsById(dmState()).call.title).toBe('Call Bobby')
 })
 
-test('rows keep their 0.3 order in each state', () => {
+test('rows come in the pinned order in each state', () => {
   for (const [name, want] of Object.entries(ORDER))
     expect([name, order(STATES[name]())]).toEqual([name, want])
   const channel = ORDER.channelState.split(' ')
@@ -719,7 +719,7 @@ test('rows keep their 0.3 order in each state', () => {
   )
 })
 
-test('rows keep their 0.3 titles, groups, icons, subtitles, hints and flags', () => {
+test('rows have the pinned titles, groups, icons, subtitles, hints and flags', () => {
   expect(rows(channelState()).map(look)).toEqual(LOOKS)
   for (const [name, want] of Object.entries(OTHER_LOOKS)) {
     const got = rowsById(STATES[name]())
@@ -727,17 +727,17 @@ test('rows keep their 0.3 titles, groups, icons, subtitles, hints and flags', ()
   }
 })
 
-test('keywords keep their 0.3 terms; a contextual title adds only its static name', () => {
+test('keywords are the pinned terms; a contextual title adds only its static name', () => {
   for (const make of Object.values(STATES))
     for (const r of rows(make())) {
       const a = actionById(r.action ?? '')
-      const old = KEYWORDS[r.id] ?? (r.group === 'selection' ? ['selected', 'messages'] : [])
+      const pinned = KEYWORDS[r.id] ?? (r.group === 'selection' ? ['selected', 'messages'] : [])
       const extra = r.id === r.action && a && a.title !== r.title ? [a.title] : []
-      expect([r.id, r.keywords ?? []]).toEqual([r.id, [...old, ...extra]])
+      expect([r.id, r.keywords ?? []]).toEqual([r.id, [...pinned, ...extra]])
     }
 })
 
-test('arguments are unchanged: choices, checks and typed forms', () => {
+test('arguments: choices, checks and typed forms', () => {
   const byId = rowsById(channelState())
   const choices = (id: string) => byId[id].arg?.choices?.map(c => [c.value, c.label])
   const checks = (id: string) =>
@@ -788,7 +788,7 @@ test('arguments are unchanged: choices, checks and typed forms', () => {
   expect(byId.poll.slash).toBe('poll')
 })
 
-test('each row does what it did in 0.3, confirms included', async () => {
+test('each row makes the pinned store calls, confirms included', async () => {
   for (const [name, want] of Object.entries(RUNS))
     expect([name, await runAll(STATES[name], Object.keys(want))]).toEqual([name, want])
 })

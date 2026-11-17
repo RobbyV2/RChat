@@ -17,9 +17,9 @@ import {
   type Rank,
 } from './rules'
 
-// The state of a set of ACL events (spec §1.5, §3.2): facts derived from live grants and
+// The state of a set of ACL events: facts derived from live grants and
 // effective denies. Facts are computed per key from that key's event list (keyed lazy views),
-// never by a pass over the set (§5).
+// never by a pass over the set.
 
 export interface Has<K> {
   has(k: K): boolean
@@ -50,7 +50,7 @@ export interface CodeFact {
   k: Rank
 }
 
-// What authority, rank and protection read (§1.4, §1.6).
+// What authority, rank and protection read.
 export interface FactsQ {
   owners: ReadonlySet<string>
   mem: Has<string>
@@ -70,7 +70,7 @@ export interface FactsQ {
   codeDead: Has<string>
 }
 
-// The whole state (§3.2), with the registers.
+// The whole state, with the registers.
 export interface Facts extends FactsQ {
   upgraded: readonly string[]
   mem: RSet<string>
@@ -305,8 +305,8 @@ export abstract class View {
     this.mBits.set(R, v)
     return v
   }
-  // Bit(R, b) (§3.2): the bit holds iff a live setter has every effective clear in its past. Two
-  // exact reads run step by step and the first to finish answers: per chain (§5.4 A; a register
+  // Bit(R, b): the bit holds iff a live setter has every effective clear in its past. Two
+  // exact reads run step by step and the first to finish answers: per chain (a register
   // with chains that never see each other) and from the top with the coverage stop (a register
   // whose newest counted write covers the rest, though whole chains are void).
   private bit(l: BitW): boolean {
@@ -432,7 +432,7 @@ export abstract class View {
   extraE(): Iterable<number> {
     return EMPTY
   }
-  // Pos(R) (§1.5): the best of the register's maximal counted writes. Raced as Bit is.
+  // Pos(R): the best of the register's maximal counted writes. Raced as Bit is.
   pos(R: string): number | undefined {
     if (this.mPos.has(R)) return this.mPos.get(R)
     const ix = this.ix
@@ -447,7 +447,7 @@ export abstract class View {
     this.mPos.set(R, v)
     return v
   }
-  // Per chain (§5.4 A): on each chain of R's position writes the latest one counted in this view;
+  // Per chain: on each chain of R's position writes the latest one counted in this view;
   // the maximal of those are the register's maximal writes.
   private posChains(R: string, limit: number): number | undefined {
     const ix = this.ix
@@ -726,10 +726,10 @@ export abstract class View {
     if (slow > 0) out.slow = slow
     return out
   }
-  // RoleMeta(R) (§1.5): the register over the live writes whose Authority holds in their own
+  // RoleMeta(R): the register over the live writes whose Authority holds in their own
   // admission state and still holds after the effective denies concurrent with them that act on
   // their author's roles (a demoted moderator's concurrent rename doesn't count). Neither test
-  // cuts anything: the writes are live or cut by the generic rule (§1.4).
+  // cuts anything: the writes are live or cut by the generic rule.
   roleMetaOf(R: string): AclContent | undefined {
     const ix = this.ix
     const ws = (ix.roleMetaEv.get(R) ?? EMPTY).filter(
@@ -964,7 +964,7 @@ class SetView extends View {
   }
 }
 
-// facts(E, void, eff) of §3.2 for a causally closed set E (the model's `facts`).
+// facts(E, void, eff) for a causally closed set E (the model's `facts`).
 export function facts(
   E: Iterable<string>,
   voidS: Has<string>,

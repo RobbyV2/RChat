@@ -98,7 +98,7 @@ export const SLOT_KIND: Record<Slot, 'audio' | 'video'> = {
   screen: 'video',
 }
 
-// What goes out on the camera and screen slots. A legacy (0.2.0) peer shows only the camera
+// What goes out on the camera and screen slots. A legacy peer (its cam messages have no screen) shows only the camera
 // slot. While the camera is off, it gets the screen there. It never gets the screen slot,
 // because it cannot show it.
 export const videoPlan = <T>(

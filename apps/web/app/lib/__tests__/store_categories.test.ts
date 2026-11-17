@@ -151,7 +151,7 @@ describe('categories in the store', () => {
     expect(groups()).toEqual([[1, 2, 3]])
   })
 
-  test('the moves still waiting end with the session, so the next one sends its own', async () => {
+  test('the moves that are waiting end with the session, so the next one sends its own', async () => {
     st().moveChannel('club', 2, null, 0)
     st().moveChannel('club', 1, 10, 0)
     await tick()
@@ -192,7 +192,7 @@ describe('categories in the store', () => {
     expect(st().layout.collapsed).toEqual({ club: [11] })
   })
 
-  test('loading a server drops collapsed ids of categories it no longer has', async () => {
+  test('loading a server drops collapsed ids of categories it does not have', async () => {
     st().setCategoriesCollapsed('club', [10, 11], true)
     st().setCategoriesCollapsed('arena', [20], true)
     replies.push(

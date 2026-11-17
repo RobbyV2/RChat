@@ -260,7 +260,7 @@ describe('live group mentions', () => {
     expect(toasts()).toEqual([])
   })
 
-  test('suppressed kinds neither toast nor badge, others still do', () => {
+  test('suppressed kinds neither toast nor badge, others do', () => {
     useStore.setState({ notifyPrefs: setSuppress(EMPTY_NOTIFY, 's', 'everyone', true) })
     dispatch(said(13, [everyone, here]))
     expect(allPings(st())).toBe(0)
@@ -302,7 +302,7 @@ describe('live group mentions', () => {
     expect(onlineForHere({ appear_offline: true })).toBe(false)
   })
 
-  test('every kind suppressed: "All messages" still alerts as a plain message', () => {
+  test('every kind suppressed: "All messages" alerts as a plain message', () => {
     const all = setLevel(EMPTY_NOTIFY, { kind: 'server', name: 's' }, 'all')
     useStore.setState({ notifyPrefs: setSuppress(all, 's', 'everyone', true) })
     dispatch(said(45, [everyone, here]))

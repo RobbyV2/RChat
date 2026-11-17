@@ -103,7 +103,7 @@ fn a_takeover_that_copies_the_instance_id_but_signs_with_a_new_key_halts_both_wa
 }
 
 #[test]
-fn a_takeover_that_also_serves_the_old_public_key_still_halts_only_the_signer_counts() {
+fn a_takeover_that_also_serves_the_old_public_key_halts_only_the_signer_counts() {
     let h = run(vec![
         hello_at(0, hello()),
         hello_at(100, signed("kEvil", &["kB", "kEvil"], &["kB", "kEvil"])),
@@ -830,7 +830,7 @@ fn block_stops_both_ways_and_only_unblock_lifts_it() {
 }
 
 #[test]
-fn block_calls_from_it_only_our_users_can_still_write_there() {
+fn block_calls_from_it_only_our_users_can_write_there() {
     let h = run(vec![hello_at(0, hello()), (1, Event::Op(Op::BlockIn))]);
     assert!(!go(&h, Letters, In, 2));
     assert!(go(&h, Letters, Out, 2));

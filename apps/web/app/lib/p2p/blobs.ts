@@ -33,7 +33,7 @@ import type { P2pNode } from './node'
 import { LOCAL } from './limits'
 import { realClock, type Clock, type Pipe, type Session } from './session'
 
-// P2P attachments (note section 5). Files are split into 1 MiB blocks, named by a root hash over
+// P2P attachments. Files are split into 1 MiB blocks, named by a root hash over
 // the block hashes, and fetched block by block over a separate encrypted pipe per session
 // (`rcp1b`), so file transfers never hold up chat and never count against the chat session's
 // limits. Every block is checked against its hash before it is stored, so blocks can come from

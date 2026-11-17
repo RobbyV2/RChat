@@ -210,7 +210,7 @@ describe('presence events in the store', () => {
     expect(st().members.s.list[0].online).toBe(false)
   })
 
-  test('an event that arrives before the member list loads still marks the row', async () => {
+  test('an event that arrives before the member list loads marks the row', async () => {
     useStore.setState({ servers: { s: serverDetail('s', { online_count: 1, member_count: 2 }) } })
     let release = () => {}
     const gate = new Promise<void>(r => (release = r))

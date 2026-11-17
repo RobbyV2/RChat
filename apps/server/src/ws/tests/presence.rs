@@ -449,7 +449,7 @@ async fn appear_offline_holds_across_instances() {
     assert!(b.is_online("rchat", "alice") && b.is_online("other", "alice"));
 }
 
-// Review I1: a socket reads `appear_offline` before alice turns it on and announces after
+// A socket reads `appear_offline` before alice turns it on and announces after
 // the change, without ever seeing the event. She stays hidden on every node.
 #[tokio::test]
 async fn a_socket_with_a_stale_appear_offline_can_not_unhide() {

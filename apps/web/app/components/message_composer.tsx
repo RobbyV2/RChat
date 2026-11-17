@@ -452,7 +452,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     }
     if (slowLeft > 0) return
     const go = () => (pending?.mode === 'p2p' ? setExpiryOpen(true) : doSend())
-    // A P2P server invite code posted here can be read by the instance (note section 6).
+    // A P2P server invite code posted here can be read by the instance.
     if (hasInviteCode(text))
       return useStore.getState().askConfirm({
         title: 'Post Invite Code',

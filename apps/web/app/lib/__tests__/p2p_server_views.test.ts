@@ -14,8 +14,8 @@ import {
 } from './p2p_server_net'
 
 // The member list a server's view gives (server/views.ts): an owner, a moderator and three
-// members, seen by the owner and by the moderator. The expectation is today's view() before the
-// server split, with identity keys and role ids replaced by names.
+// members, seen by the owner and by the moderator. The expectation is a pinned view()
+// with identity keys and role ids replaced by names.
 
 afterEach(stopAll)
 

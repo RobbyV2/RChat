@@ -336,7 +336,7 @@ describe('edit stubs (server channels)', () => {
   })
 })
 
-describe('edit fixes', () => {
+describe('edits: Up, dropped views, gone messages and s/', () => {
   test('Up with an edit open focuses it instead of replacing it', () => {
     useStore.setState({ messages: { c1: [mine, msg(12, { author: bob }), reply] } })
     st().startEdit('c1', mine)

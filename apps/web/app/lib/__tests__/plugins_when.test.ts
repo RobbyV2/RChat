@@ -304,7 +304,7 @@ describe('when: checking a condition from a plugin', () => {
     expect(performance.now() - start).toBeLessThan(1000)
   })
 
-  test('a condition that was never checked still evaluates without throwing', () => {
+  test('a condition that was never checked evaluates without throwing', () => {
     for (const w of [
       null,
       {},

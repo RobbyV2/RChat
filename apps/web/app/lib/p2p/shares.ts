@@ -1,6 +1,6 @@
 import { LOCAL } from './limits'
 
-// Per-sender content shares of P2P servers (spec 4.2): what one sender's content may take of a
+// Per-sender content shares of P2P servers: what one sender's content may take of a
 // room's and of every server's content budget, counted over a rolling day of local receipt in
 // hourly buckets.
 

@@ -38,7 +38,7 @@ export interface Serving {
   push?: (link: Link, wire: Wire) => boolean
 }
 
-// Room sync over a session (note section 5): `heads` announces the frontier, `want` and `get`
+// Room sync over a session: `heads` announces the frontier, `want` and `get`
 // pull what is missing, `push` carries live events, `ack` confirms what was stored (delivery).
 // Flow control is credit based on both sides: we keep at most `requests` pulls outstanding, each
 // answer is capped at `responseBytes`, and live pushes wait for acks once `pushBytes` are in
@@ -87,7 +87,7 @@ export interface SyncDeps {
   // missing parents of pending events).
   stateHeads?: (room: string) => Promise<string[]>
   stateWanted?: (room: string) => string[]
-  // A peer sent its heads (servers: moderation waits for a fresh exchange, spec 8.2).
+  // A peer sent its heads (servers: moderation waits for a fresh exchange).
   onHeads?: (link: Link) => void
   // Events stored from a peer (new ones only).
   onStored: (room: string, from: string, added: Inserted[]) => void
@@ -487,8 +487,8 @@ export class Sync {
     else if (!room?.missing.length) link.pulled = 0
   }
 
-  // Asks one peer of the room for events by id that it hasn't said it lacks (bodies we want back,
-  // spec 4.3); what comes is checked and stored like any answer. False: no peer to ask now.
+  // Asks one peer of the room for events by id that it hasn't said it lacks (bodies we want
+  // back); what comes is checked and stored like any answer. False: no peer to ask now.
   fetch(room: string, ids: string[]) {
     for (const link of this.linksOf(room)) {
       if (link.closed || link.requests.size >= this.limits.requests) continue
@@ -530,7 +530,7 @@ export class Sync {
     return this.linksOf(room).some(l => l.requests.size > 0)
   }
 
-  // A walk over the ACL DAG is under way (servers: sync progress, spec 9 rule 19).
+  // A walk over the ACL DAG is under way (servers: sync progress).
   pullingState(room: string) {
     return this.linksOf(room).some(l => [...l.requests.values()].some(r => r.state))
   }

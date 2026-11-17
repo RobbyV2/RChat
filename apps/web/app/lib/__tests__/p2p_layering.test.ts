@@ -10,7 +10,7 @@ import { importsOf, packagesOf } from './import_graph'
 const P2P = 'apps/web/app/lib/p2p'
 const SERVER = fileURLToPath(new URL('../p2p/server/', import.meta.url))
 
-// What plan H's reports may import without the page: every server module and the transport.
+// What code may import without the page: every server module and the transport.
 const PAGE_FREE = () => [
   ...readdirSync(SERVER)
     .filter(f => f.endsWith('.ts'))

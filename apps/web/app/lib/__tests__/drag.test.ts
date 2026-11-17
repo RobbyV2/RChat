@@ -56,7 +56,7 @@ describe('drop slot', () => {
 describe('drop onto an item', () => {
   const merging = tiles('a', 'b', 'c').map(b => ({ ...b, onto: ontoBand(b.top, b.bottom) }))
 
-  test('the middle half of a tile merges, the edges still reorder', () => {
+  test('the middle half of a tile merges, the edges reorder', () => {
     expect(ontoBand(0, 48)).toEqual({ top: 12, bottom: 36 })
     expect(slotAt(merging, 56 + 24, 'c')).toEqual({ index: 1, line: null, noop: false, onto: 'b' })
     expect(slotAt(merging, 56 + 13, 'c').onto).toBe('b')
@@ -118,7 +118,7 @@ describe('merge highlight geometry', () => {
     expect(layoutSpan({ top: 10, bottom: 58 }, 48)).toEqual({ top: 10, bottom: 58 })
   })
 
-  test('highlighting the target never moves its band under a still pointer', () => {
+  test('highlighting the target never moves its band under a pointer at rest', () => {
     for (let y = 40; y <= 120; y += 0.125) {
       const first = frame(y, null)
       let lit = first
@@ -129,7 +129,7 @@ describe('merge highlight geometry', () => {
     }
   })
 
-  test('the band edges hold at the offsets that used to flicker', () => {
+  test('the band edges hold at offsets on and around the slot boundaries', () => {
     const offsets = [11, 11.875, 12, 12.5, 13, 14.5, 24, 35, 35.5, 36, 36.125, 37]
     const expected = [null, null, 'b', 'b', 'b', 'b', 'b', 'b', 'b', 'b', null, null]
     expect(offsets.map(dy => frame(56 + dy, null))).toEqual(expected)

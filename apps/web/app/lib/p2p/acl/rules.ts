@@ -3,9 +3,9 @@ import { bytesOf, canonical, isInt } from '../canonical'
 import { AGREED, type Agreed } from '../limits'
 import type { EvalResult, Facts, FactsQ } from './facts'
 
-// The rules of P2P server ACL events (spec §1.4, §1.6): event classes, the Authority column (what
+// The rules of P2P server ACL events: event classes, the Authority column (what
 // an event relies on, so what a deny can take away), the guards (admission only) and the
-// protection predicates of §3.1. A port of notes/acl-model/model.ts.
+// protection predicates. A port of the reference model's model.ts.
 
 export type Rank = readonly [number, string]
 export const TOP: Rank = [Infinity, '']
@@ -43,7 +43,7 @@ export const MODBITS = KICK | BAN | ROLES | CHANNELS | SERVER | MESSAGES
 export const EVERYONE = 'everyone'
 export const RULES_VERSION = 2
 
-// §4.1 production values (ts in ms).
+// Production values (ts in ms).
 export const PRODUCTION_LIMITS: Readonly<Agreed> = AGREED
 
 export interface Owner {
@@ -53,7 +53,7 @@ export interface Owner {
   [k: string]: unknown
 }
 
-// ACL event content. Each type reads only its own fields (§1.4); `aclContentOk` checks their
+// ACL event content. Each type reads only its own fields; `aclContentOk` checks their
 // types, so a field a type reads is either absent or of the type given here.
 export interface AclContent {
   [k: string]: unknown
@@ -85,11 +85,11 @@ export interface AclContent {
   deny?: number
 }
 
-// `a` is the acting identity. A device_revoke that another member relays (§1.4, §1.6) acts for the
+// `a` is the acting identity. A device_revoke that another member relays acts for the
 // record's `ik` in facts, k, self-deny and protection: then `a` is that identity and `relay` the
 // member whose device `dev` signed it; everything else counts it as the relayer's (admit.ts). A
 // relayed primary_rotate is refused: two members could carry one record concurrently, and two
-// concurrent rotations are rotation evidence (§2.3), which only the recovery key may create.
+// concurrent rotations are rotation evidence, which only the recovery key may create.
 export interface AclEv {
   id: string
   t: string
@@ -106,7 +106,7 @@ export interface AclEv {
 
 export type Cls = 'G' | 'D' | 'R' | 'A'
 
-// What admission records for an admitted event (§2.2).
+// What admission records for an admitted event.
 export interface Rec {
   k: Rank
   cls: Cls
@@ -115,7 +115,7 @@ export interface Rec {
   depth: number
   epoch: string
   local: EvalResult
-  // U(e) (§4.1), by poster: a relayed revocation is in its relayer's
+  // U(e), by poster: a relayed revocation is in its relayer's
   pool?: string[]
 }
 
@@ -172,7 +172,7 @@ export function permsQ(F: Pick<FactsQ, 'owners' | 'bits' | 'holds'>, P: string):
 }
 export const perms = permsQ
 
-// Monotone authority (§3.1, revision 5): resources (what the author holds) are read in Fr,
+// Monotone authority: resources (what the author holds) are read in Fr,
 // obstacles (what it acts against) in Fo. In the admission state both are St(e).
 export interface AuthCtx {
   Fr: FactsQ
@@ -189,7 +189,7 @@ export const simpleCtx = (F: FactsQ, a: string): AuthCtx => ({
   rankT: T => rank(F, T),
 })
 
-// The authority of content events (§3.5) through authCore: a redaction of another member's
+// The authority of content events through authCore: a redaction of another member's
 // message needs Manage messages and a rank above its author, a pin needs Manage messages; any
 // other content needs Mem (and Dev). These type names can't be ACL types.
 export const CONTENT_REDACT = 'c:redact'
@@ -298,7 +298,7 @@ export function authCore(e: AclEv, x: AuthCtx): boolean {
   }
 }
 
-// The Authority column of §1.4 in one state (admission: St(e)).
+// The Authority column in one state (admission: St(e)).
 export const authority = (e: AclEv, F: FactsQ): boolean => authCore(e, simpleCtx(F, e.a))
 
 const sameValue = (x: unknown, y: unknown) => {
@@ -343,7 +343,7 @@ export function guards(e: AclEv, F: Facts, L: Agreed): boolean {
       return c.to !== a && F.mem.has(c.to) && !holds(c.to, c.role)
     case 'revoke':
       // Taking away a role that a live channel's overwrites restrict widens access there:
-      // owners and ManageChannels only, oneself included (§1.4, §10.21; the model has no chperm).
+      // owners and ManageChannels only, oneself included (the model has no chperm).
       // Deleting it takes it from everyone, so the same holds there.
       return holds(c.to, c.role) && mayLift(F, a, c.role)
     case 'code':
@@ -466,10 +466,10 @@ export const authorizeFull = (e: AclEv, F: FactsQ) => deviceOk(e, F) && authorit
 
 export const admissible = (e: AclEv, F: Facts, L: Agreed) => authorizeFull(e, F) && guards(e, F, L)
 
-// role_meta (added within rules version 2, §1.4 common rules) has no case in authCore, guards or
+// role_meta has no case in authCore, guards or
 // classify: it is admitted, cut and live by the generic rule, as a client that doesn't know the
 // type reads it, so every version holds the same events and agrees on their liveness. Its
-// Authority is read only inside RoleMeta(R) (§1.5): a write counts when it is well formed and its
+// Authority is read only inside RoleMeta(R): a write counts when it is well formed and its
 // author, in St(w), has Manage roles, Role(R) holds and the author outranks R.
 export const roleMetaOk = (e: AclEv, St: FactsQ) =>
   typeof e.c.role === 'string' &&
@@ -520,7 +520,7 @@ export function classify(e: AclEv, F: FactsQ): { cls: Cls; self: boolean } {
   }
 }
 
-// What a deny acts on, for protection (§3.1). `who` is the principal whose rank protects it.
+// What a deny acts on, for protection. `who` is the principal whose rank protects it.
 export function target(
   e: AclEv,
   F: FactsQ
@@ -549,7 +549,7 @@ export function protectedP(F: FactsQ, P: string, k: Rank) {
   return F.owners.has(P) || gt(rank(F, P), k)
 }
 
-// Whether a deny's target is protected at stratum kk in V_d (§3.1 step 2). A target that was not
+// Whether a deny's target is protected at stratum kk in V_d. A target that was not
 // a member in St(d) and joined concurrently is protected already at equal rank.
 export function protectedTarget(e: AclEv, St: FactsQ, V: FactsQ, kk: Rank) {
   const tg = target(e, St)
@@ -562,7 +562,7 @@ export function protectedTarget(e: AclEv, St: FactsQ, V: FactsQ, kk: Rank) {
   return false
 }
 
-// exposed(p, γ) (§3.1): p's author is not protected against cause γ at stratum kk, read in V_γ.
+// exposed(p, γ): p's author is not protected against cause γ at stratum kk, read in V_γ.
 export function exposedTo(p: AclEv, g: AclEv, gRec: Rec, V: FactsQ, kk: Rank): boolean {
   const P = p.a
   if (V.owners.has(P)) return false
@@ -643,11 +643,11 @@ const REQUIRED: Record<string, string[]> = {
   proof: ['x', 'y'],
 }
 
-// A genesis nonce: 16 random bytes, b64u (§1.2).
+// A genesis nonce: 16 random bytes, b64u.
 export const NONCE_LEN = 16
 
 // The fields an ACL type reads have their types; fields a newer version adds are kept, unread. A
-// genesis of another rules version needs only an integer `rules` (§1.2: shown read-only).
+// genesis of another rules version needs only an integer `rules` (shown read-only).
 export function aclContentOk(t: string, c: unknown): c is AclContent {
   if (!isRecord(c)) return false
   if (t === 'genesis')

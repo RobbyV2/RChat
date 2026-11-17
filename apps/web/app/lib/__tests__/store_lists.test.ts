@@ -144,7 +144,7 @@ describe('unread dots for lists that are not loaded', () => {
     expect(serverUnread(st(), 'far')).toBe(false)
   })
 
-  test('a loaded server detail still decides from its own channels', () => {
+  test('a loaded server detail decides from its own channels', () => {
     useStore.setState({
       servers: { far: serverDetail('far', { channels: [] }) },
       reads: { c40: { lastRead: 0, latest: 60, server: 'far' } },
@@ -506,7 +506,7 @@ describe('resync after the socket lagged', () => {
     expect(st().error === 'Not a member').toBe(false)
   })
 
-  test('a server that no longer exists drops without a removal notice', async () => {
+  test('a server that is gone drops without a removal notice', async () => {
     useStore.setState({
       me: me('alice', { servers: [srv('rchat'), srv('gone')] }),
       serversMore: false,

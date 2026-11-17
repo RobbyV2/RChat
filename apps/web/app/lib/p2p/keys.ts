@@ -81,7 +81,7 @@ export const verify = (pk: Uint8Array, msg: Uint8Array, sig: Uint8Array) => {
 // RFC 8032 as the instance's verify_strict checks it: canonical encodings, no small-order key or
 // R, s below the group order, and sB = R + kA without the cofactor. Only for the records the
 // instance also verifies (creation and chain records, bind2 proofs), so both give one answer; every
-// other signature verifies as 0.3.0 verifies it, so replicas of one server never disagree.
+// other signature takes the cofactored check, so replicas of one server never disagree.
 const strictOk = (sig: Uint8Array, msg: Uint8Array, pk: Uint8Array) => {
   const { Point } = ed25519
   const A = Point.fromBytes(pk, false)

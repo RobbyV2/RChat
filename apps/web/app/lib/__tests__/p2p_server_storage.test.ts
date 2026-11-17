@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { genCase } from './acl_model/gen'
+import { genCase } from './acl_model_rules2/gen'
 import { orphanDrops as referenceDrops } from '../p2p/acl/equivocation'
 import type { EvalResult } from '../p2p/acl/facts'
 import { AclReplica, totCounted } from '../p2p/acl/admit'
@@ -16,8 +16,8 @@ import { banRequest } from '../p2p/app'
 import type { ServerView } from '../p2p/server'
 import { ServerWorld, type Sent } from './p2p_server_world'
 
-// Storage rules of P2P servers as the ACL core decides them (spec 2.3 orphan rule and headers,
-// 4.1 proofs and shares, 4.2 dropped headers, 4.3 stability), on the host's evaluator with real
+// Storage rules of P2P servers as the ACL core decides them (the orphan rule and headers,
+// proofs and shares, dropped headers, stability), on the host's evaluator with real
 // signed events.
 
 // `gone`: dropped events, left out of the statuses (a cold store holds only their headers).
@@ -63,7 +63,7 @@ const stored = (
   return { acl, contents: w.contents.filter(m => !contentGone.has(m.id)) }
 }
 
-// The growth bound of spec 4.1 as revision 7 restates it (the model's O11-growth), over what
+// The growth bound (the model's O11-growth), over what
 // storage keeps of a replica after its drop list: per non-owner identity, over its events nobody
 // else acknowledged, stored whole or as headers, (a) every maximal stored one is no structural
 // candidate, at most one per device chain plus one rotation; (b) every stored one lies in the
@@ -146,7 +146,7 @@ const probeWorld = () => {
 }
 
 // `n` relays of Z's revocation record by Y's first device, all siblings at one position (one seq,
-// one aprev): void by equivocation (spec 2.3).
+// one aprev): void by equivocation.
 const voidRelays = (w: ServerWorld, n: number) => {
   const z = w.who('Z')
   const p = w.plan('Y', 'device_revoke')
@@ -159,7 +159,7 @@ const voidRelays = (w: ServerWorld, n: number) => {
   return out
 }
 
-describe('the orphan rule in storage (spec 2.3)', () => {
+describe('the orphan rule in storage', () => {
   test('the drop list storage applies equals the reference rule on equivocation-heavy universes, headers included', () => {
     let some = 0
     let bare = 0
@@ -179,7 +179,7 @@ describe('the orphan rule in storage (spec 2.3)', () => {
     expect(bare).toBeGreaterThan(10)
   }, 300_000)
 
-  test('what storage keeps after the drop list stays within the restated growth bound (O11-growth, revision 7) on the model universes', () => {
+  test('what storage keeps after the drop list stays within the restated growth bound (O11-growth) on the model universes', () => {
     let headers = 0
     let below = 0
     const gens = [
@@ -226,7 +226,7 @@ describe('the orphan rule in storage (spec 2.3)', () => {
   }, 300_000)
 })
 
-describe('the reviewer’s probe: void relays cited by a removed member’s hidden content', () => {
+describe('void relays cited by a removed member’s hidden content', () => {
   test('a kicked member’s second device posts content at an old position, each citing 10 void relays: all of it goes, and stored void events stay within the pool bound', () => {
     const { w, ch } = probeWorld()
     const y = w.who('Y')
@@ -254,7 +254,7 @@ describe('the reviewer’s probe: void relays cited by a removed member’s hidd
     )
     const d = w.room.drops()
     expect(d.acl.map(x => x.id).sort()).toEqual(relays.map(r => r.id).sort())
-    // Revision 7: siblings past the fork point go without their headers, but the two that keep
+    // Siblings past the fork point go without their headers, but the two that keep
     // the device's fork point where it is (one seq and one aprev for all of them).
     const hdrs = d.acl.filter(x => x.header).map(x => x.id)
     expect(hdrs).toEqual(
@@ -267,7 +267,7 @@ describe('the reviewer’s probe: void relays cited by a removed member’s hidd
     expect(d.content.sort()).toEqual(msgs.map(m => m.id).sort())
     // Nothing more the next time.
     expect(w.room.drops()).toEqual({ acl: [], content: [] })
-    // Stored void events (whole): none of the relays, within §4.1's bound; 2 headers.
+    // Stored void events (whole): none of the relays, within the growth bound; 2 headers.
     const gone = new Map(d.acl.map(x => [x.id, x.header]))
     expect(growthBound(w.room.r, gone).fails).toEqual([])
     const kept = w.acl.filter(it => !gone.has(it.id) && S0.X.has(it.id))
@@ -351,7 +351,7 @@ const siblingDevices = (note?: string) => {
   return { w, ch, mark, msg, add7, gone, contentGone: new Set(d.content) }
 }
 
-describe('headers outside the index (port fix round 1)', () => {
+describe('headers outside the index', () => {
   test('a cold replica serves ACL state to a peer whose heads or wants name an event it holds only as a header, and decides an import citing one', () => {
     const { w, mark, msg, gone, contentGone } = siblingDevices()
     const st = stored(w, gone, contentGone)
@@ -377,7 +377,7 @@ describe('headers outside the index (port fix round 1)', () => {
     expect(r2.r.acl.isHeader(mark.id)).toBe(false)
   })
 
-  test('a header fetched again while its parent is still a header waits for that parent; both come back whole and survive the next cold start', () => {
+  test('a header fetched again while its parent is a header waits for that parent; both come back whole and survive the next cold start', () => {
     const { w, mark, add7, gone, contentGone } = siblingDevices()
     const st = stored(w, gone, contentGone)
     const r = new AclRoom(w.srv)
@@ -422,7 +422,7 @@ describe('headers outside the index (port fix round 1)', () => {
   })
 })
 
-describe('stored records and headers (spec 2.4)', () => {
+describe('stored records and headers', () => {
   test('a record naming a base that isn’t there, or a cycle of bases, is refused and admitted again: no throw, no loop', () => {
     const { w } = probeWorld()
     w.ok('Z', 'mark')
@@ -479,7 +479,7 @@ describe('stored records and headers (spec 2.4)', () => {
   })
 })
 
-describe('content dropped with its header (spec 4.2)', () => {
+describe('content dropped with its header', () => {
   test('past its device’s fork point it goes, but the pair that defines the fork point', () => {
     const { w, ch } = probeWorld()
     const p = w.plan('Y2', 'msg')
@@ -517,7 +517,7 @@ describe('content dropped with its header (spec 4.2)', () => {
   })
 })
 
-describe('proofs (spec 2.3, 4.1)', () => {
+describe('proofs', () => {
   test('content evidence that lowers a device’s fork point below an ACL event of it is offered once; posted, it lowers F', () => {
     const { w, ch } = probeWorld()
     const y2 = w.who('Y2')
@@ -575,7 +575,7 @@ const modWorld = () => {
   return { w, ch, sr, mr }
 }
 
-describe('stability (spec 4.3 S1 to S3)', () => {
+describe('stability (S1 to S3)', () => {
   test('a ban that hides everything is stable once 3 ACL events of 2 others acknowledge it, unless a more senior deny concurrent with it would take its authority', () => {
     for (const contested of [false, true]) {
       const { w, ch, sr, mr } = modWorld()
@@ -615,8 +615,8 @@ describe('stability (spec 4.3 S1 to S3)', () => {
     // Who may acknowledge it: not its authors.
     expect(w.room.acks(w.who('Y').a)).toEqual([r.id])
     expect([w.room.acks(w.who('M').a), w.room.acks(w.who('Z').a)]).toEqual([[], []])
-    // ACL traffic at or after its position that doesn't hold it counts nothing (controller
-    // ruling); neither do its authors' marks.
+    // ACL traffic at or after its position that doesn't hold it counts nothing;
+    // neither do its authors' marks.
     for (const n of ['Y', 'W', 'Y']) w.ok(n, 'mark')
     w.ok('M', 'mark', { ack: [r.id] })
     w.ok('Z', 'mark', { ack: [r.id] })
@@ -656,7 +656,7 @@ describe('stability (spec 4.3 S1 to S3)', () => {
   })
 })
 
-describe('serving (spec 3.7)', () => {
+describe('serving', () => {
   test('content of a channel goes only to who may view it; a copy without its body to who may view every channel', () => {
     const { w, ch } = modWorld()
     const priv = 'BBBBBBBBBBB'
@@ -677,7 +677,7 @@ describe('serving (spec 3.7)', () => {
   })
 })
 
-describe('per-sender shares (spec 4.2)', () => {
+describe('per-sender shares', () => {
   test('a sender’s share counts a rolling day of receipts, in hours', () => {
     const H = SHARE.hourMs
     let s = shareLive(undefined, 0)
@@ -695,7 +695,7 @@ describe('per-sender shares (spec 4.2)', () => {
   })
 })
 
-describe('headers and the page (spec 2.3, 4.3)', () => {
+describe('headers and the page', () => {
   test('a header checks out only with its own id, its server and its device’s signature over its core', () => {
     const { w } = probeWorld()
     const [r] = voidRelays(w, 1)
@@ -740,7 +740,7 @@ describe('headers and the page (spec 2.3, 4.3)', () => {
   })
 })
 
-describe('evicted edits (spec 4.2)', () => {
+describe('evicted edits', () => {
   test('a body that comes back takes along the edits that waited on it, looking only at those', () => {
     const { w, ch } = probeWorld()
     const msgs: Sent[] = []

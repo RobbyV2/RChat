@@ -139,7 +139,7 @@ describe('long press gesture', () => {
     expect(press.phase).toBe('idle')
   })
 
-  test('clicks are swallowed while the finger is still down on an opened menu', () => {
+  test('clicks are swallowed while the finger is down on an opened menu', () => {
     const { press } = run([start(), { kind: 'timer' }])
     expect(swallowsClick(press, 0)).toBe(true)
   })
@@ -223,7 +223,7 @@ describe('drag gesture on touch', () => {
     expect(press.phase).toBe('idle')
   })
 
-  test('a quick tap on a draggable item is still a click', () => {
+  test('a quick tap on a draggable item is a click', () => {
     const { press, outs } = run([grab(), { kind: 'end', now: 1000 }])
     expect(outs[1].swallow).toBe(false)
     expect(swallowsClick(press, 1001)).toBe(false)
@@ -337,7 +337,7 @@ describe('drag gesture with a mouse', () => {
     expect(swallowsClick(dropped.press, 1001)).toBe(false)
   })
 
-  test('a key press leaves a press that is still down alone', () => {
+  test('a key press leaves a press that is down alone', () => {
     const pending = run([start(), { kind: 'key' }])
     expect(pending.press.phase).toBe('pending')
     const dragging = run([mouse(), move(100, 260), { kind: 'key' }])
@@ -345,7 +345,7 @@ describe('drag gesture with a mouse', () => {
     expect(drags(dragging.outs)).toEqual(['start'])
   })
 
-  test('a right click still opens the menu at the cursor', () => {
+  test('a right click opens the menu at the cursor', () => {
     const { opens } = run([{ kind: 'native', x: 7, y: 9, now: 5000 }])
     expect(opens).toEqual([{ x: 7, y: 9 }])
   })

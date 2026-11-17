@@ -1,23 +1,23 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { Rng } from './acl_model_r8f/gen'
-import { crDigest, KICK, recDigest, type Ev } from './acl_model_r8f/model'
-import { World } from './acl_model_r8f/world'
+import { Rng } from './acl_model_rules3/gen'
+import { crDigest, KICK, recDigest, type Ev } from './acl_model_rules3/model'
+import { World } from './acl_model_rules3/world'
 import { protection } from '../p2p/acl/keys'
-import { wireOf, worldDiff } from './p2p_acl_r3'
+import { wireOf, worldDiff } from './p2p_acl_rules3'
 
 // Run by p2p_acl_keys.test.ts in a process of its own (`bun test ./p2p_acl_keys_attacks.ts`):
 // test files share their modules, and the model's vector files check every world built in their
-// process. Here: the saved seed of the r8e C2 verifier, and the r8e attack review's C1 (a stolen
-// device of a later epoch undoes an earlier transfer) with its verifier's scripts, on the model's
+// process. Here: a saved universe, and a stolen device of a later epoch that tries to undo an
+// earlier transfer, on the model's
 // worlds, against production's `acl/keys.ts`.
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 
-test('fixture r8e-o15oracle-seed93100183: production equals the model and the oracle', () => {
+test('fixture o15oracle-seed93100183: production equals the model and the oracle', () => {
   const fx = JSON.parse(
-    readFileSync(`${HERE}acl_model_r8f/fixtures/r8e-o15oracle-seed93100183.json`, 'utf8')
+    readFileSync(`${HERE}acl_model_rules3/fixtures/o15oracle-seed93100183.json`, 'utf8')
   ) as { format: number; events: Ev[] }
   expect(fx.format).toBe(3)
   const w = new World()
@@ -31,7 +31,7 @@ test('fixture r8e-o15oracle-seed93100183: production equals the model and the or
   expect([...P.ids.values()].map(k => k.st)).toContain('frozen')
 })
 
-// ----- r8e attack C1: a stolen device of a later epoch undoes an earlier transfer -----
+// ----- A stolen device of a later epoch undoes no earlier transfer -----
 
 let T = 0
 const t = () => (T += 4)
@@ -61,10 +61,10 @@ const stands = (w: World, u: string) => {
 const honestHeads = (w: World, thief: string[]) =>
   w.heads(w.ref.order.filter(id => !thief.some(x => x === id || w.ref.anc(id).has(x))))
 
-describe('r8e attack C1: a stolen later-epoch device undoes no transfer', () => {
+describe('a stolen later-epoch device undoes no transfer', () => {
   for (const posting of [true, false])
     for (const resp of ['none', 'atu', 'heads'])
-      test(`r8e attack C1: an extension before the transfer (c1-epoch-ext-undo), the user's posting ${posting ? 'there' : 'missing'}, its next recovery ${resp}`, () => {
+      test(`an extension before the transfer, the user's posting ${posting ? 'there' : 'missing'}, its next recovery ${resp}`, () => {
         T = 0
         const w = new World()
         w.genesis('O1', ['O'], 0, 0, {
@@ -122,7 +122,7 @@ describe('r8e attack C1: a stolen later-epoch device undoes no transfer', () => 
       })
 
   for (const v of ['min', 'dadd', 'dadd-keep', 'conflict'])
-    test(`r8e attack C1 (verifier v1, ${v}): the device_add path of the transfer's author device`, () => {
+    test(`the device_add path of the transfer's author device (${v})`, () => {
       T = 0
       const w = new World()
       w.genesis('O1', ['O'], 0, 0, {
@@ -175,7 +175,7 @@ describe('r8e attack C1: a stolen later-epoch device undoes no transfer', () => 
     })
 
   for (const v of ['heads', 'before-u2', 'atu'])
-    test(`r8e attack C1 (verifier v2, ${v}): the user's next recovery after the thief's own transfer`, () => {
+    test(`the user's next recovery after the thief's own transfer (${v})`, () => {
       T = 0
       const w = new World()
       w.genesis('O1', ['O'], 0, 0, {
@@ -231,7 +231,7 @@ describe('r8e attack C1: a stolen later-epoch device undoes no transfer', () => 
       stands(w, u.id)
     })
 
-  // The reviewer's shape fuzz (c1-fuzz) and the verifier's widening of it (vfuzz).
+  // A fuzz over the shapes, narrow and wide.
   const shape = (s: number, wide: boolean): { w: World; u: string } | undefined => {
     const rng = new Rng(Math.imul(s, 2654435761) >>> 0 || 1)
     for (let i = 0; i < 4; i++) rng.next()
@@ -330,7 +330,7 @@ describe('r8e attack C1: a stolen later-epoch device undoes no transfer', () => 
   }
 
   for (const wide of [false, true])
-    test(`r8e attack C1: 0 transfers undone in 500 shapes (${wide ? "the verifier's vfuzz" : "the reviewer's c1-fuzz"})`, () => {
+    test(`0 transfers undone in 500 shapes (${wide ? 'the wide fuzz' : 'the narrow fuzz'})`, () => {
       let shapes = 0
       const undone: number[] = []
       const differ: string[] = []

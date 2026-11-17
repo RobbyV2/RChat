@@ -12,7 +12,7 @@ import {
 import { isEventId, type EditContent, type MsgContent } from './content'
 import { LOCAL } from './limits'
 
-// Local search over P2P server messages (note section 7, store `search`): one row per word and
+// Local search over P2P server messages (store `search`): one row per word and
 // message, written with the message in the transaction that stores, purges or drops it, and
 // counted in the room's and every server's storage. Words are lowercase NFKD without marks; a
 // query word of three characters or more matches any word it starts, a shorter one only itself.

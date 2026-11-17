@@ -33,7 +33,7 @@ const pw = (over: Partial<ServerPassword> = {}): ServerPassword => ({
 })
 
 describe('presets', () => {
-  test('match the brief', () => {
+  test('run from 30 minutes to 30 days', () => {
     expect(EXPIRY_PRESETS.map(p => p.label)).toEqual([
       '30 minutes',
       '1 hour',

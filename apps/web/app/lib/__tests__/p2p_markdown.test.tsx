@@ -79,7 +79,7 @@ describe('P2P messages fetch nothing', () => {
 
   const text = `![pixel](${ORIGIN}/api/media/7) and ![rel](/api/media/8) https://example.com/a`
 
-  test('instance messages still show same-origin images', () => {
+  test('instance messages show same-origin images', () => {
     const html = render(text, false)
     expect(html).toContain(`<img src="${ORIGIN}/api/media/7"`)
     expect(html).toContain('/messages/1/embeds/0/image?v=0123456789abcdef')

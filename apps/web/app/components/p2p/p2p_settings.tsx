@@ -57,7 +57,7 @@ export const badgeOffBody = (until: number | null) =>
     until ? `, on ${badgeDate(until)}` : ''
   }, at most 7 days from now. They may then show it as expired for up to 30 days. P2P servers you joined keep the old confirmation in their history.`
 
-// Settings > Peer-to-peer > Account badge (opt-in, note section 2).
+// Settings > Peer-to-peer > Account badge (opt-in).
 function BadgeSetting() {
   const badge = useP2p(s => s.badge)
   const busy = useP2p(s => s.badgeBusy)

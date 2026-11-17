@@ -33,7 +33,7 @@ export const HelloRequestSchema: GenMessage<HelloRequest> = /*@__PURE__*/
 
 /**
  * The Hello answer. `answer` holds HelloAnswer bytes; the proof signs them, so everything in them
- * is the key's own word (spec 4.3.5). Later calls within the hour rest on TLS to the host.
+ * is the key's own word. Later calls within the hour rest on TLS to the host.
  *
  * @generated from message rchat.fed.v1.HelloResponse
  */
@@ -162,21 +162,21 @@ export type Hello = Message<"rchat.fed.v1.Hello"> & {
   /**
    * Thumbprints of the keys that may sign calls, proofs and endorsements (a subset of the JWKS).
    * Other published keys only check old seals. A key a proven Hello leaves out for an hour is
-   * retired for good at the receiver (spec 4.3.5).
+   * retired for good at the receiver.
    *
    * @generated from field: repeated string call_kids = 10;
    */
   callKids: string[];
 
   /**
-   * Statements by older keys that vouch for newer ones (key rotation, spec 4.3.5).
+   * Statements by older keys that vouch for newer ones (key rotation).
    *
    * @generated from field: repeated rchat.fed.v1.KeyEndorsement endorsements = 11;
    */
   endorsements: KeyEndorsement[];
 
   /**
-   * What this instance budgets per calling host, per service; callers pace to it (spec 4.5.1).
+   * What this instance budgets per calling host, per service; callers pace to it.
    *
    * @generated from field: repeated rchat.fed.v1.ServiceBudget budgets = 12;
    */
@@ -232,7 +232,7 @@ export const KeyEndorsementSchema: GenMessage<KeyEndorsement> = /*@__PURE__*/
  */
 export type ServiceBudget = Message<"rchat.fed.v1.ServiceBudget"> & {
   /**
-   * A service name of spec 4.1.1 (`letters`, `invites`, ...).
+   * A service name (`letters`, `invites`, ...).
    *
    * @generated from field: string service = 1;
    */

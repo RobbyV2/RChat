@@ -192,7 +192,7 @@ describe('p2p screen share', () => {
     expect(sending().screenAudio).toBe(x.silence)
   })
 
-  test('a peer whose cam message has no screen is 0.2.0 and gets the screen on the camera slot', async () => {
+  test('a peer whose cam message has no screen is legacy and gets the screen on the camera slot', async () => {
     const { m, x, conn, sending } = call()
     await m.toggleShare()
     await settle()
@@ -214,7 +214,7 @@ describe('p2p screen share', () => {
     expect([conn.sent.at(-1)?.on, conn.sent.at(-1)?.share]).toEqual([false, false])
   })
 
-  test('a share started once the peer is known to be 0.2.0 goes on the camera slot', async () => {
+  test('a share started once the peer is known to be legacy goes on the camera slot', async () => {
     const { m, x, conn, sending } = call()
     conn.emit('data', { type: 'cam', on: false, share: false })
     await m.toggleShare()
@@ -301,7 +301,7 @@ describe('p2p screen share', () => {
 })
 
 describe('p2p call setup', () => {
-  test('without an AudioContext the screen audio slot still gets a silent track', async () => {
+  test('without an AudioContext the screen audio slot gets a silent track', async () => {
     g.AudioContext = class {
       constructor() {
         throw new Error('no audio')

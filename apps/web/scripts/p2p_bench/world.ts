@@ -1,4 +1,4 @@
-// The P2P bench world (recon-p2p-scale §2.1): the scenario builder over the production admission
+// The P2P bench world: the scenario builder over the production admission
 // that acl_bench.ts and the P2P bench scripts share, a fake v2 wire for AclRoom.receiveAcl, and
 // what every P2P bench script shares: its command line (`--out <dir>`, `--events`, `--members`,
 // `--seed`, `--chan`, script options) and its output, one JSON line per measurement with the
@@ -155,7 +155,7 @@ export class BenchWorld {
     }
     return e
   }
-  // At most LIM.ap parents (§1.2): the most recently admitted, with the device's own latest event
+  // At most LIM.ap parents: the most recently admitted, with the device's own latest event
   // in their closure.
   private capped(dev: string, hs: string[]): string[] {
     const ix = this.ref.acl.ix
@@ -169,7 +169,7 @@ export class BenchWorld {
     }
     return ap
   }
-  // The client rule (§1.2), for the measured honest events: the maximal events that are no
+  // The client rule, for the measured honest events: the maximal events that are no
   // candidate, X or Tail event (upgrades excepted), walking down from excluded heads.
   clientRule = false
   defaultParents(dev: string): string[] {

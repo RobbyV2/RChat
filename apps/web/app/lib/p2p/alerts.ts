@@ -39,7 +39,7 @@ export const p2pOverride = (
   return { scope: { kind: 'p2p', room }, name: dmName(room) ?? 'P2P conversation' }
 }
 
-// How a new event in a P2P conversation notifies, by the conversation's Task 9 rule: pings
+// How a new event in a P2P conversation notifies, by the conversation's notification level: pings
 // (mentions, replies to you, reactions to your messages) toast unless muted or "Nothing"; other
 // messages only under "All messages" and unmuted.
 
