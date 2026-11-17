@@ -102,8 +102,9 @@ pub struct WordsResp {
 /// A new account. Give exactly one of `password` or `words`.
 #[derive(Deserialize, ToSchema)]
 pub struct RegisterReq {
-    /// 1 to 100 characters, not blank, without `@`. Unique case-insensitively; the given case
-    /// becomes the display name. Checked by the profanity filter (`usernames` target).
+    /// 1 to 100 characters, not blank, without `@` and without control, format or invisible
+    /// characters. Unique case-insensitively; the given case becomes the display name. Checked
+    /// by the profanity filter (`usernames` target).
     #[schema(example = "Alice")]
     username: String,
     /// A non-empty text password. Omit when using `words`.
@@ -467,7 +468,7 @@ fn lock_order(defaults: &[String]) -> Vec<&str> {
 /// Sign-ups are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
 /// `RARE_REQUESTS_PER_DAY` (100) a day per client address (an IPv6 /64 counts as one) by default,
 /// whatever the username.
-#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), NUL-containing, `@`-containing, banned, taken or profanity-filtered username; empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; a missing or invalid avatar color for `color` avatars; or an invalid background color for `identicon` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
+#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank, too long (over 100 characters), NUL-containing, `@`-containing, banned, taken or profanity-filtered username; a username that holds control, format or invisible characters (`Username has invalid characters`); empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; a missing or invalid avatar color for `color` avatars; or an invalid background color for `identicon` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub(crate) async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
@@ -489,6 +490,9 @@ pub(crate) async fn register(
     check_len(&username, NAME_MAX, "Username")?;
     if username.contains('@') {
         return Err(bad("Usernames can't contain @"));
+    }
+    if username.chars().any(names::hidden_char) {
+        return Err(bad("Username has invalid characters"));
     }
     if password.as_deref() == Some("") {
         return Err(bad("Password required"));
@@ -1400,6 +1404,199 @@ mod tests {
                 .is_some()
         );
         let _ = register_text(&state, "plain").await.expect("plain ok");
+        done(state, path).await;
+    }
+
+    /// One character of each kind a new name may not hold: the format characters (zero width,
+    /// joiners, the byte order mark, the soft hyphen, the bidi controls), then control
+    /// characters, the separators, a private-use and an unassigned code point, and a filler
+    /// that renders as nothing.
+    const HIDDEN: [(&str, char); 25] = [
+        ("word joiner", '\u{2060}'),
+        ("zero width space", '\u{200b}'),
+        ("zero width non-joiner", '\u{200c}'),
+        ("zero width joiner", '\u{200d}'),
+        ("byte order mark", '\u{feff}'),
+        ("soft hyphen", '\u{ad}'),
+        ("left-to-right mark", '\u{200e}'),
+        ("right-to-left mark", '\u{200f}'),
+        ("Arabic letter mark", '\u{61c}'),
+        ("left-to-right embedding", '\u{202a}'),
+        ("right-to-left embedding", '\u{202b}'),
+        ("pop directional formatting", '\u{202c}'),
+        ("left-to-right override", '\u{202d}'),
+        ("right-to-left override", '\u{202e}'),
+        ("left-to-right isolate", '\u{2066}'),
+        ("right-to-left isolate", '\u{2067}'),
+        ("first strong isolate", '\u{2068}'),
+        ("pop directional isolate", '\u{2069}'),
+        ("tab", '\t'),
+        ("line feed", '\n'),
+        ("line separator", '\u{2028}'),
+        ("paragraph separator", '\u{2029}'),
+        ("private use", '\u{e000}'),
+        ("unassigned", '\u{378}'),
+        ("Hangul filler", '\u{3164}'),
+    ];
+
+    const HIDDEN_REFUSED: &str = "Username has invalid characters";
+
+    /// What a sign-up was refused with: the status, the text and whether it has no reason.
+    fn sign_up_refusal(
+        res: Result<Json<AuthResp>, ApiError>,
+    ) -> Option<(StatusCode, String, bool)> {
+        match res {
+            Ok(_) => None,
+            Err(ApiError(code, text, reason)) => Some((code, text, reason.is_none())),
+        }
+    }
+
+    #[tokio::test]
+    async fn sign_up_refuses_usernames_with_format_or_other_hidden_characters() {
+        let (state, path) = temp_state("username_hidden").await;
+        let state = crate::api::rare::tests::unlimited(state);
+        let refused = |text: &str| Some((StatusCode::BAD_REQUEST, text.to_string(), true));
+        for (what, c) in HIDDEN {
+            for name in [format!("{c}bob"), format!("bo{c}b"), format!("bob{c}")] {
+                assert_eq!(
+                    sign_up_refusal(register_text(&state, &name).await),
+                    refused(HIDDEN_REFUSED),
+                    "{what}: {name:?}"
+                );
+            }
+            let alone = match c.is_whitespace() {
+                true => "Username required",
+                false => HIDDEN_REFUSED,
+            };
+            assert_eq!(
+                sign_up_refusal(register_text(&state, &c.to_string()).await),
+                refused(alone),
+                "{what} alone"
+            );
+        }
+        assert_eq!(
+            count(&state, "SELECT COUNT(*) FROM users").await,
+            0,
+            "a refused name makes no account"
+        );
+        for name in [
+            "Zo\u{eb}",
+            "\u{540d}\u{524d}",
+            "o\u{301}k",
+            "a b",
+            "\u{1f642}",
+            "\u{2615}\u{fe0f}",
+        ] {
+            let made = register_text(&state, name)
+                .await
+                .unwrap_or_else(|e| panic!("{name:?} signs up: {e:?}"));
+            assert_eq!(made.0.user.username, name.to_lowercase());
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn stored_usernames_with_format_characters_sign_in() {
+        let (state, path) = temp_state("username_hidden_stored").await;
+        let state = crate::api::rare::tests::unlimited(state);
+        let hash = hash_password("pw").await.expect("hash");
+        let t = now();
+        let stored = [
+            ("word joiner", '\u{2060}'),
+            ("zero width space", '\u{200b}'),
+            ("zero width joiner", '\u{200d}'),
+            ("byte order mark", '\u{feff}'),
+            ("right-to-left override", '\u{202e}'),
+        ];
+        for (what, c) in stored {
+            let name = format!("bo{c}b");
+            crate::db::NewUser::plain(&name)
+                .hash(&hash)
+                .at(1)
+                .add(&state.db)
+                .await;
+            let Json(AuthResp { token, user }) = login_at(
+                &state,
+                LoginReq {
+                    username: name.clone(),
+                    password: Some("pw".to_string()),
+                    words: None,
+                },
+                t,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{what}: {name:?} signs in: {e:?}"));
+            assert_eq!(user.username, name, "{what}");
+            let session = crate::api::user_for_token(&state, &token)
+                .await
+                .expect("lookup")
+                .expect("session");
+            assert_eq!(session.username, name, "{what}");
+            assert_eq!(
+                sign_up_refusal(register_text(&state, &name).await),
+                Some((StatusCode::BAD_REQUEST, HIDDEN_REFUSED.to_string(), true)),
+                "{what}: nobody signs up under the stored name"
+            );
+        }
+        assert_eq!(
+            count(&state, "SELECT COUNT(*) FROM users").await,
+            stored.len() as i64,
+            "the stored accounts are kept"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_name_change_refuses_format_and_other_hidden_characters() {
+        let (state, path) = temp_state("display_name_hidden").await;
+        let state = crate::api::rare::tests::unlimited(state);
+        let _ = register_text(&state, "Alice").await.expect("alice");
+        let old = "bo\u{2060}b";
+        crate::db::NewUser::plain(old).at(1).add(&state.db).await;
+        let rename = |who: &'static str, name: String| {
+            let state = state.clone();
+            async move {
+                let user = get_user(&state.db, who).await.expect("load").expect("user");
+                let req: MePatch =
+                    serde_json::from_value(serde_json::json!({ "display_name": name }))
+                        .expect("patch body");
+                patch_me(State(state), Authed(user), Json(req))
+                    .await
+                    .map(|r| r.0.user.display_name)
+                    .map_err(|ApiError(code, text, reason)| (code, text, reason.is_none()))
+            }
+        };
+        let refused = Err((
+            StatusCode::BAD_REQUEST,
+            "Display name has invalid characters".to_string(),
+            true,
+        ));
+        for (what, c) in HIDDEN {
+            let name = format!("Al{c}ice");
+            assert_eq!(
+                rename("alice", name.clone()).await,
+                refused,
+                "{what}: {name:?}"
+            );
+        }
+        assert_eq!(
+            rename(old, old.to_string()).await,
+            refused,
+            "an account's own stored username with one is no new name either"
+        );
+        assert_eq!(rename(old, "Bob".to_string()).await, Ok("Bob".to_string()));
+        let shown = |who: &'static str| {
+            let state = state.clone();
+            async move {
+                get_user(&state.db, who)
+                    .await
+                    .expect("load")
+                    .expect("user")
+                    .display_name
+            }
+        };
+        assert_eq!(shown("alice").await, "Alice");
+        assert_eq!(shown(old).await, "Bob");
         done(state, path).await;
     }
 

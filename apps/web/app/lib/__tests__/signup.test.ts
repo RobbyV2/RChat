@@ -30,6 +30,7 @@ test('a refused username is shown under the username field', () => {
     'Username required',
     'Username must be at most 100 characters',
     "Usernames can't contain @",
+    'Username has invalid characters',
     'That name is reserved',
     'Something the server says tomorrow',
   ])
