@@ -1377,6 +1377,74 @@ async fn answers_follow_the_form() {
 }
 
 #[tokio::test]
+async fn stored_forms_without_the_reason_other_take_reports_but_cant_be_saved() {
+    let (w, path) = world("reports_reason_other").await;
+    let db = w.db();
+    let mut doc = serde_json::to_value(forms::ReportForms::defaults()).expect("json");
+    doc["forms"][3]["fields"][0]["options"]
+        .as_array_mut()
+        .expect("options")
+        .pop();
+    assert_eq!(
+        forms::ReportForms::parse(&doc.to_string()),
+        Err("general.topic: the reason other must stay".to_string())
+    );
+    exec(db, "DELETE FROM settings WHERE key = 'report_forms'").await;
+    sqlx::query("INSERT INTO settings(key, value) VALUES('report_forms', $1)")
+        .bind(doc.to_string())
+        .execute(db)
+        .await
+        .expect("forms");
+    Policy::load(db).await;
+    let general = |topic: &str| json!({"to": "instance", "target": {"kind": "none"}, "form": "general", "answers": [{"id": "topic", "value": topic}, {"id": "details", "value": "hello"}]});
+    let reason = |id: i64| async move {
+        text(
+            db,
+            &format!("SELECT reason || '|' || reason_label FROM reports WHERE id = {id}"),
+        )
+        .await
+    };
+    let id = w
+        .send("alice", general("question"), T0)
+        .await
+        .expect("a stored form without the option takes reports")
+        .id;
+    assert_eq!(reason(id).await, "question|Question");
+    assert_eq!(
+        refusal(w.send("alice", general("praise"), T0 + 1).await),
+        (400, "Unknown option".to_string()),
+        "without the option other, an option the form doesn't offer is refused"
+    );
+    let root = who(db, "root").await;
+    let save = |doc: &Value| {
+        let (state, root) = (w.state.clone(), root.clone());
+        let req = serde_json::from_value(json!({"forms": doc["forms"]})).expect("body");
+        async move {
+            admin::put_report_forms(State(state), Authed(root), Json(req))
+                .await
+                .map(|Json(saved)| saved.rev)
+        }
+    };
+    assert_eq!(
+        refusal(save(&doc).await),
+        (400, "general.topic: the reason other must stay".to_string()),
+        "the forms can't be saved without the option"
+    );
+    doc["forms"][3]["fields"][0]["options"]
+        .as_array_mut()
+        .expect("options")
+        .push(json!({"id": "other", "label": "Other"}));
+    save(&doc).await.expect("with the option");
+    let id = w
+        .send("alice", general("praise"), T0 + 2)
+        .await
+        .expect("an option the form doesn't offer counts as other")
+        .id;
+    assert_eq!(reason(id).await, "other|Other");
+    done(w.state, path).await;
+}
+
+#[tokio::test]
 async fn feedback_does_not_use_abuse_caps() {
     let (w, path) = world("reports_feedback").await;
     let db = w.db();

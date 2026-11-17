@@ -191,7 +191,8 @@ pub struct Field {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<Choice>,
     /// `single_choice` in a form of base `none`: its answer is the report's reason. At most one
-    /// field per form.
+    /// field per form, and it offers the option `other`: an answer it doesn't offer counts as
+    /// `other`.
     #[serde(default, skip_serializing_if = "is_false")]
     pub reason: bool,
 }
@@ -436,6 +437,9 @@ fn check_field(form: &Form, n: usize, field: &Field) -> Result<(), String> {
                 return Err(format!(
                     "{at}: only a single_choice of a form of base none marks a reason"
                 ));
+            }
+            if *reason && !options.iter().any(|o| o.id == OTHER) {
+                return Err(format!("{at}: the reason {OTHER} must stay"));
             }
         }
     }
@@ -1318,6 +1322,16 @@ mod tests {
                 "user.reason: the reason other must stay",
             ),
             (
+                "the reason other of a marked field removed",
+                Box::new(|d| {
+                    d["forms"][1]["fields"][0]["options"]
+                        .as_array_mut()
+                        .expect("options")
+                        .pop();
+                }),
+                "bug.kind: the reason other must stay",
+            ),
+            (
                 "two reason fields",
                 Box::new(|d| {
                     let mut second = d["forms"][1]["fields"][0].clone();
@@ -1480,6 +1494,7 @@ mod tests {
         (0..7).for_each(|i| push(&mut full, "/forms/1/fields", text(&format!("more{i}"))));
         full["forms"][1]["fields"][0]["options"] = json!(many(20));
         full["forms"][1]["fields"][0]["options"][0]["id"] = json!("a".repeat(32));
+        full["forms"][1]["fields"][0]["options"][19]["id"] = json!("other");
         assert!(
             ReportForms::parse(&full.to_string()).is_ok(),
             "exactly at the limits"
