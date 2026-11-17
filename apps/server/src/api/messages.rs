@@ -2215,6 +2215,12 @@ enum Bind {
     I(i64),
 }
 
+enum Scan {
+    All,
+    Window(i64, i64),
+    Rows(Vec<i64>),
+}
+
 const SEARCH_PAGE: i64 = 25;
 const FTS_MIN_CHARS: usize = 3;
 
@@ -2277,13 +2283,17 @@ async fn search_paged(
         sq.offset = None;
     }
     sq.offset = sq.offset.map(|n| n.min(SEARCH_OFFSET_MAX));
+    let Some(scope) = search_scope(db, user, proof, sq.servers.take()).await? else {
+        return Ok((Vec::new(), None));
+    };
+    let scope = &scope;
     let text = sq.q.as_deref().map(str::trim).unwrap_or("");
     let short = text.chars().count() < FTS_MIN_CHARS || !has_fts(db);
     let unscoped = sq.server.is_none() && sq.channel_id.is_none();
     let first_page = sq.offset.is_none_or(|n| n <= 0);
     if !text.is_empty() && !short && is_sqlite(db) && first_page {
         let phrase = fts_phrase(text);
-        return fts_paged(db, user, proof, sq, &phrase).await;
+        return fts_paged(db, scope, sq, &phrase).await;
     }
     let windowed = !text.is_empty() && (short || unscoped) && is_sqlite(db) && first_page;
     let budget = match short {
@@ -2291,7 +2301,7 @@ async fn search_paged(
         false => i64::MAX,
     };
     if !windowed {
-        let results = search_once(db, user, proof, sq, None, SEARCH_PAGE).await?;
+        let results = search_once(db, scope, sq, Scan::All, SEARCH_PAGE).await?;
         let next = match results.len() as i64 == SEARCH_PAGE {
             true => results.last().map(|r| r.message.id),
             false => None,
@@ -2301,14 +2311,7 @@ async fn search_paged(
     let floor = sq.after.unwrap_or(0).max(0);
     let mut hi = match sq.before {
         Some(b) => b,
-        None => {
-            sqlx::query("SELECT MAX(id) FROM messages")
-                .fetch_one(db)
-                .await?
-                .try_get::<Option<i64>, _>(0)?
-                .unwrap_or(0)
-                + 1
-        }
+        None => search_top(db, scope).await? + 1,
     };
     let mut size = SEARCH_WINDOW;
     let mut scanned = 0i64;
@@ -2316,7 +2319,7 @@ async fn search_paged(
     while (results.len() as i64) < SEARCH_PAGE && hi > floor + 1 && scanned < budget {
         let lo = hi.saturating_sub(size).max(floor + 1);
         let want = SEARCH_PAGE - results.len() as i64;
-        let page = search_once(db, user, proof, sq.clone(), Some((lo, hi)), want).await?;
+        let page = search_once(db, scope, sq.clone(), Scan::Window(lo, hi), want).await?;
         results.extend(page);
         scanned = scanned.saturating_add(hi - lo);
         hi = lo;
@@ -2330,13 +2333,51 @@ async fn search_paged(
     Ok((results, next))
 }
 
+/// An id at or above every message the caller may find, 0 when none of their channels has a
+/// message they may read: the newest row of each channel they may view, counted unless it was
+/// sent before a join that gives them no read history.
+async fn search_top(db: &Db, scope: &Scope) -> Result<i64, ApiError> {
+    Ok(bind_all(
+        sqlx::query(sqlx::AssertSqlSafe(top_sql(scope))),
+        &scope.binds,
+    )
+    .fetch_one(db)
+    .await?
+    .try_get::<Option<i64>, _>(0)?
+    .unwrap_or(0))
+}
+
+fn top_sql(scope: &Scope) -> String {
+    format!(
+        "SELECT MAX(m.id) FROM channels c CROSS JOIN messages m WHERE {} AND m.id = (SELECT n.id FROM messages n WHERE n.channel_id = c.id ORDER BY n.id DESC LIMIT 1){}",
+        scope.place(),
+        scope.floor()
+    )
+}
+
+/// One round of `fts_paged`. The three binds after the scope's are the phrase and the ids to
+/// stay under and over.
+fn batch_sql(scope: &Scope) -> String {
+    let n = scope.binds.len();
+    format!(
+        "SELECT messages_fts.rowid FROM messages_fts CROSS JOIN messages m CROSS JOIN channels c WHERE messages_fts MATCH ${} AND messages_fts.rowid < ${} AND messages_fts.rowid > ${} AND m.id = messages_fts.rowid AND m.channel_id IN (SELECT c.id FROM channels c WHERE {}) AND c.id = m.channel_id AND {} ORDER BY messages_fts.rowid DESC LIMIT {FTS_BATCH}",
+        n + 1,
+        n + 2,
+        n + 3,
+        scope.place(),
+        scope.row()
+    )
+}
+
+/// The full-text matches the caller may find, newest first, `FTS_BATCH` per round. The page,
+/// its cursor and whether more follow come from these rows only.
 async fn fts_paged(
     db: &Db,
-    user: Option<&User>,
-    proof: &Proof<'_>,
+    scope: &Scope,
     sq: SearchQuery,
     phrase: &str,
 ) -> Result<(Vec<SearchResult>, Option<i64>), ApiError> {
+    let batch = batch_sql(scope);
     let floor = sq.after.unwrap_or(0).max(0);
     let mut hi = sq.before.unwrap_or(i64::MAX);
     let mut results: Vec<SearchResult> = Vec::new();
@@ -2345,24 +2386,27 @@ async fn fts_paged(
         if results.len() as i64 >= SEARCH_PAGE {
             break;
         }
-        let rows = sqlx::query(
-            "SELECT rowid FROM messages_fts WHERE messages_fts MATCH $1 AND rowid < $2 AND rowid > $3 ORDER BY rowid DESC LIMIT $4",
+        let ids: Vec<i64> = bind_all(
+            sqlx::query(sqlx::AssertSqlSafe(batch.clone())),
+            &scope.binds,
         )
         .bind(phrase)
         .bind(hi)
         .bind(floor)
-        .bind(FTS_BATCH)
         .fetch_all(db)
-        .await?;
-        let Some(last) = rows.last() else {
+        .await?
+        .iter()
+        .map(|r| r.try_get(0))
+        .collect::<sqlx::Result<_>>()?;
+        let Some(lo) = ids.last().copied() else {
             more = false;
             break;
         };
-        let lo: i64 = last.try_get(0)?;
+        let full = ids.len() as i64 == FTS_BATCH;
         let want = SEARCH_PAGE - results.len() as i64;
-        results.extend(search_once(db, user, proof, sq.clone(), Some((lo, hi)), want).await?);
+        results.extend(search_once(db, scope, sq.clone(), Scan::Rows(ids), want).await?);
         hi = lo;
-        if (rows.len() as i64) < FTS_BATCH {
+        if !full {
             more = false;
             break;
         }
@@ -2377,19 +2421,18 @@ async fn fts_paged(
 
 async fn search_once(
     db: &Db,
-    user: Option<&User>,
-    proof: &Proof<'_>,
+    scope: &Scope,
     sq: SearchQuery,
-    window: Option<(i64, i64)>,
+    scan: Scan,
     limit: i64,
 ) -> Result<Vec<SearchResult>, ApiError> {
-    let (sql, binds) = match search_sql(db, user, proof, sq, window, limit).await? {
-        Some(built) => built,
-        None => return Ok(Vec::new()),
-    };
-    let rows = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), &binds)
-        .fetch_all(db)
-        .await?;
+    let (sql, binds) = search_sql(db, scope, sq, scan, limit);
+    let rows = bind_all(
+        bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), &scope.binds),
+        &binds,
+    )
+    .fetch_all(db)
+    .await?;
     let mut msgs = rows_messages(db, &rows, Quotes::Skip).await?;
     let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
     for r in &rows {
@@ -2431,42 +2474,52 @@ fn check_nul(texts: [&Option<String>; 4], servers: &Option<Vec<String>>) -> Resu
     }
 }
 
-async fn search_sql(
+/// What the caller may find, as conditions every search query carries, with their binds (`$1`
+/// on): `place` on the channel `c` alone, `row` on the message `m` in it. `floor` is the part
+/// of `row` that asks when `m` itself was sent: a message it leaves out can't be read, and no
+/// older message of its channel can.
+struct Scope {
+    place: Vec<String>,
+    row: Vec<String>,
+    floor: Option<String>,
+    binds: Vec<Bind>,
+}
+
+impl Scope {
+    fn place(&self) -> String {
+        self.place.join(" AND ")
+    }
+
+    fn row(&self) -> String {
+        self.row.join(" AND ")
+    }
+
+    fn floor(&self) -> String {
+        match &self.floor {
+            Some(floor) => format!(" AND {floor}"),
+            None => String::new(),
+        }
+    }
+}
+
+/// `None` for a guest that names no server.
+async fn search_scope(
     db: &Db,
     user: Option<&User>,
     proof: &Proof<'_>,
-    sq: SearchQuery,
-    window: Option<(i64, i64)>,
-    limit: i64,
-) -> Result<Option<(String, Vec<Bind>)>, ApiError> {
-    let SearchQuery {
-        q,
-        server,
-        channel_id,
-        from,
-        has,
-        before,
-        after,
-        before_ts,
-        after_ts,
-        offset,
-        cursor: _,
-        servers,
-    } = sq;
-    let (lo, hi) = match window {
-        Some((lo, hi)) => (lo, hi),
-        None => (i64::MIN, before.unwrap_or(i64::MAX)),
-    };
-    check_nul([&q, &server, &from, &has], &servers)?;
-    let mut conds: Vec<String> = vec![
+    servers: Option<Vec<String>>,
+) -> Result<Option<Scope>, ApiError> {
+    let mut place: Vec<String> = Vec::new();
+    let mut row: Vec<String> = vec![
         LIVE_AUTHOR.to_string(),
         "m.kind IN ('user', 'poll')".to_string(),
     ];
+    let mut floor = None;
     let mut binds: Vec<Bind> = Vec::new();
     match user {
         Some(u) => {
             binds.push(Bind::S(u.username.clone()));
-            conds.push(format!(
+            place.push(format!(
                 "c.server IN (SELECT server FROM members WHERE username = ${})",
                 binds.len()
             ));
@@ -2486,27 +2539,32 @@ async fn search_sql(
                     false => format!("c.server IN ({}) OR ", managed.join(", ")),
                 };
                 let mine = ph.join(", ");
-                conds.push(format!(
-                    "({bypass}(c.restrict_view = 0 AND NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.subject IN ({mine}))) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.can_view != 0 AND cp.subject IN ({mine})))"
+                place.push(format!(
+                    "({bypass}(c.restrict_view = 0 AND NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.subject IN ({mine}))) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_view != 0 AND cp.subject IN ({mine})))"
                 ));
-                conds.push(format!(
-                    "({bypass}NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.subject IN ({mine})) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.can_read_history != 0 AND cp.subject IN ({mine})) OR m.created_at >= (SELECT joined_at FROM members mm WHERE mm.server = c.server AND mm.username = $1))"
+                let history = format!(
+                    "{bypass}NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.subject IN ({mine})) OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = m.channel_id AND cp.can_read_history != 0 AND cp.subject IN ({mine}))"
+                );
+                let joined = "(SELECT joined_at FROM members mm WHERE mm.server = c.server AND mm.username = $1)";
+                row.push(format!(
+                    "({history} OR (m.created_at >= {joined} AND COALESCE((SELECT rt.created_at FROM messages rt WHERE rt.id = m.thread_root_id), m.created_at) >= {joined}))"
                 ));
+                floor = Some(format!("({history} OR m.created_at >= {joined})"));
             }
         }
         None => {
-            conds.push("c.restrict_view = 0".to_string());
+            place.push("c.restrict_view = 0".to_string());
             let granted = granted_servers(db, proof).await?;
             let public = crate::api::access::Reading::now(db).await.servers_sql();
             match granted.is_empty() {
-                true => conds.push(format!("c.server IN ({public})")),
+                true => place.push(format!("c.server IN ({public})")),
                 false => {
                     let mut ph = Vec::with_capacity(granted.len());
                     for server in granted {
                         binds.push(Bind::S(server));
                         ph.push(format!("${}", binds.len()));
                     }
-                    conds.push(format!(
+                    place.push(format!(
                         "(c.server IN ({public}) OR c.server IN ({}))",
                         ph.join(", "),
                     ));
@@ -2526,72 +2584,121 @@ async fn search_sql(
                 binds.push(Bind::S(name));
                 ph.push(format!("${}", binds.len()));
             }
-            conds.push(format!("c.server IN ({})", ph.join(", ")));
+            place.push(format!("c.server IN ({})", ph.join(", ")));
         }
     }
-    if let Some(text) = q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        match text.chars().count() >= FTS_MIN_CHARS && has_fts(db) {
-            true => {
-                binds.push(Bind::S(fts_phrase(text)));
-                binds.push(Bind::I(lo));
-                binds.push(Bind::I(hi));
-                conds.push(format!(
+    Ok(Some(Scope {
+        place,
+        row,
+        floor,
+        binds,
+    }))
+}
+
+/// One search query under `scope`, with the binds that follow the scope's.
+fn search_sql(
+    db: &Db,
+    scope: &Scope,
+    sq: SearchQuery,
+    scan: Scan,
+    limit: i64,
+) -> (String, Vec<Bind>) {
+    let SearchQuery {
+        q,
+        server,
+        channel_id,
+        from,
+        has,
+        before,
+        after,
+        before_ts,
+        after_ts,
+        offset,
+        cursor: _,
+        servers: _,
+    } = sq;
+    let (lo, hi) = match scan {
+        Scan::Window(lo, hi) => (lo, hi),
+        Scan::All | Scan::Rows(_) => (i64::MIN, before.unwrap_or(i64::MAX)),
+    };
+    let mut conds = vec![scope.place(), scope.row()];
+    let mut binds: Vec<Bind> = Vec::new();
+    let at = scope.binds.len();
+    let text = q.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    match (&scan, text) {
+        (Scan::Rows(ids), _) => {
+            let list: Vec<String> = ids.iter().map(i64::to_string).collect();
+            binds.push(Bind::S(format!("[{}]", list.join(","))));
+            conds.push(format!(
+                "m.id IN (SELECT value FROM json_each(${}))",
+                at + binds.len()
+            ));
+        }
+        (Scan::All | Scan::Window(_, _), None) => {}
+        (Scan::All | Scan::Window(_, _), Some(text)) => {
+            match text.chars().count() >= FTS_MIN_CHARS && has_fts(db) {
+                true => {
+                    binds.push(Bind::S(fts_phrase(text)));
+                    binds.push(Bind::I(lo));
+                    binds.push(Bind::I(hi));
+                    conds.push(format!(
                     "m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${} AND rowid >= ${} AND rowid < ${})",
-                    binds.len() - 2,
-                    binds.len() - 1,
-                    binds.len()
+                    at + binds.len() - 2,
+                    at + binds.len() - 1,
+                    at + binds.len()
                 ));
-            }
-            false => {
-                binds.push(Bind::S(like_pattern(text, false)));
-                conds.push(format!(
-                    "lower(m.content) LIKE lower(${}) ESCAPE '\\'",
-                    binds.len()
-                ));
+                }
+                false => {
+                    binds.push(Bind::S(like_pattern(text, false)));
+                    conds.push(format!(
+                        "lower(m.content) LIKE lower(${}) ESCAPE '\\'",
+                        at + binds.len()
+                    ));
+                }
             }
         }
     }
     if let Some(s) = server {
         binds.push(Bind::S(s.to_lowercase()));
-        conds.push(format!("c.server = ${}", binds.len()));
+        conds.push(format!("c.server = ${}", at + binds.len()));
     }
     if let Some(cid) = channel_id {
         binds.push(Bind::I(cid));
-        conds.push(format!("m.channel_id = ${}", binds.len()));
+        conds.push(format!("m.channel_id = ${}", at + binds.len()));
     }
     if let Some(author) = from {
         binds.push(Bind::S(author.to_lowercase()));
-        conds.push(format!("m.author = ${}", binds.len()));
+        conds.push(format!("m.author = ${}", at + binds.len()));
     }
     if has.as_deref() == Some("file") {
         conds.push("m.media_id IS NOT NULL".to_string());
     }
     if let Some(b) = before {
         binds.push(Bind::I(b));
-        conds.push(format!("m.id < ${}", binds.len()));
+        conds.push(format!("m.id < ${}", at + binds.len()));
     }
-    if window.is_some() {
+    if let Scan::Window(lo, hi) = scan {
         binds.push(Bind::I(lo));
-        conds.push(format!("m.id >= ${}", binds.len()));
+        conds.push(format!("m.id >= ${}", at + binds.len()));
         binds.push(Bind::I(hi));
-        conds.push(format!("m.id < ${}", binds.len()));
+        conds.push(format!("m.id < ${}", at + binds.len()));
     }
     if let Some(a) = after {
         binds.push(Bind::I(a));
-        conds.push(format!("m.id > ${}", binds.len()));
+        conds.push(format!("m.id > ${}", at + binds.len()));
     }
     if let Some(t) = before_ts {
         binds.push(Bind::I(t));
-        conds.push(format!("m.created_at < ${}", binds.len()));
+        conds.push(format!("m.created_at < ${}", at + binds.len()));
     }
     if let Some(t) = after_ts {
         binds.push(Bind::I(t));
-        conds.push(format!("m.created_at > ${}", binds.len()));
+        conds.push(format!("m.created_at > ${}", at + binds.len()));
     }
     let skip = match offset {
         Some(n) if n > 0 => {
             binds.push(Bind::I(n));
-            format!(" OFFSET ${}", binds.len())
+            format!(" OFFSET ${}", at + binds.len())
         }
         _ => String::new(),
     };
@@ -2599,7 +2706,7 @@ async fn search_sql(
         "SELECT {COLS}, c.server, c.name FROM messages m CROSS JOIN channels c WHERE c.id = m.channel_id AND {} ORDER BY m.id DESC LIMIT {limit}{skip}",
         conds.join(" AND ")
     );
-    Ok(Some((sql, binds)))
+    (sql, binds)
 }
 
 const UNREADS_MAX: usize = 500;
@@ -4071,40 +4178,46 @@ mod tests {
         let (state, path) = temp_state("fts_batches").await;
         let db = &state.db;
         let general = general_id(db).await;
-        let private = add_channel(db, "hidden", "text").await;
         add_member(db, "rchat", "alice", 0, 0, 0).await;
-        perm(db, private, "u:alice", 0).await;
-        let mut visible = Vec::new();
+        let mut wanted = Vec::new();
         for n in 0..3 {
-            visible.push(post(db, general, "eve", &format!("common word {n}"), 1).await);
+            wanted.push(post(db, general, "eve", &format!("common word {n}"), 1).await);
         }
-        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 6000) INSERT INTO messages(channel_id, author, content, created_at) SELECT $1, 'eve', 'common word hidden ' || i, 2 FROM n")
-            .bind(private)
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 6000) INSERT INTO messages(channel_id, author, content, created_at) SELECT $1, 'bob', 'common word other ' || i, 2 FROM n")
+            .bind(general)
             .execute(db)
             .await
-            .expect("seed hidden");
+            .expect("seed others");
         let alice = mem_user("alice", false);
         let mut sq = query(Some("common"));
-        let mut got = Vec::new();
-        let mut calls = 0;
+        sq.from = Some("eve".to_string());
+        let stop: i64 = sqlx::query(
+            "SELECT id FROM messages WHERE author = 'bob' ORDER BY id DESC LIMIT 1 OFFSET $1",
+        )
+        .bind(FTS_BATCH * FTS_ROUNDS as i64 - 1)
+        .fetch_one(db)
+        .await
+        .expect("the last match one call reads")
+        .try_get(0)
+        .expect("id");
+        let mut calls = Vec::new();
         loop {
-            calls += 1;
             let (page, next) = search_paged(&state, Some(&alice), &HeaderMap::new(), sq.clone())
                 .await
                 .expect("search");
-            got.extend(page.iter().map(|r| r.message.id));
+            calls.push((page.iter().map(|r| r.message.id).collect::<Vec<_>>(), next));
             match next {
                 Some(before) => sq.before = Some(before),
                 None => break,
             }
-            assert!(calls < 10, "search never finished");
+            assert!(calls.len() < 10, "search never finished");
         }
-        assert!(
-            calls > 1,
-            "a common term must not scan every match in one call"
+        wanted.reverse();
+        assert_eq!(
+            calls,
+            [(Vec::new(), Some(stop)), (wanted, None)],
+            "a filter that drops visible matches stops a call after the batch rounds"
         );
-        visible.reverse();
-        assert_eq!(got, visible);
         done(state, path).await;
     }
 
@@ -4744,20 +4857,32 @@ mod tests {
         done(state, path).await;
     }
 
+    async fn member_scope(db: &Db, user: &User) -> Scope {
+        search_scope(db, Some(user), &Proof::none(), None)
+            .await
+            .expect("scope")
+            .expect("member scope")
+    }
+
     async fn plan(db: &Db, user: &User, sq: SearchQuery) -> String {
-        let (sql, binds) = search_sql(db, Some(user), &Proof::none(), sq, None, SEARCH_PAGE)
-            .await
-            .expect("search sql")
-            .expect("built");
+        let scope = member_scope(db, user).await;
+        let (sql, binds) = search_sql(db, &scope, sq, Scan::All, SEARCH_PAGE);
+        explain(db, &sql, &scope.binds, &binds).await
+    }
+
+    async fn explain(db: &Db, sql: &str, scope: &[Bind], binds: &[Bind]) -> String {
         let explain = format!("EXPLAIN QUERY PLAN {sql}");
-        bind_all(sqlx::query(sqlx::AssertSqlSafe(explain)), &binds)
-            .fetch_all(db)
-            .await
-            .expect("explain")
-            .iter()
-            .map(|r| r.try_get::<String, _>(3).expect("detail"))
-            .collect::<Vec<_>>()
-            .join("\n")
+        bind_all(
+            bind_all(sqlx::query(sqlx::AssertSqlSafe(explain)), scope),
+            binds,
+        )
+        .fetch_all(db)
+        .await
+        .expect("explain")
+        .iter()
+        .map(|r| r.try_get::<String, _>(3).expect("detail"))
+        .collect::<Vec<_>>()
+        .join("\n")
     }
 
     #[tokio::test]
@@ -4795,7 +4920,44 @@ mod tests {
         dated.after_ts = Some(10);
         let browse = plan(db, &alice, dated).await;
         assert!(browse.contains("SCAN m"), "{browse}");
-        for detail in [fts, filtered, like, browse] {
+        let scope = member_scope(db, &alice).await;
+        let top = explain(db, &top_sql(&scope), &scope.binds, &[]).await;
+        assert!(
+            top.contains("SEARCH n USING COVERING INDEX idx_messages_channel_id (channel_id=?)"),
+            "{top}"
+        );
+        assert!(
+            top.contains("SEARCH m USING INTEGER PRIMARY KEY (rowid=?)"),
+            "{top}"
+        );
+        assert!(!top.contains("TEMP B-TREE"), "{top}");
+        let phrase = [Bind::S(fts_phrase("needle")), Bind::I(i64::MAX), Bind::I(0)];
+        let batch = explain(db, &batch_sql(&scope), &scope.binds, &phrase).await;
+        assert!(batch.contains("SCAN messages_fts VIRTUAL TABLE"), "{batch}");
+        assert!(batch.contains("LIST SUBQUERY"), "{batch}");
+        let by_id = |ids: Vec<i64>| {
+            search_sql(
+                db,
+                &scope,
+                query(Some("needle")),
+                Scan::Rows(ids),
+                SEARCH_PAGE,
+            )
+        };
+        let (sql, binds) = by_id(vec![4950, 5000]);
+        assert_eq!(
+            by_id((1..=FTS_BATCH).collect()).0,
+            sql,
+            "one statement whatever ids it reads"
+        );
+        let rows = explain(db, &sql, &scope.binds, &binds).await;
+        for detail in [&batch, &rows] {
+            assert!(
+                detail.contains("SEARCH m USING INTEGER PRIMARY KEY (rowid=?)"),
+                "{detail}"
+            );
+        }
+        for detail in [fts, filtered, like, browse, batch, rows] {
             assert!(!detail.contains("TEMP B-TREE"), "{detail}");
             assert!(!detail.contains("SCAN c"), "{detail}");
         }
@@ -5231,6 +5393,429 @@ mod tests {
             Err(ApiError(StatusCode::BAD_REQUEST, _, _))
         ));
         done(state, path).await;
+    }
+
+    const OVER_ONE_READ: i64 = FTS_BATCH * FTS_ROUNDS as i64 + 100;
+
+    async fn fill(db: &Db, cid: i64, author: &str, text: &str, count: i64) {
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < $4) INSERT INTO messages(channel_id, author, content, created_at) SELECT $1, $2, $3 || ' ' || i, 1000 + i FROM n")
+            .bind(cid)
+            .bind(author)
+            .bind(text)
+            .bind(count)
+            .execute(db)
+            .await
+            .expect("fill channel");
+    }
+
+    async fn channel_in(db: &Db, server: &str, name: &str) -> i64 {
+        sqlx::query("INSERT INTO channels(server, name, kind, created_at) VALUES($1, $2, 'text', 0) RETURNING id")
+            .bind(server)
+            .bind(name)
+            .fetch_one(db)
+            .await
+            .expect("insert channel")
+            .try_get(0)
+            .expect("channel id")
+    }
+
+    async fn add_server(db: &Db, name: &str, password: Option<&str>) {
+        sqlx::query("INSERT INTO servers(name, display_name, password_hash, created_at) VALUES($1, $1, $2, 0)")
+            .bind(name)
+            .bind(password)
+            .execute(db)
+            .await
+            .expect("insert server");
+    }
+
+    /// Every page of a search with its cursor, following the cursors to the end.
+    async fn pages(
+        state: &AppState,
+        user: Option<&User>,
+        sq: &SearchQuery,
+    ) -> Vec<serde_json::Value> {
+        let mut out = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut sq = sq.clone();
+            sq.cursor = cursor.take();
+            let (results, next) = search_paged(state, user, &HeaderMap::new(), sq)
+                .await
+                .expect("search");
+            out.push(serde_json::json!({ "results": results, "next": next }));
+            assert!(out.len() < 100, "search never ends");
+            match next {
+                Some(id) => cursor = Some(encode_cursor(&[&id.to_string()])),
+                None => return out,
+            }
+        }
+    }
+
+    fn first_ids(pages: &[serde_json::Value]) -> Vec<i64> {
+        pages[0]["results"]
+            .as_array()
+            .expect("results")
+            .iter()
+            .map(|r| r["message"]["id"].as_i64().expect("id"))
+            .collect()
+    }
+
+    async fn hidden_channel_search(state: &AppState) {
+        let db = &state.db;
+        let general = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        add_member(db, "rchat", "bob", 0, 0, 0).await;
+        fill(db, general, "bob", "weekly notes", 30).await;
+        let bob = mem_user("bob", false);
+        let long = query(Some("notes"));
+        let short = query(Some("no"));
+        let mut without = Vec::new();
+        for sq in [&long, &short] {
+            let pages = pages(state, Some(&bob), sq).await;
+            assert_eq!(first_ids(&pages).len(), SEARCH_PAGE as usize);
+            assert_eq!(pages.len(), 2);
+            without.push(pages);
+        }
+        let staff = add_channel(db, "staff", "text").await;
+        perm(db, staff, "u:alice", 1).await;
+        fill(db, staff, "alice", "weekly staff notes", OVER_ONE_READ).await;
+        for (sq, without) in [&long, &short].into_iter().zip(without) {
+            assert_eq!(pages(state, Some(&bob), sq).await, without);
+        }
+        let alice = mem_user("alice", false);
+        let (hers, _) = search_paged(state, Some(&alice), &HeaderMap::new(), long)
+            .await
+            .expect("search");
+        assert_eq!(hers[0].channel_name, "staff");
+    }
+
+    #[tokio::test]
+    async fn search_page_is_the_same_with_a_hidden_channel() {
+        let (state, path) = temp_state("search_hidden").await;
+        hidden_channel_search(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("search_hidden").await {
+            hidden_channel_search(&state).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
+    }
+
+    async fn lost_access_search(state: &AppState) {
+        let db = &state.db;
+        let general = general_id(db).await;
+        add_server(db, "club", None).await;
+        let lounge = channel_in(db, "club", "lounge").await;
+        for server in ["rchat", "club"] {
+            add_member(db, server, "alice", 0, 0, 0).await;
+            add_member(db, server, "bob", 0, 0, 0).await;
+        }
+        fill(db, general, "bob", "weekly notes", 30).await;
+        let bob = mem_user("bob", false);
+        let sq = query(Some("notes"));
+        let without = pages(state, Some(&bob), &sq).await;
+        let staff = add_channel(db, "staff", "text").await;
+        let archive = add_channel(db, "archive", "text").await;
+        for cid in [staff, lounge, archive] {
+            fill(db, cid, "alice", "weekly staff notes", OVER_ONE_READ).await;
+        }
+        let (open, _) = search_paged(state, Some(&bob), &HeaderMap::new(), sq.clone())
+            .await
+            .expect("search");
+        assert_eq!(open[0].channel_name, "archive");
+        perm(db, staff, "u:alice", 1).await;
+        sqlx::query("DELETE FROM members WHERE server = 'club' AND username = 'bob'")
+            .execute(db)
+            .await
+            .expect("leave club");
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:bob', 1, 1, 0)")
+            .bind(archive)
+            .execute(db)
+            .await
+            .expect("no history");
+        sqlx::query(
+            "UPDATE members SET joined_at = 900000 WHERE server = 'rchat' AND username = 'bob'",
+        )
+        .execute(db)
+        .await
+        .expect("joined after the archive");
+        assert_eq!(pages(state, Some(&bob), &sq).await, without);
+    }
+
+    #[tokio::test]
+    async fn search_page_is_the_same_after_losing_access() {
+        let (state, path) = temp_state("search_lost").await;
+        lost_access_search(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("search_lost").await {
+            lost_access_search(&state).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
+    }
+
+    async fn guest_search(state: &AppState) {
+        let db = &state.db;
+        let general = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        fill(db, general, "alice", "weekly notes", 30).await;
+        let mut sq = query(Some("notes"));
+        sq.servers = Some(vec!["rchat".to_string(), "locked".to_string()]);
+        let without = pages(state, None, &sq).await;
+        assert_eq!(first_ids(&without).len(), SEARCH_PAGE as usize);
+        let staff = add_channel(db, "staff", "text").await;
+        perm(db, staff, "u:alice", 1).await;
+        fill(db, staff, "alice", "weekly staff notes", OVER_ONE_READ).await;
+        assert_eq!(pages(state, None, &sq).await, without);
+        add_server(db, "locked", Some("x")).await;
+        let vault = channel_in(db, "locked", "vault").await;
+        fill(db, vault, "alice", "weekly vault notes", OVER_ONE_READ).await;
+        assert_eq!(pages(state, None, &sq).await, without);
+        add_server(db, "unlisted", None).await;
+        let hall = channel_in(db, "unlisted", "hall").await;
+        fill(db, hall, "alice", "weekly hall notes", OVER_ONE_READ).await;
+        assert_eq!(pages(state, None, &sq).await, without);
+    }
+
+    #[tokio::test]
+    async fn guest_search_page_is_the_same_with_a_private_channel() {
+        let (state, path) = temp_state("search_guest_hidden").await;
+        guest_search(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("search_guest_hidden").await {
+            guest_search(&state).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
+    }
+
+    async fn site_admin_search(state: &AppState) {
+        let db = &state.db;
+        let general = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        add_member(db, "rchat", "root", 0, 0, 0).await;
+        fill(db, general, "alice", "weekly notes", 30).await;
+        let staff = add_channel(db, "staff", "text").await;
+        perm(db, staff, "u:alice", 1).await;
+        fill(db, staff, "alice", "weekly staff notes", 10).await;
+        let root = mem_user("root", true);
+        let sq = query(Some("notes"));
+        let without = pages(state, Some(&root), &sq).await;
+        assert_eq!(without[0]["results"][0]["channel_name"], "staff");
+        assert_eq!(first_ids(&without).len(), SEARCH_PAGE as usize);
+        add_server(db, "club", None).await;
+        let lounge = channel_in(db, "club", "lounge").await;
+        add_member(db, "club", "alice", 0, 0, 0).await;
+        fill(db, lounge, "alice", "weekly club notes", OVER_ONE_READ).await;
+        assert_eq!(pages(state, Some(&root), &sq).await, without);
+    }
+
+    #[tokio::test]
+    async fn site_admin_search_page_is_the_same_with_a_server_it_is_not_in() {
+        let (state, path) = temp_state("search_admin_hidden").await;
+        site_admin_search(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("search_admin_hidden").await {
+            site_admin_search(&state).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn short_search_page_is_the_same_with_hidden_newer_messages() {
+        for fts in [true, false] {
+            let (state, path) = temp_state("search_short_hidden").await;
+            let db = &state.db;
+            let general = general_id(db).await;
+            add_member(db, "rchat", "alice", 0, 0, 0).await;
+            add_member(db, "rchat", "bob", 0, 0, 0).await;
+            fill(db, general, "bob", "weekly notes", 30).await;
+            let bob = mem_user("bob", false);
+            let staff = add_channel(db, "staff", "text").await;
+            perm(db, staff, "u:alice", 1).await;
+            let dm: i64 = sqlx::query(
+                "INSERT INTO dms(user_a, user_b) VALUES('alice', 'carol') RETURNING id",
+            )
+            .fetch_one(db)
+            .await
+            .expect("dm")
+            .try_get(0)
+            .expect("dm id");
+            let q = match fts {
+                true => "no",
+                false => {
+                    drop_fts(db).await;
+                    "notes"
+                }
+            };
+            let sq = query(Some(q));
+            let without = pages(&state, Some(&bob), &sq).await;
+            assert_eq!(first_ids(&without).len(), SEARCH_PAGE as usize, "fts={fts}");
+            let places: [(Option<i64>, Option<i64>); 2] = [(Some(staff), None), (None, Some(dm))];
+            for (n, (cid, dm_id)) in places.into_iter().enumerate() {
+                let top: i64 = sqlx::query("SELECT MAX(id) FROM messages")
+                    .fetch_one(db)
+                    .await
+                    .expect("max id")
+                    .try_get(0)
+                    .expect("id");
+                sqlx::query("INSERT INTO messages(id, channel_id, dm_id, author, content, created_at) VALUES($1, $2, $3, 'alice', 'staff notes', 5000)")
+                    .bind(top + LIKE_BUDGET * 2)
+                    .bind(cid)
+                    .bind(dm_id)
+                    .execute(db)
+                    .await
+                    .expect("hidden message");
+                assert_eq!(
+                    pages(&state, Some(&bob), &sq).await,
+                    without,
+                    "fts={fts} place {n}"
+                );
+            }
+            done(state, path).await;
+        }
+    }
+
+    async fn newest_findable(db: &Db, user: &User) -> i64 {
+        search_top(db, &member_scope(db, user).await)
+            .await
+            .expect("newest id")
+    }
+
+    async fn no_history(db: &Db, cid: i64, subject: &str) {
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, 1, 1, 0)")
+            .bind(cid)
+            .bind(subject)
+            .execute(db)
+            .await
+            .expect("no read history");
+    }
+
+    async fn joined(db: &Db, name: &str, at: i64) {
+        sqlx::query("UPDATE members SET joined_at = $1 WHERE server = 'rchat' AND username = $2")
+            .bind(at)
+            .bind(name)
+            .execute(db)
+            .await
+            .expect("join time");
+    }
+
+    #[tokio::test]
+    async fn short_search_starts_at_the_newest_row_of_each_channel() {
+        let (state, path) = temp_state("search_start").await;
+        let db = &state.db;
+        let general = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        add_member(db, "rchat", "bob", 0, 0, 0).await;
+        fill(db, general, "bob", "weekly notes", 30).await;
+        let bob = mem_user("bob", false);
+        let sq = query(Some("no"));
+        let without = pages(&state, Some(&bob), &sq).await;
+        let own = newest_findable(db, &bob).await;
+        assert_eq!(own, first_ids(&without)[0]);
+        let archive = add_channel(db, "archive", "text").await;
+        no_history(db, archive, "u:bob").await;
+        joined(db, "bob", 900_000).await;
+        fill(db, archive, "alice", "archived notes", 20_000).await;
+        assert_eq!(
+            newest_findable(db, &bob).await,
+            own,
+            "a channel whose newest message is from before the join adds nothing"
+        );
+        assert_eq!(pages(&state, Some(&bob), &sq).await, without);
+        let lobby = add_channel(db, "lobby", "text").await;
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000) INSERT INTO messages(channel_id, author, content, created_at, kind) SELECT $1, 'alice', 'joined, no notes ' || i, 2000 + i, 'system' FROM n")
+            .bind(lobby)
+            .execute(db)
+            .await
+            .expect("join messages");
+        let last_join: i64 = sqlx::query("SELECT MAX(id) FROM messages")
+            .fetch_one(db)
+            .await
+            .expect("max id")
+            .try_get(0)
+            .expect("id");
+        assert_eq!(
+            newest_findable(db, &bob).await,
+            last_join,
+            "a join message is the newest row of its channel"
+        );
+        assert_eq!(pages(&state, Some(&bob), &sq).await, without);
+        let fresh = post(db, archive, "alice", "fresh notes", 950_000).await;
+        assert_eq!(newest_findable(db, &bob).await, fresh);
+        let with_fresh = pages(&state, Some(&bob), &sq).await;
+        assert_eq!(first_ids(&with_fresh)[0], fresh);
+        assert_eq!(first_ids(&with_fresh)[1..], first_ids(&without)[..24]);
+        assert_eq!(
+            newest_findable(db, &mem_user("alice", false)).await,
+            fresh,
+            "with read history the newest row counts whenever it was sent"
+        );
+        done(state, path).await;
+    }
+
+    async fn reply(db: &Db, cid: i64, root: i64, content: &str, at: i64) -> i64 {
+        sqlx::query("INSERT INTO messages(channel_id, thread_root_id, author, content, created_at) VALUES($1, $2, 'alice', $3, $4) RETURNING id")
+            .bind(cid)
+            .bind(root)
+            .bind(content)
+            .bind(at)
+            .fetch_one(db)
+            .await
+            .expect("insert reply")
+            .try_get(0)
+            .expect("reply id")
+    }
+
+    async fn reply_floor_search(state: &AppState) {
+        let db = &state.db;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        add_member(db, "rchat", "bob", 0, 0, 0).await;
+        let archive = add_channel(db, "archive", "text").await;
+        no_history(db, archive, "u:bob").await;
+        joined(db, "bob", 500).await;
+        let before = post(db, archive, "alice", "zebra root from before", 100).await;
+        let since = post(db, archive, "alice", "zebra root since", 550).await;
+        let under_before =
+            reply(db, archive, before, "zebra under the root from before", 600).await;
+        let under_since = reply(db, archive, since, "zebra under the root since", 600).await;
+        let alone = post(db, archive, "alice", "zebra on its own", 600).await;
+        let bob = mem_user("bob", false);
+        let mut readable = Vec::new();
+        for id in [alone, under_since, under_before, since, before] {
+            let gate =
+                crate::api::access::resolve_message(db, id, Some(&bob), &Proof::none()).await;
+            if gate.is_ok() {
+                readable.push(id);
+            }
+        }
+        assert_eq!(readable, [alone, under_since, since]);
+        for q in ["zebra", "ze"] {
+            assert_eq!(
+                found(state, Some(bob.clone()), HeaderMap::new(), query(Some(q))).await,
+                readable,
+                "{q}"
+            );
+            assert_eq!(
+                found(
+                    state,
+                    Some(mem_user("alice", false)),
+                    HeaderMap::new(),
+                    query(Some(q))
+                )
+                .await,
+                [alone, under_since, under_before, since, before],
+                "{q} with read history"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn search_leaves_out_replies_under_a_root_from_before_the_join() {
+        let (state, path) = temp_state("search_reply_floor").await;
+        reply_floor_search(&state).await;
+        done(state, path).await;
+        if let Some((state, pg)) = crate::api::test_util::pg_state("search_reply_floor").await {
+            reply_floor_search(&state).await;
+            crate::api::test_util::pg_done(state, pg).await;
+        }
     }
 
     #[tokio::test]
