@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::body::Body;
@@ -35,23 +35,25 @@ use crate::api::{Authed, Reason, ReasonKind, Settings, user_for_token};
 use crate::db::{Db, NewUser, get_user, now, pool_key, secret_key};
 use crate::limits::Limits;
 
-static PASSED: LazyLock<Mutex<HashMap<String, Duration>>> = LazyLock::new(Default::default);
+static CLOCKS: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(Default::default);
 
-/// How far the clock of the rare requests is ahead for the database of `state`.
-pub(crate) fn passed(state: &AppState) -> Duration {
-    match PASSED.lock() {
-        Ok(passed) => passed
-            .get(&pool_key(&state.db))
-            .copied()
-            .unwrap_or_default(),
-        Err(_) => Duration::ZERO,
+/// The time of the rare requests for the database of `state`. It starts at the first request
+/// and moves only with `pass`, so no answer depends on how long a test takes.
+pub(crate) fn clock(state: &AppState) -> Instant {
+    match CLOCKS.lock() {
+        Ok(mut clocks) => *clocks
+            .entry(pool_key(&state.db))
+            .or_insert_with(Instant::now),
+        Err(_) => Instant::now(),
     }
 }
 
 /// Moves the clock of the rare requests forward by `by` for the database of `state`.
 pub(crate) fn pass(state: &AppState, by: Duration) {
-    if let Ok(mut passed) = PASSED.lock() {
-        *passed.entry(pool_key(&state.db)).or_default() += by;
+    if let Ok(mut clocks) = CLOCKS.lock() {
+        *clocks
+            .entry(pool_key(&state.db))
+            .or_insert_with(Instant::now) += by;
     }
 }
 
@@ -100,6 +102,18 @@ fn answer<T>(res: Result<T, ApiError>) -> Answer {
 
 fn refused(answer: &Answer) -> bool {
     matches!(answer, Answer::Refused(_))
+}
+
+/// Whether a request was answered and keeps its count. A refusal by another limit or for
+/// capacity gives the count back.
+fn kept(answer: &Answer) -> bool {
+    match answer {
+        Answer::Refused(_) => false,
+        Answer::Answered(code) => !matches!(
+            *code,
+            StatusCode::LOCKED | StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
+        ),
+    }
 }
 
 fn body<T: DeserializeOwned>(value: Value) -> Json<T> {
@@ -303,7 +317,9 @@ impl Route {
     }
 
     /// Makes the `n`th request of this route as actor `i`: the account `u{i}` with its server
-    /// `s{i}`, or the client address 198.18.0.`i` when it is signed out.
+    /// `s{i}`, or the client address 198.18.0.`i` when it is signed out. A request paced by its
+    /// session or by the username it names has its own for every `n`, so none waits for the one
+    /// before it.
     async fn call(self, w: &World, i: usize, n: usize) -> Answer {
         let state = || State(w.state.clone());
         let who = format!("u{i}");
@@ -375,7 +391,7 @@ impl Route {
                     recover(
                         state(),
                         body(json!({
-                            "username": "alice",
+                            "username": format!("alice{n}"),
                             "nonce": "x",
                             "sig": "y",
                             "new": { "password": "pw" },
@@ -644,28 +660,22 @@ async fn every_rare_operation_is_refused_past_its_limits_and_answers_after_them(
     };
     for n in 0..2 {
         for (route, answer) in each(n).await {
-            assert!(!refused(&answer), "{route:?} {n}: {answer:?}");
+            assert!(kept(&answer), "{route:?} {n}: {answer:?}");
         }
     }
     for (route, answer) in each(2).await {
-        assert!(
-            matches!(answer, Answer::Refused(wait) if (3000..=3600).contains(&wait)),
-            "{route:?} past 2 an hour: {answer:?}"
-        );
+        assert_eq!(answer, Answer::Refused(3600), "{route:?} past 2 an hour");
     }
     pass(&w.state, HOUR);
     for (route, answer) in each(3).await {
-        assert!(!refused(&answer), "{route:?} in the next hour: {answer:?}");
+        assert!(kept(&answer), "{route:?} in the next hour: {answer:?}");
     }
     for (route, answer) in each(4).await {
-        assert!(
-            matches!(answer, Answer::Refused(wait) if (82_000..=82_800).contains(&wait)),
-            "{route:?} past 3 a day: {answer:?}"
-        );
+        assert_eq!(answer, Answer::Refused(82_800), "{route:?} past 3 a day");
     }
     pass(&w.state, DAY);
     for (route, answer) in each(5).await {
-        assert!(!refused(&answer), "{route:?} the next day: {answer:?}");
+        assert!(kept(&answer), "{route:?} the next day: {answer:?}");
     }
     done(w.state, w.path).await;
 }

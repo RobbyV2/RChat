@@ -248,7 +248,7 @@ fn clock(_: &AppState) -> Instant {
 
 #[cfg(test)]
 fn clock(state: &AppState) -> Instant {
-    Instant::now() + tests::passed(state)
+    tests::clock(state)
 }
 
 #[cfg(test)]
