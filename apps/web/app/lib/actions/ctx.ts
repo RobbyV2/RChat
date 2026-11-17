@@ -62,7 +62,8 @@ const placeOf = (s: RChatState, t: Target): Place => {
       return { server: null, channel: null, dm: t.dm }
     case 'member':
     case 'server':
-    case 'category': {
+    case 'category':
+    case 'voice_guest': {
       const open = openPlace(s)
       const same = open.server !== null && open.server === t.server
       return { server: t.server, channel: same ? open.channel : null, dm: null }
@@ -85,6 +86,7 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'p2p_call':
     case 'p2p_badge':
     case 'p2p_home':
+    case 'header':
       return openPlace(s)
   }
 }
@@ -110,7 +112,9 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'timestamp':
     case 'inbox':
     case 'card':
+    case 'header':
       return s.profile?.user ?? null
+    case 'voice_guest':
     case 'p2p_contact':
     case 'p2p_server':
     case 'p2p_channel':
@@ -137,6 +141,8 @@ const listOf = (s: RChatState, t: Target) => {
       return viewKey({ kind: 'channel', server: t.server, channelId: t.channel.id })
     case 'embed':
       return messageList(t.message) ?? currentList(s)
+    case 'header':
+      return t.list
     case 'none':
     case 'member':
     case 'server':
@@ -157,6 +163,7 @@ const listOf = (s: RChatState, t: Target) => {
     case 'p2p_call':
     case 'p2p_badge':
     case 'p2p_home':
+    case 'voice_guest':
       return currentList(s)
   }
 }
@@ -251,6 +258,8 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
     case 'p2p_call':
     case 'p2p_badge':
     case 'p2p_home':
+    case 'header':
+    case 'voice_guest':
       return t
   }
 }

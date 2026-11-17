@@ -15,10 +15,8 @@ import {
   PhoneMissed,
   PhoneOff,
   PhoneOutgoing,
-  Pin,
   Reply,
   Search,
-  SquareCheckBig,
   Trash2,
   Users,
   Video,
@@ -33,7 +31,8 @@ import { readOnly } from '../lib/reactions'
 import { slowTitle } from '../lib/slowmode'
 import { canQuote, repliesToMe } from '../lib/replies'
 import { messageRights } from '../lib/actions/message'
-import { openActionMenu } from '../lib/actions/menu'
+import { openActionMenu, useHasMenu } from '../lib/actions/menu'
+import type { Target } from '../lib/actions/types'
 import {
   byUsername,
   confirmDeleteMessage,
@@ -44,7 +43,6 @@ import {
   viewKey,
   allPings,
   groupMentionsMe,
-  type ContextMenuItem,
   type ContextMenuOptions,
   type Outgoing,
 } from '../lib/store'
@@ -88,7 +86,6 @@ import { PinNotice, PinsButton, PinsWindow } from './pins'
 import { PollCard } from './poll_card'
 import { SystemNotice } from './system_messages'
 import { useMyTimeoutEnds } from './timeout_dialog'
-import { PINS_TITLE } from '../lib/pins'
 import { isNotice, isSystem } from '../lib/system_messages'
 import { MessageTime } from './timestamp'
 import { BlockedComposer, BlockedList } from './blocking'
@@ -582,20 +579,10 @@ export const HEADER_MORE = 'header-more'
 
 // The header actions that fold into one menu when the header is narrow.
 export function HeaderMore({ scope, search }: { scope: string | null; search: boolean }) {
-  const signedIn = useStore(s => s.me !== null && !s.guest)
+  const target: Target = { kind: 'header', list: scope, search }
   const open = useStore(s => s.contextMenu?.owner === HEADER_MORE)
-  const items: ContextMenuItem[] = []
-  if (scope && signedIn)
-    items.push({
-      label: 'Select Messages',
-      icon: SquareCheckBig,
-      action: () => useStore.getState().startSelection(scope),
-    })
-  if (scope)
-    items.push({ label: PINS_TITLE, icon: Pin, action: () => useStore.getState().openPins() })
-  if (search)
-    items.push({ label: 'Search', icon: Search, action: () => useStore.getState().openSearch() })
-  if (!items.length) return null
+  const has = useHasMenu(target)
+  if (!has) return null
   return (
     <button
       title="More"
@@ -604,7 +591,7 @@ export function HeaderMore({ scope, search }: { scope: string | null; search: bo
       aria-expanded={open}
       onClick={e => {
         const r = e.currentTarget.getBoundingClientRect()
-        useStore.getState().openContextMenu(r.right, r.bottom + 4, items, { owner: HEADER_MORE })
+        openActionMenu(r.right, r.bottom + 4, target, { owner: HEADER_MORE })
       }}
       className="rounded-full p-1.5 hover:bg-surface-container-high @sm:hidden"
     >

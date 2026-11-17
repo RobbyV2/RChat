@@ -93,6 +93,7 @@ test('the actions marked as danger', () => {
     'embed_remove_all',
     'channel_delete',
     'category_delete',
+    'voice_guest_disconnect',
     'p2p_contact_block',
     'p2p_contact_remove',
     'p2p_server_leave',

@@ -89,6 +89,12 @@ export type Target =
   | { kind: 'p2p_badge'; ik: string; sub: string | null; stale: boolean }
   // The rail's P2P tile.
   | { kind: 'p2p_home' }
+  // A channel's or DM's header, for what its More button folds away when it is narrow. `list`:
+  // the header's conversation, none in a voice channel; `search`: the header has search.
+  | { kind: 'header'; list: string | null; search: boolean }
+  // A guest in the voice of `server`, by its connection's name: staff's menu on the guest's tile
+  // and sidebar row.
+  | { kind: 'voice_guest'; server: string; name: string }
 
 export interface ActionCtx {
   s: RChatState

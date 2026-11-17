@@ -1,9 +1,11 @@
+import { useSyncExternalStore } from 'react'
 import { openPaletteAt } from '../palette_store'
 import { useStore } from '../store'
 import type { ContextMenuItem, ContextMenuOptions, ContextMenuState } from '../store_types'
 import { ctxFor, refreshCtx } from './ctx'
 import {
   actionById,
+  actionsVersion,
   guardAction,
   isAvailable,
   labelOf,
@@ -105,6 +107,13 @@ export const itemFor = (id: string, ctx: ActionCtx): ContextMenuItem | null => {
 const idsOf = (built: Built[]) => JSON.stringify(built.map(r => r.id))
 
 let live: { ctx: ActionCtx; menu: ContextMenuState | null; ids: string } | null = null
+
+// Whether the menu of `target` has a row now, as the store and the registry change; none for
+// no target. A button that opens the menu shows only while it does.
+export const useHasMenu = (target: Target | null) => {
+  useSyncExternalStore(subscribeActions, actionsVersion, actionsVersion)
+  return useStore(s => target !== null && menuRows(ctxFor(s, target, 'menu')).length > 0)
+}
 
 // Whether `menu` is the open action menu, which follows the registry by itself.
 export const isActionMenu = (menu: ContextMenuState | null) => menu !== null && live?.menu === menu

@@ -7,6 +7,8 @@ import { dmActions, dmListActions } from './dm'
 import { folderActions } from './folder'
 import { friendActions } from './friends'
 import { globalActions, goActions } from './global'
+import { guestVoiceMenuActions } from './guest_voice'
+import { headerActions } from './header'
 import { maskedActions } from './masked'
 import { memberActions } from './member'
 import { itemFor } from './menu'
@@ -45,6 +47,8 @@ export const registerAppActions = () => {
     channelActions,
     cardActions,
     voiceActions,
+    guestVoiceMenuActions,
+    headerActions,
     p2pContactActions,
     p2pServerActions,
     p2pChatActions,

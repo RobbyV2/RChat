@@ -27,28 +27,16 @@ const MENU = [
   'lib/store_types.ts',
 ]
 
-// The menus still built by hand, each held to the one it has: its one call of the opener and its
-// mentions of the row type.
-const BY_HAND: Record<string, { why: string; rows: number }> = {
-  'components/guest_voice_menu.tsx': {
-    why: "staff's menu of a guest in an instance voice channel",
-    rows: 2,
-  },
-  'components/message_pane.tsx': { why: "the instance channel header's More button", rows: 2 },
-}
-
 const count = (src: string, re: RegExp) => src.match(re)?.length ?? 0
 
 const drift = (sources: Sources): string[] =>
   Object.entries(sources).flatMap(([f, src]) => {
     if (MENU.includes(f)) return []
-    const kept = BY_HAND[f]
     const opens = count(src, /\bopenContextMenu\b/g)
     const calls = count(src, /\bopenContextMenu\(/g)
     const rows = f.startsWith('lib/actions/') ? 0 : count(src, /\bContextMenuItem\b/g)
     const sets = count(src, /(?<![.\w])contextMenu\b(?!\s*:\s*null\b)/g)
-    const may = kept ? 1 : 0
-    return opens === may && calls === may && rows === (kept?.rows ?? 0) && sets === 0
+    return opens === 0 && rows === 0 && sets === 0
       ? []
       : [
           `${f}: openContextMenu ${opens} (called ${calls}), ContextMenuItem ${rows}, contextMenu set ${sets}`,
@@ -63,7 +51,6 @@ test('no file builds or opens a menu by hand', () => {
   const src = app()
   expect(Object.keys(src).filter(f => f.startsWith('components/')).length).toBeGreaterThan(50)
   expect(Object.keys(src).filter(f => f.startsWith('lib/')).length).toBeGreaterThan(200)
-  expect(Object.keys(BY_HAND).filter(f => !(f in src))).toEqual([])
   expect(drift(src)).toEqual([])
 }, 60_000)
 
@@ -96,14 +83,14 @@ test('a menu put into the store without the opener is drift', () => {
   expect(drift({ 'components/x.tsx': 'const menu = useStore(s => s.contextMenu)' })).toEqual([])
 })
 
-test('a second menu in a file that keeps one by hand is drift', () => {
+test('the channel header and the guest voice menu open theirs from the registry', () => {
   for (const f of [HEADER, GUEST]) {
     const src = read(f)
+    expect([f, src.includes('openActionMenu(')]).toEqual([f, true])
     expect(drift({ [f]: src })).toEqual([])
     expect(drift({ [f]: `${src}\n${OPEN}` })).toHaveLength(1)
     expect(drift({ [f]: `${src}\nconst open = useStore(s => s.openContextMenu)` })).toHaveLength(1)
     expect(drift({ [f]: `${src}\nconst more: ContextMenuItem[] = []` })).toHaveLength(1)
-    expect(drift({ [f]: 'export {}' })).toHaveLength(1)
   }
 })
 
