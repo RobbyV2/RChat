@@ -1,4 +1,4 @@
-import { shareOrigin } from './instances'
+import { sessionStore, shareOrigin } from './instances'
 import { replaceSpoilers } from './spoilers'
 import type { InviteStatus } from './types'
 
@@ -193,14 +193,6 @@ export const inviteEntry = (state: unknown, server: string): InviteEntry | null 
 
 export const entryState = (entry: InviteEntry) => ({ rchatInvite: entry })
 
-const session = () => {
-  try {
-    return window.sessionStorage
-  } catch {
-    return null
-  }
-}
-
 export const handoffFor = (
   raw: string | null,
   server: string,
@@ -218,16 +210,15 @@ export const handoffFor = (
 }
 
 export const stashInvite = (target: InviteTarget) =>
-  session()?.setItem(STASH, JSON.stringify({ ...target, at: Date.now() }))
+  sessionStore.setItem(STASH, JSON.stringify({ ...target, at: Date.now() }))
 
 export const takeStashedInvite = (server: string | null) => {
-  const store = session()
-  const raw = store?.getItem(STASH) ?? null
-  if (raw !== null) store?.removeItem(STASH)
+  const raw = sessionStore.getItem(STASH)
+  if (raw !== null) sessionStore.removeItem(STASH)
   return server === null ? null : handoffFor(raw, server, Date.now())
 }
 
-export const dropStashedInvite = () => session()?.removeItem(STASH)
+export const dropStashedInvite = () => sessionStore.removeItem(STASH)
 
 const INVITE_VERSIONS_MAX = 500
 const inviteVersions = new Map<string, number>()

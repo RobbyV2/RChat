@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
-import { home, writeLocal } from './instances'
+import { home, readLocal, writeLocal } from './instances'
 import {
   EMPTY_HOME,
   dismissTip,
@@ -39,9 +39,9 @@ export const useHome = create<HomeState>(() => ({ owner: null, prefs: EMPTY_HOME
 
 const read = (owner: string): HomePrefs => {
   try {
-    const prefs = parseHome(localStorage.getItem(home.scoped(homeKey(owner))))
+    const prefs = parseHome(readLocal(home.scoped(homeKey(owner))))
     return legacyIntroKeys(owner)
-      .filter(([, key]) => localStorage.getItem(home.scoped(key)) === '1')
+      .filter(([, key]) => readLocal(home.scoped(key)) === '1')
       .reduce((p, [id]) => dismissTip(p, id), prefs)
   } catch {
     return EMPTY_HOME

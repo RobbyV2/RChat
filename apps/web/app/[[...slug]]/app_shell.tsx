@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '../lib/store'
 import { notifications } from '../lib/platform'
-import { home } from '../lib/instances'
+import { startApp } from '../lib/start'
 import { ContextMenu } from '../components/context_menu'
 import { ReactionPickerHost } from '../components/reactions'
 import { ProfileCard } from '../components/profile_card'
@@ -87,7 +87,6 @@ export default function AppShell() {
   const toast = useStore(s => s.toast)
   const error = useStore(s => s.error)
   const bootError = useStore(s => s.bootError)
-  const bootstrap = useStore(s => s.bootstrap)
   const pings = useInboxCount()
   const p2pHome = useP2p(s => s.home) && me !== null
   const p2pServer = useP2p(s => s.server !== null) && me !== null
@@ -111,18 +110,8 @@ export default function AppShell() {
   useEffect(() => {
     if (booted.current) return
     booted.current = true
-    useStore.getState().setStreamer(localStorage.getItem('rchat_streamer') === '1')
-    const authed =
-      localStorage.getItem(home.scoped('rchat_token')) ||
-      localStorage.getItem(home.scoped('rchat_guest'))
-    if (!authed) {
-      const { syncInvite, syncConfigLink, loadSettings } = useStore.getState()
-      if (syncInvite() || syncConfigLink()) void loadSettings()
-      else router.replace('/login')
-      return
-    }
-    void bootstrap()
-  }, [router, bootstrap])
+    void startApp(() => router.replace('/login'))
+  }, [router])
 
   useEffect(() => {
     notifications().setBadge(pings)

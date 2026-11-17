@@ -454,23 +454,47 @@ const storage = (): StorageLike | null => {
   }
 }
 
-function write(store: StorageLike | null, key: string, value: string | null) {
+const local = (): StorageLike | null => (typeof localStorage === 'undefined' ? null : localStorage)
+const session = (): StorageLike | null => window.sessionStorage
+
+// A value in the storage `store` gives; storage that throws (blocked, full or failing) reads as
+// nothing saved.
+const read = (store: () => StorageLike | null, key: string) => {
   try {
-    if (value === null) store?.removeItem(key)
-    else store?.setItem(key, value)
+    return store()?.getItem(key) ?? null
+  } catch {
+    return null
+  }
+}
+
+// Writes or removes a value in the storage `store` gives. False when getting the storage or
+// writing to it throws; `warn` says so in the console.
+function write(store: () => StorageLike | null, key: string, value: string | null, warn = true) {
+  try {
+    const to = store()
+    if (value === null) to?.removeItem(key)
+    else to?.setItem(key, value)
     return true
   } catch (e) {
-    console.warn('localStorage write failed', key, e)
+    if (warn) console.warn('localStorage write failed', key, e)
     return false
   }
 }
 
-export const writeLocal = (key: string, value: string | null) =>
-  write(typeof localStorage === 'undefined' ? null : localStorage, key, value)
+export const readLocal = (key: string) => read(local, key)
+
+export const writeLocal = (key: string, value: string | null) => write(local, key, value)
+
+// This tab's sessionStorage, through the same guard.
+export const sessionStore: StorageLike = {
+  getItem: key => read(session, key),
+  setItem: (key, value) => void write(session, key, value, false),
+  removeItem: key => void write(session, key, null, false),
+}
 
 export function readKnown(store: StorageLike | null = storage()): Record<string, InstanceInfo> {
   try {
-    const raw = JSON.parse(store?.getItem(KNOWN_KEY) ?? '{}') as Record<string, unknown>
+    const raw = JSON.parse(read(() => store, KNOWN_KEY) ?? '{}') as Record<string, unknown>
     return Object.fromEntries(
       Object.entries(raw).filter(
         (e): e is [string, InstanceInfo] => validInfo(e[1], e[0]) && sameSite(e[0], e[1])
@@ -489,11 +513,11 @@ export function rememberInstance(
   const known = readKnown(store)
   delete known[origin]
   const entries = [[origin, info] as const, ...Object.entries(known)].slice(0, KNOWN_MAX)
-  write(store, KNOWN_KEY, JSON.stringify(Object.fromEntries(entries)))
+  write(() => store, KNOWN_KEY, JSON.stringify(Object.fromEntries(entries)))
 }
 
 export function savedHome(defaultOrigin: string, store: StorageLike | null = storage()) {
-  const saved = store?.getItem(HOME_KEY)
+  const saved = read(() => store, HOME_KEY)
   const origin = saved ? normalizeOrigin(saved) : null
   return origin ?? defaultOrigin
 }
@@ -516,7 +540,7 @@ export const api = home.api
 export function selectHome(origin: string, info: InstanceInfo) {
   const conn = registry.setHome(origin, info)
   const store = storage()
-  write(store, HOME_KEY, conn.isDefault ? null : conn.origin)
+  write(() => store, HOME_KEY, conn.isDefault ? null : conn.origin)
   rememberInstance(conn.origin, info, store)
   return conn
 }

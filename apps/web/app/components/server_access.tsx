@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useState, type ReactNode } from 'react'
 import { Check, Copy, Lock, LockOpen, Plus } from 'lucide-react'
-import { api, home, writeLocal } from '../lib/instances'
+import { api, home, readLocal, writeLocal } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { inviteUrl } from '../lib/invite'
 import { passwordDone, passwordPrompt } from '../lib/rules'
@@ -76,7 +76,7 @@ const bookKey = (username: string) => home.scoped(secretsKey(username))
 
 const readBook = (username: string) => {
   try {
-    return parseSecrets(localStorage.getItem(bookKey(username)))
+    return parseSecrets(readLocal(bookKey(username)))
   } catch {
     return parseSecrets(null)
   }

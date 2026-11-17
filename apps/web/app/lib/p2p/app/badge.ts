@@ -1,4 +1,4 @@
-import { home } from '../../instances'
+import { home, sessionStore } from '../../instances'
 import { verifyBinding } from '../../identity'
 import type { OwnBadge } from '../db'
 import type { BadgeSlot } from '../badge'
@@ -11,8 +11,8 @@ const localBadges = (): boolean => {
   if (typeof window === 'undefined') return false
   try {
     if (new URLSearchParams(window.location.search).get('badge') === 'local')
-      sessionStorage.setItem('rchat_badge_local', '1')
-    return sessionStorage.getItem('rchat_badge_local') === '1'
+      sessionStore.setItem('rchat_badge_local', '1')
+    return sessionStore.getItem('rchat_badge_local') === '1'
   } catch {
     return false
   }

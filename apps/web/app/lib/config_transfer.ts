@@ -39,7 +39,7 @@ import {
   type RelayPrefs,
   type RelaysSection,
 } from './relays'
-import { shareOrigin } from './instances'
+import { sessionStore, shareOrigin, type StorageLike } from './instances'
 import { isShowSpoilers, type ShowSpoilers } from './spoilers'
 import { cleanP2pSection, type P2pSection } from './p2p/section'
 
@@ -598,34 +598,20 @@ export const describeChanges = (doc: ConfigDoc, src: ConfigSource): Change[] => 
 const STASH = 'rchat_config_stash'
 export const STASH_MS = 30 * 60 * 1000
 
-interface SessionLike {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
-  removeItem(key: string): void
-}
-
-const session = (): SessionLike | null => {
-  try {
-    return window.sessionStorage
-  } catch {
-    return null
-  }
-}
-
 export const stashConfig = (
   doc: ConfigDoc,
   keys: SectionKey[],
-  store = session(),
+  store: StorageLike = sessionStore,
   now = Date.now()
-) => store?.setItem(STASH, JSON.stringify({ at: now, doc, keys }))
+) => store.setItem(STASH, JSON.stringify({ at: now, doc, keys }))
 
 export const takeStashedConfig = (
-  store = session(),
+  store: StorageLike = sessionStore,
   now = Date.now()
 ): { doc: ConfigDoc; keys: SectionKey[] } | null => {
-  const raw = store?.getItem(STASH) ?? null
+  const raw = store.getItem(STASH)
   if (raw === null) return null
-  store?.removeItem(STASH)
+  store.removeItem(STASH)
   try {
     const saved = JSON.parse(raw) as { at?: unknown; doc?: unknown; keys?: unknown }
     if (typeof saved.at !== 'number' || saved.at > now || now - saved.at >= STASH_MS) return null
@@ -639,4 +625,4 @@ export const takeStashedConfig = (
   }
 }
 
-export const hasStashedConfig = (store = session()) => (store?.getItem(STASH) ?? null) !== null
+export const hasStashedConfig = (store: StorageLike = sessionStore) => store.getItem(STASH) !== null

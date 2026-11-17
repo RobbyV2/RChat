@@ -1,4 +1,4 @@
-import { home, writeLocal } from '../../instances'
+import { home, readLocal, writeLocal } from '../../instances'
 import {
   addToFolder,
   emptyLayout,
@@ -26,7 +26,7 @@ export const p2pLayoutKey = (username: string) => `rchat_p2p_layout:${username}`
 export const readLayout = (username: string | null) => {
   if (!username) return emptyLayout
   try {
-    return parseLayout(localStorage.getItem(home.scoped(p2pLayoutKey(username))))
+    return parseLayout(readLocal(home.scoped(p2pLayoutKey(username))))
   } catch {
     return emptyLayout
   }

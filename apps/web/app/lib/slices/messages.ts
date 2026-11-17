@@ -13,7 +13,7 @@ import { accountPrompt } from '../features'
 import { type ForwardClip, canForward, clipOf, forwardPending } from '../forward'
 import { dropGroupMessage } from '../group_pings'
 import { limitsOf, tooLargeText } from '../instance_limits'
-import { api, home, writeLocal } from '../instances'
+import { api, home, readLocal, writeLocal } from '../instances'
 import { staleInvites } from '../invite'
 import {
   DEFAULT_DM_QUERY,
@@ -1442,12 +1442,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     startReply: (key, m) => {
       const username = get().me?.username
       if (!username) return
-      let mention = true
-      try {
-        mention = parseReplyMention(localStorage.getItem(home.scoped(replyMentionKey(username))))
-      } catch {
-        mention = true
-      }
+      const mention = parseReplyMention(readLocal(home.scoped(replyMentionKey(username))))
       set(s => ({
         replying: { ...s.replying, [key]: { message: m, mention } },
         composerFocus: { key, n: (s.composerFocus?.n ?? 0) + 1 },

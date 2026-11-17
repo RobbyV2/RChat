@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { home, writeLocal } from '../../instances'
+import { home, readLocal, sessionStore, writeLocal } from '../../instances'
 import { emptyLayout, type Layout } from '../../nav_layout'
 import type { AlertInput } from '../../notices'
 import { EMPTY_NOTIFY, type NotifyPrefs } from '../../notify'
@@ -307,7 +307,7 @@ export const parseOn = (raw: string | null) => {
 
 export const readOn = (username: string) => {
   try {
-    return parseOn(localStorage.getItem(home.scoped(p2pKey(username))))
+    return parseOn(readLocal(home.scoped(p2pKey(username))))
   } catch {
     return false
   }
@@ -336,7 +336,7 @@ export const parseImports = (raw: string | null): string[] => {
 
 export const readImports = (username: string) => {
   try {
-    return parseImports(localStorage.getItem(home.scoped(importsKey(username))))
+    return parseImports(readLocal(home.scoped(importsKey(username))))
   } catch {
     return []
   }
@@ -516,7 +516,7 @@ export const readAuto = (username: string | null) => {
   const l = instanceLocal()
   if (!username) return parseAuto(null, l)
   try {
-    return parseAuto(localStorage.getItem(home.scoped(autoKey(username))), l)
+    return parseAuto(readLocal(home.scoped(autoKey(username))), l)
   } catch {
     return parseAuto(null, l)
   }
@@ -530,19 +530,10 @@ export const threadScope = (t: { room: string; ch: string; root: string }) => `p
 // The open P2P home survives a reload of this tab.
 const HOME_KEY = 'rchat_p2p_home'
 
-export const readHome = (username: string) => {
-  try {
-    return sessionStorage.getItem(home.scoped(HOME_KEY)) === username
-  } catch {
-    return false
-  }
-}
+export const readHome = (username: string) =>
+  sessionStore.getItem(home.scoped(HOME_KEY)) === username
 
 export const writeHome = (username: string | null) => {
-  try {
-    if (username) sessionStorage.setItem(home.scoped(HOME_KEY), username)
-    else sessionStorage.removeItem(home.scoped(HOME_KEY))
-  } catch {
-    // Private mode: the view just isn't kept.
-  }
+  if (username) sessionStore.setItem(home.scoped(HOME_KEY), username)
+  else sessionStore.removeItem(home.scoped(HOME_KEY))
 }

@@ -1,32 +1,9 @@
+import { readLocal, writeLocal } from '../instances'
 import type { DeviceStore } from './device_store'
 
-const local = (): Storage | null => {
-  try {
-    return typeof localStorage === 'undefined' ? null : localStorage
-  } catch {
-    return null
-  }
-}
-
 export const webDeviceStore: DeviceStore = {
-  read: key => {
-    try {
-      return local()?.getItem(key) ?? null
-    } catch {
-      return null
-    }
-  },
-  write: (key, value) => {
-    const store = local()
-    if (!store) return false
-    try {
-      if (value === null) store.removeItem(key)
-      else store.setItem(key, value)
-      return true
-    } catch {
-      return false
-    }
-  },
+  read: readLocal,
+  write: writeLocal,
   watch: (key, fn) => {
     const w = typeof window === 'undefined' ? null : window
     if (typeof w?.addEventListener !== 'function') return () => {}

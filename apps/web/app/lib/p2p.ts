@@ -1,7 +1,7 @@
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs'
 import { backoffDelay } from './backoff'
 import { fromBase64, fromBase64Url, randomHex, toBase64 } from './bytes'
-import { home, writeLocal } from './instances'
+import { home, readLocal, writeLocal } from './instances'
 import { ice } from './ice'
 import {
   AUTO,
@@ -168,17 +168,9 @@ const buffered = (conn: DataConnection) => (conn as { bufferSize?: number }).buf
 
 const nowS = () => Math.floor(Date.now() / 1000)
 
-const readRaw = (key: string) => {
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
-}
-
 const readJson = <T extends object>(key: string): Record<string, T> => {
   try {
-    const raw: unknown = JSON.parse(localStorage.getItem(key) ?? '{}')
+    const raw: unknown = JSON.parse(readLocal(key) ?? '{}')
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
     return Object.fromEntries(
       Object.entries(raw).filter(([, v]) => v !== null && typeof v === 'object')
@@ -592,7 +584,7 @@ export class P2pManager {
   files(): Record<string, StoredFile> {
     if (this.account === null) return {}
     if (!this.cached) {
-      this.raw = readRaw(this.key('rchat_p2p_files'))
+      this.raw = readLocal(this.key('rchat_p2p_files'))
       this.cached = readJson<StoredFile>(this.key('rchat_p2p_files'))
     }
     return this.cached
@@ -601,7 +593,7 @@ export class P2pManager {
   // Every change starts from what is stored now when another tab of the account wrote since this
   // one read or wrote it; otherwise from this tab's copy (which holds what storage refused).
   private fresh() {
-    if (this.cached && readRaw(this.key('rchat_p2p_files')) === this.raw) return this.cached
+    if (this.cached && readLocal(this.key('rchat_p2p_files')) === this.raw) return this.cached
     this.cached = null
     return this.files()
   }

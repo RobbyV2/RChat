@@ -1,5 +1,5 @@
 import { fmtSize, plural } from '../bytes'
-import { home, writeLocal } from '../instances'
+import { home, readLocal, writeLocal } from '../instances'
 import { localDefaults, RANGES, type Local } from './limits'
 
 // What one account runs P2P with: the instance's P2P_LIMITS (its `local.` names), then the
@@ -93,13 +93,7 @@ export const instanceLocal = (info: HasLimits = home.info): Local =>
 export const accountLimits = (info: HasLimits, raw: string | null): Local =>
   applyUser(instanceLocal(info), parseUserLimits(raw))
 
-const readRaw = (username: string) => {
-  try {
-    return localStorage.getItem(home.scoped(userLimitsKey(username)))
-  } catch {
-    return null
-  }
-}
+const readRaw = (username: string) => readLocal(home.scoped(userLimitsKey(username)))
 
 export const readUserLimits = (username: string) => parseUserLimits(readRaw(username))
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
 import { useStore } from '../lib/store'
+import { restoreTheme } from '../lib/start'
 import type { WsStatus } from '../lib/types'
 
 const dotClass: Record<WsStatus, string> = {
@@ -21,7 +22,7 @@ export function ThemeToggle() {
   const theme = useStore(s => s.theme)
   const setTheme = useStore(s => s.setTheme)
   useEffect(() => {
-    useStore.getState().setTheme(localStorage.getItem('rchat_theme') === 'light' ? 'light' : 'dark')
+    restoreTheme()
   }, [])
   return (
     <button

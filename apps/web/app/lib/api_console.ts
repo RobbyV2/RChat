@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { ApiError, readStart } from './api'
-import { api, home, writeLocal } from './instances'
+import { api, home, readLocal, writeLocal } from './instances'
 import {
   EMPTY_HISTORY,
   historyKey,
@@ -68,7 +68,7 @@ export const loadApiHistory = (owner: string | null) => {
   const key = home.scoped(historyKey(owner))
   let history: ApiHistory
   try {
-    const raw = localStorage.getItem(key)
+    const raw = readLocal(key)
     history = parseHistory(raw)
     if (raw !== null && historyValue(history) !== raw)
       writeLocal(key, history.items.length ? historyValue(history) : null)

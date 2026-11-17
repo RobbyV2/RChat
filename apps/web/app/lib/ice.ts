@@ -1,4 +1,4 @@
-import { api, home } from './instances'
+import { api, home, sessionStore } from './instances'
 import type { IceServers, InstanceIce } from './types'
 
 // The only source of ICE servers. Without it, PeerJS uses its own public STUN and TURN servers,
@@ -224,8 +224,8 @@ const forcedPolicy = (): RTCIceTransportPolicy | null => {
   if (typeof window === 'undefined') return null
   try {
     const flag = new URLSearchParams(window.location.search).get('ice')
-    if (flag === 'relay' || flag === 'all') sessionStorage.setItem('rchat_ice_policy', flag)
-    return sessionStorage.getItem('rchat_ice_policy') === 'relay' ? 'relay' : null
+    if (flag === 'relay' || flag === 'all') sessionStore.setItem('rchat_ice_policy', flag)
+    return sessionStore.getItem('rchat_ice_policy') === 'relay' ? 'relay' : null
   } catch {
     return null
   }

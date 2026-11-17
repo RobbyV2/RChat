@@ -2,7 +2,7 @@
 // that runs one handler per event type.
 
 import type { StoreApi } from 'zustand'
-import { home } from '../instances'
+import { home, readLocal } from '../instances'
 import type { Key, Page } from '../lists'
 import type { Paged, RChatState, SearchState } from '../store_types'
 import type { ServerSummary, WsEvent } from '../types'
@@ -87,7 +87,7 @@ export const emptySearch = (): SearchState => ({ results: [], hasMore: false, lo
 // Reads a per-account value; storage that throws (no window, privacy mode) gives the fallback.
 export const readScoped = <T>(key: string, parse: (raw: string | null) => T, fallback: T): T => {
   try {
-    return parse(localStorage.getItem(home.scoped(key)))
+    return parse(readLocal(home.scoped(key)))
   } catch {
     return fallback
   }

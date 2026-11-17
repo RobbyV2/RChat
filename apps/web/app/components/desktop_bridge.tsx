@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { home } from '../lib/instances'
 import { confirmGate, openDeepLink, type LinkEnv } from '../lib/deep_links'
 import { useStore } from '../lib/store'
+import { keptSession } from '../lib/start'
 import { inShell, mobileOs } from '../lib/platform'
 import { listen, shell } from '../lib/platform/desktop'
 import { Dialog, filledBtn, textBtn } from './ui'
@@ -15,11 +16,10 @@ interface Ask {
 
 const env = (confirmSwitch: LinkEnv['confirmSwitch']): LinkEnv => {
   const { me, guest, switchInstance, setError } = useStore.getState()
-  const stored = (key: string) => localStorage.getItem(home.scoped(key)) !== null
   return {
     homeOrigin: home.origin,
     appLinks: mobileOs() !== null,
-    signedIn: stored('rchat_token') || stored('rchat_guest'),
+    signedIn: me !== null || guest || keptSession(),
     live: (me !== null || guest) && !window.location.pathname.startsWith('/login'),
     push: path => {
       window.history.pushState(null, '', path)

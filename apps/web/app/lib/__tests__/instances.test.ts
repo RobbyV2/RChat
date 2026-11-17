@@ -16,10 +16,13 @@ import {
   normalizeOrigin,
   peerFrom,
   readKnown,
+  readLocal,
   rememberInstance,
   resolveInstance,
   savedHome,
+  sessionStore,
   validInfo,
+  writeLocal,
   fitsHome,
   fromOrigin,
   privateHost,
@@ -76,6 +79,45 @@ const memory = (): StorageLike & { data: Map<string, string> } => {
     getItem: k => data.get(k) ?? null,
     setItem: (k, v) => void data.set(k, v),
     removeItem: k => void data.delete(k),
+  }
+}
+
+// Storage as a browser hands it out when it is blocked or failing: every call throws.
+const fail = (): never => {
+  throw new DOMException('The operation is insecure.', 'SecurityError')
+}
+
+const failing = (): StorageLike => ({ getItem: fail, setItem: fail, removeItem: fail })
+
+// Runs `f` with console warnings kept off the test output, and returns them.
+const quietly = async (f: () => unknown) => {
+  const warn = console.warn
+  const said: unknown[][] = []
+  console.warn = (...a: unknown[]) => void said.push(a)
+  try {
+    await f()
+  } finally {
+    console.warn = warn
+  }
+  return said
+}
+
+// Runs `f` with the global `name` set to `value` (a getter when `value` is a function), then
+// puts back what was there.
+const withGlobal = async (name: string, value: unknown, f: () => unknown) => {
+  const before = Object.getOwnPropertyDescriptor(globalThis, name)
+  Object.defineProperty(
+    globalThis,
+    name,
+    typeof value === 'function'
+      ? { configurable: true, get: value as () => unknown }
+      : { configurable: true, writable: true, value }
+  )
+  try {
+    await f()
+  } finally {
+    if (before) Object.defineProperty(globalThis, name, before)
+    else delete (globalThis as Record<string, unknown>)[name]
   }
 }
 
@@ -390,6 +432,100 @@ describe('runtime instance resolution', () => {
     expect(readKnown(store)).toEqual({})
     store.setItem('rchat_instances', 'not json')
     expect(readKnown(store)).toEqual({})
+  })
+
+  test('storage that throws reads as nothing saved and keeps no writes', async () => {
+    const store = failing()
+    expect(savedHome('https://page.example', store)).toBe('https://page.example')
+    expect(readKnown(store)).toEqual({})
+    const said = await quietly(() =>
+      rememberInstance('https://a.example', at('https://a.example'), store)
+    )
+    expect(said.map(a => a.slice(0, 2))).toEqual([['localStorage write failed', 'rchat_instances']])
+  })
+
+  test('a local write reports false when storage throws or cannot be reached', async () => {
+    const said = await quietly(async () => {
+      await withGlobal('localStorage', failing(), () => {
+        expect(writeLocal('rchat_theme', 'light')).toBe(false)
+        expect(writeLocal('rchat_theme', null)).toBe(false)
+      })
+      await withGlobal('localStorage', fail, () => {
+        expect(writeLocal('rchat_theme', 'light')).toBe(false)
+        expect(writeLocal('rchat_theme', null)).toBe(false)
+      })
+    })
+    expect(said.map(a => a.slice(0, 2))).toEqual(
+      Array.from({ length: 4 }, () => ['localStorage write failed', 'rchat_theme'])
+    )
+    const store = memory()
+    await withGlobal('localStorage', store, () => {
+      expect(writeLocal('rchat_theme', 'light')).toBe(true)
+      expect(store.data.get('rchat_theme')).toBe('light')
+      expect(writeLocal('rchat_theme', null)).toBe(true)
+      expect(store.data.has('rchat_theme')).toBe(false)
+    })
+  })
+
+  test('a local read is nothing saved when storage throws or cannot be reached', async () => {
+    await withGlobal('localStorage', failing(), () => expect(readLocal('rchat_theme')).toBeNull())
+    await withGlobal('localStorage', fail, () => expect(readLocal('rchat_theme')).toBeNull())
+    await withGlobal('localStorage', undefined, () => expect(readLocal('rchat_theme')).toBeNull())
+    const store = memory()
+    store.setItem('rchat_theme', 'light')
+    await withGlobal('localStorage', store, () => expect(readLocal('rchat_theme')).toBe('light'))
+  })
+
+  test('the session store reads nothing and keeps nothing when sessionStorage throws', async () => {
+    const windows = [
+      { sessionStorage: failing() },
+      Object.defineProperty({}, 'sessionStorage', { get: fail }),
+      {},
+      undefined,
+    ]
+    const said = await quietly(async () => {
+      for (const window of windows)
+        await withGlobal('window', window, () => {
+          expect(sessionStore.getItem('rchat_p2p_home')).toBeNull()
+          sessionStore.setItem('rchat_p2p_home', 'bob')
+          sessionStore.removeItem('rchat_p2p_home')
+        })
+    })
+    expect(said).toEqual([])
+    const store = memory()
+    await withGlobal('window', { sessionStorage: store }, () => {
+      sessionStore.setItem('rchat_p2p_home', 'bob')
+      expect(store.data.get('rchat_p2p_home')).toBe('bob')
+      expect(sessionStore.getItem('rchat_p2p_home')).toBe('bob')
+      sessionStore.removeItem('rchat_p2p_home')
+      expect(store.data.has('rchat_p2p_home')).toBe(false)
+    })
+  })
+
+  test('the app starts at its default home when its storage throws', async () => {
+    // The home a fresh load of the module starts at under `window`.
+    const started = async (window: unknown, tag: string) => {
+      let seen: unknown[] = []
+      await withGlobal('window', window, async () => {
+        const m = (await import(`../instances?${tag}`)) as typeof import('../instances')
+        seen = [m.home.isDefault, m.home.origin, m.home.info, m.knownInstances()]
+      })
+      return seen
+    }
+    const plain = await started(undefined, 'no-window')
+    expect([plain[0], plain[2], plain[3]]).toEqual([true, null, []])
+    expect(await started({ localStorage: failing() }, 'failing-storage')).toEqual(plain)
+    expect(
+      await started(Object.defineProperty({}, 'localStorage', { get: fail }), 'no-storage')
+    ).toEqual(plain)
+    const store = memory()
+    store.setItem('rchat_home', 'chat.example.com')
+    expect(await started({ localStorage: store }, 'saved-home')).toEqual([
+      false,
+      'https://chat.example.com',
+      null,
+      [],
+    ])
   })
 })
 

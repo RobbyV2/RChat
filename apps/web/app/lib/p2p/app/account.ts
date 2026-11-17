@@ -1,4 +1,4 @@
-import { api, home, homeLookup, shareOrigin } from '../../instances'
+import { api, home, homeLookup, sessionStore, shareOrigin } from '../../instances'
 import { probeAddress } from '../../ice'
 import { keepAsker } from '../keep'
 import { dbName, P2pStore, removeP2pDb } from '../db'
@@ -314,7 +314,7 @@ export const startDeps = (username: string) => {
 const INFO_WAIT_MS = 5000
 
 // Never waited on (keep.ts); asked again at a later start after a dismissed prompt.
-const keep = keepAsker(() => sessionStorage)
+const keep = keepAsker(() => sessionStore)
 const storageManager = () => (typeof navigator === 'undefined' ? undefined : navigator.storage)
 
 export const boot = async (

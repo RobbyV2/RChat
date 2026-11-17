@@ -6,6 +6,7 @@ import { ArrowRight, Globe } from 'lucide-react'
 import { DEFAULT_INSTANCE_NAME, api, home, knownInstances, normalizeOrigin } from '../lib/instances'
 import { hostOf } from '../lib/qualified'
 import { useStore } from '../lib/store'
+import { keptSession, restoreStreamer } from '../lib/start'
 import { shellInfo } from '../lib/platform'
 import { safeNext } from '../lib/invite'
 import { passwordSignup } from '../lib/features'
@@ -22,10 +23,6 @@ type Mode = 'login' | 'register'
 
 const inputBase = 'rounded-lg border bg-transparent px-3 py-2 outline-none'
 const inputCls = `${inputBase} border-outline focus:border-primary`
-
-const signedIn = () =>
-  localStorage.getItem(home.scoped('rchat_token')) !== null ||
-  localStorage.getItem(home.scoped('rchat_guest')) !== null
 
 function blurHosts(text: string, hosts: (string | null)[]): ReactNode {
   const wanted = [...new Set(hosts.filter((h): h is string => !!h))].sort(
@@ -105,7 +102,7 @@ function InstancePicker({
     setOpen(false)
     setAddress('')
     onMissing(false)
-    if (signedIn()) onSwitched()
+    if (keptSession()) onSwitched()
   }
 
   const name = info?.name || DEFAULT_INSTANCE_NAME
@@ -225,7 +222,7 @@ export default function LoginPage() {
   const nameId = useId()
 
   useEffect(() => {
-    useStore.getState().setStreamer(localStorage.getItem('rchat_streamer') === '1')
+    restoreStreamer()
     if (new URLSearchParams(window.location.search).get('mode') === 'register') setMode('register')
   }, [])
 

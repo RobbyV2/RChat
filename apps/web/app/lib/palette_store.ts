@@ -4,7 +4,7 @@ import { paletteRow } from './actions/palette'
 import { actionById, guardAction } from './actions/registry'
 import { askable } from './actions/steps'
 import type { Target } from './actions/types'
-import { home, writeLocal } from './instances'
+import { home, readLocal, writeLocal } from './instances'
 import {
   EMPTY_PALETTE,
   noteUse,
@@ -47,7 +47,7 @@ export const usePaletteUi = create<PaletteUi>(() => ({
 
 const read = (owner: string | null): PalettePrefs => {
   try {
-    return parsePalette(localStorage.getItem(home.scoped(palettePrefsKey(owner))))
+    return parsePalette(readLocal(home.scoped(palettePrefsKey(owner))))
   } catch {
     return EMPTY_PALETTE
   }

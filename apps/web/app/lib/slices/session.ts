@@ -27,6 +27,7 @@ import {
   noteHomeInfo,
   homeLookup,
   pageHref,
+  readLocal,
   resolveInstance,
   selectHome,
   shareOrigin,
@@ -133,7 +134,7 @@ const THEME_COLORS: Record<Theme, string> = { dark: '#141218', light: '#fef7ff' 
 
 const readJson = <T>(key: string, fallback: T): T => {
   try {
-    const raw = localStorage.getItem(key)
+    const raw = readLocal(key)
     return raw ? (JSON.parse(raw) as T) : fallback
   } catch {
     return fallback
@@ -337,7 +338,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   relayBook.onChange(() => set({ relayPrefs: relayBook.prefs }))
 
   const armIce = (username: string | null, signedIn: boolean) => {
-    const { on, relay } = parseIce(localStorage.getItem(home.scoped(iceKey(username))))
+    const { on, relay } = parseIce(readLocal(home.scoped(iceKey(username))))
     ice.setHelpers(on)
     ice.setRelay(relay)
     if (relayAnswer) settleRelayPrompt('deny')
@@ -1344,8 +1345,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }
       await get().loadInstance()
       void get().loadSettings()
-      const token = localStorage.getItem(LS.token)
-      const guest = localStorage.getItem(LS.guest) === '1'
+      const token = readLocal(LS.token)
+      const guest = readLocal(LS.guest) === '1'
       const stored = readJson<unknown>(LS.guestServers, null)
       const guestServers = Array.isArray(stored)
         ? stored.filter((n): n is string => typeof n === 'string')
@@ -1650,7 +1651,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     openLastDm: () => {
       const { me } = get()
       if (!me) return
-      const stored = Number(localStorage.getItem(`${LS.lastDm}:${me.username}`))
+      const stored = Number(readLocal(`${LS.lastDm}:${me.username}`))
       const known = () => get().dms.some(d => d.id === stored)
       const at = sessionMark()
       const go = () => {
