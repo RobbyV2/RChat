@@ -435,12 +435,13 @@ describe('in messages', () => {
       )
     expect(tile('alice')).toContain('aria-label="Focus shit head (alice)"')
     expect(tile('shit')).toContain('aria-label="Focus **** head (****)"')
-    // A P2P call names people by their P2P identity, never the instance username.
+    // A P2P call names people by their P2P name, masked unless the tile is your own.
     const ownTile = tile('shit', { own: true })
-    expect(ownTile).toContain('aria-label="Focus shit head (shit)"')
+    expect(ownTile).toContain('aria-label="Focus shit head"')
     expect(ownTile.includes('data-masked-word')).toBe(false)
     const peerTile = tile('alice', { own: false })
-    expect(peerTile).toContain('aria-label="Focus **** head (alice)"')
+    expect(peerTile).toContain('aria-label="Focus **** head"')
+    expect(peerTile.includes('(alice)')).toBe(false)
     expect(peerTile).toContain('data-masked-word')
     const mask = (t: string) => t.replace(/shit/g, '****')
     expect(dmPlaceholder(user('shit'), false, mask)).toBe('Message @****')

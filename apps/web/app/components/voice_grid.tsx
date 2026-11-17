@@ -40,7 +40,7 @@ import {
 import { pastFit, VOICE_NOTICE, type VoiceUser } from '../lib/p2p/voice'
 import { displayName } from '../lib/p2p/contacts'
 import type { CallView } from '../lib/p2p/calls'
-import { P2pBadge } from './p2p/p2p_badge'
+import { KeyAvatar, P2pBadge } from './p2p/p2p_badge'
 import { useMask, userRefFor, useStore, voiceMutedIn } from '../lib/store'
 import { voiceHushedIn } from '../lib/selectors'
 import { accountPrompt } from '../lib/features'
@@ -71,7 +71,7 @@ import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
 import { Masked, useEscape, useOwn } from './ui'
 import { NameWithUsername } from './display_name'
-import { maskedName } from '../lib/display_name'
+import { tileName } from '../lib/display_name'
 import { ownsP2pServer } from '../lib/p2p/server/types'
 import { ChannelTopic } from './channel_topic'
 import { useMyTimeoutEnds } from './timeout_dialog'
@@ -371,7 +371,7 @@ export function Tile({
   const avatar = compact ? 32 : Math.round(Math.max(40, Math.min(96, box * 0.3)))
   const mine = useOwn(user.username)
   const mask = useMask(tile.own ?? mine)
-  const name = maskedName(user, mask)
+  const name = tileName(user, tile.local === true, mask)
   const label = screen ? `${name}'s screen` : name
   const menu = useGuestMenu(tile.local || screen || pending ? null : server, user.username)
   const menuOpen = useGuestMenuOpen(user.username)
@@ -425,6 +425,8 @@ export function Tile({
           )}
           {streamer ? (
             <AvatarHidden size={avatar} />
+          ) : tile.local ? (
+            <KeyAvatar ik={user.username} size={avatar} />
           ) : (
             <UserAvatar
               username={user.username}
@@ -469,7 +471,11 @@ export function Tile({
           />
         )}
         <span className="streamer truncate">
-          <NameWithUsername user={user} own={tile.own} />
+          {tile.local ? (
+            <Masked text={user.display_name} own={tile.own} />
+          ) : (
+            <NameWithUsername user={user} own={tile.own} />
+          )}
         </span>
         {pending && <span className="shrink-0 opacity-75">Ringing…</span>}
         {tile.staffMuted && !screen && !compact && (

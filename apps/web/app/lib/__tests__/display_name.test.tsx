@@ -14,7 +14,7 @@ import { ActorHit } from '../../components/audit_log'
 import { PreviewLine } from '../../components/invite_card'
 import { VoterRow } from '../../components/poll_card'
 import TimeoutDialogHost from '../../components/timeout_dialog'
-import { DockPlace } from '../../components/voice_grid'
+import { DockPlace, Tile } from '../../components/voice_grid'
 import { CreatorNote } from '../../components/webhooks_dialog'
 import { paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
@@ -26,6 +26,7 @@ import {
   mentionHandle,
   nameWithUsername,
   showsUsername,
+  tileName,
 } from '../display_name'
 import { DEFAULT_FEATURES } from '../features'
 import { api } from '../instances'
@@ -314,4 +315,58 @@ test('the voice dock, poll voters, invite previews and staff tools name the acco
   expect(note).toContain(shown)
   Object.assign(initial, { activeDialog: { kind: 'timeout', server: 's', user: impostor } })
   expect(render(<TimeoutDialogHost />)).toContain(shown)
+})
+
+// A P2P identity's key, which stands where an account's username stands.
+const KEY = 'Qk3xZ9'.padEnd(43, 'a')
+
+const tileOf = (u: ReturnType<typeof user>, p2p: { own: boolean } | null, screen = false) => ({
+  ...(p2p ? { local: true, own: p2p.own } : {}),
+  key: screen ? `${u.username}:screen` : u.username,
+  user: u,
+  stream: null,
+  hasVideo: false,
+  muted: false,
+  deafened: false,
+  speaking: false,
+  mirror: false,
+  pending: false,
+  tint: '#336699',
+  screen,
+  shareId: null,
+})
+
+test('a voice tile names a P2P identity by its P2P name and an account with its username', () => {
+  const plain = (text: string) => text
+  const stars = (text: string) => text.replace(/shit/g, '****')
+  expect(tileName(user(KEY, { display_name: 'Alice' }), true, plain)).toBe('Alice')
+  expect(tileName(user(KEY, { display_name: 'shit head' }), true, stars)).toBe('**** head')
+  expect(tileName(user('alice', { display_name: 'Ally' }), false, plain)).toBe('Ally (alice)')
+  expect(tileName(user('alice', { display_name: 'Alice' }), false, plain)).toBe('Alice')
+  expect(tileName(user('@guest:abcd1234', { display_name: 'Guest abcd' }), false, stars)).toBe(
+    'Guest abcd'
+  )
+})
+
+test('a P2P voice tile shows the P2P name and keeps the key out of its labels', () => {
+  Object.assign(initial, { token: 'tok', me: me('carol') })
+  const alice = user(KEY, { display_name: 'Alice' })
+  const tile = (t: ReturnType<typeof tileOf>, server: string | null = null) =>
+    render(<Tile tile={t} server={server} focused={false} compact={false} onToggle={() => {}} />)
+  const outside = (html: string, key: string) => html.replace(`data-tile="${key}"`, '')
+  const theirs = tile(tileOf(alice, { own: false }))
+  expect(theirs).toContain('<span class="streamer truncate">Alice</span>')
+  expect(theirs).toContain('aria-label="Focus Alice"')
+  expect(outside(theirs, KEY).includes(KEY)).toBe(false)
+  const mine = tile(tileOf(alice, { own: true }))
+  expect(mine).toContain('<span class="streamer truncate">Alice</span>')
+  expect(outside(mine, KEY).includes(KEY)).toBe(false)
+  const screen = tile(tileOf(alice, { own: false }, true))
+  expect(screen).toContain('aria-label="Focus Alice&#x27;s screen"')
+  expect(outside(screen, `${KEY}:screen`).includes(KEY)).toBe(false)
+  const account = tile(tileOf(user('alice', { display_name: 'Ally' }), null), 's')
+  expect(account).toContain(
+    `<span class="streamer truncate">${USERNAME_AFTER('Ally', 'alice')}</span>`
+  )
+  expect(account).toContain('aria-label="Focus Ally (alice)"')
 })

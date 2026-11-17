@@ -32,6 +32,11 @@ export const nameWithUsername = (u: Named) =>
 export const maskedName = (u: Named, mask: (text: string) => string) =>
   isGuestName(u.username) ? u.display_name : mask(nameWithUsername(u))
 
+// A voice tile's name as the viewer's filter shows it. A P2P identity carries its key where an
+// account carries its username, so a P2P tile shows the P2P name alone, as the P2P pages do.
+export const tileName = (u: Named, p2p: boolean, mask: (text: string) => string) =>
+  p2p ? mask(u.display_name) : maskedName(u, mask)
+
 // What a mention pill shows: the handle that resolves.
 export const mentionHandle = (u: Named) => (showsUsername(u) ? u.username : u.display_name)
 
