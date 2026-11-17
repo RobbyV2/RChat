@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::Response;
+use tokio::sync::Notify;
 
 use crate::api::ApiError;
 
@@ -232,6 +233,14 @@ impl Bucket {
         }
         answer
     }
+
+    /// Gives back one token taken from `key`, whose bucket holds `burst`.
+    pub fn give_back(&self, key: &str, burst: u32) {
+        let mut table = locked(&self.table);
+        if let Some(entry) = table.map.get_mut(key) {
+            entry.1 = (entry.1 + 1.0).min(f64::from(burst.max(1)));
+        }
+    }
 }
 
 /// Failed attempts per key with a growing wait. The first `free` failures cost nothing; after
@@ -352,6 +361,7 @@ impl Drop for Slot {
 #[derive(Default)]
 pub struct Shares {
     held: Mutex<HashMap<String, u64>>,
+    given_back: Notify,
 }
 
 /// An amount held in `Shares`; dropping it gives the amount back.
@@ -379,6 +389,38 @@ impl Shares {
         }
     }
 
+    /// Like `take`, but when the amount is not free it waits for holders to give amounts back,
+    /// until `deadline` or until `keep` is false. A free amount is taken whatever `keep` says;
+    /// `keep` is checked while the amount is not free, again on every `wake`.
+    pub async fn take_by(
+        &'static self,
+        key: &str,
+        amount: u64,
+        most: u64,
+        deadline: tokio::time::Instant,
+        keep: impl Fn() -> bool,
+    ) -> Option<Share> {
+        loop {
+            let given_back = self.given_back.notified();
+            let mut given_back = std::pin::pin!(given_back);
+            given_back.as_mut().enable();
+            if let Some(share) = self.take(key, amount, most) {
+                return Some(share);
+            }
+            if !keep() {
+                return None;
+            }
+            if tokio::time::timeout_at(deadline, given_back).await.is_err() {
+                return None;
+            }
+        }
+    }
+
+    /// Makes every `take_by` that waits check again.
+    pub fn wake(&self) {
+        self.given_back.notify_waiters();
+    }
+
     #[cfg(test)]
     pub fn held(&self, key: &str) -> u64 {
         locked(&self.held).get(key).copied().unwrap_or(0)
@@ -387,13 +429,16 @@ impl Shares {
 
 impl Drop for Share {
     fn drop(&mut self) {
-        let mut held = locked(&self.shares.held);
-        if let Some(n) = held.get_mut(&self.key) {
-            *n = n.saturating_sub(self.amount);
-            if *n == 0 {
-                held.remove(&self.key);
+        {
+            let mut held = locked(&self.shares.held);
+            if let Some(n) = held.get_mut(&self.key) {
+                *n = n.saturating_sub(self.amount);
+                if *n == 0 {
+                    held.remove(&self.key);
+                }
             }
         }
+        self.shares.wake();
     }
 }
 
@@ -412,7 +457,7 @@ pub fn client() -> Option<IpAddr> {
     CLIENT.try_with(|ip| *ip).ok()
 }
 
-#[cfg(test)]
+/// Runs `f` as work for the client at `ip`.
 pub async fn as_client<F: std::future::Future>(ip: IpAddr, f: F) -> F::Output {
     CLIENT.scope(ip, f).await
 }
@@ -571,6 +616,31 @@ mod tests {
     }
 
     #[test]
+    fn a_token_given_back_can_be_taken_again_up_to_the_burst() {
+        let b = Bucket::new(10);
+        let t0 = Instant::now();
+        for n in 0..3 {
+            assert_eq!(b.take_at("a", 3, 60, t0), Ok(()), "{n}");
+        }
+        assert!(b.take_at("a", 3, 60, t0).is_err());
+        b.give_back("a", 3);
+        assert_eq!(b.take_at("a", 3, 60, t0), Ok(()), "the token came back");
+        assert!(b.take_at("a", 3, 60, t0).is_err(), "only one");
+        for _ in 0..10 {
+            b.give_back("a", 3);
+        }
+        let taken = (0..10)
+            .take_while(|_| b.take_at("a", 3, 60, t0).is_ok())
+            .count();
+        assert_eq!(taken, 3, "a bucket holds at most its burst");
+        b.give_back("b", 3);
+        let fresh = (0..10)
+            .take_while(|_| b.take_at("b", 3, 60, t0).is_ok())
+            .count();
+        assert_eq!(fresh, 3, "a key without a bucket gains nothing");
+    }
+
+    #[test]
     fn a_full_table_evicts_only_the_oldest_window() {
         let b = Budget::new(1, Duration::from_secs(60), 3);
         for key in ["a", "b", "c"] {
@@ -666,6 +736,51 @@ mod tests {
             SLOTS.enter("a".to_string()).is_some(),
             "a dropped slot frees a place"
         );
+    }
+
+    #[tokio::test]
+    async fn shares_wait_until_an_amount_comes_back() {
+        static SHARES: LazyLock<Shares> = LazyLock::new(Shares::default);
+        let after = |ms: u64| tokio::time::Instant::now() + Duration::from_millis(ms);
+        let brief = Duration::from_millis(100);
+        let all = SHARES.take("a", 2, 2).expect("free");
+        assert!(
+            SHARES
+                .take_by("a", 1, 2, after(50), || true)
+                .await
+                .is_none(),
+            "it gives up at the deadline"
+        );
+        let mut waits = Box::pin(SHARES.take_by("a", 1, 2, after(60_000), || true));
+        assert!(tokio::time::timeout(brief, waits.as_mut()).await.is_err());
+        assert!(
+            SHARES
+                .take_by("b", 1, 2, after(60_000), || true)
+                .await
+                .is_some(),
+            "other keys are not held back"
+        );
+        drop(all);
+        let one = waits.await.expect("an amount given back ends the wait");
+        assert_eq!(SHARES.held("a"), 1);
+        let rest = SHARES
+            .take_by("a", 1, 2, after(60_000), || false)
+            .await
+            .expect("a free amount is taken whatever `keep` says");
+        let keep = std::sync::atomic::AtomicBool::new(true);
+        let mut waits = Box::pin(SHARES.take_by("a", 1, 2, after(60_000), || {
+            keep.load(std::sync::atomic::Ordering::Relaxed)
+        }));
+        assert!(tokio::time::timeout(brief, waits.as_mut()).await.is_err());
+        keep.store(false, std::sync::atomic::Ordering::Relaxed);
+        SHARES.wake();
+        let stopped = tokio::time::timeout(brief, waits).await;
+        assert!(
+            matches!(stopped, Ok(None)),
+            "a wake makes it check `keep` again"
+        );
+        drop((one, rest));
+        assert_eq!(SHARES.held("a"), 0);
     }
 
     #[test]

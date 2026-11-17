@@ -1,7 +1,7 @@
 // Messages and DMs: the loaded windows with their tails and heads, live appends, quotes and
 // edits, pins, link cards, the outbox, embeds, P2P availability and the DM list.
 
-import { ApiError, type PageOpts, type SendOpts } from '../api'
+import { ApiError, type PageOpts, type SearchParams, type SendOpts } from '../api'
 import {
   type PendingUpload,
   type UploadMode,
@@ -60,7 +60,15 @@ import {
 } from '../replies'
 import { charCount } from '../rules'
 import { nameWithUsername } from '../display_name'
-import { SEARCH_PAGE, SEARCH_TRIES, addSearchPage, searchParams } from '../search'
+import {
+  SEARCH_PAGE,
+  addSearchPage,
+  sameSearch,
+  searchParams,
+  searchRetryAfter,
+  searchTries,
+  type SearchArgs,
+} from '../search'
 import { type Sed, applySed, lastEditable } from '../sed'
 import { myPerms, scopeRule } from '../selectors'
 import { hashBlob } from '../sha256'
@@ -335,6 +343,10 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   }
 
   let dmGen = 0
+  // The requests of the last search run; the next run aborts them.
+  let searching: AbortController | null = null
+  // The filters of the last search run, the only ones its cursor reads on for.
+  let searchFor: SearchArgs | null = null
   // DMs this account closed that a lookup by id returned, so their settings are kept.
   const closedDms = new Map<number, DmSummary>()
 
@@ -1874,22 +1886,40 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     searchRun: (args, reset) =>
       act(async () => {
         const cur = get().search
-        if (!reset && (cur.loading || !cur.hasMore)) return
-        if (reset) epochs.search = (epochs.search ?? 0) + 1
+        if (!reset && (cur.loading || !cur.hasMore || !sameSearch(args, searchFor))) return
+        if (reset) {
+          epochs.search = (epochs.search ?? 0) + 1
+          searchFor = args
+        }
         const epoch = epochs.search ?? 0
         const at = sessionMark()
         const current = () => (epochs.search ?? 0) === epoch && at === sessionMark()
+        searching?.abort()
+        const request = new AbortController()
+        searching = request
         let results = reset ? [] : cur.results
         let cursor = reset ? null : (cur.cursor ?? null)
         set({ search: { results, hasMore: true, loading: true, cursor } })
         const { guest, guestServers } = get()
         const start = results.length
+        const ask = async (params: SearchParams) => {
+          try {
+            return await api.search(params, request.signal)
+          } catch (e) {
+            const wait = searchRetryAfter(e)
+            if (wait === null || !current()) throw e
+            await new Promise(resolve => setTimeout(resolve, wait * 1000))
+            if (!current()) throw e
+            return api.search(params, request.signal)
+          }
+        }
         for (let tries = 0; ; tries += 1) {
           let page: Page<SearchResult>
           try {
-            page = await api.search(searchParams(args, cursor, guest ? guestServers : null))
+            page = await ask(searchParams(args, cursor, guest ? guestServers : null))
           } catch (e) {
-            if (current()) set({ search: { results, hasMore: true, loading: false, cursor } })
+            if (!current()) return
+            set({ search: { results, hasMore: true, loading: false, cursor } })
             throw e
           }
           if (!current()) return
@@ -1897,7 +1927,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           results = next.results
           cursor = page.next
           const done =
-            !next.hasMore || results.length - start >= SEARCH_PAGE || tries + 1 >= SEARCH_TRIES
+            !next.hasMore ||
+            results.length - start >= SEARCH_PAGE ||
+            tries + 1 >= searchTries(args.q)
           set({ search: { ...next, loading: !done, cursor } })
           if (done) return
         }

@@ -183,7 +183,8 @@ export class ApiClient {
     body?: unknown,
     extra: Record<string, string> = {},
     keepalive = false,
-    timeoutMs = 0
+    timeoutMs = 0,
+    signal?: AbortSignal
   ): Promise<Response> {
     const headers: Record<string, string> = { ...extra }
     if (headers.Authorization === undefined && this.token) {
@@ -193,7 +194,10 @@ export class ApiClient {
       if (grants.length) headers['X-Guest-Grant'] = grants.join(',')
     }
     const init: RequestInit = keepalive ? { method, headers, keepalive } : { method, headers }
-    if (timeoutMs) init.signal = AbortSignal.timeout(timeoutMs)
+    const stops = [signal, timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined].filter(
+      s => s !== undefined
+    )
+    if (stops.length) init.signal = stops.length === 1 ? stops[0] : AbortSignal.any(stops)
     if (body instanceof FormData) {
       init.body = body
     } else if (body !== undefined) {
@@ -218,8 +222,8 @@ export class ApiClient {
     return handleResponse<T>(await this.send(method, path, body, extra, keepalive, timeoutMs))
   }
 
-  async page<T>(path: string): Promise<Page<T>> {
-    const response = await this.send('GET', path)
+  async page<T>(path: string, signal?: AbortSignal): Promise<Page<T>> {
+    const response = await this.send('GET', path, undefined, {}, false, 0, signal)
     if (!response.ok) return failed(response)
     const items = (await response.json()) as T[]
     return { items, next: response.headers.get(NEXT_CURSOR) || null }
@@ -769,13 +773,13 @@ export const endpoints = (c: ApiClient) => ({
     c.req<Message[]>('GET', `/messages/${id}/thread${pageQuery(page)}`),
   sendThreadMessage: (id: number, content: string, opts: SendOpts = {}) =>
     c.req<Message>('POST', `/messages/${id}/thread`, { content, ...opts }),
-  search: (params: SearchParams) => {
+  search: (params: SearchParams, signal?: AbortSignal) => {
     const qs = new URLSearchParams()
     for (const [k, v] of Object.entries(params)) {
       if (Array.isArray(v)) for (const item of v) qs.append(k, String(item))
       else if (v !== undefined) qs.set(k, String(v))
     }
-    return c.page<SearchResult>(`/search?${qs.toString()}`)
+    return c.page<SearchResult>(`/search?${qs.toString()}`, signal)
   },
   getUnreads: () => c.req<{ items: Unread[]; more: boolean }>('GET', '/unreads'),
   postRead: (scope: string, last_read: number, keepalive = false, pings_until?: number) =>

@@ -15,7 +15,7 @@ const MIB: usize = 1024 * 1024;
 pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 53] = [
+const RANGES: [(&str, i64, i64); 56] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("WS_CONNECTIONS_PER_USER", 1, 10_000),
@@ -67,6 +67,9 @@ const RANGES: [(&str, i64, i64); 53] = [
     ("LOOKUP_SEARCH_PER_MINUTE", 1, 1_000),
     ("LOOKUP_PROFILE_PER_MINUTE", 10, 10_000),
     ("LOOKUP_MISSES_PER_HOUR", 0, 100_000),
+    ("MESSAGE_SEARCH_PER_MINUTE", 1, 1_000),
+    ("MESSAGE_SEARCH_AT_ONCE", 1, 100),
+    ("MESSAGE_SEARCH_CONCURRENT_LIMIT", 1, 1_000),
     ("RARE_REQUESTS_PER_HOUR", 0, 10_000),
     ("RARE_REQUESTS_PER_DAY", 0, 100_000),
 ];
@@ -224,6 +227,9 @@ pub struct Limits {
     pub lookup_search_per_minute: u32,
     pub lookup_profile_per_minute: u32,
     pub lookup_misses_per_hour: u32,
+    pub message_search_per_minute: u32,
+    pub message_search_at_once: u32,
+    pub message_search_concurrent_limit: Option<u32>,
     pub rare_requests_per_hour: u32,
     pub rare_requests_per_day: u32,
     /// `P2P_LIMITS`: the names given that the P2P registry has, with their values.
@@ -288,6 +294,9 @@ impl Default for Limits {
             lookup_search_per_minute: 30,
             lookup_profile_per_minute: 120,
             lookup_misses_per_hour: 200,
+            message_search_per_minute: 30,
+            message_search_at_once: 1,
+            message_search_concurrent_limit: None,
             rare_requests_per_hour: 20,
             rare_requests_per_day: 100,
             p2p: BTreeMap::new(),
@@ -489,6 +498,10 @@ impl Limits {
             lookup_profile_per_minute: e
                 .num("LOOKUP_PROFILE_PER_MINUTE", d.lookup_profile_per_minute)?,
             lookup_misses_per_hour: e.num("LOOKUP_MISSES_PER_HOUR", d.lookup_misses_per_hour)?,
+            message_search_per_minute: e
+                .num("MESSAGE_SEARCH_PER_MINUTE", d.message_search_per_minute)?,
+            message_search_at_once: e.num("MESSAGE_SEARCH_AT_ONCE", d.message_search_at_once)?,
+            message_search_concurrent_limit: e.opt("MESSAGE_SEARCH_CONCURRENT_LIMIT")?,
             rare_requests_per_hour: e.num("RARE_REQUESTS_PER_HOUR", d.rare_requests_per_hour)?,
             rare_requests_per_day: e.num("RARE_REQUESTS_PER_DAY", d.rare_requests_per_day)?,
             p2p,
@@ -555,6 +568,9 @@ impl Limits {
             lookup_search_per_minute,
             lookup_profile_per_minute,
             lookup_misses_per_hour,
+            message_search_per_minute,
+            message_search_at_once,
+            message_search_concurrent_limit,
             rare_requests_per_hour,
             rare_requests_per_day,
             p2p: _,
@@ -630,6 +646,12 @@ impl Limits {
             ("LOOKUP_SEARCH_PER_MINUTE", set(lookup_search_per_minute)),
             ("LOOKUP_PROFILE_PER_MINUTE", set(lookup_profile_per_minute)),
             ("LOOKUP_MISSES_PER_HOUR", set(lookup_misses_per_hour)),
+            ("MESSAGE_SEARCH_PER_MINUTE", set(message_search_per_minute)),
+            ("MESSAGE_SEARCH_AT_ONCE", set(message_search_at_once)),
+            (
+                "MESSAGE_SEARCH_CONCURRENT_LIMIT",
+                opt(message_search_concurrent_limit),
+            ),
             ("RARE_REQUESTS_PER_HOUR", set(rare_requests_per_hour)),
             ("RARE_REQUESTS_PER_DAY", set(rare_requests_per_day)),
         ]
@@ -869,6 +891,7 @@ mod tests {
                 "DATABASE_ACQUIRE_TIMEOUT_SECS",
                 "DATABASE_READ_CONNECTIONS",
                 "RELAY_MAX_ALLOCATIONS",
+                "MESSAGE_SEARCH_CONCURRENT_LIMIT",
             ]
         );
         for (name, lo, hi) in RANGES {
@@ -1378,6 +1401,47 @@ mod tests {
     }
 
     #[test]
+    fn message_search_limits_have_their_defaults_and_ranges() {
+        let d = load(&[]).expect("defaults");
+        assert_eq!(
+            (
+                d.message_search_per_minute,
+                d.message_search_at_once,
+                d.message_search_concurrent_limit
+            ),
+            (30, 1, None)
+        );
+        let set = load(&[
+            ("MESSAGE_SEARCH_PER_MINUTE", "1000".to_string()),
+            ("MESSAGE_SEARCH_AT_ONCE", " 4 ".to_string()),
+            ("MESSAGE_SEARCH_CONCURRENT_LIMIT", "1".to_string()),
+        ])
+        .expect("set");
+        assert_eq!(
+            (
+                set.message_search_per_minute,
+                set.message_search_at_once,
+                set.message_search_concurrent_limit
+            ),
+            (1000, 4, Some(1))
+        );
+        for (name, bad, range) in [
+            ("MESSAGE_SEARCH_PER_MINUTE", "0", "1 to 1000"),
+            ("MESSAGE_SEARCH_PER_MINUTE", "1001", "1 to 1000"),
+            ("MESSAGE_SEARCH_AT_ONCE", "0", "1 to 100"),
+            ("MESSAGE_SEARCH_AT_ONCE", "101", "1 to 100"),
+            ("MESSAGE_SEARCH_CONCURRENT_LIMIT", "0", "1 to 1000"),
+            ("MESSAGE_SEARCH_CONCURRENT_LIMIT", "half", "1 to 1000"),
+        ] {
+            let err = load(&[(name, bad.to_string())]).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("{name}: expected {range}, got {bad}")
+            );
+        }
+    }
+
+    #[test]
     fn bad_p2p_limits_json_stops_the_start() {
         for bad in [
             "{",
@@ -1487,6 +1551,7 @@ mod tests {
             database_acquire_timeout_secs: None,
             database_read_connections: None,
             relay_max_allocations: None,
+            message_search_concurrent_limit: None,
             ..l
         };
         assert_eq!(

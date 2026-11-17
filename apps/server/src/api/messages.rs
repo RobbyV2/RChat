@@ -2242,8 +2242,14 @@ const FTS_ROUNDS: usize = 8;
 /// they joined. Guests (allowed when guest access is on) search only the servers listed in
 /// `servers`, only channels without permission overrides, and only servers without a password
 /// or with a valid grant in `X-Guest-Grant` (invalid grants are ignored). Messages by accounts
-/// being deleted are left out. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/search", tag = "Search", params(SearchQuery), responses((status = 200, description = "Up to 25 messages from channels the caller can view whose content contains `q` (case-insensitive), newest first; `before`/`after` bound the message id and `before_ts`/`after_ts` bound `created_at` (exclusive, unix seconds). When more results may follow, the `X-Next-Cursor` response header holds a `cursor` for the next page (it is absent once the search reached the oldest message); a page can hold fewer than 25 results and still have a next cursor. Passing the oldest returned id as `before` also works when the page is full. The legacy `offset` is capped at 500. Guests pass the servers to search as repeated `servers` params (`servers=a&servers=b`, max 100)", body = Vec<SearchResult>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid number or cursor, or text containing a NUL character", body = ApiErrorBody), (status = 401, description = "No valid token and guest access is disabled", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+/// being deleted are left out. Each search that runs counts as one message search of the
+/// caller, an account or the client address of a guest: 30 a minute with 10 at once
+/// (`MESSAGE_SEARCH_PER_MINUTE`), one running at a time (`MESSAGE_SEARCH_AT_ONCE`; the next one
+/// waits up to 5 s for it, and a newer one takes the place of one that waits), and for all
+/// callers together as many at a time as `MESSAGE_SEARCH_CONCURRENT_LIMIT` allows (by default
+/// half the connections reads use; a search waits up to 2 s for a place). A search refused
+/// after its wait or replaced by a newer one does not count. General rate-limit bucket.
+#[utoipa::path(get, path = "/api/v1/search", tag = "Search", params(SearchQuery), responses((status = 200, description = "Up to 25 messages from channels the caller can view whose content contains `q` (case-insensitive), newest first; `before`/`after` bound the message id and `before_ts`/`after_ts` bound `created_at` (exclusive, unix seconds). When more results may follow, the `X-Next-Cursor` response header holds a `cursor` for the next page (it is absent once the search reached the oldest message); a page can hold fewer than 25 results and still have a next cursor. Passing the oldest returned id as `before` also works when the page is full. The legacy `offset` is capped at 500. Guests pass the servers to search as repeated `servers` params (`servers=a&servers=b`, max 100)", body = Vec<SearchResult>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid number or cursor, or text containing a NUL character", body = ApiErrorBody), (status = 401, description = "No valid token and guest access is disabled", body = ApiErrorBody), (status = 429, description = "`Too many searches. Try again in a moment.`: the caller used up its message searches. Or `Another search of yours is still running. Try again when it is done.`: the caller's earlier search did not end within 5 s. Or `A newer search of yours took the place of this one.`: a newer search of the caller started while this one waited. All three are JSON with the reason `rate` and a `Retry-After` header. Or too many requests in the general bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`This site is at capacity for searches right now. Try again in a few seconds.`: the instance runs as many message searches as it allows at a time and none ended within 2 s. The reason is `capacity` with the control `message_search_concurrent_limit`, with a `Retry-After` header", body = ApiErrorBody)), security((), ("bearer" = [])))]
 pub(crate) async fn search(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -2251,7 +2257,11 @@ pub(crate) async fn search(
     RawQuery(raw): RawQuery,
 ) -> Result<Paged<SearchResult>, ApiError> {
     let sq = SearchQuery::parse(raw.as_deref().unwrap_or(""))?;
-    let (results, next) = search_paged(&state, user.as_ref(), &headers, sq).await?;
+    let sq = screen_search(&state.read(), user.as_ref(), sq).await?;
+    let admitted = crate::api::search_limits::admit(&state, user.as_ref()).await?;
+    let (results, next) = admitted
+        .run(async move { search_screened(&state, user.as_ref(), &headers, sq).await })
+        .await??;
     Ok(Paged(
         results,
         next.map(|id| encode_cursor(&[&id.to_string()])),
@@ -2268,20 +2278,42 @@ async fn search_with(
     Ok(search_paged(state, user, headers, sq).await?.0)
 }
 
+#[cfg(test)]
 async fn search_paged(
+    state: &AppState,
+    user: Option<&User>,
+    headers: &HeaderMap,
+    sq: SearchQuery,
+) -> Result<(Vec<SearchResult>, Option<i64>), ApiError> {
+    let sq = screen_search(&state.read(), user, sq).await?;
+    search_screened(state, user, headers, sq).await
+}
+
+/// Refuses a search no caller may run, before it counts against any search limit: a guest
+/// while guest access is off, text with a NUL character, or a cursor that is not one. The
+/// cursor becomes `before`.
+async fn screen_search(
+    db: &Db,
+    user: Option<&User>,
+    mut sq: SearchQuery,
+) -> Result<SearchQuery, ApiError> {
+    require_guest_ok(db, user).await?;
+    check_nul([&sq.q, &sq.server, &sq.from, &sq.has], &sq.servers)?;
+    if let Some(raw) = sq.cursor.take() {
+        sq.before = Some(cursor_int(&decode_cursor(&raw, 1)?[0])?);
+        sq.offset = None;
+    }
+    Ok(sq)
+}
+
+async fn search_screened(
     state: &AppState,
     user: Option<&User>,
     headers: &HeaderMap,
     mut sq: SearchQuery,
 ) -> Result<(Vec<SearchResult>, Option<i64>), ApiError> {
     let db = &state.read();
-    require_guest_ok(db, user).await?;
-    check_nul([&sq.q, &sq.server, &sq.from, &sq.has], &sq.servers)?;
     let proof = &Proof::headers(headers, &state.limits);
-    if let Some(raw) = sq.cursor.take() {
-        sq.before = Some(cursor_int(&decode_cursor(&raw, 1)?[0])?);
-        sq.offset = None;
-    }
     sq.offset = sq.offset.map(|n| n.min(SEARCH_OFFSET_MAX));
     let Some(scope) = search_scope(db, user, proof, sq.servers.take()).await? else {
         return Ok((Vec::new(), None));

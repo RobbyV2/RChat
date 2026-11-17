@@ -144,17 +144,24 @@ export function useCopied() {
   return [copied, () => setCopied(true)] as const
 }
 
-export function Sentinel({ onVisible }: { onVisible: () => void }) {
+export function Sentinel({
+  onVisible,
+  onHidden,
+}: {
+  onVisible: () => void
+  onHidden?: () => void
+}) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = ref.current
     if (!el) return
     const observer = new IntersectionObserver(entries => {
       if (entries.some(e => e.isIntersecting)) onVisible()
+      if (!entries[entries.length - 1]?.isIntersecting) onHidden?.()
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [onVisible])
+  }, [onVisible, onHidden])
   return <div ref={ref} className="h-px" />
 }
 

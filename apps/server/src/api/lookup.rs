@@ -106,7 +106,8 @@ static BLOCKS: LazyLock<Budget> =
 
 /// The refusal of the limit `limit` (its env name, `contact` or `blocks`): 429 with the reason
 /// `rate` and the time to wait in whole seconds, rounded up and at least one, also as
-/// `Retry-After`. Every refusal of a lookup limit or of the rare requests (`rare`) is built here.
+/// `Retry-After`. Every refusal of a lookup limit, of the rare requests (`rare`) or of a
+/// caller's message searches (`search_limits`) is built here.
 pub(crate) fn limited(limit: &'static str, text: &str, wait: Duration) -> ApiError {
     tracing::debug!("refused by the {limit} limit");
     ApiError::rate(text, Some(wait.as_secs_f64().ceil().max(1.0) as u64))

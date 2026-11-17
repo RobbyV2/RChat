@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { FileText, Hash, Search } from 'lucide-react'
 import { useMask, useStore } from '../lib/store'
-import { dayEndTs, dayStartTs, type SearchArgs } from '../lib/search'
+import { dayEndTs, dayStartTs, endOfList, shortSearch, type SearchArgs } from '../lib/search'
 import { UserAvatar } from './user_avatar'
 import { fieldCls, Masked, PanelHeader, Sentinel, useEscape } from './ui'
 import { NameWithUsername } from './display_name'
@@ -61,6 +61,7 @@ export function SearchView({
   pageKey,
   seed,
   note,
+  scrollForMore,
   onRun,
   onClose,
 }: {
@@ -75,6 +76,10 @@ export function SearchView({
   seed?: { q: string | null; n: number }
   // Shown under the filters (where the search looks).
   note?: ReactNode
+  // Whether, for this text, the next page loads only when the member asks for it or scrolls to
+  // the end of the list after the page arrived (one page a scroll), not as soon as the end
+  // shows. Without it every page loads on sight.
+  scrollForMore?: (q: string) => boolean
   // A first page (`fresh`) or the next one.
   onRun: (f: SearchFilters, fresh: boolean) => void
   onClose: () => void
@@ -111,15 +116,32 @@ export function SearchView({
   argsRef.current = args
   const runRef = useRef(onRun)
   runRef.current = onRun
+  const stepped = active && (scrollForMore?.(args.q) ?? false)
+  const steppedRef = useRef(stepped)
+  steppedRef.current = stepped
+  const pageRef = useRef(pageKey)
+  pageRef.current = pageKey
+  const listRef = useRef<HTMLDivElement>(null)
+  const [end] = useState(endOfList)
   useEscape(onClose, 'panel')
 
   useEffect(() => {
     if (!active) return
     const t = setTimeout(() => runRef.current(argsRef.current, true), 300)
     return () => clearTimeout(t)
-  }, [q, from, channelId, hasFile, before, after, active])
+  }, [args.q, args.from, channelId, hasFile, args.beforeTs, args.afterTs, active])
 
   const more = useCallback(() => runRef.current(argsRef.current, false), [])
+  const endShown = useCallback(() => {
+    if (end.sight(true, pageRef.current, steppedRef.current)) more()
+  }, [end, more])
+  const endHidden = useCallback(() => {
+    end.sight(false, pageRef.current, steppedRef.current)
+  }, [end])
+  const scrolled = useCallback(() => {
+    const top = listRef.current?.scrollTop ?? 0
+    if (end.scroll(top, pageRef.current, steppedRef.current)) more()
+  }, [end, more])
 
   const dateField = (
     label: string,
@@ -183,7 +205,11 @@ export function SearchView({
         </div>
         {note && <p className="text-xs text-on-surface-variant">{note}</p>}
       </div>
-      <div className="flex-1 overflow-y-auto p-2">
+      <div
+        ref={listRef}
+        onScroll={scrolled}
+        className="flex-1 overflow-y-auto p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] [overflow-anchor:none]"
+      >
         {!active && (
           <p className="px-3 py-6 text-center text-sm text-on-surface-variant">
             Type a query or pick a filter to search.
@@ -232,8 +258,23 @@ export function SearchView({
             )}
           </button>
         ))}
-        {active && hasMore && <Sentinel key={pageKey} onVisible={more} />}
-        {loading && (
+        {active && hasMore && <Sentinel key={pageKey} onVisible={endShown} onHidden={endHidden} />}
+        {stepped && (hasMore || loading) && (
+          <div className="flex h-9 items-end justify-center">
+            {loading ? (
+              <p className="py-2 text-xs text-on-surface-variant">Searching</p>
+            ) : (
+              <button
+                type="button"
+                onClick={more}
+                className="cursor-pointer rounded-full px-4 py-2 text-xs font-medium text-primary hover:bg-surface-container-high"
+              >
+                Search older messages
+              </button>
+            )}
+          </div>
+        )}
+        {loading && !stepped && (
           <p className="px-3 py-2 text-center text-xs text-on-surface-variant">Searching</p>
         )}
       </div>
@@ -322,6 +363,7 @@ export default function SearchPanel() {
       hasMore={search.hasMore}
       pageKey={`${search.results.length}:${search.cursor ?? ''}`}
       seed={{ q: search.seed ?? null, n: search.seedN ?? 0 }}
+      scrollForMore={shortSearch}
       onRun={run}
       onClose={closePanel}
     />

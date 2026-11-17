@@ -3557,6 +3557,18 @@ mod tests {
             limit("DATABASE_MAX_CONNECTIONS"),
             json!({"env": "DATABASE_MAX_CONNECTIONS", "value": 4, "default": null, "range": "1-1000"})
         );
+        assert_eq!(
+            limit("MESSAGE_SEARCH_PER_MINUTE"),
+            json!({"env": "MESSAGE_SEARCH_PER_MINUTE", "value": 30, "default": 30, "range": "1-1000"})
+        );
+        assert_eq!(
+            limit("MESSAGE_SEARCH_AT_ONCE"),
+            json!({"env": "MESSAGE_SEARCH_AT_ONCE", "value": 1, "default": 1, "range": "1-100"})
+        );
+        assert_eq!(
+            limit("MESSAGE_SEARCH_CONCURRENT_LIMIT"),
+            json!({"env": "MESSAGE_SEARCH_CONCURRENT_LIMIT", "value": null, "default": null, "range": "1-1000"})
+        );
 
         let text = view.to_string();
         assert!(text.is_ascii());

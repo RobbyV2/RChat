@@ -1,10 +1,14 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { ApiError } from '../api'
 import {
   SEARCH_PAGE,
+  SEARCH_RETRY_MAX,
   addSearchPage,
   dayEndTs,
   dayStartTs,
   searchParams,
+  searchRetryAfter,
+  shortSearch,
   type SearchArgs,
 } from '../search'
 import { useStore, resetSessionCaches } from '../store'
@@ -91,6 +95,42 @@ describe('search pages', () => {
   })
 })
 
+describe('short search text', () => {
+  test('is under 3 characters, counted as the server counts them', () => {
+    expect(['', 'w', 'we', ' we ', 'éé', '😀😀'].map(shortSearch)).toEqual(Array(6).fill(true))
+    expect(['wee', 'weekly notes', '日本語', '😀😀😀'].map(shortSearch)).toEqual(
+      Array(4).fill(false)
+    )
+  })
+})
+
+describe('search refusals asked again', () => {
+  const refused = (status: number, reason?: unknown) =>
+    new ApiError('refused', status, { error: 'refused', reason })
+
+  test("the caller's own limits with a short wait are asked again after that wait", () => {
+    expect(searchRetryAfter(refused(429, { kind: 'rate', retry_after: 1 }))).toBe(1)
+    expect(searchRetryAfter(refused(429, { kind: 'rate', retry_after: SEARCH_RETRY_MAX }))).toBe(
+      SEARCH_RETRY_MAX
+    )
+  })
+
+  test('a long wait, the site at capacity and other failures are not', () => {
+    for (const e of [
+      refused(429, { kind: 'rate', retry_after: SEARCH_RETRY_MAX + 1 }),
+      refused(429, { kind: 'rate', retry_after: 0 }),
+      refused(429, { kind: 'rate' }),
+      refused(429, { kind: 'rate', retry_after: '1' }),
+      refused(429),
+      refused(503, { kind: 'capacity', retry_after: 2 }),
+      refused(500, { kind: 'rate', retry_after: 1 }),
+      new Error('offline'),
+      null,
+    ])
+      expect(searchRetryAfter(e)).toBeNull()
+  })
+})
+
 const realFetch = globalThis.fetch
 let requests: URL[] = []
 let replies: unknown[][] = []
@@ -147,6 +187,41 @@ describe('searchRun', () => {
     expect(ids()).toHaveLength(33)
     expect(useStore.getState().search.hasMore).toBe(true)
     expect(useStore.getState().search.loading).toBe(false)
+  })
+
+  test('text under 3 characters reads one page a run, and the next one as asked', async () => {
+    replies = [page(900, 3), [], page(500, 30)]
+    nexts = ['a', 'b', 'c']
+    await run(args({ q: 'no' }), true)
+    const cursors = () => requests.map(r => r.searchParams.get('cursor'))
+    expect(cursors()).toEqual([null])
+    expect(ids()).toHaveLength(3)
+    expect(useStore.getState().search).toMatchObject({ hasMore: true, loading: false, cursor: 'a' })
+    await run(args({ q: 'no' }), false)
+    expect(cursors()).toEqual([null, 'a'])
+    expect(ids()).toHaveLength(3)
+    expect(useStore.getState().search).toMatchObject({ hasMore: true, loading: false, cursor: 'b' })
+    await run(args({ q: 'no' }), false)
+    expect(cursors()).toEqual([null, 'a', 'b'])
+    expect(ids()).toHaveLength(33)
+  })
+
+  test('a next page continues only the text its cursor came from', async () => {
+    replies = [page(900, 25), page(875, 25)]
+    nexts = ['we1', 'we2']
+    await run(args({ q: 'we' }), true)
+    await run(args({ q: 'wee' }), false)
+    await run(args({ q: 'we', from: 'bob' }), false)
+    await run(args({ q: 'we', hasFile: true }), false)
+    expect(requests).toHaveLength(1)
+    expect(useStore.getState().search).toMatchObject({ cursor: 'we1', loading: false })
+    await run(args({ q: 'we' }), false)
+    expect(requests.map(r => [r.searchParams.get('q'), r.searchParams.get('cursor')])).toEqual([
+      ['we', null],
+      ['we', 'we1'],
+    ])
+    await run(args({ q: 'wee' }), true)
+    expect(requests[2].searchParams.get('cursor')).toBeNull()
   })
 
   test('the automatic follow-up is bounded', async () => {
