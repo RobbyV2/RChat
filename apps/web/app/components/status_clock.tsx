@@ -27,6 +27,7 @@ export function ThemeToggle() {
   return (
     <button
       title="Toggle theme"
+      aria-label="Toggle theme"
       onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
       className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
     >
