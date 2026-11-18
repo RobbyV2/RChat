@@ -88,6 +88,8 @@ Settings live in `.env.local` or in the environment (`docker run -e NAME=value`)
 | `S3_ENDPOINT`          | none        | Stores uploads in an S3 bucket, with `S3_BUCKET`, `S3_ACCESS_KEY` and `S3_SECRET_KEY`.                  |
 | `TRUSTED_PROXIES`      | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.                            |
 
+Other instances accept this instance's identity assertions only when its public address uses port 443.
+
 ## Desktop and mobile apps
 
 Build the apps with `just src desktop-build` (installers in `target/release/bundle/`), `just src mobile-init android` then `just src android-build`, and `just src mobile-init ios` then `just src ios-sideload` (on a Mac). They need the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your platform.
