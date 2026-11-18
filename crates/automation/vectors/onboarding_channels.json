@@ -1,0 +1,2855 @@
+{
+ "v": 1,
+ "cases": [
+  {
+   "name": "a config naming only channels the saver can view is valid",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": []
+  },
+  {
+   "name": "the waiting room takes a channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1,
+     3
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": []
+  },
+  {
+   "name": "the waiting room refuses a text channel the saver can't view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1,
+     4
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "waiting_room.1",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "the waiting room refuses a voice channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1,
+     9
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "waiting_room.1",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "the waiting room refuses a channel the server doesn't have",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1,
+     99
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "waiting_room.1",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a choice takes a channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2,
+         3
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": []
+  },
+  {
+   "name": "a choice refuses a text channel the saver can't view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2,
+         4
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "questions.0.options.0.channels.1",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a choice refuses a voice channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2,
+         9
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "questions.0.options.0.channels.1",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a choice refuses a channel the server doesn't have",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2,
+         99
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "questions.0.options.0.channels.1",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a default channel takes a channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     3,
+     1
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": []
+  },
+  {
+   "name": "a default channel refuses a text channel the saver can't view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     4,
+     1
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "default_channels.0",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a default channel refuses a voice channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     9,
+     1
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "default_channels.0",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a default channel refuses a channel the server doesn't have",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     99,
+     1
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "default_channels.0",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "the landing channel takes a channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 3,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": []
+  },
+  {
+   "name": "the landing channel refuses a text channel the saver can't view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 4,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "land_channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "the landing channel refuses a voice channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 9,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "land_channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "the landing channel refuses a channel the server doesn't have",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 99,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "land_channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a recommended channel takes a channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      },
+      {
+       "channel": 3
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": []
+  },
+  {
+   "name": "a recommended channel refuses a text channel the saver can't view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      },
+      {
+       "channel": 4
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.recommended.1.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a recommended channel refuses a voice channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      },
+      {
+       "channel": 9
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.recommended.1.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a recommended channel refuses a channel the server doesn't have",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      },
+      {
+       "channel": 99
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.recommended.1.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a read to-do takes a channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": []
+  },
+  {
+   "name": "a read to-do refuses a text channel the saver can't view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 4,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.todos.0.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a read to-do refuses a voice channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 9,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.todos.0.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a read to-do refuses a channel the server doesn't have",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 99,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.todos.0.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a post to-do takes a channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "post_in",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": []
+  },
+  {
+   "name": "a post to-do refuses a text channel the saver can't view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "post_in",
+       "channel": 4,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.todos.0.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a post to-do refuses a voice channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "post_in",
+       "channel": 9,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.todos.0.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a post to-do refuses a channel the server doesn't have",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "post_in",
+       "channel": 99,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.todos.0.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a custom to-do with a channel takes a channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": 3,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": []
+  },
+  {
+   "name": "a custom to-do with a channel refuses a text channel the saver can't view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": 4,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.todos.1.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a custom to-do with a channel refuses a voice channel the saver can view",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": 9,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.todos.1.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a custom to-do with a channel refuses a channel the server doesn't have",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": 99,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.todos.1.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "every check refuses a text channel the saver cannot view, in order",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1,
+     5
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2,
+         5
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     5,
+     1
+    ],
+    "land_channel": 5,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      },
+      {
+       "channel": 5
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "post_in",
+       "channel": 5,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": 5,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "waiting_room.1",
+     "reason": "unknown_channel"
+    },
+    {
+     "path": "questions.0.options.0.channels.1",
+     "reason": "unknown_channel"
+    },
+    {
+     "path": "default_channels.0",
+     "reason": "unknown_channel"
+    },
+    {
+     "path": "land_channel",
+     "reason": "unknown_channel"
+    },
+    {
+     "path": "welcome.recommended.1.channel",
+     "reason": "unknown_channel"
+    },
+    {
+     "path": "welcome.todos.0.channel",
+     "reason": "unknown_channel"
+    },
+    {
+     "path": "welcome.todos.1.channel",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "default channels are checked without repeats",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     1,
+     4,
+     4
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "default_channels.1",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "choice channels are checked without repeats",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2,
+         2,
+         5
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": 3,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "questions.0.options.0.channels.1",
+     "reason": "unknown_channel"
+    }
+   ]
+  },
+  {
+   "name": "a read to-do names a channel",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "read_channel",
+       "channel": null,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.todos.0.channel",
+     "reason": "missing"
+    }
+   ]
+  },
+  {
+   "name": "a post to-do names a channel",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "post_in",
+       "channel": null,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": [
+    {
+     "path": "welcome.todos.0.channel",
+     "reason": "missing"
+    }
+   ]
+  },
+  {
+   "name": "a roles to-do needs no channel",
+   "config": {
+    "enabled": true,
+    "pending_view": "waiting_room",
+    "waiting_room": [
+     1
+    ],
+    "questions": [
+     {
+      "id": "q1",
+      "title": "What brings you here?",
+      "options": [
+       {
+        "id": "c1",
+        "label": "Gaming",
+        "channels": [
+         2
+        ]
+       }
+      ]
+     }
+    ],
+    "default_channels": [
+     1,
+     2
+    ],
+    "land_channel": 1,
+    "welcome": {
+     "recommended": [
+      {
+       "channel": 3,
+       "text": "Start here"
+      }
+     ],
+     "todos": [
+      {
+       "id": "t1",
+       "kind": "pick_roles",
+       "channel": null,
+       "text": "Do this first"
+      },
+      {
+       "id": "t2",
+       "kind": "custom",
+       "channel": null,
+       "text": "Do this first"
+      }
+     ]
+    }
+   },
+   "server": {
+    "text_channels": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "views": [
+     1,
+     2,
+     3,
+     9
+    ]
+   },
+   "problems": []
+  }
+ ]
+}

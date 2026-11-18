@@ -183,6 +183,38 @@ fn onboarding_vectors() {
 }
 
 #[test]
+fn onboarding_channels_vectors() {
+    use rchat_automation::onboarding::Server;
+    use rchat_automation::validate::Problem;
+    let all = cases("onboarding_channels");
+    assert_eq!(all.len(), 39);
+    let mut refused = 0;
+    for c in all {
+        let config: Onboarding = read(&c["config"]);
+        let server = Server {
+            text_channels: read(&c["server"]["text_channels"]),
+            views: read(&c["server"]["views"]),
+            ..Server::default()
+        };
+        let problems = onboarding::validate(&config, &server);
+        assert_eq!(problems, read::<Vec<Problem>>(&c["problems"]), "{c}");
+        assert_eq!(
+            serde_json::to_value(&problems).expect("json"),
+            c["problems"],
+            "{c}"
+        );
+        if c["name"]
+            .as_str()
+            .expect("name")
+            .contains("text channel the saver can't view")
+        {
+            refused += 1;
+        }
+    }
+    assert_eq!(refused, 8);
+}
+
+#[test]
 fn access_vectors() {
     let all = cases("access");
     assert_eq!(all.len(), 2);
@@ -502,6 +534,7 @@ fn every_vector_file_is_replayed() {
             "keywords.json",
             "levels.json",
             "onboarding.json",
+            "onboarding_channels.json",
             "panels.json",
             "redact.json",
             "run_check.json",

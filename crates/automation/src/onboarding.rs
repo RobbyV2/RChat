@@ -178,12 +178,23 @@ pub struct Todo {
 }
 
 /// What a config may name: the server's text channels, its roles other than @everyone with
-/// their current bits, and the bits of the member saving it.
+/// their current bits, and the bits and the viewable channels of the member saving it.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct Server {
     pub text_channels: BTreeSet<i64>,
     pub roles: BTreeMap<i64, u32>,
     pub owner_bits: u32,
+    /// The channels the member saving it can view. A channel they can't view is refused like
+    /// one the server doesn't have.
+    pub views: BTreeSet<i64>,
+}
+
+impl Server {
+    fn text(&self, check: &mut Check, path: &str, id: i64) {
+        if !self.text_channels.contains(&id) || !self.views.contains(&id) {
+            check.add(path, Reason::UnknownChannel);
+        }
+    }
 }
 
 fn unique(ids: &[i64]) -> Vec<i64> {
@@ -291,9 +302,7 @@ pub const EMOJI_MAX: usize = 32;
 
 fn channels(check: &mut Check, path: &str, ids: &[i64], server: &Server) {
     for (i, id) in ids.iter().enumerate() {
-        if !server.text_channels.contains(id) {
-            check.add(&format!("{path}.{i}"), Reason::UnknownChannel);
-        }
+        server.text(check, &format!("{path}.{i}"), *id);
     }
 }
 
@@ -303,7 +312,8 @@ fn emoji(check: &mut Check, path: &str, emoji: &Option<String>) {
     }
 }
 
-/// Every problem of a config, measured on its `normalized` form. Roles a choice gives must
+/// Every problem of a config, measured on its `normalized` form. Every channel it names must be
+/// a text channel the member saving it can view (`Server::views`). Roles a choice gives must
 /// exist and pass the self-service rule with their current bits.
 pub fn validate(config: &Onboarding, server: &Server) -> Vec<Problem> {
     let c = normalized(config);
@@ -387,10 +397,8 @@ pub fn validate(config: &Onboarding, server: &Server) -> Vec<Problem> {
     }
     check.count("default_channels", c.default_channels.len(), 0, 50);
     channels(&mut check, "default_channels", &c.default_channels, server);
-    if c.land_channel
-        .is_some_and(|id| !server.text_channels.contains(&id))
-    {
-        check.add("land_channel", Reason::UnknownChannel);
+    if let Some(id) = c.land_channel {
+        server.text(&mut check, "land_channel", id);
     }
     let w = &c.welcome;
     check.text("welcome.description", &w.description, 0, 300);
@@ -398,9 +406,7 @@ pub fn validate(config: &Onboarding, server: &Server) -> Vec<Problem> {
     check.count("welcome.recommended", w.recommended.len(), 0, 5);
     for (i, rec) in w.recommended.iter().enumerate() {
         let at = format!("welcome.recommended.{i}");
-        if !server.text_channels.contains(&rec.channel) {
-            check.add(&format!("{at}.channel"), Reason::UnknownChannel);
-        }
+        server.text(&mut check, &format!("{at}.channel"), rec.channel);
         emoji(&mut check, &format!("{at}.emoji"), &rec.emoji);
         check.text(&format!("{at}.text"), &rec.text, 0, 100);
     }
@@ -412,10 +418,8 @@ pub fn validate(config: &Onboarding, server: &Server) -> Vec<Problem> {
         let needs_channel = matches!(todo.kind, TodoKind::ReadChannel | TodoKind::PostIn);
         match todo.channel {
             None if needs_channel => check.add(&format!("{at}.channel"), Reason::Missing),
-            Some(id) if !server.text_channels.contains(&id) => {
-                check.add(&format!("{at}.channel"), Reason::UnknownChannel)
-            }
-            _ => {}
+            None => {}
+            Some(id) => server.text(&mut check, &format!("{at}.channel"), id),
         }
     }
     for (i, role) in c.may_give.iter().enumerate() {
@@ -1224,6 +1228,15 @@ mod tests {
             .into_iter()
             .collect(),
             owner_bits: 4095 & !DELETE_SERVER,
+            views: (1..=60).collect(),
+        }
+    }
+
+    /// The saver can't view text channel 40, and views 70, a voice channel.
+    fn hidden() -> Server {
+        Server {
+            views: (1..=60).filter(|id| *id != 40).chain([70]).collect(),
+            ..server()
         }
     }
 
@@ -1534,6 +1547,79 @@ mod tests {
             "welcome.todos.0.channel",
         );
         bad(&|c| c.may_give = vec![99], "may_give.0");
+    }
+
+    /// Puts a channel id into one place of a config.
+    type Put = dyn Fn(&mut Onboarding, i64);
+
+    #[test]
+    fn every_channel_check_takes_a_channel_the_saver_can_view_and_refuses_one_they_cant() {
+        let places: [(&str, &Put); 8] = [
+            ("waiting_room.1", &|c, id| c.waiting_room = vec![1, id]),
+            ("questions.0.options.0.channels.1", &|c, id| {
+                c.questions[0].options[0].channels = vec![2, id]
+            }),
+            ("default_channels.0", &|c, id| {
+                c.default_channels = vec![id, 2]
+            }),
+            ("land_channel", &|c, id| c.land_channel = Some(id)),
+            ("welcome.recommended.0.channel", &|c, id| {
+                c.welcome.recommended[0].channel = id
+            }),
+            ("welcome.todos.0.channel", &|c, id| {
+                c.welcome.todos[0].channel = Some(id)
+            }),
+            ("welcome.todos.0.channel", &|c, id| {
+                c.welcome.todos[0].kind = TodoKind::PostIn;
+                c.welcome.todos[0].channel = Some(id)
+            }),
+            ("welcome.todos.1.channel", &|c, id| {
+                c.welcome.todos[1].channel = Some(id)
+            }),
+        ];
+        for (path, put) in places {
+            let run = |id| {
+                let mut c = full();
+                put(&mut c, id);
+                validate(&c, &hidden())
+            };
+            let refused = [Problem {
+                path: path.into(),
+                reason: Reason::UnknownChannel,
+            }];
+            assert_eq!(run(41), [], "{path} takes a channel the saver can view");
+            assert_eq!(run(40), refused, "{path} refuses one they can't view");
+            assert_eq!(run(70), refused, "{path} refuses a voice channel they view");
+            assert_eq!(run(99), refused, "{path} refuses one the server lacks");
+        }
+    }
+
+    #[test]
+    fn a_saver_who_views_no_channel_can_name_none() {
+        let blind = Server {
+            views: BTreeSet::new(),
+            ..server()
+        };
+        let paths: Vec<String> = validate(&full(), &blind)
+            .into_iter()
+            .map(|p| {
+                assert_eq!(p.reason, Reason::UnknownChannel, "{}", p.path);
+                p.path
+            })
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "waiting_room.0",
+                "questions.0.options.0.channels.0",
+                "questions.0.options.0.channels.1",
+                "default_channels.0",
+                "default_channels.1",
+                "land_channel",
+                "welcome.recommended.0.channel",
+                "welcome.todos.0.channel",
+            ]
+        );
     }
 
     #[test]
