@@ -30,8 +30,9 @@ const OUT_BYTES_MAX: usize = 256 * 1024;
 const OUT_BYTES_ADDR_MAX: usize = 2 * 1024 * 1024;
 /// Most bytes queued for all connections.
 const OUT_BYTES_TOTAL_MAX: usize = 64 * 1024 * 1024;
-/// Bytes queued for one connection that fit whatever its client address and all connections
-/// hold, so a connection that reads promptly always gets small frames.
+/// While a connection holds less than this, a frame of at most this fits whatever its client
+/// address and all connections hold, so a connection that reads promptly always gets small
+/// frames.
 const OUT_BYTES_FLOOR: usize = 16 * 1024;
 /// Longest id or token, in bytes.
 const ID_MAX: usize = 128;
@@ -136,11 +137,12 @@ struct Backlog {
 
 impl Backlog {
     /// Counts `bytes` more, unless this connection, its client address or all connections
-    /// hold too much. Up to `OUT_BYTES_FLOOR` held by this connection always fits. Called with
-    /// the realm locked.
+    /// hold too much. A frame of at most `OUT_BYTES_FLOOR` always fits while this connection
+    /// holds less than that. Called with the realm locked.
     fn take(&self, bytes: usize) -> bool {
-        let own = self.own.load(Ordering::Relaxed) + bytes;
-        let fits = own <= OUT_BYTES_FLOOR
+        let held = self.own.load(Ordering::Relaxed);
+        let own = held + bytes;
+        let fits = (held < OUT_BYTES_FLOOR && bytes <= OUT_BYTES_FLOOR)
             || (own <= OUT_BYTES_MAX
                 && self.addr.load(Ordering::Relaxed) + bytes <= OUT_BYTES_ADDR_MAX
                 && self.all.load(Ordering::Relaxed) + bytes <= OUT_BYTES_TOTAL_MAX);
@@ -759,13 +761,13 @@ pub(crate) struct Hello {
 /// no room is left for it: 64 frames or 256 KiB wait for one absent peer, 512 KiB from one
 /// client address, 8 MiB in all; 256 frames or 256 KiB are queued for one connection that reads
 /// slowly, 2 MiB for the connections of one client address, 64 MiB in all; or the sender passes
-/// its pace (1000 frames at once, then 100 per second). The first 16 KiB queued for a connection
-/// always fit, so one that reads promptly keeps getting small frames. A client address is the
-/// one the rate limits use (an IPv6 /64 counts as one; forwarded headers count only from trusted
-/// proxies). A connection that does not take a queued frame within 15 seconds is closed, and its
-/// id stays with its token for a minute. A sender whose peer's connection just ended gets
-/// `LEAVE` from it. Frames are at most 64 KiB. Peers of one process see each other; run one
-/// process, or keep the separate PeerJS server.
+/// its pace (1000 frames at once, then 100 per second). A frame of up to 16 KiB always fits
+/// while less than 16 KiB is queued for its connection, so one that reads promptly keeps
+/// getting small frames. A client address is the one the rate limits use (an IPv6 /64 counts as
+/// one; forwarded headers count only from trusted proxies). A connection that does not take a
+/// queued frame within 15 seconds is closed, and its id stays with its token for a minute. A
+/// sender whose peer's connection just ended gets `LEAVE` from it. Frames are at most 64 KiB.
+/// Peers of one process see each other; run one process, or keep the separate PeerJS server.
 #[utoipa::path(get, path = "/peerjs/peerjs", tag = "Realtime", params(("key" = String, Query, description = "The PeerJS key: `peerjs`"), ("id" = String, Query, description = "The peer id to register, at most 128 bytes"), ("token" = String, Query, description = "A random value that lets the same client take its id back after a reconnect, at most 128 bytes")), responses((status = 101, description = "WebSocket upgrade"), (status = 404, description = "The instance does not serve PeerJS signaling itself, or `P2P is turned off on this instance`: the `p2p` and `p2p_attachments` switches of `GET /api/v1/settings` are both off", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket, or `PEERJS_PEERS_PER_IP` connections open from this address", content_type = "text/plain", body = String)), security(()))]
 pub(crate) async fn socket(
     State(peers): State<Peers>,
@@ -1772,7 +1774,7 @@ mod tests {
         );
         assert_eq!(bob.next(), None, "Bob was refused nothing");
 
-        // One that stops reading holds no more than the floor.
+        // One that stops reading holds the floor and at most one frame more.
         let mut sent = 0;
         loop {
             realm.relay(CANDIDATE, "alice", "bob", Some(&candidate));
@@ -1783,11 +1785,83 @@ mod tests {
             assert!(sent < OUT_FRAMES);
         }
         assert!(sent > 0);
-        assert!(bob.held() <= OUT_BYTES_FLOOR);
-        assert!(bob.held() > OUT_BYTES_FLOOR - 400);
+        assert!(bob.held() >= OUT_BYTES_FLOOR);
+        assert!(bob.held() < OUT_BYTES_FLOOR + 400);
         realm.peers.clear();
         drop(held);
         drop((alice, bob, carol));
+        assert_eq!(queued(&realm), 0);
+    }
+
+    /// The shared budget is full from 35 addresses of slow readers. A peer that reads takes
+    /// any frame of up to the floor while it holds less than the floor, also one that takes it
+    /// past the floor, and the frame still counts in the total; the slow readers are refused.
+    #[test]
+    fn a_peer_under_its_floor_takes_small_frames_from_a_full_budget() {
+        let mut realm = Realm::default();
+        let big = Value::String("y".repeat(FRAME_MAX / 2));
+        let tiny = Value::String("t".repeat(100));
+        let mut alice = member(&mut realm, "alice");
+        let mut bob = member(&mut realm, "bob");
+        assert_eq!(alice.next().as_deref(), Some(OPEN));
+        assert_eq!(bob.next().as_deref(), Some(OPEN));
+        let per_address = OUT_BYTES_ADDR_MAX / OUT_BYTES_MAX + 1;
+        let addresses = OUT_BYTES_TOTAL_MAX / OUT_BYTES_ADDR_MAX + 3;
+        assert_eq!(addresses, 35);
+        let mut slow: Vec<Member> = Vec::new();
+        for a in 0..addresses {
+            let one = client(&format!("198.51.100.{a}"));
+            for n in 0..per_address {
+                let id = format!("a{a}n{n}");
+                slow.push(member_of(&mut realm, &id, &one));
+                fill(&mut realm, &mut alice, &id, &big);
+            }
+        }
+        for reader in &slow {
+            fill(&mut realm, &mut alice, &reader.id, &tiny);
+            assert!(reader.held() > OUT_BYTES_FLOOR - 200);
+        }
+        assert!(queued(&realm) > OUT_BYTES_TOTAL_MAX - FRAME_MAX);
+        for reader in &slow {
+            realm.relay(CANDIDATE, "alice", &reader.id, Some(&tiny));
+            assert!(refused(&mut alice, &reader.id), "{} is refused", reader.id);
+        }
+
+        let candidate = Value::String("c".repeat(300));
+        while bob.held() < OUT_BYTES_FLOOR * 3 / 4 {
+            realm.relay(CANDIDATE, "alice", "bob", Some(&candidate));
+            assert!(!refused(&mut alice, "bob"));
+        }
+        let before = (bob.held(), queued(&realm));
+        let sdp = Value::String("s".repeat(OUT_BYTES_FLOOR / 2));
+        realm.relay(OFFER, "alice", "bob", Some(&sdp));
+        assert!(
+            !refused(&mut alice, "bob"),
+            "an offer past Bob's floor fits"
+        );
+        let offer = bob.held() - before.0;
+        assert!(bob.held() > OUT_BYTES_FLOOR);
+        assert_eq!(queued(&realm), before.1 + offer, "and counts in the total");
+        realm.relay(CANDIDATE, "alice", "bob", Some(&candidate));
+        assert!(
+            refused(&mut alice, "bob"),
+            "past the floor nothing more fits"
+        );
+        while bob.next().is_some() {}
+        let over = Value::String("s".repeat(OUT_BYTES_FLOOR));
+        realm.relay(OFFER, "alice", "bob", Some(&over));
+        assert!(
+            refused(&mut alice, "bob"),
+            "a frame over the floor needs shared room"
+        );
+        realm.relay(OFFER, "alice", "bob", Some(&sdp));
+        assert!(
+            !refused(&mut alice, "bob"),
+            "what Bob reads makes room again"
+        );
+        realm.peers.clear();
+        drop(slow);
+        drop((alice, bob));
         assert_eq!(queued(&realm), 0);
     }
 
@@ -2452,7 +2526,8 @@ mod tests {
     /// round a new connection takes `x` over with the same token and reads nothing, and a
     /// sender keeps `x`'s floor full until writes to it wait. Every replaced connection gives
     /// back what it held at once, write waiting or not, so what is queued over the total stays
-    /// within the limit's floors.
+    /// within what the limit's connections take below their floors: less than the floor and one
+    /// frame of up to the floor each.
     #[tokio::test]
     async fn a_connection_taken_over_gives_its_queue_back_at_once() {
         let limit = 2;
@@ -2519,7 +2594,7 @@ mod tests {
         }
         assert!(most > OUT_BYTES_FLOOR / 2);
         assert!(
-            most <= limit * OUT_BYTES_FLOOR,
+            most < limit * 2 * OUT_BYTES_FLOOR,
             "{most} bytes over the total"
         );
     }
