@@ -441,8 +441,10 @@ pub struct LayoutCategory {
 /// category with its channels.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ChannelLayout {
-    /// Layout version. Every change through the layout or category endpoints, and creating or
-    /// deleting a channel, raises it; send it back when reordering.
+    /// Layout version. For people who manage channels, every change through the layout or
+    /// category endpoints, and creating or deleting a channel, raises it; send it back when
+    /// reordering. Everyone else gets a value that changes only when the part of the layout they
+    /// can see changes.
     pub version: i64,
     /// Ids of channels without a category, top first.
     pub uncategorized: Vec<i64>,
@@ -588,7 +590,8 @@ pub struct ServerDetail {
     /// Channel categories, ordered by `position`. Categories without a channel the caller can
     /// see are left out, unless the caller manages channels.
     pub categories: Vec<Category>,
-    /// Version of the channel layout, for `PUT /api/v1/servers/{name}/layout`.
+    /// Version of the channel layout, for `PUT /api/v1/servers/{name}/layout` (see
+    /// `ChannelLayout.version`).
     pub layout_version: i64,
     /// Ids of listed text channels where the caller, a member, can read but not send messages
     /// or add reactions (their own reactions can still be removed). Empty for non-members, who

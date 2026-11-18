@@ -20,8 +20,8 @@ use crate::api::admin::{is_fuzzy, like_pattern, name_hit};
 use crate::api::audit::{self, ChannelRef, Details, Entry, Target, TargetKind};
 use crate::api::auth::{Work, clean_multiline, hash_in, new_token, present};
 use crate::api::categories::{
-    announce, bump, channel_order, layout_version, listed, load_layout, rank, server_categories,
-    write_layout,
+    announce, bump, channel_order, layout_version, listed, load_layout, rank, seen_version,
+    server_categories, write_layout,
 };
 use crate::api::lookup::{self, LookupClass};
 use crate::api::messages::recent_channel_messages;
@@ -33,12 +33,12 @@ use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::timeouts::{running_timeouts, timeout_event};
 use crate::api::users::Names;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, Channel, ChannelPerm, LIST_MAX, MaybeAuthed, Member, Message,
-    NAME_MAX, OFFSET_MAX, OkResp, Paged, ProfanityTarget, Role, RoleLimits, SLOWMODE_MAX,
-    ServerDetail, ServerSummary, ServerSummaryLite, Settings, TOPIC_MAX, UserRef, allowed, bad,
-    check_len, check_profanity, cursor_int, decode_cursor, encode_cursor, header_grants, ok,
-    page_bounds, placeholders, require_guest_ok, unique_capped, user_from, user_ref, user_refs,
-    valid_color,
+    ApiError, ApiErrorBody, Authed, Channel, ChannelLayout, ChannelPerm, LIST_MAX, LayoutCategory,
+    MaybeAuthed, Member, Message, NAME_MAX, OFFSET_MAX, OkResp, Paged, ProfanityTarget, Role,
+    RoleLimits, SLOWMODE_MAX, ServerDetail, ServerSummary, ServerSummaryLite, Settings, TOPIC_MAX,
+    UserRef, allowed, bad, check_len, check_profanity, cursor_int, decode_cursor, encode_cursor,
+    header_grants, ok, page_bounds, placeholders, require_guest_ok, unique_capped, user_from,
+    user_ref, user_refs, valid_color,
 };
 use crate::db::{ChannelKind, Db, NO_PERMANENT_HASH, User, lock_server, now, shift_member_count};
 use crate::state::AppState;
@@ -1024,7 +1024,29 @@ async fn server_detail(
     for (i, c) in categories.iter_mut().enumerate() {
         c.position = i as i64;
     }
-    let layout_version = layout_version(db, &name).await?;
+    let layout_version = match manage {
+        true => layout_version(db, &name).await?,
+        false => seen_version(&ChannelLayout {
+            version: 0,
+            uncategorized: channels
+                .iter()
+                .filter(|c| c.category_id.is_none_or(|id| !at.contains_key(&id)))
+                .map(|c| c.id)
+                .collect(),
+            categories: categories
+                .iter()
+                .map(|category| LayoutCategory {
+                    id: category.id,
+                    name: category.name.clone(),
+                    channels: channels
+                        .iter()
+                        .filter(|c| c.category_id == Some(category.id))
+                        .map(|c| c.id)
+                        .collect(),
+                })
+                .collect(),
+        }),
+    };
     let member_count = member_count(db, &name).await?;
     let online_count = hub.online_count(&name);
     let choice = crate::api::upload_expiry::stored(db, &name).await?;
@@ -3123,7 +3145,7 @@ pub(crate) async fn create_channel(
         channel: channel.clone(),
     });
     if let Some(layout) = layout {
-        announce(&state, &key, layout, Some(id));
+        announce(&state, &key, layout, Some(id), None);
     }
     Ok(Json(channel))
 }
@@ -3436,9 +3458,11 @@ pub(crate) async fn delete_channel(
     if let Some(layout) = layout {
         state.hub.broadcast(WsEvent::LayoutChanged {
             server,
-            layout,
+            layout: layout.into(),
             created: None,
             deleted: Some(rules),
+            before: None,
+            after: None,
         });
     }
     Ok(ok())
@@ -11063,6 +11087,8 @@ mod tests {
                 layout,
                 created,
                 deleted: None,
+                before: _,
+                after: _,
             }) => {
                 assert_eq!(server, "club");
                 assert_eq!(created, None);
@@ -11397,6 +11423,8 @@ mod tests {
                 layout,
                 created,
                 deleted: None,
+                before: _,
+                after: _,
             }) => {
                 assert_eq!(server, "club");
                 assert_eq!(created, Some(a.id));
@@ -11505,7 +11533,7 @@ mod tests {
         ));
         assert!(matches!(
             rx.try_recv(),
-            Ok(WsEvent::LayoutChanged { server: _, layout, created: None, deleted: Some(_) }) if layout.version == version + 1
+            Ok(WsEvent::LayoutChanged { server: _, layout, created: None, deleted: Some(_), before: None, after: None }) if layout.version == version + 1
         ));
         let stored: Vec<i64> =
             sqlx::query("SELECT position FROM channels WHERE server = 'club' ORDER BY position")

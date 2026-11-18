@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use sqlx::{AnyConnection, Row};
 use utoipa::ToSchema;
 
@@ -256,19 +257,52 @@ pub(crate) async fn write_layout(
 }
 
 /// Emits `layout_changed`. With `created`, only connections that can view that new channel get
-/// it, so creating a hidden channel tells nobody else anything.
+/// it, so creating a hidden channel tells nobody else anything. With `before`, connections that
+/// don't manage channels get it only when the part they see changed.
 pub(crate) fn announce(
     state: &AppState,
     server: &str,
     layout: ChannelLayout,
     created: Option<i64>,
+    before: Option<ChannelLayout>,
 ) {
     state.hub.broadcast(WsEvent::LayoutChanged {
         server: server.to_string(),
-        layout,
+        layout: layout.into(),
         created,
         deleted: None,
+        before,
+        after: None,
     });
+}
+
+/// The `layout_version` of someone who doesn't manage channels: a hash of `seen`, the part of
+/// the layout they can see (its own `version` left out), so a change they can't see leaves it
+/// alone. Between 0 and 2^53 - 1.
+pub(crate) fn seen_version(seen: &ChannelLayout) -> i64 {
+    let ChannelLayout {
+        version: _,
+        uncategorized,
+        categories,
+    } = seen;
+    let mut hash = Sha256::new();
+    hash.update(b"rchat-layout\0");
+    hash.update((uncategorized.len() as u64).to_be_bytes());
+    for id in uncategorized {
+        hash.update(id.to_be_bytes());
+    }
+    for LayoutCategory { id, name, channels } in categories {
+        hash.update(id.to_be_bytes());
+        hash.update((name.len() as u64).to_be_bytes());
+        hash.update(name.as_bytes());
+        hash.update((channels.len() as u64).to_be_bytes());
+        for channel in channels {
+            hash.update(channel.to_be_bytes());
+        }
+    }
+    let mut top = [0u8; 8];
+    top.copy_from_slice(&hash.finalize()[..8]);
+    (u64::from_be_bytes(top) >> 11) as i64
 }
 
 async fn clean_name(db: &Db, raw: &str) -> Result<String, ApiError> {
@@ -313,6 +347,7 @@ pub(crate) async fn create_category(
     let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
+    let before = load_layout(&mut tx, &server).await?;
     let count: i64 = sqlx::query("SELECT COUNT(*) FROM channel_categories WHERE server = $1")
         .bind(&server)
         .fetch_one(&mut *tx)
@@ -345,7 +380,7 @@ pub(crate) async fn create_category(
     let layout = load_layout(&mut tx, &server).await?;
     tx.commit().await?;
     if let Some(layout) = layout {
-        announce(&state, &server, layout, None);
+        announce(&state, &server, layout, None, before);
     }
     Ok(Json(category))
 }
@@ -382,6 +417,7 @@ pub(crate) async fn rename_category(
     let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
     let mut tx = state.db.begin().await?;
     bump(&mut tx, &server, None).await?;
+    let before = load_layout(&mut tx, &server).await?;
     let was: Option<String> =
         sqlx::query("SELECT name FROM channel_categories WHERE id = $1 AND server = $2")
             .bind(id)
@@ -415,7 +451,7 @@ pub(crate) async fn rename_category(
     let layout = load_layout(&mut tx, &server).await?;
     tx.commit().await?;
     if let Some(layout) = layout {
-        announce(&state, &server, layout, None);
+        announce(&state, &server, layout, None, before);
     }
     Ok(Json(category))
 }
@@ -456,6 +492,7 @@ pub(crate) async fn delete_category(
     let Some(at) = layout.categories.iter().position(|c| c.id == id) else {
         return Err(crate::api::access::not_found());
     };
+    let before = layout.clone();
     let gone = layout.categories.remove(at);
     audit::record(
         &mut tx,
@@ -471,7 +508,7 @@ pub(crate) async fn delete_category(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    announce(&state, &server, layout, None);
+    announce(&state, &server, layout, None, Some(before));
     Ok(ok())
 }
 
@@ -589,6 +626,7 @@ pub(crate) async fn reorder_layout(
         .ok_or_else(crate::api::access::not_found)?;
     check_order(&req, &current)?;
     let was = shape(&current);
+    let before = current.clone();
     let names: HashMap<i64, String> = current
         .categories
         .into_iter()
@@ -612,6 +650,52 @@ pub(crate) async fn reorder_layout(
         audit::record(&mut tx, Entry::new(&server, &actor, Action::ChannelReorder)).await?;
     }
     tx.commit().await?;
-    announce(&state, &server, layout.clone(), None);
+    announce(&state, &server, layout.clone(), None, Some(before));
     Ok(Json(layout))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn layout(
+        version: i64,
+        uncategorized: &[i64],
+        categories: &[(i64, &str, &[i64])],
+    ) -> ChannelLayout {
+        ChannelLayout {
+            version,
+            uncategorized: uncategorized.to_vec(),
+            categories: categories
+                .iter()
+                .map(|(id, name, channels)| LayoutCategory {
+                    id: *id,
+                    name: name.to_string(),
+                    channels: channels.to_vec(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn the_seen_version_follows_only_the_seen_layout() {
+        let seen = seen_version(&layout(3, &[1, 2], &[(7, "Games", &[3])]));
+        assert_eq!(
+            seen,
+            seen_version(&layout(9, &[1, 2], &[(7, "Games", &[3])]))
+        );
+        for other in [
+            layout(3, &[2, 1], &[(7, "Games", &[3])]),
+            layout(3, &[1], &[(7, "Games", &[2, 3])]),
+            layout(3, &[1, 2, 3], &[(7, "Games", &[])]),
+            layout(3, &[1, 2], &[(7, "Game", &[3])]),
+            layout(3, &[1, 2], &[(8, "Games", &[3])]),
+            layout(3, &[1, 2], &[(7, "Games", &[3]), (8, "", &[])]),
+        ] {
+            assert_ne!(seen_version(&other), seen, "{other:?}");
+        }
+        for v in [seen, seen_version(&layout(0, &[], &[]))] {
+            assert!((0..1 << 53).contains(&v), "{v}");
+        }
+    }
 }

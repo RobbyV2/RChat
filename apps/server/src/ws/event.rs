@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +35,10 @@ impl UserScope {
 
 fn routing_only<T>(_: &T) -> bool {
     !BUS_WIRE.with(Cell::get)
+}
+
+fn absent_or_client<T>(value: &Option<T>) -> bool {
+    value.is_none() || routing_only(value)
 }
 
 pub fn to_bus_json<T: Serialize>(value: &T) -> serde_json::Result<String> {
@@ -276,11 +281,18 @@ pub enum WsEvent {
     },
     LayoutChanged {
         server: String,
-        layout: ChannelLayout,
+        layout: Arc<ChannelLayout>,
         #[serde(default, skip_serializing_if = "routing_only")]
         created: Option<i64>,
         #[serde(default, skip_serializing_if = "routing_only")]
         deleted: Option<ViewRules>,
+        /// The layout before a move or a category change: a connection that doesn't manage
+        /// channels and sees no difference gets nothing.
+        #[serde(default, skip_serializing_if = "routing_only")]
+        before: Option<ChannelLayout>,
+        /// The layout produced by this edit when `layout` carries a more recent snapshot.
+        #[serde(default, skip_serializing_if = "absent_or_client")]
+        after: Option<Arc<ChannelLayout>>,
     },
     UserUpdated {
         user: UserRef,

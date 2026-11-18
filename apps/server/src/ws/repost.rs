@@ -250,19 +250,23 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
         }
         WsEvent::LayoutChanged {
             server,
-            layout: _,
+            layout,
             created,
             deleted,
+            before,
+            after,
         } => {
-            let layout = crate::api::categories::current_layout(db, &server)
+            let current = crate::api::categories::current_layout(db, &server)
                 .await
                 .ok()
                 .flatten()?;
             Some(WsEvent::LayoutChanged {
                 server,
-                layout,
+                after: after.or_else(|| (*layout != current).then_some(layout)),
+                layout: current.into(),
                 created,
                 deleted,
+                before,
             })
         }
         WsEvent::ServerCreated { server } => {

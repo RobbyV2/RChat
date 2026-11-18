@@ -644,6 +644,8 @@ pub(super) fn wants(
             layout: _,
             created: _,
             deleted: _,
+            before: _,
+            after: _,
         } => in_server(server),
         WsEvent::UserUpdated { user, scope } => {
             Some(user.username.as_str()) == me

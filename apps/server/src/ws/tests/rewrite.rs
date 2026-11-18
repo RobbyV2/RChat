@@ -336,21 +336,28 @@ async fn layout_changes_only_carry_viewable_channels() {
     );
     let ev = WsEvent::LayoutChanged {
         server: s("open"),
-        layout: layout.clone(),
-        created: None,
+        layout: layout.clone().into(),
+        created: Some(general),
         deleted: None,
+        before: None,
+        after: None,
     };
     let fanned = crate::fanout::Fanned::new(ev.clone(), 1);
     assert!(client_frame(&fanned, Some("nora")).is_none());
     let mut nora = Access::new(Some(s("nora")), false, set(&["open"]));
     assert_eq!(on_event(&state, 1, &mut nora, &ev).await, Some(true));
-    let mine = layout_for(&state, &mut nora, "open", &layout, None, None)
-        .await
-        .unwrap()
-        .unwrap();
+    let mine = layout_for(&state, &mut nora, &ev).await.unwrap().unwrap();
     let json = serde_json::to_string(&mine).unwrap();
     assert!(json.contains("\"type\":\"layout_changed\""), "{json}");
-    assert!(!json.contains(&format!("{secret}")), "{json}");
+    let wire: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        (
+            &wire["layout"]["uncategorized"],
+            &wire["layout"]["categories"]
+        ),
+        (&serde_json::json!([general]), &serde_json::json!([])),
+        "{json}"
+    );
     assert!(!json.contains("Staff") && !json.contains("Later"), "{json}");
     match mine {
         WsEvent::LayoutChanged {
@@ -358,6 +365,8 @@ async fn layout_changes_only_carry_viewable_channels() {
             layout,
             created: _,
             deleted: _,
+            before: _,
+            after: _,
         } => {
             assert_eq!(server, "open");
             assert_eq!(layout.uncategorized, [general]);
@@ -366,17 +375,15 @@ async fn layout_changes_only_carry_viewable_channels() {
         _ => panic!("expected layout_changed"),
     }
     let mut alice = Access::new(Some(s("alice")), false, set(&["open"]));
-    match layout_for(&state, &mut alice, "open", &layout, None, None)
-        .await
-        .unwrap()
-        .unwrap()
-    {
+    match layout_for(&state, &mut alice, &ev).await.unwrap().unwrap() {
         WsEvent::LayoutChanged {
             server: _,
             layout: got,
             created: _,
             deleted: _,
-        } => assert_eq!(got, layout),
+            before: _,
+            after: _,
+        } => assert_eq!(*got, layout),
         _ => panic!("expected layout_changed"),
     }
     let mut stranger = Access::new(Some(s("zed")), false, HashSet::new());
@@ -387,9 +394,12 @@ async fn layout_changes_only_carry_viewable_channels() {
             version: 0,
             uncategorized: Vec::new(),
             categories: Vec::new(),
-        },
+        }
+        .into(),
         created: Some(secret),
         deleted: None,
+        before: None,
+        after: None,
     };
     match current(&state, stale).await {
         Some(WsEvent::LayoutChanged {
@@ -397,8 +407,11 @@ async fn layout_changes_only_carry_viewable_channels() {
             layout: got,
             created,
             deleted: None,
+            before: None,
+            after: Some(edit),
         }) => {
-            assert_eq!(got, layout);
+            assert_eq!(*got, layout);
+            assert!(edit.uncategorized.is_empty());
             assert_eq!(created, Some(secret));
         }
         _ => panic!("expected the stored layout"),
@@ -423,6 +436,14 @@ async fn channel_events_reach_only_viewers_with_their_own_positions() {
         .await
         .unwrap()
         .unwrap();
+    let creation = |cid| WsEvent::LayoutChanged {
+        server: s("open"),
+        layout: layout.clone().into(),
+        created: Some(cid),
+        deleted: None,
+        before: None,
+        after: None,
+    };
     let created = WsEvent::ChannelCreated {
         server: s("open"),
         channel: hidden.clone(),
@@ -434,7 +455,7 @@ async fn channel_events_reach_only_viewers_with_their_own_positions() {
     assert_eq!(on_event(&state, 1, &mut nora, &created).await, Some(false));
     assert!(
         matches!(
-            layout_for(&state, &mut nora, "open", &layout, Some(secret), None).await,
+            layout_for(&state, &mut nora, &creation(secret)).await,
             Some(None)
         ),
         "creating a hidden channel sends its non-viewers no layout either"
@@ -469,7 +490,7 @@ async fn channel_events_reach_only_viewers_with_their_own_positions() {
         );
     }
     assert!(matches!(
-        layout_for(&state, &mut nora, "open", &layout, Some(after), None).await,
+        layout_for(&state, &mut nora, &creation(after)).await,
         Some(Some(WsEvent::LayoutChanged { .. }))
     ));
     let other = crate::fanout::Fanned::new(post_in("open", general), 3);
@@ -634,9 +655,11 @@ async fn deleting_a_hidden_channel_sends_its_non_viewers_no_layout() {
     assert_eq!(layout.uncategorized, [general, after]);
     let ev = WsEvent::LayoutChanged {
         server: s("open"),
-        layout: layout.clone(),
+        layout: layout.clone().into(),
         created: None,
         deleted: Some(rules.clone()),
+        before: None,
+        after: None,
     };
     let wire = serde_json::to_string(&ev).unwrap();
     assert!(
@@ -644,30 +667,221 @@ async fn deleting_a_hidden_channel_sends_its_non_viewers_no_layout() {
         "{wire}"
     );
     let back: WsEvent = serde_json::from_str(&to_bus_json(&ev).unwrap()).unwrap();
-    let Some(WsEvent::LayoutChanged {
-        server: _,
-        layout: _,
-        created: None,
-        deleted: Some(kept),
-    }) = current(&state, back).await
-    else {
-        panic!("expected layout_changed with its deleted rules");
-    };
+    let recovered = current(&state, back).await.expect("stored layout");
     for (user, sent) in [("nora", false), ("vic", true), ("alice", true)] {
         let mut access = Access::new(Some(s(user)), false, set(&["open"]));
         assert_eq!(on_event(&state, 1, &mut access, &ev).await, Some(true));
-        let mine = layout_for(&state, &mut access, "open", &layout, None, Some(&kept))
-            .await
-            .unwrap();
+        let mine = layout_for(&state, &mut access, &recovered).await.unwrap();
         assert_eq!(mine.is_some(), sent, "{user}");
     }
     let mut nora = Access::new(Some(s("nora")), false, set(&["open"]));
     assert!(
         matches!(
-            layout_for(&state, &mut nora, "open", &layout, None, Some(&shown)).await,
+            layout_for(
+                &state,
+                &mut nora,
+                &WsEvent::LayoutChanged {
+                    server: s("open"),
+                    layout: layout.into(),
+                    created: None,
+                    deleted: Some(shown),
+                    before: None,
+                    after: None,
+                }
+            )
+            .await,
             Some(Some(WsEvent::LayoutChanged { .. }))
         ),
         "deleting a channel they could view still updates their layout"
     );
+    crate::api::test_util::done(state, path).await;
+}
+
+/// The `layout_version` `who` reads in `GET /servers/open`.
+async fn open_version(state: &AppState, who: crate::db::User) -> i64 {
+    crate::api::servers::get_server(
+        axum::extract::State(state.clone()),
+        crate::api::MaybeAuthed(Some(who)),
+        axum::http::HeaderMap::new(),
+        axum::extract::Path(s("open")),
+    )
+    .await
+    .expect("server")
+    .0
+    .layout_version
+}
+
+/// Checks the layout change that just happened in `open`: alice (who manages channels) and the
+/// site admin read the stored version and alice's connection gets it; nora reads a version that
+/// moved only if she can see the change, and her connection hears of it only then, with that
+/// version. Returns nora's version.
+async fn layout_step(
+    state: &AppState,
+    rx: &mut broadcast::Receiver<WsEvent>,
+    nora_before: i64,
+    seen: bool,
+    label: &str,
+) -> i64 {
+    use crate::api::test_util::mem_user;
+    let stored = crate::api::categories::layout_version(&state.db, "open")
+        .await
+        .unwrap();
+    for who in [mem_user("alice", false), mem_user("root", true)] {
+        assert_eq!(open_version(state, who).await, stored, "{label}");
+    }
+    let nora = open_version(state, mem_user("nora", false)).await;
+    assert_eq!(nora != nora_before, seen, "{label}: nora's version");
+    let ev = loop {
+        match rx.try_recv() {
+            Ok(ev @ WsEvent::LayoutChanged { .. }) => break ev,
+            Ok(_) => {}
+            Err(e) => panic!("{label}: no layout_changed ({e:?})"),
+        }
+    };
+    let wire = serde_json::to_value(&ev).unwrap();
+    assert!(wire.get("before").is_none(), "{label}: {wire}");
+    let mut conn = Access::new(Some(s("nora")), false, set(&["open"]));
+    let mine = layout_for(state, &mut conn, &ev).await.expect("stays open");
+    match (mine, seen) {
+        (None, false) => {}
+        (
+            Some(WsEvent::LayoutChanged {
+                server: _,
+                layout,
+                created: _,
+                deleted: _,
+                before: _,
+                after: _,
+            }),
+            true,
+        ) => assert_eq!(layout.version, nora, "{label}: the event's version"),
+        (got, _) => panic!(
+            "{label}: nora's connection got {:?}",
+            got.map(|e| serde_json::to_string(&e).unwrap())
+        ),
+    }
+    let mut conn = Access::new(Some(s("alice")), false, set(&["open"]));
+    match layout_for(state, &mut conn, &ev).await {
+        Some(Some(WsEvent::LayoutChanged {
+            server: _,
+            layout,
+            created: _,
+            deleted: _,
+            before: _,
+            after: _,
+        })) => assert_eq!(layout.version, stored, "{label}: alice's event"),
+        _ => panic!("{label}: alice hears of every change"),
+    }
+    nora
+}
+
+#[tokio::test]
+async fn layout_versions_move_only_for_changes_their_reader_sees() {
+    use crate::api::Authed;
+    use crate::api::categories::{
+        create_category, delete_category, rename_category, reorder_layout,
+    };
+    use crate::api::servers::{create_channel, delete_channel};
+    use crate::api::test_util::mem_user;
+    use axum::Json;
+    use axum::extract::{Path, State};
+    let (state, path, general, secret) = peek_world("layout_versions").await;
+    let db = &state.db;
+    exec(
+        db,
+        "INSERT INTO members(server, username, joined_at) VALUES('open', 'nora', 1)",
+    )
+    .await;
+    exec(
+        db,
+        "UPDATE members SET is_admin = 1 WHERE server = 'open' AND username = 'alice'",
+    )
+    .await;
+    fn body<T: serde::de::DeserializeOwned>(v: serde_json::Value) -> Json<T> {
+        Json(serde_json::from_value(v).expect("body"))
+    }
+    let alice = || Authed(mem_user("alice", false));
+    let stored = || async {
+        crate::api::categories::layout_version(db, "open")
+            .await
+            .unwrap()
+    };
+    let reorder = |version: i64, order: serde_json::Value| {
+        let state = state.clone();
+        async move {
+            let mut order = order;
+            order["version"] = version.into();
+            let _ = reorder_layout(State(state), alice(), Path(s("open")), body(order))
+                .await
+                .expect("reorder");
+        }
+    };
+    let channel = |name: &'static str, restrict: bool| {
+        let state = state.clone();
+        async move {
+            create_channel(
+                State(state),
+                alice(),
+                Path(s("open")),
+                body(serde_json::json!({ "name": name, "restrict_view": restrict })),
+            )
+            .await
+            .expect("channel")
+            .0
+            .id
+        }
+    };
+    let mut rx = state.hub.subscribe();
+    let nora = open_version(&state, mem_user("nora", false)).await;
+    reorder(
+        stored().await,
+        serde_json::json!({ "uncategorized": [secret, general], "categories": [] }),
+    )
+    .await;
+    let nora = layout_step(&state, &mut rx, nora, false, "moving a hidden channel").await;
+    let staff = create_category(
+        State(state.clone()),
+        alice(),
+        Path(s("open")),
+        body(serde_json::json!({ "name": "Staff" })),
+    )
+    .await
+    .expect("category")
+    .0
+    .id;
+    let nora = layout_step(&state, &mut rx, nora, false, "an empty category").await;
+    reorder(
+        stored().await,
+        serde_json::json!({ "uncategorized": [general], "categories": [{ "id": staff, "channels": [secret] }] }),
+    )
+    .await;
+    let nora = layout_step(&state, &mut rx, nora, false, "filling a hidden category").await;
+    let _ = rename_category(
+        State(state.clone()),
+        alice(),
+        Path(staff),
+        body(serde_json::json!({ "name": "Team" })),
+    )
+    .await
+    .expect("rename");
+    let nora = layout_step(&state, &mut rx, nora, false, "renaming it").await;
+    let vault = channel("vault", true).await;
+    let nora = layout_step(&state, &mut rx, nora, false, "creating a hidden channel").await;
+    let _ = delete_channel(State(state.clone()), alice(), Path(vault))
+        .await
+        .expect("delete");
+    let nora = layout_step(&state, &mut rx, nora, false, "deleting it").await;
+    let _ = delete_category(State(state.clone()), alice(), Path(staff))
+        .await
+        .expect("delete category");
+    let nora = layout_step(&state, &mut rx, nora, false, "deleting the category").await;
+    let talk = channel("talk", false).await;
+    let nora = layout_step(&state, &mut rx, nora, true, "creating a visible channel").await;
+    reorder(
+        stored().await,
+        serde_json::json!({ "uncategorized": [talk, general, secret], "categories": [] }),
+    )
+    .await;
+    layout_step(&state, &mut rx, nora, true, "moving a visible channel").await;
     crate::api::test_util::done(state, path).await;
 }

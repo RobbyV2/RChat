@@ -4,7 +4,8 @@ use tokio::time::Instant;
 use super::access::{Access, channel_gate, deleted_gate};
 use super::event::WsEvent;
 
-use crate::api::access::{ViewRules, ws_sees_timeouts};
+use crate::api::access::ws_sees_timeouts;
+use crate::api::categories::seen_version;
 use crate::api::{Channel, ChannelLayout, LayoutCategory};
 use crate::hub::Hub;
 use crate::state::AppState;
@@ -38,6 +39,8 @@ pub(super) fn client_frame(fanned: &crate::fanout::Fanned, me: Option<&str>) -> 
                 layout: _,
                 created: _,
                 deleted: _,
+                before: _,
+                after: _,
             }
             | WsEvent::ChannelCreated {
                 server: _,
@@ -216,75 +219,128 @@ pub(super) async fn channel_for(
     }))
 }
 
-/// `layout_changed` for one connection: only the channels it can view, and only the categories
-/// that hold one of them, unless it manages channels. `Some(None)` when it comes from creating or
-/// deleting a channel the connection can't view (its layout is the same); `None` when the
-/// connection must close.
+/// Projects a layout change for one viewer. A category or reorder notification needs a
+/// visible change in the matching edit, even when its payload is a newer layout.
 pub(super) async fn layout_for(
+    state: &AppState,
+    access: &mut Access,
+    ev: &WsEvent,
+) -> Option<Option<WsEvent>> {
+    let WsEvent::LayoutChanged {
+        server,
+        layout,
+        created,
+        deleted,
+        before,
+        after,
+    } = ev
+    else {
+        return Some(None);
+    };
+    let edited = after.as_ref().unwrap_or(layout);
+    let previous = access.layouts.insert(server.clone(), edited.clone());
+    if let Some(cid) = created
+        && !channel_gate(state, access, server, *cid).await?
+    {
+        return Some(None);
+    }
+    if deleted.is_some() && !deleted_gate(state, access, server, None, deleted.as_ref()).await? {
+        return Some(None);
+    }
+    let started = Instant::now();
+    let manages = match crate::api::access::ws_manages_channels(
+        &state.read(),
+        server,
+        access.user.as_deref(),
+    )
+    .await
+    {
+        Ok(manages) => manages,
+        Err(e) => return access.hold(e, started).then_some(None),
+    };
+    let mine = if manages || created.is_some() || deleted.is_some() {
+        seen_layout(state, access, server, layout, manages).await?
+    } else {
+        // Both snapshots in a write transaction carry its incremented version.
+        let before = before
+            .as_ref()
+            .filter(|b| b.version == edited.version)
+            .or_else(|| {
+                previous
+                    .as_deref()
+                    .filter(|p| p.version.checked_add(1) == Some(edited.version))
+            });
+        let Some(before) = before else {
+            return Some(None);
+        };
+        let old = seen_layout(state, access, server, before, false).await?;
+        let new = seen_layout(state, access, server, edited, false).await?;
+        if old.version == new.version {
+            return Some(None);
+        }
+        match after {
+            Some(_) => seen_layout(state, access, server, layout, false).await?,
+            None => new,
+        }
+    };
+    if access.retry.pending() {
+        return Some(None);
+    }
+    Some(Some(WsEvent::LayoutChanged {
+        server: server.clone(),
+        layout: mine.into(),
+        created: None,
+        deleted: None,
+        before: None,
+        after: None,
+    }))
+}
+
+/// `layout` with only the channels this connection can view, and only the categories that hold
+/// one of them unless it `manages` channels. `None` when the connection must close.
+async fn seen_layout(
     state: &AppState,
     access: &mut Access,
     server: &str,
     layout: &ChannelLayout,
-    created: Option<i64>,
-    deleted: Option<&ViewRules>,
-) -> Option<Option<WsEvent>> {
-    if let Some(cid) = created
-        && !channel_gate(state, access, server, cid).await?
-    {
-        return Some(None);
-    }
-    if deleted.is_some() && !deleted_gate(state, access, server, None, deleted).await? {
-        return Some(None);
-    }
+    manages: bool,
+) -> Option<ChannelLayout> {
+    let ChannelLayout {
+        version,
+        uncategorized: all,
+        categories: all_categories,
+    } = layout;
     let mut uncategorized = Vec::new();
-    for cid in &layout.uncategorized {
+    for cid in all {
         if channel_gate(state, access, server, *cid).await? {
             uncategorized.push(*cid);
         }
     }
     let mut categories = Vec::new();
-    let mut manages = None;
-    for category in &layout.categories {
-        let mut channels = Vec::new();
-        for cid in &category.channels {
+    for LayoutCategory { id, name, channels } in all_categories {
+        let mut shown = Vec::new();
+        for cid in channels {
             if channel_gate(state, access, server, *cid).await? {
-                channels.push(*cid);
+                shown.push(*cid);
             }
         }
-        if channels.is_empty() && manages.is_none() {
-            let started = Instant::now();
-            manages = match crate::api::access::ws_manages_channels(
-                &state.read(),
-                server,
-                access.user.as_deref(),
-            )
-            .await
-            {
-                Ok(m) => Some(m),
-                Err(e) => match access.hold(e, started) {
-                    true => Some(false),
-                    false => return None,
-                },
-            };
-        }
-        if !channels.is_empty() || manages == Some(true) {
+        if !shown.is_empty() || manages {
             categories.push(LayoutCategory {
-                id: category.id,
-                name: category.name.clone(),
-                channels,
+                id: *id,
+                name: name.clone(),
+                channels: shown,
             });
         }
     }
-    Some(Some(WsEvent::LayoutChanged {
-        server: server.to_string(),
-        layout: ChannelLayout {
-            version: layout.version,
-            uncategorized,
-            categories,
-        },
-        created: None,
-        deleted: None,
-    }))
+    let mut seen = ChannelLayout {
+        version: *version,
+        uncategorized,
+        categories,
+    };
+    if !manages {
+        seen.version = seen_version(&seen);
+    }
+    Some(seen)
 }
 
 pub(super) const PRESENCE_SNAPSHOT_MAX: usize = 50;

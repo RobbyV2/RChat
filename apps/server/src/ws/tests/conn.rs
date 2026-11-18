@@ -357,13 +357,17 @@ async fn a_recovery_closes_the_sockets_of_old_sessions() {
 }
 
 async fn next_of_type(ws: &mut Client, kind: &str, wait: Duration) -> Option<serde_json::Value> {
+    next_among(ws, &[kind], wait).await
+}
+
+async fn next_among(ws: &mut Client, kinds: &[&str], wait: Duration) -> Option<serde_json::Value> {
     use tokio_tungstenite::tungstenite::Message as T;
     let until = Instant::now() + wait;
     loop {
         match tokio::time::timeout_at(until, ws.next()).await {
             Ok(Some(Ok(T::Text(text)))) => {
                 let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-                if v["type"] == kind {
+                if kinds.iter().any(|kind| v["type"] == *kind) {
                     return Some(v);
                 }
                 assert_ne!(v["type"], "error", "{v}");
@@ -372,6 +376,168 @@ async fn next_of_type(ws: &mut Client, kind: &str, wait: Duration) -> Option<ser
             Err(_) | Ok(Some(Err(_)) | None) => return None,
         }
     }
+}
+
+async fn socket_account(state: &AppState, name: &str, admin: i64) {
+    add_user(&state.db, name).await;
+    crate::api::test_util::add_member(&state.db, "rchat", name, admin, 0, 1).await;
+    sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, 1)")
+        .bind(crate::db::secret_key(&format!("{name}-token")))
+        .bind(name)
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+async fn viewing_socket(addr: std::net::SocketAddr, name: &str) -> Client {
+    let mut ws = dial(addr, "203.0.113.21").await.expect("socket");
+    send_auth(&mut ws, Some(&format!("{name}-token"))).await;
+    ws.send(tokio_tungstenite::tungstenite::Message::text(
+        r#"{"type":"viewing","server":"rchat"}"#,
+    ))
+    .await
+    .unwrap();
+    next_of_type(&mut ws, "presence_snapshot", Duration::from_secs(10))
+        .await
+        .expect("viewing");
+    ws
+}
+
+async fn layout_names(ws: &mut Client) -> Vec<String> {
+    let mut names = Vec::new();
+    loop {
+        let frame = next_among(
+            ws,
+            &["layout_changed", "upload_expiry_changed"],
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("end of layout changes");
+        if frame["type"] == "upload_expiry_changed" {
+            return names;
+        }
+        assert_eq!(frame.as_object().unwrap().len(), 3, "{frame}");
+        names.push(
+            frame["layout"]["categories"][0]["name"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+}
+
+fn end_events(state: &AppState) {
+    state
+        .hub
+        .broadcast(WsEvent::UploadExpiryChanged { server: s("rchat") });
+}
+
+#[tokio::test]
+async fn recovered_layout_edits_send_the_current_layout_only_for_visible_changes() {
+    use crate::api::{Authed, categories::rename_category, test_util};
+    use crate::hub::{Aftermath, Op};
+    use axum::{
+        Json,
+        extract::{Path, State},
+    };
+
+    let (state, path, addr) = live("ws_layout_recovery").await;
+    let db = &state.db;
+    socket_account(&state, "alice", 1).await;
+    socket_account(&state, "nora", 0).await;
+    let public = insert_id(db, "INSERT INTO channel_categories(server, name, position, created_at) VALUES('rchat', 'Spring', 0, 1) RETURNING id").await;
+    let empty = insert_id(db, "INSERT INTO channel_categories(server, name, position, created_at) VALUES('rchat', 'Empty', 1, 1) RETURNING id").await;
+    sqlx::query("UPDATE channels SET category_id = $1 WHERE server = 'rchat'")
+        .bind(public)
+        .execute(db)
+        .await
+        .unwrap();
+    let (hub, mut out) = Hub::replicated();
+    let mut writer = state.clone();
+    writer.hub = hub.clone();
+    let mut aftermath = hub.take_aftermath().unwrap();
+    let mut reader = viewing_socket(addr, "nora").await;
+    let mut manager = viewing_socket(addr, "alice").await;
+    for (id, name) in [(empty, "Later"), (public, "Summer"), (public, "Autumn")] {
+        let body = serde_json::from_value(serde_json::json!({ "name": name })).unwrap();
+        let _ = rename_category(
+            State(writer.clone()),
+            Authed(test_util::mem_user("alice", false)),
+            Path(id),
+            Json(body),
+        )
+        .await
+        .unwrap();
+        let Op::Broadcast { event } = out.try_recv().expect("published rename").op else {
+            panic!("expected broadcast")
+        };
+        state
+            .hub
+            .broadcast(serde_json::from_str(&to_bus_json(&event).unwrap()).unwrap());
+    }
+    end_events(&state);
+    assert_eq!(layout_names(&mut reader).await, ["Summer", "Autumn"]);
+    assert_eq!(
+        layout_names(&mut manager).await,
+        ["Spring", "Summer", "Autumn"]
+    );
+    reader.close(None).await.unwrap();
+    let mut reader = viewing_socket(addr, "nora").await;
+
+    hub.heartbeat();
+    hub.ingest("4-0", out.try_recv().unwrap(), true);
+    let Aftermath::Repost(missed) = aftermath.try_recv().expect("missing broadcasts") else {
+        panic!("expected reposts")
+    };
+    assert_eq!(missed.len(), 3);
+    for op in missed {
+        crate::ws::repost::repost(&writer, op).await;
+        let Op::Broadcast { event } = out.try_recv().expect("reposted rename").op else {
+            panic!("expected broadcast")
+        };
+        let received = serde_json::from_str(&to_bus_json(&event).unwrap()).unwrap();
+        let recovered = crate::ws::repost::current(&writer, received)
+            .await
+            .expect("current layout");
+        state.hub.broadcast(recovered);
+    }
+    end_events(&state);
+    assert_eq!(layout_names(&mut reader).await, ["Autumn", "Autumn"]);
+    assert_eq!(layout_names(&mut manager).await, ["Autumn"; 3]);
+    test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn layout_events_without_a_comparison_use_consecutive_snapshots_on_the_socket() {
+    let (state, path, addr) = live("ws_layout_snapshots").await;
+    socket_account(&state, "nora", 0).await;
+    socket_account(&state, "alice", 1).await;
+    let mut manager = viewing_socket(addr, "alice").await;
+    let channel = general(&state.db).await;
+    let mut reader = viewing_socket(addr, "nora").await;
+    for (version, public, empty) in [
+        (10, "Spring", "Later"),
+        (11, "Spring", "Elsewhere"),
+        (12, "Summer", "Elsewhere"),
+        (14, "Autumn", "Later"),
+        (15, "Winter", "Later"),
+    ] {
+        let wire = serde_json::json!({
+            "type": "layout_changed", "server": "rchat",
+            "layout": { "version": version, "uncategorized": [], "categories": [
+                {"id": 101, "name": public, "channels": [channel]},
+                {"id": 102, "name": empty, "channels": []}
+            ]}
+        });
+        state.hub.broadcast(serde_json::from_value(wire).unwrap());
+    }
+    end_events(&state);
+    assert_eq!(layout_names(&mut reader).await, ["Summer", "Winter"]);
+    assert_eq!(
+        layout_names(&mut manager).await,
+        ["Spring", "Spring", "Summer", "Autumn", "Winter"]
+    );
+    crate::api::test_util::done(state, path).await;
 }
 
 #[tokio::test]

@@ -304,8 +304,8 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                     let Some(deliver) = on_event(&state, conn, &mut access, ev).await else {
                         break;
                     };
-                    if deliver && let WsEvent::LayoutChanged { server, layout, created, deleted } = ev {
-                        let Some(mine) = layout_for(&state, &mut access, server, layout, *created, deleted.as_ref()).await else {
+                    if deliver && matches!(ev, WsEvent::LayoutChanged { .. }) {
+                        let Some(mine) = layout_for(&state, &mut access, ev).await else {
                             break;
                         };
                         if let Some(mine) = mine && !sent(&mut access, out.event(&mine)) {
@@ -495,6 +495,9 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
             _ = out.tx.closed() => break,
         }
         if std::mem::take(&mut access.topics_dirty) {
+            access.layouts.retain(|server, _| {
+                access.member_servers.contains(server) || access.subs.contains(server)
+            });
             state.hub.reconcile(conn, &access.topics(), through);
         }
         if access.retry.pending() {
@@ -669,6 +672,7 @@ pub(super) fn join(access: &mut Access, server: String) {
 }
 
 pub(super) fn forget_server(access: &mut Access, server: &str) {
+    access.layouts.remove(server);
     access.viewable.retain(|_, (owner, _)| owner != server);
     access.floors.clear();
     access.who.forget();

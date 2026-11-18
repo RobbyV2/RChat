@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::time::Instant;
@@ -336,6 +336,8 @@ pub(super) struct Access {
     pub(super) hosted_scope: Option<(Instant, P2pScope)>,
     pub(super) hosting_pace: Pace,
     pub(super) who: Who,
+    /// The last edit observed for each followed server, shared across its connections.
+    pub(super) layouts: HashMap<String, Arc<crate::api::ChannelLayout>>,
     pub(super) sub: SubPace,
     pub(super) viewable: Viewable,
     pub(super) floors: HashMap<i64, (Instant, Option<Option<i64>>)>,
@@ -379,6 +381,7 @@ impl Access {
             hosted_scope: None,
             hosting_pace: Pace::new(P2P_ANNOUNCE_EVERY),
             who: Who::new(),
+            layouts: HashMap::new(),
             sub,
             viewable: HashMap::new(),
             floors: HashMap::new(),
@@ -737,6 +740,7 @@ impl Access {
     }
 
     pub(super) fn hold(&mut self, e: sqlx::Error, started: Instant) -> bool {
+        self.layouts.clear();
         self.viewable.clear();
         self.floors.clear();
         self.missed = true;
@@ -854,6 +858,7 @@ pub(super) async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::
             kept.insert(server.clone());
         }
     }
+    access.layouts.clear();
     access.viewable.clear();
     access.floors.clear();
     if access.member_servers != servers {

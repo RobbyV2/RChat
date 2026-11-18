@@ -257,6 +257,8 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             layout: _,
             created: _,
             deleted: _,
+            before: _,
+            after: _,
         }
         | WsEvent::VoiceState {
             server,
