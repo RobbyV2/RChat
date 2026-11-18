@@ -211,7 +211,7 @@ impl Place {
         }
     }
 
-    fn event(&self, ids: Vec<i64>, created: Vec<i64>) -> WsEvent {
+    fn event(&self, ids: Vec<i64>, created: Vec<i64>, notices: Vec<i64>) -> WsEvent {
         let (server, channel_id) = match self.channel() {
             Some(c) => (Some(c.server().name().to_string()), Some(c.id())),
             None => (None, None),
@@ -232,6 +232,7 @@ impl Place {
             thread_root_id,
             ids,
             created,
+            notices: Some(notices),
         }
     }
 }
@@ -409,6 +410,7 @@ async fn audit_place(db: &Db, channel_id: Option<i64>) -> Result<Option<AuditPla
 /// Messages chosen for deletion with what the delete needs.
 struct Picked {
     id: i64,
+    notice: bool,
     author: String,
     pinged: Vec<(String, String)>,
     moderated: bool,
@@ -429,6 +431,7 @@ async fn pick(
     }
     Ok(Picked {
         id,
+        notice: crate::api::access::is_membership_notice(&message.scope().kind),
         author: message.scope().author.clone(),
         pinged: pinged_by(db, id).await?,
         moderated: audit.is_some(),
@@ -469,6 +472,11 @@ async fn delete_rows(
 }
 
 async fn announce(state: &AppState, place: &Place, picked: Vec<Picked>, gone: &[(i64, i64)]) {
+    let notices: Vec<i64> = picked
+        .iter()
+        .filter(|p| p.notice && gone.iter().any(|(id, _)| *id == p.id))
+        .map(|p| p.id)
+        .collect();
     let pinged: Vec<(String, String)> = {
         let mut seen = HashSet::new();
         picked
@@ -482,7 +490,7 @@ async fn announce(state: &AppState, place: &Place, picked: Vec<Picked>, gone: &[
         return;
     }
     let (ids, created) = gone.iter().copied().unzip();
-    state.hub.broadcast(place.event(ids, created));
+    state.hub.broadcast(place.event(ids, created, notices));
 }
 
 fn job_from(r: &sqlx::any::AnyRow) -> sqlx::Result<BulkJob> {

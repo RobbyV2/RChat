@@ -24,6 +24,22 @@ mod repost;
 mod rewrite;
 mod typing;
 
+async fn bulk_ids(
+    state: &AppState,
+    conn: u64,
+    viewer: &mut Access,
+    event: &WsEvent,
+) -> Option<Vec<i64>> {
+    if !super::filter::on_event(state, conn, viewer, event).await? {
+        return None;
+    }
+    let fanned = crate::fanout::Fanned::new(event.clone(), 1);
+    let frame = super::rewrite::event_frame(state, viewer, &fanned).await?;
+    let wire: serde_json::Value = serde_json::from_str(frame.as_str()).unwrap();
+    assert!(wire.get("notices").is_none() && wire.get("created").is_none());
+    Some(serde_json::from_value(wire["ids"].clone()).unwrap())
+}
+
 fn message() -> Message {
     Message {
         id: 4,

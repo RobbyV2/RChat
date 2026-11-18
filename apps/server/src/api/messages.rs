@@ -2032,7 +2032,7 @@ pub(crate) async fn delete_message(
         channel_id,
         dm_id,
         thread_root_id,
-        kind: _,
+        kind,
         author: _,
         media_id: _,
         media_filename: _,
@@ -2047,6 +2047,7 @@ pub(crate) async fn delete_message(
         dm_users,
         id,
         thread_root_id,
+        notice: Some(crate::api::access::is_membership_notice(&kind)),
     });
     Ok(ok())
 }
@@ -2949,24 +2950,35 @@ enum ReadUpTo {
 }
 
 /// Newest top-level message of a channel the reader may read (respecting the read-history
-/// floor `since`), or of a DM.
+/// floor `since`, and without `join` and `leave` messages unless `notices`), or of a DM.
 async fn latest_readable(
     db: &Db,
     target: ReadTarget,
     since: Option<i64>,
+    notices: bool,
 ) -> Result<Option<i64>, ApiError> {
     let row = match target {
-        ReadTarget::Channel(id) => sqlx::query(
-            "SELECT MAX(id) FROM messages WHERE channel_id = $1 AND thread_root_id IS NULL AND created_at >= $2",
-        )
-        .bind(id)
-        .bind(since.unwrap_or(i64::MIN))
-        .fetch_one(db)
-        .await?,
-        ReadTarget::Dm(id) => sqlx::query("SELECT MAX(id) FROM messages WHERE dm_id = $1")
-            .bind(id)
-            .fetch_one(db)
-            .await?,
+        ReadTarget::Channel(id) => {
+            let sql = match notices {
+                true => {
+                    "SELECT MAX(id) FROM messages WHERE channel_id = $1 AND thread_root_id IS NULL AND created_at >= $2"
+                }
+                false => {
+                    "SELECT MAX(id) FROM messages WHERE channel_id = $1 AND thread_root_id IS NULL AND created_at >= $2 AND kind NOT IN ('join', 'leave')"
+                }
+            };
+            sqlx::query(sql)
+                .bind(id)
+                .bind(since.unwrap_or(i64::MIN))
+                .fetch_one(db)
+                .await?
+        }
+        ReadTarget::Dm(id) => {
+            sqlx::query("SELECT MAX(id) FROM messages WHERE dm_id = $1")
+                .bind(id)
+                .fetch_one(db)
+                .await?
+        }
         ReadTarget::Thread(_) => return Ok(None),
     };
     Ok(row.try_get::<Option<i64>, _>(0)?)
@@ -2989,7 +3001,7 @@ async fn read_scope(
         } => (Some(last_read), pings_until),
         ReadUpTo::Latest => (None, None),
     };
-    let since = match target {
+    let (since, notices) = match target {
         ReadTarget::Thread(id) => {
             let root = resolve_message(&state.db, id, Some(user), &Proof::none()).await?;
             let channel = format!("c{}", root.thread_channel()?.id());
@@ -3016,14 +3028,15 @@ async fn read_scope(
         }
         ReadTarget::Channel(id) => {
             let channel = resolve_channel(&state.db, id, Some(user), &Proof::none()).await?;
-            match given {
+            let since = match given {
                 Some(_) => None,
                 None => channel.read_since(&state.db).await?,
-            }
+            };
+            (since, channel.shows_membership_notices())
         }
         ReadTarget::Dm(id) => {
             resolve_dm(&state.db, id, user).await?;
-            None
+            (None, true)
         }
     };
     let current = || async {
@@ -3041,7 +3054,7 @@ async fn read_scope(
     let wanted = match given {
         Some(last_read) => Some(last_read),
         None => {
-            let latest = latest_readable(&state.db, target, since).await?;
+            let latest = latest_readable(&state.db, target, since, notices).await?;
             let stored = current().await?;
             latest.filter(|latest| *latest > stored)
         }
@@ -3149,8 +3162,8 @@ pub struct ReadBatchReq {
 /// Mark channels, DMs and threads read
 ///
 /// For each scope the caller can read, with the same checks as `POST /api/v1/read`: stores the
-/// newest top-level message the caller may read (respecting read-history limits) as the read
-/// position and marks every unseen ping of the caller in the scope as seen (for a thread scope,
+/// newest top-level message the caller may read (respecting read-history limits, and leaving
+/// out `join` and `leave` messages that are hidden from the caller) as the read position and marks every unseen ping of the caller in the scope as seen (for a thread scope,
 /// the pings on its replies). Scopes the caller cannot read are skipped without any sign, so the
 /// response is the same for every list of valid scope names. Emits one `read_updated` per scope
 /// that changed to the caller's connections. Requires a bearer token. General rate-limit bucket,
@@ -6971,6 +6984,95 @@ mod tests {
         );
         assert_eq!(stored_read(db, "bob", &c).await, Some(after));
         done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn read_positions_skip_join_messages_outsiders_may_not_see() {
+        let (state, path) = temp_state("read_notices").await;
+        read_positions_skip_hidden_notices(&state).await;
+        done(state, path).await;
+        if let Some((state, temp)) = crate::api::test_util::pg_state("read_notices").await {
+            read_positions_skip_hidden_notices(&state).await;
+            crate::api::test_util::pg_done(state, temp).await;
+        }
+    }
+
+    async fn read_positions_skip_hidden_notices(state: &AppState) {
+        let db = &state.db;
+        for name in ["alice", "bob", "zed"] {
+            add_user(db, name, name).await;
+        }
+        sqlx::query("INSERT INTO servers(name, display_name, creator, public_read, members_visible, created_at) VALUES('club', 'club', 'alice', 1, 0, 1)")
+            .execute(db)
+            .await
+            .expect("server");
+        let cid: i64 = sqlx::query("INSERT INTO channels(server, name, created_at) VALUES('club', 'general', 1) RETURNING id")
+            .fetch_one(db)
+            .await
+            .expect("channel")
+            .try_get(0)
+            .expect("id");
+        add_member(db, "club", "alice", 1, 0, 1).await;
+        add_member(db, "club", "bob", 0, 0, 1).await;
+        let post = |kind: &'static str, author: &'static str| async move {
+            sqlx::query("INSERT INTO messages(channel_id, author, content, kind, created_at) VALUES($1, $2, '', $3, 2) RETURNING id")
+                .bind(cid)
+                .bind(author)
+                .bind(kind)
+                .fetch_one(db)
+                .await
+                .expect("message")
+                .try_get::<i64, _>(0)
+                .expect("id")
+        };
+        let said = post("user", "alice").await;
+        post("join", "fay").await;
+        let left = post("leave", "fay").await;
+        let c = format!("c{cid}");
+        let mut rx = state.hub.subscribe();
+        let read = |who: User| {
+            let state = state.clone();
+            let c = c.clone();
+            async move {
+                let _ = mark_read_batch(
+                    State(state),
+                    Authed(who),
+                    Json(ReadBatchReq { scopes: vec![c] }),
+                )
+                .await
+                .expect("read");
+            }
+        };
+        read(mem_user("zed", false)).await;
+        assert_eq!(
+            stored_read(db, "zed", &c).await,
+            Some(said),
+            "an outsider's position is the newest message they may read"
+        );
+        match rx.try_recv() {
+            Ok(WsEvent::ReadUpdated {
+                username,
+                scope: _,
+                last_read,
+                pings_until: _,
+            }) => assert_eq!((username.as_str(), last_read), ("zed", said)),
+            _ => panic!("expected read_updated"),
+        }
+        for who in [mem_user("bob", false), mem_user("root", true)] {
+            let name = who.username.clone();
+            read(who).await;
+            assert_eq!(stored_read(db, &name, &c).await, Some(left), "{name}");
+        }
+        sqlx::query("UPDATE servers SET members_visible = 1 WHERE name = 'club'")
+            .execute(db)
+            .await
+            .expect("members visible");
+        read(mem_user("zed", false)).await;
+        assert_eq!(
+            stored_read(db, "zed", &c).await,
+            Some(left),
+            "with its members shown, the notices count"
+        );
     }
 
     #[tokio::test]

@@ -1008,3 +1008,135 @@ async fn a_server_that_stops_being_readable_drops_its_followers() {
     assert_eq!(bob.member_servers, set(&["vault"]), "members stay");
     crate::api::test_util::done(state, path).await;
 }
+
+#[tokio::test]
+async fn deleted_notices_of_a_server_that_keeps_its_members_skip_outsiders() {
+    let (state, path) = crate::api::test_util::temp_state("ws_deleted_notices").await;
+    deleted_notices_skip_outsiders(state.clone()).await;
+    crate::api::test_util::done(state, path).await;
+    if let Some((state, pg)) = crate::api::test_util::pg_state("ws_deleted_notices").await {
+        deleted_notices_skip_outsiders(state.clone()).await;
+        crate::api::test_util::pg_done(state, pg).await;
+    }
+}
+
+async fn deleted_notices_skip_outsiders(state: AppState) {
+    use crate::api::Authed;
+    use crate::api::bulk_delete::bulk_delete;
+    use crate::api::messages::delete_message;
+    use axum::Json;
+    use axum::extract::{Path, State};
+    let db = &state.db;
+    for name in ["alice", "bob", "carol"] {
+        add_user(db, name).await;
+    }
+    crate::db::NewUser::plain("root")
+        .admin(true)
+        .at(1)
+        .add(db)
+        .await;
+    exec(db, "INSERT INTO servers(name, display_name, creator, public_read, members_visible, created_at) VALUES('club', 'club', 'alice', 1, 0, 1)").await;
+    let cid = insert_id(
+        db,
+        "INSERT INTO channels(server, name, created_at) VALUES('club', 'general', 1) RETURNING id",
+    )
+    .await;
+    crate::api::test_util::add_member(db, "club", "alice", 1, 0, 1).await;
+    crate::api::test_util::add_member(db, "club", "bob", 0, 0, 1).await;
+    let post = |kind: &'static str, author: &'static str| async move {
+        sqlx::query("INSERT INTO messages(channel_id, author, content, kind, created_at) VALUES($1, $2, '', $3, $4) RETURNING id")
+            .bind(cid)
+            .bind(author)
+            .bind(kind)
+            .bind(now())
+            .fetch_one(db)
+            .await
+            .unwrap()
+            .try_get::<i64, _>(0)
+            .unwrap()
+    };
+    let (joined, said, left, again) = (
+        post("join", "fay").await,
+        post("user", "alice").await,
+        post("leave", "fay").await,
+        post("join", "fay").await,
+    );
+    let mut carol = Access::new(Some(s("carol")), false, HashSet::new());
+    let mut guest = Access::new(None, false, HashSet::new());
+    let mut root = Access::new(Some(s("root")), true, HashSet::new());
+    let mut bob = Access::new(Some(s("bob")), false, set(&["club"]));
+    for access in [&mut carol, &mut guest, &mut root] {
+        subscribe(&state, 1, access, vec![s("club")], HashMap::new()).await;
+        assert_eq!(access.subs, set(&["club"]), "it reads club");
+    }
+    let alice = || Authed(crate::api::test_util::mem_user("alice", false));
+    let mut rx = state.hub.subscribe();
+    let mut next = move |bulk: bool| loop {
+        match rx.try_recv() {
+            Ok(ev @ WsEvent::MessageDeleted { .. }) if !bulk => break ev,
+            Ok(ev @ WsEvent::MessagesDeleted { .. }) if bulk => break ev,
+            Ok(_) => {}
+            Err(e) => panic!("no deletion event ({e:?})"),
+        }
+    };
+    let _ = delete_message(State(state.clone()), Path(joined), alice())
+        .await
+        .expect("delete");
+    let ev = next(false);
+    let wire = serde_json::to_string(&ev).unwrap();
+    assert!(!wire.contains("notice"), "{wire}");
+    for (access, shown) in [
+        (&mut carol, false),
+        (&mut guest, false),
+        (&mut root, true),
+        (&mut bob, true),
+    ] {
+        assert_eq!(
+            on_event(&state, 1, access, &ev).await,
+            Some(shown),
+            "{:?} and the deleted join message",
+            access.user
+        );
+    }
+    let bulk = |ids: Vec<i64>| {
+        let state = state.clone();
+        async move {
+            let _ = bulk_delete(
+                State(state),
+                alice(),
+                Json(
+                    serde_json::from_value(
+                        serde_json::json!({ "scope": format!("c{cid}"), "ids": ids }),
+                    )
+                    .unwrap(),
+                ),
+            )
+            .await
+            .expect("bulk delete");
+        }
+    };
+    bulk(vec![said, left]).await;
+    let ev = next(true);
+    let wire = serde_json::to_string(&ev).unwrap();
+    assert!(!wire.contains("notices"), "{wire}");
+    for access in [&mut carol, &mut guest] {
+        assert_eq!(bulk_ids(&state, 1, access, &ev).await, Some(vec![said]));
+    }
+    for access in [&mut root, &mut bob] {
+        let ids = bulk_ids(&state, 1, access, &ev)
+            .await
+            .expect("both deletions");
+        let WsEvent::MessagesDeleted { ids: all, .. } = &ev else {
+            unreachable!()
+        };
+        assert_eq!(&ids, all);
+    }
+    bulk(vec![again]).await;
+    let ev = next(true);
+    for (access, shown) in [(&mut carol, false), (&mut guest, false), (&mut bob, true)] {
+        assert_eq!(
+            bulk_ids(&state, 1, access, &ev).await,
+            shown.then(|| vec![again])
+        );
+    }
+}

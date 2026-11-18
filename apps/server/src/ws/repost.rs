@@ -437,6 +437,7 @@ async fn repost_event(state: &AppState, event: WsEvent) {
             dm_users: dm_users.clone(),
             id,
             thread_root_id: message.thread_root_id,
+            notice: Some(crate::api::access::is_membership_notice(&message.kind)),
         };
         if state.hub.broadcast_confirmed(ev).await {
             if matches!(

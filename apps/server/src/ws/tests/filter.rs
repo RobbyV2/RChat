@@ -500,6 +500,7 @@ fn every_event() -> Vec<WsEvent> {
             dm_users: dm_users.clone(),
             id: 1,
             thread_root_id: None,
+            notice: Some(false),
         });
         evs.push(WsEvent::MessagesDeleted {
             server: server.clone(),
@@ -509,6 +510,7 @@ fn every_event() -> Vec<WsEvent> {
             thread_root_id: None,
             ids: vec![1, 2],
             created: vec![1, 2],
+            notices: Some(Vec::new()),
         });
         evs.push(WsEvent::MediaRemoved {
             server: server.clone(),
@@ -1402,6 +1404,7 @@ fn reply_events(cid: i64, root: i64, reply: i64) -> Vec<WsEvent> {
             dm_users: None,
             id: reply,
             thread_root_id: Some(root),
+            notice: Some(false),
         },
         WsEvent::MessagesDeleted {
             server: server.clone(),
@@ -1411,6 +1414,7 @@ fn reply_events(cid: i64, root: i64, reply: i64) -> Vec<WsEvent> {
             thread_root_id: Some(root),
             ids: vec![reply],
             created: vec![at],
+            notices: Some(Vec::new()),
         },
         reaction(true),
         reaction(false),

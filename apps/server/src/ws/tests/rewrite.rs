@@ -6,7 +6,7 @@ use crate::db::now;
 use crate::ws::access::{Access, channel_gate};
 use crate::ws::filter::{event_channel, on_event, track, wants};
 use crate::ws::rewrite::{
-    PRESENCE_SNAPSHOT_MAX, channel_for, client_frame, deleted_for, layout_for, own_timeout,
+    PRESENCE_SNAPSHOT_MAX, channel_for, client_frame, event_frame, layout_for, own_timeout,
     poll_for, presence_snapshot,
 };
 
@@ -115,24 +115,31 @@ async fn bulk_deletes_reach_viewers_with_only_the_ids_they_could_read() {
         thread_root_id: None,
         ids,
         created,
+        notices: Some(Vec::new()),
     };
     let conn = state.hub.next_conn();
     let mut bob = Access::new(Some("bob".to_string()), false, set(&["rchat"]));
     let mut erin = Access::new(Some("erin".to_string()), false, set(&["rchat"]));
     let mut zed = Access::new(Some("zed".to_string()), false, set(&["rchat"]));
     let mixed = ev(vec![9, 8, 7], vec![700, 600, 100]);
-    assert_eq!(on_event(&state, conn, &mut bob, &mixed).await, Some(true));
-    assert!(deleted_for(&state, &mut bob, &mixed).await.is_none());
-    assert_eq!(on_event(&state, conn, &mut zed, &mixed).await, Some(false));
-    assert_eq!(on_event(&state, conn, &mut erin, &mixed).await, Some(true));
-    let Some(WsEvent::MessagesDeleted { ids, .. }) = deleted_for(&state, &mut erin, &mixed).await
-    else {
-        panic!("erin gets her own copy");
-    };
-    assert_eq!(ids, vec![9, 8]);
+    assert_eq!(
+        bulk_ids(&state, conn, &mut bob, &mixed).await,
+        Some(vec![9, 8, 7])
+    );
+    assert_eq!(bulk_ids(&state, conn, &mut zed, &mixed).await, None);
+    assert_eq!(
+        bulk_ids(&state, conn, &mut erin, &mixed).await,
+        Some(vec![9, 8])
+    );
+    let bare = ev(vec![4], Vec::new());
+    assert_eq!(bulk_ids(&state, conn, &mut bob, &bare).await, Some(vec![4]));
+    assert_eq!(bulk_ids(&state, conn, &mut erin, &bare).await, None);
     let old = ev(vec![3, 2], vec![100, 200]);
-    assert_eq!(on_event(&state, conn, &mut erin, &old).await, Some(false));
-    assert_eq!(on_event(&state, conn, &mut bob, &old).await, Some(true));
+    assert_eq!(bulk_ids(&state, conn, &mut erin, &old).await, None);
+    assert_eq!(
+        bulk_ids(&state, conn, &mut bob, &old).await,
+        Some(vec![3, 2])
+    );
     let client = serde_json::to_string(&mixed).unwrap();
     assert!(client.contains(r#""ids":[9,8,7]"#) && !client.contains("created"));
     assert!(
@@ -148,10 +155,34 @@ async fn bulk_deletes_reach_viewers_with_only_the_ids_they_could_read() {
         thread_root_id: None,
         ids: vec![5],
         created: vec![1],
+        notices: Some(Vec::new()),
     };
     let mut nina = Access::new(Some("nina".to_string()), false, HashSet::new());
-    assert_eq!(on_event(&state, conn, &mut erin, &dm).await, Some(true));
-    assert_eq!(on_event(&state, conn, &mut nina, &dm).await, Some(false));
+    assert_eq!(bulk_ids(&state, conn, &mut erin, &dm).await, Some(vec![5]));
+    assert_eq!(bulk_ids(&state, conn, &mut nina, &dm).await, None);
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn a_bulk_deletion_needs_readable_ids_when_its_channel_policy_is_unavailable() {
+    let (state, path) = crate::api::test_util::temp_state("ws_bulk_policy").await;
+    let cid = general(&state.db).await;
+    let mut guest = Access::new(None, false, HashSet::new());
+    guest.subs.insert(s("rchat"));
+    guest.note_option("rchat", false);
+    let event = serde_json::json!({"type":"messages_deleted", "server":"rchat", "channel_id":cid,
+        "dm_id":null, "dm_users":null, "thread_root_id":null, "ids":[10,11], "notices":[11]});
+    let fanned = crate::fanout::Fanned::new(serde_json::from_value(event).unwrap(), 1);
+    assert_eq!(
+        on_event(&state, 1, &mut guest, &fanned.ev).await,
+        Some(true)
+    );
+    state.hub.channels().clear();
+    state.read().close().await;
+    assert!(
+        event_frame(&state, &mut guest, &fanned).await.is_none(),
+        "missing policy must withhold the batch"
+    );
     crate::api::test_util::done(state, path).await;
 }
 

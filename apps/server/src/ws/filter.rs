@@ -171,20 +171,6 @@ pub(super) async fn on_event(
         };
     }
     if deliver
-        && let WsEvent::MessagesDeleted {
-            server: Some(server),
-            channel_id: Some(cid),
-            created,
-            ..
-        } = ev
-    {
-        deliver = match access.floor(state, server, *cid).await {
-            Some(Some(floor)) => created.iter().any(|c| *c >= floor),
-            Some(None) => true,
-            None => false,
-        };
-    }
-    if deliver
         && let WsEvent::ChannelDeleted {
             server,
             channel_id: _,
@@ -387,6 +373,7 @@ pub(super) fn event_thread(ev: &WsEvent) -> Option<InThread> {
             dm_users: _,
             id: _,
             thread_root_id,
+            notice: _,
         }
         | WsEvent::MessagesDeleted {
             server: _,
@@ -396,6 +383,7 @@ pub(super) fn event_thread(ev: &WsEvent) -> Option<InThread> {
             thread_root_id,
             ids: _,
             created: _,
+            notices: _,
         }
         | WsEvent::ReactionAdded {
             server: _,
@@ -499,6 +487,7 @@ pub(super) fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             dm_users: _,
             id: _,
             thread_root_id: _,
+            notice: _,
         } => scoped(server, channel_id),
         WsEvent::MessagesDeleted {
             server,
@@ -508,6 +497,7 @@ pub(super) fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {
             thread_root_id: _,
             ids: _,
             created: _,
+            notices: _,
         } => scoped(server, channel_id),
         WsEvent::MediaRemoved {
             server,
@@ -660,6 +650,7 @@ pub(super) fn wants(
             dm_users,
             id: _,
             thread_root_id: _,
+            notice: _,
         } => scoped(server, dm_users),
         WsEvent::MessagesDeleted {
             server,
@@ -669,6 +660,7 @@ pub(super) fn wants(
             thread_root_id: _,
             ids: _,
             created: _,
+            notices: _,
         } => scoped(server, dm_users),
         WsEvent::MediaRemoved {
             server,

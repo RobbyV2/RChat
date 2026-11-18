@@ -1697,6 +1697,7 @@ pub(crate) async fn delete_hook_message(
         dm_users: None,
         id: mid,
         thread_root_id: root,
+        notice: Some(false),
     });
     Ok(StatusCode::NO_CONTENT)
 }

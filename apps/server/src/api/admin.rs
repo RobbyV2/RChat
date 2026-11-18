@@ -1714,7 +1714,7 @@ pub(crate) async fn delete_message(
         channel_id,
         dm_id,
         thread_root_id,
-        kind: _,
+        kind,
         author: _,
         media_id: _,
         media_filename: _,
@@ -1729,6 +1729,7 @@ pub(crate) async fn delete_message(
         dm_users,
         id,
         thread_root_id,
+        notice: Some(crate::api::access::is_membership_notice(&kind)),
     });
     Ok(ok())
 }

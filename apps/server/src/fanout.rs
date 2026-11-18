@@ -114,6 +114,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             dm_users,
             id: _,
             thread_root_id: _,
+            notice: _,
         }
         | WsEvent::MessagesDeleted {
             server,
@@ -123,6 +124,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             thread_root_id: _,
             ids: _,
             created: _,
+            notices: _,
         }
         | WsEvent::MediaRemoved {
             server,

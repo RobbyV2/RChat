@@ -695,8 +695,8 @@ impl Access {
     /// Whether `ev` shows the members of a server this connection reads from outside while it
     /// keeps them to itself: who is in it, joins and leaves, admins, presence, and a member's
     /// name changes that reach it only through such servers. Events about the connection's own
-    /// user still arrive. `join` and `leave` messages are hidden whoever they are about, like
-    /// in the channel's history.
+    /// user still arrive. `join` and `leave` messages, and their deletions, are hidden whoever they
+    /// are about, like in the channel's history.
     fn hides_members(&self, ev: &WsEvent) -> bool {
         let me = self.user.as_deref();
         let (server, about) = match ev {
@@ -707,6 +707,15 @@ impl Access {
                 dm_users: _,
                 message,
             } if is_membership_notice(&message.kind) => return self.closes(server),
+            WsEvent::MessageDeleted {
+                server: Some(server),
+                channel_id: _,
+                dm_id: _,
+                dm_users: _,
+                id: _,
+                thread_root_id: _,
+                notice: None | Some(true),
+            } => return self.closes(server),
             WsEvent::MemberJoined { server, member } => (server, Some(&member.user.username)),
             WsEvent::MemberLeft { server, username }
             | WsEvent::MemberKicked {

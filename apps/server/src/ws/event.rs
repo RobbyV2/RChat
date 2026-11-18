@@ -126,6 +126,10 @@ pub enum WsEvent {
         dm_users: Option<Vec<String>>,
         id: i64,
         thread_root_id: Option<i64>,
+        /// A `join` or `leave` message, which outsiders of a server that keeps its members to
+        /// itself never see. An absent flag leaves the message kind unknown.
+        #[serde(default, skip_serializing_if = "absent_or_client")]
+        notice: Option<bool>,
     },
     /// Messages of one channel, thread (`thread_root_id`) or DM deleted together by a bulk
     /// delete; ids only. A viewer without read history of some of them gets only the ids it
@@ -139,6 +143,9 @@ pub enum WsEvent {
         ids: Vec<i64>,
         #[serde(default, skip_serializing_if = "routing_only")]
         created: Vec<i64>,
+        /// All membership notice ids in the batch. An absent list leaves their kinds unknown.
+        #[serde(default, skip_serializing_if = "absent_or_client")]
+        notices: Option<Vec<i64>>,
     },
     MediaRemoved {
         server: Option<String>,

@@ -24,9 +24,7 @@ use super::protocol::{
     CLOSE_NO_AUTH, CLOSE_TOO_MANY, CLOSE_TOO_MANY_ADDR, CLOSE_TOO_MANY_GUESTS, CLOSE_TOO_OFTEN,
     ClientMsg, close_frame, first_frame, refuse,
 };
-use super::rewrite::{
-    channel_for, client_frame, deleted_for, layout_for, own_timeout, poll_for, presence_snapshot,
-};
+use super::rewrite::{channel_for, event_frame, layout_for, own_timeout, presence_snapshot};
 use super::typing::{Bucket, Typer, type_in};
 use super::{
     FRAME_MAX, LAG_REAUTH_EVERY, OUT_FRAMES, PING_EVERY, SEND_TIMEOUT, SILENT_LIMIT, authed_sub_ok,
@@ -328,19 +326,8 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                             break;
                         }
                     }
-                    let mine = match deliver {
-                        true => match poll_for(&state, &access, ev).await {
-                            Some(mine) => Some(mine),
-                            None => deleted_for(&state, &mut access, ev).await,
-                        },
-                        false => None,
-                    };
-                    if let Some(mine) = &mine && !sent(&mut access, out.event(mine)) {
-                        break;
-                    }
                     if deliver
-                        && mine.is_none()
-                        && let Some(frame) = client_frame(&fanned, access.user.as_deref())
+                        && let Some(frame) = event_frame(&state, &mut access, &fanned).await
                         && !sent(&mut access, out.text(frame))
                     {
                         break;

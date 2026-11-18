@@ -136,44 +136,66 @@ pub(super) async fn poll_for(state: &AppState, access: &Access, ev: &WsEvent) ->
     })
 }
 
-/// `messages_deleted` for a connection with a read-history floor in its channel: only the ids it
-/// could read. `None` when the shared event fits (or for other events).
-pub(super) async fn deleted_for(
+/// The frame this connection may receive after the common event gates.
+pub(super) async fn event_frame(
     state: &AppState,
     access: &mut Access,
-    ev: &WsEvent,
-) -> Option<WsEvent> {
+    fanned: &crate::fanout::Fanned,
+) -> Option<Utf8Bytes> {
+    let ev = &fanned.ev;
+    if let Some(poll) = poll_for(state, access, ev).await {
+        return serde_json::to_string(&poll).ok().map(Utf8Bytes::from);
+    }
     let WsEvent::MessagesDeleted {
         server: Some(server),
-        channel_id: Some(cid),
+        channel_id,
         dm_id,
         dm_users,
         thread_root_id,
         ids,
         created,
+        notices,
     } = ev
     else {
-        return None;
+        return client_frame(fanned, access.user.as_deref());
     };
-    let floor = access.floor(state, server, *cid).await??;
-    if created.len() == ids.len() && created.iter().all(|c| *c >= floor) {
+    let floor = access.floor(state, server, (*channel_id)?).await?;
+    let hidden = match access.closes(server) {
+        true => notices.as_deref()?,
+        false => &[],
+    };
+    if ids.is_empty() {
         return None;
     }
-    let (ids, created): (Vec<i64>, Vec<i64>) = ids
+    if floor.is_none() && hidden.is_empty() {
+        return fanned.frame();
+    }
+    let kept: Vec<i64> = ids
         .iter()
-        .zip(created)
-        .filter(|(_, c)| **c >= floor)
-        .map(|(i, c)| (*i, *c))
-        .unzip();
-    Some(WsEvent::MessagesDeleted {
+        .enumerate()
+        .filter_map(|(i, id)| {
+            let readable = floor.is_none_or(|floor| created.get(i).is_some_and(|at| *at >= floor));
+            (readable && !hidden.contains(id)).then_some(*id)
+        })
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    if kept.len() == ids.len() {
+        return fanned.frame();
+    }
+    serde_json::to_string(&WsEvent::MessagesDeleted {
         server: Some(server.clone()),
-        channel_id: Some(*cid),
+        channel_id: *channel_id,
         dm_id: *dm_id,
         dm_users: dm_users.clone(),
         thread_root_id: *thread_root_id,
-        ids,
-        created,
+        ids: kept,
+        created: Vec::new(),
+        notices: None,
     })
+    .ok()
+    .map(Utf8Bytes::from)
 }
 
 /// A channel event for one connection, with the channel's `position` counted among the channels

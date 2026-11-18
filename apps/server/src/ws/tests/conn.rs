@@ -44,6 +44,7 @@ async fn an_overflowed_inbox_drops_stale_events_and_resyncs() {
         dm_users: None,
         id,
         thread_root_id: None,
+        notice: Some(false),
     };
     for id in 0..600 {
         router.deliver(filler(id));
@@ -676,6 +677,99 @@ async fn frames_until(
             Ok(other) => panic!("the socket ended ({:?}): {frames:?}", other.is_some()),
         }
     }
+}
+
+#[tokio::test]
+async fn deletion_frames_use_the_evidence_available_to_each_socket() {
+    use serde_json::{Value, json};
+
+    async fn received(ws: &mut Client) -> Vec<Value> {
+        frames_until(ws, |event| event["type"] == "upload_expiry_changed")
+            .await
+            .into_iter()
+            .filter_map(|event| {
+                assert!(event.get("notice").is_none() && event.get("notices").is_none());
+                match event["type"].as_str()? {
+                    "message_deleted" => Some(event["id"].clone()),
+                    "messages_deleted" => Some(event["ids"].clone()),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    let (state, path, addr) = live("ws_delete_evidence").await;
+    socket_account(&state, "bob", 0).await;
+    socket_account(&state, "nora", 0).await;
+    exec(
+        &state.db,
+        "DELETE FROM members WHERE server = 'rchat' AND username = 'nora'",
+    )
+    .await;
+    exec(
+        &state.db,
+        "UPDATE servers SET public_read = 1 WHERE name = 'rchat'",
+    )
+    .await;
+    let mut outsider = viewing_socket(addr, "nora").await;
+    let mut member = viewing_socket(addr, "bob").await;
+    exec(
+        &state.db,
+        "UPDATE servers SET members_visible = 0 WHERE name = 'rchat'",
+    )
+    .await;
+    let server = crate::api::access::ws_server_lite(&state.db, "rchat")
+        .await
+        .unwrap()
+        .unwrap();
+    state.hub.broadcast(WsEvent::ServerUpdated { server });
+
+    let cid = general(&state.db).await;
+    let send = |mut wire: Value| {
+        wire["server"] = "rchat".into();
+        wire["channel_id"] = cid.into();
+        let event: WsEvent = serde_json::from_value(wire.clone()).unwrap();
+        let bus = to_bus_json(&event).unwrap();
+        let forwarded: Value = serde_json::from_str(&bus).unwrap();
+        for key in ["notice", "notices"] {
+            assert_eq!(forwarded.get(key), wire.get(key));
+        }
+        state.hub.broadcast(serde_json::from_str(&bus).unwrap());
+    };
+    for event in [
+        json!({"type":"message_deleted", "id":1, "notice":false}),
+        json!({"type":"message_deleted", "id":2}),
+        json!({"type":"message_deleted", "id":3, "notice":true}),
+        json!({"type":"messages_deleted", "ids":[4,5], "notices":[5]}),
+        json!({"type":"messages_deleted", "ids":[6,7]}),
+        json!({"type":"messages_deleted", "ids":[8,9], "notices":[]}),
+    ] {
+        send(event);
+    }
+    end_events(&state);
+    assert_eq!(
+        received(&mut outsider).await,
+        [json!(1), json!([4]), json!([8, 9])]
+    );
+    assert_eq!(
+        received(&mut member).await,
+        [
+            json!(1),
+            json!(2),
+            json!(3),
+            json!([4, 5]),
+            json!([6, 7]),
+            json!([8, 9])
+        ]
+    );
+
+    state.hub.channels().clear();
+    state.read().close().await;
+    send(json!({"type":"messages_deleted", "ids":[10,11], "notices":[11]}));
+    end_events(&state);
+    assert!(received(&mut outsider).await.is_empty());
+    assert!(received(&mut member).await.is_empty());
+    crate::api::test_util::done(state, path).await;
 }
 
 #[tokio::test]
