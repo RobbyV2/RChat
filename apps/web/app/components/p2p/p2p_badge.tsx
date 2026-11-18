@@ -40,10 +40,19 @@ const SHIELD = {
 
 export const shieldText = (kind: ShieldKind) => SHIELD[kind].text
 
-export function ContactShield({ kind, size = 16 }: { kind: ShieldKind; size?: number }) {
+export function ContactShield({
+  kind,
+  size = 16,
+  id,
+}: {
+  kind: ShieldKind
+  size?: number
+  id?: string
+}) {
   const { Icon, cls, text } = SHIELD[kind]
   return (
     <span
+      id={id}
       title={text}
       aria-label={text}
       role="img"

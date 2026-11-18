@@ -443,6 +443,90 @@ afterEach(() => {
   resetMasking()
 })
 
+describe('the P2P DM header', () => {
+  const longChat = (over: Partial<Contact> = {}) => {
+    const long = 'Bartholomew Featherstonehaugh-Wo'
+    p2pState({
+      enabled: true,
+      account: 'bob',
+      me: BOB,
+      name: 'Bob',
+      status: 'online',
+      home: true,
+      contacts: [{ ...contact(ALICE, long), ...over }],
+      rooms: {
+        [ROOM]: { id: ROOM, peer: ALICE, seq: 0, unread: 0, pings: 0, lastTs: NOW },
+      } as unknown as P2pState['rooms'],
+      chat: {
+        room: ROOM,
+        peer: ALICE,
+        messages: [],
+        more: false,
+        loading: false,
+        readSeq: 0,
+        missed: [],
+      },
+    })
+    const html = render(<P2pDmPane onBack={() => {}} onMenu={() => {}} />)
+    return { long, header: html.slice(html.indexOf('<header'), html.indexOf('</header>')) }
+  }
+  const contactButton = (header: string) =>
+    header.match(/<button([^>]*)><span class="relative shrink-0"><img /)?.[1] ?? ''
+
+  test('the avatar keeps its size and the name truncates, with the full name as its title', () => {
+    Object.assign(initial, { me: me('bob') })
+    const { long, header } = longChat()
+    const avatar = header.match(/<span class="([^"]*)"><img [^>]*width="28" height="28"/)
+    expect(avatar?.[1].split(' ')).toContain('shrink-0')
+    const name = header.match(/<span id="[^"]*" title="([^"]*)" class="([^"]*)">([^<]*)</)
+    expect(name?.[1]).toBe(long)
+    expect(name?.[3]).toBe(long)
+    const classes = name?.[2].split(' ') ?? []
+    for (const c of ['streamer', 'min-w-0', 'truncate']) expect(classes).toContain(c)
+  })
+
+  test('below 360 px the contact shows only its avatar and shield, named by its title and label', () => {
+    Object.assign(initial, { me: me('bob') })
+    for (const [over, kind, label] of [
+      [{}, 'unverified', 'Not verified'],
+      [{ verified: true }, 'verified', 'Verified'],
+      [{ warning: 'new key' }, 'warning', 'Identity warning'],
+    ] as const) {
+      const { long, header } = longChat(over)
+      const button = contactButton(header)
+      expect(button).toContain(`title="${long}"`)
+      const ids = button.match(/aria-labelledby="([^"]*)"/)?.[1].split(' ') ?? []
+      expect(ids).toHaveLength(3)
+      const element = (id: string) =>
+        header.match(new RegExp(`<span id="${id}"([^>]*)>(.*?)</span>`))
+      const text = (id: string) => element(id)?.[2].replace(/<[^>]*>/g, '')
+      expect(text(ids[0])).toBe(long)
+      expect(element(ids[1])?.[1]).toContain(`aria-label="${label}"`)
+      expect(element(ids[1])?.[1]).toContain(`data-shield="${kind}"`)
+      expect(text(ids[2])).toContain(long)
+      const column = header.match(
+        /<span class="([^"]*)"><span class="flex min-w-0 items-center gap-1.5">/
+      )
+      expect(column?.[1].split(' ')).toContain('max-[360px]:hidden')
+      const avatar =
+        header.match(
+          /<span class="relative shrink-0">(.*?)<\/span><span class="flex min-w-0 flex-col/
+        )?.[1] ?? ''
+      const onAvatar = avatar.match(/<span class="([^"]*)"><span[^>]*data-shield="([^"]*)"/)
+      expect(onAvatar?.[2]).toBe(kind)
+      const classes = onAvatar?.[1].split(' ') ?? []
+      for (const c of ['absolute', 'hidden', 'max-[360px]:flex']) expect(classes).toContain(c)
+    }
+  })
+
+  test('in streamer mode the contact button and name have no title with the name', () => {
+    Object.assign(initial, { me: me('bob'), streamer: true })
+    const { long, header } = longChat()
+    expect(header).not.toContain(`title="${long}"`)
+    expect(contactButton(header)).toContain('title="Contact"')
+  })
+})
+
 describe('rail', () => {
   const homeButton = (html: string) => html.match(/<button[^>]*data-home-button[^>]*>/)?.[0] ?? ''
 

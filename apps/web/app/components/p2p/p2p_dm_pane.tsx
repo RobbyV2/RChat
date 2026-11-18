@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, type ReactNode } from 'react'
+import { useCallback, useId, useMemo, type ReactNode } from 'react'
 import { ArrowLeft, Menu } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
@@ -57,6 +57,10 @@ export function P2pDmPane({ onBack, onMenu }: { onBack?: () => void; onMenu: () 
   const presence = useP2p(s => (s.chat ? (s.presence[s.chat.peer] ?? 'offline') : 'offline'))
   const room = useP2p(s => (s.chat ? s.rooms[s.chat.room] : undefined))
   const typingIks = useP2p(s => (s.chat ? (s.typing[s.chat.room] ?? NONE) : NONE))
+  const nameId = useId()
+  const shieldId = useId()
+  const statusId = useId()
+  const streamer = useStore(s => s.streamer)
   const pinsOpen = useP2p(s => s.pins !== null && s.pins.room === s.chat?.room)
   const menuPings = useStore(allPings)
   const staged = useP2p(
@@ -133,7 +137,7 @@ export function P2pDmPane({ onBack, onMenu }: { onBack?: () => void; onMenu: () 
     ) : null
 
   const header = (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-3 md:px-4">
+    <header className="flex h-14 shrink-0 items-center gap-1 border-b border-outline-variant px-3 sm:gap-2 md:px-4">
       <button
         title={menuPings ? `Menu, ${pingLabel(menuPings)}` : 'Menu'}
         aria-label="Menu"
@@ -156,22 +160,33 @@ export function P2pDmPane({ onBack, onMenu }: { onBack?: () => void; onMenu: () 
           <ArrowLeft size={20} />
         </button>
       )}
+      {/* Below 360 px the header has room for the avatar only: the shield sits on it, and the
+          name stays the label. */}
       <button
+        title={streamer ? 'Contact' : peerName}
+        aria-labelledby={peer ? `${nameId} ${shieldId} ${statusId}` : `${nameId} ${statusId}`}
         onClick={() => peer && p2p.openDialog({ kind: 'contact', ik: peer.ik })}
-        className="flex min-w-0 items-center gap-2 rounded-full py-1 pr-2.5 pl-1 hover:bg-surface-container-high"
+        className="flex min-w-0 items-center gap-2 rounded-full py-1 pr-1.5 pl-1 hover:bg-surface-container-high sm:pr-2.5"
       >
-        <span className="relative">
+        <span className="relative shrink-0">
           <KeyAvatar ik={peerIk} size={28} />
           <PresenceDot presence={presence} />
+          {peer && (
+            <span className="absolute -top-1 -right-1 hidden rounded-full bg-surface-container-low max-[360px]:flex">
+              <ContactShield kind={shieldOf(peer)} size={12} />
+            </span>
+          )}
         </span>
-        <span className="flex min-w-0 flex-col text-left">
+        <span className="flex min-w-0 flex-col text-left max-[360px]:hidden">
           <span className="flex min-w-0 items-center gap-1.5">
             <span
+              id={nameId}
+              title={streamer ? undefined : peerName}
               className={`streamer min-w-0 truncate text-sm font-medium ${chip ? 'sm:max-w-[60%] sm:shrink-0' : ''}`}
             >
               <Masked text={peerRaw} />
             </span>
-            {peer && <ContactShield kind={shieldOf(peer)} size={14} />}
+            {peer && <ContactShield id={shieldId} kind={shieldOf(peer)} size={14} />}
             <span className="flex min-w-0 max-sm:hidden">
               <AccountChip ik={peerIk} />
             </span>
@@ -182,6 +197,7 @@ export function P2pDmPane({ onBack, onMenu }: { onBack?: () => void; onMenu: () 
               <AccountChip ik={peerIk} size="icon" />
             </span>
             <span
+              id={statusId}
               data-p2p-online={online ? 'yes' : 'no'}
               className="truncate text-xs text-on-surface-variant"
             >

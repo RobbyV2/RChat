@@ -93,7 +93,7 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
           const r = e.currentTarget.getBoundingClientRect()
           menu(r.left - 24, r.bottom + 4)
         }}
-        className="flex h-8 items-center rounded-r-full pr-1 pl-0.5 text-on-surface-variant [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:min-w-10 [@media(pointer:coarse)]:justify-center outline-offset-2 hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
+        className="flex h-8 items-center rounded-r-full pr-1 pl-0.5 text-on-surface-variant [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:min-w-7 [@media(pointer:coarse)]:justify-center outline-offset-2 hover:bg-surface-container-high hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary disabled:hover:bg-transparent"
       >
         <ChevronDown size={14} />
       </button>
