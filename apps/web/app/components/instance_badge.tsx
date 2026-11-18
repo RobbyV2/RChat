@@ -2,14 +2,34 @@
 
 import { Globe } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { DEFAULT_INSTANCE_NAME } from '../lib/instances'
+import { home } from '../lib/instances'
+import { instanceLabel, labelParts } from '../lib/instance_label'
 import { openActionMenu } from '../lib/actions/menu'
 import { longPress } from './context_menu'
 
-export function useInstance() {
+// What the copy calls this instance: its name, or its host when the name tells nothing.
+export function useInstanceLabel() {
   const info = useStore(s => s.instance)
-  const host = useStore(s => s.instanceHost)
-  return { info, host, name: info?.name || DEFAULT_INSTANCE_NAME }
+  const host = useStore(s => s.instanceHost) || home.host
+  return { label: instanceLabel(info, host), host }
+}
+
+// Text that may name the instance, the name hidden in streamer mode like other names.
+export function LabelText({ text }: { text: string }) {
+  const { label } = useInstanceLabel()
+  return (
+    <>
+      {labelParts(text, label).map((p, i) =>
+        p.label ? (
+          <span key={i} className="streamer">
+            {p.text}
+          </span>
+        ) : (
+          p.text
+        )
+      )}
+    </>
+  )
 }
 
 export function InstanceChip({ host, className = '' }: { host: string; className?: string }) {
@@ -28,23 +48,24 @@ export function InstanceChip({ host, className = '' }: { host: string; className
 }
 
 export function RailInstance() {
-  const { name, host } = useInstance()
+  const { label, host } = useInstanceLabel()
   const openDialog = useStore(s => s.openDialog)
   const streamer = useStore(s => s.streamer)
   const signedIn = useStore(s => s.me !== null)
+  const named = label !== host
   return (
     <button
-      title={streamer ? 'Instance' : host ? `${name} (${host})` : name}
-      aria-label={`Instance ${name}${host ? ` on ${host}` : ''}`}
+      title={streamer ? 'Instance' : named ? `${label} (${host})` : host}
+      aria-label={`Instance ${label}${named ? ` on ${host}` : ''}`}
       onClick={() => openDialog({ kind: 'settings' })}
       {...(signedIn ? longPress((x, y) => openActionMenu(x, y, { kind: 'home' })) : {})}
       className="flex w-15 shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
     >
       <Globe size={16} className="shrink-0" />
       <span className="streamer w-full truncate text-center text-[10px] leading-3 font-semibold text-on-surface">
-        {name}
+        {label}
       </span>
-      {host && (
+      {named && (
         <span className="streamer w-full truncate text-center text-[9px] leading-3">{host}</span>
       )}
     </button>
@@ -61,7 +82,8 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 export function InstanceDetails() {
-  const { info } = useInstance()
+  const info = useStore(s => s.instance)
+  const { label, host } = useInstanceLabel()
   return (
     <div className="flex flex-col gap-3">
       <dl className="divide-y divide-outline-variant px-2 text-sm">
@@ -72,8 +94,15 @@ export function InstanceDetails() {
         <Row label="API version">{info?.api_version ?? 'Unknown'}</Row>
       </dl>
       <p className="px-2 text-xs text-on-surface-variant">
-        Your account, servers and DMs live on this instance. Other RChat instances are run
-        independently; anything from them is marked with its host.
+        Your account, servers and DMs
+        {label === host ? null : (
+          <>
+            {' '}
+            on <span className="streamer">{label}</span>
+          </>
+        )}{' '}
+        live on <span className="streamer">{host}</span>. Other instances are run by other people;
+        what comes from them is marked with its instance.
       </p>
     </div>
   )

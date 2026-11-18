@@ -8,8 +8,11 @@ import { WsClient, wsUrlFrom, type WsEndpoints } from './ws'
 import { shellInfo } from './platform/desktop'
 import type { InstanceInfo } from './types'
 
+import { DEFAULT_INSTANCE_NAME, instanceLabel } from './instance_label'
+
+export { DEFAULT_INSTANCE_NAME }
+
 const CLIENT_API_MAJOR = 1
-export const DEFAULT_INSTANCE_NAME = 'RChat'
 
 export interface PeerTarget {
   host: string
@@ -534,6 +537,9 @@ function initialHome() {
 export const registry = new InstanceRegistry(initialHome(), defaultEndpoints)
 
 export const home = registry.home
+
+// What the copy calls the instance this tab is signed in to.
+export const homeLabel = () => instanceLabel(home.info, home.host)
 
 export const api = home.api
 

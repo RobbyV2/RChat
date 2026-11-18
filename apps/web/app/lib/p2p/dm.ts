@@ -522,6 +522,8 @@ export interface DmDeps {
   bulk?: Partial<BulkLimits>
   // Attachments are off (the instance is text only).
   attachments?: () => boolean
+  // What the copy calls the instance.
+  label?: () => string
   // Free storage for downloads, or null when unknown.
   room?: () => Promise<number | null>
   // Files up to this size are fetched as soon as they arrive (0: never).
@@ -593,6 +595,7 @@ export class Dms {
         ...new Set([...(await this.holdersOf(h)), ...((await this.moreHolders?.(h)) ?? [])]),
       ],
       enabled: deps.attachments,
+      label: deps.label,
       room: deps.room,
     })
   }

@@ -23,6 +23,7 @@ import { DevicesSection } from './p2p_server_flows'
 import { MyCode } from './add_contact'
 import { badgeDate, P2pBadge } from './p2p_badge'
 import { confirmReset, ElsewhereNotice, IdentityAlert, MovedBanner, MovingBanner } from './p2p_home'
+import { LabelText, useInstanceLabel } from '../instance_badge'
 
 function NameField() {
   const name = useP2p(s => s.name)
@@ -59,6 +60,7 @@ export const badgeOffBody = (until: number | null) =>
 
 // Settings > Peer-to-peer > Account badge (opt-in).
 function BadgeSetting() {
+  const { label } = useInstanceLabel()
   const badge = useP2p(s => s.badge)
   const busy = useP2p(s => s.badgeBusy)
   const error = useP2p(s => s.badgeError)
@@ -96,12 +98,15 @@ function BadgeSetting() {
         ) : tail ? (
           `Off. Peers who have it may show it until ${badgeDate(tail)}.`
         ) : (
-          'Lets contacts see which account on this instance holds your P2P identity. Off by default.'
+          <>
+            Lets contacts see which account on <span className="streamer">{label}</span> holds your
+            P2P identity. Off by default.
+          </>
         )}
       </p>
       {error && (
         <p role="alert" className="mt-1 px-2 text-xs text-error">
-          {error}
+          <LabelText text={error} />
         </p>
       )}
     </div>
@@ -178,6 +183,7 @@ function DailySelect() {
 // Settings > Peer-to-peer > Attachments: what downloads by itself, what is stored here, and
 // clearing old downloads.
 function FilesSettings() {
+  const { label } = useInstanceLabel()
   const usage = useP2p(s => s.fileUsage)
   const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
   const ask = useStore(s => s.askConfirm)
@@ -191,7 +197,8 @@ function FilesSettings() {
   if (textOnly)
     return (
       <p className="px-2 text-xs text-on-surface-variant">
-        Attachments are turned off on this instance, so P2P files are hidden too.
+        Attachments are turned off on <span className="streamer">{label}</span>, so P2P files are
+        hidden too.
       </p>
     )
   const save = (patch: Partial<typeof auto>) => {
@@ -314,6 +321,7 @@ const REMOVE_BODY =
 
 // Settings > Peer-to-peer while the instance has P2P off: only removing this browser's data.
 export function P2pOffSection() {
+  const { label } = useInstanceLabel()
   const username = useStore(s => s.me?.username ?? null)
   const off = useStore(s => !s.settings.p2p)
   const ask = useStore(s => s.askConfirm)
@@ -333,7 +341,8 @@ export function P2pOffSection() {
       <p className={sectionCls}>Peer-to-peer</p>
       <div className="flex flex-col items-start gap-2 px-2">
         <p className="text-xs text-on-surface-variant">
-          P2P is off on this instance. Your P2P data stays in this browser until you remove it.
+          P2P is off on <span className="streamer">{label}</span>. Your P2P data stays on this
+          device until you remove it.
         </p>
         {result?.ok ? (
           <p role="status" className="text-xs text-on-surface">
@@ -395,7 +404,7 @@ export function P2pSection() {
           </p>
           {error && (
             <p role="alert" className="text-xs text-error">
-              {error}
+              <LabelText text={error} />
             </p>
           )}
           <button onClick={() => p2p.openDialog({ kind: 'enable' })} className={filledBtn}>
@@ -424,7 +433,7 @@ export function P2pSection() {
           </div>
           {error && (
             <p role="alert" className="px-2 text-xs text-error">
-              {error}
+              <LabelText text={error} />
             </p>
           )}
           <div className="flex flex-col gap-2 px-2">

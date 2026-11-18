@@ -32,7 +32,7 @@ import { PaletteHost } from '../components/palette'
 import { reloadPalettePrefs, usePaletteUi } from '../lib/palette_store'
 import { PollVotersDialog } from '../components/poll_card'
 import { CallBanner } from '../components/voice_grid'
-import { NoticeStack } from '../components/notice_stack'
+import { Banners } from '../components/banners'
 import { InvitePage } from '../components/invite_card'
 import { ConfigLinkPage } from '../components/config_sync'
 import { useEscape } from '../components/ui'
@@ -70,9 +70,6 @@ p2pHost.leaveInstanceCalls = () => {
 p2pHost.muted = () => useStore.getState().selfAudio.muted
 addInboxAdapter(p2pInbox)
 
-const bannerCls =
-  'pointer-events-auto max-w-full self-center rounded-xl px-4 py-2 text-center text-sm shadow-elevation-2 sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:left-1/2 sm:z-60 sm:w-max sm:max-w-[calc(100vw-2rem)] sm:-translate-x-1/2'
-
 export default function AppShell() {
   const router = useRouter()
   const me = useStore(s => s.me)
@@ -84,8 +81,6 @@ export default function AppShell() {
   const dialog = useStore(s => s.activeDialog)
   const confirming = useStore(s => s.confirm !== null)
   const panel = useStore(s => s.panel)
-  const toast = useStore(s => s.toast)
-  const error = useStore(s => s.error)
   const bootError = useStore(s => s.bootError)
   const pings = useInboxCount()
   const p2pHome = useP2p(s => s.home) && me !== null
@@ -316,28 +311,7 @@ export default function AppShell() {
         <ContextMenu />
         <ReactionPickerHost />
         <CallBanner />
-        <div className="pointer-events-none fixed inset-x-4 top-[calc(var(--safe-top)+4rem)] z-60 flex flex-col gap-2 sm:contents">
-          {error && (
-            <div role="alert" className={`${bannerCls} bg-error-container text-on-error-container`}>
-              {error}
-            </div>
-          )}
-          {toast && !error && (
-            <div
-              role="status"
-              className={`${bannerCls} bg-inverse-surface text-inverse-on-surface`}
-            >
-              {toast.text}
-              {toast.name && (
-                <>
-                  {' '}
-                  <span className="streamer font-medium">{toast.name}</span>
-                </>
-              )}
-            </div>
-          )}
-          <NoticeStack />
-        </div>
+        <Banners />
       </div>
       <InvitePage />
       <ConfigLinkPage />

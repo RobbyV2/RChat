@@ -25,6 +25,7 @@ import {
   type UploadExpiryState,
 } from '../lib/upload_expiry'
 import { Chips, FieldError, fieldCls, filledBtn, sectionCls, textBtn } from './ui'
+import { useInstanceLabel } from './instance_badge'
 
 // Seconds a file posted now in `server` stays (null: until removed); DMs use the default.
 export const useUploadLifetime = (server: string | null | undefined) => {
@@ -49,6 +50,7 @@ const UNITS: { value: ExpiryUnit; label: string }[] = [
 
 // How long files uploaded in a server stay. For people with the Delete server permission.
 export function ServerUploadExpiry({ server }: { server: string }) {
+  const { label } = useInstanceLabel()
   const base = useStore(s => limitsOf(s.instance).media_retention_secs)
   const cap = useStore(s => s.settings.upload_expiry_max_days ?? 0)
   const [saved, setSaved] = useState<UploadExpiryState | null>(null)
@@ -160,7 +162,13 @@ export function ServerUploadExpiry({ server }: { server: string }) {
           )}
           <p data-upload-expiry-now className="text-xs text-on-surface-variant">
             New files: {newFilesText(kept, owner, now, base)}.
-            {cap > 0 && ` This instance removes files after ${durationText(cap * 86400)} at most.`}
+            {cap > 0 && (
+              <>
+                {' '}
+                <span className="streamer">{label}</span> removes files after{' '}
+                {durationText(cap * 86400)} at most.
+              </>
+            )}
           </p>
           {kept && keptShown(kept, now, base) && (
             <p data-upload-kept className="text-xs text-on-surface-variant">

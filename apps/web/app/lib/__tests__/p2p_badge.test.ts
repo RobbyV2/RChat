@@ -29,7 +29,6 @@ import {
   parseSlot,
   peersCanCheck,
   readSlots,
-  UNCHECKABLE,
   type BadgeSlot,
   type Issued,
 } from '../p2p/badge'
@@ -757,6 +756,7 @@ describe('BadgeKeeper', () => {
       clock: new ManualClock(),
       sub: () => `alice@${HOST}`,
       checkable: () => peersCanCheck(iss),
+      label: () => 'Alpha',
       request: async (_ik, ts): Promise<Issued> => {
         asked.push(ts)
         return { token: 't', sub: `alice@${HOST}`, expires_at: ts + BINDING_MAX_TTL }
@@ -767,7 +767,9 @@ describe('BadgeKeeper', () => {
         () => 'ok',
         (e: Error) => e.message
       )
-    ).toBe(UNCHECKABLE)
+    ).toBe(
+      "Peers can't check badges from Alpha. It needs HTTPS on the default port and a public address."
+    )
     expect(asked).toEqual([])
     expect(node.badge).toBeNull()
     iss = 'https://chat.example.com'

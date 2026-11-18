@@ -9,7 +9,7 @@ import {
   type CardInput,
 } from '../p2p/home_card'
 import type { Contact } from '../p2p/contacts'
-import { SQUATTED, UNREACHABLE, UNREACHABLE_TEXT, UNSUPPORTED, UNSUPPORTED_TEXT } from '../p2p/node'
+import { UNREACHABLE, UNREACHABLE_TEXT, UNSUPPORTED, UNSUPPORTED_TEXT } from '../p2p/node'
 
 const contact = (ik: string, over: Partial<Contact> = {}): Contact =>
   ({
@@ -39,6 +39,7 @@ const input = (over: Partial<CardInput> = {}): CardInput => ({
   serverInvites: 0,
   coOwnerAsks: 0,
   transferAsks: 0,
+  label: 'Alpha',
   ...over,
 })
 
@@ -79,12 +80,18 @@ describe('the Peer-to-peer card on Home', () => {
     expect(line({ status: 'connecting' })).toEqual(['connecting', 'Connecting…'])
     expect(line({ status: 'paused' })).toEqual(['paused', 'Paused'])
     expect(line({ status: 'connecting', paused: true })).toEqual(['paused', 'Paused'])
-    expect(line({ status: 'squatted' })).toEqual(['blocked', SQUATTED])
+    expect(line({ status: 'squatted' })).toEqual([
+      'blocked',
+      'Someone is blocking your P2P address on Alpha',
+    ])
     expect(line({ status: 'moved' })).toEqual(['moved', 'Moved to another device'])
     expect(line({ elsewhere: true })).toEqual(['elsewhere', 'Open in another tab'])
     expect(line({ elsewhere: true, loading: true })).toEqual(['elsewhere', 'Open in another tab'])
-    expect(statusText('online', true)).toBe('Online')
-    expect(statusText('squatted', true)).toBe('Paused')
+    expect(statusText('online', true, 'Alpha')).toBe('Online')
+    expect(statusText('squatted', true, 'Alpha')).toBe('Paused')
+    expect(statusText('squatted', false, 'chat.a.com')).toBe(
+      'Someone is blocking your P2P address on chat.a.com'
+    )
   })
 
   // The signaling server can't be reached, or the browser has WebRTC off: the card says so and
@@ -99,9 +106,9 @@ describe('the Peer-to-peer card on Home', () => {
     expect(shown({ status: 'online' })).toEqual(['online', 'Online', null])
     expect(shown({ status: 'connecting' })).toEqual(['connecting', 'Connecting…', null])
     expect(shown({ status: 'unreachable', paused: true })).toEqual(['paused', 'Paused', null])
-    expect(statusText('unreachable', false)).toBe(UNREACHABLE)
-    expect(statusText('unsupported', false)).toBe(UNSUPPORTED)
-    expect(statusText('unsupported', true)).toBe('Paused')
+    expect(statusText('unreachable', false, 'Alpha')).toBe(UNREACHABLE)
+    expect(statusText('unsupported', false, 'Alpha')).toBe(UNSUPPORTED)
+    expect(statusText('unsupported', true, 'Alpha')).toBe('Paused')
   })
 
   test('online contacts are counted and the first few are shown by name', () => {

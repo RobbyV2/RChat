@@ -19,6 +19,7 @@ import { Masked } from './ui'
 import { NameWithUsername } from './display_name'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
+import { useInstanceLabel } from './instance_badge'
 
 const DELETED_USER = 'Deleted user'
 
@@ -38,7 +39,7 @@ export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: ()
   const sendForward = useStore(s => s.sendForward)
   const clearForward = useStore(s => s.clearForward)
   const me = useStore(s => s.me?.username ?? null)
-  const instance = useStore(s => s.instance?.name ?? 'this instance')
+  const { label: instance } = useInstanceLabel()
   if (!clip) return null
   const own = !clip.p2p && clip.author !== null && clip.author.username === me
   // A P2P message stored only on two devices: copying it to the instance needs a yes first.

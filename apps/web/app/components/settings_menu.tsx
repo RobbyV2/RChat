@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { Globe, UserRound, X } from 'lucide-react'
-import { api, home } from '../lib/instances'
+import { api } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
 import { iceOffer } from '../lib/ice'
@@ -29,7 +29,7 @@ import { AvatarPicker } from './avatar_picker'
 import { DisplayNameField } from './display_name'
 import { canEditDisplayName } from '../lib/display_name'
 import { ColorField } from './color_field'
-import { InstanceDetails, useInstance } from './instance_badge'
+import { InstanceDetails, useInstanceLabel } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { SettingSwitch } from './admin_panel'
 import { NotificationsSection } from './notify_settings'
@@ -198,8 +198,7 @@ function AboutMe({ focus }: { focus: boolean }) {
 // The top of Profile: who is signed in, and on which instance.
 function AccountCard() {
   const me = useStore(s => s.me)
-  const { name, host: loaded } = useInstance()
-  const host = loaded || home.host
+  const { label, host } = useInstanceLabel()
   return (
     <div
       data-account-card
@@ -230,8 +229,10 @@ function AccountCard() {
           <Globe size={16} />
         </span>
         <div className="min-w-0">
-          <p className="streamer truncate text-sm font-medium text-on-surface">{name}</p>
-          <p className="streamer truncate text-xs text-on-surface-variant">{host}</p>
+          <p className="streamer truncate text-sm font-medium text-on-surface">{label}</p>
+          {host !== label && (
+            <p className="streamer truncate text-xs text-on-surface-variant">{host}</p>
+          )}
         </div>
       </div>
     </div>
@@ -253,8 +254,7 @@ function GuestAvatar({ size }: { size: number }) {
 // The nav header on wide screens: the account the settings belong to.
 function NavAccount() {
   const me = useStore(s => s.me)
-  const { name, host: loaded } = useInstance()
-  const host = loaded || home.host
+  const { label, host } = useInstanceLabel()
   return (
     <div data-nav-account className="hidden min-w-0 items-center gap-3 px-3 pb-3 md:flex">
       {me ? (
@@ -271,8 +271,8 @@ function NavAccount() {
         <p className="streamer truncate text-sm font-medium text-on-surface">
           {me ? me.display_name : 'Guest'}
         </p>
-        <p className="streamer truncate text-xs text-on-surface-variant">{name}</p>
-        {host !== name && (
+        <p className="streamer truncate text-xs text-on-surface-variant">{label}</p>
+        {host !== label && (
           <p className="streamer truncate text-xs text-on-surface-variant">{host}</p>
         )}
       </div>
@@ -633,6 +633,7 @@ export function ProfanitySwitch() {
   const setOn = useStore(s => s.setProfanityOn)
   const failed = useStore(s => s.profanityFailed)
   const site = useStore(s => siteFilterOn(s.settings))
+  const { label } = useInstanceLabel()
   const shown = filterSwitch(capabilities().wasm, on, failed)
   return (
     <div className="mt-4">
@@ -654,7 +655,8 @@ export function ProfanitySwitch() {
       </p>
       {site && (
         <p className="mt-1 px-2 text-xs text-on-surface-variant">
-          This instance also blocks profanity in server content before it is posted.
+          <span className="streamer">{label}</span> also blocks profanity in server content before
+          it is posted.
         </p>
       )}
     </div>
@@ -669,6 +671,8 @@ function ConnectionSection() {
   const signedIn = useStore(s => s.me !== null)
   const info = useStore(s => s.instance?.ice)
   const own = useStore(s => ownTurn(s.relayPrefs))
+  const { label } = useInstanceLabel()
+  const named = <span className="streamer">{label}</span>
   const offer = iceOffer(info)
   const relayUsable = (info?.turn === true || own) && on && signedIn
   return (
@@ -699,22 +703,29 @@ function ConnectionSection() {
         />
       </div>
       <p className="mt-2 px-2 text-xs text-on-surface-variant">
-        {relayUsable
-          ? info?.turn === true
-            ? 'Others see the relay, not you. Calls may have more delay.'
-            : 'Others see your relay, not you. Voice channels and calls through the server need a relay from this instance, so they will not connect.'
-          : info?.turn !== true && !own
-            ? 'Not available: this instance has no relay. You can add your own TURN relay below.'
-            : !signedIn
-              ? 'Sign in to use the relay.'
-              : 'Turn on connection helpers to use the relay.'}
+        {relayUsable ? (
+          info?.turn === true ? (
+            'Others see the relay, not you. Calls may have more delay.'
+          ) : (
+            <>
+              Others see your relay, not you. Voice channels and calls through the server need a
+              relay from {named}, so they will not connect.
+            </>
+          )
+        ) : info?.turn !== true && !own ? (
+          <>Not available: {named} has no relay. You can add your own TURN relay below.</>
+        ) : !signedIn ? (
+          'Sign in to use the relay.'
+        ) : (
+          'Turn on connection helpers to use the relay.'
+        )}
       </p>
     </section>
   )
 }
 
 function ProfileSection() {
-  const { name } = useInstance()
+  const { label } = useInstanceLabel()
   return (
     <div className="flex flex-col gap-8">
       <AccountCard />
@@ -722,7 +733,7 @@ function ProfileSection() {
       <SignInSection />
       <section>
         <p className={sectionCls}>
-          About <span className="streamer">{name}</span>
+          About <span className="streamer">{label}</span>
         </p>
         <InstanceDetails />
       </section>
@@ -777,12 +788,21 @@ function Info({ title, children }: { title: string; children: React.ReactNode })
 
 function ModerationText() {
   const site = useStore(s => siteFilterOn(s.settings))
+  const { label } = useInstanceLabel()
   return (
     <>
       <p>
-        {site
-          ? 'This instance blocks profanity in server content before it is posted: names, channel topics, profile descriptions, file names and channel messages, as the admin set it up.'
-          : 'This instance does not filter profanity in server content.'}{' '}
+        {site ? (
+          <>
+            <span className="streamer">{label}</span> blocks profanity in server content before it
+            is posted: names, channel topics, profile descriptions, file names and channel messages,
+            as the admin set it up.
+          </>
+        ) : (
+          <>
+            <span className="streamer">{label}</span> does not filter profanity in server content.
+          </>
+        )}{' '}
         DMs, passwords and P2P content are never filtered by the instance.
       </p>
       <p>

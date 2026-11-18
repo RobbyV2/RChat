@@ -28,6 +28,7 @@ import { sessionMark, useStore } from '../lib/store'
 import { CodeBlock } from './code_block'
 import { SettingSwitch } from './admin_panel'
 import { dangerBtn, filledBtn, filledDangerBtn, iconBtn, textBtn, useCopied } from './ui'
+import { useInstanceLabel } from './instance_badge'
 
 const METHOD_CLS: Record<Method, string> = {
   GET: 'bg-secondary-container text-on-secondary-container',
@@ -584,10 +585,13 @@ export function ApiConsoleFor({
   onBack: () => void
 }) {
   const op = useApiDoc(s => s.ops?.find(o => o.id === opId) ?? null)
+  const { label } = useInstanceLabel()
   if (!op)
     return (
       <div className="flex flex-col items-start gap-2 p-4 text-sm text-on-surface-variant">
-        <p>That operation is not in this instance&apos;s API.</p>
+        <p>
+          That operation is not in the API of <span className="streamer">{label}</span>.
+        </p>
         <button type="button" onClick={onBack} className={textBtn}>
           Back
         </button>

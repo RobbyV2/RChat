@@ -65,7 +65,7 @@ export const PIPE_INFO = 'rchat-p2p bulk pipe1'
 
 export const NO_ROOM_TEXT = (need: number, free: number) =>
   `Not enough storage on this device for this file (${fmtMb(need)} needed, ${fmtMb(free)} free).`
-export const OFF_TEXT = 'Attachments are turned off on this instance.'
+export const offText = (label: string) => `Attachments are turned off on ${label}.`
 export const SHARE_ROOM_TEXT = 'Not enough storage on this device to share this file.'
 export const MISMATCH_TEXT = "This file doesn't match what was sent."
 
@@ -675,6 +675,8 @@ export interface BlobsDeps {
   members: (h: string) => Promise<string[]>
   // Attachments are off (the instance is text only).
   enabled?: () => boolean
+  // What the copy calls the instance.
+  label?: () => string
   // Free bytes for downloads, or null when the platform can't tell.
   room?: () => Promise<number | null>
 }
@@ -1623,7 +1625,7 @@ export class Blobs {
   // Starts (or resumes) fetching a file. Refuses up front when the device has no room for it,
   // counting what the downloads under way still need.
   async download(att: Pick<Attachment, 'h' | 'size'>): Promise<void> {
-    if (!this.enabled()) throw new Error(OFF_TEXT)
+    if (!this.enabled()) throw new Error(offText(this.deps.label?.() ?? 'the instance'))
     const { h, size } = att
     if (!hashOk(h) || !Number.isSafeInteger(size) || size < 0) throw new Error(MISMATCH_TEXT)
     if (size === 0 && h !== EMPTY_ROOT) throw new Error(MISMATCH_TEXT)

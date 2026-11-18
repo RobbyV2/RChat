@@ -1,6 +1,6 @@
 import { requests, visibleContacts, type Contact } from './contacts'
 import {
-  SQUATTED,
+  squatted,
   UNREACHABLE,
   UNREACHABLE_TEXT,
   UNSUPPORTED,
@@ -24,6 +24,8 @@ export interface CardInput {
   serverInvites: number
   coOwnerAsks: number
   transferAsks: number
+  // What the copy calls the instance.
+  label: string
 }
 
 export type CardState =
@@ -58,7 +60,7 @@ const nodeState = (status: Status | 'off', paused: boolean): CardState => {
   return status === 'moved' ? 'moved' : 'connecting'
 }
 
-const TEXT: Record<CardState, string> = {
+const TEXT: Record<Exclude<CardState, 'blocked'>, string> = {
   off: 'Off',
   elsewhere: 'Open in another tab',
   starting: 'Starting…',
@@ -67,13 +69,15 @@ const TEXT: Record<CardState, string> = {
   unreachable: UNREACHABLE,
   unsupported: UNSUPPORTED,
   paused: 'Paused',
-  blocked: SQUATTED,
   moved: 'Moved to another device',
 }
 
+const textOf = (state: CardState, label: string) =>
+  state === 'blocked' ? squatted(label) : TEXT[state]
+
 // The connection in words, once P2P runs in this tab.
-export const statusText = (status: Status | 'off', paused: boolean) =>
-  TEXT[nodeState(status, paused)]
+export const statusText = (status: Status | 'off', paused: boolean, label: string) =>
+  textOf(nodeState(status, paused), label)
 
 const NOTE: Partial<Record<CardState, string>> = {
   unreachable: UNREACHABLE_TEXT,
@@ -104,7 +108,7 @@ export const homeCard = (s: CardInput): HomeCard => {
   )
   return {
     state,
-    status: TEXT[state],
+    status: textOf(state, s.label),
     online: online.length,
     top: online.slice(0, CARD_CONTACTS),
     requests: requests(s.contacts).length,

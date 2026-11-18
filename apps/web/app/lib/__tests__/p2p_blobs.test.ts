@@ -729,6 +729,21 @@ describe('bulk transfers', () => {
     clean(ba, bb)
   }, 60_000)
 
+  test('a download while attachments are off says on which instance', async () => {
+    const clock = new ManualClock()
+    const hub = new Hub()
+    const a = await node(hub, 'Alice', clock)
+    const att = await attOf(bytes(BLOCK, 3))
+    const ba = blobsOn(a, clock, { enabled: () => false, label: () => 'Alpha' })
+    expect(
+      await ba.download(att).then(
+        () => 'ok',
+        (e: Error) => e.message
+      )
+    ).toBe('Attachments are turned off on Alpha.')
+    clean(ba)
+  }, 60_000)
+
   test('a pipe due for new keys is replaced while a download goes on', async () => {
     const clock = new ManualClock()
     const hub = new Hub()

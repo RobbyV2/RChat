@@ -491,7 +491,7 @@ describe('P2P switched off on the instance', () => {
     await p2pAccount(null)
     Object.assign(initial, { me: me('bob'), settings: settings(false) })
     const off = render(<P2pOffSection />)
-    expect(off).toContain('P2P is off on this instance.')
+    expect(off).toContain(`P2P is off on <span class="streamer">${home.host}</span>.`)
     expect(off).toContain('Remove P2P data from this browser')
     Object.assign(initial, { settings: settings(true) })
     expect(render(<P2pOffSection />)).toBe('')

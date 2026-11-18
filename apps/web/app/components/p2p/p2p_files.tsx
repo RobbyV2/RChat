@@ -23,6 +23,7 @@ import type { Attachment } from '../../lib/p2p/content'
 import { AUTO_PAUSED_TEXT } from '../../lib/p2p/dm'
 import { SpoilerCover } from '../markdown_message'
 import { Masked } from '../ui'
+import { useInstanceLabel } from '../instance_badge'
 
 // P2P attachments in messages and in the composer. What a file is shown as comes from its
 // stored bytes only (sniff.ts): images, video and audio play inline, everything else (SVG and
@@ -103,6 +104,7 @@ function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own:
   const done = v?.state === 'done'
   const kind = done && v.type ? kindOf(v.type) : null
   const url = useFileUrl(att.h, done && kind !== null)
+  const { label } = useInstanceLabel()
   const thumb = useThumb(done ? undefined : att.thumb)
   useEffect(() => {
     if (!textOnly) p2pFiles.watch(att)
@@ -111,7 +113,7 @@ function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own:
   if (textOnly)
     return (
       <p className="mt-1 text-xs text-on-surface-variant italic">
-        Attachment hidden: this instance is text only
+        Attachment hidden: <span className="streamer">{label}</span> is text only
       </p>
     )
   const hidden = !!att.spoiler && !revealed

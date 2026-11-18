@@ -1,4 +1,4 @@
-import { api, home, homeLookup, sessionStore, shareOrigin } from '../../instances'
+import { api, home, homeLabel, homeLookup, sessionStore, shareOrigin } from '../../instances'
 import { probeAddress } from '../../ice'
 import { keepAsker } from '../keep'
 import { dbName, P2pStore, removeP2pDb } from '../db'
@@ -10,7 +10,7 @@ import { PingLog } from '../ping_log'
 import { freeSpace, storageSpace } from '../files'
 import { pausesHidden } from '../../platform'
 import { TabLeader, webLeaderDeps } from '../leader'
-import { P2pNode, SQUATTED, type Visibility } from '../node'
+import { P2pNode, squatted, type Visibility } from '../node'
 import { PeerTransport } from '../transport'
 import { hidesIp, relayBook } from '../../relays'
 import { Calls, type PendingCall } from '../calls'
@@ -126,7 +126,7 @@ export const mirrorFrom = async (
     alertAt: v.alertAt,
     badge: v.badge,
     elsewhere: false,
-    error: v.status === 'squatted' ? SQUATTED : null,
+    error: v.status === 'squatted' ? squatted(homeLabel()) : null,
   })
   const card = await n.myCard().catch(() => null)
   if (node === n) useP2p.setState({ card })
@@ -304,6 +304,7 @@ export const startDeps = (username: string, lim: Readonly<Local> = limitsFor(use
     dms: {
       ...rt.dms,
       attachments: () => !p2pHost.textOnly(),
+      label: homeLabel,
       room: freeSpace,
       space: storageSpace,
       autoMax: () => readAuto(username).dm,
@@ -368,6 +369,7 @@ export const startParts = (deps: StartDeps, s: P2pStore, n: P2pNode) => {
   const keeper = new BadgeKeeper({
     node: n,
     checkable: () => peersCanCheck(shareOrigin(null), badgeLocal),
+    label: homeLabel,
     request: (ik, ts, proof) => api.p2pBinding(ik, ts, proof),
     sub: accountSub,
     onIssued: () => void sv.refreshBadge().catch(() => {}),

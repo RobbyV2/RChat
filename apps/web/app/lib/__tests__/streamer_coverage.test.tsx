@@ -7,14 +7,28 @@ import { resetSessionCaches, useStore } from '../store'
 import { ServerRail } from '../../components/server_rail'
 import { ConfigSyncSection } from '../../components/config_sync'
 import { MarkdownMessage } from '../../components/markdown_message'
+import { Banners } from '../../components/banners'
+import { ConfirmDialog } from '../../components/server_settings'
+import { P2pHome } from '../../components/p2p/p2p_home'
+import { P2pSection } from '../../components/p2p/p2p_settings'
+import { useP2p } from '../p2p/app'
+import type { P2pState } from '../p2p/app/store'
+import { offText } from '../p2p/blobs'
+import { uncheckable } from '../p2p/badge'
+import { squatted } from '../p2p/node'
+import type { RChatState } from '../store_types'
 import { me, msg, user } from './fixtures'
 
 // Server rendering reads the store's initial state, so the test state goes there.
 const initial = useStore.getInitialState()
 const saved = { ...initial }
+const p2pInitial = useP2p.getInitialState()
+const p2pSaved = { ...p2pInitial }
 
 afterEach(() => {
   Object.assign(initial, saved)
+  Object.assign(p2pInitial, p2pSaved)
+  useP2p.setState(p2pSaved)
   resetSessionCaches()
 })
 
@@ -116,5 +130,46 @@ describe('palette index', () => {
     )
     expect(doc?.text.includes('dies')).toBe(false)
     expect(doc?.text).toContain('sadly')
+  })
+})
+
+describe('the instance name in toasts, errors and status text', () => {
+  const ALPHA = { name: 'Alpha', id: 'a', version: '1', api_version: '1' } as RChatState['instance']
+  const named = (over: Partial<RChatState> = {}) =>
+    signedIn(true, { instance: ALPHA, instanceHost: 'chat.a.test', ...over })
+  const running = (over: Partial<P2pState>) =>
+    Object.assign(p2pInitial, { enabled: true, loading: false, account: 'alice', ...over })
+  const SPAN = '<span class="streamer">Alpha</span>'
+  // The name shows only inside streamer spans.
+  const hidden = (html: string) =>
+    html.includes(SPAN) && !html.split(SPAN).join('').includes('Alpha')
+
+  test('a toast and an error banner', () => {
+    named({ toast: { id: 1, text: offText('Alpha') } })
+    expect(hidden(render(<Banners />))).toBe(true)
+    named({ error: `Couldn't reach Alpha.` })
+    expect(hidden(render(<Banners />))).toBe(true)
+  })
+
+  test('a confirmation', () => {
+    named({
+      confirm: {
+        title: 'Forward',
+        body: 'This copies the message to Alpha.',
+        confirm: 'Copy',
+        action: () => {},
+      },
+    })
+    expect(hidden(render(<ConfirmDialog />))).toBe(true)
+  })
+
+  test('the P2P status line and P2P errors', () => {
+    named()
+    running({ status: 'squatted' })
+    expect(hidden(render(<P2pHome onMenu={() => {}} />))).toBe(true)
+    running({ status: 'online', error: squatted('Alpha') })
+    expect(hidden(render(<P2pSection />))).toBe(true)
+    running({ status: 'online', badgeError: uncheckable('Alpha') })
+    expect(hidden(render(<P2pSection />))).toBe(true)
   })
 })

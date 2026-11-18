@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   ADMIN_LINE,
   REQUIREMENTS,
-  WHY,
+  whyText,
   banner,
   guidedSetup,
   modeOf,
@@ -30,7 +30,7 @@ describe('the registry', () => {
       'Set up an authenticator app',
       'Save a backup phrase',
     ])
-    expect(WHY).toBe('This instance requires it.')
+    expect(whyText('Alpha')).toBe('Alpha requires it.')
   })
 })
 
@@ -79,8 +79,8 @@ describe('the guided setup', () => {
         { key: 'totp', deadline: 2 * 86400 },
       ],
     })
-    expect(guidedSetup(p, ['new_password', 'totp', 'backup_phrase'], date)).toEqual({
-      heading: 'This instance requires a few things before you continue.',
+    expect(guidedSetup(p, ['new_password', 'totp', 'backup_phrase'], date, 'Alpha')).toEqual({
+      heading: 'Alpha requires a few things before you continue.',
       steps: [
         { key: 'new_password', label: 'A password of your own', state: 'Done' },
         { key: 'totp', label: 'Authenticator codes', state: 'Now' },
@@ -93,23 +93,27 @@ describe('the guided setup', () => {
   })
   test('Later only in grace; the admin line only to a site admin while no admin can fix it', () => {
     const overdue = grace({ restricted: true })
-    expect(guidedSetup(overdue, ['totp'], date).later).toBeNull()
+    expect(guidedSetup(overdue, ['totp'], date, 'Alpha').later).toBeNull()
     expect(
-      guidedSetup(grace({ unmet: [{ key: 'new_password' }] }), ['new_password'], date).later
+      guidedSetup(grace({ unmet: [{ key: 'new_password' }] }), ['new_password'], date, 'Alpha')
+        .later
     ).toBeNull()
     expect(
-      guidedSetup(overdue, ['totp'], date, { isSiteAdmin: true, noUsableAdmin: true }).adminLine
+      guidedSetup(overdue, ['totp'], date, 'Alpha', { isSiteAdmin: true, noUsableAdmin: true })
+        .adminLine
     ).toBe(ADMIN_LINE)
     expect(
-      guidedSetup(overdue, ['totp'], date, { isSiteAdmin: true, noUsableAdmin: false }).adminLine
+      guidedSetup(overdue, ['totp'], date, 'Alpha', { isSiteAdmin: true, noUsableAdmin: false })
+        .adminLine
     ).toBeNull()
     expect(
-      guidedSetup(overdue, ['totp'], date, { isSiteAdmin: false, noUsableAdmin: true }).adminLine
+      guidedSetup(overdue, ['totp'], date, 'Alpha', { isSiteAdmin: false, noUsableAdmin: true })
+        .adminLine
     ).toBeNull()
     expect(ADMIN_LINE).toBe('You can also change this requirement in Site administration.')
   })
   test('nothing left: no current step', () => {
-    const done = guidedSetup({ unmet: [], restricted: false }, ['totp'], date)
+    const done = guidedSetup({ unmet: [], restricted: false }, ['totp'], date, 'Alpha')
     expect(done.current).toBeNull()
     expect(done.steps).toEqual([{ key: 'totp', label: 'Authenticator codes', state: 'Done' }])
   })

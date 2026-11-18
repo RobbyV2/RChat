@@ -334,6 +334,22 @@ describe('P2P on Home', () => {
     ).toBe(true)
   })
 
+  test('the P2P status names the instance in a streamer span', () => {
+    const { instance, instanceHost } = st()
+    useStore.setState({
+      instance: { name: 'Alpha', id: 'a', version: '1', api_version: '1' } as never,
+      instanceHost: 'chat.a.test',
+    })
+    try {
+      Object.assign(p2pInitial, { enabled: true, loading: false, status: 'squatted' })
+      const html = render()
+      expect(html).toContain('blocking your P2P address on <span class="streamer">Alpha</span>')
+      expect(html.split('<span class="streamer">Alpha</span>').join('')).not.toContain('Alpha')
+    } finally {
+      useStore.setState({ instance, instanceHost })
+    }
+  })
+
   test('running P2P shows its status, what waits for an answer and who is online', () => {
     Object.assign(p2pInitial, {
       enabled: true,

@@ -50,6 +50,7 @@ import { badgeState } from '../../lib/p2p/badge'
 import { ctxFor } from '../../lib/actions/ctx'
 import { menuItems, openActionMenu } from '../../lib/actions/menu'
 import { openContactMenu } from '../../lib/actions/p2p_contact'
+import { LabelText, useInstanceLabel } from '../instance_badge'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 
@@ -473,7 +474,7 @@ function Off() {
       <p className="text-sm text-on-surface-variant">{ENABLE_COPY}</p>
       {error && (
         <p role="alert" className="text-sm text-error">
-          {error}
+          <LabelText text={error} />
         </p>
       )}
       <button onClick={() => p2p.openDialog({ kind: 'enable' })} className={filledBtn}>
@@ -533,6 +534,7 @@ export function P2pHome({ onMenu }: { onMenu: () => void }) {
 }
 
 function P2pContacts({ onMenu }: { onMenu: () => void }) {
+  const { label } = useInstanceLabel()
   const enabled = useP2p(s => s.enabled)
   const loading = useP2p(s => s.loading)
   const status = useP2p(s => s.status)
@@ -566,7 +568,7 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
             data-p2p-status={status}
             className="min-w-0 truncate text-xs text-on-surface-variant"
           >
-            {loading ? 'Starting…' : statusText(status, paused)}
+            {loading ? 'Starting…' : <LabelText text={statusText(status, paused, label)} />}
           </span>
         )}
         <span className="flex-1" />

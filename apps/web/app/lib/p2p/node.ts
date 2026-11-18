@@ -128,7 +128,7 @@ export type Status =
 
 export type Presence = 'online' | 'dialing' | 'offline'
 
-export const SQUATTED = 'Someone is blocking your P2P address on this instance'
+export const squatted = (label: string) => `Someone is blocking your P2P address on ${label}`
 export const UNREACHABLE = "Can't reach the P2P server"
 export const UNREACHABLE_TEXT = `${UNREACHABLE}, so contacts can't reach you. Trying again in the background.`
 export const ADDRESS_HIDDEN =

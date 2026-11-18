@@ -48,6 +48,7 @@ import { CreatePollDialog } from './poll_dialog'
 import type { PollTarget } from '../lib/polls_store'
 import { RelayPicker } from './relay_settings'
 import type { RelayChoice } from '../lib/relays'
+import { useInstanceLabel } from './instance_badge'
 
 const PRESETS: { label: string; seconds: number | null }[] = [
   { label: '1 hour', seconds: 3600 },
@@ -212,6 +213,7 @@ function JoinBar({ server }: { server: string }) {
 
 // Said once in server channels while the instance filter checks messages, until closed.
 function SiteFilterNote() {
+  const { label } = useInstanceLabel()
   const on = useStore(s => s.view?.kind === 'channel' && messageFilterOn(s.settings))
   const owner = useHome(s => s.owner)
   const seen = useHome(s => s.prefs.tips.includes(SITE_FILTER_NOTE))
@@ -222,7 +224,9 @@ function SiteFilterNote() {
       className="mb-2 flex items-center gap-2 rounded-2xl bg-surface-container px-3 py-1.5 text-xs text-on-surface-variant"
     >
       <ShieldAlert size={14} className="shrink-0" />
-      <span className="min-w-0 flex-1">This instance filters some words in server messages.</span>
+      <span className="min-w-0 flex-1">
+        <span className="streamer">{label}</span> filters some words in server messages.
+      </span>
       <button
         type="button"
         onClick={() => hideTip(SITE_FILTER_NOTE)}

@@ -26,7 +26,7 @@ export const REQUIREMENTS: readonly Requirement[] = [
   },
 ]
 
-export const WHY = 'This instance requires it.'
+export const whyText = (label: string) => `${label} requires it.`
 export const ADMIN_LINE = 'You can also change this requirement in Site administration.'
 
 export type Unmet = { key: string; deadline?: number | null }
@@ -59,6 +59,7 @@ export const guidedSetup = (
   p: MeProtections,
   required: readonly string[],
   date: FormatDate,
+  label: string,
   admin: { isSiteAdmin: boolean; noUsableAdmin: boolean } = {
     isSiteAdmin: false,
     noUsableAdmin: false,
@@ -77,7 +78,7 @@ export const guidedSetup = (
   }))
   const deadline = current?.deadline ?? null
   return {
-    heading: 'This instance requires a few things before you continue.',
+    heading: `${label} requires a few things before you continue.`,
     steps,
     current: current?.requirement.key ?? null,
     later: !p.restricted && deadline !== null ? `You have until ${date(deadline)}` : null,

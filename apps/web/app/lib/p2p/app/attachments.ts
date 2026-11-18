@@ -1,6 +1,6 @@
-import { home, writeLocal } from '../../instances'
+import { home, homeLabel, writeLocal } from '../../instances'
 import { fitContent, LIMITS as EV, type Attachment } from '../content'
-import { assemble, EMPTY_VIEW } from '../blobs'
+import { assemble, EMPTY_VIEW, offText } from '../blobs'
 import type { Hashed } from '../hashing'
 import { checkedThumb, hashFile, imageFits, previewOf, saveName, UrlCache } from '../files'
 import { kindOf, NEUTRAL_TYPE } from '../../sniff'
@@ -194,7 +194,7 @@ export const p2pFiles = {
     const d = dms
     if (!list.length || !d) return []
     if (p2pHost.textOnly()) {
-      p2pHost.toast('Attachments are turned off on this instance.')
+      p2pHost.toast(offText(homeLabel()))
       return null
     }
     if (list.some(p => p.error)) {

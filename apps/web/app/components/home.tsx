@@ -73,6 +73,7 @@ import { mutedOf, levelOf } from '../lib/notify'
 import { serverInitial } from '../lib/rules'
 import { KeyAvatar, P2pBadge, PresenceDot } from './p2p/p2p_badge'
 import { ElsewhereNotice } from './p2p/p2p_home'
+import { LabelText, useInstanceLabel } from './instance_badge'
 
 const card = 'flex min-w-0 flex-col gap-1 rounded-3xl bg-surface-container-low p-4'
 
@@ -196,6 +197,7 @@ const useP2pCard = () => {
   const serverInvites = useP2p(s => s.serverInvites.length)
   const coOwnerAsks = useP2p(s => s.coOwnerAsks.length)
   const transferAsks = useP2p(s => s.transferAsks.length)
+  const { label } = useInstanceLabel()
   return useMemo(
     () =>
       homeCard({
@@ -209,6 +211,7 @@ const useP2pCard = () => {
         serverInvites,
         coOwnerAsks,
         transferAsks,
+        label,
       }),
     [
       enabled,
@@ -221,6 +224,7 @@ const useP2pCard = () => {
       serverInvites,
       coOwnerAsks,
       transferAsks,
+      label,
     ]
   )
 }
@@ -951,7 +955,7 @@ function P2pCard() {
           </p>
           {error && (
             <p role="alert" className="px-2 text-sm text-error">
-              {error}
+              <LabelText text={error} />
             </p>
           )}
           <button
@@ -970,7 +974,9 @@ function P2pCard() {
             data-p2p-home-status={card.state}
             className="px-2 text-sm break-words text-on-surface-variant"
           >
-            <span className="font-medium text-on-surface">{card.status}</span>
+            <span className="font-medium text-on-surface">
+              <LabelText text={card.status} />
+            </span>
             {card.state === 'online' && ` \u00b7 ${onlineText(card.online)}`}
           </p>
           {card.note && (

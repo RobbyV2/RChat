@@ -47,6 +47,7 @@ import {
   type FilesKey,
 } from '../lib/p2p/transfer'
 import { P2pExportOption, P2pImport, SlowNote, type PassState } from './p2p/p2p_transfer'
+import { useInstanceLabel } from './instance_badge'
 
 const iconBtn =
   'rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-highest hover:text-on-surface disabled:pointer-events-none disabled:opacity-40'
@@ -499,6 +500,7 @@ function ExportBlock({
 }
 
 function ShareBlock({ doc }: { doc: ConfigDoc }) {
+  const { label } = useInstanceLabel()
   const [links, setLinks] = useState<ConfigShare[] | null>(null)
   const [expiry, setExpiry] = useState(EXPIRY_CHOICES[2].seconds)
   const [shown, setShown] = useState<string | null>(null)
@@ -583,8 +585,8 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
       </div>
       <p className="text-xs text-on-surface-variant">
         Anyone with the link can see the included settings, like the servers you are in and who you
-        message, until it expires. This instance stores them as readable text. Links never include
-        P2P servers or P2P settings.
+        message, until it expires. <span className="streamer">{label}</span> stores them as readable
+        text. Links never include P2P servers or P2P settings.
       </p>
       {empty && <p className="text-xs text-on-surface-variant">Include at least one section.</p>}
       <FieldError message={error} />

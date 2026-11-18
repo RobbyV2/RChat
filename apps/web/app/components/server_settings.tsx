@@ -82,6 +82,7 @@ import {
   sectionCls,
   textBtn,
 } from './ui'
+import { LabelText } from './instance_badge'
 
 const SEARCH_DEBOUNCE = 250
 const PICKER_HITS = 8
@@ -1030,7 +1031,9 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
   const danger = picked?.danger ?? true
   return (
     <Dialog title={title} onClose={onClose} layer="confirm">
-      <p className="text-sm text-on-surface-variant">{body}</p>
+      <p className="text-sm text-on-surface-variant">
+        <LabelText text={body} />
+      </p>
       {choices && (
         <fieldset className="mt-4 space-y-2">
           <legend className="sr-only">{title}</legend>

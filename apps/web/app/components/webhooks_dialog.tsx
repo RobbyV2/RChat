@@ -40,6 +40,7 @@ import {
   textBtn,
   useCopied,
 } from './ui'
+import { useInstanceLabel } from './instance_badge'
 
 // Who made a webhook, on its own line under its details.
 export function CreatorNote({ creator }: { creator: UserRef }) {
@@ -677,6 +678,7 @@ function DeliveryLog({ server, hook }: { server: string; hook: number }) {
 }
 
 function Outgoing({ server }: { server: string }) {
+  const { label } = useInstanceLabel()
   const askConfirm = useStore(s => s.askConfirm)
   const showToast = useStore(s => s.showToast)
   const me = useStore(s => s.me?.username)
@@ -820,8 +822,8 @@ function Outgoing({ server }: { server: string }) {
       </p>
       {!data.available && (
         <p className="mb-3 rounded-xl bg-surface-container p-3 text-sm text-on-surface-variant">
-          Outgoing webhooks are turned off on this instance. Nothing is sent until an instance admin
-          turns them on.
+          Outgoing webhooks are turned off on <span className="streamer">{label}</span>. Nothing is
+          sent until an instance admin turns them on.
         </p>
       )}
       {secret && (
