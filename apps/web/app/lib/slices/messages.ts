@@ -1178,6 +1178,13 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   let clock: number[] = []
   const serverSeconds = () => Math.floor((Date.now() + offsetOf(clock)) / 1000)
 
+  // Per session: views where a send of mine waits for its answer. My messages arriving live there
+  // meanwhile wait in the tail, so a confirmed send never shows beside its outbox row.
+  let answering = new Set<string>()
+  const waitsForSend = (key: string, m: Message) =>
+    answering.has(key) && m.author.username === get().me?.username
+  const heldBack = (key: string) => (holding(key) ? [] : takeTail(key, 0))
+
   const patchOutgoing = (key: string, tempId: number, status: OutgoingStatus) =>
     set(s => {
       const list = s.outbox[key]
@@ -1224,6 +1231,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
   const drain = async (key: string) => {
     const mine = draining
+    const sends = answering
     if (mine.has(key)) return
     mine.add(key)
     try {
@@ -1240,6 +1248,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           const { opts } = built
           let { p2pId } = built
           sentAt = Date.now()
+          sends.add(key)
           try {
             try {
               real = await head.send(opts)
@@ -1263,11 +1272,15 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           } catch (e) {
             if (p2pId !== null) p2p.removeFile(p2pId)
             throw e
+          } finally {
+            sends.delete(key)
           }
           if (p2pId !== null) p2p.posted(p2pId, real.id)
         } catch (e) {
           if (mine !== draining) return
           patchOutgoing(key, head.tempId, 'failed')
+          const held = heldBack(key)
+          if (held.length) set(appendLive(key, held) ?? holdLive(key, held))
           settleSent(head.tempId, null)
           const wait = e instanceof ApiError && e.status === 429 ? slowWait(e.message) : null
           if (wait !== null) noteSlow(head.msg.channel_id, wait)
@@ -1278,7 +1291,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         const sample = clockSample(sentAt, Date.now(), real.created_at)
         if (sample !== null) clock = pushOffset(clock, sample)
         if (holding(key)) holdTail(key, real)
-        const next = holding(key) ? {} : (appendLive(key, [real], true) ?? holdLive(key, [real]))
+        const shown = [real, ...heldBack(key)]
+        const next = holding(key) ? {} : (appendLive(key, shown, true) ?? holdLive(key, shown))
         set(s => ({ outbox: dropOutgoing(s.outbox, key, head.tempId), ...next }))
         settleSent(head.tempId, real)
         noteSlow(real.channel_id, null)
@@ -1334,6 +1348,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     quoteGen += 1
     draining = new Set()
     clock = []
+    answering = new Set()
     reactionQueue = new Map()
     pendingEmbeds.clear()
     linkQueue.clear()
@@ -2066,8 +2081,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         const held = ckey ? tails.get(ckey) : undefined
         if (ckey && held) tails.set(ckey, bump(held))
         const live = liveKey(tkey)
-        if (live && holding(tkey)) holdTail(tkey, m)
-        const thread = live && !holding(tkey) ? (appendLive(tkey, [m]) ?? holdLive(tkey, [m])) : {}
+        const wait = live && (holding(tkey) || waitsForSend(tkey, m))
+        if (wait) holdTail(tkey, m)
+        const thread = live && !wait ? (appendLive(tkey, [m]) ?? holdLive(tkey, [m])) : {}
         set(s => {
           const messages = { ...s.messages, ...thread.messages }
           if (ckey && messages[ckey]) messages[ckey] = bump(messages[ckey])
@@ -2086,7 +2102,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       } else {
         const key = messageKey(ev.channel_id, ev.dm_id)
         if (key && liveKey(key)) {
-          if (holding(key)) holdTail(key, m)
+          if (holding(key) || waitsForSend(key, m)) holdTail(key, m)
           else set(appendLive(key, [m]) ?? holdLive(key, [m]))
         }
       }
