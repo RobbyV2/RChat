@@ -41,7 +41,7 @@ const ON_BIG: &[OnlineIndex] = &[OnlineIndex {
     table: "online_t",
     body: "ON online_t(v, id)",
     replaces: &["idx_online_t_old"],
-    extension: None,
+    extensions: &[],
 }];
 
 fn built(built: &[&'static str], dropped: &[&'static str]) -> Built {
@@ -63,6 +63,7 @@ async fn online_index_on_a_big_table_builds_after_start() {
         "INSERT INTO messages(channel_id, author, content, created_at) SELECT c.id, 'alice', 'message ' || g, 1 FROM channels c, generate_series(1, 200001) g WHERE c.server = 'rchat'",
     )
     .await;
+    run(&db, "DROP INDEX idx_messages_channel_text").await;
     run(&db, "DROP INDEX idx_messages_content_trgm").await;
     big_table(&db).await;
     close(&db).await;
@@ -72,12 +73,17 @@ async fn online_index_on_a_big_table_builds_after_start() {
         None,
         "the start does not build an index on a big table"
     );
+    assert_eq!(state(&db, "idx_messages_channel_text").await, None);
     let limits = Limits::default();
     assert_eq!(
         build_online(&db, &limits).await.expect("build"),
-        built(&["idx_messages_content_trgm"], &[])
+        built(
+            &["idx_messages_channel_text", "idx_messages_content_trgm"],
+            &[]
+        )
     );
     assert_eq!(state(&db, "idx_messages_content_trgm").await, Some(true));
+    assert_eq!(state(&db, "idx_messages_channel_text").await, Some(true));
     assert_eq!(
         build_online(&db, &limits).await.expect("again"),
         Built::default()
@@ -315,14 +321,14 @@ async fn sqlite_builds_online_indexes_inline() {
             table: "online_t",
             body: "ON online_t(v, id)",
             replaces: &["idx_online_t_old"],
-            extension: None,
+            extensions: &[],
         },
         OnlineIndex {
             name: "idx_online_t_ext",
             table: "online_t",
             body: "ON online_t USING gin (lower(v) gin_trgm_ops)",
             replaces: &[],
-            extension: Some("pg_trgm"),
+            extensions: &["pg_trgm"],
         },
     ];
     let names = || async {
@@ -363,14 +369,14 @@ async fn a_missing_extension_skips_its_index() {
             table: "online_t",
             body: "ON online_t(v)",
             replaces: &["idx_online_t_old"],
-            extension: Some("rchat_no_such_extension"),
+            extensions: &["rchat_no_such_extension"],
         },
         OnlineIndex {
             name: "idx_online_t_new",
             table: "online_t",
             body: "ON online_t(v, id)",
             replaces: &[],
-            extension: None,
+            extensions: &[],
         },
     ];
     let mut tx = db.begin().await.expect("tx");
@@ -761,12 +767,14 @@ async fn sqlite_indexes(db: &Db, table: &str) -> Vec<Listed> {
             .iter()
             .map(|col| col.get::<Option<String>, _>(2))
             .collect();
-        let sql: Option<String> = sqlx::query("SELECT sql FROM sqlite_master WHERE name = $1")
-            .bind(&name)
-            .fetch_one(db)
-            .await
-            .expect("index sql")
-            .get(0);
+        let sql: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT sql FROM sqlite_master WHERE name = $1",
+        )
+        .bind(&name)
+        .fetch_optional(db)
+        .await
+        .expect("index sql")
+        .flatten();
         listed.push(Listed {
             table: table.to_string(),
             name,
@@ -1044,7 +1052,7 @@ fn new_indexes_on_big_tables_are_online_indexes() {
         table,
         body,
         replaces,
-        extension: _,
+        extensions: _,
     } in ONLINE_INDEXES
     {
         assert!(

@@ -210,6 +210,19 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
             Err(e) => tracing::warn!("online index builds failed: {e}"),
         }
     });
+    let search = db.clone();
+    held.spawn(async move {
+        loop {
+            let built = crate::db::build_channel_index(&search).await;
+            if let Err(e) = &built {
+                tracing::warn!("channel search index maintenance: {e}");
+            }
+            if built.is_ok() && !crate::db::is_sqlite(&search) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    });
     held.grant_ttl = config.limits.guest_grant_ttl();
     let instance = crate::instance::Instance::load(&db, &config.instance()).await?;
     info!("Instance: {} ({})", instance.name, instance.id);

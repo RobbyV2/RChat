@@ -360,7 +360,13 @@ pub async fn open_with(database_url: Option<&str>, opts: &DbOptions) -> anyhow::
             if let Err(e) = sqlite_search_index(&pool).await {
                 tracing::warn!("FTS5 trigram unavailable, search falls back to LIKE: {e}");
             }
-            set_fts(&pool, probe_fts(&pool).await);
+            let fts = probe_fts(&pool).await;
+            set_fts(&pool, fts);
+            if fts && let Err(e) = super::channel_index::create(&pool).await {
+                tracing::warn!(
+                    "channel search index unavailable, search reads the message index: {e}"
+                );
+            }
             let in_memory = url.contains(":memory:") || url.contains("mode=memory");
             let readers = match in_memory {
                 true => 0,

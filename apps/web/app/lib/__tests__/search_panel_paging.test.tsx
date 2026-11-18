@@ -28,6 +28,11 @@ const view = (
   )
 
 describe('search panel paging', () => {
+  test('an empty page shows no final message while it has a continuation', () => {
+    expect(view('meeting notes', { hasMore: true })).not.toContain('No results.')
+    expect(view('meeting notes', { hasMore: false })).toContain('No results.')
+  })
+
   test('short text offers older messages at the end of the list', () => {
     const offer = new RegExp(`<button[^>]*cursor-pointer[^>]*>${OLDER}</button>`)
     expect(offer.test(view('we'))).toBe(true)

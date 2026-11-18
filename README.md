@@ -64,6 +64,8 @@ Open http://localhost:3000. The first account you register is the site admin.
 
 A proxy in front needs one domain on port 443. It sends every path to `SERVER_PORT` and passes the WebSocket upgrade for `/api/ws` and `/peerjs`.
 
+For indexed channel search on Postgres, install `btree_gist` and `intarray` or allow the server to create them.
+
 Never run an older release on a database that a newer release upgraded.
 
 ### Scaling

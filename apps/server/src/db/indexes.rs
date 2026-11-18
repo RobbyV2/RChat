@@ -16,8 +16,8 @@ pub(super) struct OnlineIndex {
     pub body: &'static str,
     /// Indexes dropped once this one is valid.
     pub replaces: &'static [&'static str],
-    /// The Postgres extension the index needs. SQLite skips an index that needs one.
-    pub extension: Option<&'static str>,
+    /// The Postgres extensions the index needs. SQLite skips indexes that need them.
+    pub extensions: &'static [&'static str],
 }
 
 /// Every index added to a table that can be big (`messages`, `reactions`, `members`,
@@ -25,123 +25,130 @@ pub(super) struct OnlineIndex {
 /// `poll_votes`, `media`), every index that replaces or drops another, and the trigram indexes.
 pub(super) const ONLINE_INDEXES: &[OnlineIndex] = &[
     OnlineIndex {
+        name: "idx_messages_channel_text",
+        table: "messages",
+        body: "ON messages USING gist(channel_id, (LEAST(created_at, search_root_at)), rchat_search_grams(lower(content)) gist__intbig_ops(siglen=64), (id >> 32), (id & 4294967295)) WHERE channel_id IS NOT NULL AND kind IN ('user', 'poll') AND (thread_root_id IS NULL OR search_root_at IS NOT NULL)",
+        replaces: &[],
+        extensions: &["btree_gist", "intarray"],
+    },
+    OnlineIndex {
         name: "idx_messages_content_trgm",
         table: "messages",
         body: "ON messages USING gin (lower(content) gin_trgm_ops)",
         replaces: &[],
-        extension: Some("pg_trgm"),
+        extensions: &["pg_trgm"],
     },
     OnlineIndex {
         name: "idx_users_username_trgm",
         table: "users",
         body: "ON users USING gin (lower(username) gin_trgm_ops)",
         replaces: &[],
-        extension: Some("pg_trgm"),
+        extensions: &["pg_trgm"],
     },
     OnlineIndex {
         name: "idx_users_display_name_trgm",
         table: "users",
         body: "ON users USING gin (lower(display_name) gin_trgm_ops)",
         replaces: &[],
-        extension: Some("pg_trgm"),
+        extensions: &["pg_trgm"],
     },
     OnlineIndex {
         name: "idx_servers_name_trgm",
         table: "servers",
         body: "ON servers USING gin (lower(name) gin_trgm_ops)",
         replaces: &[],
-        extension: Some("pg_trgm"),
+        extensions: &["pg_trgm"],
     },
     OnlineIndex {
         name: "idx_servers_display_name_trgm",
         table: "servers",
         body: "ON servers USING gin (lower(display_name) gin_trgm_ops)",
         replaces: &[],
-        extension: Some("pg_trgm"),
+        extensions: &["pg_trgm"],
     },
     OnlineIndex {
         name: "idx_media_kept_by",
         table: "media",
         body: "ON media(kept_by, size) WHERE kept_by IS NOT NULL",
         replaces: &[],
-        extension: None,
+        extensions: &[],
     },
     OnlineIndex {
         name: "idx_media_uploader",
         table: "media",
         body: "ON media(uploader, uploaded_at)",
         replaces: &[],
-        extension: None,
+        extensions: &[],
     },
     OnlineIndex {
         name: "idx_media_charged_to",
         table: "media",
         body: "ON media(charged_to, uploaded_at) WHERE charged_to IS NOT NULL",
         replaces: &[],
-        extension: None,
+        extensions: &[],
     },
     OnlineIndex {
         name: "idx_media_charged_server",
         table: "media",
         body: "ON media(charged_server, uploaded_at) WHERE charged_server IS NOT NULL",
         replaces: &[],
-        extension: None,
+        extensions: &[],
     },
     OnlineIndex {
         name: "idx_members_user_joined",
         table: "members",
         body: "ON members(username, joined_at, server)",
         replaces: &["idx_members_username"],
-        extension: None,
+        extensions: &[],
     },
     OnlineIndex {
         name: "idx_dms_b_latest",
         table: "dms",
         body: "ON dms(user_b, last_message_id, id)",
         replaces: &["idx_dms_user_b"],
-        extension: None,
+        extensions: &[],
     },
     OnlineIndex {
         name: "idx_reactions_agg",
         table: "reactions",
         body: "ON reactions(message_id, emoji, created_at, username)",
         replaces: &["idx_reactions_message"],
-        extension: None,
+        extensions: &[],
     },
     OnlineIndex {
         name: "idx_group_pings_server_time",
         table: "group_pings",
         body: "ON group_pings(server, created_at, message_id)",
         replaces: &["idx_group_pings_server"],
-        extension: None,
+        extensions: &[],
     },
     OnlineIndex {
         name: "idx_pings_server",
         table: "pings",
         body: "ON pings(server)",
         replaces: &[],
-        extension: None,
+        extensions: &[],
     },
     OnlineIndex {
         name: "idx_messages_dm",
         table: "messages",
         body: "ON messages(dm_id, id) WHERE dm_id IS NOT NULL",
         replaces: &["idx_messages_dm_id"],
-        extension: None,
+        extensions: &[],
     },
     OnlineIndex {
         name: "idx_messages_thread",
         table: "messages",
         body: "ON messages(thread_root_id, id) WHERE thread_root_id IS NOT NULL",
         replaces: &["idx_messages_thread_root"],
-        extension: None,
+        extensions: &[],
     },
     OnlineIndex {
         name: "idx_messages_dm_author",
         table: "messages",
         body: "ON messages(author, dm_id) WHERE dm_id IS NOT NULL",
         replaces: &[],
-        extension: None,
+        extensions: &[],
     },
 ];
 
@@ -177,7 +184,10 @@ async fn guarded(conn: &mut AnyConnection, stmt: String) -> sqlx::Result<()> {
 }
 
 /// `None`: no such index. `Some(false)`: an interrupted concurrent build left it invalid.
-async fn index_valid(conn: &mut AnyConnection, name: &str) -> sqlx::Result<Option<bool>> {
+pub(super) async fn index_valid(
+    conn: &mut AnyConnection,
+    name: &str,
+) -> sqlx::Result<Option<bool>> {
     sqlx::query("SELECT CAST(CASE WHEN i.indisvalid THEN 1 ELSE 0 END AS BIGINT) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = $1")
         .bind(name)
         .fetch_optional(&mut *conn)
@@ -259,16 +269,16 @@ pub(super) async fn build_inline(
     entries: &[OnlineIndex],
 ) -> anyhow::Result<()> {
     let mut big: HashMap<&str, bool> = HashMap::new();
-    for OnlineIndex {
+    'entries: for OnlineIndex {
         name,
         table,
         body,
         replaces,
-        extension,
+        extensions,
     } in entries
     {
         if is_sqlite {
-            if extension.is_none() {
+            if extensions.is_empty() {
                 sql(conn, format!("CREATE INDEX IF NOT EXISTS {name} {body}")).await?;
                 for old in *replaces {
                     sql(conn, format!("DROP INDEX IF EXISTS {old}")).await?;
@@ -276,12 +286,13 @@ pub(super) async fn build_inline(
             }
             continue;
         }
-        if let Some(extension) = extension
-            && let Err(e) =
+        for extension in *extensions {
+            if let Err(e) =
                 guarded(conn, format!("CREATE EXTENSION IF NOT EXISTS {extension}")).await
-        {
-            tracing::warn!("{extension} unavailable, index {name} not created: {e}");
-            continue;
+            {
+                tracing::warn!("{extension} unavailable, index {name} not created: {e}");
+                continue 'entries;
+            }
         }
         let big = match big.get(table) {
             Some(big) => *big,
@@ -394,16 +405,16 @@ async fn build_one(
         table: _,
         body,
         replaces,
-        extension,
+        extensions,
     } = entry;
     let state = index_valid(conn, name).await?;
     if state != Some(true) {
-        if let Some(extension) = extension
-            && !has_extension(conn, extension).await?
-        {
-            tracing::warn!("{extension} unavailable, index {name} not created");
-            done.skipped.push(name);
-            return Ok(());
+        for extension in *extensions {
+            if !has_extension(conn, extension).await? {
+                tracing::warn!("{extension} unavailable, index {name} not created");
+                done.skipped.push(name);
+                return Ok(());
+            }
         }
         if state == Some(false) {
             sql(conn, format!("DROP INDEX CONCURRENTLY IF EXISTS {name}")).await?;

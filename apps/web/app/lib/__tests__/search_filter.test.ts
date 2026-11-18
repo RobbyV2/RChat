@@ -189,6 +189,22 @@ describe('searchRun', () => {
     expect(useStore.getState().search.loading).toBe(false)
   })
 
+  test('empty pages carry their cursors through to a later hit and a terminal page', async () => {
+    replies = [[], [], page(42, 1), []]
+    nexts = ['3831', '3337', '3132', null]
+    const a = args({ q: 'meeting notes' })
+    await run(a, true)
+    expect(requests.map(r => r.searchParams.get('cursor'))).toEqual([null, '3831', '3337', '3132'])
+    expect(ids()).toEqual([42])
+    expect(useStore.getState().search).toMatchObject({
+      cursor: null,
+      hasMore: false,
+      loading: false,
+    })
+    await run(a, false)
+    expect(requests).toHaveLength(4)
+  })
+
   test('text under 3 characters reads one page a run, and the next one as asked', async () => {
     replies = [page(900, 3), [], page(500, 30)]
     nexts = ['a', 'b', 'c']

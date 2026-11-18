@@ -7413,3 +7413,200 @@ async fn guest_voice_is_added_to_an_old_database() {
     })
     .await;
 }
+
+/// Every message as (id, channel, dm, thread root, author, content, kind, sent), by id.
+type MessageRow = (
+    i64,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    String,
+    String,
+    String,
+    i64,
+);
+
+async fn message_rows(db: &Db) -> Vec<MessageRow> {
+    sqlx::query("SELECT id, channel_id, dm_id, thread_root_id, author, content, kind, created_at FROM messages ORDER BY id")
+        .fetch_all(db)
+        .await
+        .expect("messages")
+        .iter()
+        .map(|r| {
+            (
+                r.try_get(0).expect("id"),
+                r.try_get(1).expect("channel"),
+                r.try_get(2).expect("dm"),
+                r.try_get(3).expect("root"),
+                r.try_get(4).expect("author"),
+                r.try_get(5).expect("content"),
+                r.try_get(6).expect("kind"),
+                r.try_get(7).expect("sent"),
+            )
+        })
+        .collect()
+}
+
+async fn old_channel_search_db(db: &Db) -> i64 {
+    if is_sqlite(db) {
+        without_channel_index(db).await;
+    } else {
+        for stmt in [
+            "DROP TRIGGER messages_search_root ON messages",
+            "DROP TRIGGER messages_search_root_inserted ON messages",
+            "DROP TRIGGER messages_search_replies ON messages",
+            "DROP FUNCTION rchat_message_root_date()",
+            "DROP FUNCTION rchat_finish_reply_date()",
+            "DROP FUNCTION rchat_update_reply_dates()",
+            "DROP INDEX idx_messages_channel_text",
+            "DROP FUNCTION rchat_search_grams(text)",
+            "DELETE FROM settings WHERE key = 'messages_fts_channel_next'",
+        ] {
+            sqlx::query(stmt)
+                .execute(db)
+                .await
+                .expect("predecessor schema");
+        }
+    }
+    sqlx::query("ALTER TABLE messages DROP COLUMN search_root_at")
+        .execute(db)
+        .await
+        .expect("predecessor messages");
+    let general = general_id(db).await;
+    for stmt in [
+        "UPDATE settings SET value = '33' WHERE key = 'schema_version'",
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 5)",
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('bob', 'Bob', 'x', 'text', 'identicon', 6)",
+        "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob')",
+        "INSERT INTO messages(dm_id, author, content, created_at) SELECT id, 'bob', 'old weekly dm', 9 FROM dms",
+    ] {
+        sqlx::query(stmt).execute(db).await.expect(stmt);
+    }
+    let mut root = 0;
+    for n in 0..3 {
+        root = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', $2, 10) RETURNING id")
+            .bind(general)
+            .bind(format!("old weekly notes {n}"))
+            .fetch_one(db)
+            .await
+            .expect("channel message")
+            .try_get(0)
+            .expect("id");
+    }
+    for (root, content, kind) in [(Some(root), "old weekly reply", "user"), (None, "", "join")] {
+        sqlx::query("INSERT INTO messages(channel_id, thread_root_id, author, content, kind, created_at) VALUES($1, $2, 'bob', $3, $4, 11)")
+            .bind(general)
+            .bind(root)
+            .bind(content)
+            .bind(kind)
+            .execute(db)
+            .await
+            .expect("reply and system message");
+    }
+    general
+}
+
+async fn channel_search_upgrade(url: &str) {
+    let db = open_started(Some(url)).await.expect("open");
+    let general = old_channel_search_db(&db).await;
+    assert_eq!(count(&db, STORED_SCHEMA).await, 33);
+    let before = message_rows(&db).await;
+    assert_eq!(before.len(), 6);
+    let top = before.last().expect("rows").0;
+    let sqlite = is_sqlite(&db);
+    close(&db).await;
+    for round in 0..2 {
+        let db = open_started(Some(url)).await.expect("upgrade");
+        assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+        const { assert!(SCHEMA_VERSION >= 34) };
+        assert_eq!(message_rows(&db).await, before, "start {round}: old rows");
+        if !sqlite {
+            assert!(!has_channel_index(&db).await.expect("readiness"));
+        }
+        match sqlite {
+            true => {
+                assert_eq!(
+                    count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'search_postings'").await,
+                    1
+                );
+                assert_eq!(
+                    count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'search_message_%'").await,
+                    4
+                );
+                assert_eq!(
+                    count(&db, "SELECT COUNT(*) FROM search_positions").await,
+                    128
+                );
+                assert_eq!(
+                    count(&db, "SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'messages_fts_channel_next'").await,
+                    top,
+                    "start {round}: the old messages wait for the build"
+                );
+                assert!(!has_channel_index(&db).await.expect("readiness"));
+                assert!(
+                    super::channel_index::tests::hits(&db, "old weekly", general)
+                        .await
+                        .is_empty()
+                );
+                assert_eq!(
+                    count(&db, "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH '\"old weekly\"'").await,
+                    5,
+                    "the existing index keeps every message"
+                );
+            }
+            false => assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM pg_class WHERE relname = 'search_postings'"
+                )
+                .await,
+                0
+            ),
+        }
+        close(&db).await;
+    }
+    let db = open_started(Some(url)).await.expect("open");
+    if !sqlite {
+        build_channel_index(&db).await.expect("backfill");
+        assert!(has_channel_index(&db).await.expect("readiness"));
+        assert_eq!(
+            count(
+                &db,
+                "SELECT search_root_at FROM messages WHERE thread_root_id IS NOT NULL"
+            )
+            .await,
+            10
+        );
+        close(&db).await;
+        return;
+    }
+    while !build_step(&db, 2).await.expect("batch") {}
+    assert!(has_channel_index(&db).await.expect("readiness"));
+    let channel: Vec<i64> = before
+        .iter()
+        .filter(|row| row.1 == Some(general) && !row.5.is_empty())
+        .map(|row| row.0)
+        .collect();
+    assert_eq!(channel.len(), 4);
+    assert_eq!(
+        super::channel_index::tests::hits(&db, "old weekly", general).await,
+        channel
+    );
+    assert_eq!(message_rows(&db).await, before);
+    close(&db).await;
+    let db = open_started(Some(url)).await.expect("restart");
+    assert!(has_channel_index(&db).await.expect("readiness"));
+    assert_eq!(
+        super::channel_index::tests::hits(&db, "old weekly", general).await,
+        channel
+    );
+    close(&db).await;
+}
+
+#[tokio::test]
+async fn the_channel_search_index_is_added_to_an_old_database() {
+    on_each_database("channel_search_upgrade", |url| async move {
+        channel_search_upgrade(&url).await;
+    })
+    .await;
+}

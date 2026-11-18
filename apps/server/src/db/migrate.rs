@@ -18,6 +18,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "kind TEXT NOT NULL DEFAULT 'text' CHECK(kind IN ('text','voice'))",
     ),
     ("channels", "slowmode_seconds {INT} NOT NULL DEFAULT 0"),
+    ("messages", "search_root_at {INT}"),
     ("messages", "media_spoiler {INT} NOT NULL DEFAULT 0"),
     (
         "messages",
@@ -216,7 +217,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// server" option.
 /// 33: the look-alike keys of banned usernames (`banned_usernames.username_key`,
 /// `banned_usernames.username_key_alt`).
-pub const SCHEMA_VERSION: i64 = 33;
+/// 34: channel-scoped message search and the thread root timestamp for indexed replies.
+pub const SCHEMA_VERSION: i64 = 34;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 16] {
@@ -484,6 +486,9 @@ pub(super) async fn init_schema(
         rest.into_iter().chain(late_indexes(is_sqlite)),
     )
     .await?;
+    if !is_sqlite {
+        super::channel_index::postgres::install(conn).await?;
+    }
     build_inline(conn, is_sqlite, ONLINE_INDEXES).await?;
     hash_stored_secrets(conn).await?;
     key_usernames(conn).await?;
@@ -618,6 +623,9 @@ pub(super) async fn init_schema(
         ("p2p_secret", crate::api::auth::new_token()),
     ] {
         seed_setting(conn, key, &value).await?;
+    }
+    if version == 33 {
+        store_setting(conn, "channel_search_predecessor", "33").await?;
     }
     store_setting(conn, "schema_version", &SCHEMA_VERSION.to_string()).await?;
     Ok(started)
