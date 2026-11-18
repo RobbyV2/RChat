@@ -11,11 +11,16 @@ import { MoreHorizontal, SmilePlus, type LucideIcon } from 'lucide-react'
 import { useReactionActions } from './chat_source'
 import type { Message } from '../lib/types'
 import { FULL_TITLE, canAddEmoji, reacted, reactionsFull } from '../lib/reactions'
+import { keptWhenTight, toolbarFit } from '../lib/toolbar_fit'
 import { EmojiPicker, useTopEmojis } from './emoji_picker'
 
 // It straddles the row's top edge, so a pointer moving up from the row reaches it before leaving.
 const messageToolbarCls =
-  'pointer-events-none absolute -top-5 right-3 z-10 flex items-center gap-0.5 rounded-lg border border-outline-variant bg-surface-container p-0.5 opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 data-open:pointer-events-auto data-open:opacity-100 pointer-fine:group-focus-within:pointer-events-auto pointer-fine:group-focus-within:opacity-100'
+  'group/bar pointer-events-none absolute -top-5 right-3 z-10 flex items-center gap-0.5 rounded-lg border border-outline-variant bg-surface-container p-0.5 opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 data-open:pointer-events-auto data-open:opacity-100 pointer-fine:group-focus-within:pointer-events-auto pointer-fine:group-focus-within:opacity-100'
+
+// Buttons a narrow row leaves to the More menu (see `toolbarFit`).
+const quickCls = 'group-data-[fit=compact]/bar:hidden group-data-[fit=tight]/bar:hidden'
+const spareCls = 'group-data-[fit=tight]/bar:hidden'
 
 const GAP = 4
 
@@ -27,8 +32,8 @@ const scrollParent = (el: HTMLElement | null) => {
   return null
 }
 
-// Keeps the row toolbar inside the scroll area. It overlaps the previous row and moves down if
-// the top would be clipped.
+// Keeps the row toolbar inside the scroll area, and as wide as fits beside the row's name line.
+// It overlaps the previous row and moves down if the top would be clipped.
 function useClampedToolbar(ref: RefObject<HTMLDivElement | null>, shown: boolean) {
   useEffect(() => {
     const bar = ref.current
@@ -38,7 +43,9 @@ function useClampedToolbar(ref: RefObject<HTMLDivElement | null>, shown: boolean
     const place = () => {
       scroller ??= scrollParent(row)
       const top = scroller ? scroller.getBoundingClientRect().top : 0
-      const room = row.getBoundingClientRect().top - top
+      const box = row.getBoundingClientRect()
+      bar.dataset.fit = toolbarFit(box.width)
+      const room = box.top - top
       const shift = Math.min(GAP - bar.offsetTop - room, row.offsetHeight)
       bar.style.transform = shift > 0 ? `translateY(${Math.ceil(shift)}px)` : ''
     }
@@ -119,13 +126,13 @@ export function MessageToolbar({
                 onClick={() => {
                   if (!blocked) toggle(m, e)
                 }}
-                className={`${messageToolCls} font-emoji text-[18px] leading-none ${blocked ? 'cursor-not-allowed [&>span]:opacity-40' : 'hover:[&>span]:scale-115'}`}
+                className={`${messageToolCls} ${quickCls} font-emoji text-[18px] leading-none ${blocked ? 'cursor-not-allowed [&>span]:opacity-40' : 'hover:[&>span]:scale-115'}`}
               >
                 <span className="transition-transform">{e}</span>
               </button>
             )
           })}
-          <span aria-hidden className="mx-0.5 h-5 w-px bg-outline-variant" />
+          <span aria-hidden className={`mx-0.5 h-5 w-px bg-outline-variant ${quickCls}`} />
           <button
             ref={addRef}
             type="button"
@@ -151,7 +158,7 @@ export function MessageToolbar({
           title={a.label}
           aria-label={a.label}
           onClick={a.onClick}
-          className={`${messageToolCls} ${a.danger ? 'hover:text-error' : 'hover:text-primary'}`}
+          className={`${messageToolCls} ${keptWhenTight(a.key) ? '' : spareCls} ${a.danger ? 'hover:text-error' : 'hover:text-primary'}`}
         >
           <a.icon size={18} />
         </button>
