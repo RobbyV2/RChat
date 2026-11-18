@@ -376,7 +376,10 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
 
   if (guest) {
     return (
-      <div className="m-3 rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant">
+      <div
+        data-guest-notice
+        className="mx-3 mt-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] shrink-0 rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant keyboard:mb-3"
+      >
         Viewing as a guest.{' '}
         <Link href="/login" onClick={() => logout()} className="text-primary underline">
           {ask}
