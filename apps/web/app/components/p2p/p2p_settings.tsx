@@ -320,7 +320,7 @@ export function P2pOffSection() {
   const [done, setDone] = useState<{ username: string; ok: boolean } | null>(null)
   if (!off || username === null) return null
   const result = done?.username === username ? done : null
-  if (result ? result.ok : !p2p.hasData(username)) return null
+  if (!result && !p2p.hasData(username)) return null
   const remove = () =>
     ask({
       title: REMOVE_TITLE,
@@ -335,14 +335,22 @@ export function P2pOffSection() {
         <p className="text-xs text-on-surface-variant">
           P2P is off on this instance. Your P2P data stays in this browser until you remove it.
         </p>
-        {result && (
-          <p role="alert" className="text-xs text-error">
-            Couldn&apos;t remove P2P data
+        {result?.ok ? (
+          <p role="status" className="text-xs text-on-surface">
+            P2P data removed from this browser.
           </p>
+        ) : (
+          <>
+            {result && (
+              <p role="alert" className="text-xs text-error">
+                Couldn&apos;t remove P2P data
+              </p>
+            )}
+            <button onClick={remove} className={dangerBtn}>
+              Remove P2P data from this browser
+            </button>
+          </>
         )}
-        <button onClick={remove} className={dangerBtn}>
-          Remove P2P data from this browser
-        </button>
       </div>
     </section>
   )

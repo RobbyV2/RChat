@@ -8,6 +8,7 @@ import { actionById, allActions, defineAction, runAction } from '../actions/regi
 import type { Args, Target } from '../actions/types'
 import { api, shareOrigin } from '../instances'
 import { EMPTY_NOTIFY } from '../notify'
+import { useP2p } from '../p2p/app'
 import type { PaletteCommand } from '../palette'
 import { buildSections, flatItems, type ResultCtx } from '../palette_results'
 import { closePalette, usePaletteUi } from '../palette_store'
@@ -67,7 +68,14 @@ const bobby = user('bob', { display_name: 'Bobby' })
 
 // Alice moderates server s (ViewAuditLog | ManageWebhooks | TimeoutMembers) and views #general;
 // bob is timed out, carol asked to be friends, dave is a friend and erin is blocked.
+// No P2P for alice, on or kept on this device: the rows that need it (Settings: P2P) stay out.
+const noP2p = () => {
+  useP2p.setState({ account: null, enabled: false })
+  localStorage.removeItem('rchat_p2p:alice')
+}
+
 const reset = (over: Partial<RChatState> = {}) => {
+  noP2p()
   useStore.setState({
     token: 'tok',
     guest: false,
@@ -277,6 +285,8 @@ const IDS = [
   'spoilers',
   'appear_offline',
   'settings_settings',
+  'settings_profile',
+  'settings_general',
   'settings_notifications',
   'settings_privacy',
   'settings_sync',
@@ -366,6 +376,8 @@ const LOOKS = [
   ['spoilers', 'Always show spoilers', 'settings', 'Eye', '', '', ''],
   ['appear_offline', 'Appear offline', 'settings', 'EyeOff', '', '', ''],
   ['settings_settings', 'Open settings', 'settings', 'Settings', '', '', ''],
+  ['settings_profile', 'Settings: Profile', 'settings', 'UserRound', '', '', ''],
+  ['settings_general', 'Settings: General', 'settings', 'SlidersHorizontal', '', '', ''],
   ['settings_notifications', 'Settings: Notifications', 'settings', 'Bell', '', '', ''],
   ['settings_privacy', 'Settings: Privacy', 'settings', 'ShieldOff', '', '', ''],
   ['settings_sync', 'Settings: Sync config', 'settings', 'Copy', '', '', ''],
@@ -443,6 +455,8 @@ const KEYWORDS: Record<string, string[]> = {
   profanity: ['filter', 'mask'],
   appear_offline: ['status', 'invisible', 'presence'],
   settings_settings: ['preferences'],
+  settings_profile: ['account', 'avatar', 'password', 'instance'],
+  settings_general: ['preferences'],
   settings_notifications: ['preferences'],
   settings_privacy: ['preferences'],
   settings_sync: ['preferences'],
@@ -456,29 +470,29 @@ const ORDER: Record<string, string> = {
     'audit_log webhooks timeout_member untimeout_s_bob leave_server poll mark_all_read mark_dms_read',
     'start_dm create_server join_server palette_help logout friends add_friends block',
     'accept_carol deny_carol unfriend_dave unblock_erin theme streamer typing profanity',
-    'spoilers appear_offline settings_settings settings_notifications settings_privacy settings_sync settings_palette settings_information',
+    'spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information',
   ].join(' '),
   dmState: [
     'home inbox mark_read_here jump_unread jump_present select pins copy_link_here',
     'mute_here level_here poll call video_call close_dm mark_all_read mark_dms_read',
     'start_dm create_server join_server palette_help logout friends add_friends block',
     'accept_carol deny_carol unfriend_dave unblock_erin theme streamer typing profanity',
-    'spoilers appear_offline settings_settings settings_notifications settings_privacy settings_sync settings_palette settings_information',
+    'spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information',
   ].join(' '),
   homeState: [
     'inbox mark_all_read mark_dms_read start_dm create_server join_server palette_help logout',
     'friends add_friends block accept_carol deny_carol unfriend_dave unblock_erin theme',
-    'streamer typing profanity spoilers appear_offline settings_settings settings_notifications settings_privacy',
+    'streamer typing profanity spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy',
     'settings_sync settings_palette settings_information',
   ].join(' '),
   guestState: [
     'home mark_read_here jump_unread jump_present select pins copy_link_here search_channel',
     'jump_date mute_here level_here mark_server_read mute_server level_server join_server palette_help',
-    'theme streamer typing profanity spoilers settings_settings settings_notifications settings_sync',
+    'theme streamer typing profanity spoilers settings_settings settings_profile settings_general settings_notifications settings_sync',
     'settings_palette settings_information',
   ].join(' '),
   signedOutState: [
-    'home join_server palette_help theme streamer settings_settings settings_notifications settings_sync',
+    'home join_server palette_help theme streamer settings_settings settings_profile settings_general settings_notifications settings_sync',
     'settings_palette settings_information',
   ].join(' '),
   mutedState: [
@@ -487,7 +501,7 @@ const ORDER: Record<string, string> = {
     'audit_log webhooks timeout_member untimeout_s_bob poll mark_all_read mark_dms_read start_dm',
     'create_server join_server palette_help logout friends add_friends block accept_carol',
     'deny_carol unfriend_dave unblock_erin theme streamer typing profanity spoilers',
-    'appear_offline settings_settings settings_notifications settings_privacy settings_sync settings_palette settings_information',
+    'appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information',
   ].join(' '),
 }
 const RUNS: Record<string, Record<string, unknown[]>> = {
@@ -556,7 +570,9 @@ const RUNS: Record<string, Record<string, unknown[]>> = {
     profanity: [['setProfanityOn', false]],
     spoilers: [['setShowSpoilers', 'always']],
     appear_offline: [['setAppearOffline', true]],
-    settings_settings: [['openDialog', { kind: 'settings', section: 'settings' }]],
+    settings_settings: [['openDialog', { kind: 'settings' }]],
+    settings_profile: [['openDialog', { kind: 'settings', section: 'profile' }]],
+    settings_general: [['openDialog', { kind: 'settings', section: 'general' }]],
     settings_notifications: [['openDialog', { kind: 'settings', section: 'notifications' }]],
     settings_privacy: [['openDialog', { kind: 'settings', section: 'privacy' }]],
     settings_sync: [['openDialog', { kind: 'settings', section: 'sync' }]],

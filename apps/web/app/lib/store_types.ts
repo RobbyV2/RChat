@@ -26,6 +26,7 @@ import type { GroupPings } from './group_pings'
 import type { Replying } from './replies'
 import type { SearchArgs } from './search'
 import type { Sed } from './sed'
+import type { SettingsAsk, SettingsFocus } from './settings_sections'
 import type { ShowSpoilers } from './spoilers'
 import type { SignupFailure } from './signup'
 import type {
@@ -126,8 +127,8 @@ export type ActiveDialog =
   | { kind: 'remove_phrase_confirm'; username: string }
   | {
       kind: 'settings'
-      focus?: 'bio' | 'display_name' | 'p2p_limits'
-      section?: 'settings' | 'notifications' | 'privacy' | 'sync' | 'information' | 'palette'
+      focus?: SettingsFocus
+      section?: SettingsAsk
     }
   | { kind: 'rename_folder'; id: string; focus?: 'color' }
   | { kind: 'category'; server: string; id?: number }

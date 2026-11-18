@@ -28,9 +28,7 @@ export const p2pLimitActions: Action[] = [
     keywords,
     available: ctx => p2pAccount(ctx) !== null,
     run: () =>
-      useStore
-        .getState()
-        .openDialog({ kind: 'settings', section: 'settings', focus: 'p2p_limits' }),
+      useStore.getState().openDialog({ kind: 'settings', section: 'p2p', focus: 'p2p_limits' }),
   },
   {
     id: 'p2p_limits_reset',

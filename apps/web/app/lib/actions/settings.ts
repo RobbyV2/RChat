@@ -8,8 +8,11 @@ import {
   Moon,
   Settings,
   ShieldOff,
+  SlidersHorizontal,
   Type,
   UserPen,
+  UserRound,
+  Waypoints,
   type LucideIcon,
 } from 'lucide-react'
 import { UNAVAILABLE } from '../capabilities'
@@ -18,12 +21,11 @@ import { filterSwitch } from '../profanity'
 import { useStore } from '../store'
 import type { RChatState } from '../store_types'
 import { canEditDisplayName } from '../display_name'
+import { p2p, useP2p } from '../p2p/app'
+import { settingsSections, type SettingsSection } from '../settings_sections'
 import { signedIn } from './global'
 import { p2pLimitActions } from './p2p_limits'
 import type { Action } from './types'
-
-export type SettingsSection =
-  'settings' | 'notifications' | 'privacy' | 'sync' | 'palette' | 'information'
 
 const get = () => useStore.getState()
 
@@ -33,19 +35,27 @@ const local = (s: RChatState) => s.me !== null || s.guest
 const filterNow = (s: RChatState) =>
   filterSwitch(capabilities().wasm, s.profanityOn, s.profanityFailed)
 
-const section = (
-  id: SettingsSection,
-  title: string,
-  icon: LucideIcon,
-  available: (s: RChatState) => boolean = () => true
-): Action => ({
+// The entries the settings nav shows for this account.
+export const shownSections = (s: RChatState) =>
+  settingsSections({
+    signedIn: signedIn(s),
+    p2p: useP2p.getState().account !== null || (s.me !== null && p2p.hasData(s.me.username)),
+  })
+
+const KEYWORDS: Partial<Record<SettingsSection, string[]>> = {
+  profile: ['account', 'avatar', 'password', 'instance'],
+  p2p: ['peer-to-peer', 'contacts'],
+  information: ['keyboard shortcuts', 'help'],
+}
+
+const section = (id: SettingsSection, title: string, icon: LucideIcon): Action => ({
   id: `settings_${id}`,
   title,
   scope: 'global',
   group: 'settings',
   icon,
-  keywords: id === 'information' ? ['keyboard shortcuts', 'help'] : ['preferences'],
-  available: ({ s }) => available(s),
+  keywords: KEYWORDS[id] ?? ['preferences'],
+  available: ({ s }) => shownSections(s).includes(id),
   run: () => get().openDialog({ kind: 'settings', section: id }),
 })
 
@@ -133,9 +143,21 @@ export const settingsActions: Action[] = [
     run: () => void get().setAppearOffline(!get().me?.appear_offline),
   },
   ...p2pLimitActions,
-  section('settings', 'Open settings', Settings),
+  {
+    id: 'settings_settings',
+    title: 'Open settings',
+    scope: 'global',
+    group: 'settings',
+    icon: Settings,
+    keywords: ['preferences'],
+    available: () => true,
+    run: () => get().openDialog({ kind: 'settings' }),
+  },
+  section('profile', 'Settings: Profile', UserRound),
+  section('general', 'Settings: General', SlidersHorizontal),
   section('notifications', 'Settings: Notifications', Bell),
-  section('privacy', 'Settings: Privacy', ShieldOff, signedIn),
+  section('privacy', 'Settings: Privacy', ShieldOff),
+  section('p2p', 'Settings: P2P', Waypoints),
   section('sync', 'Settings: Sync config', Copy),
   section('palette', 'Settings: Command palette', Command),
   section('information', 'Settings: Information', Keyboard),

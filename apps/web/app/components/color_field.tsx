@@ -63,7 +63,7 @@ export function ColorField({
           })}
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-on-surface-variant">
+      <div className="relative flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-on-surface-variant">
         <input
           type="color"
           value={shown}

@@ -1,15 +1,22 @@
 'use client'
 
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
-import { X } from 'lucide-react'
-import { api } from '../lib/instances'
+import Link from 'next/link'
+import { Globe, UserRound, X } from 'lucide-react'
+import { api, home } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
 import { iceOffer } from '../lib/ice'
 import { ownTurn } from '../lib/relays'
 import { RelaySection } from './relay_settings'
 import { P2pOffSection, P2pSection } from './p2p/p2p_settings'
-import { useP2p } from '../lib/p2p/app'
+import { p2p, useP2p } from '../lib/p2p/app'
+import {
+  SECTION_LABELS,
+  sectionFor,
+  settingsSections,
+  type SettingsSection,
+} from '../lib/settings_sections'
 import { avatarColorFor, avatarDraft } from '../lib/identicon'
 import { defaultBanner } from '../lib/profile'
 import { passwordChangeError, secretOf, type PassKind } from '../lib/password'
@@ -19,10 +26,10 @@ import { BIO_MAX, bioAnnouncement, bioError, charCount, cleanBio, siteFilterOn }
 import { SHORTCUTS, shortcutLabel, type Shortcut } from '../lib/shortcuts'
 import type { AvatarKind } from '../lib/types'
 import { AvatarPicker } from './avatar_picker'
-import { DisplayNameField, NameWithUsername } from './display_name'
+import { DisplayNameField } from './display_name'
 import { canEditDisplayName } from '../lib/display_name'
 import { ColorField } from './color_field'
-import { InstanceDetails } from './instance_badge'
+import { InstanceDetails, useInstance } from './instance_badge'
 import { UserAvatar } from './user_avatar'
 import { SettingSwitch } from './admin_panel'
 import { NotificationsSection } from './notify_settings'
@@ -32,11 +39,9 @@ import { BlockedUsersSection } from './blocking'
 import { PaletteSettingsSection } from './palette_settings'
 import { Choice, PrivacyChoices } from './friends'
 import { PassSwitch, WordGrid } from './word_grid'
-import { FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './ui'
+import { dangerBtn, FieldError, fieldCls, filledBtn, sectionCls, textBtn, useEscape } from './ui'
 
 const bioFieldCls = fieldCls.replace(' border-outline', '').replace(' focus:border-primary', '')
-
-type Section = 'settings' | 'notifications' | 'privacy' | 'sync' | 'palette' | 'information'
 
 export default function SettingsMenu() {
   const open = useStore(s => s.activeDialog?.kind === 'settings')
@@ -153,7 +158,7 @@ function AboutMe({ focus }: { focus: boolean }) {
           over || error !== null ? 'border-error' : 'border-outline focus:border-primary'
         }`}
       />
-      <div className="flex items-start justify-between gap-3">
+      <div className="relative flex items-start justify-between gap-3">
         <div className="min-w-0">
           <FieldError id={`${id}-error`} message={error} />
           {done && !error && <p className="pt-1.5 text-xs text-on-surface-variant">Saved</p>}
@@ -190,7 +195,92 @@ function AboutMe({ focus }: { focus: boolean }) {
   )
 }
 
-function AccountSection() {
+// The top of Profile: who is signed in, and on which instance.
+function AccountCard() {
+  const me = useStore(s => s.me)
+  const { name, host: loaded } = useInstance()
+  const host = loaded || home.host
+  return (
+    <div
+      data-account-card
+      className="flex min-w-0 flex-col gap-3 rounded-2xl bg-surface-container-high p-4"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        {me ? (
+          <UserAvatar
+            username={me.username}
+            avatarKind={me.avatar_kind}
+            avatarColor={me.avatar_color}
+            size={48}
+          />
+        ) : (
+          <GuestAvatar size={48} />
+        )}
+        <div className="min-w-0">
+          <p className="streamer truncate font-medium text-on-surface">
+            {me ? me.display_name : 'Guest'}
+          </p>
+          <p className="streamer truncate text-sm text-on-surface-variant">
+            {me ? `@${me.username}` : 'Browsing without an account'}
+          </p>
+        </div>
+      </div>
+      <div className="flex min-w-0 items-center gap-3 border-t border-outline-variant pt-3">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary-container text-on-primary-container">
+          <Globe size={16} />
+        </span>
+        <div className="min-w-0">
+          <p className="streamer truncate text-sm font-medium text-on-surface">{name}</p>
+          <p className="streamer truncate text-xs text-on-surface-variant">{host}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function GuestAvatar({ size }: { size: number }) {
+  return (
+    <span
+      aria-hidden
+      style={{ width: size, height: size }}
+      className="flex shrink-0 items-center justify-center rounded-full bg-secondary-container text-on-secondary-container"
+    >
+      <UserRound size={size / 2} />
+    </span>
+  )
+}
+
+// The nav header on wide screens: the account the settings belong to.
+function NavAccount() {
+  const me = useStore(s => s.me)
+  const { name, host: loaded } = useInstance()
+  const host = loaded || home.host
+  return (
+    <div data-nav-account className="hidden min-w-0 items-center gap-3 px-3 pb-3 md:flex">
+      {me ? (
+        <UserAvatar
+          username={me.username}
+          avatarKind={me.avatar_kind}
+          avatarColor={me.avatar_color}
+          size={32}
+        />
+      ) : (
+        <GuestAvatar size={32} />
+      )}
+      <div className="min-w-0">
+        <p className="streamer truncate text-sm font-medium text-on-surface">
+          {me ? me.display_name : 'Guest'}
+        </p>
+        <p className="streamer truncate text-xs text-on-surface-variant">{name}</p>
+        {host !== name && (
+          <p className="streamer truncate text-xs text-on-surface-variant">{host}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ProfileFields() {
   const focusBio = useStore(
     s => s.activeDialog?.kind === 'settings' && s.activeDialog.focus === 'bio'
   )
@@ -208,13 +298,7 @@ function AccountSection() {
   if (!me) return null
   return (
     <section>
-      <p className={sectionCls}>Account</p>
-      <p className="mb-4 text-sm text-on-surface-variant">
-        Signed in as{' '}
-        <span className="streamer font-medium text-on-surface">
-          <NameWithUsername user={me} />
-        </span>
-      </p>
+      <p className={sectionCls}>Your profile</p>
       <div className="flex flex-col gap-5">
         {editName && <DisplayNameField focus={focusName} />}
         <AvatarPicker
@@ -382,8 +466,8 @@ function PasswordSection() {
   }
 
   return (
-    <section>
-      <p className={sectionCls}>Change password</p>
+    <div>
+      <p className="mb-3 text-sm font-medium text-on-surface">Change password</p>
       <form onSubmit={submit} className="flex flex-col gap-5">
         <input
           type="text"
@@ -458,6 +542,32 @@ function PasswordSection() {
           </button>
         </div>
       </form>
+    </div>
+  )
+}
+
+function SignInSection() {
+  const signedIn = useStore(s => s.me !== null && !s.guest)
+  const logout = useStore(s => s.logout)
+  const closeDialog = useStore(s => s.closeDialog)
+  return (
+    <section>
+      <p className={sectionCls}>Sign-in</p>
+      <div className="flex flex-col items-start gap-6">
+        {signedIn && <PasswordSection />}
+        <Link
+          href="/login"
+          replace
+          data-settings-logout
+          onClick={() => {
+            closeDialog()
+            logout()
+          }}
+          className={dangerBtn}
+        >
+          {signedIn ? 'Log out' : 'Exit guest mode'}
+        </Link>
+      </div>
     </section>
   )
 }
@@ -603,25 +713,34 @@ function ConnectionSection() {
   )
 }
 
-function SettingsSection() {
+function ProfileSection() {
+  const { name } = useInstance()
+  return (
+    <div className="flex flex-col gap-8">
+      <AccountCard />
+      <ProfileFields />
+      <SignInSection />
+      <section>
+        <p className={sectionCls}>
+          About <span className="streamer">{name}</span>
+        </p>
+        <InstanceDetails />
+      </section>
+    </div>
+  )
+}
+
+function GeneralSection() {
   const theme = useStore(s => s.theme)
   const setTheme = useStore(s => s.setTheme)
   const streamer = useStore(s => s.streamer)
   const setStreamer = useStore(s => s.setStreamer)
-  const p2pOn = useP2p(s => s.account !== null)
   return (
     <div className="flex flex-col gap-8">
-      <section>
-        <p className={sectionCls}>Instance</p>
-        <InstanceDetails />
-      </section>
-      <AccountSection />
-      <PasswordSection />
       <StatusSection />
       <ChatSection />
       <ConnectionSection />
       <RelaySection />
-      {p2pOn ? <P2pSection /> : <P2pOffSection />}
       <section>
         <p className={sectionCls}>Appearance</p>
         <SettingSwitch
@@ -640,6 +759,11 @@ function SettingsSection() {
       <DesktopSection />
     </div>
   )
+}
+
+function P2pPage() {
+  const p2pOn = useP2p(s => s.account !== null)
+  return p2pOn ? <P2pSection /> : <P2pOffSection />
 }
 
 function Info({ title, children }: { title: string; children: React.ReactNode }) {
@@ -789,60 +913,58 @@ function InformationSection() {
 function Menu() {
   const closeDialog = useStore(s => s.closeDialog)
   const signedIn = useStore(s => s.me !== null && !s.guest)
+  const username = useStore(s => s.me?.username ?? null)
+  const p2pOn = useP2p(s => s.account !== null)
+  const [p2pKept] = useState(() => username !== null && p2p.hasData(username))
+  const shown = settingsSections({ signedIn, p2p: p2pOn || p2pKept })
   const asked = useStore(s =>
     s.activeDialog?.kind === 'settings' ? (s.activeDialog.section ?? null) : null
   )
-  const [section, setSection] = useState<Section>(() =>
-    asked && (asked !== 'privacy' || signedIn) ? asked : 'settings'
+  const focus = useStore(s =>
+    s.activeDialog?.kind === 'settings' ? (s.activeDialog.focus ?? null) : null
   )
-  const [seenAsked, setSeenAsked] = useState(asked)
-  if (seenAsked !== asked) {
-    setSeenAsked(asked)
-    if (asked && (asked !== 'privacy' || signedIn)) setSection(asked)
+  const [picked, setPicked] = useState<SettingsSection>(() => sectionFor(asked, focus, shown))
+  const askKey = `${asked}|${focus}`
+  const [seenAsk, setSeenAsk] = useState(askKey)
+  if (seenAsk !== askKey) {
+    setSeenAsk(askKey)
+    if (asked || focus) setPicked(sectionFor(asked, focus, shown))
   }
-  const titleId = useId()
+  const section = shown.includes(picked) ? picked : shown[0]
   useEscape(closeDialog)
-
-  const sections: [Section, string][] = [
-    ['settings', 'Settings'],
-    ['notifications', 'Notifications'],
-    ...(signedIn ? ([['privacy', 'Privacy']] as [Section, string][]) : []),
-    ['sync', 'Sync config'],
-    ['palette', 'Command palette'],
-    ['information', 'Information'],
-  ]
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-labelledby={titleId}
+      aria-label="Settings"
       className="fixed inset-x-0 top-app z-50 flex h-app flex-col bg-surface px-safe md:flex-row"
     >
       <div className="flex shrink-0 items-center border-b border-outline-variant bg-surface-container-low pr-3 md:contents">
-        <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto p-3 md:w-56 md:flex-none md:flex-col md:overflow-y-auto md:border-r md:border-outline-variant md:bg-surface-container-low md:p-4">
-          <p
-            id={titleId}
-            className="hidden px-3 pb-2 text-xs font-medium tracking-wide text-on-surface-variant uppercase md:block"
-          >
-            Settings
-          </p>
-          {sections.map(([key, label]) => (
+        <nav
+          aria-label="Settings sections"
+          className="flex min-w-0 flex-1 gap-1 overflow-x-auto p-3 md:w-56 md:flex-none md:flex-col md:overflow-y-auto md:border-r md:border-outline-variant md:bg-surface-container-low md:p-4"
+        >
+          <NavAccount />
+          {shown.map(key => (
             <button
               key={key}
-              onClick={() => setSection(key)}
+              data-settings-section={key}
+              aria-current={section === key ? 'page' : undefined}
+              onClick={() => setPicked(key)}
               className={`shrink-0 rounded-full px-3 py-1.5 text-left text-sm md:rounded-xl md:py-2 ${
                 section === key
                   ? 'bg-secondary-container text-on-secondary-container'
                   : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
               }`}
             >
-              {label}
+              {SECTION_LABELS[key]}
             </button>
           ))}
         </nav>
         <button
           title="Close settings"
+          aria-label="Close settings"
           onClick={closeDialog}
           className="shrink-0 rounded-full md:absolute md:top-4 md:right-[max(1rem,env(safe-area-inset-right))] md:z-10 border border-outline-variant bg-surface p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
         >
@@ -851,8 +973,10 @@ function Menu() {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-6 md:p-10">
         <div className="max-w-lg pb-10">
-          {section === 'settings' ? (
-            <SettingsSection />
+          {section === 'profile' ? (
+            <ProfileSection />
+          ) : section === 'general' ? (
+            <GeneralSection />
           ) : section === 'notifications' ? (
             <NotificationsSection />
           ) : section === 'privacy' ? (
@@ -862,6 +986,8 @@ function Menu() {
               <p className={sectionCls}>Blocked users</p>
               <BlockedUsersSection />
             </section>
+          ) : section === 'p2p' ? (
+            <P2pPage />
           ) : section === 'sync' ? (
             <ConfigSyncSection />
           ) : section === 'palette' ? (

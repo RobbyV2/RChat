@@ -2,11 +2,11 @@
 
 import { Globe } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { DEFAULT_INSTANCE_NAME, home } from '../lib/instances'
+import { DEFAULT_INSTANCE_NAME } from '../lib/instances'
 import { openActionMenu } from '../lib/actions/menu'
 import { longPress } from './context_menu'
 
-function useInstance() {
+export function useInstance() {
   const info = useStore(s => s.instance)
   const host = useStore(s => s.instanceHost)
   return { info, host, name: info?.name || DEFAULT_INSTANCE_NAME }
@@ -61,18 +61,9 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 export function InstanceDetails() {
-  const { info, host, name } = useInstance()
+  const { info } = useInstance()
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex min-w-0 items-center gap-3 rounded-2xl bg-surface-container-high p-3">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary-container text-on-primary-container">
-          <Globe size={20} />
-        </span>
-        <div className="min-w-0">
-          <p className="streamer truncate font-medium text-on-surface">{name}</p>
-          <p className="streamer truncate text-sm text-on-surface-variant">{host || home.host}</p>
-        </div>
-      </div>
       <dl className="divide-y divide-outline-variant px-2 text-sm">
         <Row label="Instance ID">
           <span className="font-mono text-xs">{info?.id ?? 'Unknown'}</span>

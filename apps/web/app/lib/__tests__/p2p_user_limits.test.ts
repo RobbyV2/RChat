@@ -289,7 +289,7 @@ describe('P2P limits actions', () => {
     await runAction('p2p_limits', ctx())
     expect(useStore.getState().activeDialog).toEqual({
       kind: 'settings',
-      section: 'settings',
+      section: 'p2p',
       focus: 'p2p_limits',
     })
     writeUserLimits('ann', { v: 1, totalBytes: 4 * GIB })
