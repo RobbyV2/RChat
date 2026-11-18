@@ -1,10 +1,10 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Ban, Check, Menu, QrCode as QrIcon, UserPlus, Waypoints, X } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
-import { badgePings, dmUnread, listedPeers } from '../../lib/p2p/alerts'
+import { p2pTileCount } from '../../lib/p2p/alerts'
 import { dmRoomId, movedText, MOVING_TEXT, RESUME_TEXT } from '../../lib/p2p/dm'
 import { levelOf, mutedOf } from '../../lib/notify'
 import {
@@ -54,35 +54,23 @@ import { LabelText, useInstanceLabel } from '../instance_badge'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 
-// Only conversations: the P2P tile badges these, server tiles badge their own.
-const useDmPings = () => {
-  const rooms = useP2p(s => s.rooms)
-  const contacts = useP2p(s => s.contacts)
-  const prefs = useStore(s => s.notifyPrefs)
-  return useMemo(() => badgePings(rooms, prefs, listedPeers(contacts)), [rooms, contacts, prefs])
-}
+const count = (n: number, one: string, many: string) => (n ? `${n} ${n === 1 ? one : many}` : '')
 
-// Unread conversations that show it: muted ones and unlisted contacts' don't.
-const useP2pUnread = () => {
-  const rooms = useP2p(s => s.rooms)
-  const contacts = useP2p(s => s.contacts)
-  const prefs = useStore(s => s.notifyPrefs)
-  return useMemo(() => dmUnread(rooms, prefs, listedPeers(contacts)), [rooms, contacts, prefs])
-}
-
-// The rail tile under the home button. Pending requests and pings show as a badge.
+// The P2P tile in the rail's P2P frame: opens the contacts. What waits for an answer (message
+// requests, server invites, co-owner and transfer asks) shows as its badge; conversation pings
+// count on the DM tile.
 export function P2pRailTile() {
   const open = useP2p(s => s.home)
   const enabled = useP2p(s => s.enabled)
   const pending = useP2p(s => requestsOf(s.contacts).length)
-  const pings = useDmPings()
-  const unread = useP2pUnread()
-  const badge = pending + pings
+  const invites = useP2p(s => s.serverInvites.length)
+  const asks = useP2p(s => s.coOwnerAsks.length + s.transferAsks.length)
+  const badge = useP2p(p2pTileCount)
   const label = [
     'Peer-to-peer',
-    pending ? `${pending} message ${pending === 1 ? 'request' : 'requests'}` : '',
-    pings ? `${pings} ${pings === 1 ? 'notification' : 'notifications'}` : '',
-    unread && !pings ? 'unread messages' : '',
+    count(pending, 'message request', 'message requests'),
+    count(invites, 'server invite', 'server invites'),
+    count(asks, 'request to answer', 'requests to answer'),
   ]
     .filter(Boolean)
     .join(', ')
@@ -94,21 +82,14 @@ export function P2pRailTile() {
       aria-pressed={open}
       onClick={() => (open ? p2p.closeHome() : p2p.openHome())}
       {...(enabled ? longPress((x, y) => openActionMenu(x, y, { kind: 'p2p_home' })) : {})}
-      className={`${tile} relative border-2 border-dashed ${
+      className={`${tile} relative ${
         open
-          ? 'border-tertiary bg-tertiary text-on-tertiary'
-          : 'border-tertiary/70 bg-surface-container-high text-tertiary hover:bg-tertiary-container hover:text-on-tertiary-container'
+          ? 'bg-tertiary text-on-tertiary'
+          : 'bg-surface-container-high text-tertiary hover:bg-tertiary-container hover:text-on-tertiary-container'
       }`}
     >
       <Waypoints size={22} />
       {badge > 0 && <RailPingBadge count={badge} />}
-      {badge === 0 && unread && (
-        <span
-          data-p2p-unread
-          aria-hidden
-          className="absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-surface-container-lowest bg-on-surface"
-        />
-      )}
     </button>
   )
 }

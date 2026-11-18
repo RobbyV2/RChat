@@ -256,22 +256,38 @@ export function P2pFolderEntry({
   )
 }
 
-// The P2P server group of the rail, below a divider.
+// Create or join a P2P server: the second tile of the rail's P2P frame.
+export function P2pJoinTile() {
+  return (
+    <button
+      data-p2p-tile
+      data-p2p-join
+      title="Create or join a P2P server"
+      aria-label="Create or join a P2P server"
+      onClick={() => p2p.openDialog({ kind: 'server_new' })}
+      className={`${tile} bg-surface-container-high text-tertiary hover:bg-tertiary-container hover:text-on-tertiary-container`}
+    >
+      <Plus size={22} />
+    </button>
+  )
+}
+
+// The P2P servers and folders, last in the rail under a dashed line.
 export function P2pServerRail() {
   const enabled = useP2p(s => s.enabled)
   const servers = useP2p(s => s.servers)
   const layout = useP2p(s => s.layout)
-  const invites = useP2p(s => s.serverInvites.length + s.coOwnerAsks.length + s.transferAsks.length)
   const list = useMemo(
     () => Object.values(servers).sort((a, b) => (a.name < b.name ? -1 : 1)),
     [servers]
   )
-  if (!enabled) return null
+  if (!enabled || !list.length) return null
   const items = railItems(list, v => v.id, layout.servers)
   return (
     <>
       <div className="my-1 h-px w-8 shrink-0 border-t border-dashed border-tertiary" />
       <div
+        data-rail="p2p-servers"
         data-drop-zone="p2p"
         data-drop-label="Remove from folder"
         className="flex shrink-0 flex-col items-center gap-2"
@@ -284,20 +300,6 @@ export function P2pServerRail() {
           )
         )}
       </div>
-      <button
-        data-p2p-tile
-        title={
-          invites
-            ? `Create or join a P2P server, ${invites} invites`
-            : 'Create or join a P2P server'
-        }
-        aria-label="Create or join a P2P server"
-        onClick={() => p2p.openDialog({ kind: 'server_new' })}
-        className={`${tile} relative border-2 border-dashed border-tertiary text-tertiary hover:bg-tertiary-container hover:text-on-tertiary-container`}
-      >
-        <Plus size={22} />
-        {invites > 0 && <RailPingBadge count={invites} />}
-      </button>
     </>
   )
 }

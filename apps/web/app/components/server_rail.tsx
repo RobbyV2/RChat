@@ -14,8 +14,7 @@ import {
   Shield,
 } from 'lucide-react'
 import {
-  dmPingCount,
-  dmsUnread,
+  dmTile,
   folderLabel,
   previewServer,
   type RailServer,
@@ -42,7 +41,7 @@ import { Sentinel, iconBtn, useOwnServer } from './ui'
 import { RailPingBadge, pingLabel } from './ping_badge'
 import { MutedIcon } from './notify_menu'
 import { P2pRailTile } from './p2p/p2p_home'
-import { P2pServerRail } from './p2p/p2p_server_view'
+import { P2pJoinTile, P2pServerRail } from './p2p/p2p_server_view'
 import { p2p as p2pView, useP2p } from '../lib/p2p/app'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
@@ -282,6 +281,28 @@ export function FolderEntry({
   )
 }
 
+// Direct messages: the badge counts the instance's DM and friend pings and the P2P
+// conversations' pings, the dot an unread DM in either.
+function DmTile({ active }: { active: boolean }) {
+  const openLastDm = useStore(s => s.openLastDm)
+  const rooms = useP2p(s => s.rooms)
+  const contacts = useP2p(s => s.contacts)
+  const { pings, unread } = useStore(s => dmTile(s, { rooms, contacts }))
+  return (
+    <button
+      data-rail="dms"
+      title={pings ? `Direct messages, ${pingLabel(pings)}` : 'Direct messages'}
+      aria-label="Direct messages"
+      onClick={openLastDm}
+      {...longPress((x, y) => openActionMenu(x, y, { kind: 'home' }))}
+      className={`${tile} relative ${active ? 'bg-primary text-on-primary' : idle}`}
+    >
+      <MessageCircle size={22} />
+      {pings > 0 ? <RailPingBadge count={pings} /> : unread && <UnreadDot />}
+    </button>
+  )
+}
+
 export function ServerRail() {
   const router = useRouter()
   const me = useStore(s => s.me)
@@ -289,9 +310,6 @@ export function ServerRail() {
   const guestNames = useStore(s => s.guestNames)
   const servers = useStore(s => (s.me ? NO_DETAILS : s.servers))
   const view = useStore(s => s.view)
-  const dmUnread = useStore(dmsUnread)
-  const dmPings = useStore(dmPingCount)
-  const openLastDm = useStore(s => s.openLastDm)
   const goHome = useStore(s => s.goHome)
   const serversMore = useStore(s => s.serversMore)
   const loadMoreServers = useStore(s => s.loadMoreServers)
@@ -301,6 +319,7 @@ export function ServerRail() {
   const p2pHome = useP2p(s => s.home || s.server !== null)
   // Set only while the instance has P2P on for this account.
   const p2pOn = useP2p(s => s.account !== null)
+  const p2pEnabled = useP2p(s => s.enabled)
   const atHome = useStore(s => s.home && s.view === null) && !p2pHome
 
   const items = railItems(
@@ -311,7 +330,7 @@ export function ServerRail() {
 
   return (
     <nav className="flex h-full w-18 shrink-0 flex-col bg-surface-container-lowest">
-      <div className="flex shrink-0 flex-col items-center gap-1.5 pt-2">
+      <div data-rail="instance" className="flex shrink-0 flex-col items-center gap-1.5 pt-2">
         <RailInstance />
         <div className="h-px w-8 bg-outline-variant" />
       </div>
@@ -329,27 +348,35 @@ export function ServerRail() {
           aria-label="Home"
           aria-current={atHome ? 'page' : undefined}
           data-home-button
+          data-rail="home"
           onClick={goHome}
           className={`${tile} ${atHome ? 'bg-primary text-on-primary' : idle}`}
         >
           <House size={22} />
         </button>
-        {me && (
-          <button
-            title={dmPings ? `Direct messages, ${pingLabel(dmPings)}` : 'Direct messages'}
-            aria-label="Direct messages"
-            onClick={openLastDm}
-            {...longPress((x, y) => openActionMenu(x, y, { kind: 'home' }))}
-            className={`${tile} relative ${view?.kind === 'dm' && !p2pHome ? 'bg-primary text-on-primary' : idle}`}
+        {me && <DmTile active={view?.kind === 'dm' && !p2pHome} />}
+        <button
+          data-rail="add-server"
+          title="Add a server"
+          aria-label="Add a server"
+          onClick={() => openDialog({ kind: 'add_server' })}
+          className={`${tile} bg-primary-container text-on-primary-container shadow-elevation-1 hover:bg-primary hover:text-on-primary`}
+        >
+          <Plus size={22} />
+        </button>
+        {p2pOn && (
+          <div
+            data-rail="p2p"
+            className="flex shrink-0 flex-col items-center gap-2 rounded-[1.25rem] border-2 border-dashed border-tertiary/70 p-[3px]"
           >
-            <MessageCircle size={22} />
-            {dmPings > 0 ? <RailPingBadge count={dmPings} /> : dmUnread && <UnreadDot />}
-          </button>
+            <P2pRailTile />
+            {p2pEnabled && <P2pJoinTile />}
+          </div>
         )}
-        {p2pOn && <P2pRailTile />}
-        {me && <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />}
+        <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />
         {me && <PreviewTile />}
         <div
+          data-rail="servers"
           data-drop-zone="servers"
           data-drop-label="Remove from folder"
           className="flex shrink-0 flex-col items-center gap-2"
@@ -363,13 +390,6 @@ export function ServerRail() {
           )}
         </div>
         {me && serversMore && <Sentinel key={me.servers.length} onVisible={loadMoreServers} />}
-        <button
-          title="Add a server"
-          onClick={() => openDialog({ kind: 'add_server' })}
-          className={`${tile} bg-primary-container text-on-primary-container shadow-elevation-1 hover:bg-primary hover:text-on-primary`}
-        >
-          <Plus size={22} />
-        </button>
         {p2pOn && <P2pServerRail />}
       </div>
       <div className="flex shrink-0 flex-col items-center gap-2 border-t border-outline-variant pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">

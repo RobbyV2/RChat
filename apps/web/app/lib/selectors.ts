@@ -25,6 +25,8 @@ import { canChangeRole, memberPerms, rolePerms } from './rules'
 import type { ConfigSource } from './config_transfer'
 import { running, type Timeout } from './timeouts'
 import type { RChatState } from './store_types'
+import { badgePings as p2pBadgePings, dmUnread as p2pDmUnread, listedPeers } from './p2p/alerts'
+import type { P2pState } from './p2p/app/store'
 import { ALL_PERMS, Perm } from './types'
 import type { Member, Message, Role, UserRef } from './types'
 
@@ -288,6 +290,53 @@ export const serverPingCount = (s: RChatState, name: string) => serverPings(badg
 export const dmPingCount = (s: RChatState) => {
   const p = badgePings(s)
   return dmPings(p) + scopePings(p, 'friends')
+}
+
+// The P2P conversations the DM tile counts with the instance's.
+export type P2pConversations = Pick<P2pState, 'rooms' | 'contacts'>
+
+export interface DmTileCounts {
+  // The instance's DM and friend pings and the P2P conversations' pings.
+  pings: number
+  // An unread DM there or in a P2P conversation.
+  unread: boolean
+}
+
+let dmTileMemo: {
+  pings: Pings
+  reads: RChatState['reads']
+  prefs: NotifyPrefs
+  rooms: P2pConversations['rooms']
+  contacts: P2pConversations['contacts']
+  tile: DmTileCounts
+} | null = null
+
+// The DM tile's badge and dot, computed again only when what they count changes.
+export const dmTile = (s: RChatState, p2p: P2pConversations): DmTileCounts => {
+  const pings = badgePings(s)
+  const m = dmTileMemo
+  if (
+    m?.pings === pings &&
+    m.reads === s.reads &&
+    m.prefs === s.notifyPrefs &&
+    m.rooms === p2p.rooms &&
+    m.contacts === p2p.contacts
+  )
+    return m.tile
+  const listed = listedPeers(p2p.contacts)
+  const tile = {
+    pings: dmPingCount(s) + p2pBadgePings(p2p.rooms, s.notifyPrefs, listed),
+    unread: dmsUnread(s) || p2pDmUnread(p2p.rooms, s.notifyPrefs, listed),
+  }
+  dmTileMemo = {
+    pings,
+    reads: s.reads,
+    prefs: s.notifyPrefs,
+    rooms: p2p.rooms,
+    contacts: p2p.contacts,
+    tile,
+  }
+  return tile
 }
 
 export const allPings = (s: RChatState) => totalPings(badgePings(s))

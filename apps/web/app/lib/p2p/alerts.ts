@@ -9,7 +9,7 @@ import {
   type Resolved,
 } from '../notify'
 import type { UserRef } from '../types'
-import { visibleContacts, type Contact } from './contacts'
+import { requests, visibleContacts, type Contact } from './contacts'
 import type { PingKind } from './dag'
 import type { Arrival } from './dm'
 import type { MsgContent } from './content'
@@ -191,3 +191,16 @@ export const p2pUnread = (
     },
   }
 }
+
+// The P2P tile's count: what waits for an answer (message requests, server invites, co-owner and
+// transfer asks). Conversation pings count on the DM tile.
+export const p2pTileCount = (st: {
+  contacts: Contact[]
+  serverInvites: readonly unknown[]
+  coOwnerAsks: readonly unknown[]
+  transferAsks: readonly unknown[]
+}) =>
+  requests(st.contacts).length +
+  st.serverInvites.length +
+  st.coOwnerAsks.length +
+  st.transferAsks.length
