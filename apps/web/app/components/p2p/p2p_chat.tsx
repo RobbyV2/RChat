@@ -341,7 +341,7 @@ export const P2pRow = memo(function P2pRow({
         data-mentioned={mentioned ? '' : undefined}
         className={`group relative px-4 ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
       >
-        {m.reply_to && <ReplyPreview quote={m.reply_to} avatar={36} onJump={onJump} />}
+        {m.reply_to && <ReplyPreview quote={m.reply_to} avatar={36} local onJump={onJump} />}
         {first ? (
           <div className="flex gap-3">
             <div className="shrink-0 pt-0.5">

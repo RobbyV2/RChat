@@ -9,6 +9,7 @@ import { plainStamps } from '../lib/timestamps'
 import type { ReplyRef } from '../lib/types'
 import { UserAvatar } from './user_avatar'
 import { NameWithUsername } from './display_name'
+import { KeyAvatar } from './p2p/p2p_badge'
 import { Masked, useOwn } from './ui'
 import { WebhookBadge } from './webhooks'
 import { isWebhookAuthor } from '../lib/webhooks'
@@ -81,20 +82,24 @@ export function SpoilerLine({ parts, own = false }: { parts: SnippetPart[]; own?
   )
 }
 
-// The quoted message above a reply. Click it to go to the original.
+// The quoted message above a reply. Click it to go to the original. `local`: a P2P quote, whose
+// author carries a P2P key where an account carries its username; it shows the P2P name alone.
 export function ReplyPreview({
   quote,
   avatar,
   color,
+  local = false,
   onJump,
 }: {
   quote: ReplyRef
   avatar: number
   color?: string
+  local?: boolean
   onJump: (id: number) => void
 }) {
   const blocked = useStore(s => (quote.author ? s.blocked[quote.author.username] === true : false))
   const own = useOwn(quote.author?.username)
+  const streamer = useStore(s => s.streamer)
   const connector = (
     <span
       aria-hidden
@@ -154,16 +159,31 @@ export function ReplyPreview({
         }}
         className="flex min-w-0 items-center gap-1.5 rounded-sm text-left text-on-surface-variant outline-offset-2 hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary"
       >
-        <UserAvatar
-          username={author.username}
-          avatarKind={author.avatar_kind}
-          avatarColor={author.avatar_color}
-          size={16}
-        />
-        <span style={{ color }} className="streamer shrink-0 font-medium text-on-surface">
-          {quote.mention ? '@' : ''}
-          <NameWithUsername user={author} own={own} />
-        </span>
+        {local ? (
+          <KeyAvatar ik={author.username} size={16} />
+        ) : (
+          <UserAvatar
+            username={author.username}
+            avatarKind={author.avatar_kind}
+            avatarColor={author.avatar_color}
+            size={16}
+          />
+        )}
+        {local ? (
+          <span
+            title={streamer ? undefined : author.username}
+            style={{ color }}
+            className="streamer min-w-0 truncate font-medium text-on-surface"
+          >
+            {quote.mention ? '@' : ''}
+            <Masked text={author.display_name} own={own} />
+          </span>
+        ) : (
+          <span style={{ color }} className="streamer shrink-0 font-medium text-on-surface">
+            {quote.mention ? '@' : ''}
+            <NameWithUsername user={author} own={own} />
+          </span>
+        )}
         {isWebhookAuthor(author.username) && <WebhookBadge />}
         {quote.forwarded && <ForwardedTag />}
         <Snippet quote={quote} own={own && !quote.forwarded} />

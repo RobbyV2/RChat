@@ -16,6 +16,9 @@ import { VoterRow } from '../../components/poll_card'
 import TimeoutDialogHost from '../../components/timeout_dialog'
 import { DockPlace, Tile } from '../../components/voice_grid'
 import { CreatorNote } from '../../components/webhooks_dialog'
+import { ReplyPreview } from '../../components/replies'
+import { asMessage, P2pRow } from '../../components/p2p/p2p_chat'
+import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
 import { paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { actionById, runAction } from '../actions/registry'
@@ -34,6 +37,9 @@ import { setMasking, resetMasking } from '../profanity'
 import { resetSessionCaches, useStore } from '../store'
 import { ApiError } from '../api'
 import { typerNames } from '../typing'
+import { p2pUser } from '../p2p/app'
+import type { P2pMessage } from '../p2p/dm'
+import type { ReplyRef, UserRef } from '../types'
 import { drain, me, member, msg, user } from './fixtures'
 
 const realSet = api.setDisplayName
@@ -369,4 +375,121 @@ test('a P2P voice tile shows the P2P name and keeps the key out of its labels', 
     `<span class="streamer truncate">${USERNAME_AFTER('Ally', 'alice')}</span>`
   )
   expect(account).toContain('aria-label="Focus Ally (alice)"')
+})
+
+const quoteOf = (author: UserRef, over: Partial<ReplyRef> = {}): ReplyRef => ({
+  id: 7,
+  author,
+  content: 'see you there',
+  has_media: false,
+  deleted: false,
+  mention: false,
+  ...over,
+})
+
+const P2P_NAME = (title: string | null, text: string) =>
+  `<span${title === null ? '' : ` title="${title}"`} class="streamer min-w-0 truncate font-medium text-on-surface">${text}</span>`
+
+test('a P2P reply quote shows the P2P name, with the key only in its title', () => {
+  const alice = user(KEY, { display_name: 'Alice' })
+  const quote = (q: ReplyRef) =>
+    render(<ReplyPreview quote={q} avatar={36} local onJump={() => {}} />)
+  const html = quote(quoteOf(alice))
+  expect(html).toContain(P2P_NAME(KEY, 'Alice'))
+  expect(html.replace(`title="${KEY}"`, '').includes(KEY)).toBe(false)
+  expect(quote(quoteOf(alice, { mention: true }))).toContain(P2P_NAME(KEY, '@Alice'))
+  Object.assign(initial, { streamer: true })
+  const streamer = quote(quoteOf(alice))
+  expect(streamer).toContain(P2P_NAME(null, 'Alice'))
+  expect(streamer.includes(KEY)).toBe(false)
+  Object.assign(initial, { streamer: false })
+  const account = render(<ReplyPreview quote={quoteOf(impostor)} avatar={36} onJump={() => {}} />)
+  expect(account).toContain(USERNAME_AFTER('alice', 'bob'))
+})
+
+test('a P2P reply quote masks the P2P name of others only', async () => {
+  const named = user(KEY, { display_name: 'shit head' })
+  Object.assign(initial, { profanityOn: true, profanityReady: true, me: me('carol') })
+  await setMasking(true, () => Promise.resolve(t => t.replace(/shit/g, '****')))
+  try {
+    const quote = (self: string) =>
+      render(
+        <ChatSourceProvider value={{ ...source, self }}>
+          <ReplyPreview quote={quoteOf(named)} avatar={36} local onJump={() => {}} />
+        </ChatSourceProvider>
+      )
+    const theirs = quote('someone else')
+    expect(theirs).toContain('data-masked-word')
+    expect(theirs.includes('shit')).toBe(false)
+    expect(quote(KEY)).toContain(P2P_NAME(KEY, 'shit head'))
+  } finally {
+    resetMasking()
+  }
+})
+
+const BOB_KEY = 'Bx7pW2'.padEnd(43, 'b')
+
+const p2pMessage = (over: Partial<P2pMessage> = {}): P2pMessage => ({
+  id: 'e2',
+  sender: BOB_KEY,
+  ts: 1_700_000_000_000,
+  sentTs: 1_700_000_000_000,
+  sortKey: 'b',
+  seq: 2,
+  body: 'sounds good',
+  reply: { id: 'e1', sender: KEY, body: 'see you there' },
+  mentions: [],
+  fwd: null,
+  att: [],
+  edited: null,
+  reactions: [],
+  pinned: null,
+  late: false,
+  pending: false,
+  failed: false,
+  call: null,
+  ...over,
+})
+
+const source: ChatSource = {
+  toggleReaction: () => {},
+  loadReactors: () => Promise.resolve([]),
+  openReactPicker: () => {},
+  known: () => '',
+  user: username => user(username),
+  mine: () => false,
+  self: BOB_KEY,
+  people: () => [],
+}
+
+test('a P2P message quotes the sender it answers by P2P name', () => {
+  const names: Record<string, string> = { [KEY]: 'Alice', [BOB_KEY]: 'Bob' }
+  const p = p2pMessage()
+  const m = asMessage(p, 2, 1, ik => p2pUser(ik, names[ik]), BOB_KEY)
+  const html = render(
+    <ChatSourceProvider value={source}>
+      <P2pRow
+        p={p}
+        m={m}
+        mine
+        pendingTip=""
+        mentioned={false}
+        divider={false}
+        flash={false}
+        first
+        last
+        canAct
+        canDelete
+        editing={null}
+        draftKey="dm"
+        threads={false}
+        onMenu={() => {}}
+        onCopy={() => {}}
+        onJump={() => {}}
+      />
+    </ChatSourceProvider>
+  )
+  const quote = html.slice(html.indexOf('data-reply-to'), html.indexOf('sounds good'))
+  expect(quote).toContain(P2P_NAME(KEY, 'Alice'))
+  expect(quote.replace(`title="${KEY}"`, '').includes(KEY)).toBe(false)
 })
