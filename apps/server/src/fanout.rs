@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use axum::extract::ws::Utf8Bytes;
 use tokio::sync::{OnceCell, mpsc};
 
+use crate::api::access::ChannelPolicy;
 use crate::ws::WsEvent;
 
 const INBOX: usize = 512;
@@ -776,7 +777,7 @@ impl Router {
     }
 }
 
-type ChannelSlot = Arc<OnceCell<Option<(String, bool)>>>;
+type ChannelSlot = Arc<OnceCell<Option<ChannelPolicy>>>;
 
 #[derive(Default)]
 pub struct Channels {
@@ -797,7 +798,7 @@ impl Channels {
             .lock()
             .unwrap()
             .retain(|_, slot| match slot.get() {
-                Some(Some((owner, _))) => owner != name,
+                Some(Some(policy)) => policy.server != name,
                 Some(None) => true,
                 None => false,
             });
@@ -1056,7 +1057,12 @@ mod tests {
         let channels = Channels::default();
         let fill = |cid: i64, owner: &str, open: bool| {
             let slot = channels.slot(cid);
-            slot.set(Some((s(owner), open))).unwrap();
+            slot.set(Some(ChannelPolicy {
+                server: s(owner),
+                public_view: open,
+                limits_history: false,
+            }))
+            .unwrap();
         };
         fill(1, "a", true);
         fill(2, "a", true);
@@ -1068,7 +1074,14 @@ mod tests {
         assert!(channels.slot(1).get().is_none());
         channels.observe(&WsEvent::ServerDeleted { name: s("a") });
         assert!(channels.slot(2).get().is_none());
-        assert_eq!(channels.slot(3).get(), Some(&Some((s("b"), false))));
+        assert_eq!(
+            channels.slot(3).get(),
+            Some(&Some(ChannelPolicy {
+                server: s("b"),
+                public_view: false,
+                limits_history: false,
+            }))
+        );
         channels.clear();
         assert!(channels.slot(3).get().is_none());
     }

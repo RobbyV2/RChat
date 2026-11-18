@@ -1844,6 +1844,43 @@ pub(crate) async fn ws_read_floor(
     }
 }
 
+/// Live thread events: when the thread of a channel message started. With `root`, `id` is the
+/// thread root: `Some(Some(created_at))`. Otherwise `id` is any message: `Some(None)` outside any
+/// thread, `Some(Some(created_at of its root))` for a reply. `None` once the message or its root
+/// is gone. Never answers a client with target data.
+pub(crate) async fn ws_thread_start(
+    db: &Db,
+    id: i64,
+    root: bool,
+) -> sqlx::Result<Option<Option<i64>>> {
+    if root {
+        return Ok(sqlx::query("SELECT created_at FROM messages WHERE id = $1")
+            .bind(id)
+            .fetch_optional(db)
+            .await?
+            .map(|r| r.try_get::<i64, _>(0))
+            .transpose()?
+            .map(Some));
+    }
+    let row = sqlx::query("SELECT m.thread_root_id, rt.created_at FROM messages m LEFT JOIN messages rt ON rt.id = m.thread_root_id WHERE m.id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await?;
+    let Some(r) = row else {
+        return Ok(None);
+    };
+    Ok(
+        match (
+            r.try_get::<Option<i64>, _>(0)?,
+            r.try_get::<Option<i64>, _>(1)?,
+        ) {
+            (None, _) => Some(None),
+            (Some(_), Some(at)) => Some(Some(at)),
+            (Some(_), None) => None,
+        },
+    )
+}
+
 /// Same as `ws_channel_view`, with any error meaning "not viewable".
 #[cfg(test)]
 pub(crate) async fn ws_channel_viewable(
@@ -2299,18 +2336,26 @@ pub(crate) async fn ws_channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(Str
     }
 }
 
-/// Realtime channel gate: the server of channel `cid`, and whether everyone who can open that
-/// server sees it (no view restriction, no rule hiding it). Never answers a client.
-pub(crate) async fn ws_channel_public(db: &Db, cid: i64) -> sqlx::Result<Option<(String, bool)>> {
-    let Some((owner, _)) = ws_channel_now(db, cid).await? else {
-        return Ok(None);
-    };
-    let restricted = sqlx::query("SELECT 1 FROM channels c WHERE c.id = $1 AND (c.restrict_view <> 0 OR EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_view = 0))")
-        .bind(cid)
-        .fetch_optional(db)
-        .await?
-        .is_some();
-    Ok(Some((owner, !restricted)))
+#[derive(Debug, PartialEq, Eq)]
+pub struct ChannelPolicy {
+    pub server: String,
+    pub public_view: bool,
+    pub limits_history: bool,
+}
+
+/// Channel rules shared by every connection: whether everyone in the server may view it,
+/// and whether a rule can grant view without read history.
+pub(crate) async fn ws_channel_policy(db: &Db, cid: i64) -> sqlx::Result<Option<ChannelPolicy>> {
+    sqlx::query("SELECT c.server,
+        CASE WHEN c.restrict_view = 0 AND NOT EXISTS (SELECT 1 FROM channel_perms p WHERE p.channel_id = c.id AND p.can_view = 0) THEN 1 ELSE 0 END,
+        CASE WHEN EXISTS (SELECT 1 FROM channel_perms p WHERE p.channel_id = c.id AND p.can_view <> 0 AND p.can_read_history = 0) THEN 1 ELSE 0 END
+        FROM channels c WHERE c.id = $1")
+        .bind(cid).fetch_optional(db).await?
+        .map(|r| Ok(ChannelPolicy {
+            server: r.try_get(0)?,
+            public_view: r.try_get::<i64, _>(1)? != 0,
+            limits_history: r.try_get::<i64, _>(2)? != 0,
+        })).transpose()
 }
 
 /// Realtime subscription checks: `None` when `server` doesn't exist, otherwise its password

@@ -2,11 +2,11 @@ use std::collections::HashSet;
 
 use tokio::time::Instant;
 
-use super::access::{Access, channel_gate, deleted_gate};
+use super::access::{Access, InThread, Rooted, channel_gate, deleted_gate};
 use super::conn::{forget_server, join, leave};
-use super::event::WsEvent;
+use super::event::{EditStub, Updated, WsEvent};
 
-use crate::api::access::{is_member, ws_sees_reports, ws_sees_timeouts};
+use crate::api::access::{is_member, typing_scope, ws_sees_reports, ws_sees_timeouts};
 use crate::db::{MediaKind, now};
 use crate::state::AppState;
 
@@ -149,6 +149,26 @@ pub(super) async fn on_event(
             .floor(state, server, *cid)
             .await
             .is_some_and(|floor| floor.is_none_or(|floor| message.created_at >= floor));
+    }
+    // Someone without read history of a channel reads a thread only when its root is from
+    // their join on, as through the access gate.
+    if deliver
+        && let Some((server, cid)) = event_channel(ev)
+        && let Some(thread) = event_thread(ev)
+    {
+        deliver = match access.floor(state, server, cid).await {
+            Some(Some(floor)) => {
+                let started = Instant::now();
+                match access.rooted(&state.read(), thread).await {
+                    Ok(Rooted::Top) => true,
+                    Ok(Rooted::At(at)) => at >= floor,
+                    Ok(Rooted::Gone) => false,
+                    Err(e) => return access.hold(e, started).then_some(false),
+                }
+            }
+            Some(None) => true,
+            None => false,
+        };
     }
     if deliver
         && let WsEvent::MessagesDeleted {
@@ -332,6 +352,123 @@ pub(super) fn track(ev: &WsEvent, access: &mut Access) {
         _ => {}
     }
     access.tidy_peek();
+}
+
+/// The thread a channel event is about, for the read-history rule: the root it names (a reply,
+/// its edit, reactions, deletion, poll or typing), or the message whose thread is looked up
+/// (embeds and media). `None` for events outside any thread.
+pub(super) fn event_thread(ev: &WsEvent) -> Option<InThread> {
+    match ev {
+        WsEvent::Message {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            message,
+        } => message.thread_root_id.map(InThread::Root),
+        WsEvent::MessageUpdated {
+            server: _,
+            channel_id: _,
+            update,
+            dm_users: _,
+        } => match update {
+            Updated::Stub(EditStub {
+                id: _,
+                thread_root_id,
+                edited_at: _,
+                stub: _,
+            }) => thread_root_id.map(InThread::Root),
+            Updated::Full { message } => message.thread_root_id.map(InThread::Root),
+        },
+        WsEvent::MessageDeleted {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            id: _,
+            thread_root_id,
+        }
+        | WsEvent::MessagesDeleted {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            thread_root_id,
+            ids: _,
+            created: _,
+        }
+        | WsEvent::ReactionAdded {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            message_id: _,
+            thread_root_id,
+            emoji: _,
+            username: _,
+            count: _,
+        }
+        | WsEvent::ReactionRemoved {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            message_id: _,
+            thread_root_id,
+            emoji: _,
+            username: _,
+            count: _,
+        }
+        | WsEvent::PollUpdated {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            message_id: _,
+            thread_root_id,
+            created_at: _,
+            poll: _,
+        } => thread_root_id.map(InThread::Root),
+        WsEvent::MediaRemoved {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            message_id,
+            removed_by_author: _,
+        }
+        | WsEvent::EmbedsResolved {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            message_id,
+            embeds: _,
+        }
+        | WsEvent::EmbedsRemoved {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            message_id,
+            ord: _,
+            banner: _,
+        } => Some(InThread::Of(*message_id)),
+        WsEvent::Typing {
+            server: _,
+            channel_id: _,
+            dm_id: _,
+            dm_users: _,
+            scope,
+            username: _,
+            display_name: _,
+            until: _,
+        } => match typing_scope(scope) {
+            Some(("t", root)) => Some(InThread::Root(root)),
+            Some(_) | None => None,
+        },
+        _ => None,
+    }
 }
 
 pub(super) fn event_channel(ev: &WsEvent) -> Option<(&str, i64)> {

@@ -17,9 +17,9 @@ use super::{
 };
 
 use crate::api::access::{
-    ViewRules, is_member, is_membership_notice, presence_mode, ws_channel_now, ws_channel_public,
+    ViewRules, is_member, is_membership_notice, presence_mode, ws_channel_now, ws_channel_policy,
     ws_channel_view, ws_closed_servers, ws_grant_deadline, ws_member_servers,
-    ws_server_password_hash, ws_view_under,
+    ws_server_password_hash, ws_thread_start, ws_view_under,
 };
 use crate::api::policy::ServerJoining;
 use crate::api::{Settings, token_row};
@@ -126,6 +126,23 @@ pub(super) static AUTH_FAILED: LogGate = LogGate::new(LOG_EVERY, |n| {
 });
 
 const FLOOR_TTL: Duration = Duration::from_secs(30);
+
+/// The thread an event about a channel message belongs to: the root it names, or a message
+/// whose thread is looked up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum InThread {
+    Root(i64),
+    Of(i64),
+}
+
+/// When the thread of an `InThread` started: `Top` for a message outside any thread, `At` the
+/// root's `created_at`, `Gone` when the message or its root no longer exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Rooted {
+    Top,
+    At(i64),
+    Gone,
+}
 
 type Viewable = HashMap<i64, (String, bool)>;
 
@@ -341,6 +358,7 @@ pub(super) struct Access {
     pub(super) sub: SubPace,
     pub(super) viewable: Viewable,
     pub(super) floors: HashMap<i64, (Instant, Option<Option<i64>>)>,
+    threads: HashMap<InThread, Rooted>,
     pub(super) retry: Retry,
     pub(super) topics_dirty: bool,
     /// How the instance opens servers to people who aren't members (its joining rule and
@@ -385,6 +403,7 @@ impl Access {
             sub,
             viewable: HashMap::new(),
             floors: HashMap::new(),
+            threads: HashMap::new(),
             retry: Retry::new(),
             topics_dirty: false,
             reading: None,
@@ -577,27 +596,63 @@ impl Access {
         }
     }
 
-    /// The read-history floor of channel `cid` for this connection (see `ws_read_floor`),
-    /// remembered for 30 seconds.
+    /// The read-history floor after the channel view gate. Only channels with a limiting
+    /// rule need a per-connection lookup, remembered for 30 seconds.
     pub(super) async fn floor(
         &mut self,
         state: &AppState,
         server: &str,
         cid: i64,
     ) -> Option<Option<i64>> {
+        let slot = state.hub.channels().slot(cid);
+        let db = state.read();
+        let policy = slot
+            .get_or_try_init(|| ws_channel_policy(&db, cid))
+            .await
+            .ok()?
+            .as_ref()?;
+        if policy.server != server {
+            return None;
+        }
+        if !policy.limits_history {
+            return Some(None);
+        }
         if let Some((at, floor)) = self.floors.get(&cid)
             && at.elapsed() < FLOOR_TTL
         {
             return *floor;
         }
-        let floor =
-            crate::api::access::ws_read_floor(&state.read(), server, cid, self.user.as_deref())
-                .await;
+        let floor = crate::api::access::ws_read_floor(&db, server, cid, self.user.as_deref()).await;
         if self.floors.len() > 1000 {
             self.floors.clear();
         }
         self.floors.insert(cid, (Instant::now(), floor));
         floor
+    }
+
+    /// When `thread` started, remembered once known: a root's time and a reply's root never
+    /// change. `Gone` is asked again next time, so a message a lagging read pool doesn't show yet
+    /// is found later.
+    pub(super) async fn rooted(&mut self, db: &Db, thread: InThread) -> sqlx::Result<Rooted> {
+        if let Some(rooted) = self.threads.get(&thread) {
+            return Ok(*rooted);
+        }
+        let (id, root) = match thread {
+            InThread::Root(id) => (id, true),
+            InThread::Of(id) => (id, false),
+        };
+        let rooted = match ws_thread_start(db, id, root).await? {
+            Some(None) => Rooted::Top,
+            Some(Some(at)) => Rooted::At(at),
+            None => Rooted::Gone,
+        };
+        if rooted != Rooted::Gone {
+            if self.threads.len() > 1000 {
+                self.threads.clear();
+            }
+            self.threads.insert(thread, rooted);
+        }
+        Ok(rooted)
     }
 
     pub(super) fn held(&self, name: &str) -> bool {
@@ -953,13 +1008,10 @@ pub(super) async fn channel_gate(
     let started = Instant::now();
     let slot = state.hub.channels().slot(cid);
     let read = state.read();
-    let shared = slot
-        .get_or_try_init(|| ws_channel_public(&read, cid))
-        .await
-        .cloned();
+    let shared = slot.get_or_try_init(|| ws_channel_policy(&read, cid)).await;
     let looked = match shared {
-        Ok(Some((owner, true))) => Ok(Some((owner, true))),
-        Ok(Some((_, false))) => channel_view(&state.read(), access.user.as_deref(), cid).await,
+        Ok(Some(policy)) if policy.public_view => Ok(Some((policy.server.clone(), true))),
+        Ok(Some(_)) => channel_view(&read, access.user.as_deref(), cid).await,
         Ok(None) => Ok(None),
         Err(e) => Err(e),
     };

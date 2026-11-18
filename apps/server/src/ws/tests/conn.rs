@@ -652,3 +652,177 @@ async fn subscribe_checks_only_servers_not_held() {
     assert!(user.subs.is_empty());
     crate::api::test_util::done(state, path).await;
 }
+
+/// The text frames `ws` gets until one that `last` accepts, that one included.
+async fn frames_until(
+    ws: &mut Client,
+    last: impl Fn(&serde_json::Value) -> bool,
+) -> Vec<serde_json::Value> {
+    use tokio_tungstenite::tungstenite::Message as T;
+    let until = Instant::now() + Duration::from_secs(30);
+    let mut frames = Vec::new();
+    loop {
+        match tokio::time::timeout_at(until, ws.next()).await {
+            Ok(Some(Ok(T::Text(text)))) => {
+                let v: serde_json::Value = serde_json::from_str(&text).expect("json");
+                let done = last(&v);
+                frames.push(v);
+                if done {
+                    return frames;
+                }
+            }
+            Ok(Some(Ok(_))) => {}
+            Err(_) => panic!("no such frame within the wait: {frames:?}"),
+            Ok(other) => panic!("the socket ended ({:?}): {frames:?}", other.is_some()),
+        }
+    }
+}
+
+#[tokio::test]
+async fn live_replies_reach_only_members_who_may_read_their_root() {
+    use crate::api::Authed;
+    use crate::api::messages::{
+        delete_message, edit_message, send_channel_message, send_thread_message,
+    };
+    use crate::api::reactions::add_reaction;
+    use axum::Json;
+    use axum::extract::{Path, State};
+    let (state, path, addr) = live("ws_thread_history").await;
+    let db = &state.db;
+    for (name, joined) in [("alice", 0), ("carol", 1000), ("dave", 1000)] {
+        add_user_row(db, name).await;
+        crate::api::test_util::add_member(db, "rchat", name, 0, 0, joined).await;
+        sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, 0)")
+            .bind(crate::db::secret_key(&format!("{name}-token")))
+            .bind(name)
+            .execute(db)
+            .await
+            .expect("token");
+    }
+    let cid = general(db).await;
+    sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:carol', 1, 1, 0)")
+        .bind(cid)
+        .execute(db)
+        .await
+        .expect("no history for carol");
+    let root = |at: i64| async move {
+        sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', 'root', $2) RETURNING id")
+            .bind(cid)
+            .bind(at)
+            .fetch_one(db)
+            .await
+            .expect("root")
+            .try_get::<i64, _>(0)
+            .expect("id")
+    };
+    let (old_root, new_root) = (root(500).await, root(crate::db::now()).await);
+    let mut sockets = Vec::new();
+    for name in ["carol", "dave", "alice"] {
+        let mut ws = dial(addr, "203.0.113.20").await.expect("socket");
+        send_auth(&mut ws, Some(&format!("{name}-token"))).await;
+        let frame = serde_json::json!({ "type": "subscribe", "servers": ["rchat"] });
+        ws.send(tokio_tungstenite::tungstenite::Message::text(
+            frame.to_string(),
+        ))
+        .await
+        .expect("subscribe");
+        sockets.push(ws);
+    }
+    let alice = || Authed(crate::api::test_util::mem_user("alice", false));
+    let send =
+        |text: &str| serde_json::from_value(serde_json::json!({ "content": text })).expect("body");
+    let mut ready = false;
+    for _ in 0..20 {
+        let Json(ping) =
+            send_channel_message(State(state.clone()), Path(cid), alice(), Json(send("ping")))
+                .await
+                .expect("ping");
+        let mut seen = 0;
+        for ws in sockets.iter_mut().take(2) {
+            if next_of_type(ws, "message", Duration::from_secs(1))
+                .await
+                .is_some_and(|v| v["message"]["id"] == ping.id)
+            {
+                seen += 1;
+            }
+        }
+        if seen == 2 {
+            ready = true;
+            break;
+        }
+    }
+    assert!(ready, "the sockets never got their first event");
+    let Json(reply) = send_thread_message(
+        State(state.clone()),
+        Path(old_root),
+        alice(),
+        Json(send("under the old root")),
+    )
+    .await
+    .expect("reply");
+    let _ = edit_message(
+        State(state.clone()),
+        Path(reply.id),
+        alice(),
+        Json(
+            serde_json::from_value(serde_json::json!({ "content": "edited under the old root" }))
+                .expect("body"),
+        ),
+    )
+    .await
+    .expect("edit");
+    let _ = add_reaction(
+        State(state.clone()),
+        Path((reply.id, "\u{1f44d}".to_string())),
+        alice(),
+    )
+    .await
+    .expect("react");
+    let typing = serde_json::json!({ "type": "typing", "scope": format!("t{old_root}") });
+    sockets[2]
+        .send(tokio_tungstenite::tungstenite::Message::text(
+            typing.to_string(),
+        ))
+        .await
+        .expect("typing");
+    let mut dave = frames_until(&mut sockets[1], |v| v["type"] == "typing").await;
+    let _ = delete_message(State(state.clone()), Path(reply.id), alice())
+        .await
+        .expect("delete");
+    let Json(later) = send_thread_message(
+        State(state.clone()),
+        Path(new_root),
+        alice(),
+        Json(send("under the new root")),
+    )
+    .await
+    .expect("later reply");
+    let about_reply = |v: &serde_json::Value| {
+        v["message"]["id"] == reply.id
+            || v["id"] == reply.id
+            || v["message_id"] == reply.id
+            || v["scope"] == format!("t{old_root}")
+    };
+    let is_later = |v: &serde_json::Value| v["type"] == "message" && v["message"]["id"] == later.id;
+    let carol = frames_until(&mut sockets[0], is_later).await;
+    let leaked: Vec<&serde_json::Value> = carol.iter().filter(|v| about_reply(v)).collect();
+    assert!(leaked.is_empty(), "carol got {leaked:?}");
+    dave.extend(frames_until(&mut sockets[1], is_later).await);
+    let kinds: Vec<&str> = dave
+        .iter()
+        .filter(|v| about_reply(v))
+        .filter_map(|v| v["type"].as_str())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "message",
+            "message_updated",
+            "reaction_added",
+            "typing",
+            "message_deleted"
+        ],
+        "dave reads the old root"
+    );
+    crate::api::test_util::done(state, path).await;
+}

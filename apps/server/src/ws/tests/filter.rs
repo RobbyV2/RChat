@@ -52,9 +52,13 @@ async fn poll_updates_respect_the_read_history_floor() {
         .execute(db)
         .await
         .unwrap();
+    let changed = WsEvent::ChannelPermsChanged {
+        server: s("rchat"),
+        channel_id: cid,
+    };
+    state.hub.broadcast(changed.clone());
     for access in [&mut bob, &mut erin, &mut guest] {
-        access.viewable.clear();
-        access.floors.clear();
+        track(&changed, access);
     }
     assert_eq!(on_event(&state, conn, &mut bob, &ev(100)).await, Some(true));
     assert_eq!(
@@ -1332,5 +1336,284 @@ async fn edits_reach_only_those_who_can_see_the_channel() {
             dm_users
         } if dm_users.len() == 2
     ));
+    crate::api::test_util::done(state, path).await;
+}
+
+/// Every event about the thread reply `reply` under `root` in `rchat`'s channel `cid`.
+fn reply_events(cid: i64, root: i64, reply: i64) -> Vec<WsEvent> {
+    let at = now();
+    let place = || (Some(s("rchat")), Some(cid));
+    let (server, channel_id) = place();
+    let reaction = |added: bool| {
+        let (server, channel_id) = place();
+        let (message_id, thread_root_id, emoji, username, count) =
+            (reply, Some(root), s("x"), s("alice"), 1);
+        match added {
+            true => WsEvent::ReactionAdded {
+                server,
+                channel_id,
+                dm_id: None,
+                dm_users: None,
+                message_id,
+                thread_root_id,
+                emoji,
+                username,
+                count,
+            },
+            false => WsEvent::ReactionRemoved {
+                server,
+                channel_id,
+                dm_id: None,
+                dm_users: None,
+                message_id,
+                thread_root_id,
+                emoji,
+                username,
+                count,
+            },
+        }
+    };
+    vec![
+        WsEvent::Message {
+            server: server.clone(),
+            channel_id,
+            dm_id: None,
+            dm_users: None,
+            message: Box::new(Message {
+                id: reply,
+                channel_id,
+                dm_id: None,
+                thread_root_id: Some(root),
+                created_at: at,
+                content: s("the reply"),
+                ..message()
+            }),
+        },
+        WsEvent::MessageUpdated {
+            server: server.clone(),
+            channel_id,
+            update: crate::ws::event::Updated::stub(reply, Some(root), Some(at)),
+            dm_users: Vec::new(),
+        },
+        WsEvent::MessageDeleted {
+            server: server.clone(),
+            channel_id,
+            dm_id: None,
+            dm_users: None,
+            id: reply,
+            thread_root_id: Some(root),
+        },
+        WsEvent::MessagesDeleted {
+            server: server.clone(),
+            channel_id,
+            dm_id: None,
+            dm_users: None,
+            thread_root_id: Some(root),
+            ids: vec![reply],
+            created: vec![at],
+        },
+        reaction(true),
+        reaction(false),
+        WsEvent::PollUpdated {
+            server: server.clone(),
+            channel_id,
+            dm_id: None,
+            dm_users: None,
+            message_id: reply,
+            thread_root_id: Some(root),
+            created_at: at,
+            poll: Box::new(crate::api::polls::sample_poll()),
+        },
+        WsEvent::MediaRemoved {
+            server: server.clone(),
+            channel_id,
+            dm_id: None,
+            dm_users: None,
+            message_id: reply,
+            removed_by_author: true,
+        },
+        WsEvent::EmbedsResolved {
+            server: server.clone(),
+            channel_id,
+            dm_id: None,
+            dm_users: None,
+            message_id: reply,
+            embeds: Vec::new(),
+        },
+        WsEvent::EmbedsRemoved {
+            server: server.clone(),
+            channel_id,
+            dm_id: None,
+            dm_users: None,
+            message_id: reply,
+            ord: 0,
+            banner: false,
+        },
+        WsEvent::Typing {
+            server,
+            channel_id,
+            dm_id: None,
+            dm_users: None,
+            scope: format!("t{root}"),
+            username: s("erin"),
+            display_name: s("erin"),
+            until: at + 5,
+        },
+    ]
+}
+
+#[tokio::test]
+async fn thread_events_in_a_channel_with_full_history_share_one_check() {
+    let (state, path) = crate::api::test_util::temp_state("ws_shared_history").await;
+    let db = &state.db;
+    for name in ["bob", "carol"] {
+        add_user(db, name).await;
+        crate::api::test_util::add_member(db, "rchat", name, 0, 0, 1000).await;
+    }
+    let cid = general(db).await;
+    let root = insert_id(db, "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'bob', 'root', 100 FROM channels WHERE server = 'rchat' RETURNING id").await;
+    sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:bob', 1, 0, 1)")
+        .bind(cid).execute(db).await.unwrap();
+    let conn = state.hub.next_conn();
+    let mut bob = Access::new(Some(s("bob")), false, set(&["rchat"]));
+    let mut carol = Access::new(Some(s("carol")), false, set(&["rchat"]));
+    let events = reply_events(cid, root, root + 1);
+    for ev in &events {
+        assert_eq!(on_event(&state, conn, &mut bob, ev).await, Some(true));
+    }
+    assert!(bob.floors.is_empty(), "no member floor is looked up");
+
+    let changed = WsEvent::ChannelPermsChanged {
+        server: s("rchat"),
+        channel_id: cid,
+    };
+    sqlx::query("UPDATE channel_perms SET can_read_history = 0 WHERE channel_id = $1")
+        .bind(cid)
+        .execute(db)
+        .await
+        .unwrap();
+    state.hub.broadcast(changed.clone());
+    track(&changed, &mut bob);
+    assert_eq!(
+        on_event(&state, conn, &mut bob, &events[0]).await,
+        Some(false)
+    );
+
+    sqlx::query("DELETE FROM channel_perms WHERE channel_id = $1")
+        .bind(cid)
+        .execute(db)
+        .await
+        .unwrap();
+    state.hub.broadcast(changed.clone());
+    track(&changed, &mut bob);
+    assert_eq!(
+        on_event(&state, conn, &mut bob, &events[0]).await,
+        Some(true)
+    );
+    state.read().close().await;
+    for ev in &events {
+        assert_eq!(
+            on_event(&state, conn, &mut carol, ev).await,
+            Some(true),
+            "another connection delivers the event without a database read"
+        );
+    }
+    crate::api::test_util::done(state, path).await;
+}
+
+#[tokio::test]
+async fn thread_events_follow_the_read_history_of_their_root() {
+    let (state, path) = crate::api::test_util::temp_state("ws_thread_floor").await;
+    let db = &state.db;
+    for name in ["alice", "carol", "dave"] {
+        add_user(db, name).await;
+    }
+    exec(db, "INSERT INTO members(server, username, joined_at) VALUES('rchat', 'alice', 1), ('rchat', 'carol', 1000), ('rchat', 'dave', 1000)").await;
+    let cid = general(db).await;
+    sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:carol', 1, 1, 0)")
+        .bind(cid)
+        .execute(db)
+        .await
+        .unwrap();
+    let insert = |root: Option<i64>, at: i64| async move {
+        sqlx::query("INSERT INTO messages(channel_id, thread_root_id, author, content, created_at) VALUES($1, $2, 'alice', 'm', $3) RETURNING id")
+            .bind(cid)
+            .bind(root)
+            .bind(at)
+            .fetch_one(db)
+            .await
+            .unwrap()
+            .try_get::<i64, _>(0)
+            .unwrap()
+    };
+    let old_root = insert(None, 500).await;
+    let new_root = insert(None, now()).await;
+    let old_reply = insert(Some(old_root), now()).await;
+    let new_reply = insert(Some(new_root), now()).await;
+    let old_top = insert(None, 600).await;
+    let conn = state.hub.next_conn();
+    let reader = |name: &str| Access::new(Some(s(name)), false, set(&["rchat"]));
+    let (mut carol, mut dave, mut alice) = (reader("carol"), reader("dave"), reader("alice"));
+    for ev in reply_events(cid, old_root, old_reply) {
+        let kind = serde_json::to_value(&ev).unwrap()["type"].clone();
+        assert_eq!(
+            on_event(&state, conn, &mut carol, &ev).await,
+            Some(false),
+            "{kind}: carol may not read the root, sent before she joined"
+        );
+        for reader in [&mut dave, &mut alice] {
+            assert_eq!(
+                on_event(&state, conn, reader, &ev).await,
+                Some(true),
+                "{kind}"
+            );
+        }
+    }
+    for ev in reply_events(cid, new_root, new_reply) {
+        let kind = serde_json::to_value(&ev).unwrap()["type"].clone();
+        assert_eq!(
+            on_event(&state, conn, &mut carol, &ev).await,
+            Some(true),
+            "{kind}"
+        );
+    }
+    for ev in reply_events(cid, old_top, old_top) {
+        if matches!(
+            ev,
+            WsEvent::MediaRemoved { .. }
+                | WsEvent::EmbedsResolved { .. }
+                | WsEvent::EmbedsRemoved { .. }
+        ) {
+            assert_eq!(
+                on_event(&state, conn, &mut carol, &ev).await,
+                Some(true),
+                "events about a message outside any thread keep their rules"
+            );
+        }
+    }
+    let gone = old_reply + 1000;
+    for ev in reply_events(cid, old_root, gone) {
+        if let WsEvent::EmbedsResolved { .. } = ev {
+            assert_eq!(on_event(&state, conn, &mut carol, &ev).await, Some(false));
+            assert_eq!(on_event(&state, conn, &mut dave, &ev).await, Some(true));
+        }
+    }
+    sqlx::query("INSERT INTO messages(id, channel_id, thread_root_id, author, content, created_at) VALUES($1, $2, $3, 'alice', 'm', $4)")
+        .bind(gone)
+        .bind(cid)
+        .bind(new_root)
+        .bind(now())
+        .execute(db)
+        .await
+        .unwrap();
+    for ev in reply_events(cid, new_root, gone) {
+        if let WsEvent::EmbedsResolved { .. } = ev {
+            assert_eq!(
+                on_event(&state, conn, &mut carol, &ev).await,
+                Some(true),
+                "a message missing at first is found once it is there"
+            );
+        }
+    }
     crate::api::test_util::done(state, path).await;
 }
