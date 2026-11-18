@@ -11,7 +11,7 @@ until docker exec rchat-load-pg pg_isready -U postgres -h 127.0.0.1; do sleep 1;
 docker exec rchat-load-pg psql -U postgres -c 'CREATE EXTENSION pg_stat_statements'
 cargo build --release --bin server
 DATABASE_URL=postgres://postgres:pw@127.0.0.1:55411/postgres SERVER_PORT=3411 PORT=3412 \
-  APP_MODE=api-only TRUST_PROXY=true RATE_LIMIT_PER_SECOND=100000 RATE_LIMIT_BURST=100000 \
+  APP_MODE=api-only TRUST_PROXY=true RATE_LIMIT_PER_SECOND=1000 RATE_LIMIT_BURST=100000 \
   MESSAGE_SEARCH_PER_MINUTE=1000 target/release/server &
 export SERVER_PID=$!
 ```

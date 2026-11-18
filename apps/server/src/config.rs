@@ -1326,6 +1326,41 @@ mod tests {
     }
 
     #[test]
+    fn the_load_harness_server_command_has_settings_in_range() {
+        let readme = include_str!("../../../scripts/load/README.md");
+        let start = readme.find("DATABASE_URL=").expect("the server command");
+        let end = start + readme[start..].find("target/").expect("its binary");
+        let pairs: Vec<(&str, &str)> = readme[start..end]
+            .split_whitespace()
+            .filter(|word| *word != "\\")
+            .map(|word| word.split_once('=').expect("NAME=value"))
+            .collect();
+        let example = include_str!("../../../.env.local.example");
+        for (name, _) in &pairs {
+            let set = format!("{name}=");
+            assert!(
+                example
+                    .lines()
+                    .any(|line| line.trim_start_matches("# ").starts_with(&set)),
+                "{name} is a setting"
+            );
+        }
+        let config = AppConfig::load_from(&cli(None, None), env(&pairs)).expect("in range");
+        let rows = config.limits.rows();
+        let limits: Vec<_> = pairs
+            .iter()
+            .filter_map(|(name, value)| {
+                let (_, read) = rows.iter().find(|(row, _)| row == name)?;
+                Some((*name, *read, value.parse().ok()))
+            })
+            .collect();
+        assert!(!limits.is_empty(), "the command sets limits");
+        for (name, read, given) in limits {
+            assert_eq!(read, given, "{name} is read as written");
+        }
+    }
+
+    #[test]
     fn bad_limit_values_name_the_variable() {
         let load = |pairs: &[(&str, &str)]| AppConfig::load_from(&cli(None, None), env(pairs));
         for (k, v, range) in [
