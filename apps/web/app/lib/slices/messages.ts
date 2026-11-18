@@ -69,12 +69,14 @@ import {
   searchTries,
   type SearchArgs,
 } from '../search'
+import { clockSample } from '../send_clock'
 import { type Sed, applySed, lastEditable } from '../sed'
 import { myPerms, scopeRule } from '../selectors'
 import { hashBlob } from '../sha256'
 import { slowExempt, slowWait } from '../slowmode'
 import type { Focus, Outgoing, OutgoingStatus, RChatState } from '../store_types'
 import { isSystem, systemText } from '../system_messages'
+import { offsetOf, pushOffset } from '../trust/token'
 import type {
   BlockedUser,
   DmSummary,
@@ -790,7 +792,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         thread_root_id: null,
         author: me,
         content,
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: serverSeconds(),
         reply_count: 0,
         media: null,
         embeds: [],
@@ -1171,6 +1173,11 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     return { opts: { media_id: uploaded.id, media_spoiler: spoiler }, p2pId: null }
   }
 
+  // Per session: how far the server's clock runs ahead of this device, from sends it answered
+  // quickly, so a send on its way shows the time the server will give it.
+  let clock: number[] = []
+  const serverSeconds = () => Math.floor((Date.now() + offsetOf(clock)) / 1000)
+
   const patchOutgoing = (key: string, tempId: number, status: OutgoingStatus) =>
     set(s => {
       const list = s.outbox[key]
@@ -1182,6 +1189,30 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         },
       }
     })
+
+  // The send `tempId` goes out now: it takes the time, and the sends queued behind it go out no
+  // earlier.
+  const stampOutgoing = (key: string, tempId: number) => {
+    const at = serverSeconds()
+    const timed = (o: Outgoing) => ({ ...o, msg: { ...o.msg, created_at: at } })
+    set(s => {
+      const list = s.outbox[key]
+      const head = list?.findIndex(o => o.tempId === tempId) ?? -1
+      if (!list || head < 0) return {}
+      return {
+        outbox: {
+          ...s.outbox,
+          [key]: list.map((o, i) =>
+            i === head
+              ? { ...timed(o), status: 'sending' as const }
+              : i > head && o.status === 'queued' && o.msg.created_at < at
+                ? timed(o)
+                : o
+          ),
+        },
+      }
+    })
+  }
 
   const dropOutgoing = (map: Record<string, Outgoing[]>, key: string, tempId: number) => {
     const next = (map[key] ?? []).filter(o => o.tempId !== tempId)
@@ -1199,13 +1230,16 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       for (;;) {
         const head = (get().outbox[key] ?? [])[0]
         if (!head || head.status === 'failed') break
-        patchOutgoing(key, head.tempId, 'sending')
+        stampOutgoing(key, head.tempId)
         let real: Message
+        let sentAt = 0
         try {
           const built = await buildSendOpts(head.pending, head.p2pExpiresIn)
           if (mine !== draining) return
+          if (head.pending) stampOutgoing(key, head.tempId)
           const { opts } = built
           let { p2pId } = built
+          sentAt = Date.now()
           try {
             try {
               real = await head.send(opts)
@@ -1241,6 +1275,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           break
         }
         if (mine !== draining) return
+        const sample = clockSample(sentAt, Date.now(), real.created_at)
+        if (sample !== null) clock = pushOffset(clock, sample)
         if (holding(key)) holdTail(key, real)
         const next = holding(key) ? {} : (appendLive(key, [real], true) ?? holdLive(key, [real]))
         set(s => ({ outbox: dropOutgoing(s.outbox, key, head.tempId), ...next }))
@@ -1297,6 +1333,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     for (const id of [...sentWaiters.keys()]) settleSent(id, null)
     quoteGen += 1
     draining = new Set()
+    clock = []
     reactionQueue = new Map()
     pendingEmbeds.clear()
     linkQueue.clear()
@@ -1566,7 +1603,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           thread_root_id: kind === 't' ? id : null,
           author: me,
           content: clip.snippet,
-          created_at: Math.floor(Date.now() / 1000),
+          created_at: serverSeconds(),
           reply_count: 0,
           media: null,
           embeds: [],
@@ -1871,7 +1908,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           thread_root_id: rootId,
           author: me,
           content,
-          created_at: Math.floor(Date.now() / 1000),
+          created_at: serverSeconds(),
           reply_count: 0,
           media: null,
           embeds: [],
