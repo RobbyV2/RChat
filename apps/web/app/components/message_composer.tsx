@@ -20,6 +20,9 @@ import {
 } from 'lucide-react'
 import { errorText, type UploadMode, useMask, useStore, viewKey } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
+import { guestPostingStatus, postGuest } from '../lib/guest_chat'
+import { api } from '../lib/instances'
+import { TextComposer } from './text_composer'
 import { accountPrompt } from '../lib/features'
 import { charCount, counterFrom, messageFilterOn } from '../lib/rules'
 import { dmPlaceholder } from '../lib/display_name'
@@ -300,6 +303,10 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const pickerOpen = pickerFor !== null && pickerFor === draftKey
   const focusSeen = useRef(focusAsk?.n ?? 0)
   const channelId = thread ? threadChannel : view?.kind === 'channel' ? view.channelId : null
+  const posting = useStore(s =>
+    guestPostingStatus(s, view?.kind === 'channel' ? view.server : null, channelId)
+  )
+  const quote = useStore(s => (draftKey ? s.replying[draftKey]?.message : undefined))
   const slowLeft = useSlowLeft(channelId)
   const timedOutEnds = useMyTimeoutEnds(view?.kind === 'channel' ? view.server : null)
 
@@ -375,16 +382,61 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   if (!guest && !member && view?.kind === 'channel') return <JoinBar server={view.server} />
 
   if (guest) {
+    if (posting === 'ready' && view?.kind === 'channel' && channelId !== null && draftKey) {
+      return (
+        <div
+          data-guest-editor
+          className="shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] keyboard:pb-3"
+        >
+          <TextComposer
+            key={draftKey}
+            inputRef={inputRef}
+            label={thread ? 'Reply in thread' : 'Message as a guest'}
+            reply={quote?.author.display_name}
+            cancelReply={() => cancelReply(draftKey)}
+            send={async content => {
+              const message = await postGuest(
+                api,
+                view.server,
+                `/channels/${channelId}/guest-messages`,
+                {
+                  content,
+                  reply_to: quote?.id,
+                  thread_root_id: thread && rootId !== null ? rootId : undefined,
+                }
+              )
+              useStore.getState().applyWsEvent({
+                type: 'message',
+                server: view.server,
+                channel_id: channelId,
+                dm_id: null,
+                dm_users: null,
+                message,
+              })
+              cancelReply(draftKey)
+            }}
+          />
+        </div>
+      )
+    }
     return (
       <div
         data-guest-notice
         className="mx-3 mt-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] shrink-0 rounded-2xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant keyboard:mb-3"
       >
-        Viewing as a guest.{' '}
+        {
+          {
+            off: 'Guest posting is off here.',
+            checking: 'Checking guest access…',
+            paused: 'Guest posting is paused by a moderator.',
+            unavailable: 'Guest posting is unavailable here.',
+            ready: '',
+          }[posting]
+        }{' '}
         <Link href="/login" onClick={() => logout()} className="text-primary underline">
           {ask}
         </Link>{' '}
-        to send messages.
+        to use account features.
       </div>
     )
   }

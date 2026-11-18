@@ -14,6 +14,7 @@ pub mod error;
 pub mod features;
 pub mod form_heads;
 pub mod friends;
+pub mod guest_chat;
 pub mod guest_voice;
 pub mod health;
 pub mod inbox;
@@ -142,6 +143,14 @@ impl UserRef {
 }
 
 pub fn missing_user(username: &str) -> UserRef {
+    if let Some(tag) = username.strip_prefix("@guest:").and_then(|s| s.get(..4)) {
+        return UserRef {
+            username: username.into(),
+            display_name: format!("Guest {tag}"),
+            avatar_kind: AvatarKind::Identicon,
+            avatar_color: None,
+        };
+    }
     UserRef {
         username: username.to_string(),
         display_name: username.to_string(),
@@ -239,7 +248,7 @@ pub(crate) fn split_list(raw: &str) -> Vec<String> {
 
 pub const NEXT_CURSOR: &str = "x-next-cursor";
 
-pub const CORS_REQUEST_HEADERS: [&str; 14] = [
+pub const CORS_REQUEST_HEADERS: [&str; 15] = [
     "content-type",
     "authorization",
     "accept",
@@ -249,6 +258,7 @@ pub const CORS_REQUEST_HEADERS: [&str; 14] = [
     "sec-websocket-version",
     "sec-websocket-protocol",
     "x-guest-grant",
+    "x-guest-session",
     "x-invite-password",
     "x-subject-binding",
     "x-trust-token",
@@ -367,8 +377,11 @@ pub struct ServerSummaryLite {
     pub public_read: Option<bool>,
     /// "Guests can use voice": `false` keeps people without an account out of the server's
     /// voice channels. Accounts are not affected.
-    #[serde(default = "yes")]
+    #[serde(default)]
     pub guest_voice: bool,
+    /// Server opt-in for guest text messages.
+    #[serde(default)]
+    pub guest_chat: bool,
     /// "Members can be seen by people outside this server": `true` (the default) lets people
     /// who can open the server without being a member see its member list and its members'
     /// profiles and find them by name through it; `false` shows them only to members (and the
@@ -578,9 +591,12 @@ pub struct ServerDetail {
     /// `public_reading` is off. Set with `PATCH /api/v1/servers/{name}`.
     pub public_read: Option<bool>,
     /// "Guests can use voice": `false` keeps people without an account out of the server's
-    /// voice channels; accounts are not affected. `true` for new servers. Set with
+    /// voice channels. New servers start with guest voice off. Set with
     /// `PATCH /api/v1/servers/{name}`.
     pub guest_voice: bool,
+    /// Server opt-in for guest text messages.
+    #[serde(default)]
+    pub guest_chat: bool,
     /// "Members can be seen by people outside this server" (see `ServerSummaryLite`). Set with
     /// `PATCH /api/v1/servers/{name}`.
     pub members_visible: bool,
@@ -1226,6 +1242,12 @@ pub struct Settings {
     /// Sending from widgets, and Quick join.
     #[serde(default = "yes")]
     pub widget_chat: bool,
+    /// Site permission for servers to opt in to guest chat.
+    #[serde(default)]
+    pub guest_chat_enabled: bool,
+    /// Site permission for servers to opt in to guest voice.
+    #[serde(default)]
+    pub guest_voice_enabled: bool,
     /// Read-only widget links.
     #[serde(default = "yes")]
     pub widget_read_links: bool,
@@ -1418,6 +1440,8 @@ impl Settings {
         instance_reports: false,
         widgets: false,
         widget_chat: false,
+        guest_chat_enabled: false,
+        guest_voice_enabled: false,
         widget_read_links: false,
         widget_bridge: false,
         e2ee: false,
@@ -1493,6 +1517,8 @@ impl Settings {
             instance_reports: feature(Feature::InstanceReports),
             widgets: feature(Feature::Widgets),
             widget_chat: feature(Feature::WidgetChat),
+            guest_chat_enabled: feature(Feature::GuestChat),
+            guest_voice_enabled: feature(Feature::GuestVoice),
             widget_read_links: feature(Feature::WidgetReadLinks),
             widget_bridge: feature(Feature::WidgetBridge),
             e2ee: feature(Feature::E2ee),
@@ -1570,6 +1596,8 @@ impl Settings {
             instance_reports,
             widgets,
             widget_chat,
+            guest_chat_enabled,
+            guest_voice_enabled,
             widget_read_links,
             widget_bridge,
             e2ee,
@@ -1601,6 +1629,8 @@ impl Settings {
             Feature::InstanceReports => instance_reports,
             Feature::Widgets => widgets,
             Feature::WidgetChat => widget_chat,
+            Feature::GuestChat => guest_chat_enabled,
+            Feature::GuestVoice => guest_voice_enabled,
             Feature::WidgetReadLinks => widget_read_links,
             Feature::WidgetBridge => widget_bridge,
             Feature::E2ee => e2ee,
@@ -1643,7 +1673,12 @@ impl Settings {
         let state = state.clone();
         tokio::spawn(async move {
             while changes.changed().await.is_ok() {
-                Settings::load(&state.db).await;
+                let settings = Settings::load(&state.db).await;
+                if !settings.guest_voice_enabled || !settings.guests_enabled {
+                    for server in state.hub.room_servers() {
+                        crate::ws::guests_out_of_voice(&state.hub, &server);
+                    }
+                }
                 policy::Policy::load(&state.db).await;
                 crate::ws::end_switched_off(&state).await;
                 crate::ws::evict_closed_voice(&state).await;
@@ -2150,6 +2185,11 @@ fn api_routes(
             "/channels/{id}/messages",
             get(messages::channel_messages).post(messages::send_channel_message),
         )
+        .route(
+            "/channels/{id}/guest-messages",
+            get(guest_chat::status).post(guest_chat::post),
+        )
+        .route("/messages/{id}/pause-guest", post(guest_chat::pause))
         .route("/channels/{id}/pins", get(pins::channel_pins))
         .route("/dms", get(dms::list_dms).post(dms::open_dm))
         .route(
@@ -2353,6 +2393,36 @@ pub(crate) mod test_util {
             .await
             .expect("instance");
         (AppState::new(db, Hub::new(), None, None, instance), path)
+    }
+
+    pub(crate) async fn site_sets(state: &AppState, body: serde_json::Value) {
+        let patch = serde_json::from_value(body).expect("patch");
+        let _ = super::admin::patch_settings(
+            axum::extract::State(state.clone()),
+            super::Authed(mem_user("root", true)),
+            axum::Json(patch),
+        )
+        .await
+        .expect("settings");
+    }
+
+    pub(crate) async fn set_guest_voice(
+        state: &AppState,
+        by: &str,
+        server: &str,
+        on: bool,
+    ) -> Result<bool, (u16, String)> {
+        let patch =
+            serde_json::from_value(serde_json::json!({ "guest_voice_opt_in": on })).expect("patch");
+        super::servers::update_server(
+            axum::extract::State(state.clone()),
+            super::Authed(mem_user(by, false)),
+            axum::extract::Path(server.to_owned()),
+            axum::Json(patch),
+        )
+        .await
+        .map(|axum::Json(updated)| updated.server.guest_voice)
+        .map_err(|crate::api::ApiError(code, msg, _)| (code.as_u16(), msg))
     }
 
     /// Turns the instance profanity filter on, as an operator would.

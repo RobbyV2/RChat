@@ -239,6 +239,8 @@ pub struct SettingsPatch {
     instance_reports: Option<bool>,
     widgets: Option<bool>,
     widget_chat: Option<bool>,
+    guest_chat_enabled: Option<bool>,
+    guest_voice_enabled: Option<bool>,
     widget_read_links: Option<bool>,
     widget_bridge: Option<bool>,
     e2ee: Option<bool>,
@@ -323,6 +325,8 @@ pub(crate) async fn patch_settings(
         instance_reports,
         widgets,
         widget_chat,
+        guest_chat_enabled,
+        guest_voice_enabled,
         widget_read_links,
         widget_bridge,
         e2ee,
@@ -400,6 +404,8 @@ pub(crate) async fn patch_settings(
         Feature::InstanceReports => instance_reports,
         Feature::Widgets => widgets,
         Feature::WidgetChat => widget_chat,
+        Feature::GuestChat => guest_chat_enabled,
+        Feature::GuestVoice => guest_voice_enabled,
         Feature::WidgetReadLinks => widget_read_links,
         Feature::WidgetBridge => widget_bridge,
         Feature::E2ee => e2ee,
@@ -887,7 +893,7 @@ pub(crate) async fn list_servers(
     let fuzzy = is_fuzzy(&q);
     let (rows, next) = name_page(
         &state.read(),
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice, members_visible FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging'",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging'",
         "name",
         &page,
     )
@@ -908,6 +914,7 @@ pub(crate) async fn list_servers(
             name_color: r.try_get(5)?,
             public_read: crate::api::access::public_read(r, 6)?,
             guest_voice: r.try_get::<i64, _>(7)? != 0,
+            guest_chat: r.try_get::<i64, _>(9)? != 0,
             members_visible: r.try_get::<i64, _>(8)? != 0,
         });
     }
@@ -1645,7 +1652,7 @@ pub(crate) async fn user_servers(
     require_site_admin(&user)?;
     let page = query.page()?;
     let rows = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice, members_visible FROM servers WHERE creator = $1 AND name > $2 AND COALESCE(password_hash, '') <> '!purging' ORDER BY name LIMIT $3 OFFSET $4",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in FROM servers WHERE creator = $1 AND name > $2 AND COALESCE(password_hash, '') <> '!purging' ORDER BY name LIMIT $3 OFFSET $4",
     )
     .bind(username.to_lowercase())
     .bind(page.after.clone().unwrap_or_default())
@@ -1668,6 +1675,7 @@ pub(crate) async fn user_servers(
             name_color: r.try_get(5)?,
             public_read: crate::api::access::public_read(r, 6)?,
             guest_voice: r.try_get::<i64, _>(7)? != 0,
+            guest_chat: r.try_get::<i64, _>(9)? != 0,
             members_visible: r.try_get::<i64, _>(8)? != 0,
         });
     }

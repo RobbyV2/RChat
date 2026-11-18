@@ -1520,8 +1520,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     startReply: (key, m) => {
       const username = get().me?.username
-      if (!username) return
-      const mention = parseReplyMention(readLocal(home.scoped(replyMentionKey(username))))
+      if (!username && !get().guest) return
+      const mention =
+        !!username && parseReplyMention(readLocal(home.scoped(replyMentionKey(username))))
       set(s => ({
         replying: { ...s.replying, [key]: { message: m, mention } },
         composerFocus: { key, n: (s.composerFocus?.n ?? 0) + 1 },

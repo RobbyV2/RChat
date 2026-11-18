@@ -23,6 +23,8 @@ const SETTINGS: Record<keyof SiteSettings, true> = {
   asset_uploads: true,
   p2p_attachments: true,
   guests_enabled: true,
+  guest_chat_enabled: true,
+  guest_voice_enabled: true,
   outgoing_webhooks: true,
   server_reports: true,
   instance_reports: true,

@@ -135,7 +135,8 @@ export const applyServerChange = (
       banner_color: server.banner_color ?? null,
       name_color: server.name_color ?? null,
       public_read: server.public_read ?? null,
-      guest_voice: server.guest_voice ?? true,
+      guest_voice: server.guest_voice === true,
+      guest_chat: server.guest_chat === true,
       members_visible: server.members_visible ?? detail.members_visible,
     }
   }

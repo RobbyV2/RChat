@@ -233,6 +233,7 @@ export interface RChatState {
   token: string | null
   me: Me | null
   guest: boolean
+  guestPosting: Record<number, 'ready' | 'paused' | 'unavailable'>
   guestServers: string[]
   guestGrants: Record<string, string>
   guestNames: Record<string, string>

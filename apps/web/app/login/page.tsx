@@ -403,7 +403,7 @@ export default function LoginPage() {
             onClick={() => void enterGuest()}
             className="flex flex-wrap items-center justify-center gap-x-1 rounded-full px-3 py-2 text-sm text-primary hover:bg-surface-container-high"
           >
-            Skip to RChat <ArrowRight size={16} /> (cannot send messages)
+            Continue as a guest <ArrowRight size={16} />
           </button>
         )}
         <div className="flex flex-col items-center gap-1">

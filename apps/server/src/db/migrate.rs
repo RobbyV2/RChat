@@ -118,6 +118,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "public_read {INT}"),
     ("privacy", "profile TEXT"),
     ("servers", "guest_voice {INT} NOT NULL DEFAULT 1"),
+    ("servers", "guest_voice_opt_in {INT} NOT NULL DEFAULT 0"),
+    ("servers", "guest_chat_opt_in {INT} NOT NULL DEFAULT 0"),
     ("servers", "members_visible {INT} NOT NULL DEFAULT 1"),
     ("banned_usernames", "username_key TEXT"),
     ("banned_usernames", "username_key_alt TEXT"),
@@ -218,7 +220,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 33: the look-alike keys of banned usernames (`banned_usernames.username_key`,
 /// `banned_usernames.username_key_alt`).
 /// 34: channel-scoped message search and the thread root timestamp for indexed replies.
-pub const SCHEMA_VERSION: i64 = 34;
+/// 35: guest chat sessions, channel widgets and explicit server opt-ins for guest text and voice.
+pub const SCHEMA_VERSION: i64 = 35;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 16] {

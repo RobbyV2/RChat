@@ -23,6 +23,7 @@ use crate::api::categories::{
     announce, bump, channel_order, layout_version, listed, load_layout, rank, seen_version,
     server_categories, write_layout,
 };
+use crate::api::features::Feature;
 use crate::api::lookup::{self, LookupClass};
 use crate::api::messages::recent_channel_messages;
 use crate::api::pings::forget_server_pings;
@@ -143,11 +144,12 @@ pub struct ServerPatch {
     #[serde(default, deserialize_with = "crate::api::auth::present")]
     #[schema(value_type = Option<bool>)]
     public_read: Option<Option<bool>>,
-    /// "Guests can use voice": `false` keeps people without an account out of the server's
-    /// voice channels and takes the guests in them out at once; `true` lets guests who can open
-    /// the server use them again. Accounts are not affected. Omit to leave it unchanged.
-    #[serde(default)]
+    /// Accepts false to disable guest voice. Enabling it requires guest_voice_opt_in.
     guest_voice: Option<bool>,
+    /// Allow guests to talk in voice channels when the site permits it.
+    guest_voice_opt_in: Option<bool>,
+    /// Allow guests to send text when the site permits it.
+    guest_chat_opt_in: Option<bool>,
     /// "Members can be seen by people outside this server": `false` shows the member list,
     /// members' profiles and their membership only to other members (and the member list to
     /// instance staff), and finds members by name through the server only for other members
@@ -937,7 +939,7 @@ fn read_only_channels(
     rights: &HashMap<i64, ChannelAccess>,
     channels: &[Channel],
 ) -> Vec<i64> {
-    if access.viewer().is_none() || !access.is_member() {
+    if access.viewer().is_some() && !access.is_member() {
         return Vec::new();
     }
     channels
@@ -992,6 +994,7 @@ async fn server_detail(
         name_color,
         public_read,
         guest_voice,
+        guest_chat,
         members_visible,
     } = access.lite().clone();
     let rows = sqlx::query(
@@ -1060,6 +1063,7 @@ async fn server_detail(
         name_color,
         public_read,
         guest_voice,
+        guest_chat,
         members_visible,
         channels,
         categories,
@@ -1827,7 +1831,8 @@ async fn found_server(
             banner_color: None,
             name_color: None,
             public_read: None,
-            guest_voice: true,
+            guest_voice: false,
+            guest_chat: false,
             members_visible: true,
         },
     });
@@ -2499,11 +2504,12 @@ pub(crate) async fn leave_server(
 /// Renames the server, switches it between public and password protected, sets, changes or
 /// clears its permanent password, changes its header colors, and sets whether people who
 /// aren't members can read it (`public_read`) and see its members (`members_visible`), and
-/// whether guests can use its voice channels (`guest_voice`); every field is optional.
+/// whether guests can participate in text and voice (`guest_chat_opt_in`, `guest_voice_opt_in`).
+/// Turning either choice on requires its site switch. A suspended choice can be kept or turned off.
 /// Requires the Delete server permission; `members: remove` together with `password` also
 /// requires Kick. The built-in rchat server can't be given a password and keeps its key
 /// `rchat` (a new name changes only its display name); its colors, `public_read`,
-/// `members_visible` and `guest_voice` may change.
+/// `members_visible` and the guest participation opt-ins may change.
 ///
 /// When `password` is present, `members: remove` removes every other member whose server
 /// permissions are a strict subset of yours (their roles are dropped, as if kicked) and existing
@@ -2531,7 +2537,7 @@ pub(crate) async fn leave_server(
         (status = 200, description = "The updated server, with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated),
         (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, a new password shorter than 8 characters, or a new password that is already a live extra password of the server. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, a password change on the protected rchat server, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`)", body = ApiErrorBody),
+        (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, a password change on the protected rchat server, enabling guest text or voice while its site switch is off, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 409, description = "The new name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
@@ -2556,8 +2562,11 @@ pub(crate) async fn update_server(
         name_color,
         public_read,
         guest_voice,
+        guest_chat_opt_in,
+        guest_voice_opt_in,
         members_visible,
     } = req;
+    let guest_voice = guest_voice_opt_in.or(guest_voice.filter(|v| !v));
     let builtin = is_builtin(&state.db, &key).await;
     if password.is_some() || protected.is_some() {
         guard_rchat(&state.db, &key).await?;
@@ -2643,12 +2652,40 @@ pub(crate) async fn update_server(
             .execute(&mut *tx)
             .await?;
     }
-    if let Some(on) = guest_voice {
-        sqlx::query("UPDATE servers SET guest_voice = $1 WHERE name = $2")
-            .bind(i64::from(on))
-            .bind(&new_key)
-            .execute(&mut *tx)
-            .await?;
+    for (choice, column, feature, refusal) in [
+        (
+            guest_chat_opt_in,
+            "guest_chat_opt_in",
+            Feature::GuestChat,
+            "Guest text chat is turned off on this site",
+        ),
+        (
+            guest_voice,
+            "guest_voice_opt_in",
+            Feature::GuestVoice,
+            "Guest voice is turned off on this site",
+        ),
+    ] {
+        if let Some(on) = choice {
+            let sql = format!(
+                "UPDATE servers SET {column} = $1 WHERE name = $2 AND ($1 = 0 OR {column} = 1 OR EXISTS (SELECT 1 FROM settings WHERE key = $3 AND value = '1'))"
+            );
+            if sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(i64::from(on))
+                .bind(&new_key)
+                .bind(feature.key())
+                .execute(&mut *tx)
+                .await?
+                .rows_affected()
+                == 0
+            {
+                return Err(ApiError::off_site(
+                    StatusCode::FORBIDDEN,
+                    refusal,
+                    feature.key(),
+                ));
+            }
+        }
     }
     if let Some(visible) = members_visible {
         sqlx::query("UPDATE servers SET members_visible = $1 WHERE name = $2")
@@ -2694,6 +2731,11 @@ pub(crate) async fn update_server(
             "public_read",
             reading_word(lite.public_read),
             reading_word(public_read.unwrap_or(lite.public_read)),
+        )
+        .change(
+            "guest_chat",
+            lite.guest_chat,
+            guest_chat_opt_in.unwrap_or(lite.guest_chat),
         )
         .change(
             "guest_voice",
@@ -2751,20 +2793,10 @@ pub(crate) async fn update_server(
         }
     }
     let renamed = new_key != key || display != lite.display_name;
-    let server = ServerSummaryLite {
-        name: new_key,
-        display_name: display,
-        creator: lite.creator,
-        has_password: match &password_hash {
-            Some(hash) => hash.is_some(),
-            None => lite.has_password,
-        },
-        banner_color: banner_color.unwrap_or(lite.banner_color),
-        name_color: name_color.unwrap_or(lite.name_color),
-        public_read: public_read.unwrap_or(lite.public_read),
-        guest_voice: guest_voice.unwrap_or(lite.guest_voice),
-        members_visible: members_visible.unwrap_or(lite.members_visible),
-    };
+    let server = resolve_server(&state.db, &new_key, Some(&user), &Proof::none())
+        .await?
+        .lite()
+        .clone();
     state.hub.broadcast(match renamed {
         true => WsEvent::ServerRenamed {
             old_name: key,
@@ -5555,6 +5587,8 @@ mod tests {
                 name_color: None,
                 public_read: None,
                 guest_voice: None,
+                guest_chat_opt_in: None,
+                guest_voice_opt_in: None,
                 members_visible: None,
             }),
         )
@@ -6675,6 +6709,8 @@ mod tests {
                 name_color: None,
                 public_read: None,
                 guest_voice: None,
+                guest_chat_opt_in: None,
+                guest_voice_opt_in: None,
                 members_visible: None,
             }),
         )
@@ -7069,6 +7105,8 @@ mod tests {
                 name_color: None,
                 public_read: None,
                 guest_voice: None,
+                guest_chat_opt_in: None,
+                guest_voice_opt_in: None,
                 members_visible: None,
             }),
         )
@@ -7125,7 +7163,7 @@ mod tests {
             .expect("assign");
     }
 
-    async fn patch_colors(
+    async fn patch_server(
         state: &AppState,
         actor: User,
         server: &str,
@@ -7143,6 +7181,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn guest_opt_ins_require_the_site_switch_only_when_turning_on() {
+        let (state, path) = temp_state("guest_opt_in_transitions").await;
+        let _ = make_server(&state, "club").await.expect("club");
+        let patch =
+            |body: &'static str| patch_server(&state, mem_user("alice", false), "club", body);
+        let both = r#"{"guest_chat_opt_in":true,"guest_voice_opt_in":true}"#;
+        let chat = r#"{"guest_chat_opt_in":true}"#;
+        let voice = r#"{"guest_voice_opt_in":true}"#;
+        for body in [chat, voice] {
+            assert!(matches!(
+                patch(body).await,
+                Err(ApiError(StatusCode::FORBIDDEN, _, _))
+            ));
+        }
+        for (enabled, disabled, choice) in [
+            ("guest_chat_enabled", "guest_voice_enabled", chat),
+            ("guest_voice_enabled", "guest_chat_enabled", voice),
+        ] {
+            sqlx::query("UPDATE settings SET value = CASE WHEN key = $1 THEN '1' ELSE '0' END WHERE key IN ($1, $2)")
+                .bind(enabled)
+                .bind(disabled)
+                .execute(&state.db)
+                .await
+                .expect("site settings");
+            assert!(matches!(
+                patch(both).await,
+                Err(ApiError(StatusCode::FORBIDDEN, _, _))
+            ));
+            let server = lite_of(&state.db, "club").await;
+            assert!(!server.guest_chat && !server.guest_voice);
+            let server = patch(choice).await.expect("allowed choice").server;
+            assert_eq!(
+                (server.guest_chat, server.guest_voice),
+                (choice == chat, choice == voice)
+            );
+            sqlx::query("UPDATE settings SET value = '0' WHERE key = $1")
+                .bind(enabled)
+                .execute(&state.db)
+                .await
+                .expect("suspend");
+            patch(choice).await.expect("retain suspended choice");
+            patch(r#"{"guest_voice_opt_in":false,"guest_chat_opt_in":false}"#)
+                .await
+                .expect("opt out");
+            assert!(matches!(
+                patch(choice).await,
+                Err(ApiError(StatusCode::FORBIDDEN, _, _))
+            ));
+        }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn server_colors_are_validated_gated_and_broadcast() {
         let (state, path) = temp_state("server_colors").await;
         let db = &state.db;
@@ -7151,7 +7242,7 @@ mod tests {
         join(&state, "bob", "club").await.expect("join");
         let alice = || mem_user("alice", false);
         let mut rx = state.hub.subscribe();
-        let set = patch_colors(
+        let set = patch_server(
             &state,
             alice(),
             "club",
@@ -7189,12 +7280,12 @@ mod tests {
             .await
             .expect("mine");
         assert_eq!(mine[0].banner_color.as_deref(), Some("#ff0066"));
-        let renamed = patch_colors(&state, alice(), "club", r#"{"name":"Club"}"#)
+        let renamed = patch_server(&state, alice(), "club", r#"{"name":"Club"}"#)
             .await
             .expect("rename keeps colors");
         assert_eq!(renamed.server.banner_color.as_deref(), Some("#ff0066"));
         assert_eq!(renamed.server.name_color.as_deref(), Some("#ffffff"));
-        let cleared = patch_colors(&state, alice(), "club", r#"{"name_color":null}"#)
+        let cleared = patch_server(&state, alice(), "club", r#"{"name_color":null}"#)
             .await
             .expect("clear name color");
         assert_eq!(cleared.server.banner_color.as_deref(), Some("#ff0066"));
@@ -7210,13 +7301,13 @@ mod tests {
             r##"{"name_color":"#12345g"}"##,
             r#"{"name_color":""}"#,
         ] {
-            let err = patch_colors(&state, alice(), "club", bad)
+            let err = patch_server(&state, alice(), "club", bad)
                 .await
                 .err()
                 .expect(bad);
             assert_eq!(err.0, StatusCode::BAD_REQUEST, "{bad}");
         }
-        let err = patch_colors(
+        let err = patch_server(
             &state,
             mem_user("bob", false),
             "club",
@@ -7228,7 +7319,7 @@ mod tests {
         assert_eq!(err.0, StatusCode::FORBIDDEN);
         let lite = lite_of(db, "club").await;
         assert_eq!(lite.banner_color.as_deref(), Some("#ff0066"));
-        let rchat = patch_colors(
+        let rchat = patch_server(
             &state,
             mem_user("root", true),
             "rchat",
@@ -7237,7 +7328,7 @@ mod tests {
         .await
         .expect("site admin colors rchat");
         assert_eq!(rchat.server.banner_color.as_deref(), Some("#000000"));
-        let err = patch_colors(
+        let err = patch_server(
             &state,
             mem_user("root", true),
             "rchat",
@@ -7247,7 +7338,7 @@ mod tests {
         .err()
         .expect("rchat takes no password");
         assert_eq!(err.0, StatusCode::FORBIDDEN);
-        let err = patch_colors(&state, alice(), "rchat", r##"{"banner_color":"#111111"}"##)
+        let err = patch_server(&state, alice(), "rchat", r##"{"banner_color":"#111111"}"##)
             .await
             .err()
             .expect("members can't color rchat");
@@ -10146,7 +10237,7 @@ mod tests {
             out
         };
         let patch =
-            |body: &'static str| patch_colors(&state, mem_user("alice", false), "club", body);
+            |body: &'static str| patch_server(&state, mem_user("alice", false), "club", body);
         patch(r#"{"password":"hunter22"}"#).await.expect("password");
         patch(r#"{"name":"club"}"#).await.expect("same name");
         patch(r##"{"banner_color":"#101010"}"##)
@@ -10867,6 +10958,8 @@ mod tests {
                 name_color: None,
                 public_read: None,
                 guest_voice: None,
+                guest_chat_opt_in: None,
+                guest_voice_opt_in: None,
                 members_visible: None,
             }),
         )

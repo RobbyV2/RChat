@@ -5,6 +5,7 @@ use tokio::time::Instant;
 
 use super::*;
 use crate::api::messages::{Quotes, load_message};
+use crate::api::test_util::{set_guest_voice, site_sets};
 use crate::db::now;
 use crate::hub::VOICE_EVERY;
 use crate::ws::access::{Access, still_held};
@@ -262,17 +263,6 @@ async fn set_joining(db: &Db, mode: &str) {
     crate::api::Settings::forget(db);
 }
 
-async fn site_sets(state: &AppState, body: serde_json::Value) {
-    let patch = serde_json::from_value(body).expect("patch");
-    let _ = crate::api::admin::patch_settings(
-        State(state.clone()),
-        crate::api::Authed(crate::api::test_util::mem_user("root", true)),
-        axum::Json(patch),
-    )
-    .await
-    .expect("settings");
-}
-
 async fn within_5s(what: &str, mut done: impl FnMut() -> bool) {
     let until = Instant::now() + std::time::Duration::from_secs(5);
     while !done() {
@@ -284,7 +274,9 @@ async fn within_5s(what: &str, mut done: impl FnMut() -> bool) {
 /// The four kinds of server people who aren't members meet, each with a voice channel and
 /// `alice` as their admin: `vault` (password, reading on), `locked` (password), `open` (no
 /// password, reading on) and `lobby` (no password, following the site).
-async fn reading_world(db: &Db) -> Vec<(&'static str, i64)> {
+async fn reading_world(state: &AppState) -> Vec<(&'static str, i64)> {
+    let db = &state.db;
+    site_sets(state, serde_json::json!({"guest_voice_enabled": true})).await;
     for name in ["alice", "eve"] {
         add_user_row(db, name).await;
     }
@@ -302,6 +294,9 @@ async fn reading_world(db: &Db) -> Vec<(&'static str, i64)> {
             .try_get(0)
             .expect("id");
         crate::api::test_util::add_member(db, server, "alice", 1, 0, 0).await;
+        set_guest_voice(state, "alice", server, true)
+            .await
+            .expect("allow guest voice");
         rooms.push((server, cid));
     }
     rooms
@@ -321,7 +316,7 @@ async fn set_control(db: &Db, key: &str, value: &str) {
 async fn voice_follows_who_can_open_the_server() {
     let (state, path) = crate::api::test_util::temp_state("reader_voice").await;
     let db = &state.db;
-    let rooms = reading_world(db).await;
+    let rooms = reading_world(&state).await;
     let hidden = insert_id(db, "INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES('open', 'staff', 'voice', 0, 1) RETURNING id").await;
     let join = |user, channel_id| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id });
     let gone = Err("Channel not found".into());
@@ -366,8 +361,7 @@ async fn voice_follows_who_can_open_the_server() {
 #[tokio::test]
 async fn readers_leave_voice_when_the_server_closes_to_them() {
     let (state, path) = crate::api::test_util::temp_state("reader_voice_close").await;
-    let db = &state.db;
-    let rooms = reading_world(db).await;
+    let rooms = reading_world(&state).await;
     let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
     let follow = crate::api::Settings::follow(&state);
     let join = |user, channel_id| voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id });
@@ -443,7 +437,7 @@ async fn as_guest(
 async fn guests_use_voice_where_they_can_open_the_server() {
     let (state, path) = crate::api::test_util::temp_state("guest_voice").await;
     let db = &state.db;
-    let rooms = reading_world(db).await;
+    let rooms = reading_world(&state).await;
     let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
     let grant = grant_on(db, "locked", None, "locked-guest").await;
     let hidden = insert_id(db, "INSERT INTO channels(server, name, kind, created_at, restrict_view) VALUES('lobby', 'staff', 'voice', 0, 1) RETURNING id").await;
@@ -582,7 +576,7 @@ async fn guests_use_voice_where_they_can_open_the_server() {
 async fn a_guest_leaves_voice_when_its_server_closes_to_it() {
     let (state, path) = crate::api::test_util::temp_state("guest_voice_close").await;
     let db = &state.db;
-    let rooms = reading_world(db).await;
+    let rooms = reading_world(&state).await;
     let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
     let conn = state.hub.next_conn();
     let ticket = insert_id(db, "INSERT INTO server_passwords(server, label, hash, lookup, created_at, expires_at) VALUES('locked', 'Friends', 'h', 'l', 0, 4000000000) RETURNING id").await;
@@ -643,7 +637,7 @@ async fn a_guest_leaves_voice_when_its_server_closes_to_it() {
 async fn a_guest_removed_by_staff_waits_before_using_that_servers_voice() {
     let (state, path) = crate::api::test_util::temp_state("guest_voice_kick").await;
     let db = &state.db;
-    let rooms = reading_world(db).await;
+    let rooms = reading_world(&state).await;
     add_user_row(db, "10.1.2.3").await;
     crate::api::test_util::add_member(db, "lobby", "10.1.2.3", 0, 0, 0).await;
     let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
@@ -693,29 +687,11 @@ async fn a_guest_removed_by_staff_waits_before_using_that_servers_voice() {
     crate::api::test_util::done(state, path).await;
 }
 
-async fn set_guest_voice(
-    state: &AppState,
-    by: &str,
-    server: &str,
-    on: bool,
-) -> Result<bool, (u16, String)> {
-    let patch = serde_json::from_value(serde_json::json!({ "guest_voice": on })).expect("patch");
-    crate::api::servers::update_server(
-        State(state.clone()),
-        crate::api::Authed(crate::api::test_util::mem_user(by, false)),
-        axum::extract::Path(s(server)),
-        axum::Json(patch),
-    )
-    .await
-    .map(|axum::Json(updated)| updated.server.guest_voice)
-    .map_err(|crate::api::ApiError(code, msg, _)| (code.as_u16(), msg))
-}
-
 #[tokio::test]
 async fn guests_use_a_servers_voice_only_while_it_lets_them() {
     let (state, path) = crate::api::test_util::temp_state("guest_voice_switch").await;
     let db = &state.db;
-    let rooms = reading_world(db).await;
+    let rooms = reading_world(&state).await;
     let room = |name: &str| rooms.iter().find(|(s, _)| *s == name).expect("room").1;
     add_user_row(db, "carol").await;
     crate::api::test_util::add_member(db, "lobby", "carol", 0, 0, 0).await;
@@ -813,12 +789,12 @@ async fn guests_use_a_servers_voice_only_while_it_lets_them() {
 async fn a_guest_join_that_raced_the_switch_going_off_is_undone() {
     let (state, path) = crate::api::test_util::temp_state("guest_voice_race").await;
     let (replica, replica_path) = crate::api::test_util::temp_state("guest_voice_lag").await;
-    let rooms = reading_world(&state.db).await;
-    assert_eq!(reading_world(&replica.db).await, rooms);
+    let rooms = reading_world(&state).await;
+    assert_eq!(reading_world(&replica).await, rooms);
     let lobby = rooms.iter().find(|(s, _)| *s == "lobby").expect("room").1;
     exec(
         &state.db,
-        "UPDATE servers SET guest_voice = 0 WHERE name = 'lobby'",
+        "UPDATE servers SET guest_voice_opt_in = 0 WHERE name = 'lobby'",
     )
     .await;
     let lagging = state.clone().with_reader(replica.db.clone());
@@ -1890,6 +1866,12 @@ async fn the_calls_switch_refuses_voice_and_calls_with_its_reason() {
     let join = |user: &'static str, channel_id| {
         voice_msg(&state, user, 1, ClientMsg::VoiceJoin { channel_id })
     };
+    site_sets(&state, serde_json::json!({"guest_voice_enabled": true})).await;
+    add_user_row(db, "manager").await;
+    crate::api::test_util::add_member(db, "rchat", "manager", 1, 0, 0).await;
+    set_guest_voice(&state, "manager", "rchat", true)
+        .await
+        .expect("allow guest voice");
     let guest = guest_at(&["rchat"], &[]);
 
     join("alice", cid).await.expect("calls are on");

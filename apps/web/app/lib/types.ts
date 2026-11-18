@@ -49,8 +49,9 @@ export interface ServerSummaryLite {
   name_color?: string | null
   // "Anyone can read this server": on, off, or null or absent to follow the site.
   public_read?: boolean | null
-  // "Guests can use voice": absent from older servers means on.
+  // The server's guest voice and guest text choices: absent means off.
   guest_voice?: boolean
+  guest_chat?: boolean
   // "Members can be seen by people outside this server". Absent on older servers: on.
   members_visible?: boolean
 }
@@ -215,8 +216,9 @@ export interface ServerDetail {
   name_color: string | null
   // "Anyone can read this server": on, off, or null or absent to follow the site.
   public_read?: boolean | null
-  // "Guests can use voice": absent from older servers means on.
+  // The server's guest voice and guest text choices: absent means off.
   guest_voice?: boolean
+  guest_chat?: boolean
   // "Members can be seen by people outside this server". Absent on older servers: on.
   members_visible?: boolean
   channels: Channel[]
@@ -573,6 +575,8 @@ export interface SiteSettings {
   instance_reports: boolean
   widgets: boolean
   widget_chat: boolean
+  guest_chat_enabled: boolean
+  guest_voice_enabled: boolean
   widget_read_links: boolean
   widget_bridge: boolean
   e2ee: boolean

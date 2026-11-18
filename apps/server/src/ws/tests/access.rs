@@ -996,7 +996,8 @@ async fn a_server_that_stops_being_readable_drops_its_followers() {
         server: ServerSummaryLite {
             has_password: true,
             public_read: Some(false),
-            guest_voice: true,
+            guest_voice: false,
+            guest_chat: false,
             ..lite("vault")
         },
     };

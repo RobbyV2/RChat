@@ -341,7 +341,13 @@ describe('timeouts in voice', () => {
 
   test('a guest joins voice under the name its connection got', async () => {
     const name = '@guest:00000000000000aa'
-    useStore.setState({ me: null, guest: true, guestVoiceName: null })
+    useStore.setState({
+      me: null,
+      guest: true,
+      guestVoiceName: null,
+      servers: { lounge: serverDetail('lounge', { guest_voice: true }) },
+      settings: { ...st().settings, guests_enabled: true, guest_voice_enabled: true },
+    })
     await st().joinVoice('lounge', 3)
     expect(st().error).toBe('Create an account to join voice')
     expect(sent.some(m => m.type === 'voice_join')).toBe(false)
@@ -500,7 +506,13 @@ describe('guests muted by staff', () => {
   )
 
   test('the guest sees it is muted and cannot unmute itself until staff end it', async () => {
-    useStore.setState({ me: null, guest: true, guestVoiceName: guestName })
+    useStore.setState({
+      me: null,
+      guest: true,
+      guestVoiceName: guestName,
+      servers: { lounge: serverDetail('lounge', { guest_voice: true }) },
+      settings: { ...st().settings, guest_voice_enabled: true },
+    })
     await st().joinVoice('lounge', 1)
     expect(st().voice?.channelId).toBe(1)
     expect(lastTrack().enabled).toBe(true)
@@ -517,7 +529,13 @@ describe('guests muted by staff', () => {
   })
 
   test('a staff mute leaves the camera alone', async () => {
-    useStore.setState({ me: null, guest: true, guestVoiceName: guestName })
+    useStore.setState({
+      me: null,
+      guest: true,
+      guestVoiceName: guestName,
+      servers: { lounge: serverDetail('lounge', { guest_voice: true }) },
+      settings: { ...st().settings, guest_voice_enabled: true },
+    })
     await st().joinVoice('lounge', 1)
     const live = rtc as unknown as { videoTrack: unknown }
     live.videoTrack = { kind: 'video', enabled: true, stop: () => {} }

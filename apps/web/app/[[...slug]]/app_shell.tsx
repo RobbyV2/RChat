@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '../lib/store'
 import { notifications } from '../lib/platform'
+import { useGuestPostingCheck } from '../components/use_guest_posting_check'
 import { startApp } from '../lib/start'
 import { ContextMenu } from '../components/context_menu'
 import { ReactionPickerHost } from '../components/reactions'
@@ -83,6 +84,11 @@ export default function AppShell() {
   const dialog = useStore(s => s.activeDialog)
   const confirming = useStore(s => s.confirm !== null)
   const panel = useStore(s => s.panel)
+  const server = view?.kind === 'channel' ? view.server : null
+  const channel = view?.kind === 'channel' ? view.channelId : null
+  const threadChannel = panel?.kind === 'thread' ? panel.root.channel_id : null
+  useGuestPostingCheck(server, channel)
+  useGuestPostingCheck(server, threadChannel !== channel ? threadChannel : null)
   const bootError = useStore(s => s.bootError)
   const pings = useInboxCount()
   const p2pHome = useP2p(s => s.home) && me !== null

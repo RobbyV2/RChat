@@ -582,6 +582,12 @@ async fn normal_tabs_keep_working_under_the_limits() {
 async fn guests_are_named_and_leave_voice_when_they_close() {
     use tokio_tungstenite::tungstenite::Message as T;
     let (state, path, addr) = live("ws_guest_voice").await;
+    crate::api::test_util::site_sets(&state, serde_json::json!({"guest_voice_enabled":true})).await;
+    add_user_row(&state.db, "manager").await;
+    crate::api::test_util::add_member(&state.db, "rchat", "manager", 1, 0, 0).await;
+    crate::api::test_util::set_guest_voice(&state, "manager", "rchat", true)
+        .await
+        .expect("allow guest voice");
     let cid = insert_id(&state.db, "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id").await;
     let mut names = Vec::new();
     for from in ["203.0.113.7", "203.0.113.8"] {

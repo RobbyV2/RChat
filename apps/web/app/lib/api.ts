@@ -542,7 +542,8 @@ export const endpoints = (c: ApiClient) => ({
       banner_color?: string | null
       name_color?: string | null
       public_read?: boolean | null
-      guest_voice?: boolean
+      guest_voice_opt_in?: boolean
+      guest_chat_opt_in?: boolean
       members_visible?: boolean
     }
   ) => c.req<ServerUpdated>('PATCH', `/servers/${seg(name)}`, patch),

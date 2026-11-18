@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import { guestPostingStatus } from '../guest_chat'
 import { openPaletteAt } from '../palette_store'
 import { useStore } from '../store'
 import type { ContextMenuItem, ContextMenuOptions, ContextMenuState } from '../store_types'
@@ -148,7 +149,7 @@ export const openChoiceMenu = (
 
 // An open action menu (or sheet) follows actions defined or removed while it shows, and keeps
 // its state while its rows stay the same.
-subscribeActions(() => {
+const refreshOpenMenu = () => {
   const open = live
   const menu = useStore.getState().contextMenu
   live = null
@@ -167,4 +168,14 @@ subscribeActions(() => {
   const next = { ...menu, items: built.map(r => r.item) }
   useStore.setState({ contextMenu: next })
   live = { ctx, menu: next, ids }
+}
+
+subscribeActions(refreshOpenMenu)
+
+useStore.subscribe((state, previous) => {
+  if (!live || state.contextMenu !== live.menu || live.ctx.target.kind !== 'message') return
+  const { server, message } = live.ctx
+  const channel = message?.channel_id ?? null
+  if (guestPostingStatus(state, server, channel) !== guestPostingStatus(previous, server, channel))
+    refreshOpenMenu()
 })

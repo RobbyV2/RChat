@@ -50,6 +50,7 @@ import { openContactMenu } from '../lib/actions/p2p_contact'
 import type { Target } from '../lib/actions/types'
 import { dmSections } from '../lib/nav_layout'
 import { passwordSignup } from '../lib/features'
+import { accountBenefits, guestHomeLine } from '../lib/guest_chat'
 import { enterKey } from '../lib/keys'
 import type { DmSummary } from '../lib/types'
 import { longPress } from './context_menu'
@@ -1096,13 +1097,13 @@ function GuestHome() {
   const openDialog = useStore(s => s.openDialog)
   const logout = useStore(s => s.logout)
   const signup = useStore(s => passwordSignup(s.settings))
+  const line = useStore(s => guestHomeLine(s.settings))
+  const benefits = useStore(s => accountBenefits(s.settings))
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1 px-1">
         <h1 className="text-2xl font-semibold text-on-surface sm:text-3xl">Welcome</h1>
-        <p className="text-sm text-on-surface-variant">
-          You&apos;re browsing as a guest. You can read servers but not post.
-        </p>
+        <p className="text-sm text-on-surface-variant">{line}</p>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <Card title="Browse servers" icon={<Compass size={18} />}>
@@ -1119,8 +1120,7 @@ function GuestHome() {
         </Card>
         <Card title={signup ? 'Create an account' : 'Log in'} icon={<LogIn size={18} />}>
           <p className="px-2 text-sm text-on-surface-variant">
-            {signup ? 'Sign up' : 'Log in'} to send messages, add friends and get notified when
-            someone mentions you.
+            {signup ? 'Sign up' : 'Log in'} to {benefits}
           </p>
           <button
             type="button"

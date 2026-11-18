@@ -5,7 +5,7 @@ import { MessageSquareText, Trash2 } from 'lucide-react'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
 import { ReactionBar } from './reactions'
 import { readOnly } from '../lib/reactions'
-import { messageRights } from '../lib/actions/message'
+import { messageRights, replyAccess } from '../lib/actions/message'
 import { openActionMenu } from '../lib/actions/menu'
 import { confirmDeleteMessage, myPerms, roleColor, threadKey, useStore } from '../lib/store'
 import { Perm, hasPerm, type Message } from '../lib/types'
@@ -207,20 +207,22 @@ export default function ThreadPanel() {
     [replies, detached, outgoing]
   )
 
-  if (!root || !key) return null
-
-  const positioned = scroll.positioned
-
-  const canDelete = (m: Message) =>
-    me !== null && (m.author.username === me.username || hasPerm(perms, Perm.DeleteMessages))
-
   const canUnreact = me !== null && !guest
   const canReact =
     canUnreact &&
+    root !== null &&
     server !== null &&
     me.servers.some(x => x.name === server) &&
     !readOnly(detail, root.channel_id) &&
     timedOutEnds === null
+  const canQuoteHere = useStore(
+    s => replyAccess(s, server, root?.channel_id ?? null, canReact).quote
+  )
+
+  if (!root || !key) return null
+  const positioned = scroll.positioned
+  const canDelete = (m: Message) =>
+    me !== null && (m.author.username === me.username || hasPerm(perms, Perm.DeleteMessages))
 
   const onScroll = () => {
     scroll.onScroll()
@@ -233,7 +235,7 @@ export default function ThreadPanel() {
     void loadOlderThread()
   }
 
-  const canReply = (m: Message) => canReact && canQuote(m)
+  const canReply = (m: Message) => canQuoteHere && canQuote(m)
   const forwardable = (m: Message) => canUnreact && canForward(m)
   const replyTo = (m: Message) => startReply(key, m)
   const canEdit = (m: Message) => canReact && ownEditable(m, me?.username)

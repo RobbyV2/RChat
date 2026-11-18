@@ -62,10 +62,14 @@ export const GUESTS_NO_VOICE = "Guests can't use voice in this server"
 // The reason this tab can't join the voice of `server`: it is a guest and the server keeps
 // guests out of voice. Null otherwise.
 export const guestVoiceOff = (
-  s: Pick<RChatState, 'me' | 'guest' | 'servers'>,
+  s: Pick<RChatState, 'me' | 'guest' | 'servers' | 'settings'>,
   server: string
 ): string | null =>
-  s.me === null && s.guest && s.servers[server]?.guest_voice === false ? GUESTS_NO_VOICE : null
+  s.me === null &&
+  s.guest &&
+  (s.settings.guest_voice_enabled !== true || s.servers[server]?.guest_voice !== true)
+    ? GUESTS_NO_VOICE
+    : null
 
 // What the "Guests can use voice" option means, on and off.
 export const GUEST_VOICE_ON = 'People without an account can talk in voice channels here.'

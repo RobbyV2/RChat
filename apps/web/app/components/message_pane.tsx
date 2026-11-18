@@ -1,6 +1,7 @@
 'use client'
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import {
   Clock,
   Hash,
@@ -30,7 +31,7 @@ import { mentionLookups, mentionsUser } from '../lib/mentions'
 import { readOnly } from '../lib/reactions'
 import { slowTitle } from '../lib/slowmode'
 import { canQuote, repliesToMe } from '../lib/replies'
-import { messageRights } from '../lib/actions/message'
+import { messageRights, replyAccess } from '../lib/actions/message'
 import { openActionMenu, useHasMenu } from '../lib/actions/menu'
 import type { Target } from '../lib/actions/types'
 import {
@@ -445,6 +446,8 @@ interface RowProps {
   canDelete: boolean
   canReact: boolean
   canUnreact: boolean
+  canReply: boolean
+  canThread: boolean
   canEdit: boolean
   canForward: boolean
   editing: boolean
@@ -468,6 +471,8 @@ const MessageRow = memo(function MessageRow({
   canDelete,
   canReact,
   canUnreact,
+  canReply,
+  canThread,
   canEdit,
   canForward,
   editing,
@@ -484,9 +489,9 @@ const MessageRow = memo(function MessageRow({
   const copyForward = useStore(s => s.copyForward)
   const actions: ToolbarAction[] = []
   if (canEdit && !editing) actions.push(editAction(() => onEdit(m)))
-  if (canReact && canQuote(m)) actions.push(replyAction(() => onReply(m)))
+  if (canReply && canQuote(m)) actions.push(replyAction(() => onReply(m)))
   if (canForward) actions.push(forwardAction(() => copyForward(m)))
-  if (channel)
+  if (canThread && !isNotice(m))
     actions.push({
       key: 'thread',
       label: 'Reply in thread',
@@ -878,6 +883,11 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
         me.servers.some(x => x.name === view.server) &&
         !readOnly(detail, view.channelId) &&
         timedOutEnds === null))
+  const replies = useStore(
+    useShallow(s =>
+      replyAccess(s, memberServer, view?.kind === 'channel' ? view.channelId : null, canReact)
+    )
+  )
 
   const canDelete = (m: Message) =>
     me !== null &&
@@ -1113,6 +1123,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                         canDelete={canDelete(m)}
                         canReact={canReact}
                         canUnreact={canUnreact}
+                        canReply={replies.quote}
+                        canThread={replies.thread}
                         canEdit={canEdit(m)}
                         canForward={forwardable(m)}
                         editing={editingId === m.id}

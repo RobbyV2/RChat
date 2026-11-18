@@ -1536,6 +1536,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         me: null,
         guest: false,
         guestGrants: {},
+        guestPosting: {},
         guestNames: {},
         guestVoiceName: null,
         voice: null,

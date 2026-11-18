@@ -32,6 +32,8 @@ const SWITCHES = [
   'instance_reports',
   'widgets',
   'widget_chat',
+  'guest_chat_enabled',
+  'guest_voice_enabled',
   'widget_read_links',
   'widget_bridge',
   'e2ee',

@@ -7610,3 +7610,103 @@ async fn the_channel_search_index_is_added_to_an_old_database() {
     })
     .await;
 }
+
+async fn guest_participation_upgrade(url: &str) {
+    let db = open_started(Some(url)).await.expect("open");
+    for sql in [
+        "DROP TABLE widgets",
+        "DROP TABLE guest_chat_sessions",
+        "ALTER TABLE servers DROP COLUMN guest_voice_opt_in",
+        "ALTER TABLE servers DROP COLUMN guest_chat_opt_in",
+        "UPDATE settings SET value = '34' WHERE key = 'schema_version'",
+        "DELETE FROM settings WHERE key IN ('guest_chat_enabled', 'guest_voice_enabled')",
+        "INSERT INTO servers(name, display_name, guest_voice, created_at) VALUES('quiet', 'Quiet', 0, 3), ('talk', 'Talk', 1, 4)",
+    ] {
+        sqlx::query(sql).execute(&db).await.expect(sql);
+    }
+    assert_eq!(count(&db, STORED_SCHEMA).await, 34);
+    close(&db).await;
+    for round in 0..2 {
+        let kept = i64::from(round == 1);
+        let db = open_started(Some(url)).await.expect("upgrade");
+        assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+        assert_eq!(index_count(&db, "widgets_server_id").await, 1);
+        assert_eq!(index_count(&db, "guest_chat_address").await, 1);
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM settings WHERE key IN ('guest_chat_enabled', 'guest_voice_enabled') AND value = '0'").await,
+            2,
+            "{round}: both site switches start off"
+        );
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM servers WHERE (name = 'quiet' AND display_name = 'Quiet' AND guest_voice = 0 AND created_at = 3) OR (name = 'talk' AND display_name = 'Talk' AND guest_voice = 1 AND created_at = 4)").await,
+            2,
+            "{round}: the old rows"
+        );
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'quiet' AND guest_voice_opt_in = 0 AND guest_chat_opt_in = 0").await,
+            1,
+            "{round}: an explicit denial stays a denial"
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT guest_voice_opt_in FROM servers WHERE name = 'talk'"
+            )
+            .await,
+            kept,
+            "{round}: the legacy default is not consent, a later choice survives"
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM servers WHERE guest_chat_opt_in <> 0"
+            )
+            .await,
+            0
+        );
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM widgets").await, kept);
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM guest_chat_sessions").await,
+            kept
+        );
+        if round == 0 {
+            for sql in [
+                "INSERT INTO channels(server, name, kind, created_at) VALUES('talk', 'voice room', 'voice', 0)",
+                "INSERT INTO widgets(id, server, channel_id, mode, enabled, composer, origins, revision) SELECT 'test', 'talk', id, 'voice', 1, 0, '[]', 'rev' FROM channels WHERE server = 'talk'",
+                "INSERT INTO guest_chat_sessions(secret, server, author, address, last_used) VALUES('secret', 'talk', 'guest', 'address', 0)",
+            ] {
+                sqlx::query(sql).execute(&db).await.expect(sql);
+            }
+            let state = crate::state::AppState::new(
+                db.clone(),
+                crate::ws::Hub::new(),
+                None,
+                None,
+                crate::instance::Instance::ephemeral(),
+            );
+            NewUser::plain("manager").hash("x").add(&db).await;
+            add_member(&db, "talk", "manager", 1, 0, 0).await;
+            let site = |on: bool| serde_json::json!({ "guest_voice_enabled": on });
+            crate::api::test_util::site_sets(&state, site(true)).await;
+            crate::api::test_util::set_guest_voice(&state, "manager", "talk", true)
+                .await
+                .expect("manager opt-in");
+            crate::api::test_util::site_sets(&state, site(false)).await;
+            sqlx::query(
+                "INSERT INTO servers(name, display_name, created_at) VALUES('fresh', 'Fresh', 0)",
+            )
+            .execute(&db)
+            .await
+            .expect("new server");
+        }
+        close(&db).await;
+    }
+}
+
+#[tokio::test]
+async fn guest_participation_requires_explicit_choices_across_restarts() {
+    on_each_database("guest_participation_upgrade", |url| async move {
+        guest_participation_upgrade(&url).await;
+    })
+    .await;
+}

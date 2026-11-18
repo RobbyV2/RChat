@@ -31,7 +31,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 - Uploads, or a text only mode
 - Restricted channels, slow mode, server passwords and invite links
 - Moderation, a profanity filter and a site admin panel
-- Guests who read public servers and join their voice channels without an account
+- Guests who read public servers without an account, and post or talk where the site and server allow it
 - Accounts with no email or phone number
 - Search, a command palette, notification settings and settings sync
 - Dark and light themes, a PWA, and desktop and mobile apps

@@ -911,8 +911,9 @@ function InformationSection() {
           protected servers require the password first.
         </p>
         <p>
-          Guests browse read-only with no account: they can view servers by name, receive live
-          updates, and never appear in presence. Their server list lives in their own browser.
+          Guests can open servers by name and receive live updates. Guest chat and guest voice each
+          need to be enabled by the site and the server. Guests stay out of the online member list.
+          Their server list is saved in their browser.
         </p>
       </Info>
       <Info title="Keyboard shortcuts">

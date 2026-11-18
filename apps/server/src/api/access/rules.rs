@@ -252,6 +252,16 @@ pub(super) async fn grants_open(
     server: &str,
     ttl: i64,
 ) -> sqlx::Result<bool> {
+    grants_open_on(db, db, grants, server, ttl).await
+}
+
+pub(super) async fn grants_open_on<'e>(
+    executor: impl sqlx::Executor<'e, Database = sqlx::Any>,
+    db: &Db,
+    grants: &[String],
+    server: &str,
+    ttl: i64,
+) -> sqlx::Result<bool> {
     if grants.is_empty() {
         return Ok(false);
     }
@@ -268,7 +278,7 @@ pub(super) async fn grants_open(
     for grant in grants {
         query = query.bind(secret_key(grant));
     }
-    let Some(row) = query.fetch_optional(db).await? else {
+    let Some(row) = query.fetch_optional(executor).await? else {
         return Ok(false);
     };
     let (key, used): (String, i64) = (row.try_get(0)?, row.try_get(1)?);

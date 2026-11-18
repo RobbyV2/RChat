@@ -235,7 +235,8 @@ fn self_grants_are_recognized() {
             banner_color: None,
             name_color: None,
             public_read: None,
-            guest_voice: true,
+            guest_voice: false,
+            guest_chat: false,
             members_visible: true,
         },
     };

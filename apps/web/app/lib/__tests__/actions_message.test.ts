@@ -146,6 +146,7 @@ const state = (o: State = {}) => {
     ...realFns,
     token: o.guest ? null : 'tok',
     guest: !!o.guest,
+    guestPosting: {},
     me: o.guest
       ? null
       : me('alice', {
@@ -484,7 +485,7 @@ test('a webhook author: no person rows, its webhook id instead of a user id', ()
   }
 })
 
-test('a guest sees copy items only', () => {
+test('a guest with posting off sees copy items only', () => {
   state({ guest: true })
   expect(labels(at(bobs))).toEqual(COPY_ALL)
   expect(labels(at(pinNotice))).toEqual(COPY_ALL.slice(1))
@@ -496,13 +497,61 @@ test('a guest sees copy items only', () => {
   expect(labels(at(dmBob))).toEqual(COPY_ALL)
 })
 
-test('a guest opens no write row anywhere', () => {
+test('a guest with posting off has no reply or moderation actions', () => {
   state({ guest: true, thread: root })
   const write =
     /^(Edit|Reply|Forward|Pin|Unpin|Delete|Select|Kick|Ban|Time Out|Change|Remove|Assign|Revoke|Promote|Transfer|Add|Block|Unblock|Close|Reopen)\b/
   for (const t of [at(bobs), at(own), at(bobPoll), inThread(bobReply), inThread(root)])
     expect(labels(t).filter(l => write.test(l))).toEqual([])
   expect(labels(inThread(pollReply))).toEqual(['View Votes', ...COPY_ALL.slice(1)])
+})
+
+test('guest replies follow the channel and its participation settings', () => {
+  state({ guest: true, thread: root })
+  const change = (site: boolean, server: boolean) =>
+    useStore.setState(s => ({
+      settings: { ...s.settings, guests_enabled: true, guest_chat_enabled: site },
+      servers: { ...s.servers, s: { ...s.servers.s, guest_chat: server } },
+    }))
+  const replies = (t: Target) => labels(t).filter(label => label.startsWith('Reply'))
+  change(true, true)
+  for (const status of [undefined, 'paused', 'unavailable'] as const) {
+    useStore.setState({ guestPosting: status ? { 1: status } : {} })
+    expect(replies(at(bobs))).toEqual([])
+    expect(replies(inThread(bobReply))).toEqual([])
+  }
+  useStore.setState({ guestPosting: { 1: 'ready' } })
+  expect(replies(at(bobs))).toEqual(['Reply', 'Reply in thread'])
+  expect(replies(inThread(bobReply))).toEqual(['Reply'])
+  expect(replies(at(pinNotice))).toEqual([])
+  expect(replies(at(readOnlyBob, 'c2'))).toEqual([])
+  expect(replies(at(dmBob, 'd9'))).toEqual([])
+  expect(messageRights(useStore.getState(), bobs, 'c1').react).toBe(false)
+  change(false, true)
+  expect(replies(at(bobs))).toEqual([])
+  change(true, false)
+  expect(replies(at(bobs))).toEqual([])
+})
+
+test('open channel and thread menus follow a guest posting pause and recovery', () => {
+  state({ guest: true, thread: root })
+  useStore.setState(s => ({
+    guestPosting: { 1: 'ready' },
+    settings: { ...s.settings, guests_enabled: true, guest_chat_enabled: true },
+    servers: { s: { ...s.servers.s, guest_chat: true } },
+  }))
+  const openLabels = () => useStore.getState().contextMenu?.items.map(item => item.label)
+  for (const target of [at(bobs), inThread(bobReply)]) {
+    openActionMenu(10, 10, target)
+    expect(openLabels()).toContain('Reply')
+    useStore.setState({ guestPosting: { 1: 'paused' } })
+    expect(openLabels()).not.toContain('Reply')
+    expect(openLabels()).not.toContain('Reply in thread')
+    expect(openLabels()).toContain('Copy Text')
+    useStore.setState({ guestPosting: { 1: 'ready' } })
+    expect(openLabels()).toContain('Reply')
+    useStore.getState().closeContextMenu()
+  }
 })
 
 test('polls: voters, close and reopen', () => {
@@ -997,13 +1046,14 @@ test('each embed and timestamp row runs its action', async () => {
   ).toEqual([['Copy Timestamp', [['copy', '<t:1700000000>']]]])
 })
 
-test('messageRights follows the panes: react, edit, quote, forward, delete, pin', () => {
+test('message rights follow membership and channel permissions', () => {
   const rights = (m: Message, list = listOf(m)) => messageRights(useStore.getState(), m, list)
   state()
   expect(rights(own)).toEqual({
     react: true,
     edit: true,
     quote: true,
+    thread: true,
     forward: true,
     delete: true,
     pin: false,
@@ -1026,6 +1076,7 @@ test('messageRights follows the panes: react, edit, quote, forward, delete, pin'
     react: false,
     edit: false,
     quote: false,
+    thread: false,
     forward: false,
     delete: false,
     pin: false,
@@ -1101,7 +1152,8 @@ test('message, embed, timestamp and inbox actions stay out of the palette', () =
   const added = allActions()
     .map(a => a.id)
     .filter(id => /^(message|poll|embed|timestamp|inbox)_/.test(id))
-  expect(added.length).toBe(22)
+  expect(added).toContain('message_pause_guest')
+  expect(added.length).toBe(23)
   expect(added.filter(id => ids.has(id))).toEqual([])
 })
 

@@ -150,6 +150,16 @@ impl<'a> Proof<'a> {
         Proof::grants(header_grants(headers), limits)
     }
 
+    /// Recheck this request's grant under the server write lock.
+    pub(crate) async fn grants_server(
+        &self,
+        db: &Db,
+        tx: &mut sqlx::AnyConnection,
+        server: &str,
+    ) -> sqlx::Result<bool> {
+        rules::grants_open_on(tx, db, &self.grants, server, self.grant_ttl).await
+    }
+
     pub fn password(password: Option<&'a str>) -> Proof<'a> {
         Proof {
             password: Slot::Open(password.map(str::trim).filter(|p| !p.is_empty())),
@@ -512,7 +522,7 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
         Slot::Open(None) | Slot::Closed => None,
     };
     let row = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice, members_visible FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
     )
     .bind(&key)
     .fetch_optional(db)
@@ -573,6 +583,7 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
         name_color: row.try_get(5)?,
         public_read: public_read(&row, 6)?,
         guest_voice: row.try_get::<i64, _>(7)? != 0,
+        guest_chat: row.try_get::<i64, _>(9)? != 0,
         members_visible: row.try_get::<i64, _>(8)? != 0,
     };
     let mut ticket = None;
@@ -1108,7 +1119,7 @@ pub async fn resolve_channel(
 /// channels and servers being deleted get `not_found`.
 pub(crate) async fn webhook_channel(db: &Db, id: i64) -> Result<ResolvedChannel, ApiError> {
     let r = sqlx::query(
-        "SELECT c.server, c.kind, c.name, c.slowmode_seconds, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice, s.members_visible FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
+        "SELECT c.server, c.kind, c.name, c.slowmode_seconds, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice_opt_in, s.members_visible, s.guest_chat_opt_in FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
     )
     .bind(id)
     .fetch_optional(db)
@@ -1125,6 +1136,7 @@ pub(crate) async fn webhook_channel(db: &Db, id: i64) -> Result<ResolvedChannel,
                 name_color: r.try_get(8)?,
                 public_read: public_read(&r, 9)?,
                 guest_voice: r.try_get::<i64, _>(10)? != 0,
+                guest_chat: r.try_get::<i64, _>(12)? != 0,
                 members_visible: r.try_get::<i64, _>(11)? != 0,
             },
             via: Via::Public,
@@ -1279,6 +1291,19 @@ impl ResolvedChannel {
         }
     }
 
+    /// Effective guest participation in this channel, using the site's current controls.
+    pub(crate) async fn guest_participation(&self, db: &Db) -> Result<bool, ApiError> {
+        let (opted_in, control) = match self.kind {
+            ChannelKind::Text => (self.server.lite.guest_chat, "guest_chat_enabled"),
+            ChannelKind::Voice => (self.server.lite.guest_voice, "guest_voice_enabled"),
+        };
+        if self.server.user.is_some() || !opted_in || !self.rights.view || !self.rights.send {
+            return Ok(false);
+        }
+        Ok(sqlx::query("SELECT 1 FROM settings WHERE key = $1 AND value = '1' AND EXISTS (SELECT 1 FROM settings WHERE key = 'guests_enabled' AND value = '1')")
+            .bind(control).fetch_optional(db).await?.is_some())
+    }
+
     /// Whether the viewer may send here at all: a member with the send permission in a text
     /// channel who is not timed out. Slow mode is not checked.
     async fn send_rights(&self, db: &Db) -> Result<&User, ApiError> {
@@ -1315,7 +1340,11 @@ impl ResolvedChannel {
     }
 
     /// Slow mode for `author` without exemptions: the wait since their last message here.
-    pub(crate) async fn slowmode_for(&self, db: &Db, author: &str) -> Result<(), ApiError> {
+    pub(crate) async fn slowmode_for<'e>(
+        &self,
+        db: impl sqlx::Executor<'e, Database = sqlx::Any>,
+        author: &str,
+    ) -> Result<(), ApiError> {
         if self.slowmode <= 0 {
             return Ok(());
         }
@@ -2377,7 +2406,7 @@ pub(crate) async fn ws_server_password_hash(
 /// Never answers a client.
 pub(crate) async fn ws_server_lite(db: &Db, name: &str) -> sqlx::Result<Option<ServerSummaryLite>> {
     let row = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice, members_visible FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
+        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
     )
     .bind(name)
     .fetch_optional(db)
@@ -2392,6 +2421,7 @@ pub(crate) async fn ws_server_lite(db: &Db, name: &str) -> sqlx::Result<Option<S
             name_color: r.try_get(5)?,
             public_read: public_read(&r, 6)?,
             guest_voice: r.try_get::<i64, _>(7)? != 0,
+            guest_chat: r.try_get::<i64, _>(9)? != 0,
             members_visible: r.try_get::<i64, _>(8)? != 0,
         })),
         None => Ok(None),

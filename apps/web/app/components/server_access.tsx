@@ -583,22 +583,47 @@ function PublicReading({
   )
 }
 
-// "Guests can use voice": whether people without an account may talk in the server's voice.
-export function GuestVoiceSwitch({ server, on }: { server: string; on: boolean }) {
+export function GuestParticipation({ server }: { server: string }) {
+  const detail = useStore(s => s.servers[server])
+  const site = useStore(s => s.settings)
   const [error, setError] = useState<string | null>(null)
-  const pick = (next: boolean) =>
-    void api.updateServer(server, { guest_voice: next }).then(
-      () => setError(null),
-      (err: unknown) => setError(errorText(err))
-    )
+  const [busy, setBusy] = useState(false)
+  const pick = (patch: { guest_voice_opt_in?: boolean; guest_chat_opt_in?: boolean }) => {
+    setBusy(true)
+    void api
+      .updateServer(server, patch)
+      .then(
+        () => setError(null),
+        (err: unknown) => setError(errorText(err))
+      )
+      .finally(() => setBusy(false))
+  }
   return (
     <div className="pt-3">
       <div className="-mx-2">
         <SettingSwitch
+          label="Guests can send messages"
+          hint={
+            site.guest_chat_enabled
+              ? 'Allows text and replies in writable text channels.'
+              : 'Guest text chat is turned off for this site.'
+          }
+          value={detail?.guest_chat === true}
+          disabled={busy || !detail || (!detail.guest_chat && !site.guest_chat_enabled)}
+          onChange={on => pick({ guest_chat_opt_in: on })}
+        />
+        <SettingSwitch
           label="Guests can use voice"
-          hint={on ? GUEST_VOICE_ON : GUEST_VOICE_OFF}
-          value={on}
-          onChange={pick}
+          hint={
+            !site.guest_voice_enabled
+              ? 'Guest voice is turned off for this site.'
+              : detail?.guest_voice
+                ? GUEST_VOICE_ON
+                : GUEST_VOICE_OFF
+          }
+          value={detail?.guest_voice === true}
+          disabled={busy || !detail || (!detail.guest_voice && !site.guest_voice_enabled)}
+          onChange={on => pick({ guest_voice_opt_in: on })}
         />
       </div>
       <FieldError message={error} />
@@ -642,14 +667,12 @@ export function ServerAccessSection({
   hasPassword,
   canRemove,
   publicRead,
-  guestVoice,
   membersVisible,
 }: {
   server: string
   hasPassword: boolean
   canRemove: boolean
   publicRead: PublicRead
-  guestVoice: boolean
   membersVisible: boolean | null
 }) {
   const username = useStore(s => s.me?.username ?? null)
@@ -824,7 +847,7 @@ export function ServerAccessSection({
           )}
           <PublicReading server={server} hasPassword={data.protected} option={publicRead} />
           {membersVisible !== null && <MemberPrivacy server={server} visible={membersVisible} />}
-          <GuestVoiceSwitch server={server} on={guestVoice} />
+          <GuestParticipation server={server} />
           <FieldError message={error} />
         </>
       )}

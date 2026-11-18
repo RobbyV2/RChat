@@ -70,6 +70,8 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         instance_reports: _,
         widgets: _,
         widget_chat: _,
+        guest_chat_enabled: _,
+        guest_voice_enabled: _,
         widget_read_links: _,
         widget_bridge: _,
         e2ee: _,

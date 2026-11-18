@@ -21,6 +21,9 @@ import {
   Trash2,
   Users,
 } from 'lucide-react'
+import { api } from '../instances'
+import { guestPostingStatus } from '../guest_chat'
+import { isGuestName } from '../guest_voice'
 import { canForward } from '../forward'
 import { messageLinkUrl } from '../message_links'
 import { sharing } from '../platform'
@@ -51,6 +54,20 @@ export interface MessageRights {
   pin: boolean
   forward: boolean
   quote: boolean
+  thread: boolean
+}
+
+export function replyAccess(
+  s: RChatState,
+  server: string | null,
+  channelId: number | null,
+  canReact: boolean
+) {
+  const guestWrites = guestPostingStatus(s, server, channelId) === 'ready'
+  return {
+    quote: canReact || guestWrites,
+    thread: channelId !== null && (signedIn(s) || guestWrites),
+  }
 }
 
 // What you may do to a message in `list`. A thread list never pins.
@@ -64,10 +81,12 @@ export const messageRights = (s: RChatState, m: Message, list: string): MessageR
   const manages = server !== null && hasPerm(myPerms(s, server), Perm.DeleteMessages)
   const writable = server !== null && !readOnly(s.servers[server], m.channel_id)
   const react = signed && (dm || (member && writable && free))
+  const replies = replyAccess(s, server, m.channel_id, react)
   return {
     react,
     edit: react && ownEditable(m, me?.username),
-    quote: react && canQuote(m),
+    quote: canQuote(m) && replies.quote,
+    thread: list.startsWith('c') && !isNotice(m) && replies.thread,
     forward: signed && canForward(m),
     delete: signed && (m.author.username === me?.username || manages),
     pin: signed && !list.startsWith('t') && (dm || (member && manages)) && free && canPin(m),
@@ -119,6 +138,32 @@ const message = { scope: 'message', targets: ['message'] } as const
 
 export const messageActions: Action[] = [
   {
+    id: 'message_pause_guest',
+    title: 'Pause guest posting',
+    icon: Clock,
+    ...message,
+    order: 290,
+    danger: true,
+    available: ctx => {
+      const at = onMessage(ctx)
+      if (!at || !signedIn(ctx.s) || !isGuestName(at.m.author.username)) return false
+      const name = messageServer(ctx.s, at.m)
+      return name !== null && hasPerm(myPerms(ctx.s, name), Perm.TimeoutMembers)
+    },
+    run: withMessage(m =>
+      get().askConfirm({
+        title: 'Pause guest posting?',
+        body: 'Stops this guest and new guest sessions from their address from posting here for 10 minutes.',
+        confirm: 'Pause posting',
+        action: () => {
+          void api
+            .req('POST', `/messages/${m.id}/pause-guest`)
+            .catch((e: Error) => get().setError(e.message))
+        },
+      })
+    ),
+  },
+  {
     id: 'message_edit',
     title: 'Edit Message',
     icon: Pencil,
@@ -151,10 +196,7 @@ export const messageActions: Action[] = [
     icon: MessageSquareText,
     ...message,
     order: 130,
-    available: ctx => {
-      const at = onMessage(ctx)
-      return !!at && signedIn(ctx.s) && at.list.startsWith('c') && !isNotice(at.m)
-    },
+    available: ctx => !!rights(ctx)?.thread,
     run: withMessage(m => void get().openThread(m)),
   },
   {

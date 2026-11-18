@@ -9,6 +9,8 @@ pub enum Feature {
     InstanceReports,
     Widgets,
     WidgetChat,
+    GuestChat,
+    GuestVoice,
     WidgetReadLinks,
     WidgetBridge,
     E2ee,
@@ -24,11 +26,13 @@ pub enum Feature {
 }
 
 impl Feature {
-    pub const ALL: [Feature; 16] = [
+    pub const ALL: [Feature; 18] = [
         Feature::ServerReports,
         Feature::InstanceReports,
         Feature::Widgets,
         Feature::WidgetChat,
+        Feature::GuestChat,
+        Feature::GuestVoice,
         Feature::WidgetReadLinks,
         Feature::WidgetBridge,
         Feature::E2ee,
@@ -50,6 +54,8 @@ impl Feature {
             Feature::InstanceReports => "instance_reports",
             Feature::Widgets => "widgets",
             Feature::WidgetChat => "widget_chat",
+            Feature::GuestChat => "guest_chat_enabled",
+            Feature::GuestVoice => "guest_voice_enabled",
             Feature::WidgetReadLinks => "widget_read_links",
             Feature::WidgetBridge => "widget_bridge",
             Feature::E2ee => "e2ee",
@@ -72,6 +78,8 @@ impl Feature {
             Feature::InstanceReports => "FEATURE_INSTANCE_REPORTS",
             Feature::Widgets => "WIDGETS",
             Feature::WidgetChat => "FEATURE_WIDGET_CHAT",
+            Feature::GuestChat => "GUEST_CHAT_ENABLED",
+            Feature::GuestVoice => "GUEST_VOICE_ENABLED",
             Feature::WidgetReadLinks => "FEATURE_WIDGET_READ_LINKS",
             Feature::WidgetBridge => "WIDGET_BRIDGE",
             Feature::E2ee => "E2EE",
@@ -90,7 +98,12 @@ impl Feature {
     /// Its value when the env leaves it unset.
     pub fn default_on(self) -> bool {
         match self {
-            Feature::WidgetBridge | Feature::E2ee | Feature::E2eeCompliance | Feature::Sfu => false,
+            Feature::GuestChat
+            | Feature::GuestVoice
+            | Feature::WidgetBridge
+            | Feature::E2ee
+            | Feature::E2eeCompliance
+            | Feature::Sfu => false,
             Feature::ServerReports
             | Feature::InstanceReports
             | Feature::Widgets
@@ -157,6 +170,8 @@ mod tests {
                 ("instance_reports", "FEATURE_INSTANCE_REPORTS", true),
                 ("widgets", "WIDGETS", true),
                 ("widget_chat", "FEATURE_WIDGET_CHAT", true),
+                ("guest_chat_enabled", "GUEST_CHAT_ENABLED", false),
+                ("guest_voice_enabled", "GUEST_VOICE_ENABLED", false),
                 ("widget_read_links", "FEATURE_WIDGET_READ_LINKS", true),
                 ("widget_bridge", "WIDGET_BRIDGE", false),
                 ("e2ee", "E2EE", false),

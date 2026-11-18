@@ -354,6 +354,7 @@ export const useStore = create<RChatState>()((set, get) => {
     token: null,
     me: null,
     guest: false,
+    guestPosting: {},
     guestServers: ['rchat'],
     guestGrants: {},
     guestNames: {},

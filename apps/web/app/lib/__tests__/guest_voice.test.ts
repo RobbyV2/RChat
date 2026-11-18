@@ -98,12 +98,13 @@ describe('servers that keep guests out of voice', () => {
   }
 
   test('only a guest in a server with the option off is kept out, with the reason', () => {
-    const guest = { me: null, guest: true, servers }
+    const settings = { ...useStore.getState().settings, guest_voice_enabled: true }
+    const guest = { me: null, guest: true, servers, settings }
     expect(guestVoiceOff(guest, 'lounge')).toBe(GUESTS_NO_VOICE)
     expect(guestVoiceOff(guest, 'open')).toBeNull()
-    expect(guestVoiceOff(guest, 'old')).toBeNull()
-    expect(guestVoiceOff(guest, 'missing')).toBeNull()
-    expect(guestVoiceOff({ me: me('alice'), guest: false, servers }, 'lounge')).toBeNull()
+    expect(guestVoiceOff(guest, 'old')).toBe(GUESTS_NO_VOICE)
+    expect(guestVoiceOff(guest, 'missing')).toBe(GUESTS_NO_VOICE)
+    expect(guestVoiceOff({ ...guest, me: me('alice'), guest: false }, 'lounge')).toBeNull()
     expect(GUESTS_NO_VOICE).toBe("Guests can't use voice in this server")
   })
 })

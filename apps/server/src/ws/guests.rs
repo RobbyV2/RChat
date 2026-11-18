@@ -5,7 +5,7 @@ use super::access::Access;
 use super::calls::{finalize_call_log, relay_signal, still_on, switched_on};
 use super::protocol::{ClientMsg, Refused};
 
-use crate::api::access::{ws_channel_now, ws_guest_voice_channel, ws_server_lite};
+use crate::api::access::{ws_channel_now, ws_guest_voice_channel};
 use crate::db::ChannelKind;
 use crate::hub::Hub;
 use crate::state::AppState;
@@ -46,25 +46,7 @@ pub(super) async fn guest_voice(
     match msg {
         ClientMsg::VoiceJoin { channel_id } => {
             switched_on(state, CallKind::Rtc).await?;
-            let gone = || Refused::from("Channel not found");
-            let Some((server, _)) = ws_channel_now(&state.read(), channel_id).await? else {
-                return Err(gone());
-            };
-            if !access.subs.contains(&server) {
-                return Err(gone());
-            }
-            let grant = access.grants.get(&server).map(String::as_str);
-            let channel =
-                ws_guest_voice_channel(&state.read(), channel_id, grant, &state.limits).await?;
-            if channel.kind() != ChannelKind::Voice {
-                return Err("Not a voice channel".into());
-            }
-            if !channel.member_rights(&state.read()).await?.view {
-                return Err(gone());
-            }
-            if !channel.server().lite().guest_voice {
-                return Err(GUESTS_NO_VOICE.into());
-            }
+            let server = admit(state, access, channel_id).await?;
             let ends = state
                 .hub
                 .guest_voice_join(
@@ -80,14 +62,11 @@ pub(super) async fn guest_voice(
                 finalize_call_log(state, end, false).await;
             }
             still_on(state, CallKind::Rtc).await?;
-            let open = ws_server_lite(&state.db, &server)
-                .await?
-                .is_some_and(|lite| lite.guest_voice);
-            if !open {
+            if let Err(e) = admit(state, access, channel_id).await {
                 state
                     .hub
                     .kick_from_voice(name, &server, None, GUESTS_NO_VOICE, Duration::ZERO);
-                return Err(GUESTS_NO_VOICE.into());
+                return Err(e);
             }
             Ok(())
         }
@@ -100,7 +79,17 @@ pub(super) async fn guest_voice(
             channel_id: Some(channel_id),
             dm_id: None,
             payload,
-        } => relay_signal(state, name, to, Some(channel_id), None, payload).await,
+        } => {
+            if !state.hub.rtc_shared(name, &to, Some(channel_id), None) {
+                return Err("No shared voice session".into());
+            }
+            if let Err(e) = admit(state, access, channel_id).await {
+                state.hub.evict_voice(name, channel_id);
+                return Err(e);
+            }
+            switched_on(state, CallKind::Rtc).await?;
+            relay_signal(state, name, to, Some(channel_id), None, payload).await
+        }
         ClientMsg::RtcSignal {
             to: _,
             channel_id: _,
@@ -141,6 +130,28 @@ pub(super) async fn guest_voice(
         | ClientMsg::Typing { scope: _ }
         | ClientMsg::TypingStop { scope: _ } => Ok(()),
     }
+}
+
+async fn admit(state: &AppState, access: &Access, channel_id: i64) -> Result<String, Refused> {
+    let gone = || Refused::from("Channel not found");
+    let Some((server, _)) = ws_channel_now(&state.db, channel_id).await? else {
+        return Err(gone());
+    };
+    if !access.subs.contains(&server) {
+        return Err(gone());
+    }
+    let grant = access.grants.get(&server).map(String::as_str);
+    let channel = ws_guest_voice_channel(&state.db, channel_id, grant, &state.limits).await?;
+    if channel.kind() != ChannelKind::Voice {
+        return Err("Not a voice channel".into());
+    }
+    if !channel.member_rights(&state.db).await?.view {
+        return Err(gone());
+    }
+    if !channel.guest_participation(&state.db).await? {
+        return Err(GUESTS_NO_VOICE.into());
+    }
+    Ok(server)
 }
 
 /// Takes every guest out of the voice of `server`, whose option now keeps guests out.

@@ -56,7 +56,7 @@ import {
   RoleNameForm,
   SlowmodeField,
 } from './settings_fields'
-import { GuestVoiceSwitch, ServerAccessSection, passwordName } from './server_access'
+import { GuestParticipation, ServerAccessSection, passwordName } from './server_access'
 import { ColorField } from './color_field'
 import { ServerHeader } from './server_header'
 import { ServerSystemMessages } from './system_messages'
@@ -1228,7 +1228,6 @@ function Settings({ server }: { server: string }) {
             hasPassword={detail.has_password}
             canRemove={hasPerm(perms, Perm.Kick)}
             publicRead={detail.public_read ?? null}
-            guestVoice={detail.guest_voice !== false}
             membersVisible={parseMembersVisible(detail.members_visible)}
           />
           <p className={sectionCls}>Delete Server</p>
@@ -1262,7 +1261,7 @@ function Settings({ server }: { server: string }) {
           <ServerSystemMessages server={server} />
           <ServerUploadExpiry server={server} />
           <p className={sectionCls}>Access</p>
-          <GuestVoiceSwitch server={server} on={detail.guest_voice !== false} />
+          <GuestParticipation server={server} />
         </>
       )}
       {hasPerm(perms, Perm.ManageAdmins) && (

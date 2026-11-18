@@ -47,7 +47,8 @@ describe('servers reducers', () => {
       banner_color: '#222222',
       name_color: '#333333',
       public_read: null,
-      guest_voice: true,
+      guest_voice: false,
+      guest_chat: false,
     })
     for (const guest_voice of [true, false]) {
       const voice = applyServerChange(s, {

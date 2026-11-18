@@ -101,6 +101,12 @@ pub async fn sweep_stale(db: &Db, limits: &Limits) -> sqlx::Result<Swept> {
 }
 
 pub(crate) async fn sweep_stale_at(db: &Db, limits: &Limits, t: i64) -> sqlx::Result<Swept> {
+    delete_batched(
+        db,
+        "DELETE FROM guest_chat_sessions WHERE secret IN (SELECT secret FROM guest_chat_sessions WHERE last_used < $1 LIMIT $2)",
+        t - crate::api::guest_chat::SESSION_TTL,
+    )
+    .await?;
     let stale_grants = delete_batched(
         db,
         "DELETE FROM guest_grants WHERE \"grant\" IN (SELECT \"grant\" FROM guest_grants WHERE last_used_at < $1 AND (last_used_at > 0 OR created_at < $1) LIMIT $2)",
