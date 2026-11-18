@@ -28,6 +28,7 @@ use crate::api::messages::recent_channel_messages;
 use crate::api::pings::forget_server_pings;
 use crate::api::policy::ServerCreation;
 use crate::api::rare::{self, Rare};
+use crate::api::sealed;
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
 use crate::api::timeouts::{running_timeouts, timeout_event};
 use crate::api::users::Names;
@@ -1463,7 +1464,7 @@ async fn recent_pairs(
     after: Option<(i64, String)>,
     offset: i64,
     limit: i64,
-) -> Result<(Vec<(String, i64)>, Option<String>), ApiError> {
+) -> Result<(Vec<(String, i64)>, bool), ApiError> {
     let rows = match after {
         Some((at, name)) => {
             sqlx::query(sqlx::AssertSqlSafe(sql_after.to_string()))
@@ -1489,25 +1490,70 @@ async fn recent_pairs(
     }
     let more = pairs.len() as i64 > limit;
     pairs.truncate(limit as usize);
-    let next = pair_next(more, pairs.last());
-    Ok((pairs, next))
+    Ok((pairs, more))
+}
+
+/// The list name `interacted` cursors are sealed for.
+const INTERACTED: &str = "interacted";
+
+/// The statement that gives each former member of the server `$1` the id of their newest message
+/// in `reading`'s channels the viewer may read. Each author and channel costs one index seek from
+/// the newest message where the viewer reads the whole history.
+fn seen_sql(reading: &str) -> String {
+    format!(
+        "WITH seen AS MATERIALIZED ({reading}) SELECT a.username, MAX(a.seen_id) FROM (SELECT i.username, (SELECT m.id FROM messages m WHERE m.channel_id = s.id AND m.author = i.username AND m.kind IN ('user', 'poll') AND m.webhook_id IS NULL AND (s.whole <> 0 OR (m.created_at >= s.since AND (m.thread_root_id IS NULL OR EXISTS(SELECT 1 FROM messages rt WHERE rt.id = m.thread_root_id AND rt.created_at >= s.since)))) ORDER BY m.id DESC LIMIT 1) AS seen_id FROM interactions i CROSS JOIN seen s WHERE i.server = $1 AND NOT EXISTS(SELECT 1 FROM members mem WHERE mem.server = i.server AND mem.username = i.username)) a WHERE a.seen_id IS NOT NULL GROUP BY a.username"
+    )
+}
+
+/// Former members of the server by the newest message of theirs the viewer, who doesn't manage
+/// channels, may read, in message order, newest first: a page of `(username, message id)` after
+/// `after` (else from `offset`), and whether more follow. One statement reads what the viewer may
+/// see and the messages.
+async fn seen_pairs(
+    db: &Db,
+    access: &ServerAccess,
+    after: Option<(i64, String)>,
+    offset: i64,
+    limit: i64,
+) -> Result<(Vec<(String, i64)>, bool), ApiError> {
+    let reading = access.text_reading(2);
+    let sql = seen_sql(&reading.sql);
+    let query = reading.bind(sqlx::query(sqlx::AssertSqlSafe(sql)).bind(access.name()));
+    let mut pairs = Vec::new();
+    for r in query.fetch_all(db).await? {
+        pairs.push((r.try_get::<String, _>(0)?, r.try_get::<i64, _>(1)?));
+    }
+    pairs.sort_by(|(a, id_a), (b, id_b)| id_b.cmp(id_a).then_with(|| b.cmp(a)));
+    let rest: Vec<(String, i64)> = match after {
+        Some((id, name)) => pairs
+            .into_iter()
+            .filter(|(n, i)| (*i, n.as_str()) < (id, name.as_str()))
+            .collect(),
+        None => pairs.into_iter().skip(offset as usize).collect(),
+    };
+    let more = rest.len() as i64 > limit;
+    Ok((rest.into_iter().take(limit as usize).collect(), more))
 }
 
 /// List non-members who interacted
 ///
 /// Returns users who sent a message or joined a voice channel in the server but are not members
 /// now (for example former members), most recent interaction first, as pages of `limit` (default
-/// and max 50). Page with `cursor` from the `X-Next-Cursor` response header (or the legacy
-/// `offset`).
+/// and max 50). Only channel managers get this activity order. Other callers get only users with
+/// a message the caller may read, newest such message first. Page with `cursor` from the
+/// `X-Next-Cursor` response header (or the legacy `offset`); a cursor works only for the caller
+/// it was given to.
 ///
 /// Signed-in users may call it, and guests when guest access is on. Banned users get 403. On a
 /// password-protected server signed-in callers must be members and guests need a valid
 /// `X-Guest-Grant`; everyone else gets the same 404 as for a server that does not exist. A
 /// server whose `members_visible` is off lists them only to its members and instance staff:
 /// everyone else gets an empty list.
-/// Each call takes one of the caller's `list` lookups (`LOOKUP_LIST_PER_MINUTE`, 120 a minute
-/// by default), counted per account, or per client address without one. General rate-limit
-/// bucket.
+/// Each admitted call spends one `list` lookup per account or guest address group.
+/// One list runs per caller. The latest waiter may wait up to 5 s for that caller or 2 s
+/// for a process search place. Pools with two or more readers reserve one for other requests.
+/// With one reader, other requests share that connection with a single admitted list.
+/// General rate-limit bucket.
 #[utoipa::path(
     get,
     path = "/api/v1/servers/{name}/interacted",
@@ -1515,11 +1561,11 @@ async fn recent_pairs(
     params(("name" = String, Path, description = "Server name, case-insensitive"), MembersQuery, ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests viewing a password-protected server")),
     responses(
         (status = 200, description = "A page of users who interacted with the server and are not members, most recent first", body = Vec<UserRef>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
-        (status = 400, description = "Invalid cursor (JSON), or a non-integer `offset` or `limit` (plain-text framework error)", body = ApiErrorBody),
+        (status = 400, description = "`Invalid cursor` (JSON): malformed, changed, or given to another caller or for another permission level. Or a non-integer `offset` or `limit` (plain-text framework error)", body = ApiErrorBody),
         (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `list` lookups. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
+        (status = 429, description = "The caller used up its list lookups, a newer request replaced this one, or no place is available. JSON with the reason `rate` and a `Retry-After` header. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -1530,35 +1576,95 @@ pub(crate) async fn list_interacted(
     Path(name): Path<String>,
     Query(q): Query<MembersQuery>,
 ) -> Result<Paged<UserRef>, ApiError> {
-    let db = &state.read();
-    require_guest_ok(db, viewer.as_ref()).await?;
-    lookup::take(&state, LookupClass::List, viewer.as_ref())?;
-    let access = resolve_server(
-        db,
-        &name,
-        viewer.as_ref(),
-        &Proof::headers(&headers, &state.limits),
-    )
-    .await?;
-    if !crate::api::access::subjects::lists_members(&access) {
-        return Ok(Paged(Vec::new(), None));
-    }
+    let db = state.read();
+    require_guest_ok(&db, viewer.as_ref()).await?;
+    let token = lookup::reserve(&state, LookupClass::List, viewer.as_ref())?;
+    let proof = Proof::headers(&headers, &state.limits);
+    let resolve = || resolve_server(&db, &name, viewer.as_ref(), &proof);
+    let mut access = match resolve().await {
+        Ok(access) if crate::api::access::subjects::lists_members(&access) => access,
+        other => {
+            token.spend();
+            return other.map(|_| Paged(Vec::new(), None));
+        }
+    };
+    let mut admission = std::pin::pin!(crate::api::search_limits::admit_interacted(
+        &state,
+        viewer.as_ref()
+    ));
+    let admitted = match futures_util::poll!(admission.as_mut()) {
+        std::task::Poll::Ready(answer) => answer?,
+        std::task::Poll::Pending => {
+            let admitted = admission.await?;
+            // Membership, grants and member visibility can change while the request waits.
+            require_guest_ok(&db, viewer.as_ref()).await?;
+            access = resolve().await?;
+            if !crate::api::access::subjects::lists_members(&access) {
+                return Ok(Paged(Vec::new(), None));
+            }
+            admitted
+        }
+    };
+    token.spend();
+    admitted
+        .run(async move { interacted_page(&db, &access, q).await })
+        .await?
+}
+
+async fn interacted_page(
+    db: &Db,
+    access: &ServerAccess,
+    q: MembersQuery,
+) -> Result<Paged<UserRef>, ApiError> {
     let key = access.name();
     let MembersQuery {
         offset,
         limit,
         cursor,
     } = q;
-    let (pairs, next) = recent_pairs(
-        db,
-        "SELECT i.username, i.last_at FROM interactions i WHERE i.server = $1 AND NOT EXISTS(SELECT 1 FROM members m WHERE m.server = i.server AND m.username = i.username) ORDER BY i.last_at DESC, i.username DESC LIMIT $2 OFFSET $3",
-        "SELECT i.username, i.last_at FROM interactions i WHERE i.server = $1 AND (i.last_at, i.username) < ($2, $3) AND NOT EXISTS(SELECT 1 FROM members m WHERE m.server = i.server AND m.username = i.username) ORDER BY i.last_at DESC, i.username DESC LIMIT $4",
-        key,
-        pair_cursor(cursor.as_deref())?,
-        offset.unwrap_or(0).max(0),
-        limit.unwrap_or(50).clamp(1, 50),
-    )
-    .await?;
+    let (offset, limit) = (offset.unwrap_or(0).max(0), limit.unwrap_or(50).clamp(1, 50));
+    let seen = !access.manages_channels(db).await?;
+    let reader = match access.viewer() {
+        Some(user) => format!("u:{}", user.username),
+        None => "g".to_string(),
+    };
+    let basis = match seen {
+        true => "seen",
+        false => "all",
+    };
+    let pepper = crate::db::pepper(db).await?;
+    let binding = [key, reader.as_str(), basis];
+    let after = match cursor.as_deref().filter(|c| !c.trim().is_empty()) {
+        Some(raw) => {
+            let parts = sealed::open(&pepper, INTERACTED, &binding, raw, 2)?;
+            Some((cursor_int(&parts[0])?, parts[1].clone()))
+        }
+        None => None,
+    };
+    let (pairs, more) = match seen {
+        true => seen_pairs(db, access, after, offset, limit).await?,
+        false => {
+            recent_pairs(
+                db,
+                "SELECT i.username, i.last_at FROM interactions i WHERE i.server = $1 AND NOT EXISTS(SELECT 1 FROM members m WHERE m.server = i.server AND m.username = i.username) ORDER BY i.last_at DESC, i.username DESC LIMIT $2 OFFSET $3",
+                "SELECT i.username, i.last_at FROM interactions i WHERE i.server = $1 AND (i.last_at, i.username) < ($2, $3) AND NOT EXISTS(SELECT 1 FROM members m WHERE m.server = i.server AND m.username = i.username) ORDER BY i.last_at DESC, i.username DESC LIMIT $4",
+                key,
+                after,
+                offset,
+                limit,
+            )
+            .await?
+        }
+    };
+    let next = match (more, pairs.last()) {
+        (true, Some((name, at))) => Some(sealed::seal(
+            &pepper,
+            INTERACTED,
+            &binding,
+            &[&at.to_string(), name],
+        )),
+        _ => None,
+    };
     let names: Vec<String> = pairs.into_iter().map(|(name, _)| name).collect();
     let refs = user_refs(db, &names).await;
     Ok(Paged(
@@ -3590,7 +3696,7 @@ pub(crate) async fn list_bans(
         limit,
         cursor,
     } = q;
-    let (bans, next) = recent_pairs(
+    let (bans, more) = recent_pairs(
         db,
         "SELECT username, created_at FROM server_bans WHERE server = $1 ORDER BY created_at DESC, username DESC LIMIT $2 OFFSET $3",
         "SELECT username, created_at FROM server_bans WHERE server = $1 AND (created_at, username) < ($2, $3) ORDER BY created_at DESC, username DESC LIMIT $4",
@@ -3600,6 +3706,7 @@ pub(crate) async fn list_bans(
         limit.unwrap_or(50).clamp(1, 50),
     )
     .await?;
+    let next = pair_next(more, bans.last());
     let names: Vec<String> = bans.iter().map(|(name, _)| name.clone()).collect();
     let refs = user_refs(db, &names).await;
     Ok(Paged(
@@ -5265,6 +5372,14 @@ mod tests {
             .execute(db)
             .await
             .expect("interaction");
+            let cid = sqlx::query_scalar(
+                "INSERT INTO channels(server, name, created_at) VALUES($1, 'chat', 1) RETURNING id",
+            )
+            .bind(server)
+            .fetch_one(db)
+            .await
+            .expect("channel");
+            wrote(db, cid, "erin", 3, None).await;
         }
         sqlx::query("INSERT INTO guest_grants(\"grant\", server, created_at, last_used_at) VALUES($1, 'vault', 0, 4000000000)")
             .bind(crate::db::secret_key(&crate::api::test_util::test_grant("g1")))
@@ -7988,7 +8103,7 @@ mod tests {
     async fn ban_and_interacted_cursors_walk_everything() {
         let (state, path) = temp_state("pair_cursor").await;
         let db = &state.db;
-        let _ = make_server(&state, "club").await.expect("club");
+        let cid = make_server(&state, "club").await.expect("club").0.channels[0].id;
         for i in 0..23 {
             sqlx::query("INSERT INTO server_bans(server, username, banned_by, created_at) VALUES('club', $1, 'alice', $2)")
                 .bind(format!("b{i:02}"))
@@ -8004,6 +8119,7 @@ mod tests {
             .execute(db)
             .await
             .expect("interaction");
+            wrote(db, cid, &format!("i{i:02}"), 500 + i / 4, None).await;
         }
         add_member(db, "club", "i05", 0, 0, 0).await;
         let walk = |interacted: bool| {
@@ -8067,6 +8183,827 @@ mod tests {
         want.sort_by(|a, b| b.cmp(a));
         assert_eq!(seen, want);
         done(state, path).await;
+    }
+
+    type Walk = Vec<(Vec<String>, Option<String>)>;
+
+    /// Every page of `club`'s `interacted` list for `who` (a guest for `None`), one name a page,
+    /// with the cursor each page gave.
+    async fn interacted_walk(state: &AppState, who: Option<User>) -> Walk {
+        let mut pages = Vec::new();
+        let mut cursor = None;
+        while pages.len() < 20 {
+            let Paged(list, next) = list_interacted(
+                State(state.clone()),
+                MaybeAuthed(who.clone()),
+                HeaderMap::new(),
+                Path("club".to_string()),
+                Query(MembersQuery {
+                    offset: None,
+                    limit: Some(1),
+                    cursor,
+                }),
+            )
+            .await
+            .expect("interacted");
+            pages.push((list.into_iter().map(|u| u.username).collect(), next.clone()));
+            match next {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        pages
+    }
+
+    fn walked(walk: &Walk) -> Vec<String> {
+        walk.iter().flat_map(|(names, _)| names.clone()).collect()
+    }
+
+    async fn wrote(db: &Db, cid: i64, author: &str, at: i64, root: Option<i64>) -> i64 {
+        sqlx::query("INSERT INTO messages(channel_id, thread_root_id, author, content, created_at) VALUES($1, $2, $3, 'hi', $4) RETURNING id")
+            .bind(cid)
+            .bind(root)
+            .bind(author)
+            .bind(at)
+            .fetch_one(db)
+            .await
+            .expect("message")
+            .try_get(0)
+            .expect("id")
+    }
+
+    /// Sets `club`'s interactions to the newest message of each author there, as sending them
+    /// would have.
+    async fn interactions_from_messages(db: &Db) {
+        sqlx::query("DELETE FROM interactions WHERE server = 'club'")
+            .execute(db)
+            .await
+            .expect("clear");
+        sqlx::query("INSERT INTO interactions(server, username, last_at) SELECT 'club', m.author, MAX(m.created_at) FROM messages m JOIN channels c ON c.id = m.channel_id WHERE c.server = 'club' GROUP BY m.author")
+            .execute(db)
+            .await
+            .expect("interactions");
+    }
+
+    /// `club` (public): `general`, `staff` that needs a role to view, and `archive` that bob
+    /// reads without history; alice owns it, bob and carol joined at 1000; ann, ben, cat, dan
+    /// and eve left it. Returns the channel ids and the archive root sent before bob joined.
+    async fn interacted_world(state: &AppState) -> (i64, i64, i64, i64) {
+        let db = &state.db;
+        let _ = make_server(state, "club").await.expect("club");
+        sqlx::query("UPDATE servers SET public_read = 1 WHERE name = 'club'")
+            .execute(db)
+            .await
+            .expect("public");
+        let general: i64 =
+            sqlx::query("SELECT id FROM channels WHERE server = 'club' AND name = 'general'")
+                .fetch_one(db)
+                .await
+                .expect("general")
+                .try_get(0)
+                .expect("id");
+        let channel = |name: &'static str, restrict: i64| async move {
+            sqlx::query("INSERT INTO channels(server, name, created_at, restrict_view) VALUES('club', $1, 1, $2) RETURNING id")
+                .bind(name)
+                .bind(restrict)
+                .fetch_one(db)
+                .await
+                .expect("channel")
+                .try_get::<i64, _>(0)
+                .expect("id")
+        };
+        let staff = channel("staff", 1).await;
+        let archive = channel("archive", 0).await;
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:bob', 1, 1, 0)")
+            .bind(archive)
+            .execute(db)
+            .await
+            .expect("no history for bob");
+        for name in ["alice", "bob", "carol", "ann", "ben", "cat", "dan", "eve"] {
+            crate::db::NewUser::plain(name).at(1).add(db).await;
+        }
+        add_member(db, "club", "bob", 0, 0, 1000).await;
+        add_member(db, "club", "carol", 0, 0, 1000).await;
+        wrote(db, general, "ann", 100, None).await;
+        wrote(db, general, "cat", 150, None).await;
+        wrote(db, general, "ben", 200, None).await;
+        let root = wrote(db, archive, "alice", 600, None).await;
+        (general, staff, archive, root)
+    }
+
+    #[tokio::test]
+    async fn an_empty_hidden_channel_preserves_interacted_pages_and_cursors() {
+        let (state, path) = temp_state("interacted_pages").await;
+        empty_hidden_channel(&state).await;
+        done(state, path).await;
+        if let Some((state, temp)) = crate::api::test_util::pg_state("interacted_pages").await {
+            empty_hidden_channel(&state).await;
+            crate::api::test_util::pg_done(state, temp).await;
+        }
+    }
+
+    async fn empty_hidden_channel(state: &AppState) {
+        let db = &state.db;
+        let general = make_server(state, "club").await.unwrap().0.channels[0].id;
+        for name in ["bob", "zed", "pat", "ann", "ben", "vic"] {
+            crate::db::NewUser::plain(name).at(1).add(db).await;
+        }
+        add_member(db, "club", "bob", 0, 0, 1).await;
+        add_member(db, "club", "pat", 0, 0, 1).await;
+        give_role(db, "club", "pat", Perm::ManageChannels as i64).await;
+        sqlx::query("INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'talk', 'voice', 1)")
+            .execute(db).await.unwrap();
+        wrote(db, general, "ann", 100, None).await;
+        wrote(db, general, "ben", 120, None).await;
+        wrote(db, general, "ann", 130, None).await;
+        sqlx::query("INSERT INTO interactions(server, username, last_at) VALUES('club', 'ann', 100), ('club', 'ben', 120), ('club', 'vic', 150)")
+            .execute(db).await.unwrap();
+
+        let readers = [
+            Some(mem_user("bob", false)),
+            None,
+            Some(mem_user("zed", false)),
+            Some(mem_user("pat", false)),
+            Some(mem_user("root", true)),
+        ];
+        let mut before = Vec::new();
+        for reader in &readers {
+            before.push(interacted_walk(state, reader.clone()).await);
+        }
+        let _ = create_channel(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path("club".into()),
+            Json(CreateChannelReq {
+                name: "staff".into(),
+                kind: None,
+                restrict_view: true,
+                category_id: None,
+            }),
+        )
+        .await
+        .expect("empty restricted channel");
+
+        for (reader, pages) in readers.into_iter().zip(before) {
+            let current = interacted_walk(state, reader.clone()).await;
+            assert_eq!(current, pages, "every page and cursor stays the same");
+            let names: &[&str] = match reader.as_ref().map(|u| u.username.as_str()) {
+                Some("pat" | "root") => &["vic", "ben", "ann"],
+                _ => &["ann", "ben"],
+            };
+            assert_eq!(walked(&current), names);
+            let Paged(list, next) = list_interacted(
+                State(state.clone()),
+                MaybeAuthed(reader),
+                HeaderMap::new(),
+                Path("club".into()),
+                Query(MembersQuery {
+                    offset: None,
+                    limit: Some(1),
+                    cursor: pages[0].1.clone(),
+                }),
+            )
+            .await
+            .expect("continue from the first page");
+            assert_eq!(
+                (list[0].username.as_str(), next),
+                (names[1], pages[1].1.clone())
+            );
+        }
+    }
+
+    async fn former_members(state: &AppState, name: &str) -> Result<usize, ApiError> {
+        list_interacted(
+            State(state.clone()),
+            MaybeAuthed(Some(mem_user(name, false))),
+            HeaderMap::new(),
+            Path("club".into()),
+            Query(MembersQuery {
+                offset: None,
+                limit: None,
+                cursor: None,
+            }),
+        )
+        .await
+        .map(|Paged(rows, _)| rows.len())
+    }
+
+    async fn list_waiter(state: &AppState, name: &str) {
+        let caller = mem_user(name, false);
+        while !crate::api::search_limits::list_waiting(state, &caller) {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    fn rate_response(error: ApiError, wait: u64) {
+        use axum::response::IntoResponse;
+        let reason = error.2.as_ref().expect("a reason");
+        assert_eq!(
+            (reason.kind, reason.retry_after),
+            (ReasonKind::Rate, Some(wait))
+        );
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()["retry-after"], wait.to_string());
+    }
+
+    #[tokio::test]
+    async fn interacted_pages_share_a_single_reader() {
+        use crate::api::{search_limits, test_util};
+        use crate::config::AppConfig;
+        use crate::instance::{Instance, InstanceConfig};
+
+        async fn check(state: &AppState) {
+            let state = &state
+                .clone()
+                .with_limits(std::sync::Arc::new(crate::limits::Limits {
+                    lookup_list_per_minute: 10,
+                    message_search_concurrent_limit: Some(10),
+                    ..crate::limits::Limits::default()
+                }));
+            assert_eq!(state.read().options().get_max_connections(), 1);
+            let (_, staff, _, _) = interacted_world(state).await;
+            wrote(&state.db, staff, "eve", 300, None).await;
+            interactions_from_messages(&state.db).await;
+            let held = search_limits::admit_interacted(state, Some(&mem_user("carol", false)))
+                .await
+                .expect("one running list");
+            let mut waiting = Box::pin(former_members(state, "bob"));
+            tokio::select! {
+                answer = &mut waiting => panic!("expected a waiter: {answer:?}"),
+                _ = list_waiter(state, "bob") => {}
+            }
+            drop(waiting);
+            assert!(!search_limits::list_waiting(state, &mem_user("bob", false)));
+            rate_response(former_members(state, "bob").await.unwrap_err(), 2);
+            drop(held);
+            for _ in 0..5 {
+                assert_eq!(
+                    former_members(state, "bob")
+                        .await
+                        .expect("readable former members"),
+                    3
+                );
+            }
+            assert_eq!(
+                former_members(state, "bob").await.unwrap_err().0,
+                StatusCode::TOO_MANY_REQUESTS
+            );
+            assert_eq!(
+                former_members(state, "alice").await.expect("activity list"),
+                4
+            );
+        }
+
+        for readers in ["1", "0"] {
+            let (state, path) = test_util::temp_state_env(
+                "list_one_reader",
+                &[("DATABASE_READ_CONNECTIONS", readers)],
+            )
+            .await;
+            check(&state).await;
+            done(state, path).await;
+        }
+
+        let opts = AppConfig::from_map(&[("DATABASE_MAX_CONNECTIONS", "1")])
+            .unwrap()
+            .db_options();
+        let open = async |url: &str| {
+            let db = crate::db::open_with(Some(url), &opts).await.unwrap();
+            let instance = Instance::load(&db, &InstanceConfig::default())
+                .await
+                .unwrap();
+            AppState::new(db, Hub::new(), None, None, instance)
+        };
+        let memory = open("sqlite://interacted?mode=memory").await;
+        check(&memory).await;
+        crate::db::close(&memory.db).await;
+        if let Some(pg) = test_util::pg_temp("list_one_reader").await {
+            let state = open(&pg.url).await;
+            check(&state).await;
+            test_util::pg_done(state, pg).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn interacted_waiters_leave_the_read_pool_and_lookup_budget_available() {
+        use crate::api::{search_limits, test_util};
+        use crate::limits::Limits;
+        use std::time::Duration;
+        use tokio::time::timeout;
+
+        let (state, path) =
+            test_util::temp_state_env("interacted_limit", &[("DATABASE_READ_CONNECTIONS", "2")])
+                .await;
+        let state = state.with_limits(std::sync::Arc::new(Limits {
+            lookup_list_per_minute: 1,
+            message_search_concurrent_limit: Some(10),
+            ..Limits::default()
+        }));
+        interacted_world(&state).await;
+        let held = search_limits::admit(&state, Some(&mem_user("carol", false)))
+            .await
+            .unwrap();
+        rate_response(
+            former_members(&state, "bob")
+                .await
+                .expect_err("one reader stays free"),
+            2,
+        );
+        let mut older = Box::pin(former_members(&state, "bob"));
+        tokio::select! {
+            answer = &mut older => panic!("expected a waiter: {answer:?}"),
+            _ = list_waiter(&state, "bob") => {}
+        }
+        let mut newer = Box::pin(former_members(&state, "bob"));
+        tokio::select! {
+            answer = &mut newer => panic!("expected a newer waiter: {answer:?}"),
+            answer = older => rate_response(answer.unwrap_err(), 1)
+        }
+        let read = state.read();
+        let mut connections = Vec::new();
+        for _ in 0..2 {
+            connections.push(
+                timeout(Duration::from_secs(1), read.acquire())
+                    .await
+                    .expect("waiting for admission holds no read connection")
+                    .unwrap(),
+            );
+        }
+        drop(newer);
+        assert!(!search_limits::list_waiting(
+            &state,
+            &mem_user("bob", false)
+        ));
+        drop(connections);
+        drop(held);
+        for _ in 0..5 {
+            former_members(&state, "bob")
+                .await
+                .expect("the full list budget is available");
+        }
+        let error = former_members(&state, "bob").await.unwrap_err();
+        assert_eq!(error.0, StatusCode::TOO_MANY_REQUESTS);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_waiting_interacted_request_checks_membership_when_it_runs() {
+        let (state, path) = temp_state("interacted_membership").await;
+        interacted_world(&state).await;
+        interactions_from_messages(&state.db).await;
+        sqlx::query("UPDATE servers SET members_visible = 0 WHERE name = 'club'")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        assert!(former_members(&state, "bob").await.unwrap() > 0);
+        let held =
+            crate::api::search_limits::admit_interacted(&state, Some(&mem_user("bob", false)))
+                .await
+                .unwrap();
+        let mut next = Box::pin(former_members(&state, "bob"));
+        tokio::select! {
+            answer = &mut next => panic!("expected a waiter: {answer:?}"),
+            _ = list_waiter(&state, "bob") => {}
+        }
+        sqlx::query("DELETE FROM members WHERE server = 'club' AND username = 'bob'")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        drop(held);
+        assert_eq!(next.await.unwrap(), 0, "outsiders cannot list the members");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_burst_of_interacted_requests_leaves_room_for_a_server_read() {
+        use std::time::{Duration, Instant};
+        use tokio::task::JoinSet;
+        use tokio::time::timeout;
+
+        async fn blocked_lists(lock: &mut sqlx::Transaction<'_, sqlx::Any>) -> i64 {
+            sqlx::query_scalar("SELECT COUNT(*) FROM pg_locks WHERE relation = 'messages'::regclass AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND NOT granted")
+                .fetch_one(&mut **lock).await.unwrap()
+        }
+
+        let Some((state, temp)) = crate::api::test_util::pg_state("interacted_burst").await else {
+            return;
+        };
+        interacted_world(&state).await;
+        let mut lock = state.db.begin().await.unwrap();
+        sqlx::query("LOCK TABLE messages IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let mut requests = JoinSet::new();
+        let request = || {
+            let state = state.clone();
+            async move { former_members(&state, "bob").await }
+        };
+        requests.spawn(request());
+        timeout(Duration::from_secs(4), async {
+            loop {
+                if blocked_lists(&mut lock).await == 1 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the first list query is running");
+        for _ in 1..28 {
+            requests.spawn(request());
+        }
+        timeout(Duration::from_secs(4), async {
+            for _ in 0..26 {
+                let refused = requests
+                    .join_next()
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .expect_err("superseded request");
+                rate_response(refused, 1);
+            }
+        })
+        .await
+        .expect("one request runs and one waits");
+        assert_eq!(
+            blocked_lists(&mut lock).await,
+            1,
+            "only one list query uses a connection"
+        );
+        let start = Instant::now();
+        let detail = timeout(
+            Duration::from_secs(2),
+            get_server(
+                State(state.clone()),
+                MaybeAuthed(Some(mem_user("carol", false))),
+                HeaderMap::new(),
+                Path("club".into()),
+            ),
+        )
+        .await
+        .expect("a plain read completes while the list is blocked")
+        .unwrap();
+        assert_eq!(detail.0.name, "club");
+        eprintln!("Server read with 28 list requests: {:?}", start.elapsed());
+        lock.rollback().await.unwrap();
+        while let Some(result) = requests.join_next().await {
+            result
+                .unwrap()
+                .expect("the running request and its latest waiter finish");
+        }
+        crate::api::test_util::pg_done(state, temp).await;
+    }
+
+    #[tokio::test]
+    async fn interacted_order_follows_only_what_the_caller_sees() {
+        let (state, path) = temp_state("interacted_sight").await;
+        interacted_sight(&state).await;
+        done(state, path).await;
+        if let Some((state, temp)) = crate::api::test_util::pg_state("interacted_sight").await {
+            interacted_sight(&state).await;
+            crate::api::test_util::pg_done(state, temp).await;
+        }
+    }
+
+    async fn interacted_sight(state: &AppState) {
+        let db = &state.db;
+        let state = state.clone();
+        let (_, staff, archive, root) = interacted_world(&state).await;
+        let staff_ids = [
+            wrote(db, staff, "dan", 800, None).await,
+            wrote(db, staff, "ann", 900, None).await,
+        ];
+        let archive_ids = [
+            wrote(db, archive, "eve", 500, None).await,
+            wrote(db, archive, "ben", 1100, Some(root)).await,
+        ];
+        interactions_from_messages(db).await;
+        let bob = || Some(mem_user("bob", false));
+        let (bob_all, guest_all) = (
+            interacted_walk(&state, bob()).await,
+            interacted_walk(&state, None).await,
+        );
+        assert_eq!(walked(&bob_all), ["ben", "cat", "ann"]);
+        assert_eq!(walked(&guest_all), ["ben", "eve", "cat", "ann"]);
+        for who in [mem_user("alice", false), mem_user("root", true)] {
+            assert_eq!(
+                walked(&interacted_walk(&state, Some(who.clone())).await),
+                ["ben", "ann", "dan", "eve", "cat"],
+                "{} sees every channel",
+                who.username
+            );
+        }
+        for id in staff_ids {
+            sqlx::query("DELETE FROM messages WHERE id = $1")
+                .bind(id)
+                .execute(db)
+                .await
+                .expect("delete");
+        }
+        interactions_from_messages(db).await;
+        assert_eq!(interacted_walk(&state, bob()).await, bob_all);
+        assert_eq!(
+            interacted_walk(&state, None).await,
+            guest_all,
+            "the staff channel's activity changes neither order nor cursors"
+        );
+        for id in archive_ids {
+            sqlx::query("DELETE FROM messages WHERE id = $1")
+                .bind(id)
+                .execute(db)
+                .await
+                .expect("delete");
+        }
+        interactions_from_messages(db).await;
+        assert_eq!(
+            interacted_walk(&state, bob()).await,
+            bob_all,
+            "messages bob may not read change neither order nor cursors"
+        );
+    }
+
+    #[tokio::test]
+    async fn interacted_cursors_open_only_for_their_caller() {
+        let (state, path) = temp_state("interacted_sealed").await;
+        interacted_sealed(&state).await;
+        done(state, path).await;
+        if let Some((state, temp)) = crate::api::test_util::pg_state("interacted_sealed").await {
+            interacted_sealed(&state).await;
+            crate::api::test_util::pg_done(state, temp).await;
+        }
+    }
+
+    async fn interacted_sealed(state: &AppState) {
+        let db = &state.db;
+        let state = state.clone();
+        let (general, _, _, _) = interacted_world(&state).await;
+        let dan = wrote(db, general, "dan", 300, None).await.to_string();
+        interactions_from_messages(db).await;
+        let page = |who: Option<User>, cursor: Option<String>, offset: Option<i64>| {
+            let state = state.clone();
+            async move {
+                list_interacted(
+                    State(state),
+                    MaybeAuthed(who),
+                    HeaderMap::new(),
+                    Path("club".to_string()),
+                    Query(MembersQuery {
+                        offset,
+                        limit: Some(1),
+                        cursor,
+                    }),
+                )
+                .await
+                .map(|Paged(list, next)| {
+                    (
+                        list.into_iter().map(|u| u.username).collect::<Vec<_>>(),
+                        next,
+                    )
+                })
+            }
+        };
+        let bob = || Some(mem_user("bob", false));
+        let (first, next) = page(bob(), None, None).await.expect("first page");
+        assert_eq!(first, ["dan"]);
+        let next = next.expect("a cursor");
+        assert_eq!(decode_cursor(&next, 2).ok(), None);
+        let (second, _) = page(bob(), Some(next.clone()), None).await.expect("second");
+        assert_eq!(second, ["ben"]);
+        let (by_offset, _) = page(bob(), None, Some(2)).await.expect("offset");
+        assert_eq!(by_offset, ["cat"]);
+        let refused = |res: Result<(Vec<String>, Option<String>), ApiError>| match res {
+            Err(ApiError(StatusCode::BAD_REQUEST, msg, None)) => msg,
+            other => panic!(
+                "expected the invalid cursor answer: {:?}",
+                other.map(|p| p.0)
+            ),
+        };
+        let uniform = refused(page(bob(), Some("zz".to_string()), None).await);
+        assert_eq!(uniform, "Invalid cursor");
+        let mut flipped = next.clone().into_bytes();
+        let at = flipped.len() / 2;
+        flipped[at] = if flipped[at] == b'A' { b'B' } else { b'A' };
+        let flipped = String::from_utf8(flipped).expect("ascii");
+        for (who, cursor) in [
+            (bob(), encode_cursor(&[&dan, "dan"])),
+            (bob(), encode_cursor(&["150", "zzz"])),
+            (bob(), flipped),
+            (Some(mem_user("carol", false)), next.clone()),
+            (Some(mem_user("alice", false)), next.clone()),
+            (None, next.clone()),
+        ] {
+            let name = who.as_ref().map(|u| u.username.clone());
+            assert_eq!(
+                refused(page(who, Some(cursor.clone()), None).await),
+                uniform,
+                "{name:?} with {cursor}"
+            );
+        }
+    }
+
+    async fn former_names(state: &AppState, who: Option<User>) -> Vec<String> {
+        let Paged(list, _) = list_interacted(
+            State(state.clone()),
+            MaybeAuthed(who),
+            HeaderMap::new(),
+            Path("club".into()),
+            Query(MembersQuery {
+                offset: None,
+                limit: None,
+                cursor: None,
+            }),
+        )
+        .await
+        .expect("interacted");
+        list.into_iter().map(|u| u.username).collect()
+    }
+
+    #[tokio::test]
+    async fn former_members_follow_their_newest_readable_message() {
+        let (state, path) = temp_state("interacted_order").await;
+        newest_message_order(&state).await;
+        done(state, path).await;
+        if let Some((state, temp)) = crate::api::test_util::pg_state("interacted_order").await {
+            newest_message_order(&state).await;
+            crate::api::test_util::pg_done(state, temp).await;
+        }
+    }
+
+    /// Message order, not send time: kit's only message comes first with the latest send time,
+    /// and wren's newest message carries an earlier send time than her first one and lark's.
+    async fn newest_message_order(state: &AppState) {
+        let db = &state.db;
+        let general = make_server(state, "club").await.unwrap().0.channels[0].id;
+        sqlx::query("UPDATE servers SET public_read = 1 WHERE name = 'club'")
+            .execute(db)
+            .await
+            .unwrap();
+        for name in ["bob", "kit", "wren", "lark"] {
+            crate::db::NewUser::plain(name).at(1).add(db).await;
+        }
+        add_member(db, "club", "bob", 0, 0, 1).await;
+        wrote(db, general, "kit", 400, None).await;
+        wrote(db, general, "wren", 300, None).await;
+        wrote(db, general, "lark", 200, None).await;
+        wrote(db, general, "wren", 100, None).await;
+        interactions_from_messages(db).await;
+        for who in [Some(mem_user("bob", false)), None] {
+            let order = ["wren", "lark", "kit"];
+            assert_eq!(former_names(state, who.clone()).await, order);
+            assert_eq!(walked(&interacted_walk(state, who).await), order);
+        }
+    }
+
+    /// Virtual machine steps SQLite takes for the former-member statement a guest's page of
+    /// `club` runs, on a connection of its own to the database at `path`.
+    async fn guest_seen_steps(state: &AppState, path: &std::path::Path) -> u64 {
+        use sqlx::Connection;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        let access = resolve_server(&state.db, "club", None, &Proof::none())
+            .await
+            .expect("club");
+        let sql = seen_sql(&access.text_reading(2).sql);
+        let mut conn =
+            sqlx::sqlite::SqliteConnection::connect(&format!("sqlite://{}", path.display()))
+                .await
+                .expect("connect");
+        let steps = Arc::new(AtomicU64::new(0));
+        let counted = steps.clone();
+        conn.lock_handle()
+            .await
+            .expect("handle")
+            .set_progress_handler(1, move || {
+                counted.fetch_add(1, Ordering::Relaxed);
+                true
+            });
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind("club")
+            .bind(now())
+            .fetch_all(&mut conn)
+            .await
+            .expect("seen");
+        assert_eq!(rows.len(), 3);
+        let taken = steps.load(Ordering::Relaxed);
+        conn.close().await.expect("close");
+        taken
+    }
+
+    #[tokio::test]
+    async fn a_former_member_page_reads_one_message_per_author_and_channel() {
+        let (state, path) = temp_state("interacted_cost").await;
+        let db = &state.db;
+        let (general, _, archive, _) = interacted_world(&state).await;
+        interactions_from_messages(db).await;
+        let shallow = guest_seen_steps(&state, &path).await;
+        for channel in [general, archive] {
+            sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 400) INSERT INTO messages(channel_id, author, content, created_at) SELECT $1, a.name, 'hi', 1 + n.i FROM n CROSS JOIN (SELECT 'ann' AS name UNION ALL SELECT 'ben' UNION ALL SELECT 'cat') a")
+                .bind(channel)
+                .execute(db)
+                .await
+                .expect("archive");
+        }
+        let deep = guest_seen_steps(&state, &path).await;
+        assert!(
+            deep < shallow * 2,
+            "2,400 more messages by former members: {shallow} steps, then {deep}"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn channel_rules_that_change_while_a_list_waits_apply_to_its_page() {
+        use std::time::Duration;
+        use tokio::time::timeout;
+
+        let Some((state, temp)) = crate::api::test_util::pg_state("interacted_moment").await else {
+            return;
+        };
+        let db = &state.db;
+        let (general, _, _, _) = interacted_world(&state).await;
+        wrote(db, general, "ann", 1200, None).await;
+        interactions_from_messages(db).await;
+        sqlx::query("INSERT INTO interactions(server, username, last_at) VALUES('club', 'dan', 50), ('club', 'eve', 60)")
+            .execute(db)
+            .await
+            .unwrap();
+        let bob = || Some(mem_user("bob", false));
+        assert_eq!(former_names(&state, bob()).await, ["ann", "ben", "cat"]);
+
+        let mut lock = db.begin().await.unwrap();
+        sqlx::query("LOCK TABLE messages IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        let waiting = tokio::spawn({
+            let state = state.clone();
+            async move { former_names(&state, bob()).await }
+        });
+        timeout(Duration::from_secs(4), async {
+            loop {
+                let blocked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pg_locks WHERE relation = 'messages'::regclass AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND NOT granted")
+                    .fetch_one(&mut *lock)
+                    .await
+                    .unwrap();
+                if blocked == 1 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the list waits for its activity read");
+        let mut channel = async |name: &str| -> i64 {
+            sqlx::query_scalar("INSERT INTO channels(server, name, created_at, restrict_view) VALUES('club', $1, 1, 1) RETURNING id")
+                .bind(name)
+                .fetch_one(&mut *lock)
+                .await
+                .unwrap()
+        };
+        let (vault, den) = (channel("vault").await, channel("den").await);
+        let role: i64 = sqlx::query_scalar("INSERT INTO roles(server, name, color, perms) VALUES('club', 'den', '#ffffff', 0) RETURNING id")
+            .fetch_one(&mut *lock)
+            .await
+            .unwrap();
+        let rows = [
+            (
+                "INSERT INTO user_roles(server, username, role_id) VALUES('club', 'bob', $1)",
+                role,
+            ),
+            (
+                "INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, 'u:bob', 1, 1, 0)",
+                general,
+            ),
+            (
+                "INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'dan', 'hi', 2000)",
+                vault,
+            ),
+            (
+                "INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'eve', 'hi', 1500)",
+                den,
+            ),
+        ];
+        for (sql, id) in rows {
+            sqlx::query(sql).bind(id).execute(&mut *lock).await.unwrap();
+        }
+        sqlx::query("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES($1, $2, 1, 1, 1)")
+            .bind(den)
+            .bind(format!("r:{role}"))
+            .execute(&mut *lock)
+            .await
+            .unwrap();
+        lock.commit().await.unwrap();
+        let page = waiting.await.unwrap();
+        assert_eq!(
+            page,
+            ["eve", "ann"],
+            "the page reads the channels, roles and rules of the moment it reads the activity"
+        );
+        assert_eq!(former_names(&state, bob()).await, page);
+        crate::api::test_util::pg_done(state, temp).await;
     }
 
     #[tokio::test]

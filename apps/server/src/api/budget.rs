@@ -196,6 +196,28 @@ pub struct Bucket {
     table: Mutex<Table<f64>>,
 }
 
+/// A reserved token returns to its bucket on drop until the request spends it.
+#[must_use]
+pub struct Token<'a> {
+    bucket: &'a Bucket,
+    key: String,
+    burst: Option<u32>,
+}
+
+impl Token<'_> {
+    pub fn spend(mut self) {
+        self.burst = None;
+    }
+}
+
+impl Drop for Token<'_> {
+    fn drop(&mut self) {
+        if let Some(burst) = self.burst {
+            self.bucket.give_back(&self.key, burst);
+        }
+    }
+}
+
 impl Bucket {
     pub fn new(max_keys: usize) -> Bucket {
         Bucket {
@@ -207,6 +229,15 @@ impl Bucket {
     /// When it is empty, the error is the wait until the next token.
     pub fn take(&self, key: &str, burst: u32, per_minute: u32) -> Result<(), Duration> {
         self.take_at(key, burst, per_minute, Instant::now())
+    }
+
+    pub fn reserve(&self, key: String, burst: u32, per_minute: u32) -> Result<Token<'_>, Duration> {
+        self.take(&key, burst, per_minute)?;
+        Ok(Token {
+            bucket: self,
+            key,
+            burst: Some(burst),
+        })
     }
 
     fn take_at(

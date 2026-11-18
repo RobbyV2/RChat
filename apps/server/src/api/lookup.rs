@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use axum::http::{Method, StatusCode};
 
 use crate::api::ApiError;
-use crate::api::budget::{self, Bucket, Budget};
+use crate::api::budget::{self, Bucket, Budget, Token};
 use crate::api::servers::MemberListQuery;
 use crate::db::{User, pool_key};
 use crate::limits::Limits;
@@ -174,11 +174,20 @@ pub fn outside_ban(state: &AppState, user: &User) -> Result<Held, ApiError> {
 
 /// Takes one lookup of `class` from the caller's budget, before the handler runs any query.
 pub fn take(state: &AppState, class: LookupClass, caller: Option<&User>) -> Result<(), ApiError> {
+    reserve(state, class, caller).map(Token::spend)
+}
+
+/// Holds a lookup while the request waits for admission.
+pub(super) fn reserve(
+    state: &AppState,
+    class: LookupClass,
+    caller: Option<&User>,
+) -> Result<Token<'static>, ApiError> {
     let who = who(state, caller);
     let per_minute = class.per_minute(&state.limits);
     TOKENS
-        .take(
-            &format!("{who}\n{}", class.env()),
+        .reserve(
+            format!("{who}\n{}", class.env()),
             class.burst(per_minute),
             per_minute,
         )

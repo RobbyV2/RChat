@@ -60,6 +60,7 @@ redis = { version = "1.8", default-features = false, features = [
 ] }
 ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
 base64 = "0.22"
+ring = "0.17"
 regex = "1"
 emojis = "0.9.1"
 # Stored username keys are made with these four (api/names.rs): raise names::KEY_VERSION when one changes.

@@ -37,6 +37,7 @@ pub mod reactions;
 pub mod reauth;
 pub mod recovery;
 pub mod reports;
+pub mod sealed;
 pub mod search_limits;
 pub mod servers;
 pub mod system_messages;

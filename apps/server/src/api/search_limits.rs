@@ -52,7 +52,7 @@ pub fn concurrent(state: &AppState) -> u32 {
         .unwrap_or_else(|| (state.read().options().get_max_connections() / 2).max(1))
 }
 
-/// A message search that may run. It holds one of its caller's places and one of the process's
+/// An admitted read holds one of its caller's places and one of the process's
 /// until it is dropped.
 #[must_use]
 pub struct Admitted {
@@ -84,6 +84,12 @@ impl<'a> Turn<'a> {
     fn current(&self) -> bool {
         waiting().get(self.who) == Some(&self.number)
     }
+
+    async fn place(&self, key: &str, most: u64, wait: Duration) -> Option<Share> {
+        RUNNING
+            .take_by(key, 1, most, Instant::now() + wait, || self.current())
+            .await
+    }
 }
 
 impl Drop for Turn<'_> {
@@ -99,34 +105,10 @@ impl Drop for Turn<'_> {
 /// `OWN_WAIT` for one to come free, unless a newer search of the caller starts to wait.
 async fn own_place(who: &str, most: u64) -> Result<Share, ApiError> {
     let turn = Turn::take(who);
-    let deadline = Instant::now() + OWN_WAIT;
-    match RUNNING
-        .take_by(who, 1, most, deadline, || turn.current())
-        .await
-    {
+    match turn.place(who, most, OWN_WAIT).await {
         Some(own) => Ok(own),
         None if turn.current() => Err(lookup::limited(AT_ONCE, STILL_RUNNING, RUNNING_WAIT)),
         None => Err(lookup::limited(AT_ONCE, REPLACED, RUNNING_WAIT)),
-    }
-}
-
-/// A token taken from a caller's bucket. Dropping it gives it back, unless `spend` kept it.
-struct Token<'a> {
-    who: &'a str,
-    burst: Option<u32>,
-}
-
-impl Token<'_> {
-    fn spend(mut self) {
-        self.burst = None;
-    }
-}
-
-impl Drop for Token<'_> {
-    fn drop(&mut self) {
-        if let Some(burst) = self.burst.take() {
-            TOKENS.give_back(self.who, burst);
-        }
     }
 }
 
@@ -144,13 +126,9 @@ pub async fn admit(state: &AppState, caller: Option<&User>) -> Result<Admitted, 
     let limits = &state.limits;
     let per_minute = limits.message_search_per_minute;
     let burst = burst(per_minute);
-    TOKENS
-        .take(&who, burst, per_minute)
+    let token = TOKENS
+        .reserve(who.clone(), burst, per_minute)
         .map_err(|wait| lookup::limited(PER_MINUTE, TOO_MANY, wait))?;
-    let token = Token {
-        who: &who,
-        burst: Some(burst),
-    };
     let own = own_place(&who, u64::from(limits.message_search_at_once)).await?;
     let deadline = Instant::now() + SITE_WAIT;
     let most = u64::from(concurrent(state));
@@ -173,19 +151,72 @@ pub async fn admit(state: &AppState, caller: Option<&User>) -> Result<Admitted, 
     })
 }
 
+fn list_key(state: &AppState, caller: Option<&User>) -> String {
+    format!("interacted\n{}", lookup::who(state, caller))
+}
+
+#[cfg(test)]
+pub(super) fn list_waiting(state: &AppState, caller: &User) -> bool {
+    waiting().contains_key(&list_key(state, Some(caller)))
+}
+
+/// Admits one former-member list per caller. Lists share the process's search places
+/// and reserve a reader for other requests when the pool has more than one.
+pub(super) async fn admit_interacted(
+    state: &AppState,
+    caller: Option<&User>,
+) -> Result<Admitted, ApiError> {
+    let readers = state.read().options().get_max_connections();
+    let who = list_key(state, caller);
+    let turn = Turn::take(&who);
+    let refused = |text, wait| {
+        if turn.current() {
+            lookup::limited("interacted", text, wait)
+        } else {
+            lookup::limited(
+                "interacted",
+                "A newer list request took the place of this one.",
+                RUNNING_WAIT,
+            )
+        }
+    };
+    let own = turn.place(&who, 1, OWN_WAIT).await.ok_or_else(|| {
+        refused(
+            "Another list request of yours is still running.",
+            RUNNING_WAIT,
+        )
+    })?;
+    let most = concurrent(state).min(readers.saturating_sub(1).max(1));
+    let full = || {
+        refused(
+            "This site is busy loading lists. Try again in a moment.",
+            SITE_WAIT,
+        )
+    };
+    let site = turn
+        .place(&pool_key(&state.db), u64::from(most), SITE_WAIT)
+        .await
+        .filter(|_| turn.current())
+        .ok_or_else(full)?;
+    Ok(Admitted {
+        _own: own,
+        _site: site,
+    })
+}
+
 impl Admitted {
-    /// Runs `search` on a task of its own and answers with its result. The places stay held
-    /// until the search ends, also when the request that started it goes away first.
+    /// Runs the admitted work on its own task. The places stay held
+    /// until the work ends, also when the request that started it goes away first.
     pub async fn run<T: Send + 'static>(
         self,
-        search: impl Future<Output = T> + Send + 'static,
+        work: impl Future<Output = T> + Send + 'static,
     ) -> Result<T, ApiError> {
         let client = budget::client();
         tokio::spawn(async move {
             let _held = self;
             match client {
-                Some(ip) => budget::as_client(ip, search).await,
-                None => search.await,
+                Some(ip) => budget::as_client(ip, work).await,
+                None => work.await,
             }
         })
         .await

@@ -965,6 +965,46 @@ impl ServerAccess {
         Ok(out)
     }
 
+    /// For one statement that reads this server's messages for a viewer who doesn't manage
+    /// channels: the text channels they view under the rule of `channel_rights`, as `id`,
+    /// `whole` (1 where they read the whole history) and `since` (from when they read the
+    /// others: their join, or now for someone who isn't a member). That statement reads the
+    /// channels, their rules, the viewer's roles and their join itself, so a channel or rule
+    /// that changes meanwhile can't fall between two reads. `$1` is the server's name; the
+    /// binds of `TextReading::bind` start at `$next`.
+    pub fn text_reading(&self, next: usize) -> TextReading {
+        let now = now();
+        match &self.user {
+            None => TextReading {
+                sql: format!(
+                    "SELECT c.id, 1 AS whole, ${next} AS since FROM channels c WHERE c.server = $1 AND c.kind = 'text' AND c.restrict_view = 0"
+                ),
+                viewer: None,
+                now,
+            },
+            Some(user) => {
+                let (name, at) = (next, next + 1);
+                let rule = |allows: &str| {
+                    format!(
+                        "EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id{allows} AND (cp.subject = 'u:' || ${name} OR cp.subject IN (SELECT 'r:' || CAST(ur.role_id AS TEXT) FROM user_roles ur WHERE ur.server = $1 AND ur.username = ${name})))"
+                    )
+                };
+                let (any, view, history) = (
+                    rule(""),
+                    rule(" AND cp.can_view <> 0"),
+                    rule(" AND cp.can_read_history <> 0"),
+                );
+                TextReading {
+                    sql: format!(
+                        "SELECT c.id, CASE WHEN NOT {any} OR {history} THEN 1 ELSE 0 END AS whole, COALESCE((SELECT mm.joined_at FROM members mm WHERE mm.server = $1 AND mm.username = ${name}), ${at}) AS since FROM channels c WHERE c.server = $1 AND c.kind = 'text' AND ((c.restrict_view = 0 AND NOT {any}) OR {view})"
+                    ),
+                    viewer: Some(user.username.clone()),
+                    now,
+                }
+            }
+        }
+    }
+
     pub async fn require_moderate(&self, db: &Db, target: &str) -> Result<(), ApiError> {
         let mine = self.perms(db).await?;
         let theirs = self.member_perms(db, target).await?;
@@ -1006,6 +1046,32 @@ impl ServerAccess {
             rights,
             server: self,
         })
+    }
+}
+
+/// The query of `ServerAccess::text_reading` and its binds.
+pub struct TextReading {
+    pub sql: String,
+    viewer: Option<String>,
+    now: i64,
+}
+
+impl TextReading {
+    /// `query` with the binds of `sql` after the ones it has.
+    pub fn bind<'q>(
+        &self,
+        query: sqlx::query::Query<'q, sqlx::Any, sqlx::any::AnyArguments>,
+    ) -> sqlx::query::Query<'q, sqlx::Any, sqlx::any::AnyArguments> {
+        let TextReading {
+            sql: _,
+            viewer,
+            now,
+        } = self;
+        let query = match viewer {
+            Some(name) => query.bind(name.clone()),
+            None => query,
+        };
+        query.bind(*now)
     }
 }
 
@@ -2715,6 +2781,114 @@ mod tests {
             .execute(db)
             .await
             .expect(sql);
+    }
+
+    #[tokio::test]
+    async fn the_text_reading_matches_channel_rights() {
+        let (state, path) = temp_state("text_reading").await;
+        text_reading_matches(&state).await;
+        done(state, path).await;
+        if let Some((state, temp)) = crate::api::test_util::pg_state("text_reading").await {
+            text_reading_matches(&state).await;
+            crate::api::test_util::pg_done(state, temp).await;
+        }
+    }
+
+    /// Channels with each kind of rule, read by a member with a role, a member without one, a
+    /// signed-in outsider and a guest.
+    async fn text_reading_matches(state: &AppState) {
+        let db = &state.db;
+        exec(db, "INSERT INTO servers(name, display_name, creator, created_at, public_read) VALUES('club', 'Club', 'alice', 0, 1)").await;
+        for name in ["alice", "bob", "carol", "zed"] {
+            user(db, name).await;
+        }
+        add_member(db, "club", "alice", 1, 0, 0).await;
+        add_member(db, "club", "bob", 0, 0, 40).await;
+        add_member(db, "club", "carol", 0, 0, 50).await;
+        let role = id_of(db, "INSERT INTO roles(server, name, color, perms) VALUES('club', 'r', '#ffffff', 0) RETURNING id").await;
+        exec(
+            db,
+            &format!(
+                "INSERT INTO user_roles(server, username, role_id) VALUES('club', 'bob', {role})"
+            ),
+        )
+        .await;
+        type Rule = (&'static str, i64, i64);
+        let channels: [(&str, &str, i64, i64, &[Rule]); 12] = [
+            ("open", "text", 0, 0, &[]),
+            ("send_only", "text", 0, 1, &[]),
+            ("locked", "text", 1, 0, &[]),
+            ("role_view", "text", 1, 0, &[("role", 1, 1)]),
+            ("role_recent", "text", 0, 0, &[("role", 1, 0)]),
+            ("bob_recent", "text", 1, 0, &[("u:bob", 1, 0)]),
+            ("bob_denied", "text", 0, 0, &[("u:bob", 0, 0)]),
+            ("carol_denied", "text", 0, 0, &[("u:carol", 0, 0)]),
+            ("mixed", "text", 0, 0, &[("u:bob", 1, 0), ("role", 0, 1)]),
+            ("zed_recent", "text", 1, 0, &[("u:zed", 1, 0)]),
+            ("history_only", "text", 1, 0, &[("role", 0, 1)]),
+            ("talk", "voice", 0, 0, &[]),
+        ];
+        let mut text = Vec::new();
+        for (name, kind, view, send, rules) in channels {
+            let id = id_of(db, &format!("INSERT INTO channels(server, name, kind, created_at, restrict_view, restrict_send) VALUES('club', '{name}', '{kind}', 0, {view}, {send}) RETURNING id")).await;
+            if kind == "text" {
+                text.push(id);
+            }
+            for (subject, can_view, history) in rules {
+                let subject = match *subject {
+                    "role" => format!("r:{role}"),
+                    other => other.to_string(),
+                };
+                exec(db, &format!("INSERT INTO channel_perms(channel_id, subject, can_view, can_send, can_read_history) VALUES({id}, '{subject}', {can_view}, 1, {history})")).await;
+            }
+        }
+        let readers = [
+            (Some(mem_user("bob", false)), Some(40)),
+            (Some(mem_user("carol", false)), Some(50)),
+            (Some(mem_user("zed", false)), None),
+            (None, None),
+        ];
+        for (reader, joined) in readers {
+            let access = resolve_server(db, "club", reader.as_ref(), &Proof::none())
+                .await
+                .expect("club");
+            let rights = access.channel_rights(db).await.unwrap();
+            let mut want: Vec<(i64, bool)> = text
+                .iter()
+                .filter_map(|id| match rights.get(id) {
+                    Some(r) if r.view => Some((*id, r.history)),
+                    Some(_) => None,
+                    None => Some((*id, true)),
+                })
+                .collect();
+            want.sort();
+            let start = now();
+            let reading = access.text_reading(2);
+            let sql = format!(
+                "SELECT t.id, CAST(t.whole AS BIGINT), t.since FROM ({}) t ORDER BY t.id",
+                reading.sql
+            );
+            let rows = reading
+                .bind(sqlx::query(sqlx::AssertSqlSafe(sql)).bind("club"))
+                .fetch_all(db)
+                .await
+                .unwrap();
+            let mut got = Vec::new();
+            for r in &rows {
+                got.push((
+                    r.try_get::<i64, _>(0).unwrap(),
+                    r.try_get::<i64, _>(1).unwrap() != 0,
+                ));
+                let since: i64 = r.try_get(2).unwrap();
+                match joined {
+                    Some(at) => assert_eq!(since, at),
+                    None => assert!(since >= start && since <= now()),
+                }
+            }
+            let who = reader.as_ref().map(|u| u.username.clone());
+            assert_eq!(got, want, "{who:?}");
+            assert!(!got.is_empty(), "{who:?}");
+        }
     }
 
     async fn id_of(db: &Db, sql: &str) -> i64 {

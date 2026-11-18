@@ -5221,6 +5221,7 @@ dependencies = [
  "redis",
  "regex",
  "reqwest 0.13.5",
+ "ring",
  "rust-next-wasm",
  "rust-s3",
  "serde",
