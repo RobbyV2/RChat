@@ -5,8 +5,8 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let _ = dotenvy::from_filename(".env.local");
-    let _ = dotenvy::dotenv();
+    rust_next::env_file::load(".env.local")?;
+    rust_next::env_file::load(".env")?;
 
     tracing_subscriber::fmt()
         .with_env_filter(
