@@ -307,7 +307,8 @@ const DEFAULTS = {
     ttlMs: 60_000,
     tickMs: 5000,
     // A participant whose session with its voice device went away, and who isn't heard of again
-    // (also through others), is gone after this: at least refreshMs plus relayMs.
+    // (also through others), is gone after this: at least refreshMs plus relayMs, and more than
+    // gapMs plus refreshMs.
     lostMs: 30_000,
     // How long someone we have a session with has to confirm what was passed on about them.
     confirmMs: 10_000,
@@ -903,19 +904,22 @@ export const fit = (name: string, v: unknown): number | null => {
 }
 
 // A refresh and the expiry it renews: `times` refreshes, each the sum of the intervals in
-// `refresh`, fit in the expiry.
+// `refresh`, fit in the expiry, and with `below` end before it.
 export interface RefreshRule {
   refresh: readonly string[]
   expiry: string
   times: number
+  below?: true
 }
 
 // Most refreshes are at most half their expiry, so one that comes late still lands before it.
 // A voice participant whose session with us closed is heard of again only through others: a
 // relay passes an unchanged state on at the first refresh at least relayMs after the last one it
-// passed, which with gapMs at most refreshMs is always sooner than refreshMs plus relayMs, and
-// lostMs is at least that. An instance that breaks a rule leaves all its names at their
-// defaults.
+// passed, so a newer state comes sooner than refreshMs plus relayMs. With gapMs past refreshMs,
+// a refresh that comes within gapMs of a pass waits for the gap to end, and the pass then carries
+// the newest refresh before it, up to refreshMs old. A newer state can take the whole of gapMs
+// plus refreshMs, when a gap ends just as a refresh is due, so lostMs is more than that sum. An
+// instance that breaks a rule leaves all its names at their defaults.
 export const REFRESH: readonly RefreshRule[] = [
   { refresh: ['gossip.typingRelayMs'], expiry: 'gossip.typingMs', times: 2 },
   { refresh: ['session.pingMs'], expiry: 'session.deadMs', times: 2 },
@@ -923,6 +927,8 @@ export const REFRESH: readonly RefreshRule[] = [
   { refresh: ['voice.refreshMs'], expiry: 'voice.ttlMs', times: 2 },
   { refresh: ['voice.relayMs'], expiry: 'voice.ttlMs', times: 2 },
   { refresh: ['voice.refreshMs', 'voice.relayMs'], expiry: 'voice.lostMs', times: 1 },
+  { refresh: ['voice.gapMs'], expiry: 'voice.ttlMs', times: 2 },
+  { refresh: ['voice.gapMs', 'voice.refreshMs'], expiry: 'voice.lostMs', times: 1, below: true },
 ]
 
 type Tree = Record<string, Record<string, unknown>>
@@ -941,17 +947,20 @@ export const localDefaults = (instance?: Record<string, number>): Local => {
     const [s, k] = name.split('.')
     return t[s][k] as number
   }
-  // A default brought back can break another rule that shares the name: until none is broken.
-  for (let broken = true; broken;) {
-    broken = false
-    for (const { refresh, expiry, times } of REFRESH) {
-      if (refresh.reduce((sum, name) => sum + at(out, name), 0) * times <= at(out, expiry)) continue
-      broken = true
+  // Every rule the values break goes back to its defaults, all at once, so a rule another one
+  // mends first still counts as broken. A default brought back can break another rule that
+  // shares the name: until none is broken.
+  for (;;) {
+    const broken = REFRESH.filter(({ refresh, expiry, times, below }) => {
+      const interval = refresh.reduce((sum, name) => sum + at(out, name), 0) * times
+      return below ? interval >= at(out, expiry) : interval > at(out, expiry)
+    })
+    if (!broken.length) break
+    for (const { refresh, expiry } of broken)
       for (const name of [...refresh, expiry]) {
         const [s, k] = name.split('.')
         out[s][k] = at(DEFAULTS as unknown as Tree, name)
       }
-    }
   }
   return out as unknown as Local
 }
@@ -968,10 +977,6 @@ export const registryJson = (): {
     v: 1,
     local,
     start: [...START_ONLY].sort(),
-    refresh: REFRESH.map(({ refresh, expiry, times }) => ({
-      refresh: [...refresh],
-      expiry,
-      times,
-    })),
+    refresh: REFRESH.map(rule => ({ ...rule, refresh: [...rule.refresh] })),
   }
 }

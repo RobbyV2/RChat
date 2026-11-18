@@ -316,6 +316,13 @@
     { "refresh": ["gossip.presenceMs"], "expiry": "gossip.presenceTtl", "times": 2 },
     { "refresh": ["voice.refreshMs"], "expiry": "voice.ttlMs", "times": 2 },
     { "refresh": ["voice.relayMs"], "expiry": "voice.ttlMs", "times": 2 },
-    { "refresh": ["voice.refreshMs", "voice.relayMs"], "expiry": "voice.lostMs", "times": 1 }
+    { "refresh": ["voice.refreshMs", "voice.relayMs"], "expiry": "voice.lostMs", "times": 1 },
+    { "refresh": ["voice.gapMs"], "expiry": "voice.ttlMs", "times": 2 },
+    {
+      "refresh": ["voice.gapMs", "voice.refreshMs"],
+      "expiry": "voice.lostMs",
+      "times": 1,
+      "below": true
+    }
   ]
 }

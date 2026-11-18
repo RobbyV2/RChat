@@ -166,12 +166,37 @@ describe('user P2P limits', () => {
 
   test('an instance that breaks a voice refresh rule leaves voice at its defaults', () => {
     const voice = (p2p: Record<string, number>) => accountLimits({ limits: { p2p } }, null).voice
-    const broken = { refreshMs: 40_000, relayMs: 40_000, lostMs: 10_000, ttlMs: 30_000 }
+    const broken = {
+      refreshMs: 40_000,
+      relayMs: 40_000,
+      lostMs: 10_000,
+      ttlMs: 30_000,
+      gapMs: 10_000,
+    }
     for (const [name, v] of Object.entries(broken))
       expect(voice({ [`local.voice.${name}`]: v })).toEqual(LOCAL.voice)
-    const edges = { refreshMs: 25_000, relayMs: 10_000, lostMs: 25_000, ttlMs: 40_000 }
+    const edges = {
+      refreshMs: 25_000,
+      relayMs: 10_000,
+      lostMs: 25_000,
+      ttlMs: 40_000,
+      gapMs: 9999,
+    }
     for (const [name, v] of Object.entries(edges))
       expect(voice({ [`local.voice.${name}`]: v })).toEqual({ ...LOCAL.voice, [name]: v })
+    const local = (given: Record<string, number>) =>
+      Object.fromEntries(Object.entries(given).map(([k, v]) => [`local.voice.${k}`, v]))
+    expect(voice(local({ gapMs: 30_000, lostMs: 25_000 }))).toEqual(LOCAL.voice)
+    const relayed = { gapMs: 30_000, refreshMs: 5000, relayMs: 30_000, ttlMs: 60_000 }
+    expect(voice(local({ ...relayed, lostMs: 35_000 }))).toEqual(LOCAL.voice)
+    expect(voice(local({ ...relayed, lostMs: 35_001 }))).toEqual({
+      ...LOCAL.voice,
+      ...relayed,
+      lostMs: 35_001,
+    })
+    expect(voice(local({ gapMs: 30_000, refreshMs: 5000, ttlMs: 59_999, lostMs: 35_001 }))).toEqual(
+      { ...LOCAL.voice, refreshMs: 5000, lostMs: 35_001 }
+    )
   })
 
   test('a fraction for a whole-number limit is not taken, from the instance or the user', () => {

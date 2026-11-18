@@ -141,8 +141,8 @@ describe('P2P limits registry', () => {
     const d = flat(LOCAL)
     const sum = (l: Record<string, number>, names: readonly string[]) =>
       names.reduce((total, name) => total + l[name], 0)
-    const holds = (l: Record<string, number>, { refresh, expiry, times }: RefreshRule) =>
-      sum(l, refresh) * times <= l[expiry]
+    const holds = (l: Record<string, number>, { refresh, expiry, times, below }: RefreshRule) =>
+      below ? sum(l, refresh) * times < l[expiry] : sum(l, refresh) * times <= l[expiry]
 
     test('each refresh fits in its expiry by default', () => {
       expect(REFRESH).toEqual([
@@ -152,26 +152,44 @@ describe('P2P limits registry', () => {
         { refresh: ['voice.refreshMs'], expiry: 'voice.ttlMs', times: 2 },
         { refresh: ['voice.relayMs'], expiry: 'voice.ttlMs', times: 2 },
         { refresh: ['voice.refreshMs', 'voice.relayMs'], expiry: 'voice.lostMs', times: 1 },
+        { refresh: ['voice.gapMs'], expiry: 'voice.ttlMs', times: 2 },
+        {
+          refresh: ['voice.gapMs', 'voice.refreshMs'],
+          expiry: 'voice.lostMs',
+          times: 1,
+          below: true,
+        },
       ])
       for (const rule of REFRESH) expect(holds(d, rule)).toBe(true)
     })
 
     for (const rule of REFRESH) {
-      const { refresh, expiry, times } = rule
+      const { refresh, expiry, times, below } = rule
       const names = [...refresh, expiry]
-      const said = `${refresh.join(' plus ')} at most ${times === 2 ? 'half of ' : ''}${expiry}`
+      const bound = `${below ? 'below' : 'at most'} ${times === 2 ? 'half of ' : ''}`
+      const said = `${refresh.join(' plus ')} ${bound}${expiry}`
       // Every other rule's expiry at its largest, so only this rule decides.
       const roomy = Object.fromEntries(
         REFRESH.filter(r => !names.includes(r.expiry)).map(r => [r.expiry, RANGES[r.expiry][1]])
       )
       const inRange = (name: string, v: number) => fit(name, v) === v
-      // `name` alone at the edge of the rule, the others at their defaults.
+      // `name` alone at the edge of the rule, the others at their defaults: a millisecond inside
+      // where the sum has to stay below the expiry.
+      const inside = below ? 1 : 0
       const edge = (name: string) =>
-        name === expiry ? sum(d, refresh) * times : d[expiry] / times - (sum(d, refresh) - d[name])
+        name === expiry
+          ? sum(d, refresh) * times + inside
+          : d[expiry] / times - (sum(d, refresh) - d[name]) - inside
+      // This rule broken: it and every other rule the values break are back at their defaults,
+      // whichever comes first in the list, and the rest keeps what was given.
       const kept = (given: Record<string, number>) => {
+        const broken = REFRESH.filter(r => !holds({ ...d, ...roomy, ...given }, r))
+        expect(broken).toContain(rule)
         const l = flat(localDefaults({ ...roomy, ...given, 'gossip.perRoom': 4 }))
-        expect(names.map(n => l[n])).toEqual(names.map(n => d[n]))
-        expect(Object.keys(roomy).map(n => l[n])).toEqual(Object.values(roomy))
+        const back = broken.flatMap(r => [...r.refresh, r.expiry])
+        expect(back.map(n => l[n])).toEqual(back.map(n => d[n]))
+        const rest = Object.keys(roomy).filter(n => !back.includes(n))
+        expect(rest.map(n => l[n])).toEqual(rest.map(n => roomy[n]))
         expect(l['gossip.perRoom']).toBe(4)
         for (const r of REFRESH) expect(holds(l, r)).toBe(true)
       }
@@ -193,9 +211,15 @@ describe('P2P limits registry', () => {
       })
 
       test(`${said}: the edge of the rule is taken`, () => {
-        for (const name of names) if (inRange(name, edge(name))) taken({ [name]: edge(name) })
+        // An edge another rule breaks first (a name it shares, at a default stricter there) is
+        // that rule's to test.
+        const alone = (name: string) =>
+          REFRESH.every(r => holds({ ...d, ...roomy, [name]: edge(name) }, r))
+        for (const name of names)
+          if (inRange(name, edge(name)) && alone(name)) taken({ [name]: edge(name) })
         const wider = Object.fromEntries(refresh.map(n => [n, d[n] + 20_000]))
-        taken({ ...wider, [expiry]: sum(wider, refresh) * times })
+        taken({ ...wider, [expiry]: sum(wider, refresh) * times + inside })
+        if (below) kept({ ...wider, [expiry]: sum(wider, refresh) * times })
         taken({ ...Object.fromEntries(refresh.map(n => [n, d[n] - 1])), [expiry]: d[expiry] + 1 })
       })
     }

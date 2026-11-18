@@ -876,7 +876,8 @@ class QuickClock implements Clock {
     return this.next++
   }
   clear = (h: unknown) => void this.timers.delete(h as number)
-  async advance(ms: number) {
+  // Up to `ms` on, or to the end of the first timer after which `stop` holds.
+  async advance(ms: number, stop: () => boolean = () => false) {
     const end = this.t + ms
     for (;;) {
       const due = [...this.timers.entries()]
@@ -889,6 +890,7 @@ class QuickClock implements Clock {
       due[1].fn()
       await drain()
       this.watch()
+      if (stop()) return
     }
     this.t = end
   }
@@ -898,76 +900,182 @@ const drain = async () => {
   for (let i = 0; i < 200; i += 1) await Promise.resolve()
 }
 
-describe('a quiet participant heard through others', () => {
-  // A is in voice and only refreshes. V hears it directly and through B, every device on
-  // `limits`. Right after B passes A's state on for the second time since the join, V's session
-  // with A closes, and V hears A only through B. Gives the times (from A joining) V shows and
-  // stops showing A, until lostMs and four more passes after the close.
-  const quiet = async (limits: Partial<VoiceLimits>) => {
-    const l = { ...LOCAL.voice, ...limits }
-    const clock = new QuickClock()
-    const net = new Net(clock, true)
-    const [a, b, v] = ['A', 'B', 'V'].map(name => net.add(name, undefined, l))
-    net.mesh([a, b, v])
-    await a.voice.join(ROOM, CH, { plan, muted: false })
-    await drain()
-    const start = clock.now()
-    const shown: [number, boolean][] = []
-    clock.watch = () => {
-      const on = inCh(v).includes(a.ik)
-      if (shown.at(-1)?.[1] !== on) shown.push([clock.now() - start, on])
-    }
-    clock.watch()
-    // B passes an unchanged state on at the first refresh at least relayMs after the last.
-    const passed = Math.ceil(l.relayMs / l.refreshMs) * l.refreshMs
-    await clock.advance(2 * passed)
-    const last = b.sessions.get(v.dk)!.sent.at(-1) as unknown as VoiceFrame
-    expect([last.ik, last.n]).toEqual([a.ik, clock.now()])
+// How often B passes a quiet participant's unchanged state on: when the gap after its last pass
+// ends, with gapMs past refreshMs and at least relayMs; else at the first refresh at least
+// relayMs after the last pass.
+const passEvery = (l: typeof LOCAL.voice) =>
+  l.gapMs > l.refreshMs && l.gapMs >= l.relayMs
+    ? l.gapMs
+    : Math.ceil(l.relayMs / l.refreshMs) * l.refreshMs
+
+const gcd = (x: number, y: number): number => (y ? gcd(y, x % y) : x)
+
+// A refreshes without changing state. V hears A directly until the cut, then through B alone.
+// Tied callbacks run in insertion order. Observe V on both sides of each callback so a removal
+// followed by a relay at the same timestamp is visible.
+const quietRun = async (
+  l: typeof LOCAL.voice,
+  until: number,
+  cutAfter?: number,
+  stopOnDrop = false
+) => {
+  const clock = new QuickClock()
+  const net = new Net(clock, true)
+  const [a, b, v] = ['A', 'B', 'V'].map(name => net.add(name, undefined, l))
+  net.mesh([a, b, v])
+  await a.voice.join(ROOM, CH, { plan, muted: false })
+  await drain()
+  const start = clock.now()
+  const shown: [number, boolean][] = []
+  clock.watch = () => {
+    const on = inCh(v).includes(a.ik)
+    if (shown.at(-1)?.[1] !== on) shown.push([clock.now() - start, on])
+  }
+  clock.watch()
+  expect(shown).toEqual([[0, true]])
+  const times: number[] = []
+  const passes: number[] = []
+  const toV = () =>
+    (b.sessions.get(v.dk)?.sent ?? []).filter(f => (f as unknown as VoiceFrame).ik === a.ik).length
+  let sent = toV()
+  await clock.advance(until, () => {
+    const elapsed = clock.now() - start
+    times.push(elapsed)
+    const count = toV()
+    if (count > sent) passes.push(elapsed)
+    sent = count
+    return times.length === cutAfter
+  })
+  if (cutAfter !== undefined) {
+    expect(times.length).toBe(cutAfter)
     net.cut(a, v)
     clock.watch()
-    await clock.advance(l.lostMs + 4 * passed)
-    return { shown, cut: 2 * passed }
+    await clock.advance(l.lostMs + 4 * passEvery(l), () => stopOnDrop && shown.length > 1)
   }
+  return { times, passes, shown }
+}
 
+type Swept = { cut: number; shown: [number, boolean][] }[]
+const swept = new Map<string, Swept>()
+
+// Close the session after each timer in a whole refresh/pass cycle, including the timers that
+// share a timestamp. A cut that disproves a bound can finish at its first disappearance.
+const quiet = async (limits: Partial<VoiceLimits>, stopOnDrop = false): Promise<Swept> => {
+  const l = { ...LOCAL.voice, ...limits }
+  const key = JSON.stringify(l)
+  const done = swept.get(key)
+  if (done) return done
+  const every = passEvery(l)
+  const cycle = (l.refreshMs / gcd(l.refreshMs, every)) * every
+  const end = every + cycle
+  const dry = await quietRun(l, end)
+  expect(dry.passes.filter(t => t >= every && t < end)).toEqual(
+    Array.from({ length: cycle / every }, (_, i) => (i + 1) * every)
+  )
+  const out: Swept = []
+  for (const [i, cut] of dry.times.entries()) {
+    if (cut < every || cut >= end) continue
+    const { times, shown } = await quietRun(l, end, i + 1, stopOnDrop)
+    expect(times.at(-1)).toBe(cut)
+    out.push({ cut, shown })
+  }
+  if (!stopOnDrop) swept.set(key, out)
+  return out
+}
+
+const dropped = (runs: Swept) => runs.filter(({ shown }) => shown.some(([, on]) => !on))
+
+describe('a quiet participant heard through others', () => {
   // The voice limits a device takes from an instance that gives these.
   const device = (given: Partial<VoiceLimits>) => {
     const p2p = Object.fromEntries(Object.entries(given).map(([k, x]) => [`local.voice.${k}`, x]))
     return instanceLocal({ limits: { p2p } }).voice
   }
 
-  test('stays shown with every voice refresh rule at its edge', async () => {
+  test('stays shown with every voice refresh rule at its edge, wherever the session closes', async () => {
     for (const given of [
       {},
       { refreshMs: 30_000, lostMs: 35_000 },
       { relayMs: 30_000, lostMs: 50_000 },
       { lostMs: 25_000 },
       { refreshMs: 5000, relayMs: 5001, ttlMs: 15_000, lostMs: 10_001 },
-      { refreshMs: 5000, relayMs: 1000, ttlMs: 15_000, lostMs: 6000 },
-      { refreshMs: 240_000, relayMs: 60_000, ttlMs: 480_000, lostMs: 300_000 },
+      { gapMs: 999, refreshMs: 5000, relayMs: 1000, ttlMs: 15_000, lostMs: 6000 },
+      { refreshMs: 240_000, relayMs: 60_000, ttlMs: 480_000, lostMs: 300_000, tickMs: 60_000 },
+      { gapMs: 9999 },
+      { gapMs: 25_000, lostMs: 45_001 },
+      { gapMs: 7500, refreshMs: 5000, relayMs: 1000, ttlMs: 15_000, lostMs: 12_501 },
+      { gapMs: 9000, refreshMs: 5000, relayMs: 1000, ttlMs: 18_000, lostMs: 14_001 },
+      { gapMs: 15_000, refreshMs: 5000, relayMs: 1000, ttlMs: 30_000, lostMs: 20_001 },
+      { gapMs: 7000, refreshMs: 5000, relayMs: 12_000, ttlMs: 30_000, lostMs: 17_000 },
+      { gapMs: 30_000, refreshMs: 5000, relayMs: 30_000, ttlMs: 60_000, lostMs: 35_001 },
+      { gapMs: 30_000, refreshMs: 5000, relayMs: 30_000, ttlMs: 60_000, lostMs: 60_000 },
     ]) {
       expect(device(given)).toEqual({ ...LOCAL.voice, ...given })
-      expect((await quiet(given)).shown).toEqual([[0, true]])
+      const runs = await quiet(given)
+      expect(runs.length).toBeGreaterThan(3)
+      expect([given, dropped(runs)]).toEqual([given, []])
     }
-  })
+  }, 300_000)
+
+  test('a loss timer tied with a newer relay can run first', async () => {
+    const given = { gapMs: 30_000, refreshMs: 5000, relayMs: 30_000, ttlMs: 60_000, lostMs: 35_000 }
+    expect(dropped(await quiet(given))).toEqual([
+      {
+        cut: 55_000,
+        shown: [
+          [0, true],
+          [90_000, false],
+          [90_000, true],
+        ],
+      },
+    ])
+    expect(device(given)).not.toEqual({ ...LOCAL.voice, ...given })
+  }, 60_000)
+
+  test('the roster can expire before the loss timer fires', async () => {
+    const given = { gapMs: 30_000, refreshMs: 5000, ttlMs: 15_000, lostMs: 300_000 }
+    const runs = await quiet(given, true)
+    expect(
+      runs.some(({ cut, shown }) => shown.some(([at, on]) => !on && at < cut + given.lostMs))
+    ).toBe(true)
+    expect(dropped(await quiet(device(given)))).toEqual([])
+  }, 60_000)
 
   test('drops out past an edge, and stays shown on what the device makes of those values', async () => {
-    const { shown, cut } = await quiet({ lostMs: 10_000 })
-    expect(shown).toEqual([
-      [0, true],
-      [cut + 10_000, false],
-      [cut + 20_000, true],
-    ])
+    // With more than lostMs to the next refresh, A disappears at loss and returns at that refresh.
+    const runs = await quiet({ lostMs: 10_000 })
+    for (const { cut, shown } of runs) {
+      const next = (Math.floor(cut / 20_000) + 1) * 20_000
+      expect(shown).toEqual(
+        cut + 10_000 < next
+          ? [
+              [0, true],
+              [cut + 10_000, false],
+              [next, true],
+            ]
+          : [[0, true]]
+      )
+    }
+    expect(dropped(runs).length).toBeGreaterThan(0)
     for (const given of [
       { lostMs: 10_000 },
       { refreshMs: 5000, relayMs: 5001, ttlMs: 15_000, lostMs: 9000 },
       { refreshMs: 21_000, relayMs: 42_001, lostMs: 300_000 },
       { refreshMs: 120_000, lostMs: 300_000 },
+      { gapMs: 30_000, lostMs: 25_000 },
+      { gapMs: 29_000, relayMs: 1000, lostMs: 28_500 },
+      { gapMs: 25_000 },
+      { gapMs: 30_000, lostMs: 35_000 },
+      { gapMs: 29_000, relayMs: 1000, lostMs: 30_000 },
+      { gapMs: 7500, refreshMs: 5000, relayMs: 1000, ttlMs: 15_000, lostMs: 8500 },
+      { gapMs: 9000, refreshMs: 5000, relayMs: 1000, ttlMs: 18_000, lostMs: 12_000 },
+      { gapMs: 15_000, refreshMs: 5000, relayMs: 1000, ttlMs: 30_000, lostMs: 20_000 },
     ]) {
-      expect((await quiet(given)).shown.some(([, on]) => !on)).toBe(true)
+      expect([given, dropped(await quiet(given, true)).length > 0]).toEqual([given, true])
       expect(device(given)).not.toEqual({ ...LOCAL.voice, ...given })
-      expect((await quiet(device(given))).shown).toEqual([[0, true]])
+      expect([given, dropped(await quiet(device(given)))]).toEqual([given, []])
     }
-  })
+  }, 300_000)
 })
 
 describe('session budget with voice', () => {

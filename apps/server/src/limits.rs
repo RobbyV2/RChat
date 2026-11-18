@@ -88,12 +88,14 @@ struct P2pRegistry {
 }
 
 /// A refresh and the expiry it renews, as registry names: `times` refreshes, each the sum of the
-/// intervals in `refresh`, fit in the expiry.
+/// intervals in `refresh`, fit in the expiry, and with `below` end before it.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct P2pRefresh {
     pub refresh: Vec<String>,
     pub expiry: String,
     pub times: u32,
+    #[serde(default)]
+    pub below: bool,
 }
 
 /// What a `P2P_LIMITS` name takes: its default, smallest and largest value, and whole numbers
@@ -146,10 +148,12 @@ pub fn p2p_refresh() -> anyhow::Result<Vec<P2pRefresh>> {
                  refresh,
                  expiry,
                  times,
+                 below,
              }| P2pRefresh {
                 refresh: refresh.into_iter().map(named).collect(),
                 expiry: named(expiry),
                 times,
+                below,
             },
         )
         .collect())
@@ -377,6 +381,7 @@ impl Env<'_> {
             refresh,
             expiry,
             times,
+            below,
         } in p2p_refresh()?
         {
             let at = |name: &str| match (values.get(name), ranges.get(name)) {
@@ -399,16 +404,20 @@ impl Env<'_> {
                 parts.push(format!("{name} ({shown})"));
             }
             let (e, e_shown) = at(&expiry)?;
-            if sum * f64::from(times) > e {
-                let share = match times {
-                    1 => String::new(),
-                    2 => "half of ".to_string(),
-                    n => format!("1/{n} of "),
-                };
-                anyhow::bail!(
-                    "{NAME}: {} must be at most {share}{expiry} ({e_shown})",
-                    parts.join(" plus ")
-                );
+            let (fits, minimum, maximum) = match (times, below) {
+                (1, true) => (sum < e, "greater than", "less than"),
+                (1, false) => (sum <= e, "at least", "at most"),
+                (2, false) if refresh.len() == 1 => {
+                    (2.0 * sum <= e, "at least twice", "at most half of")
+                }
+                _ => anyhow::bail!("unsupported refresh rule for {expiry} in the P2P registry"),
+            };
+            if !fits {
+                let parts = parts.join(" plus ");
+                if values.contains_key(&expiry) && !refresh.iter().any(|n| values.contains_key(n)) {
+                    anyhow::bail!("{NAME}: {expiry} ({e_shown}) must be {minimum} {parts}");
+                }
+                anyhow::bail!("{NAME}: {parts} must be {maximum} {expiry} ({e_shown})");
             }
         }
         Ok((values, unknown))
@@ -1083,24 +1092,43 @@ mod tests {
         {
             assert!(lo <= default && default <= hi, "{name}");
         }
-        let rule = |refresh: &[&str], expiry: &str, times| P2pRefresh {
+        let rule = |refresh: &[&str], expiry: &str, times, below| P2pRefresh {
             refresh: refresh.iter().map(|n| n.to_string()).collect(),
             expiry: expiry.to_string(),
             times,
+            below,
         };
         let rules = p2p_refresh().expect("the registry parses");
         assert_eq!(
             rules,
             [
-                rule(&["local.gossip.typingRelayMs"], "local.gossip.typingMs", 2),
-                rule(&["local.session.pingMs"], "local.session.deadMs", 2),
-                rule(&["local.gossip.presenceMs"], "local.gossip.presenceTtl", 2),
-                rule(&["local.voice.refreshMs"], "local.voice.ttlMs", 2),
-                rule(&["local.voice.relayMs"], "local.voice.ttlMs", 2),
+                rule(
+                    &["local.gossip.typingRelayMs"],
+                    "local.gossip.typingMs",
+                    2,
+                    false
+                ),
+                rule(&["local.session.pingMs"], "local.session.deadMs", 2, false),
+                rule(
+                    &["local.gossip.presenceMs"],
+                    "local.gossip.presenceTtl",
+                    2,
+                    false
+                ),
+                rule(&["local.voice.refreshMs"], "local.voice.ttlMs", 2, false),
+                rule(&["local.voice.relayMs"], "local.voice.ttlMs", 2, false),
                 rule(
                     &["local.voice.refreshMs", "local.voice.relayMs"],
                     "local.voice.lostMs",
-                    1
+                    1,
+                    false
+                ),
+                rule(&["local.voice.gapMs"], "local.voice.ttlMs", 2, false),
+                rule(
+                    &["local.voice.gapMs", "local.voice.refreshMs"],
+                    "local.voice.lostMs",
+                    1,
+                    true
                 ),
             ]
         );
@@ -1108,11 +1136,14 @@ mod tests {
             refresh,
             expiry,
             times,
+            below,
         } in &rules
         {
-            let sum: f64 = refresh.iter().map(|n| ranges[n].default).sum();
+            let interval =
+                refresh.iter().map(|n| ranges[n].default).sum::<f64>() * f64::from(*times);
+            let e = ranges[expiry].default;
             assert!(
-                sum * f64::from(*times) <= ranges[expiry].default,
+                if *below { interval < e } else { interval <= e },
                 "{refresh:?} {expiry}"
             );
         }
@@ -1145,27 +1176,104 @@ mod tests {
         };
         assert_eq!(
             refused(&[("local.gossip.typingMs", 1000.0)]),
-            "P2P_LIMITS: local.gossip.typingRelayMs (3000, the default) must be at most half of \
-             local.gossip.typingMs (1000)"
+            "P2P_LIMITS: local.gossip.typingMs (1000) must be at least twice \
+             local.gossip.typingRelayMs (3000, the default)"
         );
         assert_eq!(
             refused(&[("local.voice.lostMs", 10_000.0)]),
-            "P2P_LIMITS: local.voice.refreshMs (20000, the default) plus local.voice.relayMs \
-             (5000, the default) must be at most local.voice.lostMs (10000)"
+            "P2P_LIMITS: local.voice.lostMs (10000) must be at least local.voice.refreshMs \
+             (20000, the default) plus local.voice.relayMs (5000, the default)"
+        );
+        assert_eq!(
+            refused(&[("local.gossip.typingRelayMs", 5000.0)]),
+            "P2P_LIMITS: local.gossip.typingRelayMs (5000) must be at most half of \
+             local.gossip.typingMs (8000, the default)"
+        );
+        assert_eq!(
+            refused(&[
+                ("local.voice.refreshMs", 20_000.0),
+                ("local.voice.lostMs", 10_000.0)
+            ]),
+            "P2P_LIMITS: local.voice.refreshMs (20000) plus local.voice.relayMs (5000, the \
+             default) must be at most local.voice.lostMs (10000)"
+        );
+        assert_eq!(
+            refused(&[("local.voice.gapMs", 10_000.0)]),
+            "P2P_LIMITS: local.voice.gapMs (10000) plus local.voice.refreshMs (20000, the \
+             default) must be less than local.voice.lostMs (30000, the default)"
+        );
+        assert_eq!(
+            refused(&[
+                ("local.voice.relayMs", 1000.0),
+                ("local.voice.lostMs", 21_000.0)
+            ]),
+            "P2P_LIMITS: local.voice.lostMs (21000) must be greater than local.voice.gapMs \
+             (1000, the default) plus local.voice.refreshMs (20000, the default)"
         );
         let ranges = p2p_ranges().expect("the registry parses");
         let rules = p2p_refresh().expect("the registry parses");
         let d = |name: &str| ranges[name].default;
         let in_range = |name: &str, v: f64| (ranges[name].lo..=ranges[name].hi).contains(&v);
-        for P2pRefresh {
-            refresh,
-            expiry,
-            times,
-        } in &rules
-        {
+        // The first rule `given` breaks, the names it doesn't give at their defaults, and the
+        // refusal that names it: the expiry first when it is the only one of the rule given.
+        let refusal = |given: &[(&str, f64)]| {
+            let value = |name: &str| given.iter().rev().find(|(n, _)| *n == name).map(|g| g.1);
+            let at = |name: &str| value(name).unwrap_or(d(name));
+            let shown = |name: &str| match value(name) {
+                Some(v) => v.to_string(),
+                None => format!("{}, the default", d(name)),
+            };
+            let rule = rules.iter().find(
+                |P2pRefresh {
+                     refresh,
+                     expiry,
+                     times,
+                     below,
+                 }| {
+                    let over = refresh.iter().map(|n| at(n)).sum::<f64>() * f64::from(*times);
+                    if *below {
+                        over >= at(expiry)
+                    } else {
+                        over > at(expiry)
+                    }
+                },
+            )?;
+            let P2pRefresh {
+                refresh,
+                expiry,
+                times,
+                below,
+            } = rule;
+            let parts: Vec<String> = refresh
+                .iter()
+                .map(|n| format!("{n} ({})", shown(n)))
+                .collect();
+            let parts = parts.join(" plus ");
+            let alone = value(expiry).is_some() && refresh.iter().all(|n| value(n).is_none());
+            let e = format!("{expiry} ({})", shown(expiry));
+            let said = match (alone, below, times) {
+                (true, true, _) => format!("{e} must be greater than {parts}"),
+                (true, _, 2) => format!("{e} must be at least twice {parts}"),
+                (true, _, _) => format!("{e} must be at least {parts}"),
+                (false, true, _) => format!("{parts} must be less than {e}"),
+                (false, _, 2) => format!("{parts} must be at most half of {e}"),
+                (false, _, _) => format!("{parts} must be at most {e}"),
+            };
+            Some((rule, format!("P2P_LIMITS: {said}")))
+        };
+        for rule in &rules {
+            let P2pRefresh {
+                refresh,
+                expiry,
+                times,
+                below,
+            } = rule;
             let (expiry, t) = (expiry.as_str(), f64::from(*times));
+            // A rule that keeps the sum below the expiry has its edge a millisecond inside.
+            let inside = if *below { 1.0 } else { 0.0 };
             let names: Vec<&str> = refresh.iter().map(String::as_str).chain([expiry]).collect();
-            // Every other rule's expiry at its largest, so only this rule decides.
+            // Every other rule's expiry at its largest, so only this rule decides, unless a
+            // name it shares is stricter in another rule.
             let roomy: Vec<(&str, f64)> = rules
                 .iter()
                 .map(|r| r.expiry.as_str())
@@ -1178,63 +1286,159 @@ mod tests {
             // `name` alone at the edge of the rule, the others at their defaults.
             let edge = |name: &str| {
                 if name == expiry {
-                    sum(&d) * t
+                    sum(&d) * t + inside
                 } else {
-                    d(expiry) / t - (sum(&d) - d(name))
+                    d(expiry) / t - (sum(&d) - d(name)) - inside
                 }
-            };
-            let rule = |given: &[(&str, f64)]| {
-                let shown = |name: &str| match given.iter().find(|(n, _)| *n == name) {
-                    Some((_, v)) => v.to_string(),
-                    None => format!("{}, the default", d(name)),
-                };
-                let parts: Vec<String> = refresh
-                    .iter()
-                    .map(|n| format!("{n} ({})", shown(n)))
-                    .collect();
-                let share = match times {
-                    2 => "half of ",
-                    _ => "",
-                };
-                format!(
-                    "P2P_LIMITS: {} must be at most {share}{expiry} ({})",
-                    parts.join(" plus "),
-                    shown(expiry)
-                )
             };
             let wider: Vec<(&str, f64)> = refresh
                 .iter()
                 .map(|n| (n.as_str(), d(n) + 20_000.0))
                 .collect();
             let wide = wider.iter().map(|(_, v)| v).sum::<f64>() * t;
-            let mut cases = 0;
+            // Past the edge: refused by the first rule broken, this one or one sharing a name.
             for (name, v) in refresh
                 .iter()
                 .map(|n| (n.as_str(), edge(n) + 1.0))
                 .chain([(expiry, edge(expiry) - 1.0)])
                 .filter(|(n, v)| in_range(n, *v))
             {
-                assert_eq!(refused(&with(&roomy, &[(name, v)])), rule(&[(name, v)]));
-                cases += 1;
+                let given = with(&roomy, &[(name, v)]);
+                let (_, said) = refusal(&given).expect("past the edge");
+                assert_eq!(refused(&given), said);
             }
-            assert!(cases >= refresh.len(), "{expiry}: {cases}");
-            let over = [wider.as_slice(), &[(expiry, wide - 1.0)]].concat();
-            assert_eq!(refused(&with(&roomy, &over)), rule(&over));
+            let over = with(
+                &roomy,
+                &[wider.as_slice(), &[(expiry, wide - 1.0)]].concat(),
+            );
+            let (first, said) = refusal(&over).expect("past the edge");
+            assert_eq!(first, rule);
+            assert_eq!(refused(&over), said);
             for name in &names {
-                if in_range(name, edge(name)) {
-                    taken(&with(&roomy, &[(name, edge(name))]));
+                let given = with(&roomy, &[(name, edge(name))]);
+                if in_range(name, edge(name)) && refusal(&given).is_none() {
+                    taken(&given);
                 }
             }
             taken(&with(
                 &roomy,
-                &[wider.as_slice(), &[(expiry, wide)]].concat(),
+                &[wider.as_slice(), &[(expiry, wide + inside)]].concat(),
             ));
+            if *below {
+                let at = with(&roomy, &[wider.as_slice(), &[(expiry, wide)]].concat());
+                let (first, said) = refusal(&at).expect("at the edge");
+                assert_eq!(first, rule);
+                assert_eq!(refused(&at), said);
+            }
             let inside: Vec<(&str, f64)> = refresh
                 .iter()
                 .map(|n| (n.as_str(), d(n) - 1.0))
                 .chain([(expiry, d(expiry) + 1.0)])
                 .collect();
             taken(&with(&roomy, &inside));
+        }
+    }
+
+    #[test]
+    fn a_voice_gap_must_fit_the_loss_timer_and_roster_ttl() {
+        let p2p = |given: &[(&str, f64)]| {
+            let json = serde_json::Map::from_iter(
+                given
+                    .iter()
+                    .map(|(name, v)| (name.to_string(), serde_json::json!(v))),
+            );
+            load(&[("P2P_LIMITS", serde_json::Value::Object(json).to_string())])
+        };
+        let refused = |given: &[(&str, f64)]| p2p(given).unwrap_err().to_string();
+        let lost = |gap: &str, refresh: &str, lost: &str| {
+            format!(
+                "P2P_LIMITS: local.voice.gapMs ({gap}) plus local.voice.refreshMs ({refresh}) \
+                 must be less than local.voice.lostMs ({lost})"
+            )
+        };
+        let relayed = [
+            ("local.voice.gapMs", 30_000.0),
+            ("local.voice.refreshMs", 5000.0),
+            ("local.voice.relayMs", 30_000.0),
+            ("local.voice.ttlMs", 60_000.0),
+        ];
+        for (given, said) in [
+            (
+                vec![("local.voice.gapMs", 10_000.0)],
+                lost("10000", "20000, the default", "30000, the default"),
+            ),
+            (
+                vec![("local.voice.gapMs", 25_000.0)],
+                lost("25000", "20000, the default", "30000, the default"),
+            ),
+            (
+                vec![
+                    ("local.voice.gapMs", 30_000.0),
+                    ("local.voice.lostMs", 25_000.0),
+                ],
+                lost("30000", "20000, the default", "25000"),
+            ),
+            (
+                vec![
+                    ("local.voice.gapMs", 30_000.0),
+                    ("local.voice.lostMs", 35_000.0),
+                ],
+                lost("30000", "20000, the default", "35000"),
+            ),
+            (
+                vec![
+                    ("local.voice.gapMs", 29_000.0),
+                    ("local.voice.relayMs", 1000.0),
+                    ("local.voice.lostMs", 30_000.0),
+                ],
+                lost("29000", "20000, the default", "30000"),
+            ),
+            (
+                vec![
+                    ("local.voice.gapMs", 7500.0),
+                    ("local.voice.refreshMs", 5000.0),
+                    ("local.voice.relayMs", 1000.0),
+                    ("local.voice.ttlMs", 15_000.0),
+                    ("local.voice.lostMs", 8500.0),
+                ],
+                lost("7500", "5000", "8500"),
+            ),
+            (
+                [&relayed[..], &[("local.voice.lostMs", 35_000.0)]].concat(),
+                lost("30000", "5000", "35000"),
+            ),
+            (
+                vec![
+                    ("local.voice.gapMs", 30_000.0),
+                    ("local.voice.ttlMs", 59_999.0),
+                    ("local.voice.lostMs", 55_000.0),
+                ],
+                "P2P_LIMITS: local.voice.gapMs (30000) must be at most half of \
+                 local.voice.ttlMs (59999)"
+                    .to_string(),
+            ),
+        ] {
+            assert_eq!(refused(&given), said, "{given:?}");
+        }
+        for given in [
+            vec![("local.voice.gapMs", 9999.0)],
+            vec![
+                ("local.voice.gapMs", 25_000.0),
+                ("local.voice.lostMs", 45_001.0),
+            ],
+            vec![
+                ("local.voice.gapMs", 7500.0),
+                ("local.voice.refreshMs", 5000.0),
+                ("local.voice.relayMs", 1000.0),
+                ("local.voice.ttlMs", 15_000.0),
+                ("local.voice.lostMs", 12_501.0),
+            ],
+            [&relayed[..], &[("local.voice.lostMs", 35_001.0)]].concat(),
+        ] {
+            let l = p2p(&given).unwrap_or_else(|e| panic!("{given:?}: {e}"));
+            for (name, v) in &given {
+                assert_eq!(l.p2p.get(*name), Some(v), "{given:?}");
+            }
         }
     }
 
@@ -1516,14 +1720,14 @@ mod tests {
                         refresh,
                         expiry,
                         times,
+                        below,
                     } in p2p_refresh().expect("the registry parses")
                     {
-                        let (said, half) = match times {
-                            2 => (format!("{} of {expiry}", refresh.join(" plus ")), true),
-                            _ => (
-                                format!("{} is at most {expiry}", refresh.join(" plus ")),
-                                false,
-                            ),
+                        let parts = refresh.join(" plus ");
+                        let (said, half) = match (times, below) {
+                            (2, _) => (format!("{parts} of {expiry}"), true),
+                            (_, true) => (format!("{parts} is less than {expiry}"), false),
+                            (_, false) => (format!("{parts} is at most {expiry}"), false),
                         };
                         assert!(
                             about
