@@ -51,6 +51,7 @@ import { EMPTY_NOTIFY, keepScopes } from '../notify'
 import { historyKey } from '../openapi'
 import { p2p } from '../p2p'
 import { p2pAccount, p2pRail } from '../p2p/app'
+import { coversInstance, useP2p } from '../p2p/app/store'
 import { secretsKey } from '../passwords'
 import { NO_PINGS } from '../pings'
 import { clearProfiles } from '../profile'
@@ -93,6 +94,7 @@ import {
   live,
   serverKey,
   sessionMark,
+  shownView,
 } from './ctx'
 import { applyEmbeds, dmKey, type messagesSlice } from './messages'
 import type { presenceSlice } from './presence'
@@ -305,6 +307,23 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     useProfanity,
     views,
   } = deps
+
+  // Once P2P stops showing in the view's place, the view counts as followed only when its pane is
+  // back on screen (the pane says so); what came in meanwhile is below the unread divider.
+  useP2p.subscribe((now, before) => {
+    if (coversInstance(now) || !coversInstance(before)) return
+    const view = get().view
+    if (!view) return
+    const key = viewKey(view)
+    set(s => {
+      const mark = s.reads[key]
+      const anchor = mark && mark.latest > mark.lastRead && !(s.unreadAnchor[key] > 0)
+      return {
+        atBottom: { ...s.atBottom, [key]: false },
+        ...(anchor ? { unreadAnchor: { ...s.unreadAnchor, [key]: mark.lastRead } } : {}),
+      }
+    })
+  })
 
   const authRequest = async (path: string, body: LoginRequest | RegisterRequest) => {
     const res = await api.send('POST', path, body)
@@ -841,7 +860,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         return
       }
       home.ws.ensureConnected()
-      const { view, atBottom, messages, reads, unreadAnchor, panel } = get()
+      const { atBottom, messages, reads, unreadAnchor, panel } = get()
+      const view = shownView(get().view)
       if (panel?.kind === 'thread') {
         const thread = threadKey(panel.root.id)
         if (atBottom[thread] === true && !detached(thread)) get().seeThread(panel.root.id)
@@ -1123,8 +1143,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     id: number,
     nav: Nav = 'push'
   ) => {
-    const s = get()
-    const here = s.view?.kind === 'channel' && s.view.channelId === channelId
+    const v = shownView(get().view)
+    const here = v?.kind === 'channel' && v.channelId === channelId
     const at = threadRootId ?? id
     const mark = sessionMark()
     set({ panel: null })

@@ -588,7 +588,7 @@ export const p2pServer = {
     const v = useP2p.getState().servers[room]
     const pick = ch ?? lastChannel.get(room) ?? v?.channels.find(c => c.kind === 'text')?.id ?? null
     writeHome(null)
-    useP2p.setState({ home: false, server: { room, ch: null }, dialog: null })
+    useP2p.setState({ home: false, dmList: false, server: { room, ch: null }, dialog: null })
     p2pServer.openChannel(pick)
   },
 

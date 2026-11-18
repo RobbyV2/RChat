@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '../lib/store'
 import { notifications } from '../lib/platform'
@@ -33,10 +33,12 @@ import { reloadPalettePrefs, usePaletteUi } from '../lib/palette_store'
 import { PollVotersDialog } from '../components/poll_card'
 import { CallBanner } from '../components/voice_grid'
 import { Banners } from '../components/banners'
+import { DrawerClose } from '../components/drawer'
 import { InvitePage } from '../components/invite_card'
 import { ConfigLinkPage } from '../components/config_sync'
 import { useEscape } from '../components/ui'
 import { P2pDialogs, P2pHome } from '../components/p2p/p2p_home'
+import { P2pDmPane } from '../components/p2p/p2p_dm_pane'
 import { P2pChannelPane, P2pMemberList, P2pServerSidebar } from '../components/p2p/p2p_server_view'
 import { P2pThreadPanel } from '../components/p2p/p2p_thread'
 import { P2pSearchPanel } from '../components/p2p/p2p_search'
@@ -84,6 +86,9 @@ export default function AppShell() {
   const bootError = useStore(s => s.bootError)
   const pings = useInboxCount()
   const p2pHome = useP2p(s => s.home) && me !== null
+  // A P2P conversation opened from the DM list shows beside it, not in the P2P home.
+  const p2pBeside = useP2p(s => s.home && s.dmList && s.chat !== null) && me !== null
+  const p2pRoom = useP2p(s => s.chat?.room ?? null)
   const p2pServer = useP2p(s => s.server !== null) && me !== null
   const p2pChannel = useP2p(s => (s.server ? `${s.server.room}/${s.server.ch}` : null))
   const p2pPanelKind = useP2p(s => (s.server ? s.panel : null))
@@ -91,6 +96,7 @@ export default function AppShell() {
   const booted = useRef(false)
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
+  const closeLeft = useCallback(() => setLeftOpen(false), [])
   useHomeSync()
   useEffect(() => startP2pIndex(), [])
   useEffect(() => startP2pPings(), [])
@@ -175,7 +181,7 @@ export default function AppShell() {
   useEffect(() => {
     setLeftOpen(false)
     setRightOpen(false)
-  }, [p2pHome, p2pServer, p2pChannel])
+  }, [p2pHome, p2pServer, p2pChannel, p2pRoom])
 
   // A P2P server's thread or search takes the panel's place.
   useEffect(() => {
@@ -218,7 +224,7 @@ export default function AppShell() {
       <div className="flex h-app overflow-hidden px-safe">
         <div className="hidden h-full md:flex">
           <ServerRail />
-          {p2pServer ? <P2pServerSidebar /> : !p2pHome && <ChannelSidebar />}
+          {p2pServer ? <P2pServerSidebar /> : (!p2pHome || p2pBeside) && <ChannelSidebar />}
         </div>
         {p2pServer ? (
           <P2pChannelPane
@@ -232,6 +238,8 @@ export default function AppShell() {
             }}
             membersOpen={p2pMembers}
           />
+        ) : p2pBeside ? (
+          <P2pDmPane onMenu={openLeft} />
         ) : p2pHome ? (
           <P2pHome onMenu={openLeft} />
         ) : view === null && atHome ? (
@@ -274,8 +282,10 @@ export default function AppShell() {
         {leftOpen && (
           <div data-drawer className="fixed inset-x-0 top-app z-40 flex h-app md:hidden">
             <div className="flex h-full bg-surface-container-lowest pl-[env(safe-area-inset-left)] shadow-elevation-3">
-              <ServerRail />
-              {p2pServer ? <P2pServerSidebar /> : !p2pHome && <ChannelSidebar />}
+              <DrawerClose.Provider value={closeLeft}>
+                <ServerRail />
+                {p2pServer ? <P2pServerSidebar /> : (!p2pHome || p2pBeside) && <ChannelSidebar />}
+              </DrawerClose.Provider>
             </div>
             <div className="flex-1 bg-scrim/50" onClick={() => setLeftOpen(false)} />
           </div>

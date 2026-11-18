@@ -156,6 +156,12 @@ export const mergeReads = (
   return out
 }
 
+// A scope's mark once an own message `id` is in it, off the view the user watches: the message is
+// no sign that anything before it was seen, so the mark stays as it is and only reads move it.
+// `latest` counts messages from someone else, as on the server, so an own message makes no dot.
+export const ownRead = (mark: ReadMark | undefined, id: number): ReadMark =>
+  mark ?? { lastRead: id, latest: id }
+
 // Most scopes one POST /api/read/batch takes.
 export const READ_BATCH_MAX = 200
 

@@ -6,6 +6,8 @@ import { home, readLocal } from '../instances'
 import type { Key, Page } from '../lists'
 import type { Paged, RChatState, SearchState } from '../store_types'
 import type { ServerSummary, WsEvent } from '../types'
+import { viewKey, type View } from '../view'
+import { coversInstance, useP2p } from '../p2p/app/store'
 
 export type SetState = StoreApi<RChatState>['setState']
 export type GetState = StoreApi<RChatState>['getState']
@@ -58,6 +60,15 @@ export const inSession = <A extends unknown[], R>(fn: (...a: A) => R) => {
 
 export const pageVisible = () =>
   typeof document === 'undefined' || document.visibilityState === 'visible'
+
+// The instance view on screen: none while P2P shows in its place.
+export const shownView = (view: View | null) =>
+  view && !coversInstance(useP2p.getState()) ? view : null
+
+export const shownKey = (view: View | null) => {
+  const v = shownView(view)
+  return v ? viewKey(v) : null
+}
 
 // Runs `fetch` until no newer generation started while it ran.
 export const settled = async <T>(gen: () => number, fetch: () => Promise<T>): Promise<T> => {

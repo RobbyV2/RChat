@@ -124,6 +124,8 @@ export interface P2pState {
   paused: boolean
   // The P2P home replaces the instance sidebar and pane while open.
   home: boolean
+  // The open conversation shows beside the instance's DM list instead of in the P2P home.
+  dmList: boolean
   // Another tab of this account runs P2P; this one only offers to take over.
   elsewhere: boolean
   // Message requests dropped to limit spam.
@@ -242,6 +244,7 @@ export const initial: P2pState = {
   presence: {},
   paused: false,
   home: false,
+  dmList: false,
   elsewhere: false,
   dropped: 0,
   addressHidden: false,
@@ -293,6 +296,10 @@ export const useP2p = create<P2pState>()(() => initial)
 
 // Stored per account: { v: 1, on }. Anything unreadable means off.
 export const p2pKey = (username: string) => `rchat_p2p:${username}`
+
+// The P2P home (also a conversation of it beside the DM list) or a P2P server shows in place of
+// the instance's view.
+export const coversInstance = (s: Pick<P2pState, 'home' | 'server'>) => s.home || s.server !== null
 
 export const parseOn = (raw: string | null) => {
   try {

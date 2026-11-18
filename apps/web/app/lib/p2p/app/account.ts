@@ -182,12 +182,23 @@ const shutdown = () => {
 
 // The view fields a node fills in; cleared when this tab hands P2P to another one.
 const nodeless = () => {
-  const { account, enabled, home: h, dialog, chat, drafts, server, layout } = useP2p.getState()
+  const {
+    account,
+    enabled,
+    home: h,
+    dmList,
+    dialog,
+    chat,
+    drafts,
+    server,
+    layout,
+  } = useP2p.getState()
   return {
     ...initial,
     account,
     enabled,
     home: h,
+    dmList,
     dialog,
     drafts,
     server,
@@ -607,21 +618,38 @@ export const p2p = {
   // Moves P2P from the tab that runs it to this one.
   useHere: () => leader?.takeOver(),
 
+  // A conversation open beside the DM list closes, so the P2P home opens on its contacts.
   openHome: () => {
     writeHome(useP2p.getState().account)
-    useP2p.setState(st => ({
-      home: true,
-      server: null,
-      chat: st.chat?.ch ? null : st.chat,
-      pins: st.chat?.ch ? null : st.pins,
-      panel: null,
-      thread: null,
-    }))
+    useP2p.setState(st => {
+      const drop = st.dmList || Boolean(st.chat?.ch)
+      return {
+        home: true,
+        dmList: false,
+        server: null,
+        chat: drop ? null : st.chat,
+        pins: drop ? null : st.pins,
+        ...(st.dmList ? { editing: null, replying: null } : {}),
+        panel: null,
+        thread: null,
+      }
+    })
   },
+  // A conversation open beside the DM list closes with it.
   closeHome: () => {
     writeHome(null)
-    if (useP2p.getState().server) p2pServer.close()
-    useP2p.setState({ home: false })
+    const { server, dmList } = useP2p.getState()
+    if (server) p2pServer.close()
+    useP2p.setState({
+      home: false,
+      dmList: false,
+      ...(dmList ? { chat: null, pins: null, editing: null, replying: null } : {}),
+    })
+  },
+  // The P2P home on its contacts, where the message requests are.
+  openRequests: () => {
+    p2p.openHome()
+    useP2p.setState({ chat: null, pins: null, editing: null, replying: null })
   },
   clearError: () => useP2p.setState({ error: null }),
   openDialog: (dialog: P2pDialog) => useP2p.setState({ dialog }),

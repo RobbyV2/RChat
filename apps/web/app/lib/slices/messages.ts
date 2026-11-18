@@ -43,6 +43,7 @@ import { newP2pId, p2p } from '../p2p'
 import { unlinkPin, withPinnedAt, withoutPin } from '../pins'
 import { mergePoll } from '../polls'
 import { canAddEmoji, emojiBase, reacted, reactorKey, withReaction } from '../reactions'
+import { ownRead } from '../reads'
 import { relayBook } from '../relays'
 import {
   type Replying,
@@ -112,6 +113,7 @@ import {
   pageVisible,
   sessionMark,
   settled,
+  shownView,
 } from './ctx'
 
 export interface MessagesDeps {
@@ -1110,7 +1112,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     const loc = await locateMessage(id)
     if (!loc) return false
     if (loc.dm_id !== null) {
-      const v = get().view
+      const v = shownView(get().view)
       if (v?.kind === 'dm' && v.dmId === loc.dm_id) await get().jumpTo(`d${loc.dm_id}`, id)
       else await get().openDm(loc.dm_id, nav, id)
       return true
@@ -1221,6 +1223,19 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     })
   }
 
+  // The scope is the view on screen, following its newest message.
+  const watching = (scope: string) => {
+    const view = shownView(get().view)
+    return (
+      view !== null && viewKey(view) === scope && get().atBottom[scope] === true && pageVisible()
+    )
+  }
+
+  const readSent = (key: string, id: number) => {
+    if (watching(key)) get().markRead(key, id)
+    else set(s => ({ reads: { ...s.reads, [key]: ownRead(s.reads[key], id) } }))
+  }
+
   const dropOutgoing = (map: Record<string, Outgoing[]>, key: string, tempId: number) => {
     const next = (map[key] ?? []).filter(o => o.tempId !== tempId)
     const outbox = { ...map }
@@ -1296,7 +1311,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         set(s => ({ outbox: dropOutgoing(s.outbox, key, head.tempId), ...next }))
         settleSent(head.tempId, real)
         noteSlow(real.channel_id, null)
-        if (key[0] !== 't') get().markRead(key, real.id)
+        if (key[0] !== 't') readSent(key, real.id)
       }
     } finally {
       mine.delete(key)
@@ -1847,7 +1862,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
             await openChannelAt(ping.server, id, ping.thread_root_id, ping.message_id)
           return
         }
-        const v = get().view
+        const v = shownView(get().view)
         if (v?.kind === 'dm' && v.dmId === id) await get().jumpTo(ping.scope, ping.message_id)
         else await get().openDm(id, 'push', ping.message_id)
       }),
@@ -2117,30 +2132,24 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         if (scope) {
           const meNow = get().me
           const mine = meNow?.username === m.author.username
-          const viewNow = get().view
-          const viewingScope = viewNow ? viewKey(viewNow) : null
+          const watched = watching(scope)
           set(s => {
             const prev = s.reads[scope] ?? {
               lastRead: mine ? m.id : readsHub.more() ? 0 : m.id - 1,
               latest: 0,
             }
-            return {
-              reads: {
-                ...s.reads,
-                [scope]: {
-                  ...prev,
-                  latest: Math.max(prev.latest, m.id),
-                  server: ev.server ?? prev.server,
-                },
-              },
-            }
+            const mark =
+              mine && !watched
+                ? ownRead(s.reads[scope], m.id)
+                : { ...prev, latest: Math.max(prev.latest, m.id) }
+            return { reads: { ...s.reads, [scope]: { ...mark, server: ev.server ?? prev.server } } }
           })
-          if (mine || (scope === viewingScope && get().atBottom[scope] && pageVisible()))
-            get().markRead(scope, m.id)
+          if (watched) get().markRead(scope, m.id)
         }
       }
       if (rootId === null && ev.server !== null && groupAlert(m, ev.server)) return
-      const { me, view } = get()
+      const me = get().me
+      const view = shownView(get().view)
       if (!me || m.author.username === me.username || (rootId !== null && m.dm_id === null)) return
       if (get().blocked[m.author.username]) return
       const scope = messageKey(m.channel_id, m.dm_id)

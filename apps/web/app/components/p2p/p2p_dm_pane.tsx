@@ -43,7 +43,8 @@ const statusLine = (online: boolean, name: string): ReactNode =>
     </>
   )
 
-export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () => void }) {
+// The open conversation. Beside the instance's DM list it has no way back: the list is there.
+export function P2pDmPane({ onBack, onMenu }: { onBack?: () => void; onMenu: () => void }) {
   const chat = useP2p(s => s.chat)
   const me = useP2p(s => s.me)
   const myName = useP2p(s => s.name)
@@ -145,14 +146,16 @@ export function P2pDmPane({ onBack, onMenu }: { onBack: () => void; onMenu: () =
           className="absolute -top-1 -right-1.5 border-2 border-surface"
         />
       </button>
-      <button
-        title="Back to contacts"
-        aria-label="Back to contacts"
-        onClick={onBack}
-        className="rounded-full p-1.5 hover:bg-surface-container-high"
-      >
-        <ArrowLeft size={20} />
-      </button>
+      {onBack && (
+        <button
+          title="Back to contacts"
+          aria-label="Back to contacts"
+          onClick={onBack}
+          className="rounded-full p-1.5 hover:bg-surface-container-high"
+        >
+          <ArrowLeft size={20} />
+        </button>
+      )}
       <button
         onClick={() => peer && p2p.openDialog({ kind: 'contact', ik: peer.ik })}
         className="flex min-w-0 items-center gap-2 rounded-full py-1 pr-2.5 pl-1 hover:bg-surface-container-high"

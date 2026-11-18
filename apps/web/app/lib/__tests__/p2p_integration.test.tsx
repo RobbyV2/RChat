@@ -73,6 +73,9 @@ import {
 import { __sync, indexDocs, paletteIndex, registerIndexSource } from '../palette_sync'
 import { startP2pIndex } from '../p2p/palette_source'
 import { ServerRail } from '../../components/server_rail'
+import { ChannelSidebar } from '../../components/channel_sidebar'
+import { dmRoomId } from '../p2p/dm'
+import type { DmSummary } from '../types'
 import { InboxButton } from '../../components/inbox'
 import { P2pHome } from '../../components/p2p/p2p_home'
 import { memberMenu, P2pMemberList, P2pServerSidebar } from '../../components/p2p/p2p_server_view'
@@ -83,7 +86,7 @@ import { ServerInviteDialog, ServerNewDialog } from '../../components/p2p/p2p_in
 import { CallBanner } from '../../components/voice_grid'
 import { markAllReadItem, registerAppActions } from '../actions'
 import { p2p, p2pDm, p2pHost, p2pMarkAll, p2pServer } from '../p2p/app'
-import { me, memoryStorage } from './fixtures'
+import { me, memoryStorage, user } from './fixtures'
 import { readText } from './masked_text'
 
 beforeAll(registerAppActions)
@@ -960,6 +963,178 @@ describe('our own badge in other tabs', () => {
     badge = null
     await mirrorFrom(n, post)
     expect(sent).toEqual([{ badges: true }, { badges: true }])
+  })
+})
+
+describe('P2P conversations in the DM list', () => {
+  const DAVE = ik()
+  const self: DmSummary = {
+    id: 1,
+    other: user('bob'),
+    is_self: true,
+    last_message_id: null,
+    last_message_at: null,
+    friend: false,
+  }
+  const inDms = () =>
+    Object.assign(initial, {
+      me: me('bob'),
+      token: 'tok',
+      view: { kind: 'dm', dmId: 1 },
+      dms: [self],
+      dmsMore: false,
+    })
+  const running = (over: Partial<P2pState> = {}) =>
+    p2pState({
+      enabled: true,
+      account: 'bob',
+      me: BOB,
+      contacts: [
+        contact(ALICE, 'Alice'),
+        contact(CAROL, 'Carol'),
+        contact(DAVE, 'Dave', 'incoming'),
+      ],
+      rooms: {
+        [dmRoomId(BOB, CAROL)]: { id: 'r', peer: CAROL, seq: 1, unread: 1, pings: 2, lastTs: NOW },
+      } as unknown as P2pState['rooms'],
+      ...over,
+    })
+  const section = (html: string) => html.slice(html.indexOf('data-p2p-dms'))
+  const order = (html: string) => [...html.matchAll(/data-contact="([^"]+)"/g)].map(m => m[1])
+
+  test('the DM list shows the P2P conversations under their own divider, newest first', () => {
+    inDms()
+    running()
+    const html = render(<ChannelSidebar />)
+    expect(html).toContain('data-p2p-dms')
+    expect(order(section(html))).toEqual([CAROL, ALICE])
+    expect(section(html)).toContain('title="Add contact" aria-label="Add contact"')
+    expect(section(html)).toContain('Message requests (1)')
+  })
+
+  test('no requests row without requests, and no P2P part until P2P runs', () => {
+    inDms()
+    running({ contacts: [contact(ALICE, 'Alice')] })
+    expect(render(<ChannelSidebar />)).not.toContain('Message requests')
+    running({ enabled: false })
+    expect(render(<ChannelSidebar />)).not.toContain('data-p2p-dms')
+    running({ account: null })
+    expect(render(<ChannelSidebar />)).not.toContain('data-p2p-dms')
+  })
+
+  test('a P2P conversation open beside the list: its row is current, the DM tile is lit', () => {
+    inDms()
+    const chat = {
+      room: dmRoomId(BOB, CAROL),
+      peer: CAROL,
+      messages: [],
+      more: false,
+      loading: false,
+      readSeq: 0,
+      missed: [],
+    }
+    running({ home: true, dmList: true, chat })
+    const list = render(<ChannelSidebar />)
+    expect(new RegExp(`data-contact="${CAROL}"[^>]*aria-current="true"`).test(list)).toBe(true)
+    expect(/data-dm="1"[^>]*aria-current/.test(list)).toBe(false)
+    const rail = render(<ServerRail />)
+    expect(/<button[^>]*data-rail="dms"[^>]*bg-primary text-on-primary/.test(rail)).toBe(true)
+    expect(/<button[^>]*aria-label="Peer-to-peer"[^>]*aria-pressed="false"/.test(rail)).toBe(true)
+    const pane = render(<P2pDmPane onMenu={() => {}} />)
+    expect(pane).not.toContain('Back to contacts')
+
+    running({ home: true, dmList: false, chat })
+    expect(
+      /<button[^>]*aria-label="Peer-to-peer"[^>]*aria-pressed="true"/.test(render(<ServerRail />))
+    ).toBe(true)
+  })
+
+  test('the instance DM row is current when no P2P conversation is beside the list', () => {
+    inDms()
+    running()
+    expect(/data-dm="1"[^>]*aria-current="page"/.test(render(<ChannelSidebar />))).toBe(true)
+  })
+
+  test('the P2P home and closing it leave the place beside the DM list', () => {
+    running({ home: true, dmList: true })
+    p2p.openHome()
+    expect(useP2p.getState()).toMatchObject({ home: true, dmList: false })
+    running({ home: true, dmList: true })
+    p2p.closeHome()
+    expect(useP2p.getState()).toMatchObject({ home: false, dmList: false })
+  })
+
+  const carolChat = () => ({
+    room: dmRoomId(BOB, CAROL),
+    peer: CAROL,
+    messages: [],
+    more: false,
+    loading: false,
+    readSeq: 0,
+    missed: [],
+  })
+  const requests = (html: string) => html.includes('aria-label="Message requests"')
+
+  test('Message requests opens the requests, also with a conversation open', () => {
+    for (const over of [
+      { home: true, dmList: true, chat: carolChat() },
+      { home: false, dmList: false, chat: carolChat() },
+    ]) {
+      running(over)
+      p2p.openRequests()
+      expect(useP2p.getState()).toMatchObject({ home: true, dmList: false, chat: null })
+      p2pState(useP2p.getState())
+      expect(requests(render(<P2pHome onMenu={() => {}} />))).toBe(true)
+    }
+  })
+
+  test('closing a conversation beside the DM list closes the conversation', () => {
+    running({ home: true, dmList: true, chat: carolChat() })
+    p2p.closeHome()
+    expect(useP2p.getState().chat).toBe(null)
+    p2p.openHome()
+    p2pState(useP2p.getState())
+    expect(requests(render(<P2pHome onMenu={() => {}} />))).toBe(true)
+    running({ home: true, dmList: false, chat: carolChat() })
+    p2p.closeHome()
+    expect(useP2p.getState().chat?.peer).toBe(CAROL)
+  })
+
+  test('the P2P home opened over a conversation beside the DM list shows the contacts', () => {
+    const room = dmRoomId(BOB, CAROL)
+    running({ home: true, dmList: true, chat: carolChat(), replying: { room, id: 'm1' } })
+    p2p.openHome()
+    expect(useP2p.getState()).toMatchObject({
+      home: true,
+      dmList: false,
+      chat: null,
+      pins: null,
+      replying: null,
+    })
+    p2pState(useP2p.getState())
+    expect(requests(render(<P2pHome onMenu={() => {}} />))).toBe(true)
+    running({ home: false, dmList: false, chat: carolChat() })
+    p2p.openHome()
+    expect(useP2p.getState().chat?.peer).toBe(CAROL)
+  })
+
+  test('Add contact shows in the DM list exactly where the P2P home shows it', () => {
+    const add = 'title="Add contact" aria-label="Add contact"'
+    const STATES: [string, Partial<P2pState>, boolean][] = [
+      ['running', {}, true],
+      ['starting', { loading: true }, false],
+      ['open in another tab', { elsewhere: true }, false],
+      ['reading here, open in another tab', { elsewhere: true, reader: true }, false],
+      ['reading here with no contacts yet', { elsewhere: true, reader: true, contacts: [] }, false],
+      ['with no contacts yet', { contacts: [] }, true],
+    ]
+    for (const [state, over, shown] of STATES) {
+      inDms()
+      running(over)
+      const list = section(render(<ChannelSidebar />)).includes(add)
+      const home = render(<P2pHome onMenu={() => {}} />).includes('Add contact')
+      expect([state, list, home]).toEqual([state, shown, shown])
+    }
   })
 })
 

@@ -317,6 +317,7 @@ export function ServerRail() {
   const logout = useStore(s => s.logout)
   const saved = useStore(s => s.layout.servers)
   const p2pHome = useP2p(s => s.home || s.server !== null)
+  const p2pBeside = useP2p(s => s.home && s.dmList)
   // Set only while the instance has P2P on for this account.
   const p2pOn = useP2p(s => s.account !== null)
   const p2pEnabled = useP2p(s => s.enabled)
@@ -354,7 +355,7 @@ export function ServerRail() {
         >
           <House size={22} />
         </button>
-        {me && <DmTile active={view?.kind === 'dm' && !p2pHome} />}
+        {me && <DmTile active={view?.kind === 'dm' && (!p2pHome || p2pBeside)} />}
         <button
           data-rail="add-server"
           title="Add a server"

@@ -22,6 +22,7 @@ import {
   type Presence,
 } from '../../lib/p2p/node'
 import { statusText } from '../../lib/p2p/home_card'
+import { addsContacts, conversations } from '../../lib/p2p/conversations'
 import { enterKey } from '../../lib/keys'
 import { longPress } from '../context_menu'
 import { PingBadge, RailPingBadge } from '../ping_badge'
@@ -51,8 +52,14 @@ import { ctxFor } from '../../lib/actions/ctx'
 import { menuItems, openActionMenu } from '../../lib/actions/menu'
 import { openContactMenu } from '../../lib/actions/p2p_contact'
 import { LabelText, useInstanceLabel } from '../instance_badge'
+import { useDrawerClose } from '../drawer'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
+
+// When the conversation with a contact last had a message (0 without one).
+export const lastTsOf =
+  (rooms: Record<string, { lastTs: number }>, me: string | null) => (ik: string) =>
+    me ? (rooms[dmRoomId(me, ik)]?.lastTs ?? 0) : 0
 
 const count = (n: number, one: string, many: string) => (n ? `${n} ${n === 1 ? one : many}` : '')
 
@@ -60,7 +67,7 @@ const count = (n: number, one: string, many: string) => (n ? `${n} ${n === 1 ? o
 // requests, server invites, co-owner and transfer asks) shows as its badge; conversation pings
 // count on the DM tile.
 export function P2pRailTile() {
-  const open = useP2p(s => s.home)
+  const open = useP2p(s => s.home && !s.dmList)
   const enabled = useP2p(s => s.enabled)
   const pending = useP2p(s => requestsOf(s.contacts).length)
   const invites = useP2p(s => s.serverInvites.length)
@@ -312,14 +319,18 @@ const noticeText = (c: Contact) =>
       ? `${displayName(c)} reset their P2P identity`
       : null
 
-function ContactRow({
+// A contact: opens the conversation (in the P2P home, or beside the instance's DM list with
+// `where="dms"`), or the contact's card while it isn't mutual.
+export function ContactRow({
   c,
   presence,
   active = false,
+  where = 'home',
 }: {
   c: Contact
   presence: Presence
   active?: boolean
+  where?: 'home' | 'dms'
 }) {
   const me = useP2p(s => s.me)
   const room = me && c.state === 'mutual' ? dmRoomId(me, c.ik) : null
@@ -331,24 +342,33 @@ function ContactRow({
   const notice = noticeText(c)
   const shield = shieldOf(c)
   const chip = useHasChip(c.ik)
+  const closeDrawer = useDrawerClose()
   return (
     <li>
       <button
         data-contact={c.ik}
         data-unread={unread ? '' : undefined}
         aria-current={active || undefined}
-        onClick={() =>
-          c.state === 'mutual'
-            ? void p2pDm.openDm(c.ik)
-            : p2p.openDialog({ kind: 'contact', ik: c.ik })
-        }
+        onClick={() => {
+          if (c.state !== 'mutual') return p2p.openDialog({ kind: 'contact', ik: c.ik })
+          closeDrawer()
+          void p2pDm.openDm(c.ik, where)
+        }}
         {...longPress((x, y) => openContactMenu(x, y, c, me))}
-        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left ${
-          active ? 'bg-surface-container-highest' : 'hover:bg-surface-container-high'
-        }`}
+        className={
+          where === 'dms'
+            ? `flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm ${
+                active
+                  ? 'bg-secondary-container text-on-secondary-container'
+                  : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
+              }`
+            : `flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left ${
+                active ? 'bg-surface-container-highest' : 'hover:bg-surface-container-high'
+              }`
+        }
       >
-        <span className="relative">
-          <KeyAvatar ik={c.ik} />
+        <span className="relative shrink-0">
+          <KeyAvatar ik={c.ik} size={where === 'dms' ? 28 : undefined} />
           <PresenceDot presence={presence} />
         </span>
         <span className="min-w-0 flex-1">
@@ -472,13 +492,7 @@ function DmList() {
   const rooms = useP2p(s => s.rooms)
   const me = useP2p(s => s.me)
   const open = useP2p(s => s.chat?.peer)
-  const list = visibleContacts(contacts)
-    .filter(c => c.state === 'mutual')
-    .sort((a, b) => {
-      const ta = me ? (rooms[dmRoomId(me, a.ik)]?.lastTs ?? 0) : 0
-      const tb = me ? (rooms[dmRoomId(me, b.ik)]?.lastTs ?? 0) : 0
-      return tb - ta || displayName(a).localeCompare(displayName(b))
-    })
+  const list = conversations(contacts, lastTsOf(rooms, me))
   return (
     <aside className="hidden w-72 shrink-0 flex-col border-r border-outline-variant bg-surface-container-low md:flex">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-4">
@@ -530,6 +544,7 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
   const list = visibleContacts(contacts)
   const pending = requestsOf(contacts)
   const blockedList = contacts.filter(c => c.state === 'blocked')
+  const adds = addsContacts({ enabled, loading, elsewhere })
 
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-surface">
@@ -553,7 +568,7 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
           </span>
         )}
         <span className="flex-1" />
-        {enabled && !loading && !elsewhere && (
+        {adds && (
           <>
             <button
               title="Show my code"
@@ -612,17 +627,19 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
                 <p className="text-sm text-on-surface-variant">
                   Swap contact codes with someone: scan theirs, paste it, or show them yours.
                 </p>
-                <div className="flex gap-2">
-                  <button onClick={() => p2p.openDialog({ kind: 'add' })} className={filledBtn}>
-                    Add contact
-                  </button>
-                  <button
-                    onClick={() => p2p.openDialog({ kind: 'add', tab: 'mine' })}
-                    className={textBtn}
-                  >
-                    Show my code
-                  </button>
-                </div>
+                {adds && (
+                  <div className="flex gap-2">
+                    <button onClick={() => p2p.openDialog({ kind: 'add' })} className={filledBtn}>
+                      Add contact
+                    </button>
+                    <button
+                      onClick={() => p2p.openDialog({ kind: 'add', tab: 'mine' })}
+                      className={textBtn}
+                    >
+                      Show my code
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               list.length > 0 && (

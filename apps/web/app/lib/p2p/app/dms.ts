@@ -285,17 +285,20 @@ const lastEditable = (key: string | null = null) => {
 }
 
 export const p2pDm = {
-  async openDm(ik: string) {
+  // Opens the conversation with a contact in the P2P home, or beside the instance's DM list
+  // (`dms`), which a reload doesn't bring back.
+  async openDm(ik: string, where: 'home' | 'dms' = 'home') {
     const me = meNow()
     if (!me) return
     const room = dmRoomId(me, ik)
-    writeHome(useP2p.getState().account)
+    writeHome(where === 'home' ? useP2p.getState().account : null)
     if (dms) await dms.open(ik).catch(() => null)
     const r = await dbNow()
       ?.room(room)
       .catch(() => undefined)
     useP2p.setState(st => ({
       home: true,
+      dmList: where === 'dms',
       server: null,
       dialog: null,
       chat: {

@@ -8,7 +8,7 @@ import {
   useStore,
   resetSessionCaches,
 } from '../store'
-import { READ_BATCH_MAX, chunked, markTargets, markedRead, withThreads } from '../reads'
+import { READ_BATCH_MAX, chunked, markTargets, markedRead, ownRead, withThreads } from '../reads'
 import type { Pings } from '../pings'
 import { EMPTY_NOTIFY } from '../notify'
 import type { ReadMark } from '../lists'
@@ -163,6 +163,15 @@ describe('mark targets', () => {
     const none = markedRead(READS, PINGS, [])
     expect(none.reads).toBe(READS)
     expect(none.pings).toBe(PINGS)
+  })
+
+  test('an own message leaves the mark as it is, and starts a scope that has none at it', () => {
+    const read = { lastRead: 10, latest: 10, server: 's' }
+    expect(ownRead(read, 12)).toEqual({ lastRead: 10, latest: 10, server: 's' })
+    expect(ownRead({ lastRead: 10, latest: 11 }, 12)).toEqual({ lastRead: 10, latest: 11 })
+    expect(ownRead({ lastRead: 10, latest: 12 }, 11)).toEqual({ lastRead: 10, latest: 12 })
+    expect(ownRead({ lastRead: 12, latest: 12 }, 11)).toEqual({ lastRead: 12, latest: 12 })
+    expect(ownRead(undefined, 7)).toEqual({ lastRead: 7, latest: 7 })
   })
 
   test('chunks hold at most one batch each', () => {

@@ -41,7 +41,14 @@ import {
 import type { RChatState } from '../store_types'
 import type { Message, Unread, WsEvent } from '../types'
 import { viewKey } from '../view'
-import { pageVisible, sessionMark, type GetState, type Handlers, type SetState } from './ctx'
+import {
+  pageVisible,
+  sessionMark,
+  shownKey,
+  type GetState,
+  type Handlers,
+  type SetState,
+} from './ctx'
 
 export interface ReadsDeps {
   alertUser: (alert: AlertInput) => void
@@ -232,7 +239,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
     const alert = pingAlert(
       { scope, thread_root_id: null },
       {
-        view: s.view ? viewKey(s.view) : null,
+        view: shownKey(s.view),
         thread: s.panel?.kind === 'thread' ? s.panel.root.id : null,
         following: key => s.atBottom[key] === true && !detached(key),
         visible: pageVisible(),
@@ -410,7 +417,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
       const alert = pingAlert(
         ping,
         {
-          view: s.view ? viewKey(s.view) : null,
+          view: shownKey(s.view),
           thread: s.panel?.kind === 'thread' ? s.panel.root.id : null,
           following: key => s.atBottom[key] === true && !detached(key),
           visible: pageVisible(),

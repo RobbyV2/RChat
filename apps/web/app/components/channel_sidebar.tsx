@@ -12,6 +12,7 @@ import {
   MicOff,
   Pin,
   Plus,
+  UserPlus,
   Volume2,
 } from 'lucide-react'
 import {
@@ -67,6 +68,10 @@ import { PingBadge } from './ping_badge'
 import { scopePings } from '../lib/pings'
 import { MutedIcon } from './notify_menu'
 import { shownMedia } from '../lib/timeouts'
+import { p2p, useP2p } from '../lib/p2p/app'
+import { addsContacts, p2pDmSection } from '../lib/p2p/conversations'
+import { ContactRow, lastTsOf } from './p2p/p2p_home'
+import { P2pBadge } from './p2p/p2p_badge'
 
 const base = 'flex h-full w-60 shrink-0 flex-col bg-surface-container-low'
 
@@ -90,7 +95,13 @@ export function DmRow({
   const muted = useStore(s => scopeMuted(s, { kind: 'dm', id }))
   return (
     <button
-      onClick={() => void openDm(id)}
+      data-dm={id}
+      aria-current={active ? 'page' : undefined}
+      onClick={() => {
+        // A P2P conversation open beside the list gives way.
+        if (useP2p.getState().dmList) p2p.closeHome()
+        void openDm(id)
+      }}
       {...longPress((x, y) => openActionMenu(x, y, { kind: 'dm', dm, where: 'sidebar' }), {
         group: 'dm',
         key: String(id),
@@ -309,7 +320,68 @@ function useHeldOrder(
   return rows.ids
 }
 
+// The P2P conversations under the instance's DMs, behind a dashed divider and outside their
+// scroll, so loading more DMs never moves them. A conversation opens beside this list; message
+// requests open the P2P home on its contacts.
+function P2pDms() {
+  const account = useP2p(s => s.account)
+  const enabled = useP2p(s => s.enabled)
+  const contacts = useP2p(s => s.contacts)
+  const rooms = useP2p(s => s.rooms)
+  const me = useP2p(s => s.me)
+  const presence = useP2p(s => s.presence)
+  const open = useP2p(s => (s.home && s.dmList ? (s.chat?.peer ?? null) : null))
+  const adds = useP2p(addsContacts)
+  const section = p2pDmSection({ account, enabled, contacts, lastTs: lastTsOf(rooms, me) })
+  if (!section) return null
+  return (
+    <section
+      data-p2p-dms
+      aria-label="P2P direct messages"
+      className="flex max-h-[45%] shrink-0 flex-col pb-1"
+    >
+      <div className="flex shrink-0 items-center gap-2 pt-3 pr-3 pb-1 pl-4">
+        <span aria-hidden className="h-0 flex-1 border-t border-dashed border-tertiary/70" />
+        <P2pBadge />
+        <span aria-hidden className="h-0 flex-1 border-t border-dashed border-tertiary/70" />
+        {adds && (
+          <button
+            title="Add contact"
+            aria-label="Add contact"
+            onClick={() => p2p.openDialog({ kind: 'add' })}
+            className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
+          >
+            <UserPlus size={16} />
+          </button>
+        )}
+      </div>
+      <ul className="flex min-h-0 flex-col overflow-y-auto px-2">
+        {section.rows.map(c => (
+          <ContactRow
+            key={c.ik}
+            c={c}
+            presence={presence[c.ik] ?? 'offline'}
+            active={c.ik === open}
+            where="dms"
+          />
+        ))}
+      </ul>
+      {section.requests > 0 && (
+        <button
+          data-p2p-requests
+          onClick={p2p.openRequests}
+          className="mx-2 shrink-0 rounded-lg px-2 py-1.5 text-left text-sm font-medium text-primary hover:bg-surface-container"
+        >
+          Message requests ({section.requests})
+        </button>
+      )}
+    </section>
+  )
+}
+
 function DmSidebar({ dmId }: { dmId: number }) {
+  // While a P2P conversation is open beside the list, no instance DM is the current one.
+  const beside = useP2p(s => s.home && s.dmList)
   const dms = useStore(s => s.dms)
   const layout = useStore(s => s.layout)
   const dmsMore = useStore(s => s.dmsMore)
@@ -368,7 +440,7 @@ function DmSidebar({ dmId }: { dmId: number }) {
     <DmRow
       key={dm.id}
       dm={dm}
-      active={dmId === dm.id}
+      active={!beside && dmId === dm.id}
       unread={unread(`d${dm.id}`)}
       pings={pingsOf(`d${dm.id}`)}
       shown={shown}
@@ -377,110 +449,112 @@ function DmSidebar({ dmId }: { dmId: number }) {
   return (
     <aside className={base}>
       <div
-        ref={dragScope}
         onPointerEnter={() => setPointerIn(true)}
         onPointerLeave={() => setPointerIn(false)}
         onFocus={e => setKeyFocus(e.target.matches(':focus-visible'))}
         onBlur={e => {
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setKeyFocus(false)
         }}
-        className="flex flex-1 flex-col overflow-y-auto pb-3"
+        className="flex min-h-0 flex-1 flex-col pb-3 last:pb-[max(0.75rem,env(safe-area-inset-bottom))]"
       >
-        <FriendsEntry />
-        {pinned.length > 0 && (
-          <div
-            data-drop-zone="pinned"
-            data-drop-label="Pin"
-            className={`flex shrink-0 flex-col pb-1 transition-colors ${
-              pinning ? 'bg-primary-container/40' : ''
-            }`}
-          >
-            <div className="sticky top-0 z-10 flex items-center gap-1.5 bg-surface-container-low px-4 pt-3 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-              <Pin size={12} className="shrink-0" />
-              Pinned
-            </div>
-            {pinned.map(row)}
-          </div>
-        )}
-        <div
-          data-drop-zone={pinZone ? 'pinned' : undefined}
-          data-drop-label={pinZone ? 'Pin' : undefined}
-          className="sticky top-0 z-10 shrink-0 bg-surface-container-low"
-        >
-          {pinZone ? (
+        <div data-dm-scroll ref={dragScope} className="flex min-h-0 flex-col overflow-y-auto">
+          <FriendsEntry />
+          {pinned.length > 0 && (
             <div
-              className={`mx-2 my-1 flex h-8 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed text-xs font-medium transition-colors ${
-                dropZone === 'pinned'
-                  ? 'border-primary bg-primary-container text-on-primary-container'
-                  : 'border-outline text-on-surface-variant'
+              data-drop-zone="pinned"
+              data-drop-label="Pin"
+              className={`flex shrink-0 flex-col pb-1 transition-colors ${
+                pinning ? 'bg-primary-container/40' : ''
               }`}
             >
-              <Pin size={14} className="shrink-0" />
-              Drop here to pin
-            </div>
-          ) : (
-            <div className="flex items-center gap-0.5 pt-3 pr-3 pb-1 pl-4">
-              <span className="min-w-0 flex-1 truncate text-xs font-medium tracking-wider text-on-surface-variant uppercase">
-                Direct Messages
-              </span>
-              <DmListControl prefs={prefs} />
-              <button
-                title="New direct message"
-                aria-label="New direct message"
-                onClick={() => {
-                  settled.current = false
-                  setDmInput('')
-                }}
-                className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
-              >
-                <Plus size={16} />
-              </button>
+              <div className="sticky top-0 z-10 flex items-center gap-1.5 bg-surface-container-low px-4 pt-3 pb-1 text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+                <Pin size={12} className="shrink-0" />
+                Pinned
+              </div>
+              {pinned.map(row)}
             </div>
           )}
-        </div>
-        {dmInput !== null && (
-          <input
-            autoFocus
-            value={dmInput}
-            onChange={e => setDmInput(e.target.value)}
-            onKeyDown={e => {
-              if (enterKey(e)) submitDm()
-              if (e.key === 'Escape') {
-                settled.current = true
-                setDmInput(null)
-              }
-            }}
-            onBlur={submitDm}
-            placeholder="username"
-            className="mx-2 my-0.5 shrink-0 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
-          />
-        )}
-        <div
-          data-drop-zone="recent"
-          data-drop-label="Unpin"
-          data-drop-sorted={sorted ? '' : undefined}
-          className="flex shrink-0 flex-col"
-        >
-          {rest.map(row)}
-          {rest.length === 0 &&
-            filtersOn(prefs) > 0 &&
-            !paging &&
-            (!unreadKey || looked === unreadKey) && (
-              <p
-                data-dm-none
-                className="mx-4 my-2 flex flex-wrap items-baseline gap-x-2 text-sm text-on-surface-variant"
+          <div
+            data-drop-zone={pinZone ? 'pinned' : undefined}
+            data-drop-label={pinZone ? 'Pin' : undefined}
+            className="sticky top-0 z-10 shrink-0 bg-surface-container-low"
+          >
+            {pinZone ? (
+              <div
+                className={`mx-2 my-1 flex h-8 items-center justify-center gap-1.5 rounded-lg border-2 border-dashed text-xs font-medium transition-colors ${
+                  dropZone === 'pinned'
+                    ? 'border-primary bg-primary-container text-on-primary-container'
+                    : 'border-outline text-on-surface-variant'
+                }`}
               >
-                <span>No conversations match</span>
+                <Pin size={14} className="shrink-0" />
+                Drop here to pin
+              </div>
+            ) : (
+              <div className="flex items-center gap-0.5 pt-3 pr-3 pb-1 pl-4">
+                <span className="min-w-0 flex-1 truncate text-xs font-medium tracking-wider text-on-surface-variant uppercase">
+                  Direct Messages
+                </span>
+                <DmListControl prefs={prefs} />
                 <button
-                  onClick={() => setDmList(clearDmFilters(prefs))}
-                  className="rounded font-medium text-primary hover:underline"
+                  title="New direct message"
+                  aria-label="New direct message"
+                  onClick={() => {
+                    settled.current = false
+                    setDmInput('')
+                  }}
+                  className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
                 >
-                  Clear filters
+                  <Plus size={16} />
                 </button>
-              </p>
+              </div>
             )}
-          {paging && <Sentinel key={dms.length} onVisible={loadMoreDms} />}
+          </div>
+          {dmInput !== null && (
+            <input
+              autoFocus
+              value={dmInput}
+              onChange={e => setDmInput(e.target.value)}
+              onKeyDown={e => {
+                if (enterKey(e)) submitDm()
+                if (e.key === 'Escape') {
+                  settled.current = true
+                  setDmInput(null)
+                }
+              }}
+              onBlur={submitDm}
+              placeholder="username"
+              className="mx-2 my-0.5 shrink-0 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
+            />
+          )}
+          <div
+            data-drop-zone="recent"
+            data-drop-label="Unpin"
+            data-drop-sorted={sorted ? '' : undefined}
+            className="flex shrink-0 flex-col"
+          >
+            {rest.map(row)}
+            {rest.length === 0 &&
+              filtersOn(prefs) > 0 &&
+              !paging &&
+              (!unreadKey || looked === unreadKey) && (
+                <p
+                  data-dm-none
+                  className="mx-4 my-2 flex flex-wrap items-baseline gap-x-2 text-sm text-on-surface-variant"
+                >
+                  <span>No conversations match</span>
+                  <button
+                    onClick={() => setDmList(clearDmFilters(prefs))}
+                    className="rounded font-medium text-primary hover:underline"
+                  >
+                    Clear filters
+                  </button>
+                </p>
+              )}
+            {paging && <Sentinel key={dms.length} onVisible={loadMoreDms} />}
+          </div>
         </div>
+        <P2pDms />
       </div>
       <VoiceDock />
     </aside>
