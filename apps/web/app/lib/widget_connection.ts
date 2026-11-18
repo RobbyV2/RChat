@@ -1,0 +1,525 @@
+import { ApiError, createApi } from './api'
+import { guestSessionHeaders, postGuest } from './guest_chat'
+import { readLocal, writeLocal } from './instances'
+import { findMessageLinks } from './message_links'
+import { RtcManager, JoinAborted } from './rtc'
+import type { MessageLocation, VoiceMsg, WsEvent } from './types'
+import { parentOrigin, type WidgetMode, type WidgetRoom, type WidgetRoomMetadata } from './widgets'
+
+type Event =
+  | WsEvent
+  | { type: 'widget_ready'; name: string }
+  | { type: 'widget_refresh' }
+  | { type: 'widget_mutes'; users: string[] }
+
+export class WidgetConnection {
+  private api = createApi(location.origin + '/api', 'omit')
+  private socket: WebSocket | null = null
+  private ticket = ''
+  private parent = parentOrigin()
+  private readonly storageKey: string
+  private token: string | null
+  private grant: string | null
+  private draftChannel: number | null = null
+  private heldDraft: {
+    channel: number
+    account: string | null
+    text: string
+    expired: boolean
+  } | null = null
+  draft = { text: '' }
+  account: string | null = null
+  private stopped = false
+  private sequence = 0
+  private interval: ReturnType<typeof setInterval> | null = null
+  private ice: RTCConfiguration = { iceServers: [] }
+  readonly rtc = new RtcManager({ send: msg => this.signal(msg), ice: () => this.ice })
+  readonly hideSend = new URLSearchParams(location.search).get('send') === 'off'
+  metadata: WidgetRoomMetadata | null = null
+  room: WidgetRoom | null = null
+  linkCards = new Map<number, MessageLocation>()
+  mode: WidgetMode | null = null
+  name = ''
+  error = ''
+  loaded = false
+  storage = true
+  joining = false
+  inVoice = false
+  userMuted = false
+  silenced: string[] = []
+
+  constructor(
+    private id: string,
+    private redraw: () => void,
+    private canView: (room: WidgetRoomMetadata) => boolean = () => true
+  ) {
+    this.rtc.onChange = redraw
+    this.storageKey = 'rchat_widget:' + id + ':' + this.parent
+    this.token = readLocal(this.storageKey)
+    this.grant = readLocal(this.storageKey + ':grant')
+    const storageKey = 'rchat_widget_storage'
+    this.storage = writeLocal(storageKey, '1') && readLocal(storageKey) === '1'
+    if (this.storage) writeLocal(storageKey, null)
+  }
+  private get path() {
+    return '/widgets/' + encodeURIComponent(this.id)
+  }
+  private get scope() {
+    return { 'X-Widget-Session': this.ticket, 'X-Widget-Parent': this.parent ?? '' }
+  }
+  private get headers() {
+    return {
+      ...this.scope,
+      ...(!this.token && this.metadata
+        ? guestSessionHeaders(this.api, this.metadata.server, this.storageKey)
+        : {}),
+    }
+  }
+  get signedIn() {
+    return this.account !== null
+  }
+  private changed() {
+    if (!this.stopped) this.redraw()
+  }
+  async start() {
+    try {
+      if (!this.parent || !/^[a-f0-9]{32}$/.test(this.id)) throw Error()
+      const key = new URLSearchParams(location.hash.slice(1)).get('key')
+      const session = await this.api.req<{ ticket: string; mode: WidgetMode }>(
+        'POST',
+        this.path + '/session',
+        { parent: this.parent, read_key: key }
+      )
+      if (this.stopped) return
+      this.ticket = session.ticket
+      this.mode = session.mode
+      this.api.setToken(this.token)
+      this.api.setGrants(this.grant ? { widget: this.grant } : {})
+      await this.refresh()
+      if (!this.stopped) this.interval = setInterval(() => void this.refresh(), 30000)
+    } catch {
+      if (!this.stopped) {
+        this.loaded = true
+        this.error = 'This widget is unavailable.'
+        this.changed()
+      }
+    }
+  }
+  // Re-evaluate when local viewing settings change. Only authorized room metadata reaches
+  // canView. A blocked room has no view request, live subscription or media connection.
+  async refresh(reconnect = true) {
+    const seq = ++this.sequence
+    const token = this.token
+    if (this.metadata && !this.canView(this.metadata)) this.hideContent()
+    try {
+      if (token && !this.account) {
+        const me = await this.api.me()
+        if (this.stopped || this.sequence !== seq) return
+        this.account = me.username
+        if (!this.mayRestore(me.username)) this.heldDraft = null
+      }
+      const metadata = await this.api.req<WidgetRoomMetadata>(
+        'GET',
+        this.path + '/room',
+        undefined,
+        this.scope
+      )
+      if (this.stopped || this.sequence !== seq) return
+      this.metadata = metadata
+      this.loaded = true
+      if (!this.canView(metadata)) {
+        this.hideContent()
+        return
+      }
+      const room = await this.api.req<WidgetRoom>(
+        'GET',
+        this.path + '/view',
+        undefined,
+        this.headers
+      )
+      if (this.stopped || this.sequence !== seq) return
+      if (!this.canView(metadata)) {
+        this.hideContent()
+        return
+      }
+      if (this.draftChannel !== room.channel_id) this.draft = { text: '' }
+      this.draftChannel = room.channel_id
+      if (this.heldDraft && this.heldDraft.channel !== room.channel_id) this.heldDraft = null
+      if (this.room?.channel_id !== room.channel_id) this.linkCards = new Map()
+      this.room = room
+      void this.loadLinkCards(room, metadata, seq)
+      if (!this.token && !room.participate && (this.inVoice || this.joining)) this.release()
+      if (reconnect && !this.socket) this.connect()
+    } catch (error) {
+      if (this.stopped || this.sequence !== seq || this.expired(token, error)) return
+      this.metadata = null
+      this.loaded = true
+      const retry =
+        error instanceof ApiError &&
+        (error.status === 0 || error.status === 429 || error.status >= 500)
+      this.hideContent(retry)
+      return
+    }
+    this.changed()
+  }
+  // Notices that arrive during a refresh lead to one more once it ends.
+  private live: Promise<void> | null = null
+  private liveAgain = false
+  private liveRefresh() {
+    if (this.live) {
+      this.liveAgain = true
+      return
+    }
+    this.live = this.refresh().finally(() => {
+      this.live = null
+      if (!this.liveAgain || this.stopped) return
+      this.liveAgain = false
+      this.liveRefresh()
+    })
+  }
+  private async loadLinkCards(room: WidgetRoom, metadata: WidgetRoomMetadata, seq: number) {
+    const token = this.token
+    const ids = new Set<number>()
+    for (const message of room.messages) {
+      for (const { id, place } of findMessageLinks(message.content, [location.origin])) {
+        if (
+          place.kind === 'channel' &&
+          place.server === room.server &&
+          place.channelId === room.channel_id
+        )
+          ids.add(id)
+      }
+    }
+    const pending = [...ids]
+    // The previews shown keep their place until the new answer replaces them all.
+    const cards = new Map<number, MessageLocation>()
+    for (let i = 0; i < pending.length; i += 50) {
+      if (this.stopped || this.sequence !== seq || !this.canView(metadata)) return
+      try {
+        const found = await this.api.req<MessageLocation[]>(
+          'POST',
+          this.path + '/locations',
+          { ids: pending.slice(i, i + 50) },
+          this.scope
+        )
+        if (this.stopped || this.sequence !== seq || !this.canView(metadata)) return
+        for (const card of found) cards.set(card.id, card)
+      } catch (error) {
+        if (this.sequence === seq) this.expired(token, error)
+        return // The link remains usable when its preview is unavailable.
+      }
+    }
+    this.linkCards = cards
+    this.changed()
+  }
+  private hideContent(keepDraft = false) {
+    if (!keepDraft) {
+      this.draft = { text: '' }
+      this.draftChannel = null
+    }
+    this.room = null
+    this.linkCards = new Map()
+    this.closeSocket()
+    this.release()
+    this.changed()
+  }
+  private connect() {
+    const url = new URL('/api/v1/ws', location.href)
+    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.searchParams.set('widget', this.id)
+    const ws = new WebSocket(url)
+    this.socket = ws
+    ws.onopen = () => {
+      if (this.socket !== ws) return
+      ws.send(
+        JSON.stringify({
+          ticket: this.ticket,
+          parent: this.parent,
+          token: this.token,
+          grant: this.token ? null : this.grant,
+        })
+      )
+    }
+    ws.onmessage = e => {
+      if (this.socket !== ws) return
+      const event: Event = JSON.parse(e.data)
+      switch (event.type) {
+        case 'widget_ready':
+          this.name = event.name
+          // Catch room and permission changes between the first view and the live subscription.
+          void this.refresh(false)
+          break
+        case 'widget_refresh':
+          this.liveRefresh()
+          return
+        case 'voice_state':
+          if (!this.room || event.channel_id !== this.room.channel_id) return
+          this.room = { ...this.room, users: event.users }
+          if (this.joining && this.rtc.active() && event.users.includes(this.name)) {
+            this.inVoice = true
+            this.joining = false
+          }
+          if (this.inVoice) this.rtc.sync(event.users)
+          break
+        case 'rtc_signal':
+          void this.rtc.onSignal(event.from, event.payload, {
+            channelId: event.channel_id,
+            dmId: event.dm_id,
+          })
+          return
+        case 'widget_mutes':
+          this.updateMutes(event.users)
+          break
+        case 'voice_muted':
+          this.updateMutes([
+            ...this.silenced.filter(u => u !== event.username),
+            ...(event.muted ? [event.username] : []),
+          ])
+          break
+        case 'error':
+          this.error = event.message
+          break
+      }
+      this.changed()
+    }
+    ws.onclose = () => {
+      if (this.socket !== ws) return
+      this.socket = null
+      this.name = ''
+      if (this.inVoice || this.joining) {
+        this.error ||= 'Voice disconnected.'
+        this.release()
+      }
+      // Recheck discovery and local viewing settings on disconnect. The timer retries the socket.
+      void this.refresh(false)
+      this.changed()
+    }
+  }
+  private signal(msg: VoiceMsg) {
+    if (this.socket?.readyState !== WebSocket.OPEN) return false
+    this.socket.send(JSON.stringify(msg))
+    return true
+  }
+  private updateMutes(users: string[]) {
+    this.silenced = users
+    if (this.rtc.active() && this.rtc.muted !== (this.userMuted || users.includes(this.name)))
+      this.rtc.setMuted(this.userMuted || users.includes(this.name))
+  }
+  async join() {
+    const room = this.room,
+      ws = this.socket
+    if (
+      !room?.participate ||
+      room.kind !== 'voice' ||
+      !this.name ||
+      this.joining ||
+      this.inVoice ||
+      !ws
+    )
+      return
+    this.joining = true
+    this.error = ''
+    this.changed()
+    try {
+      const policyDocument = document as Document & {
+        permissionsPolicy?: { allowsFeature: (feature: string) => boolean }
+        featurePolicy?: { allowsFeature: (feature: string) => boolean }
+      }
+      const policy = policyDocument.permissionsPolicy ?? policyDocument.featurePolicy
+      if (policy && !policy.allowsFeature('microphone'))
+        throw Error('The host page must allow microphone access for this voice frame.')
+      if (!navigator.mediaDevices?.getUserMedia)
+        throw Error(
+          'Microphone access requires a secure connection and permission from the host page.'
+        )
+      await this.rtc.join(this.name, { channelId: room.channel_id })
+      // Fetch the instance ICE policy before accepting or sending negotiation frames.
+      const info = await this.api.discovery()
+      const iceServers: RTCIceServer[] = info.ice?.stun?.length ? [{ urls: info.ice.stun }] : []
+      if (this.token && info.ice?.turn) {
+        const turn = await this.api.p2pIce()
+        iceServers.push(...turn.ice_servers)
+      }
+      if (this.socket !== ws || !this.joining || !this.rtc.active()) return
+      this.ice = { iceServers }
+      if (!this.signal({ type: 'voice_join', channel_id: room.channel_id }))
+        throw Error('Voice disconnected.')
+    } catch (e) {
+      if (this.socket !== ws || e instanceof JoinAborted) return
+      this.error = e instanceof Error ? e.message : 'Could not join voice.'
+      this.release()
+      this.changed()
+    }
+  }
+  mute() {
+    if (!this.inVoice || this.silenced.includes(this.name)) return
+    this.userMuted = !this.userMuted
+    this.rtc.setMuted(this.userMuted)
+    this.changed()
+  }
+  private release() {
+    this.inVoice = false
+    this.joining = false
+    this.userMuted = false
+    this.silenced = []
+    this.rtc.leave()
+  }
+  private closeSocket() {
+    const ws = this.socket
+    this.socket = null
+    this.name = ''
+    if (ws) {
+      ws.onclose = null
+      ws.onmessage = null
+      ws.close()
+    }
+  }
+  leave() {
+    this.closeSocket()
+    this.release()
+    void this.refresh()
+  }
+  get canPost() {
+    return this.room?.kind === 'text' && this.room.participate && !this.hideSend
+  }
+  replyTarget(id: number) {
+    return this.canPost
+      ? this.room?.messages.find(m => m.id === id && m.kind === 'user')
+      : undefined
+  }
+  async send(content: string, reply?: number) {
+    const room = this.room
+    if (!room || !this.canPost) throw Error('Posting is unavailable.')
+    const token = this.token
+    const body = { content, reply_to: reply }
+    try {
+      if (token) await this.api.req('POST', this.path + '/messages', body, this.headers)
+      else
+        await postGuest(
+          this.api,
+          room.server,
+          this.path + '/messages',
+          body,
+          this.scope,
+          this.storageKey
+        )
+    } catch (error) {
+      this.expired(token, error)
+      throw error
+    } finally {
+      if (this.token === token && !this.stopped) await this.refresh()
+    }
+  }
+  async unlock(password: string) {
+    const { grant } = await this.api.req<{ grant: string | null }>(
+      'POST',
+      this.path + '/guest-access',
+      { password },
+      this.headers
+    )
+    this.grant = grant
+    writeLocal(this.storageKey + ':grant', grant)
+    this.api.setGrants(grant ? { widget: grant } : {})
+    await this.refresh()
+  }
+  async login(username: string, password: string) {
+    const previous = this.token
+    const { token, user } = await this.api.login({ username, password })
+    if (this.stopped || this.token !== previous) return
+    writeLocal(this.storageKey, token)
+    if (!this.mayRestore(user.username)) this.heldDraft = null
+    await this.useSession(token, user.username)
+  }
+  logout() {
+    const token = this.token
+    this.heldDraft = null
+    if (readLocal(this.storageKey) === token) writeLocal(this.storageKey, null)
+    void this.useSession(null, null)
+    if (token) void this.api.logout(token).catch(() => {})
+  }
+  // Other copies of this widget under the same embedding origin share its saved sign-in.
+  syncLogin = (event: StorageEvent) => {
+    if (!this.storage || (event.key !== this.storageKey && event.key !== null)) return
+    const saved = readLocal(this.storageKey)
+    if (this.stopped || saved === this.token) return
+    if (event.key === null) this.heldDraft = null
+    else this.holdDraft(false)
+    return this.useSession(saved, null)
+  }
+  private expired(token: string | null, error: unknown) {
+    if (
+      !token ||
+      this.stopped ||
+      this.token !== token ||
+      !(error instanceof ApiError && error.status === 401 && error.message === 'Unauthorized')
+    )
+      return false
+    const saved = readLocal(this.storageKey)
+    this.holdDraft(true)
+    if (saved && saved !== token) {
+      void this.useSession(saved, null)
+      return true
+    }
+    if (saved === token) writeLocal(this.storageKey, null)
+    void this.useSession(null, null)
+    return true
+  }
+  // Unsent text survives a sign-in change it did not ask for until the person restores or
+  // discards it. Another account never gets it.
+  private holdDraft(expired: boolean) {
+    if (this.draftChannel === null || !this.draft.text.trim()) return
+    this.heldDraft = {
+      channel: this.draftChannel,
+      account: this.account,
+      text: this.draft.text,
+      expired,
+    }
+  }
+  private mayRestore(account: string | null) {
+    const held = this.heldDraft?.account ?? null
+    return held === null || account === null || held === account
+  }
+  get canRestoreDraft() {
+    return (
+      this.canPost &&
+      this.heldDraft !== null &&
+      this.room?.channel_id === this.heldDraft.channel &&
+      this.mayRestore(this.account)
+    )
+  }
+  get draftExpired() {
+    return !!this.heldDraft?.expired
+  }
+  // What the frame says while it holds text it cannot send here.
+  get heldNotice() {
+    if (!this.heldDraft || this.canRestoreDraft) return null
+    return (
+      (this.heldDraft.expired ? 'Your sign-in expired.' : 'Your sign-in changed.') +
+      ' Sign in again to send your unsent text.'
+    )
+  }
+  recoverDraft(restore: boolean) {
+    if (!this.canRestoreDraft || !this.heldDraft) return
+    this.draft = { text: restore ? this.heldDraft.text : '' }
+    this.heldDraft = null
+    this.changed()
+  }
+  private useSession(token: string | null, account: string | null) {
+    this.token = token
+    this.account = account
+    // A queued guest send keeps the credentials it started with.
+    this.api = createApi(location.origin + '/api', 'omit')
+    this.api.setToken(token)
+    this.api.setGrants(this.grant ? { widget: this.grant } : {})
+    this.metadata = null
+    this.hideContent()
+    if (this.ticket) return this.refresh()
+  }
+  destroy() {
+    this.stopped = true
+    if (this.interval) clearInterval(this.interval)
+    this.rtc.onChange = () => {}
+    this.closeSocket()
+    this.release()
+  }
+}

@@ -77,6 +77,7 @@ import { FitName, NameWithUsername } from './display_name'
 import { showsUsername } from '../lib/display_name'
 import { PingBadge, pingLabel } from './ping_badge'
 import { MessageToolbar, type ToolbarAction } from './message_toolbar'
+import { groupPadCls, gutterTimeCls } from './grouped_row'
 import { QuickReactions, ReactionBar, rowAt } from './reactions'
 import { ReplyPreview } from './replies'
 import { MessageEditor, editAction } from './message_editor'
@@ -100,6 +101,8 @@ import {
   useSelectionKeys,
 } from './selection'
 import { p2pMarkAll } from '../lib/p2p/app'
+
+export { groupPadCls } from './grouped_row'
 
 const EMPTY: Message[] = []
 
@@ -342,15 +345,8 @@ export function GroupedRow({
   )
 }
 
-export const gutterTimeCls =
-  'absolute top-0 left-1/2 -translate-x-1/2 text-[11px] leading-[22.75px] whitespace-nowrap text-on-surface-variant tabular-nums opacity-0 group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100'
-
 const gutterStatusCls =
   'absolute top-0 left-1/2 flex h-[22.75px] -translate-x-1/2 items-center text-on-surface-variant'
-
-// Padding of a list row by its place in its group: no gap between rows of one group.
-export const groupPadCls = (first: boolean, last: boolean) =>
-  `${first ? 'pt-1.5' : 'pt-0.5'} ${last ? 'pb-1.5' : 'pb-0.5'}`
 
 // The other person in a DM's header: avatar and name, opening their profile.
 export function DmPeer({ other }: { other: UserRef }) {

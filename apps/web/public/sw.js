@@ -19,6 +19,8 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url)
   if (url.origin !== self.location.origin || url.pathname.startsWith('/api')) return
 
+  if (url.pathname === '/widget/' || url.pathname === '/widget') return
+
   if (asset(url)) {
     event.respondWith(
       caches.open(CACHE).then(async cache => {

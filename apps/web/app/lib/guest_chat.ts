@@ -61,11 +61,17 @@ export function guestPostingStatus(s: RChatState, server: string | null, channel
   return s.guestPosting[channel] ?? 'checking'
 }
 
-const sessionKey = (client: ApiClient, server: string) =>
-  'rchat_guest_session:' + client.origin() + ':' + server
+const sessionKey = (client: ApiClient, server: string, widget?: string) =>
+  widget
+    ? widget + ':guest_session:' + server
+    : 'rchat_guest_session:' + client.origin() + ':' + server
 
-export function guestSessionHeaders(client: ApiClient, server: string): Record<string, string> {
-  const key = sessionKey(client, server)
+export function guestSessionHeaders(
+  client: ApiClient,
+  server: string,
+  widget?: string
+): Record<string, string> {
+  const key = sessionKey(client, server, widget)
   const secret = sessions.get(key) ?? device().read(key)
   return secret ? { 'X-Guest-Session': secret } : {}
 }
@@ -75,9 +81,10 @@ export async function postGuest(
   server: string,
   path: string,
   body: { content: string; reply_to?: number; thread_root_id?: number },
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  widget?: string
 ) {
-  const key = sessionKey(client, server)
+  const key = sessionKey(client, server, widget)
   const current = () => sessions.get(key) ?? device().read(key)
   const send = async (secret?: string | null) => {
     const result = await client.req<{ message: Message; session: string }>(

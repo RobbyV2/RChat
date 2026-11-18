@@ -1351,6 +1351,14 @@ impl Hub {
         });
     }
 
+    pub(crate) fn owns_voice(&self, user: &str, channel: i64, conn: u64) -> bool {
+        self.replica(|r| {
+            r.rooms
+                .get(&channel)
+                .is_some_and(|room| room.users.iter().any(|(u, c)| u == user && *c == conn))
+        })
+    }
+
     pub fn rooms_in(&self, server: &str, channel_id: Option<i64>) -> Vec<(i64, Vec<String>)> {
         self.replica(|replica| {
             replica

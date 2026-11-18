@@ -127,6 +127,15 @@ pub(crate) fn api_router(config: &AppConfig, state: AppState) -> Router {
                 .merge(api_routes),
         )
         .merge(well_known)
+        .layer(axum::middleware::map_response(
+            |mut res: Response| async move {
+                res.headers_mut().insert(
+                    axum::http::header::CONTENT_SECURITY_POLICY,
+                    axum::http::HeaderValue::from_static("frame-ancestors 'none'"),
+                );
+                res
+            },
+        ))
 }
 
 /// `router` behind the version rewrite, which runs before routing so every route, limiter and

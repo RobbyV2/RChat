@@ -172,6 +172,10 @@ fn error_frames_carry_the_reason_of_rest_errors() {
         r#"{"type":"error","message":"Not a voice channel"}"#,
         "an error without a reason reads as before"
     );
+    assert_eq!(
+        wire(Refused::NoSharedVoice),
+        r#"{"type":"error","message":"No shared voice session"}"#
+    );
     let off = ApiError::off_site(StatusCode::NOT_FOUND, "Calls are off", "calls");
     assert_eq!(
         wire(off.into()),

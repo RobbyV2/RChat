@@ -19,6 +19,7 @@ const hiddenFor = (ctx: ActionCtx) =>
 const ROWS: Record<Target['kind'], boolean> = {
   none: false,
   message: true,
+  widget_message: false,
   selection: false,
   member: true,
   server: true,

@@ -1,17 +1,42 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { createContext, useEffect, useState } from 'react'
 import { ChartColumn, CornerDownRight, Forward, Phone, Pin } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { cardLabel } from '../lib/message_links'
 import type { MessageLocation } from '../lib/types'
-import type { MessageTarget } from '../lib/view'
+import { messagePath, type MessageTarget } from '../lib/view'
 import { MessageTime } from './timestamp'
 import { Snippet } from './replies'
 import { UserAvatar } from './user_avatar'
 import { BlockedQuote } from './blocking'
 import { Masked } from './ui'
 import { NameWithUsername } from './display_name'
+
+export const WidgetLinkCards = createContext<ReadonlyMap<number, MessageLocation> | null>(null)
+
+export function WidgetMessageLinkCard({
+  link,
+  card,
+}: {
+  link: MessageTarget
+  card?: MessageLocation
+}) {
+  if (
+    !card ||
+    link.place.kind !== 'channel' ||
+    card.server !== link.place.server ||
+    card.channel_id !== link.place.channelId ||
+    card.thread_root_id !== link.thread
+  )
+    return null
+  return (
+    <LinkCard
+      card={card}
+      jump={() => window.open(messagePath(link), '_blank', 'noopener,noreferrer')}
+    />
+  )
+}
 
 // A pasted link to a message on this instance. Shown only once the gated lookup says the viewer
 // can read the message; otherwise the link stays a plain link.
@@ -21,12 +46,16 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
   const known = useStore(s => id in s.linkCards)
   const resolveLinkCard = useStore(s => s.resolveLinkCard)
   const openMessage = useStore(s => s.openMessage)
-  const blocked = useStore(s => (card ? s.blocked[card.author.username] === true : false))
-  const [shown, setShown] = useState(false)
   useEffect(() => {
     if (!known) resolveLinkCard(id)
   }, [id, known, resolveLinkCard])
-  if (!card) return null
+  return card ? <LinkCard card={card} jump={() => void openMessage(id)} /> : null
+}
+
+function LinkCard({ card, jump }: { card: MessageLocation; jump: () => void }) {
+  const { id } = card
+  const blocked = useStore(s => s.blocked[card.author.username] === true)
+  const [shown, setShown] = useState(false)
   if (blocked && !shown)
     return (
       <div
@@ -37,16 +66,16 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
       </div>
     )
   const { author, created_at } = card
-  const jump = (e: React.MouseEvent) => {
+  const onJump = (e: React.MouseEvent) => {
     e.stopPropagation()
-    void openMessage(id)
+    jump()
   }
   return (
     <div
       data-link-card={id}
       className="mt-1 flex max-w-160 min-w-0 items-center gap-3 rounded-xl border border-outline-variant bg-surface-container px-3 py-2"
     >
-      <button type="button" tabIndex={-1} onClick={jump} className="min-w-0 flex-1 text-left">
+      <button type="button" tabIndex={-1} onClick={onJump} className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
           <UserAvatar
             username={author.username}
@@ -66,7 +95,7 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
       <button
         type="button"
         title="Jump to message"
-        onClick={jump}
+        onClick={onJump}
         className="flex shrink-0 items-center gap-1 rounded-full bg-secondary-container px-3 py-1 text-xs font-medium text-on-secondary-container hover:brightness-95 pointer-coarse:min-h-8"
       >
         <CornerDownRight size={12} />

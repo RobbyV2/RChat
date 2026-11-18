@@ -568,7 +568,7 @@ mod tests {
             (
                 &serde_json::json!(false),
                 &serde_json::json!(false),
-                &serde_json::json!(false)
+                &serde_json::json!(true)
             )
         );
         server.abort();
@@ -593,7 +593,7 @@ mod tests {
             (
                 &serde_json::json!(false),
                 &serde_json::json!(true),
-                &serde_json::json!(false)
+                &serde_json::json!(true)
             )
         );
         server.abort();
@@ -907,7 +907,7 @@ mod tests {
         .await;
         assert_eq!(
             (&info["e2ee"], &info["widgets"]),
-            (&serde_json::json!(false), &serde_json::json!(false)),
+            (&serde_json::json!(false), &serde_json::json!(true)),
             "what this build supports, not the switches"
         );
         let signaling = || async {

@@ -84,6 +84,7 @@ use crate::state::AppState;
 /// General rate-limit bucket for the upgrade request.
 #[utoipa::path(get, path = "/api/v1/ws", tag = "Realtime", responses((status = 101, description = "WebSocket upgrade"), (status = 429, description = "Too many requests in the general bucket, or too many open connections from this address", content_type = "text/plain", body = String), (status = 503, description = "Realtime bus not ready", content_type = "text/plain", body = String)), security(()))]
 pub async fn handler(
+    axum::extract::Query(query): axum::extract::Query<SocketQuery>,
     State(state): State<AppState>,
     Extension(key): Extension<ClientIp>,
     extensions: Extensions,
@@ -111,7 +112,17 @@ pub async fn handler(
     };
     ws.max_message_size(FRAME_MAX)
         .max_frame_size(FRAME_MAX)
-        .on_upgrade(move |socket| run(state, socket, slot))
+        .on_upgrade(move |socket| async move {
+            match query.widget {
+                Some(id) => super::widget_socket::run(state, id, socket, slot).await,
+                None => run(state, socket, slot).await,
+            }
+        })
+}
+
+#[derive(serde::Deserialize)]
+pub struct SocketQuery {
+    widget: Option<String>,
 }
 
 pub(super) enum Sent {

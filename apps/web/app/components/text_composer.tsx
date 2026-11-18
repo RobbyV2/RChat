@@ -7,16 +7,24 @@ export function TextComposer({
   send,
   label = 'Message',
   inputRef,
+  initialText = '',
+  onTextChange,
   reply,
   cancelReply,
 }: {
   send: (content: string) => Promise<void>
   label?: string
   inputRef?: Ref<HTMLTextAreaElement>
+  initialText?: string
+  onTextChange?: (value: string) => void
   reply?: string
   cancelReply?: () => void
 }) {
-  const [text, setText] = useState('')
+  const [text, setText] = useState(initialText)
+  const change = (value: string) => {
+    setText(value)
+    onTextChange?.(value)
+  }
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
@@ -27,7 +35,7 @@ export function TextComposer({
     setError('')
     try {
       await send(text)
-      setText('')
+      change('')
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -61,7 +69,7 @@ export function TextComposer({
           rows={1}
           value={text}
           disabled={busy}
-          onChange={e => setText(e.target.value)}
+          onChange={e => change(e.target.value)}
           onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()

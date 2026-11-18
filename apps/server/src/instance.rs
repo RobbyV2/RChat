@@ -428,7 +428,7 @@ impl Instance {
             limits: Limits::of(limits),
             e2ee: false,
             sfu: limits.sfu_enabled,
-            widgets: false,
+            widgets: true,
         }
     }
 }

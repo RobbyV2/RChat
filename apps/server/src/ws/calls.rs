@@ -379,7 +379,7 @@ pub(super) async fn relay_signal(
         return Err(TOO_FAST.into());
     }
     if !state.hub.rtc_shared(user, &to, channel_id, dm_id) {
-        return Err("No shared voice session".into());
+        return Err(Refused::NoSharedVoice);
     }
     if let Some(cid) = channel_id
         && shows_video(&payload)

@@ -92,7 +92,7 @@ import { useChatSource } from './chat_source'
 import type { Embed, Message, MessageMedia, UserRef } from '../lib/types'
 import { longPress } from './context_menu'
 import { InviteCard, RemoteInviteCard } from './invite_card'
-import { MessageLinkCard } from './message_link_card'
+import { MessageLinkCard, WidgetLinkCards, WidgetMessageLinkCard } from './message_link_card'
 import { RichEmbeds } from './webhooks'
 import { profileTrigger } from './profile_card'
 import { EditedMark } from './message_editor'
@@ -379,8 +379,9 @@ function GroupPill({ group, text }: { group: string; text: string }) {
 }
 
 export function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
-  const invite = href ? parseInvite(href, shareOrigin()) : null
-  const target = href && !invite ? parseMessageLink(href, localOrigins()) : null
+  const widget = useContext(WidgetLinkCards) !== null
+  const invite = !widget && href ? parseInvite(href, shareOrigin()) : null
+  const target = !widget && href && !invite ? parseMessageLink(href, localOrigins()) : null
   const body = (
     <InLink.Provider value>
       <MaskControl>{children}</MaskControl>
@@ -1196,7 +1197,12 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   const source = useMemo(() => markSpoilers(content), [content])
   const hidden = useMemo(() => spoileredUrls(content), [content])
   const homePublic = useStore(s => s.instance?.public_url ?? null)
-  const local = useMemo(() => localOrigins(homePublic), [homePublic])
+  const widgetCards = useContext(WidgetLinkCards)
+  const widget = widgetCards !== null
+  const local = useMemo(
+    () => (widget ? [location.origin] : localOrigins(homePublic)),
+    [widget, homePublic]
+  )
   const invites = useMemo(() => {
     const found = local.flatMap(origin => findInvites(content, origin))
     return found.filter((i, at) => found.findIndex(o => o.server === i.server) === at).slice(0, 3)
@@ -1268,13 +1274,22 @@ export const MarkdownMessage = memo(function MarkdownMessage({
       {message.webhook && message.webhook.embeds.length > 0 && (
         <RichEmbeds embeds={message.webhook.embeds} text={card.text} line={card.line} />
       )}
-      {!src && messageLinks.map(l => <MessageLinkCard key={l.id} link={l} />)}
       {!src &&
+        messageLinks.map(l =>
+          widgetCards ? (
+            <WidgetMessageLinkCard key={l.id} link={l} card={widgetCards.get(l.id)} />
+          ) : (
+            <MessageLinkCard key={l.id} link={l} />
+          )
+        )}
+      {!src &&
+        !widget &&
         invites.map(i => (
           <InviteCard key={i.server} variant="embed" server={i.server} password={i.password} />
         ))}
       {previews &&
         !src &&
+        !widget &&
         remotes.map(i => (
           <RemoteInviteCard key={remoteKey(i)} invite={i} onResolved={onResolved} />
         ))}

@@ -40,7 +40,7 @@ const SNIPPET_MAX: usize = 200;
 
 /// Message-id paging for message lists. Give at most one of `before`, `after` and `around`;
 /// if several are given, `around` wins over `after`, which wins over `before`.
-#[derive(Clone, Copy, Deserialize, IntoParams)]
+#[derive(Clone, Copy, Default, Deserialize, IntoParams)]
 pub struct PageQuery {
     /// Return the newest messages with an id lower than this one. Omit all three anchors for the
     /// latest messages.
@@ -105,6 +105,21 @@ pub struct SendReq {
     /// (`content` is ignored). It cannot have an attachment. Ignored with `forward_of`.
     #[serde(default)]
     pub(crate) poll: Option<crate::api::polls::PollReq>,
+}
+
+impl SendReq {
+    pub(crate) fn text(content: String, reply_to: Option<i64>) -> Self {
+        Self {
+            content,
+            reply_to,
+            mention_reply: false,
+            media_id: None,
+            media_spoiler: None,
+            p2p: None,
+            forward_of: None,
+            poll: None,
+        }
+    }
 }
 
 /// A file offered peer to peer by the sender, who becomes its `hoster`. The server stores only
@@ -1663,8 +1678,12 @@ async fn locate_message(
     id: i64,
     user: Option<&User>,
     proof: &Proof<'_>,
+    channel: Option<&super::access::ResolvedChannel>,
 ) -> Result<MessageLocation, ApiError> {
-    let message = resolve_message(db, id, user, proof).await?;
+    let scope = match channel {
+        Some(channel) => channel.message_scope(db, id).await?,
+        None => resolve_message(db, id, user, proof).await?.into_scope(),
+    };
     let crate::api::access::MsgScope {
         channel_id,
         dm_id,
@@ -1676,7 +1695,7 @@ async fn locate_message(
         media_kind: _,
         server,
         dm_users: _,
-    } = message.into_scope();
+    } = scope;
     if channel_id.is_none() && dm_id.is_none() {
         return Err(crate::api::access::not_found());
     }
@@ -1727,6 +1746,7 @@ pub(crate) async fn message_location(
         id,
         user.as_ref(),
         &Proof::headers(&headers, &state.limits),
+        None,
     )
     .await?;
     Ok(Json(found))
@@ -1766,13 +1786,32 @@ pub(crate) async fn message_locations(
     headers: HeaderMap,
     Json(req): Json<LocateBatchReq>,
 ) -> Result<Json<Vec<MessageLocation>>, ApiError> {
+    let db = state.read();
+    locations(
+        &state,
+        &db,
+        user.as_ref(),
+        &Proof::headers(&headers, &state.limits),
+        req,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn locations(
+    state: &AppState,
+    db: &Db,
+    user: Option<&User>,
+    proof: &Proof<'_>,
+    req: LocateBatchReq,
+    channel: Option<&super::access::ResolvedChannel>,
+) -> Result<Json<Vec<MessageLocation>>, ApiError> {
     let LocateBatchReq { ids } = req;
     if ids.len() > LOCATE_BATCH_MAX {
         return Err(bad("Too many messages"));
     }
-    let db = &state.read();
-    require_guest_ok(db, user.as_ref()).await?;
-    let caller = match (&user, crate::api::budget::client()) {
+    require_guest_ok(db, user).await?;
+    let caller = match (user, crate::api::budget::client()) {
         (Some(user), _) => format!("u:{}", user.username),
         (None, Some(ip)) => format!("g:{}", crate::api::budget::group(ip)),
         (None, None) => "g:".to_string(),
@@ -1780,14 +1819,13 @@ pub(crate) async fn message_locations(
     if !LOCATE_BATCHES.take(&format!("{}\n{caller}", pool_key(&state.db))) {
         return Err(slow_down());
     }
-    let proof = Proof::headers(&headers, &state.limits);
     let mut seen = std::collections::HashSet::with_capacity(ids.len());
     let mut found = Vec::with_capacity(ids.len());
     for id in ids {
         if !seen.insert(id) {
             continue;
         }
-        match locate_message(db, id, user.as_ref(), &proof).await {
+        match locate_message(db, id, user, proof, channel).await {
             Ok(location) => found.push(location),
             Err(ApiError(code, _, _)) if code.is_client_error() => {}
             Err(e) => return Err(e),
@@ -1824,6 +1862,15 @@ pub(crate) async fn channel_messages(
         &Proof::headers(&headers, &state.limits),
     )
     .await?;
+    Ok(Json(read_channel(db, &channel, user.as_ref(), &q).await?))
+}
+
+pub(crate) async fn read_channel(
+    db: &Db,
+    channel: &super::access::ResolvedChannel,
+    user: Option<&User>,
+    q: &PageQuery,
+) -> Result<Vec<Message>, ApiError> {
     let min_ts = channel.read_since(db).await?;
     let cond = match channel.shows_membership_notices() {
         true => "m.channel_id = $1 AND m.thread_root_id IS NULL",
@@ -1831,10 +1878,10 @@ pub(crate) async fn channel_messages(
             "m.channel_id = $1 AND m.thread_root_id IS NULL AND m.kind NOT IN ('join', 'leave')"
         }
     };
-    let mut msgs = page(db, cond, id, &q, min_ts).await?;
-    attach_reactions(db, &mut msgs, user.as_ref()).await?;
-    crate::api::polls::personalize(db, &mut msgs, user.as_ref()).await?;
-    Ok(Json(msgs))
+    let mut msgs = page(db, cond, channel.id(), q, min_ts).await?;
+    attach_reactions(db, &mut msgs, user).await?;
+    crate::api::polls::personalize(db, &mut msgs, user).await?;
+    Ok(msgs)
 }
 
 /// Post a channel message

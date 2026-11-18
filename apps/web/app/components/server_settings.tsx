@@ -57,6 +57,7 @@ import {
   SlowmodeField,
 } from './settings_fields'
 import { GuestParticipation, ServerAccessSection, passwordName } from './server_access'
+import { WidgetSettings } from './widget_settings'
 import { ColorField } from './color_field'
 import { ServerHeader } from './server_header'
 import { ServerSystemMessages } from './system_messages'
@@ -1196,6 +1197,9 @@ function Settings({ server }: { server: string }) {
   return (
     <Dialog full title="Server Settings" onClose={closeDialog}>
       <InviteLinkField server={server} hasPassword={detail.has_password} />
+      {detail && hasPerm(perms, Perm.DeleteServer) && (
+        <WidgetSettings server={server} channels={detail.channels} />
+      )}
       {server !== 'rchat' && hasPerm(perms, Perm.DeleteServer) && (
         <>
           <p className={sectionCls}>Rename Server</p>

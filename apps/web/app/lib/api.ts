@@ -106,7 +106,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
 
 const NEXT_CURSOR = 'X-Next-Cursor'
 
-const withCursor = (path: string, cursor: string | null) =>
+export const withCursor = (path: string, cursor: string | null) =>
   cursor ? `${path}${path.includes('?') ? '&' : '?'}cursor=${seg(cursor)}` : path
 
 const seg = encodeURIComponent
@@ -136,7 +136,10 @@ export class ApiClient {
   // Set from the instance's discovery document (see `api_version.ts`).
   prefix: ApiPrefix = 'unversioned'
 
-  constructor(base: string) {
+  constructor(
+    base: string,
+    private readonly cookieMode: RequestCredentials = 'same-origin'
+  ) {
     this.setBase(base)
   }
 
@@ -156,6 +159,7 @@ export class ApiClient {
     try {
       res = await fetch(`${this.root}/instance`, {
         headers: { Accept: 'application/json' },
+        credentials: this.cookieMode,
         redirect: 'manual',
         signal: AbortSignal.timeout(timeoutMs),
       })
@@ -195,6 +199,7 @@ export class ApiClient {
       if (grants.length) headers['X-Guest-Grant'] = grants.join(',')
     }
     const init: RequestInit = keepalive ? { method, headers, keepalive } : { method, headers }
+    init.credentials = this.cookieMode
     const stops = [signal, timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined].filter(
       s => s !== undefined
     )
@@ -291,6 +296,7 @@ export class ApiClient {
     if (!this.below(url)) throw new ApiError('Could not load the file', 0)
     const headers = this.credentials(server)
     const res = await fetch(url, {
+      credentials: this.cookieMode,
       headers,
       signal,
       redirect: 'error',
@@ -304,7 +310,12 @@ export class ApiClient {
   // true when the file goes on past them; `total` is its full size when the server says.
   async mediaStart(id: string, server: string | undefined, max: number, signal?: AbortSignal) {
     const headers = this.credentials(server)
-    const res = await fetch(this.mediaUrl(id), { headers, signal, redirect: 'error' })
+    const res = await fetch(this.mediaUrl(id), {
+      headers,
+      signal,
+      redirect: 'error',
+      credentials: this.cookieMode,
+    })
     if (!res.ok || !res.body) throw new ApiError('Could not load the file', res.status)
     const length = Number(res.headers.get('content-length'))
     const total = Number.isSafeInteger(length) && length > 0 ? length : null
@@ -828,8 +839,8 @@ export const endpoints = (c: ApiClient) => ({
 
 export type Api = ApiClient & ReturnType<typeof endpoints>
 
-export const createApi = (base: string): Api => {
-  const client = new ApiClient(base)
+export const createApi = (base: string, cookieMode?: RequestCredentials): Api => {
+  const client = new ApiClient(base, cookieMode)
   return Object.assign(client, endpoints(client))
 }
 

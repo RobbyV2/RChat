@@ -46,6 +46,7 @@ pub mod timeouts;
 pub mod upload_expiry;
 pub mod users;
 pub mod webhooks;
+pub mod widgets;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
@@ -1928,6 +1929,9 @@ pub fn routes(
     let strict = limiter();
     let upload_body = DefaultBodyLimit::max(state.limits.upload_body_bytes());
     let mut router = Router::new();
+    if roles.api || roles.web {
+        router = router.route("/widgets/{id}/framing", get(widgets::framing));
+    }
     if roles.api {
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
             rt.spawn(async {
@@ -1966,6 +1970,7 @@ pub fn routes(
                 put(p2p_identity::put_identity).delete(p2p_identity::delete_identity),
             )
             .route("/servers/{name}/guest_access", post(servers::guest_access))
+            .route("/widgets/{id}/guest-access", post(widgets::guest_access))
             .route("/servers", post(servers::create_server))
             .route("/admin/servers", post(admin::create_server_for))
             .route("/servers/{name}", patch(servers::update_server))
@@ -2185,6 +2190,16 @@ fn api_routes(
             "/channels/{id}/messages",
             get(messages::channel_messages).post(messages::send_channel_message),
         )
+        .route(
+            "/servers/{name}/widgets",
+            get(widgets::list).post(widgets::create),
+        )
+        .route("/servers/{name}/widgets/{id}", put(widgets::update))
+        .route("/widgets/{id}/session", post(widgets::open))
+        .route("/widgets/{id}/room", get(widgets::metadata))
+        .route("/widgets/{id}/view", get(widgets::view))
+        .route("/widgets/{id}/locations", post(widgets::locations))
+        .route("/widgets/{id}/messages", post(widgets::post))
         .route(
             "/channels/{id}/guest-messages",
             get(guest_chat::status).post(guest_chat::post),

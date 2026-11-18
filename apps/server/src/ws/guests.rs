@@ -81,7 +81,7 @@ pub(super) async fn guest_voice(
             payload,
         } => {
             if !state.hub.rtc_shared(name, &to, Some(channel_id), None) {
-                return Err("No shared voice session".into());
+                return Err(Refused::NoSharedVoice);
             }
             if let Err(e) = admit(state, access, channel_id).await {
                 state.hub.evict_voice(name, channel_id);
@@ -95,7 +95,7 @@ pub(super) async fn guest_voice(
             channel_id: _,
             dm_id: _,
             payload: _,
-        } => Err("No shared voice session".into()),
+        } => Err(Refused::NoSharedVoice),
         ClientMsg::CallStart {
             dm_id: _,
             p2p: _,

@@ -192,7 +192,7 @@ async fn timed_out_members_cannot_tell_if_hidden_voice_is_in_use() {
             },
         )
     };
-    let none = Err("No shared voice session".into());
+    let none = Err(crate::ws::protocol::Refused::NoSharedVoice);
     assert_eq!(probe(busy).await, none, "a hidden room in use");
     assert_eq!(probe(empty).await, none, "an empty hidden room");
     crate::api::test_util::done(state, path).await;
@@ -560,7 +560,7 @@ async fn guests_use_voice_where_they_can_open_the_server() {
         seen,
         [format!("{GUEST} -> alice"), format!("alice -> {GUEST}")]
     );
-    let none = Err("No shared voice session".into());
+    let none = Err(crate::ws::protocol::Refused::NoSharedVoice);
     assert_eq!(
         as_guest(&state, &all, signal("eve", Some(room("lobby")), None)).await,
         none
@@ -987,7 +987,7 @@ async fn blocked_users_cannot_call() {
         voice_msg(&state, "bob", 1, start())
             .await
             .err()
-            .map(|e| e.message)
+            .map(|e| e.into_parts().0)
             .as_deref(),
         Some(crate::api::blocks::NOT_ACCEPTING)
     );
@@ -1197,7 +1197,7 @@ async fn blocking_ends_calls_and_stops_answers_and_signals() {
         voice_msg(&state, "alice", 2, accept())
             .await
             .err()
-            .map(|e| e.message)
+            .map(|e| e.into_parts().0)
             .as_deref(),
         Some("You blocked this user. Unblock them to send messages.")
     );
@@ -1216,7 +1216,7 @@ async fn blocking_ends_calls_and_stops_answers_and_signals() {
         voice_msg(&state, "bob", 1, signal())
             .await
             .err()
-            .map(|e| e.message)
+            .map(|e| e.into_parts().0)
             .as_deref(),
         Some(crate::api::blocks::NOT_ACCEPTING)
     );
@@ -1579,11 +1579,11 @@ async fn refused_call_starts_write_nothing_and_are_paced() {
     assert!(
         errs[..3]
             .iter()
-            .all(|e| e.message == "You are already in a call"),
+            .all(|e| e == &"You are already in a call".into()),
         "{errs:?}"
     );
     assert!(
-        errs[3..].iter().all(|e| e.message == CALLING_TOO_OFTEN),
+        errs[3..].iter().all(|e| e == &CALLING_TOO_OFTEN.into()),
         "{errs:?}"
     );
     for _ in 0..crate::hub::DM_CALL_BURST {
@@ -1793,9 +1793,10 @@ async fn call_errors_never_carry_database_text() {
     let join = ClientMsg::VoiceJoin { channel_id: cid };
     for msg in [start, join] {
         let refused = voice_msg(&busy, "alice", 1, msg).await.expect_err("busy");
-        assert_eq!(refused.message, crate::api::SERVER_BUSY);
+        let (message, reason) = refused.into_parts();
+        assert_eq!(message, crate::api::SERVER_BUSY);
         assert_eq!(
-            refused.reason.map(|r| r.kind),
+            reason.map(|r| r.kind),
             Some(crate::api::ReasonKind::Unavailable)
         );
     }
@@ -1805,7 +1806,7 @@ async fn call_errors_never_carry_database_text() {
 }
 
 fn off(control: &'static str, message: &str) -> crate::ws::protocol::Refused {
-    crate::ws::protocol::Refused {
+    crate::ws::protocol::Refused::Error {
         message: message.to_string(),
         reason: Some(crate::api::Reason {
             kind: crate::api::ReasonKind::OffSite,
@@ -1942,7 +1943,8 @@ async fn the_calls_switch_refuses_voice_and_calls_with_its_reason() {
             voice_msg(&state, who, 1, accept(dm_id))
                 .await
                 .expect_err("not theirs")
-                .reason,
+                .into_parts()
+                .1,
             None,
             "{who} in {dm_id}: nothing about a DM that isn't theirs"
         );

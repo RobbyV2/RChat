@@ -12,21 +12,31 @@ use crate::api::{ApiError, Reason};
 
 /// What an `error` frame tells a client: the text and, when the error has one, its reason.
 #[derive(Debug, PartialEq)]
-pub(super) struct Refused {
-    pub(super) message: String,
-    pub(super) reason: Option<Reason>,
+pub(super) enum Refused {
+    NoSharedVoice,
+    Error {
+        message: String,
+        reason: Option<Reason>,
+    },
 }
 
 impl Refused {
+    pub(super) fn into_parts(self) -> (String, Option<Reason>) {
+        match self {
+            Self::NoSharedVoice => ("No shared voice session".into(), None),
+            Self::Error { message, reason } => (message, reason),
+        }
+    }
+
     pub(super) fn frame(self) -> WsEvent {
-        let Refused { message, reason } = self;
+        let (message, reason) = self.into_parts();
         WsEvent::Error { message, reason }
     }
 }
 
 impl From<String> for Refused {
     fn from(message: String) -> Refused {
-        Refused {
+        Self::Error {
             message,
             reason: None,
         }
@@ -42,7 +52,7 @@ impl From<&str> for Refused {
 impl From<ApiError> for Refused {
     fn from(e: ApiError) -> Refused {
         let ApiError(_, message, reason) = e;
-        Refused { message, reason }
+        Self::Error { message, reason }
     }
 }
 

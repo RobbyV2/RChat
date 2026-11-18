@@ -42,6 +42,7 @@ export interface ChatFacts {
 export type Target =
   | { kind: 'none' }
   | { kind: 'message'; message: Message; list: string }
+  | { kind: 'widget_message'; canReply(): boolean; reply(): void }
   // `author`: the picked row's or the bar's anchor's; `more`: the bar's More menu, without what
   // the bar shows.
   | { kind: 'selection'; list: string; author?: UserRef | null; more?: boolean }

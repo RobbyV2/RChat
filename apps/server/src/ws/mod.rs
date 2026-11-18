@@ -19,6 +19,7 @@ mod protocol;
 mod repost;
 mod rewrite;
 mod typing;
+mod widget_socket;
 
 pub(crate) use access::LogGate;
 pub(crate) use calls::{end_dm_call, end_switched_off};

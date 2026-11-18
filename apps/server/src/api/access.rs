@@ -1118,6 +1118,42 @@ pub async fn resolve_channel(
 /// that one channel (a webhook can always send in its own channel and nowhere else). Unknown
 /// channels and servers being deleted get `not_found`.
 pub(crate) async fn webhook_channel(db: &Db, id: i64) -> Result<ResolvedChannel, ApiError> {
+    configured_channel(db, id, ChannelAccess::all(true)).await
+}
+
+/// A read key delegates history in this single channel and never delegates membership.
+pub(crate) async fn read_link_channel(
+    db: &Db,
+    id: i64,
+    viewer: Option<&User>,
+) -> Result<ResolvedChannel, ApiError> {
+    let mut channel = configured_channel(
+        db,
+        id,
+        ChannelAccess {
+            view: true,
+            send: false,
+            history: true,
+        },
+    )
+    .await?;
+    if channel.kind() != ChannelKind::Text {
+        return Err(not_found());
+    }
+    if let Some(u) = viewer
+        && ws_banned(db, channel.server().name(), &u.username).await?
+    {
+        return Err(not_found());
+    }
+    channel.server.lite.members_visible = false;
+    Ok(channel)
+}
+
+async fn configured_channel(
+    db: &Db,
+    id: i64,
+    rights: ChannelAccess,
+) -> Result<ResolvedChannel, ApiError> {
     let r = sqlx::query(
         "SELECT c.server, c.kind, c.name, c.slowmode_seconds, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice_opt_in, s.members_visible, s.guest_chat_opt_in FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
     )
@@ -1147,7 +1183,7 @@ pub(crate) async fn webhook_channel(db: &Db, id: i64) -> Result<ResolvedChannel,
         kind: ChannelKind::parse(&r.try_get::<String, _>(1)?)?,
         name: r.try_get(2)?,
         slowmode: r.try_get(3)?,
-        rights: ChannelAccess::all(true),
+        rights,
     })
 }
 
@@ -1325,6 +1361,10 @@ impl ResolvedChannel {
         Ok(user)
     }
 
+    pub(crate) async fn can_send_text(&self, db: &Db) -> Result<bool, ApiError> {
+        Ok(super::allowed(self.send_rights(db).await)?.is_some())
+    }
+
     pub async fn send_gate(&self, db: &Db) -> Result<(), ApiError> {
         let user = self.send_rights(db).await?;
         if self.slowmode <= 0 {
@@ -1473,6 +1513,47 @@ async fn message_row(db: &Db, id: i64) -> Result<(MsgScope, i64), ApiError> {
     ))
 }
 
+impl ResolvedChannel {
+    pub(crate) async fn message_scope(&self, db: &Db, id: i64) -> Result<MsgScope, ApiError> {
+        let (mut scope, created_at) = message_row(db, id).await?;
+        self.check_message(db, &mut scope, created_at).await?;
+        Ok(scope)
+    }
+
+    async fn check_message(
+        &self,
+        db: &Db,
+        scope: &mut MsgScope,
+        created_at: i64,
+    ) -> Result<(), ApiError> {
+        if scope.channel_id != Some(self.id()) {
+            return Err(not_found());
+        }
+        if let Some(since) = self.read_since(db).await? {
+            if created_at < since {
+                return Err(not_found());
+            }
+            if let Some(root) = scope.thread_root_id {
+                let root_at: Option<i64> =
+                    sqlx::query("SELECT created_at FROM messages WHERE id = $1")
+                        .bind(root)
+                        .fetch_optional(db)
+                        .await?
+                        .map(|r| r.try_get(0))
+                        .transpose()?;
+                if root_at.is_some_and(|at| at < since) {
+                    return Err(not_found());
+                }
+            }
+        }
+        if is_membership_notice(&scope.kind) && !self.shows_membership_notices() {
+            return Err(not_found());
+        }
+        scope.server = Some(self.server.name().to_string());
+        Ok(())
+    }
+}
+
 pub async fn resolve_message(
     db: &Db,
     id: i64,
@@ -1483,27 +1564,7 @@ pub async fn resolve_message(
     let channel = match (scope.channel_id, scope.dm_id) {
         (Some(cid), _) => {
             let channel = resolve_channel(db, cid, viewer, proof).await?;
-            if let Some(since) = channel.read_since(db).await? {
-                if created_at < since {
-                    return Err(not_found());
-                }
-                if let Some(root) = scope.thread_root_id {
-                    let root_at: Option<i64> =
-                        sqlx::query("SELECT created_at FROM messages WHERE id = $1")
-                            .bind(root)
-                            .fetch_optional(db)
-                            .await?
-                            .map(|r| r.try_get(0))
-                            .transpose()?;
-                    if root_at.is_some_and(|at| at < since) {
-                        return Err(not_found());
-                    }
-                }
-            }
-            if is_membership_notice(&scope.kind) && !channel.shows_membership_notices() {
-                return Err(not_found());
-            }
-            scope.server = Some(channel.server.name().to_string());
+            channel.check_message(db, &mut scope, created_at).await?;
             Some(channel)
         }
         (None, Some(did)) => {
