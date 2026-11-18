@@ -96,7 +96,7 @@ impl ReportKind {
 }
 
 /// What kind of thing a report is about.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetKind {
     /// A message you can read, in a channel or a direct conversation (`id`). Messages in

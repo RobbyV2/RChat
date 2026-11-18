@@ -8,10 +8,6 @@
     "reason": "says a username is taken (a block needs the account); a 404, or a block of an account the caller may not see, takes a miss (LOOKUP_MISSES_PER_HOUR), and it has its own pace (lookup.rs tests)"
   },
   {
-    "route": "post /api/v1/reports",
-    "reason": "its target is an object whose kind picks which of id, server and username count, which the walk can't fill; a hidden or missing target answers the same 404 (reports tests invisible_targets_are_uniform_404s and hidden_references_are_404), so does every member of a server whose members the caller can't see (a_server_that_hides_its_members_answers_outsiders_alike), and each takes a miss (LOOKUP_MISSES_PER_HOUR)"
-  },
-  {
     "route": "get /api/v1/servers/{name}/available",
     "reason": "says whether a name-keyed server name is taken, nothing else"
   },

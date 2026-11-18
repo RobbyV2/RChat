@@ -16,6 +16,7 @@ use utoipa::OpenApi;
 use crate::api::access::subjects::checks_run;
 use crate::api::openapi::ApiDoc;
 use crate::api::openapi::tests::registered_routes;
+use crate::api::reports::{ReportKind, Target, TargetKind};
 use crate::api::test_util::{add_member, done, temp_state, test_grant};
 use crate::db::{Db, NewUser, secret_key};
 use crate::limits::Limits;
@@ -38,6 +39,136 @@ const ALLOWLIST: &str = include_str!("subjects_allowlist.json");
 const USER_FIELDS: [&str; 5] = ["username", "user", "target", "member", "recipient"];
 const USERS_FIELDS: [&str; 2] = ["usernames", "users"];
 const SERVER_FIELDS: [&str; 2] = ["server", "name"];
+
+/// The route whose body names its subject in `target`, by the fields its `kind` takes.
+const REPORTS: &str = "post /api/v1/reports";
+
+/// How the walk fills a route's body: as sampled, or as a report to `to` about a target of
+/// `kind`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Fill {
+    Sampled,
+    Report { to: ReportKind, kind: TargetKind },
+}
+
+/// The target fields a report takes: `id`, `server` and `username`.
+struct Takes {
+    id: bool,
+    server: bool,
+    username: bool,
+}
+
+/// The target fields a report of `kind` takes.
+fn takes(kind: TargetKind) -> Takes {
+    let nothing = Takes {
+        id: false,
+        server: false,
+        username: false,
+    };
+    match kind {
+        TargetKind::Message => Takes {
+            id: true,
+            ..nothing
+        },
+        TargetKind::Member => Takes {
+            server: true,
+            username: true,
+            ..nothing
+        },
+        TargetKind::Account => Takes {
+            username: true,
+            ..nothing
+        },
+        TargetKind::Server => Takes {
+            server: true,
+            ..nothing
+        },
+        TargetKind::None => nothing,
+    }
+}
+
+/// Whether a report of `kind` names something: a message, an account or a server.
+fn names_something(kind: TargetKind) -> bool {
+    let Takes {
+        id,
+        server,
+        username,
+    } = takes(kind);
+    id || server || username
+}
+
+/// The target of a report of `kind` about `side`: the fields the kind takes, from the side. It
+/// is built as a `Target`, so every field of one is filled or left out here.
+fn report_target(kind: TargetKind, side: &Side) -> Value {
+    let Takes {
+        id,
+        server,
+        username,
+    } = takes(kind);
+    let target = Target {
+        kind,
+        id: id.then_some(side.message),
+        server: server.then(|| side.server.to_string()),
+        username: username.then(|| side.user.to_string()),
+    };
+    let Target {
+        kind,
+        id,
+        server,
+        username,
+    } = target;
+    json!({ "kind": kind, "id": id, "server": server, "username": username })
+}
+
+/// The values of the enum `schema` is, or wraps.
+fn enum_values(doc: &Value, schema: &Value) -> Vec<Value> {
+    let schema = resolve(doc, schema);
+    if let Some(values) = schema["enum"].as_array() {
+        return values.clone();
+    }
+    ["allOf", "oneOf", "anyOf"]
+        .iter()
+        .filter_map(|key| schema[key].as_array())
+        .flatten()
+        .flat_map(|part| enum_values(doc, part))
+        .collect()
+}
+
+/// A report fill for every recipient and target kind the body of `op` lists.
+fn report_fills(doc: &Value, op: &Value) -> Vec<Fill> {
+    let body = resolve(
+        doc,
+        &op["requestBody"]["content"]["application/json"]["schema"],
+    );
+    let target = resolve(doc, &body["properties"]["target"]);
+    let tos = enum_values(doc, &body["properties"]["to"]);
+    let kinds = enum_values(doc, &target["properties"]["kind"]);
+    assert!(
+        !tos.is_empty() && !kinds.is_empty(),
+        "{REPORTS} lists its recipients and target kinds"
+    );
+    let mut fills = Vec::new();
+    for to in &tos {
+        for kind in &kinds {
+            fills.push(Fill::Report {
+                to: serde_json::from_value(to.clone()).expect("a recipient"),
+                kind: serde_json::from_value(kind.clone()).expect("a target kind"),
+            });
+        }
+    }
+    fills
+}
+
+/// A walked route: whether it names an account, whether it takes `q`, and how its body is
+/// filled.
+#[derive(Clone, Debug, PartialEq)]
+struct Route {
+    method: String,
+    path: String,
+    by_user: bool,
+    has_q: bool,
+    fill: Fill,
+}
 
 /// One side of the comparison: zed and the things only zed's server holds, or a name, a server
 /// and ids that don't exist.
@@ -224,6 +355,7 @@ impl Walk {
         side: &Side,
         text: &str,
         who: Who,
+        fill: Fill,
     ) -> Answer {
         let op = self.doc["paths"][path][method].clone();
         let mut url = String::new();
@@ -284,7 +416,18 @@ impl Walk {
         }
         let body = op["requestBody"]["content"]["application/json"]["schema"]
             .as_object()
-            .map(|schema| side.sample(&self.doc, &Value::Object(schema.clone()), text, 0));
+            .map(|schema| side.sample(&self.doc, &Value::Object(schema.clone()), text, 0))
+            .map(|mut body| {
+                match fill {
+                    Fill::Sampled => {}
+                    Fill::Report { to, kind } => {
+                        body["to"] = json!(to);
+                        body["target"] = report_target(kind, side);
+                        body["form"] = Value::Null;
+                    }
+                }
+                body
+            });
         let m = reqwest::Method::from_bytes(method.to_uppercase().as_bytes()).expect("method");
         self.n += 1;
         let n = self.n;
@@ -610,8 +753,8 @@ async fn set(db: &Db, key: &str, value: &str) {
     crate::api::Settings::forget(db);
 }
 
-/// Every walked route as (method, path, names an account, takes `q`).
-fn walked(doc: &Value) -> Vec<(String, String, bool, bool)> {
+/// Every walked route; the reports route once per recipient and target kind its body lists.
+fn walked(doc: &Value) -> Vec<Route> {
     let skip = allowlisted();
     let mut out = Vec::new();
     for (method, path) in registered_routes() {
@@ -626,8 +769,25 @@ fn walked(doc: &Value) -> Vec<(String, String, bool, bool)> {
         );
         let multipart = op["requestBody"]["content"]["multipart/form-data"].is_object();
         let (any, by_user, has_q) = takes_subject(doc, op, &path);
-        if any && !multipart {
-            out.push((method, path, by_user, has_q));
+        if !any || multipart {
+            continue;
+        }
+        let fills = match key == REPORTS {
+            true => report_fills(doc, op),
+            false => vec![Fill::Sampled],
+        };
+        for fill in fills {
+            let by_user = match fill {
+                Fill::Report { to: _, kind } => takes(kind).username,
+                Fill::Sampled => by_user,
+            };
+            out.push(Route {
+                method: method.clone(),
+                path: path.clone(),
+                by_user,
+                has_q,
+                fill,
+            });
         }
     }
     out
@@ -685,31 +845,31 @@ impl Walk {
         (theirs, none)
     }
 
-    /// Calls `method path` for zed's side and the missing side as `who` (and for each search
-    /// text), and returns every pair that differs, as text.
-    async fn pair(
-        &mut self,
-        method: &str,
-        path: &str,
-        has_q: bool,
-        zed: &Side,
-        missing: &Side,
-        who: Who,
-    ) -> Vec<String> {
+    /// Calls `route` for zed's side and the missing side as `who` (and for each search text),
+    /// and returns every pair that differs, as text.
+    async fn pair(&mut self, route: &Route, zed: &Side, missing: &Side, who: Who) -> Vec<String> {
+        let Route {
+            method,
+            path,
+            by_user: _,
+            has_q,
+            fill,
+        } = route;
+        let fill = *fill;
         let mut wrong = Vec::new();
         let texts = match has_q {
             true => 0..4,
             false => 0..1,
         };
         for t in texts {
-            let theirs = self.call(method, path, zed, zed.texts[t], who).await;
+            let theirs = self.call(method, path, zed, zed.texts[t], who, fill).await;
             let none = self
-                .call(method, path, missing, missing.texts[t], who)
+                .call(method, path, missing, missing.texts[t], who, fill)
                 .await;
             let none = as_zed(&none, missing, zed);
             if theirs != none {
                 wrong.push(format!(
-                    "{method} {path} as {who:?} (text {}): {theirs:?} against {none:?}",
+                    "{method} {path} {fill:?} as {who:?} (text {}): {theirs:?} against {none:?}",
                     zed.texts[t]
                 ));
             }
@@ -736,20 +896,40 @@ async fn lookups_answer_unrelated_and_missing_subjects_alike() {
         alice: "tok-alice".to_string(),
     };
     let mut wrong = Vec::new();
-    for (method, path, _, has_q) in &routes {
+    for route in &routes {
         for who in [Who::Alice, Who::Guest, Who::Anonymous] {
-            wrong.extend(walk.pair(method, path, *has_q, &zed, &missing, who).await);
+            wrong.extend(walk.pair(route, &zed, &missing, who).await);
         }
     }
     set(&db, "guests_enabled", "0").await;
-    for (method, path, _, has_q) in &routes {
+    for route in &routes {
         for who in [Who::Guest, Who::Anonymous] {
-            wrong.extend(walk.pair(method, path, *has_q, &zed, &missing, who).await);
+            wrong.extend(walk.pair(route, &zed, &missing, who).await);
         }
     }
     set(&db, "guests_enabled", "1").await;
     println!("walked {} routes in {} requests", routes.len(), walk.n);
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+
+    // Every report target that names something reaches its access check: zed's message, zed in
+    // hush, zed's account and hush itself are the uniform 404 for alice.
+    let (report, reports_path) = REPORTS.split_once(' ').expect("method and path");
+    let reports: Vec<Fill> = routes
+        .iter()
+        .filter(|r| (r.method.as_str(), r.path.as_str()) == (report, reports_path))
+        .map(|r| r.fill)
+        .collect();
+    let named = |fill: &Fill| match *fill {
+        Fill::Report { to: _, kind } => names_something(kind),
+        Fill::Sampled => false,
+    };
+    assert!(reports.iter().any(named), "{REPORTS} is walked");
+    for fill in reports.iter().filter(|f| named(f)) {
+        let answer = walk
+            .call(report, reports_path, &zed, zed.texts[0], Who::Alice, *fill)
+            .await;
+        assert_eq!(answer.status, 404, "{fill:?}: {answer:?}");
+    }
 
     // The control half: once alice is in hush, the card and the search show zed's markers, so
     // the walk above can't have passed because every route failed.
@@ -785,7 +965,7 @@ async fn lookups_answer_unrelated_and_missing_subjects_alike() {
 /// The by-name routes in a server the caller owns: an account that isn't a member and a name
 /// without an account get the same answer, and leave the same entries in the server's ban list
 /// and audit log, or the route counts the miss, so past the misses both get the same refusal and
-/// leave the same entries.
+/// leave the same entries. A report answers them alike either way.
 #[tokio::test]
 async fn by_name_routes_in_your_own_server_answer_alike() {
     let (state, path) = temp_state("subjects_walk_own").await;
@@ -827,10 +1007,7 @@ async fn by_name_routes_in_your_own_server_answer_alike() {
         sides.push((in_own(&zed), in_own(&missing)));
     }
     let doc = serde_json::to_value(ApiDoc::openapi()).expect("doc");
-    let routes: Vec<_> = walked(&doc)
-        .into_iter()
-        .filter(|(_, _, by_user, _)| *by_user)
-        .collect();
+    let routes: Vec<_> = walked(&doc).into_iter().filter(|r| r.by_user).collect();
     assert!(routes.len() > 15, "{} by-name routes", routes.len());
     let (base, server) = serve(&state).await;
     let mut walk = Walk {
@@ -844,21 +1021,26 @@ async fn by_name_routes_in_your_own_server_answer_alike() {
         "by name in alice's own server: {}",
         routes
             .iter()
-            .map(|(m, p, _, _)| format!("{m} {p}"))
+            .map(|r| match r.fill {
+                Fill::Sampled => format!("{} {}", r.method, r.path),
+                Fill::Report { to, kind } => format!("{} {} ({to:?} {kind:?})", r.method, r.path),
+            })
             .collect::<Vec<_>>()
             .join(", ")
     );
     let (zed, missing) = sides[0];
     let mut differ = Vec::new();
-    for (method, path, _, has_q) in &routes {
-        if !walk
-            .pair(method, path, *has_q, &zed, &missing, Who::Alice)
-            .await
-            .is_empty()
-        {
-            differ.push((method.clone(), path.clone()));
+    let mut reports_apart = Vec::new();
+    for route in &routes {
+        let apart = walk.pair(route, &zed, &missing, Who::Alice).await;
+        match (route.fill, apart.is_empty()) {
+            (_, true) => {}
+            (Fill::Report { to: _, kind: _ }, false) => reports_apart.extend(apart),
+            (Fill::Sampled, false) => differ.push(route.clone()),
         }
     }
+    // A report names what you can see or gets the uniform 404, inside the miss budget too.
+    assert!(reports_apart.is_empty(), "{}", reports_apart.join("\n"));
     let mut apart = 0;
     for list in LISTS {
         let (theirs, none) = walk.listed("own", list, &zed, &missing).await;
@@ -893,11 +1075,9 @@ async fn by_name_routes_in_your_own_server_answer_alike() {
     assert_eq!(spent.as_u16(), 404, "the one miss");
     let (zed, missing) = sides[1];
     let mut wrong = Vec::new();
-    for (method, path, _, has_q) in &routes {
-        let apart = walk
-            .pair(method, path, *has_q, &zed, &missing, Who::Alice)
-            .await;
-        if differ.contains(&(method.clone(), path.clone())) {
+    for route in &routes {
+        let apart = walk.pair(route, &zed, &missing, Who::Alice).await;
+        if differ.contains(route) {
             wrong.extend(apart);
         }
     }
@@ -919,6 +1099,144 @@ async fn by_name_routes_in_your_own_server_answer_alike() {
         "answered apart and outside the miss budget:\n{}",
         wrong.join("\n")
     );
+    done(state, path).await;
+}
+
+impl Walk {
+    /// Sends the report `body` with the bearer `token`.
+    async fn report(&mut self, token: &str, body: &Value) -> Answer {
+        self.n += 1;
+        let n = self.n;
+        let res = self
+            .client
+            .post(format!("{}/api/v1/reports", self.base))
+            .header(
+                "x-forwarded-for",
+                format!("10.{}.{}.{}", n >> 16 & 255, n >> 8 & 255, n & 255),
+            )
+            .bearer_auth(token)
+            .header("content-type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .expect("answer");
+        Answer {
+            status: res.status().as_u16(),
+            body: res.text().await.expect("body"),
+            next: false,
+            checks: Vec::new(),
+        }
+    }
+}
+
+/// The reports route at the default limits. A member target in alice's server answers alike for
+/// an account alice sees elsewhere, an account she can't see and a name without an account, and
+/// an account target answers the last two alike: the uniform 404, inside her miss budget. Each
+/// kind with the fields the walk gives it sends a report, and each of those fields is needed.
+/// Every report sent has its own reporter, so no report cap is reached.
+#[tokio::test]
+async fn reports_name_their_targets_alike_at_the_default_limits() {
+    let (state, path) = temp_state("subjects_walk_reports").await;
+    let db = state.db.clone();
+    let (zed, missing) = world(&db).await;
+    NewUser::plain("vic").at(1).add(&db).await;
+    exec(&db, "INSERT INTO servers(name, display_name, creator, password_hash, created_at) VALUES('side', 'side', 'vic', 'hash', 0)").await;
+    add_member(&db, "side", "vic", 1, 0, 1).await;
+    add_member(&db, "side", "alice", 0, 0, 2).await;
+    let doc = serde_json::to_value(ApiDoc::openapi()).expect("doc");
+    let (report, reports_path) = REPORTS.split_once(' ').expect("method and path");
+    let fills: Vec<(ReportKind, TargetKind)> = walked(&doc)
+        .into_iter()
+        .filter_map(|r| match r.fill {
+            Fill::Report { to, kind } if names_something(kind) => Some((to, kind)),
+            Fill::Report { to: _, kind: _ } | Fill::Sampled => None,
+        })
+        .collect();
+    assert!(fills.len() >= 8, "{fills:?}");
+    let (base, server) = serve(&state).await;
+    let mut walk = Walk {
+        base,
+        client: reqwest::Client::new(),
+        doc,
+        n: 0,
+        alice: "tok-alice".to_string(),
+    };
+    let in_own = |user: &'static str| Side {
+        user,
+        server: "own",
+        ..zed
+    };
+    let mut wrong = Vec::new();
+    for &(to, kind) in &fills {
+        let names = match kind {
+            TargetKind::Member => vec![in_own("vic"), in_own(zed.user), in_own(missing.user)],
+            TargetKind::Account => vec![zed, missing],
+            TargetKind::Message | TargetKind::Server | TargetKind::None => continue,
+        };
+        let fill = Fill::Report { to, kind };
+        for side in &names {
+            let answer = walk
+                .call(report, reports_path, side, side.texts[0], Who::Alice, fill)
+                .await;
+            if (answer.status, answer.body.as_str()) != (404, r#"{"error":"Not found"}"#) {
+                wrong.push(format!("{fill:?} about {}: {answer:?}", side.user));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+
+    add_member(&db, "hush", "alice", 0, 0, 2).await;
+    for (n, &(to, kind)) in fills.iter().enumerate() {
+        let target = report_target(kind, &zed);
+        let Takes {
+            id,
+            server,
+            username,
+        } = takes(kind);
+        for (field, taken) in [("id", id), ("server", server), ("username", username)] {
+            if !taken {
+                continue;
+            }
+            let mut short = target.clone();
+            short[field] = Value::Null;
+            let answer = walk
+                .report(
+                    "tok-alice",
+                    &json!({ "to": to, "reason": "spam", "target": short }),
+                )
+                .await;
+            assert_eq!(
+                (answer.status, answer.body.contains("Incomplete target")),
+                (400, true),
+                "{to:?} {kind:?} without {field}: {answer:?}"
+            );
+        }
+        let reporter = format!("reporter{n}");
+        NewUser::plain(&reporter).at(1).add(&db).await;
+        add_member(&db, "hush", &reporter, 0, 0, 2).await;
+        let token = format!("tok-{reporter}");
+        sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, $3)")
+            .bind(secret_key(&token))
+            .bind(&reporter)
+            .bind(crate::db::now())
+            .execute(&db)
+            .await
+            .expect("token");
+        let answer = walk
+            .report(
+                &token,
+                &json!({ "to": to, "reason": "spam", "target": target }),
+            )
+            .await;
+        let sent = match (to, kind) {
+            (ReportKind::Server, TargetKind::Account | TargetKind::Server) => {
+                answer.status == 400 && answer.body.contains(crate::api::reports::INSTANCE_ONLY)
+            }
+            (_, _) => answer.status == 200,
+        };
+        assert!(sent, "{to:?} {kind:?}: {answer:?}");
+    }
+    server.abort();
     done(state, path).await;
 }
 
