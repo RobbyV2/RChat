@@ -10,6 +10,8 @@ path = "src/lib.rs"
 
 [dependencies]
 axum = { version = "0.8", features = ["multipart", "ws"] }
+multer = "3.1"
+memchr = "2.8"
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.7", features = ["fs", "trace", "cors"] }
 hyper = { version = "1", features = ["client", "http1", "http2"] }

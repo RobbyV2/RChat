@@ -12,6 +12,7 @@ pub mod dms;
 pub mod embeds;
 pub mod error;
 pub mod features;
+pub mod form_heads;
 pub mod friends;
 pub mod guest_voice;
 pub mod health;

@@ -1230,8 +1230,7 @@ async fn read_execute(
     let over = || media::json_over(EXECUTE_JSON_MAX);
     let mut body: Option<ExecuteReq> = None;
     let mut file = None;
-    while let Some(field) = form
-        .next_field()
+    while let Some(field) = media::next_part(&mut form)
         .await
         .map_err(|e| watch.error(over, ApiError(StatusCode::BAD_REQUEST, e.to_string(), None)))?
     {
@@ -1499,7 +1498,7 @@ async fn post(
 /// and still has the Mention everyone permission (mentionable roles also when asked). Rate
 /// limits: 5 per 2 seconds per webhook, 30 per minute per channel, and the strict bucket per
 /// IP. Wrong ids, wrong tokens and deleted webhooks all get the same 404.
-#[utoipa::path(post, path = "/api/v1/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ExecuteQuery), request_body(content = ExecuteReq, description = "JSON, or multipart with `payload_json` and one file", content_type = "application/json"), responses((status = 200, description = "With `wait=true`: the posted message", body = Message), (status = 204, description = "Posted"), (status = 400, description = "Empty message, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), invalid embeds, name, avatar, poll, `reply_to` (`Cannot reply to that message`) or `thread_id` (`Unknown thread`), or the profanity filter", body = ApiErrorBody), (status = 403, description = "`File uploads are turned off on this server`, or `This webhook has no owner, so it cannot upload files`: for a file part, or a multipart body declared over 2 MiB and 64 KiB", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`: no such webhook or a wrong token (identical responses). `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`), or JSON (the body or `payload_json`) over 2 MiB, or a multipart body over 2 MiB and 64 KiB for a webhook that can not upload (`JSON exceeds 2MB limit`)", body = ApiErrorBody), (status = 429, description = "Slow mode (`Slow mode: wait Ns`), the webhook or channel budget (`Too many attempts. Try again later`), the upload budget of the webhook's owner or of the server's webhooks (`Upload limit reached: ...`), 3 uploads or multipart bodies of the owner, or ones holding the owner's share of the upload buffer, already being read, for a file part or a multipart body declared over 2 MiB and 64 KiB (`Too many uploads at once: ...`), or the strict bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`", body = ApiErrorBody)), security(()))]
+#[utoipa::path(post, path = "/api/v1/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ExecuteQuery), request_body(content = ExecuteReq, description = "JSON, or multipart with `payload_json` and one file", content_type = "application/json"), responses((status = 200, description = "With `wait=true`: the posted message", body = Message), (status = 204, description = "Posted"), (status = 400, description = "Empty message, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), invalid embeds, name, avatar, poll, `reply_to` (`Cannot reply to that message`) or `thread_id` (`Unknown thread`), the profanity filter, or a malformed multipart body (\"Error parsing `multipart/form-data` request\"), which includes a part head over 16 KiB: from the start of the body, or the end of the part before, to the blank line after the part's headers", body = ApiErrorBody), (status = 403, description = "`File uploads are turned off on this server`, or `This webhook has no owner, so it cannot upload files`: for a file part, or a multipart body declared over 2 MiB and 64 KiB", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`: no such webhook or a wrong token (identical responses). `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`), or JSON (the body or `payload_json`) over 2 MiB, or a multipart body over 2 MiB and 64 KiB for a webhook that can not upload (`JSON exceeds 2MB limit`)", body = ApiErrorBody), (status = 429, description = "Slow mode (`Slow mode: wait Ns`), the webhook or channel budget (`Too many attempts. Try again later`), the upload budget of the webhook's owner or of the server's webhooks (`Upload limit reached: ...`), 3 uploads or multipart bodies of the owner, or ones holding the owner's share of the upload buffer, already being read, for a file part or a multipart body declared over 2 MiB and 64 KiB (`Too many uploads at once: ...`), or the strict bucket (plain text)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`", body = ApiErrorBody)), security(()))]
 pub(crate) async fn execute(
     State(state): State<AppState>,
     Path((id, token)): Path<(String, String)>,
@@ -3981,6 +3980,14 @@ mod tests {
         let sock = open(None).await;
         let (mut read, mut write) = sock.into_split();
         let writer = tokio::spawn(async move {
+            let opened = b"--XB\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n";
+            let start = [
+                format!("{:x}\r\n", opened.len()).as_bytes(),
+                opened,
+                b"\r\n",
+            ]
+            .concat();
+            write.write_all(&start).await.expect("part head");
             let mut left = EXECUTE_FORM_MAX + 1;
             while left > 0 {
                 let n = left.min(64 * 1024);
@@ -4095,6 +4102,54 @@ mod tests {
             "without waiting"
         );
         assert_eq!(status(send(form(true), length(true)).await), posted);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn form_part_heads_past_their_cap_are_refused() {
+        let (state, path, cid) = setup("wh_form_heads").await;
+        let made = create(&state, "owner", cid, "Files").await.expect("create");
+        let id = made.webhook.id.to_string();
+        let head = |n: usize| {
+            let start = "\r\n--XyZ\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\nX-Pad: ";
+            format!("{start}{}\r\n\r\n", "p".repeat(n - start.len() - 4))
+        };
+        let form = |file_head: usize| {
+            format!(
+                "--XyZ\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n{{\"content\": \"hi\"}}{}all good\r\n--XyZ--\r\n",
+                head(file_head)
+            )
+        };
+        let send = |body: String| {
+            let req = Request::builder()
+                .method("POST")
+                .header(header::CONTENT_TYPE, "multipart/form-data; boundary=XyZ")
+                .body(Body::from(body))
+                .expect("request");
+            HOOK_PACE.forget_prefix(&format!("{}\n", crate::db::pool_key(&state.db)));
+            execute(
+                State(state.clone()),
+                Path((id.clone(), made.token.clone())),
+                Query(ExecuteQuery { wait: false }),
+                req,
+            )
+        };
+        let status = |r: Result<Response, ApiError>| match r {
+            Ok(r) => (r.status(), String::new()),
+            Err(ApiError(s, m, _)) => (s, m),
+        };
+        let cap = crate::api::form_heads::HEAD_MAX;
+        assert_eq!(
+            status(send(form(cap)).await),
+            (StatusCode::NO_CONTENT, String::new())
+        );
+        assert_eq!(
+            status(send(form(cap + 1)).await),
+            (
+                StatusCode::BAD_REQUEST,
+                "Error parsing `multipart/form-data` request".to_string()
+            )
+        );
         done(state, path).await;
     }
 

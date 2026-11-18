@@ -12,6 +12,7 @@ use sqlx::Row;
 
 use crate::api::access::{MsgScope, Proof, resolve_message};
 use crate::api::audit;
+use crate::api::form_heads::Heads;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, MediaRef, OkResp, Settings, allowed, bad, ok, placeholders,
     request_token, require_guest_ok, user_for_token,
@@ -514,13 +515,18 @@ fn stalled() -> ApiError {
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-/// Why a paced body was cut off before its end.
+/// What a malformed multipart body gets, as the framework words it.
+const MALFORMED_FORM: &str = "Error parsing `multipart/form-data` request";
+
+/// Why a body was cut off before its end.
 #[derive(Clone, Copy, Debug)]
 enum Cut {
     /// More than its most bytes came.
     Over,
     /// Nothing came for `Waits::idle`, or the whole took longer than `Waits::body`.
     Stalled,
+    /// A part's head of a form passed `HEAD_MAX`.
+    Head,
 }
 
 impl std::fmt::Display for Cut {
@@ -528,23 +534,25 @@ impl std::fmt::Display for Cut {
         f.write_str(match self {
             Cut::Over => "The body is too large",
             Cut::Stalled => "The upload stopped sending data",
+            Cut::Head => MALFORMED_FORM,
         })
     }
 }
 
 impl std::error::Error for Cut {}
 
-/// Why a paced body was cut off, once it was.
+/// Why a body was cut off, once it was.
 #[derive(Clone, Default)]
 pub(crate) struct Watch(std::sync::Arc<std::sync::OnceLock<Cut>>);
 
 impl Watch {
     /// The error for a failed read of the body: 408 when it stalled, `over()` when it passed its
-    /// most bytes, else `other`.
+    /// most bytes, 400 when a part's head of a form passed `HEAD_MAX`, else `other`.
     pub(crate) fn error(&self, over: impl FnOnce() -> ApiError, other: ApiError) -> ApiError {
         match self.0.get() {
             Some(Cut::Stalled) => stalled(),
             Some(Cut::Over) => over(),
+            Some(Cut::Head) => bad(MALFORMED_FORM),
             None => other,
         }
     }
@@ -585,7 +593,10 @@ where
 
 /// A `multipart/form-data` request read as one body: at most `most` bytes, and within the upload
 /// waits from its first byte to its last, so a stalled preamble, part header or part ends it
-/// with 408 and many parts can not make it last longer. The `Watch` says why it was cut off.
+/// with 408 and many parts can not make it last longer. Each part's head is at most `HEAD_MAX`
+/// bytes (400 past it), and the parser gets the body in pieces (`in_pieces`). Its parts are read
+/// with `next_part` and `read_file` or `read_json_part`, which poll the parser through `Quiet`.
+/// The `Watch` says why when the pace or a head's cap cut it off.
 pub(crate) async fn form(
     req: Request,
     most: usize,
@@ -600,9 +611,198 @@ async fn form_within(
 ) -> Result<(Multipart, Watch), MultipartRejection> {
     let watch = Watch::default();
     let (parts, body) = req.into_parts();
-    let body = Body::from_stream(paced(body.into_data_stream(), most, waits, watch.clone()));
+    let body = paced(body.into_data_stream(), most, waits, watch.clone());
+    let boundary = parts
+        .headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| multer::parse_boundary(v).ok());
+    let body = match boundary {
+        Some(boundary) => Body::from_stream(in_pieces(body, &boundary, watch.clone())),
+        None => Body::from_stream(body),
+    };
     let form = Multipart::from_request(Request::from_parts(parts, body), &()).await?;
     Ok((form, watch))
+}
+
+/// Fewest bytes handed to the multipart parser at once, but at the end of a body.
+const PIECE: usize = 16 * 1024;
+
+/// `stream`, the body of a form with the boundary `boundary`, as the multipart parser takes it:
+/// in pieces of at least `PIECE` bytes, ended where a part's head passes `HEAD_MAX` (`watch` then
+/// says so). From the parser's first poll, a task of its own reads `stream` (`feed`), so the
+/// parser's waker fires once a piece however the body is sent. When `stream` fails, the bytes
+/// before are handed on and the body ends there; `watch` says why when the pace cut it off. The
+/// end comes a poll after the last piece, so the parser never hears of it in the read that brings
+/// that piece.
+fn in_pieces<S>(
+    stream: S,
+    boundary: &str,
+    watch: Watch,
+) -> impl futures_util::Stream<Item = Result<axum::body::Bytes, BoxError>> + Send + 'static
+where
+    S: futures_util::Stream<Item = Result<axum::body::Bytes, BoxError>> + Send + 'static,
+{
+    let (pieces, taken) = tokio::sync::mpsc::channel(1);
+    let reader = feed(stream, Heads::new(boundary), watch, pieces);
+    futures_util::stream::unfold((Some(reader), taken), |(reader, mut taken)| async move {
+        if let Some(reader) = reader {
+            tokio::spawn(reader);
+        }
+        match taken.recv().await {
+            Some(piece) => Some((Ok(piece), (None, taken))),
+            None => {
+                tokio::task::yield_now().await;
+                None
+            }
+        }
+    })
+}
+
+/// Reads `stream` into `pieces` for `in_pieces`, a piece at a time and each only once the one
+/// before was taken, until the body ends, fails or passes a head's cap, or the parser is dropped.
+async fn feed<S>(
+    stream: S,
+    mut heads: Heads,
+    watch: Watch,
+    pieces: tokio::sync::mpsc::Sender<axum::body::Bytes>,
+) where
+    S: futures_util::Stream<Item = Result<axum::body::Bytes, BoxError>>,
+{
+    use futures_util::StreamExt;
+    let mut stream = std::pin::pin!(stream);
+    let mut pending = Vec::new();
+    let mut more = true;
+    while more {
+        let Ok(room) = pieces.reserve().await else {
+            return;
+        };
+        let read = async {
+            loop {
+                match stream.next().await {
+                    Some(Ok(chunk)) if pending.is_empty() && chunk.len() >= PIECE => {
+                        return (Some(chunk), true);
+                    }
+                    Some(Ok(chunk)) => {
+                        pending.extend_from_slice(&chunk);
+                        if pending.len() >= PIECE {
+                            return (None, true);
+                        }
+                    }
+                    Some(Err(_)) | None => return (None, false),
+                }
+            }
+        };
+        let (whole, rest) = tokio::select! {
+            read = read => read,
+            () = pieces.closed() => return,
+        };
+        let piece = whole.unwrap_or_else(|| std::mem::take(&mut pending).into());
+        let piece = match heads.scan(&piece) {
+            Ok(()) => {
+                more = rest;
+                piece
+            }
+            Err(n) => {
+                let _ = watch.0.set(Cut::Head);
+                more = false;
+                piece.slice(..n)
+            }
+        };
+        if !piece.is_empty() {
+            room.send(piece);
+        }
+    }
+}
+
+/// What `Quiet` polls its future or stream with: a waker that marks it asked for, then wakes
+/// the task that polls `Quiet`.
+struct Asked {
+    again: std::sync::atomic::AtomicBool,
+    task: futures_util::task::AtomicWaker,
+}
+
+impl std::task::Wake for Asked {
+    fn wake(self: std::sync::Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &std::sync::Arc<Self>) {
+        self.again.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.task.wake();
+    }
+}
+
+/// A future or stream polled only on its first poll, after it gave an item, and after its own
+/// waker fired: any other poll of the task it runs in returns `Pending` without reaching it.
+/// Hyper polls a request's handler on every read of an HTTP/1 connection, and the multipart
+/// parser looks through all it holds on every poll, so the routes poll the parser through this.
+pub(crate) struct Quiet<T> {
+    inner: std::pin::Pin<Box<T>>,
+    asked: std::sync::Arc<Asked>,
+    waker: std::task::Waker,
+}
+
+impl<T> Quiet<T> {
+    pub(crate) fn new(inner: T) -> Quiet<T> {
+        let asked = std::sync::Arc::new(Asked {
+            again: std::sync::atomic::AtomicBool::new(true),
+            task: futures_util::task::AtomicWaker::new(),
+        });
+        let waker = std::task::Waker::from(std::sync::Arc::clone(&asked));
+        Quiet {
+            inner: Box::pin(inner),
+            asked,
+            waker,
+        }
+    }
+
+    fn poll_with<R>(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+        poll: impl FnOnce(std::pin::Pin<&mut T>, &mut std::task::Context<'_>) -> std::task::Poll<R>,
+    ) -> std::task::Poll<R> {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.asked.task.register(cx.waker());
+        if !self.asked.again.swap(false, SeqCst) {
+            return std::task::Poll::Pending;
+        }
+        let mut own = std::task::Context::from_waker(&self.waker);
+        let polled = poll(self.inner.as_mut(), &mut own);
+        if polled.is_ready() {
+            self.asked.again.store(true, SeqCst);
+        }
+        polled
+    }
+}
+
+impl<F: std::future::Future> std::future::Future for Quiet<F> {
+    type Output = F::Output;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<F::Output> {
+        self.get_mut().poll_with(cx, F::poll)
+    }
+}
+
+impl<S: futures_util::Stream> futures_util::Stream for Quiet<S> {
+    type Item = S::Item;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<S::Item>> {
+        self.get_mut().poll_with(cx, S::poll_next)
+    }
+}
+
+/// The next part of a form read through `form`, its parser polled through `Quiet`.
+pub(crate) async fn next_part(
+    form: &mut Multipart,
+) -> Result<Option<axum::extract::multipart::Field<'_>>, axum::extract::multipart::MultipartError> {
+    Quiet::new(form.next_field()).await
 }
 
 /// The multipart body of an upload, read through `form`.
@@ -625,14 +825,14 @@ enum Stop {
     Failed(String),
 }
 
-/// Reads `stream` to its end, at most `most` bytes.
+/// Reads `stream` to its end, at most `most` bytes, polling it through `Quiet`.
 async fn collect<S, E>(stream: S, most: usize) -> Result<Vec<u8>, Stop>
 where
     S: futures_util::Stream<Item = Result<axum::body::Bytes, E>>,
     E: std::fmt::Display,
 {
     use futures_util::StreamExt;
-    let mut stream = std::pin::pin!(stream);
+    let mut stream = Quiet::new(stream);
     let mut data: Vec<u8> = Vec::new();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| Stop::Failed(e.to_string()))?;
@@ -888,7 +1088,7 @@ async fn store_within(
 /// dropped with 408.
 ///
 /// Requires a bearer token and the instance's uploads setting. Strict rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/media", tag = "Media", request_body(content = Vec<u8>, content_type = "multipart/form-data", description = "A multipart form whose first part is the file"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef), (status = 400, description = "No file part (JSON `No file provided`) or a malformed multipart body (JSON). A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "File uploads are disabled on this instance", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`): `File exceeds 25MB limit` with the configured number. A request body over that size plus 1 MiB is cut off while the file is read and answers with this status and the JSON error \"Error parsing `multipart/form-data` request\"", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket (shared with register, login, word hints, password change and guest access) or the general bucket (plain text), the per-account budget is used up (JSON `Upload limit reached: you can upload up to 2 GiB a day. ...` with the configured size; space frees up 24 hours after each upload, or sooner when a file is removed, and the site operator sets the limit with `UPLOAD_BUDGET_MIB`), or 3 of your uploads, or uploads holding your share of the upload buffer, are already being read (JSON `Too many uploads at once: ...`)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`: the instance holds as many upload bodies in memory as it allows (each upload takes room for its whole declared size first)", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/media", tag = "Media", request_body(content = Vec<u8>, content_type = "multipart/form-data", description = "A multipart form whose first part is the file"), responses((status = 200, description = "File stored; returns a media reference with its expiry time to attach to a message", body = MediaRef), (status = 400, description = "No file part (JSON `No file provided`) or a malformed multipart body (JSON \"Error parsing `multipart/form-data` request\"), which includes a part head over 16 KiB: from the start of the body, or the end of the part before, to the blank line after the part's headers. A body that is not `multipart/form-data` or has no valid boundary gets a plain-text 400 from the framework", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 401, description = "Not signed in", body = ApiErrorBody), (status = 403, description = "File uploads are disabled on this instance", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`): `File exceeds 25MB limit` with the configured number. A request body over that size plus 1 MiB is cut off while the file is read and answers with this status and the JSON error \"Error parsing `multipart/form-data` request\"", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 429, description = "Too many requests in the strict bucket (shared with register, login, word hints, password change and guest access) or the general bucket (plain text), the per-account budget is used up (JSON `Upload limit reached: you can upload up to 2 GiB a day. ...` with the configured size; space frees up 24 hours after each upload, or sooner when a file is removed, and the site operator sets the limit with `UPLOAD_BUDGET_MIB`), or 3 of your uploads, or uploads holding your share of the upload buffer, are already being read (JSON `Too many uploads at once: ...`)", content((ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Too many uploads right now, try again in a moment`: the instance holds as many upload bodies in memory as it allows (each upload takes room for its whole declared size first)", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn upload_media(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -907,8 +1107,7 @@ pub(crate) async fn upload_media(
     let body = state.limits.upload_body_bytes();
     let held = reserve(slot, declared_length(&headers), body, true).await?;
     let max = state.limits.upload_bytes();
-    let field = multipart
-        .next_field()
+    let field = next_part(&mut multipart)
         .await
         .map_err(|e| {
             watch.error(
@@ -1483,13 +1682,14 @@ pub async fn sweep_expired(state: &AppState) {
 #[cfg(test)]
 mod tests {
     use super::{
-        Charge, FILENAME_MAX, MEDIA_TTL_SECS, MIME_MAX, NEUTRAL_MIME, Room, SWEEP_BATCH,
-        UPLOADS_PER_ACCOUNT, Waits, Watch, check_budget, clean_filename, clean_mime,
-        content_disposition, delete_media, download_media, form_within, media_view_ok, paced,
-        read_chunks, read_json_part, read_small, reading_slot, save_within, share_held, share_kib,
-        store_media, sweep, take_room,
+        Charge, FILENAME_MAX, MEDIA_TTL_SECS, MIME_MAX, NEUTRAL_MIME, PIECE, Quiet, Room,
+        SWEEP_BATCH, UPLOADS_PER_ACCOUNT, Waits, Watch, check_budget, clean_filename, clean_mime,
+        content_disposition, delete_media, download_media, form_within, in_pieces, media_view_ok,
+        next_part, paced, read_chunks, read_json_part, read_small, reading_slot, save_within,
+        share_held, share_kib, store_media, sweep, take_room,
     };
     use crate::api::access::Proof;
+    use crate::api::form_heads::HEAD_MAX;
     use crate::api::test_util::{done, mem_user, temp_state};
     use crate::api::{ApiError, Authed};
     use crate::db::{now, open_started as open};
@@ -1596,10 +1796,15 @@ mod tests {
 
     /// Uploads a file of `kib` KiB as alice through the routes of `state`.
     async fn post_file(state: &crate::state::AppState, kib: usize) -> (StatusCode, String) {
-        let (addr, server) = serve(state).await;
         let mut body = b"--XB\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n".to_vec();
         body.extend(vec![7u8; kib * 1024]);
         body.extend_from_slice(b"\r\n--XB--\r\n");
+        post_form(state, body).await
+    }
+
+    /// Posts `body`, a form with the boundary `XB`, to the upload route as alice.
+    async fn post_form(state: &crate::state::AppState, body: Vec<u8>) -> (StatusCode, String) {
+        let (addr, server) = serve(state).await;
         let res = reqwest::Client::new()
             .post(format!("http://{addr}/media"))
             .bearer_auth("tok-alice")
@@ -2205,6 +2410,469 @@ mod tests {
             .expect("request")
     }
 
+    /// A form with the boundary `XB` whose first part has a head of `head` bytes and the data
+    /// `hello`.
+    fn form_with_head(head: usize) -> Vec<u8> {
+        let mut body =
+            b"--XB\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\nX-Pad: "
+                .to_vec();
+        body.resize(head - 4, b'p');
+        body.extend_from_slice(b"\r\n\r\nhello\r\n--XB--\r\n");
+        body
+    }
+
+    /// A part of a form: its name, its file name and its data.
+    type Part = (Option<String>, Option<String>, axum::body::Bytes);
+
+    /// Every part of `form`, in order, read as the routes read them.
+    async fn all_parts(mut form: axum::extract::Multipart) -> Vec<Part> {
+        let mut parts = Vec::new();
+        while let Some(field) = next_part(&mut form).await.expect("parsed") {
+            let name = field.name().map(str::to_string);
+            let file = field.file_name().map(str::to_string);
+            let data = read_json_part(field, usize::MAX, &Watch::default()).await;
+            parts.push((name, file, data.expect("data").into()));
+        }
+        parts
+    }
+
+    /// A form with the boundary `XB`: a `payload_json` part and a file of `len` bytes.
+    fn json_and_file(len: u32) -> Vec<u8> {
+        let mut body = b"--XB\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n{\"content\": \"hi\"}\r\n--XB\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n".to_vec();
+        body.extend((0..len).map(|n| (n % 251) as u8));
+        body.extend_from_slice(b"\r\n--XB--\r\n");
+        body
+    }
+
+    /// A form with the boundary `XB` whose second part has a head of `HEAD_MAX` bytes that starts
+    /// `at` bytes into the body.
+    fn later_head_at(at: usize) -> Vec<u8> {
+        let mut body =
+            b"--XB\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n".to_vec();
+        body.resize(at - 2, b' ');
+        body.extend_from_slice(b"{}");
+        body.extend_from_slice(b"\r\n--XB\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.bin\"\r\nX-Pad: ");
+        body.resize(at + HEAD_MAX - 4, b'p');
+        body.extend_from_slice(b"\r\n\r\n");
+        body.extend((0..20_000u32).map(|n| (n % 251) as u8));
+        body.extend_from_slice(b"\r\n--XB--\r\n");
+        body
+    }
+
+    /// A form whose boundary is almost as long as a head may be, and whose file is lines that
+    /// almost close it.
+    fn long_boundary_form() -> (String, Vec<u8>) {
+        let boundary = "b".repeat(HEAD_MAX - 120);
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.bin\"\r\n\r\n"
+        )
+        .into_bytes();
+        let near = format!("\r\n--{}x", &boundary[..boundary.len() - 10]);
+        while body.len() < 64 * 1024 {
+            body.extend_from_slice(near.as_bytes());
+        }
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        (boundary, body)
+    }
+
+    /// What the parser got of a form read through `in_pieces`.
+    #[derive(Clone, Default)]
+    struct Handed {
+        /// Pieces handed to it.
+        pieces: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        /// Bytes handed to it.
+        bytes: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        /// Times it polled for more.
+        polls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Handed {
+        fn pieces(&self) -> usize {
+            self.pieces.load(std::sync::atomic::Ordering::Relaxed)
+        }
+
+        fn bytes(&self) -> usize {
+            self.bytes.load(std::sync::atomic::Ordering::Relaxed)
+        }
+
+        fn polls(&self) -> usize {
+            self.polls.load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    /// The parser of a form with the boundary `boundary` whose body is `stream` read through
+    /// `in_pieces`, and what it got.
+    async fn counted_form(
+        stream: impl futures_util::Stream<Item = Result<axum::body::Bytes, super::BoxError>>
+        + Send
+        + 'static,
+        boundary: &str,
+    ) -> (axum::extract::Multipart, Handed) {
+        use axum::extract::FromRequest;
+        use futures_util::StreamExt;
+        use std::sync::atomic::Ordering;
+        let handed = Handed::default();
+        let count = handed.clone();
+        let mut pieces = Box::pin(in_pieces(stream, boundary, Watch::default()));
+        let counted = futures_util::stream::poll_fn(move |cx| {
+            count.polls.fetch_add(1, Ordering::Relaxed);
+            let next = pieces.poll_next_unpin(cx);
+            if let std::task::Poll::Ready(Some(Ok(piece))) = &next {
+                count.pieces.fetch_add(1, Ordering::Relaxed);
+                count.bytes.fetch_add(piece.len(), Ordering::Relaxed);
+            }
+            next
+        });
+        let req = axum::http::Request::builder()
+            .header(
+                axum::http::header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(axum::body::Body::from_stream(counted))
+            .expect("request");
+        let form = axum::extract::Multipart::from_request(req, &())
+            .await
+            .expect("form");
+        (form, handed)
+    }
+
+    /// Every part of `body`, a form with the boundary `boundary` sent `size` bytes at a time with
+    /// a pending poll between them, read through `in_pieces` and polled again on every chunk that
+    /// comes, as hyper polls a handler on every read of an HTTP/1 connection: the parts, how many
+    /// pieces the parser is handed, and how many times it polls for more.
+    async fn read_counting(body: &[u8], boundary: &str, size: usize) -> (Vec<Part>, usize, usize) {
+        use futures_util::StreamExt;
+        let came = std::sync::Arc::new(tokio::sync::Notify::new());
+        let chunks: Vec<_> = body
+            .chunks(size)
+            .map(axum::body::Bytes::copy_from_slice)
+            .collect();
+        let ping = std::sync::Arc::clone(&came);
+        let sent = futures_util::stream::iter(chunks).then(move |chunk| {
+            let ping = std::sync::Arc::clone(&ping);
+            async move {
+                tokio::task::yield_now().await;
+                ping.notify_one();
+                Ok::<_, super::BoxError>(chunk)
+            }
+        });
+        let (form, handed) = counted_form(sent, boundary).await;
+        let mut read = std::pin::pin!(all_parts(form));
+        let parts = loop {
+            tokio::select! {
+                biased;
+                parts = &mut read => break parts,
+                () = came.notified() => {}
+            }
+        };
+        (parts, handed.pieces(), handed.polls())
+    }
+
+    /// A waker that counts how often it wakes.
+    #[derive(Default)]
+    struct Wakes(std::sync::atomic::AtomicUsize);
+
+    impl std::task::Wake for Wakes {
+        fn wake(self: std::sync::Arc<Self>) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_quiet_future_is_polled_only_when_it_asked() {
+        use std::future::Future;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let polls = AtomicUsize::new(0);
+        let (send, mut taken) = tokio::sync::mpsc::channel::<u8>(1);
+        let mut quiet = Quiet::new(std::future::poll_fn(|cx| {
+            polls.fetch_add(1, Ordering::SeqCst);
+            taken.poll_recv(cx)
+        }));
+        let wakes = std::sync::Arc::new(Wakes::default());
+        let waker = std::task::Waker::from(std::sync::Arc::clone(&wakes));
+        let mut cx = std::task::Context::from_waker(&waker);
+        for _ in 0..10 {
+            assert!(std::pin::Pin::new(&mut quiet).poll(&mut cx).is_pending());
+        }
+        assert_eq!(polls.load(Ordering::SeqCst), 1, "only its first poll");
+        send.send(5).await.expect("sent");
+        assert_eq!(
+            wakes.0.load(Ordering::SeqCst),
+            1,
+            "its waker wakes the task"
+        );
+        assert_eq!(
+            std::pin::Pin::new(&mut quiet).poll(&mut cx),
+            std::task::Poll::Ready(Some(5))
+        );
+        assert_eq!(polls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_quiet_stream_is_polled_again_after_each_item() {
+        use futures_util::Stream;
+        let mut quiet = Quiet::new(futures_util::stream::iter([1, 2]));
+        let mut noop = std::task::Context::from_waker(std::task::Waker::noop());
+        for item in [Some(1), Some(2), None] {
+            assert_eq!(
+                std::pin::Pin::new(&mut quiet).poll_next(&mut noop),
+                std::task::Poll::Ready(item)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_parser_runs_once_a_piece_however_often_the_handler_is_polled() {
+        let (long, long_body) = long_boundary_form();
+        let forms = [
+            ("XB".to_string(), json_and_file(70_000)),
+            ("XB".to_string(), form_with_head(HEAD_MAX)),
+            ("XB".to_string(), later_head_at(10_000)),
+            (long, long_body),
+        ];
+        for (boundary, body) in forms {
+            let (whole, _, _) = read_counting(&body, &boundary, body.len()).await;
+            assert!(!whole.is_empty());
+            for size in [1, 7, 4096, PIECE + 3, body.len()] {
+                let (parts, pieces, polls) = read_counting(&body, &boundary, size).await;
+                let what = format!("{} bytes in chunks of {size}", body.len());
+                assert_eq!(parts, whole, "{what}");
+                assert!(
+                    pieces <= body.len() / PIECE + 1,
+                    "{pieces} pieces for {what}"
+                );
+                assert!(
+                    polls <= 3 * (pieces + parts.len()) + 4,
+                    "{polls} polls for {pieces} pieces of {what}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_part_head_past_its_cap_is_refused() {
+        let (state, path) = temp_state("media_head_cap").await;
+        add_alice(&state.db).await;
+        let (status, text) = post_form(&state, form_with_head(HEAD_MAX)).await;
+        assert_eq!(status, StatusCode::OK, "{text}");
+        let (status, text) = post_form(&state, form_with_head(HEAD_MAX + 1)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
+        assert_eq!(
+            text,
+            r#"{"error":"Error parsing `multipart/form-data` request"}"#
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_body_that_comes_whole_after_a_wait_is_parsed() {
+        use futures_util::StreamExt;
+        let body = axum::body::Bytes::from(form_with_head(200));
+        let late = futures_util::stream::once(async move {
+            tokio::task::yield_now().await;
+            Ok::<_, std::io::Error>(body)
+        });
+        let (mut form, _watch) = form_within(
+            form_request(late.boxed()),
+            usize::MAX,
+            test_waits(5000, 5000),
+        )
+        .await
+        .expect("form");
+        let field = next_part(&mut form).await.expect("parsed").expect("a part");
+        assert_eq!(field.bytes().await.expect("data"), "hello");
+    }
+
+    #[tokio::test]
+    async fn the_end_of_a_form_comes_a_poll_after_its_last_piece() {
+        use futures_util::StreamExt;
+        let body = axum::body::Bytes::from(form_with_head(200));
+        let whole = futures_util::stream::iter([Ok::<_, super::BoxError>(body.clone())]);
+        let mut pieces = Box::pin(in_pieces(whole, "XB", Watch::default()));
+        let first = pieces.next().await.expect("a piece").expect("data");
+        assert_eq!(first, body);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let mut noop = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(
+            pieces.poll_next_unpin(&mut noop).is_pending(),
+            "the end waits a poll"
+        );
+        assert!(pieces.next().await.is_none());
+    }
+
+    /// `stream`, and a receiver that ends once `stream` is dropped.
+    fn watched<S: futures_util::Stream>(
+        stream: S,
+    ) -> (
+        impl futures_util::Stream<Item = S::Item>,
+        tokio::sync::oneshot::Receiver<()>,
+    ) {
+        use futures_util::StreamExt;
+        let (alive, gone) = tokio::sync::oneshot::channel::<()>();
+        let stream = stream.map(move |item| {
+            let _alive = &alive;
+            item
+        });
+        (stream, gone)
+    }
+
+    /// Whether `gone` ends within a few seconds.
+    async fn let_go(gone: tokio::sync::oneshot::Receiver<()>) -> bool {
+        tokio::time::timeout(std::time::Duration::from_secs(5), gone)
+            .await
+            .is_ok()
+    }
+
+    #[tokio::test]
+    async fn a_form_lets_go_of_its_body_when_it_is_dropped() {
+        use futures_util::StreamExt;
+        let opened = || {
+            let mut part =
+                b"--XB\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.bin\"\r\n\r\n"
+                    .to_vec();
+            part.resize(part.len() + 2 * PIECE, 7);
+            futures_util::stream::iter([Ok::<_, std::io::Error>(axum::body::Bytes::from(part))])
+        };
+        let waits = test_waits(60_000, 60_000);
+        let (body, gone) = watched(opened().chain(futures_util::stream::pending()));
+        let (form, _watch) = form_within(form_request(body.boxed()), usize::MAX, waits)
+            .await
+            .expect("form");
+        drop(form);
+        assert!(let_go(gone).await, "before it is read");
+        let data = futures_util::stream::repeat_with(|| {
+            Ok::<_, std::io::Error>(axum::body::Bytes::from(vec![7u8; 64 * 1024]))
+        });
+        let quiet = opened().chain(futures_util::stream::pending()).boxed();
+        for (what, stream, chunks) in [
+            ("while it waits for bytes", quiet, 0),
+            (
+                "while a piece waits for the parser",
+                opened().chain(data).boxed(),
+                1,
+            ),
+        ] {
+            let (body, gone) = watched(stream);
+            let (mut form, _watch) = form_within(form_request(body.boxed()), usize::MAX, waits)
+                .await
+                .expect("form");
+            let mut field = next_part(&mut form).await.expect("parsed").expect("a part");
+            for _ in 0..chunks {
+                field.chunk().await.expect("data").expect("a chunk");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            drop(field);
+            drop(form);
+            assert!(let_go(gone).await, "{what}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_form_is_read_at_most_a_piece_ahead_of_the_parser() {
+        use futures_util::StreamExt;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let read = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&read);
+        let head = axum::body::Bytes::from_static(
+            b"--XB\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.bin\"\r\n\r\n",
+        );
+        let data = futures_util::stream::repeat_with(|| axum::body::Bytes::from(vec![7u8; PIECE]));
+        let body = futures_util::stream::iter([head])
+            .chain(data)
+            .map(move |chunk| {
+                count.fetch_add(chunk.len(), Ordering::Relaxed);
+                Ok::<_, super::BoxError>(chunk)
+            });
+        let (mut form, handed) = counted_form(body, "XB").await;
+        let mut field = next_part(&mut form).await.expect("parsed").expect("a part");
+        for _ in 0..3 {
+            field.chunk().await.expect("data").expect("a chunk");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let ahead = read.load(Ordering::Relaxed) - handed.bytes();
+            assert!(ahead <= PIECE, "{ahead} bytes read ahead of the parser");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_body_lets_go_of_its_stream_and_says_why() {
+        use futures_util::StreamExt;
+        let opened = || {
+            futures_util::stream::iter([Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                b"--XB\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n{",
+            ))])
+        };
+        let reset = futures_util::stream::once(async { Err(std::io::Error::other("reset")) });
+        let over = futures_util::stream::iter([Ok(axum::body::Bytes::from(vec![b' '; 64 * 1024]))]);
+        for (what, rest, code) in [
+            (
+                "a transport error",
+                reset.chain(futures_util::stream::pending()).boxed(),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                "a stall",
+                futures_util::stream::pending().boxed(),
+                StatusCode::REQUEST_TIMEOUT,
+            ),
+            (
+                "more than its most bytes",
+                over.chain(futures_util::stream::pending()).boxed(),
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+        ] {
+            let (body, gone) = watched(opened().chain(rest));
+            let (mut form, watch) =
+                form_within(form_request(body.boxed()), 32 * 1024, test_waits(5000, 300))
+                    .await
+                    .expect("form");
+            let field = next_part(&mut form).await.expect("parsed").expect("a part");
+            let failed = read_json_part(field, usize::MAX, &watch).await;
+            assert_eq!(
+                failed.err().map(|ApiError(c, _, _)| c),
+                Some(code),
+                "{what}"
+            );
+            assert!(let_go(gone).await, "{what}");
+            drop(form);
+        }
+    }
+
+    #[tokio::test]
+    async fn parts_read_the_same_in_any_pieces() {
+        use futures_util::StreamExt;
+        let body = json_and_file(70_000);
+        let read = |sizes: usize| {
+            let body = body.clone();
+            async move {
+                let pieces: Vec<_> = body
+                    .chunks(sizes)
+                    .map(axum::body::Bytes::copy_from_slice)
+                    .collect();
+                let sent = futures_util::stream::iter(pieces).then(|piece| async move {
+                    tokio::task::yield_now().await;
+                    Ok::<_, std::io::Error>(piece)
+                });
+                let (form, _watch) = form_within(
+                    form_request(sent.boxed()),
+                    usize::MAX,
+                    test_waits(5000, 5000),
+                )
+                .await
+                .expect("form");
+                all_parts(form).await
+            }
+        };
+        let whole = read(body.len()).await;
+        assert_eq!(whole.len(), 2);
+        assert_eq!(whole[0].2, r#"{"content": "hi"}"#);
+        assert_eq!(whole[1].1.as_deref(), Some("a.bin"));
+        assert_eq!(whole[1].2.len(), 70_000);
+        for sizes in [1, 7, 4096, 16 * 1024 + 3] {
+            assert_eq!(read(sizes).await, whole, "in pieces of {sizes} bytes");
+        }
+    }
+
     #[tokio::test]
     async fn a_form_is_paced_as_one_body() {
         use futures_util::StreamExt;
@@ -2224,8 +2892,12 @@ mod tests {
                 .await
                 .expect("form");
             let started = std::time::Instant::now();
-            let code = match form.next_field().await {
-                Ok(_) => StatusCode::OK,
+            let code = match next_part(&mut form).await {
+                Ok(Some(field)) => match read_json_part(field, usize::MAX, &watch).await {
+                    Ok(_) => StatusCode::OK,
+                    Err(ApiError(code, _, _)) => code,
+                },
+                Ok(None) => StatusCode::OK,
                 Err(e) => failed(&watch, e),
             };
             (code, started.elapsed())
@@ -2248,7 +2920,11 @@ mod tests {
                 "{what} ends at the idle wait: {took:?}"
             );
         }
-        let (code, _) = first(pieces(4, 64).boxed()).await;
+        let opened =
+            futures_util::stream::iter([Ok::<_, std::io::Error>(axum::body::Bytes::from_static(
+                b"--XB\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n",
+            ))]);
+        let (code, _) = first(opened.chain(pieces(4, 64)).boxed()).await;
         assert_eq!(code, StatusCode::PAYLOAD_TOO_LARGE, "past its most bytes");
         let part = axum::body::Bytes::from_static(
             b"--XB\r\nContent-Disposition: form-data; name=\"payload_json\"\r\n\r\n{}\r\n",
@@ -2267,7 +2943,7 @@ mod tests {
         let parts = async {
             let mut read = 0;
             loop {
-                let field = match form.next_field().await {
+                let field = match next_part(&mut form).await {
                     Ok(Some(field)) => field,
                     Ok(None) => return (read, None),
                     Err(e) => return (read, Some(failed(&watch, e))),
@@ -2315,7 +2991,7 @@ mod tests {
                 1024 * 1024
             );
             sock.write_all(head.as_bytes()).await.expect("head");
-            sock.write_all(&[b'x'; 64 * 1024]).await.expect("preamble");
+            sock.write_all(&[b'x'; 8 * 1024]).await.expect("preamble");
             socks.push(sock);
         }
         until(2 * 1024, "a preamble holds room for its whole body").await;
