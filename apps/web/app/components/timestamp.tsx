@@ -35,6 +35,16 @@ export function Stamp({ ms, style, token }: { ms: number; style: StampStyle; tok
   )
 }
 
+// Hours and minutes alone, with the full date and time on hover: a grouped message's gutter.
+export function ShortTime({ ts, className }: { ts: number; className?: string }) {
+  const ms = ts * 1000
+  return (
+    <time dateTime={new Date(ms).toISOString()} title={fullTime(ms)} className={className}>
+      {formatStamp(ms, 't', ms)}
+    </time>
+  )
+}
+
 // A message's own time, with the full date and time on hover.
 export function MessageTime({ ts, className }: { ts: number; className?: string }) {
   const ms = ts * 1000

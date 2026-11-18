@@ -34,12 +34,14 @@ import {
   type Mentionable,
 } from './p2p_chat'
 import { sendBlock } from './p2p_server_view'
+import { groupPlaces, p2pCue, type GroupPlace } from '../../lib/message_groups'
 
 // The thread of a P2P server channel beside it (full screen on phones): its root, the replies
 // stored here and a composer, through the same panel as instance threads.
 
 const EMPTY: P2pMessage[] = []
 const NONE: string[] = []
+const ALONE: GroupPlace = { first: true, last: true }
 
 export function P2pThreadPanel() {
   const t = useP2p(s => s.thread)
@@ -99,6 +101,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
   const head = t.head ? rows[0] : null
   const list = useMemo(() => (t.head ? rows.slice(1) : rows), [rows, t.head])
   const shared = useMemo(() => list.map(r => r.m), [list])
+  const places = useMemo(() => groupPlaces(list.map(r => p2pCue(r.p))), [list])
   const ownCount = useMemo(() => replies.filter(m => m.sender === me).length, [replies, me])
   useEscape(e => {
     if (!e.defaultPrevented) p2pThread.close()
@@ -142,7 +145,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
     [idOf]
   )
 
-  const row = (r: { p: P2pMessage; m: Message }, root: boolean) => {
+  const row = (r: { p: P2pMessage; m: Message }, root: boolean, place: GroupPlace) => {
     const { p, m } = r
     if (p.removed) return <P2pHiddenRow key={p.id} m={m} divider={false} />
     if (p.slowHidden) return <P2pSlowRow key={p.id} m={m} divider={false} />
@@ -151,6 +154,8 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
         key={p.id}
         p={p}
         m={m}
+        first={place.first}
+        last={place.last}
         mine={p.sender === me}
         pendingTip="Waiting for a member to come online"
         mentioned={pingsMe(p, me)}
@@ -190,7 +195,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
           }
           root={
             head ? (
-              row(head, true)
+              row(head, true, ALONE)
             ) : (
               <p className="px-4 py-1.5 text-sm text-on-surface-variant italic">
                 {t.loading ? 'Loading…' : 'Message unavailable'}
@@ -198,7 +203,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
             )
           }
           count={t.head?.replies ?? replies.length}
-          replies={list.map(r => row(r, false))}
+          replies={list.map((r, i) => row(r, false, places[i] ?? ALONE))}
           footer={
             <>
               <TypingIndicator

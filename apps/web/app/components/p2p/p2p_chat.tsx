@@ -76,7 +76,8 @@ import { longPress, useMedia } from '../context_menu'
 import { useTextAssist } from '../text_assist'
 import { MessageTime } from '../timestamp'
 import { PresentBar, useChatScroll, useFocusMessage } from '../viewport_height'
-import { mentionRowCls } from '../message_pane'
+import { GroupedRow, groupPadCls, mentionRowCls } from '../message_pane'
+import { groupPlaces, p2pCue } from '../../lib/message_groups'
 import { Masked, textBtn } from '../ui'
 import { KeyAvatar, P2pBadge } from './p2p_badge'
 import { AttachmentList, PendingFiles } from './p2p_files'
@@ -189,6 +190,9 @@ export function P2pIntro({ id, children }: { id: string; children: ReactNode }) 
 interface RowProps {
   p: P2pMessage
   m: Message
+  // Its place in its sender's group: only the first row shows the avatar, name and time.
+  first: boolean
+  last: boolean
   mine: boolean
   pendingTip: string
   mentioned: boolean
@@ -210,6 +214,8 @@ interface RowProps {
 export const P2pRow = memo(function P2pRow({
   p,
   m,
+  first,
+  last,
   mine,
   pendingTip,
   mentioned,
@@ -294,6 +300,34 @@ export const P2pRow = memo(function P2pRow({
       </span>
     )
   ) : null
+  const name = <Masked text={m.author.display_name} by={m.author.username} />
+  const body = (
+    <>
+      {m.forward ? (
+        <ForwardCard m={m} canDelete={false} local />
+      ) : (
+        (m.content.trim() !== '' || editing) && (
+          <MarkdownMessage
+            message={m}
+            editor={editing ? <MessageEditor binding={editing} /> : undefined}
+          />
+        )
+      )}
+      <AttachmentList att={p.fwd?.att ?? p.att} canFetch={canAct} own={!p.fwd && mine} />
+      <ReactionBar m={m} canReact={act} canRemove={act} />
+      {threads && !!p.replies && !p.archived && (
+        <button
+          title="Open thread"
+          data-p2p-thread-chip
+          onClick={() => void p2pThread.open(p.id)}
+          className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
+        >
+          <MessageSquareText size={12} />
+          {p.replies} {p.replies === 1 ? 'reply' : 'replies'}
+        </button>
+      )}
+    </>
+  )
   return (
     <div data-row data-mid={m.id} data-event={p.id}>
       {divider && (
@@ -305,55 +339,45 @@ export const P2pRow = memo(function P2pRow({
         {...longPress((x, y) => onMenu(p, m, x, y))}
         data-flash={flash ? '' : undefined}
         data-mentioned={mentioned ? '' : undefined}
-        className={`group relative px-4 py-1.5 ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
+        className={`group relative px-4 ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
       >
         {m.reply_to && <ReplyPreview quote={m.reply_to} avatar={36} onJump={onJump} />}
-        <div className="flex gap-3">
-          <div className="shrink-0 pt-0.5">
-            <KeyAvatar ik={p.sender} size={36} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-              <span className="streamer min-w-0 truncate text-sm font-medium">
-                <Masked text={m.author.display_name} by={m.author.username} />
-              </span>
-              <MessageTime ts={m.created_at} className="shrink-0 text-xs text-on-surface-variant" />
-              {p.late && (
-                <span
-                  data-late
-                  title={`Sent ${new Date(p.sentTs).toLocaleString()}`}
-                  className="shrink-0 text-[11px] text-on-surface-variant italic"
-                >
-                  sent earlier, arrived later
-                </span>
-              )}
-              {status}
+        {first ? (
+          <div className="flex gap-3">
+            <div className="shrink-0 pt-0.5">
+              <KeyAvatar ik={p.sender} size={36} />
             </div>
-            {m.forward ? (
-              <ForwardCard m={m} canDelete={false} local />
-            ) : (
-              (m.content.trim() !== '' || editing) && (
-                <MarkdownMessage
-                  message={m}
-                  editor={editing ? <MessageEditor binding={editing} /> : undefined}
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                <span className="streamer min-w-0 truncate text-sm font-medium">{name}</span>
+                <MessageTime
+                  ts={m.created_at}
+                  className="shrink-0 text-xs text-on-surface-variant"
                 />
-              )
-            )}
-            <AttachmentList att={p.fwd?.att ?? p.att} canFetch={canAct} own={!p.fwd && mine} />
-            <ReactionBar m={m} canReact={act} canRemove={act} />
-            {threads && !!p.replies && !p.archived && (
-              <button
-                title="Open thread"
-                data-p2p-thread-chip
-                onClick={() => void p2pThread.open(p.id)}
-                className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
-              >
-                <MessageSquareText size={12} />
-                {p.replies} {p.replies === 1 ? 'reply' : 'replies'}
-              </button>
-            )}
+                {p.late && (
+                  <span
+                    data-late
+                    title={`Sent ${new Date(p.sentTs).toLocaleString()}`}
+                    className="shrink-0 text-[11px] text-on-surface-variant italic"
+                  >
+                    sent earlier, arrived later
+                  </span>
+                )}
+                {status}
+              </div>
+              {body}
+            </div>
           </div>
-        </div>
+        ) : (
+          <GroupedRow
+            name={name}
+            ts={m.created_at}
+            size={36}
+            status={mine && p.pending && !p.failed ? status : undefined}
+          >
+            {body}
+          </GroupedRow>
+        )}
         <MessageToolbar
           m={m}
           react={canAct}
@@ -1095,6 +1119,10 @@ export function P2pChatBody(props: ChatBodyProps) {
     if (!chat.readSeq) return -1
     return messages.findIndex(m => m.sender !== me && m.seq > chat.readSeq)
   }, [chat, messages, me])
+  const places = useMemo(
+    () => groupPlaces(messages.map(p2pCue), new Set([divider])),
+    [messages, divider]
+  )
 
   const rowJump = useCallback(
     (n: number) => {
@@ -1189,6 +1217,8 @@ export function P2pChatBody(props: ChatBodyProps) {
                     key={p.id}
                     p={p}
                     m={m}
+                    first={places[i]?.first ?? true}
+                    last={places[i]?.last ?? true}
                     mine={p.sender === me}
                     pendingTip={props.peerFull ? 'Their storage is full' : props.pendingTip}
                     mentioned={pingsMe(p, me)}

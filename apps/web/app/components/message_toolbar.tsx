@@ -13,11 +13,11 @@ import type { Message } from '../lib/types'
 import { FULL_TITLE, canAddEmoji, reacted, reactionsFull } from '../lib/reactions'
 import { EmojiPicker, useTopEmojis } from './emoji_picker'
 
+// It straddles the row's top edge, so a pointer moving up from the row reaches it before leaving.
 const messageToolbarCls =
-  'pointer-events-none absolute -top-3 right-3 z-10 flex items-center gap-0.5 rounded-lg border border-outline-variant bg-surface-container p-0.5 opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 data-open:pointer-events-auto data-open:opacity-100 pointer-fine:group-focus-within:pointer-events-auto pointer-fine:group-focus-within:opacity-100'
+  'pointer-events-none absolute -top-5 right-3 z-10 flex items-center gap-0.5 rounded-lg border border-outline-variant bg-surface-container p-0.5 opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 data-open:pointer-events-auto data-open:opacity-100 pointer-fine:group-focus-within:pointer-events-auto pointer-fine:group-focus-within:opacity-100'
 
 const GAP = 4
-const OVERLAP = 12
 
 const scrollParent = (el: HTMLElement | null) => {
   for (let p = el?.parentElement; p; p = p.parentElement) {
@@ -27,8 +27,8 @@ const scrollParent = (el: HTMLElement | null) => {
   return null
 }
 
-// Keeps the row toolbar inside the scroll area. It overlaps the previous row by 12 px and moves
-// down if the top would be clipped.
+// Keeps the row toolbar inside the scroll area. It overlaps the previous row and moves down if
+// the top would be clipped.
 function useClampedToolbar(ref: RefObject<HTMLDivElement | null>, shown: boolean) {
   useEffect(() => {
     const bar = ref.current
@@ -39,7 +39,7 @@ function useClampedToolbar(ref: RefObject<HTMLDivElement | null>, shown: boolean
       scroller ??= scrollParent(row)
       const top = scroller ? scroller.getBoundingClientRect().top : 0
       const room = row.getBoundingClientRect().top - top
-      const shift = Math.min(GAP + OVERLAP - room, row.offsetHeight)
+      const shift = Math.min(GAP - bar.offsetTop - room, row.offsetHeight)
       bar.style.transform = shift > 0 ? `translateY(${Math.ceil(shift)}px)` : ''
     }
     const enter = () => {

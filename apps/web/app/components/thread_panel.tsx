@@ -9,6 +9,7 @@ import { messageRights } from '../lib/actions/message'
 import { openActionMenu } from '../lib/actions/menu'
 import { confirmDeleteMessage, myPerms, roleColor, threadKey, useStore } from '../lib/store'
 import { Perm, hasPerm, type Message } from '../lib/types'
+import type { Outgoing } from '../lib/store_types'
 import { findById } from '../lib/window'
 import { newSince } from '../lib/lists'
 import { MarkdownMessage } from './markdown_message'
@@ -16,7 +17,9 @@ import { MessageComposer } from './message_composer'
 import { TypingIndicator } from './typing_indicator'
 import {
   AuthorRow,
+  GroupedRow,
   OutboxRows,
+  groupPadCls,
   mentionRowCls,
   mentionsMe,
   reactHeader,
@@ -46,8 +49,12 @@ import { canEdit as ownEditable } from '../lib/sed'
 import { MessageEditor, editAction } from './message_editor'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { BulkJobBar, Selectable, SelectionBar, openSelectionMenu } from './selection'
+import { NameWithUsername } from './display_name'
+import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 
 const EMPTY: Message[] = []
+const NO_SENDS: Outgoing[] = []
+const ALONE: GroupPlace = { first: true, last: true }
 
 // The thread panel, whichever source fills it (instance messages, or a P2P server's): the header,
 // bars above the list, the list (`head`, the root, its reply count, the replies, `tail`) and the
@@ -134,7 +141,8 @@ export default function ThreadPanel() {
   const newer = useStore(s => (key ? s.newer[key] : undefined))
   const stale = useStore(s => (key ? s.stale[key] === true : false))
   const focus = useStore(s => (key ? s.focus[key] : undefined))
-  const outCount = useStore(s => (key ? (s.outbox[key]?.length ?? 0) : 0))
+  const outgoing = useStore(s => (key ? s.outbox[key] : undefined)) ?? NO_SENDS
+  const outCount = outgoing.length
   const following = useStore(s => (key ? s.atBottom[key] === true : false))
   const unseen = useStore(s => (key ? s.pings[key] !== undefined : false))
   const seeThread = useStore(s => s.seeThread)
@@ -194,6 +202,10 @@ export default function ThreadPanel() {
   const fresh = newSince(replies, scroll.leftAt, me?.username)
 
   const flash = useFocusMessage(listRef, key, focus, replies, scroll.settle)
+  const places = useMemo(
+    () => messagePlaces(replies, detached ? new Set([replies.length]) : undefined, outgoing),
+    [replies, detached, outgoing]
+  )
 
   if (!root || !key) return null
 
@@ -244,7 +256,7 @@ export default function ThreadPanel() {
     )
   }
 
-  const row = (m: Message) => {
+  const row = (m: Message, { first, last }: GroupPlace) => {
     const mentioned = mentionsMe(m, me?.username)
     const editing = editingId === m.id
     const actions: ToolbarAction[] = []
@@ -260,6 +272,22 @@ export default function ThreadPanel() {
         onClick: e => confirmDeleteMessage(m.id, e.shiftKey),
       })
     const quote = m.reply_to
+    const body = (
+      <>
+        {m.forward ? (
+          <ForwardCard m={m} canDelete={canDelete(m)} />
+        ) : m.kind === 'poll' ? (
+          <PollCard m={m} canVote={canReact} />
+        ) : (
+          <MarkdownMessage
+            message={m}
+            canDelete={canDelete(m)}
+            editor={editing ? <MessageEditor /> : undefined}
+          />
+        )}
+        <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
+      </>
+    )
     return (
       <div
         key={m.id}
@@ -268,7 +296,7 @@ export default function ThreadPanel() {
         data-flash={flash === m.id ? '' : undefined}
         data-mentioned={mentioned ? '' : undefined}
         {...longPress(rowMenu(m))}
-        className={`group relative px-4 py-1.5 ${mentioned ? mentionRowCls : 'hover:bg-surface-container'}`}
+        className={`group relative px-4 ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container'}`}
       >
         {quote && (
           <ReplyPreview
@@ -282,26 +310,21 @@ export default function ThreadPanel() {
             onJump={m.id === root.id ? jumpMain : jump}
           />
         )}
-        <AuthorRow
-          author={m.author}
-          server={server}
-          size={30}
-          color={roleColor(roles, memberFor(m.author.username)?.role_ids ?? [])}
-          meta={timeMeta(m.created_at)}
-        >
-          {m.forward ? (
-            <ForwardCard m={m} canDelete={canDelete(m)} />
-          ) : m.kind === 'poll' ? (
-            <PollCard m={m} canVote={canReact} />
-          ) : (
-            <MarkdownMessage
-              message={m}
-              canDelete={canDelete(m)}
-              editor={editing ? <MessageEditor /> : undefined}
-            />
-          )}
-          <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
-        </AuthorRow>
+        {first ? (
+          <AuthorRow
+            author={m.author}
+            server={server}
+            size={30}
+            color={roleColor(roles, memberFor(m.author.username)?.role_ids ?? [])}
+            meta={timeMeta(m.created_at)}
+          >
+            {body}
+          </AuthorRow>
+        ) : (
+          <GroupedRow name={<NameWithUsername user={m.author} />} ts={m.created_at} size={30}>
+            {body}
+          </GroupedRow>
+        )}
         <MessageToolbar
           m={m}
           react={canReact}
@@ -341,15 +364,15 @@ export default function ThreadPanel() {
           <EdgeSentinel key={replies[0].id} root={listRef} edge="top" onVisible={onTop} />
         )
       }
-      root={row(root)}
+      root={row(root, ALONE)}
       count={root.reply_count}
       replies={
         <BlockedList
           messages={replies}
           focusId={focus?.id ?? null}
-          row={m => (
+          row={(m, i) => (
             <Selectable key={m.id} m={m} scope={key}>
-              {row(m)}
+              {row(m, places[i] ?? ALONE)}
             </Selectable>
           )}
         />
@@ -368,7 +391,12 @@ export default function ThreadPanel() {
               }}
             />
           )}
-          <OutboxRows msgKey={key} size={30} />
+          <OutboxRows
+            msgKey={key}
+            outgoing={outgoing}
+            places={places.slice(replies.length)}
+            size={30}
+          />
         </>
       }
       footer={

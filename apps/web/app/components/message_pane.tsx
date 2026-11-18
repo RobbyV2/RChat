@@ -87,7 +87,8 @@ import { PollCard } from './poll_card'
 import { SystemNotice } from './system_messages'
 import { useMyTimeoutEnds } from './timeout_dialog'
 import { isNotice, isSystem } from '../lib/system_messages'
-import { MessageTime } from './timestamp'
+import { MessageTime, ShortTime } from './timestamp'
+import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { BlockedComposer, BlockedList } from './blocking'
 import {
   BulkJobBar,
@@ -309,6 +310,47 @@ export function AuthorRow({
   )
 }
 
+// A row that continues its author's group: the author for screen readers only, and hours and
+// minutes in the avatar's place while the row is hovered or holds keyboard focus. A `status`
+// (a send not delivered yet) takes the time's place and always shows.
+export function GroupedRow({
+  name,
+  ts,
+  size,
+  status,
+  children,
+}: {
+  name: ReactNode
+  ts: number
+  size: number
+  status?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <div data-grouped className="flex gap-3">
+      <span className="streamer sr-only">{name}</span>
+      <div className="relative shrink-0" style={{ width: size }}>
+        {status ? (
+          <span className={gutterStatusCls}>{status}</span>
+        ) : (
+          <ShortTime ts={ts} className={gutterTimeCls} />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  )
+}
+
+export const gutterTimeCls =
+  'absolute top-0 left-1/2 -translate-x-1/2 text-[11px] leading-[22.75px] whitespace-nowrap text-on-surface-variant tabular-nums opacity-0 group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100'
+
+const gutterStatusCls =
+  'absolute top-0 left-1/2 flex h-[22.75px] -translate-x-1/2 items-center text-on-surface-variant'
+
+// Padding of a list row by its place in its group: no gap between rows of one group.
+export const groupPadCls = (first: boolean, last: boolean) =>
+  `${first ? 'pt-1.5' : 'pt-0.5'} ${last ? 'pb-1.5' : 'pb-0.5'}`
+
 // The other person in a DM's header: avatar and name, opening their profile.
 export function DmPeer({ other }: { other: UserRef }) {
   return (
@@ -394,6 +436,9 @@ const unreadDivider = (
 
 interface RowProps {
   m: Message
+  // Its place in its author's group: only the first row shows the avatar, name and time.
+  first: boolean
+  last: boolean
   mentioned: boolean
   divider: boolean
   flash: boolean
@@ -415,6 +460,8 @@ interface RowProps {
 
 const MessageRow = memo(function MessageRow({
   m,
+  first,
+  last,
   mentioned,
   divider,
   flash,
@@ -464,6 +511,32 @@ const MessageRow = memo(function MessageRow({
         <CallLogRow message={m} />
       </div>
     )
+  const body = (
+    <>
+      {m.forward ? (
+        <ForwardCard m={m} canDelete={canDelete} />
+      ) : m.kind === 'poll' ? (
+        <PollCard m={m} canVote={canReact} />
+      ) : (
+        <MarkdownMessage
+          message={m}
+          canDelete={canDelete}
+          editor={editing ? <MessageEditor /> : undefined}
+        />
+      )}
+      <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
+      {channel && m.reply_count > 0 && (
+        <button
+          title="Open thread"
+          onClick={() => void openThread(m)}
+          className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
+        >
+          <MessageSquareText size={12} />
+          {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
+        </button>
+      )}
+    </>
+  )
   return (
     <div data-row data-mid={m.id}>
       {mark}
@@ -471,41 +544,26 @@ const MessageRow = memo(function MessageRow({
         {...longPress((x, y) => onMenu(m, x, y))}
         data-flash={flash ? '' : undefined}
         data-mentioned={mentioned ? '' : undefined}
-        className={`group relative px-4 py-1.5 ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
+        className={`group relative px-4 ${groupPadCls(first, last)} ${mentioned ? mentionRowCls : 'hover:bg-surface-container-low'}`}
       >
         {m.reply_to && (
           <ReplyPreview quote={m.reply_to} avatar={36} color={quoteColor} onJump={onJump} />
         )}
-        <AuthorRow
-          author={m.author}
-          server={server}
-          size={36}
-          color={color}
-          meta={timeMeta(m.created_at)}
-        >
-          {m.forward ? (
-            <ForwardCard m={m} canDelete={canDelete} />
-          ) : m.kind === 'poll' ? (
-            <PollCard m={m} canVote={canReact} />
-          ) : (
-            <MarkdownMessage
-              message={m}
-              canDelete={canDelete}
-              editor={editing ? <MessageEditor /> : undefined}
-            />
-          )}
-          <ReactionBar m={m} canReact={canReact} canRemove={canUnreact} />
-          {channel && m.reply_count > 0 && (
-            <button
-              title="Open thread"
-              onClick={() => void openThread(m)}
-              className="mt-1 flex items-center gap-1.5 rounded-full bg-surface-container px-2.5 py-1 text-xs font-medium text-primary hover:bg-surface-container-high"
-            >
-              <MessageSquareText size={12} />
-              {m.reply_count} {m.reply_count === 1 ? 'reply' : 'replies'}
-            </button>
-          )}
-        </AuthorRow>
+        {first ? (
+          <AuthorRow
+            author={m.author}
+            server={server}
+            size={36}
+            color={color}
+            meta={timeMeta(m.created_at)}
+          >
+            {body}
+          </AuthorRow>
+        ) : (
+          <GroupedRow name={<NameWithUsername user={m.author} />} ts={m.created_at} size={36}>
+            {body}
+          </GroupedRow>
+        )}
         <MessageToolbar
           m={m}
           react={canReact}
@@ -521,10 +579,97 @@ export const reactHeader = (m: Message, x: number, y: number): ContextMenuOption
   header: <QuickReactions m={m} anchor={rowAt(x, y)} />,
 })
 
-export function OutboxRows({ msgKey, size = 36 }: { msgKey: string; size?: number }) {
+const outgoingLabel = (status: Outgoing['status']) =>
+  status === 'failed' ? 'Failed to send' : status === 'sending' ? 'Sending' : 'Queued'
+
+// One of my sends on its way: a header row with its status, or dimmed under the group it joins.
+export function OutgoingRow({
+  o,
+  author,
+  server,
+  place,
+  size,
+  onJump,
+  onRetry,
+  onCancel,
+}: {
+  o: Outgoing
+  author: UserRef
+  server: string | null
+  place: GroupPlace
+  size: number
+  onJump: (id: number) => void
+  onRetry: () => void
+  onCancel: () => void
+}) {
+  const failed = o.status === 'failed'
+  const label = outgoingLabel(o.status)
+  const body = (
+    <>
+      {o.msg.forward ? (
+        <ForwardCard m={o.msg} canDelete={false} sending />
+      ) : (
+        <MarkdownMessage message={o.msg} canDelete={false} />
+      )}
+      {o.pending && <span className="text-xs text-on-surface-variant">{o.pending.file.name}</span>}
+      {failed && (
+        <div className="mt-1 flex items-center gap-3 text-xs font-medium">
+          <button onClick={onRetry} className="text-primary">
+            Retry
+          </button>
+          <button onClick={onCancel} className="text-error">
+            Delete
+          </button>
+        </div>
+      )}
+    </>
+  )
+  return (
+    <div
+      className={`group relative px-4 ${groupPadCls(place.first, place.last)} ${failed ? '' : 'opacity-50'}`}
+    >
+      {o.msg.reply_to && <ReplyPreview quote={o.msg.reply_to} avatar={size} onJump={onJump} />}
+      {place.first ? (
+        <AuthorRow
+          author={author}
+          server={server}
+          size={size}
+          meta={
+            <span
+              className={`shrink-0 text-xs ${failed ? 'text-error' : 'text-on-surface-variant'}`}
+            >
+              {label}
+            </span>
+          }
+        >
+          {body}
+        </AuthorRow>
+      ) : (
+        <GroupedRow name={<NameWithUsername user={author} />} ts={o.msg.created_at} size={size}>
+          <span className="sr-only">{label}</span>
+          {body}
+        </GroupedRow>
+      )}
+    </div>
+  )
+}
+
+const ALONE: GroupPlace = { first: true, last: true }
+
+// My sends on their way below a list; `places` are theirs from the list's grouping.
+export function OutboxRows({
+  msgKey,
+  outgoing,
+  places,
+  size = 36,
+}: {
+  msgKey: string
+  outgoing: readonly Outgoing[]
+  places: readonly GroupPlace[]
+  size?: number
+}) {
   const me = useStore(s => s.me)
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
-  const outgoing = useStore(s => s.outbox[msgKey]) ?? EMPTY_OUT
   const retryOutgoing = useStore(s => s.retryOutgoing)
   const cancelOutgoing = useStore(s => s.cancelOutgoing)
   const jumpTo = useStore(s => s.jumpTo)
@@ -532,45 +677,19 @@ export function OutboxRows({ msgKey, size = 36 }: { msgKey: string; size?: numbe
   if (!me || !outgoing.length) return null
   return (
     <>
-      {outgoing.map(o => {
-        const failed = o.status === 'failed'
-        return (
-          <div key={o.tempId} className={`relative px-4 py-1.5 ${failed ? '' : 'opacity-50'}`}>
-            {o.msg.reply_to && <ReplyPreview quote={o.msg.reply_to} avatar={size} onJump={jump} />}
-            <AuthorRow
-              author={me}
-              server={server}
-              size={size}
-              meta={
-                <span
-                  className={`shrink-0 text-xs ${failed ? 'text-error' : 'text-on-surface-variant'}`}
-                >
-                  {failed ? 'Failed to send' : o.status === 'sending' ? 'Sending' : 'Queued'}
-                </span>
-              }
-            >
-              {o.msg.forward ? (
-                <ForwardCard m={o.msg} canDelete={false} sending />
-              ) : (
-                <MarkdownMessage message={o.msg} canDelete={false} />
-              )}
-              {o.pending && (
-                <span className="text-xs text-on-surface-variant">{o.pending.file.name}</span>
-              )}
-              {failed && (
-                <div className="mt-1 flex items-center gap-3 text-xs font-medium">
-                  <button onClick={() => retryOutgoing(msgKey, o.tempId)} className="text-primary">
-                    Retry
-                  </button>
-                  <button onClick={() => cancelOutgoing(msgKey, o.tempId)} className="text-error">
-                    Delete
-                  </button>
-                </div>
-              )}
-            </AuthorRow>
-          </div>
-        )
-      })}
+      {outgoing.map((o, i) => (
+        <OutgoingRow
+          key={o.tempId}
+          o={o}
+          author={me}
+          server={server}
+          place={places[i] ?? ALONE}
+          size={size}
+          onJump={jump}
+          onRetry={() => retryOutgoing(msgKey, o.tempId)}
+          onCancel={() => cancelOutgoing(msgKey, o.tempId)}
+        />
+      ))}
     </>
   )
 }
@@ -610,7 +729,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
     return v?.kind === 'dm' ? s.dms.find(d => d.id === v.dmId) : undefined
   })
   const messages = useStore(s => (s.view ? s.messages[viewKey(s.view)] : undefined)) ?? EMPTY
-  const outCount = useStore(s => (s.view ? (s.outbox[viewKey(s.view)]?.length ?? 0) : 0))
+  const outgoing = useStore(s => (s.view ? s.outbox[viewKey(s.view)] : undefined)) ?? EMPTY_OUT
+  const outCount = outgoing.length
   const anchor = useStore(s => (s.view ? s.unreadAnchor[viewKey(s.view)] : undefined))
   const older = useStore(s => (s.view ? s.older[viewKey(s.view)] : undefined))
   const newer = useStore(s => (s.view ? s.newer[viewKey(s.view)] : undefined))
@@ -673,6 +793,15 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   )
   const mark = unreadMark(ids, anchor, older?.more !== false, lastOwn(messages, me?.username))
   const dividerIndex = mark.divider
+  const places = useMemo(
+    () =>
+      messagePlaces(
+        messages,
+        new Set(detached ? [dividerIndex, messages.length] : [dividerIndex]),
+        outgoing
+      ),
+    [messages, dividerIndex, detached, outgoing]
+  )
 
   const scroll = useChatScroll({
     list: listRef,
@@ -976,6 +1105,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     <Selectable m={m} scope={scope}>
                       <MessageRow
                         m={m}
+                        first={places[i]?.first ?? true}
+                        last={places[i]?.last ?? true}
                         mentioned={mentionedIds.has(m.id)}
                         divider={i === dividerIndex}
                         flash={flash === m.id}
@@ -1015,7 +1146,13 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
                     onVisible={onBottom}
                   />
                 )}
-                {view && <OutboxRows msgKey={viewKey(view)} />}
+                {view && (
+                  <OutboxRows
+                    msgKey={viewKey(view)}
+                    outgoing={outgoing}
+                    places={places.slice(messages.length)}
+                  />
+                )}
               </div>
             </div>
           </div>
