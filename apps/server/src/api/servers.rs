@@ -24,10 +24,13 @@ use crate::api::categories::{
     server_categories, write_layout,
 };
 use crate::api::features::Feature;
+use crate::api::join_modes::{
+    JoinMode, KEY_LEN, StartChannels, join_mode_of, keeps_key, random_text,
+};
 use crate::api::lookup::{self, LookupClass};
 use crate::api::messages::recent_channel_messages;
 use crate::api::pings::forget_server_pings;
-use crate::api::policy::ServerCreation;
+use crate::api::policy::{ServerCreation, ServerJoining};
 use crate::api::rare::{self, Rare};
 use crate::api::sealed;
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
@@ -75,8 +78,45 @@ pub struct CreateServerReq {
     #[schema(example = "Club")]
     name: String,
     /// Optional join password. Surrounding whitespace is trimmed; omitted, `null` or blank
-    /// creates a server without a password.
+    /// creates a server without a password. Only for `join: password`.
     password: Option<String>,
+    /// How the server starts.
+    #[serde(flatten)]
+    options: ServerOptions,
+}
+
+/// How a new server starts. Every field is optional; without them anyone joins the server by
+/// its name, or with its password when `password` is set.
+#[derive(Default, Deserialize, ToSchema)]
+pub struct ServerOptions {
+    /// How people join: `name` (anyone who knows the name), `invite` (only with an invite link
+    /// or a password the managers make), `password` (the name and `password`) or `closed`
+    /// (nobody new). Default: `password` when `password` is set, otherwise `name`. An `invite`
+    /// or `closed` server gets a random key of 10 characters for its URLs, and its name is only
+    /// a label that other servers may share. `name` is refused while the instance's
+    /// `server_joining` is `invites`.
+    #[serde(default)]
+    pub(crate) join: Option<JoinMode>,
+    /// Whether server search lists the server for people who aren't members while they can
+    /// read it by its name. Default `true`; `true` only for `name` and `password` servers.
+    #[serde(default)]
+    pub(crate) listed: Option<bool>,
+    /// "Anyone can read this server", as in `PATCH /api/v1/servers/{name}`: `true` or `false`;
+    /// omit to follow the instance. `true` is refused while the instance's `public_reading` is
+    /// off.
+    #[serde(default)]
+    pub(crate) public_read: Option<bool>,
+    /// The channels it starts with: `text` (a text channel `general`, the default) or
+    /// `text_voice` (also a voice channel `Voice`).
+    #[serde(default)]
+    pub(crate) channels: Option<StartChannels>,
+    /// Join and leave notices in its first channel. Default `true`.
+    #[serde(default)]
+    pub(crate) notices: Option<bool>,
+    /// How long uploaded files stay, as in `PUT /api/v1/servers/{name}/upload_expiry`. Default:
+    /// the instance's time.
+    #[serde(default)]
+    pub(crate) upload_expiry: Option<crate::api::upload_expiry::UploadExpiry>,
 }
 
 /// Optional request body for joining a server.
@@ -158,6 +198,20 @@ pub struct ServerPatch {
     /// what people outside it read; `true` (the default) also for people who open the server
     /// without being a member. Omit to leave it unchanged.
     members_visible: Option<bool>,
+    /// How people join: `name`, `invite`, `password` or `closed` (see `POST /api/v1/servers`).
+    /// Use it instead of `protected`. `password` needs `password`, unless the server has a
+    /// permanent password already. `invite` and `closed` remove the permanent password, and
+    /// `closed` revokes every extra password. A server that turns to `name` or `password`
+    /// takes its lowercase name as its key, which must be free. `name` is refused while the
+    /// instance's `server_joining` is `invites`. Not allowed on the rchat server. Omit to
+    /// leave it unchanged.
+    #[serde(default)]
+    join: Option<JoinMode>,
+    /// Whether server search lists the server for people who aren't members (see
+    /// `POST /api/v1/servers`). `true` only for `name` and `password` servers. Omit to leave it
+    /// unchanged.
+    #[serde(default)]
+    listed: Option<bool>,
 }
 
 /// The server after an update, plus how many members a password change removed.
@@ -1003,6 +1057,8 @@ async fn server_detail(
         guest_voice,
         guest_chat,
         members_visible,
+        join_mode,
+        listed,
     } = access.lite().clone();
     let rows = sqlx::query(
         "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive FROM channels WHERE server = $1 ORDER BY position, id",
@@ -1072,6 +1128,8 @@ async fn server_detail(
         guest_voice,
         guest_chat,
         members_visible,
+        join_mode,
+        listed,
         channels,
         categories,
         layout_version,
@@ -1710,6 +1768,12 @@ async fn interacted_page(
 ///
 /// Creates a server owned by the caller: they become its creator and an admin with all
 /// permissions, and it starts with one text channel named `general`. Requires a bearer token.
+/// The other fields choose how people join (`join`: by its name, with an invite, with a
+/// password, or nobody new), whether search lists it, whether people who aren't members can read
+/// it, a voice channel, the join and leave notices and how long uploads stay; without them anyone
+/// joins the server by its name, or with its password when `password` is set. An `invite` or
+/// `closed` server gets a random key of 10 characters (`name` in the answer) and
+/// keeps it when it is renamed; its display name may be the name of other servers.
 /// The instance may limit who creates servers (`server_creation` in `GET /api/v1/settings`):
 /// accounts it leaves out get 404, and `can_create_servers` in `GET /api/v1/me` says which
 /// applies to the caller. Emits `server_created` to the creator. Strict and general rate-limit
@@ -1724,8 +1788,9 @@ async fn interacted_page(
     request_body = CreateServerReq,
     responses(
         (status = 200, description = "The created server, with the caller as admin and a default `general` text channel", body = ServerDetail),
-        (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or a password shorter than 8 characters. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken (for `name` and `password` servers), or a password shorter than 8 characters. With reason `invalid` and its `field`: `Pick one way to join` (a `password` for another mode than `password`), `A password needs 8 characters` (`join: password` without one), `Listed is only for servers people join by name` (`listed: true` for an `invite` or `closed` server), or an invalid `upload_expiry`. `This instance needs invites to join. Pick invite or password.` with reason `off_site` and control `server_joining`: `join: name` while the instance's `server_joining` is `invites`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`Public reading is turned off on this site` with reason `off_site` and control `public_reading`: `public_read: true` while the instance has public reading off", body = ApiErrorBody),
         (status = 404, description = "`Not found`: the instance does not let this account create servers", body = ApiErrorBody),
         (status = 409, description = "That name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
@@ -1748,13 +1813,18 @@ pub(crate) async fn create_server(
             }
         });
     }
-    let CreateServerReq { name, password } = req;
+    let CreateServerReq {
+        name,
+        password,
+        options,
+    } = req;
     let held = rare::hold(&state, Rare::NewServer, Some(&user))?;
     let founder = Founder::Creator(&user.username);
-    let key = rare::counted(
-        held,
-        found_server(&state, &name, password.as_deref(), founder).await,
-    )?;
+    let founded = async {
+        let new = check_new_server(&state, &user, &name, password.as_deref(), options).await?;
+        found_server(&state, new, founder).await
+    };
+    let key = rare::counted(held, founded.await)?;
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     Ok(Json(server_detail(&state.db, &state.hub, &access).await?))
 }
@@ -1768,39 +1838,171 @@ enum Founder<'a> {
     Owner { owner: &'a str, by: &'a str },
 }
 
-/// Creates the server `name` with a `general` channel and its founder as the only member, and
+/// A new server as its request asks for it, checked.
+struct NewServer {
+    display: String,
+    mode: JoinMode,
+    /// The permanent password of a `password` server.
+    password: Option<String>,
+    listed: bool,
+    public_read: Option<bool>,
+    channels: StartChannels,
+    notices: bool,
+    upload_expiry: Option<crate::api::upload_expiry::UploadExpiry>,
+}
+
+const PICK_ONE: &str = "Pick one way to join";
+const PASSWORD_NEEDED: &str = "A password needs 8 characters";
+const LISTED_BY_NAME: &str = "Listed is only for servers people join by name";
+const NEEDS_INVITES: &str = "This instance needs invites to join. Pick invite or password.";
+const NAME_FOR_JOINING: &str = "That name is taken. Pick another to let people join by name.";
+
+/// The refusal of a request that picks `join: name` while the instance needs invites.
+fn needs_invites(joining: ServerJoining, join: Option<JoinMode>) -> Result<(), ApiError> {
+    match (joining, join) {
+        (ServerJoining::Invites, Some(JoinMode::Name)) => Err(ApiError::off_site(
+            StatusCode::BAD_REQUEST,
+            NEEDS_INVITES,
+            ServerJoining::KEY,
+        )),
+        (ServerJoining::Everyone | ServerJoining::Invites | ServerJoining::Nobody, _) => Ok(()),
+    }
+}
+
+/// Checks the request for a new server named `name` by `user` against the rules of each
+/// option and the instance's switches.
+async fn check_new_server(
+    state: &AppState,
+    user: &User,
+    name: &str,
+    password: Option<&str>,
+    options: ServerOptions,
+) -> Result<NewServer, ApiError> {
+    let ServerOptions {
+        join,
+        listed,
+        public_read,
+        channels,
+        notices,
+        upload_expiry,
+    } = options;
+    let db = &state.db;
+    let display = name.trim().to_string();
+    check_server_name(db, &display).await?;
+    let password = password.map(str::trim).filter(|p| !p.is_empty());
+    let mode = join.unwrap_or(match password {
+        Some(_) => JoinMode::Password,
+        None => JoinMode::Name,
+    });
+    let password = match (mode, password) {
+        (JoinMode::Password, Some(p)) => {
+            crate::api::passwords::check_strength(p)?;
+            Some(p.to_string())
+        }
+        (JoinMode::Password, None) => return Err(ApiError::invalid(PASSWORD_NEEDED, "password")),
+        (JoinMode::Name | JoinMode::Invite | JoinMode::Closed, Some(_)) => {
+            return Err(ApiError::invalid(PICK_ONE, "join"));
+        }
+        (JoinMode::Name | JoinMode::Invite | JoinMode::Closed, None) => None,
+    };
+    if listed == Some(true) && !mode.by_name() {
+        return Err(ApiError::invalid(LISTED_BY_NAME, "listed"));
+    }
+    if let Some(choice) = upload_expiry {
+        let cap = Settings::cached(db).await.upload_expiry_max_days;
+        if let Err(problem) = crate::api::upload_expiry::refusal(choice, cap) {
+            return Err(ApiError::invalid(problem, "upload_expiry"));
+        }
+    }
+    let allowed = crate::api::policy::effective(db, Some(user)).await;
+    needs_invites(allowed.server_joining(), join)?;
+    if public_read == Some(true) && !allowed.public_reading() {
+        return Err(crate::api::policy::refused(
+            crate::api::policy::PUBLIC_READING,
+            forbidden(PUBLIC_READING_OFF),
+        ));
+    }
+    Ok(NewServer {
+        display,
+        mode,
+        password,
+        listed: listed.unwrap_or(true),
+        public_read,
+        channels: channels.unwrap_or_default(),
+        notices: notices.unwrap_or(true),
+        upload_expiry,
+    })
+}
+
+/// A key no server has, for a server whose key isn't its name.
+async fn free_key(db: &Db) -> Result<String, ApiError> {
+    for _ in 0..5 {
+        let key = random_text(KEY_LEN);
+        let taken = sqlx::query("SELECT 1 FROM servers WHERE name = $1")
+            .bind(&key)
+            .fetch_optional(db)
+            .await?
+            .is_some();
+        if !taken {
+            return Ok(key);
+        }
+    }
+    Err(ApiError::internal("no free server key"))
+}
+
+/// Creates the server `new` with its channels and its founder as the only member, and
 /// announces it. Returns its key.
 async fn found_server(
     state: &AppState,
-    name: &str,
-    password: Option<&str>,
+    new: NewServer,
     founder: Founder<'_>,
 ) -> Result<String, ApiError> {
-    let display = name.trim().to_string();
-    let key = display.to_lowercase();
-    check_server_name(&state.db, &display).await?;
-    name_free(&state.db, &key).await?;
-    let password_hash = match password.map(str::trim).filter(|p| !p.is_empty()) {
-        Some(password) => {
-            crate::api::passwords::check_strength(password)?;
-            Some(hash_in(Work::Server, password).await?)
+    let NewServer {
+        display,
+        mode,
+        password,
+        listed,
+        public_read,
+        channels,
+        notices,
+        upload_expiry,
+    } = new;
+    let key = match mode.by_name() {
+        true => {
+            let key = display.to_lowercase();
+            name_free(&state.db, &key).await?;
+            key
         }
+        false => free_key(&state.db).await?,
+    };
+    let permanent = match &password {
+        Some(password) => Some(hash_in(Work::Server, password).await?),
         None => None,
     };
+    let password_hash = mode.hash(permanent);
     let (creator, member, perms) = match founder {
         Founder::Creator(user) => (Some(user), user, 0),
         Founder::Owner { owner, by: _ } => (None, owner, ALL_PERMS),
     };
+    let expiry_by = upload_expiry
+        .filter(|choice| crate::api::upload_expiry::extends(choice.ttl(0)))
+        .map(|_| member);
     let t = now();
     let mut tx = state.db.begin().await?;
     sqlx::query(
-        "INSERT INTO servers(name, display_name, creator, password_hash, member_count, created_at) VALUES($1, $2, $3, $4, 1, $5)",
+        "INSERT INTO servers(name, display_name, creator, password_hash, member_count, created_at, join_mode, listed, public_read, join_messages, leave_messages, upload_expiry, upload_expiry_by) VALUES($1, $2, $3, $4, 1, $5, $6, $7, $8, $9, $9, $10, $11)",
     )
     .bind(&key)
     .bind(&display)
     .bind(creator)
     .bind(&password_hash)
     .bind(t)
+    .bind(mode.as_str())
+    .bind(i64::from(listed))
+    .bind(public_read.map(i64::from))
+    .bind(i64::from(notices))
+    .bind(upload_expiry.and_then(|choice| choice.stored()))
+    .bind(expiry_by)
     .execute(&mut *tx)
     .await?;
     sqlx::query(
@@ -1817,6 +2019,13 @@ async fn found_server(
         .bind(t)
         .execute(&mut *tx)
         .await?;
+    if channels == StartChannels::TextVoice {
+        sqlx::query("INSERT INTO channels(server, name, kind, position, created_at) VALUES($1, 'Voice', 'voice', 1, $2)")
+            .bind(&key)
+            .bind(t)
+            .execute(&mut *tx)
+            .await?;
+    }
     if let Founder::Owner { owner, by } = founder {
         crate::api::instance_audit::record_in(
             &mut tx,
@@ -1837,10 +2046,12 @@ async fn found_server(
             has_password: password_hash.is_some(),
             banner_color: None,
             name_color: None,
-            public_read: None,
+            public_read,
             guest_voice: false,
             guest_chat: false,
             members_visible: true,
+            join_mode: mode,
+            listed,
         },
     });
     Ok(key)
@@ -1853,13 +2064,15 @@ pub(crate) async fn found_for(
     admin: &User,
     name: &str,
     password: Option<&str>,
+    options: ServerOptions,
     owner: &User,
 ) -> Result<Json<ServerDetail>, ApiError> {
     let founder = Founder::Owner {
         owner: &owner.username,
         by: &admin.username,
     };
-    let key = found_server(state, name, password, founder).await?;
+    let new = check_new_server(state, admin, name, password, options).await?;
+    let key = found_server(state, new, founder).await?;
     let member = build_member(
         &state.db,
         &state.hub,
@@ -1966,10 +2179,11 @@ pub(crate) async fn server_available(
 ///
 /// Finds up to 10 servers, ordered by name, whose name or display name matches `q`. Queries of up
 /// to 8 characters match fuzzily (the characters in order, not necessarily adjacent); longer ones
-/// match as a substring. Only servers without a password and servers the caller is a member of
-/// are searched; other password-protected servers never appear. While the instance's
-/// `server_joining` is `invites` or `nobody`, only servers the caller is a member of are
-/// searched. A blank `q` returns an empty
+/// match as a substring. Only servers the caller is a member of, and servers that people who
+/// aren't members may read by name, that people join by name (`join_mode` `name` or `password`)
+/// and that are `listed`, are searched; other servers never appear. While the instance's
+/// `server_joining` is `invites` or `nobody`, a server without a password is only searched by its
+/// members, unless its `public_read` is on. A blank `q` returns an empty
 /// list. Signed-in users may call it, and guests when guest access is on (guests only find
 /// servers without a password). Answers 404 while the instance has server search off
 /// (`server_search` in `GET /api/v1/settings`). Each call takes one of the caller's `search`
@@ -2011,7 +2225,7 @@ pub(crate) async fn search_servers(
     }
     let fuzzy = is_fuzzy(&q);
     let sql = format!(
-        "SELECT name, display_name, password_hash FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' AND (name IN ({}) OR name IN (SELECT server FROM members WHERE username = $2)) ORDER BY name LIMIT 50",
+        "SELECT name, display_name, password_hash FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' AND ((name IN ({}) AND listed <> 0 AND COALESCE(password_hash, '') <> '!none') OR name IN (SELECT server FROM members WHERE username = $2)) ORDER BY name LIMIT 50",
         crate::api::access::Reading::now(db).await.servers_sql()
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -2597,11 +2811,16 @@ pub(crate) async fn leave_server(
 
 /// Update a server
 ///
-/// Renames the server, switches it between public and password protected, sets, changes or
-/// clears its permanent password, changes its header colors, and sets whether people who
-/// aren't members can read it (`public_read`) and see its members (`members_visible`), and
-/// whether guests can participate in text and voice (`guest_chat_opt_in`, `guest_voice_opt_in`).
-/// Turning either choice on requires its site switch. A suspended choice can be kept or turned off.
+/// Renames the server, switches it between public and password protected or changes how people
+/// join it (`join`), sets, changes or clears its permanent password, changes its header colors,
+/// and sets whether people who aren't members can read it (`public_read`) and see its members
+/// (`members_visible`), whether search lists it (`listed`), and whether guests can participate
+/// in text and voice (`guest_chat_opt_in`, `guest_voice_opt_in`); every field is optional.
+/// Turning a guest choice on requires its site switch. A suspended choice can be kept or turned
+/// off. A server people join with an invite or that is closed keeps its key when it is renamed,
+/// so its passwords and links keep working; one that turns to `name` or `password` takes its
+/// lowercase name as its key. Joining by password or by name with `protected` and `password`
+/// sets the matching `join_mode`.
 /// Requires the Delete server permission; `members: remove` together with `password` also
 /// requires Kick. The built-in rchat server can't be given a password and keeps its key
 /// `rchat` (a new name changes only its display name); its colors, `public_read`,
@@ -2631,9 +2850,9 @@ pub(crate) async fn leave_server(
     request_body = ServerPatch,
     responses(
         (status = 200, description = "The updated server, with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated),
-        (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, a new password shorter than 8 characters, or a new password that is already a live extra password of the server. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, a new password shorter than 8 characters, or a new password that is already a live extra password of the server. With reason `invalid` and its `field`: `Use join or protected, not both`, `Pick one way to join` (a `password` with `join` other than `password`), `A password needs 8 characters` (`join: password` on a server without a permanent password), `Listed is only for servers people join by name`, or `That name is taken. Pick another to let people join by name.` (the server would take its lowercase name as its key, and another server has it). `This instance needs invites to join. Pick invite or password.` with reason `off_site` and control `server_joining`: `join: name` while the instance's `server_joining` is `invites`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, a password change on the protected rchat server, enabling guest text or voice while its site switch is off, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`)", body = ApiErrorBody),
+        (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, a password or `join` change on the protected rchat server, enabling guest text or voice while its site switch is off, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 409, description = "The new name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
@@ -2661,26 +2880,55 @@ pub(crate) async fn update_server(
         guest_chat_opt_in,
         guest_voice_opt_in,
         members_visible,
+        join,
+        listed: list,
     } = req;
     let guest_voice = guest_voice_opt_in.or(guest_voice.filter(|v| !v));
     let builtin = is_builtin(&state.db, &key).await;
-    if password.is_some() || protected.is_some() {
+    if password.is_some() || protected.is_some() || join.is_some() {
         guard_rchat(&state.db, &key).await?;
     }
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::DeleteServer).await?;
-    if public_read == Some(Some(true))
-        && !crate::api::policy::effective(&state.db, Some(&user))
-            .await
-            .public_reading()
-    {
+    if join.is_some() && protected.is_some() {
+        return Err(ApiError::invalid(
+            "Use join or protected, not both",
+            "protected",
+        ));
+    }
+    let allowed = crate::api::policy::effective(&state.db, Some(&user)).await;
+    if public_read == Some(Some(true)) && !allowed.public_reading() {
         return Err(crate::api::policy::refused(
             crate::api::policy::PUBLIC_READING,
             forbidden(PUBLIC_READING_OFF),
         ));
     }
+    needs_invites(allowed.server_joining(), join)?;
     let key = access.name().to_string();
     let lite = access.lite().clone();
+    let stored = match sqlx::query("SELECT join_mode FROM servers WHERE name = $1")
+        .bind(&key)
+        .fetch_optional(&state.db)
+        .await?
+    {
+        Some(row) => row
+            .try_get::<Option<String>, _>(0)?
+            .as_deref()
+            .and_then(JoinMode::parse),
+        None => None,
+    };
+    let typed = password.as_deref().map(str::trim).filter(|p| !p.is_empty());
+    if let Some(mode) = join {
+        match (mode, typed) {
+            (JoinMode::Password, None) if lite.join_mode != JoinMode::Password => {
+                return Err(ApiError::invalid(PASSWORD_NEEDED, "password"));
+            }
+            (JoinMode::Name | JoinMode::Invite | JoinMode::Closed, Some(_)) => {
+                return Err(ApiError::invalid(PICK_ONE, "join"));
+            }
+            _ => {}
+        }
+    }
     let listed = crate::api::policy::Policy::cached(&state.db).await;
     let banner_color = server_color(banner_color, "banner")?;
     let name_color = server_color(name_color, "name")?;
@@ -2690,26 +2938,72 @@ pub(crate) async fn update_server(
     }
     let mine = access.perms(&state.db).await?;
     let own = access.member_own_perms(&state.db).await?;
-    let (new_key, display) = match &name {
+    let display = match &name {
         Some(n) => {
             let display = n.trim().to_string();
-            let new_key = match builtin {
-                true => key.clone(),
-                false => display.to_lowercase(),
-            };
             check_server_name(&state.db, &display).await?;
-            if new_key != key {
-                rare::take(&state, Rare::ServerName, Some(&user))?;
-                name_free(&state.db, &new_key).await?;
-            }
-            (new_key, display)
+            display
         }
-        None => (key.clone(), lite.display_name.clone()),
+        None => lite.display_name.clone(),
     };
-    let password_hash = match (password.as_deref().map(str::trim), protected) {
-        (Some(""), Some(true)) => Some(Some(NO_PERMANENT_HASH.to_string())),
-        (Some(""), _) | (None, Some(false)) => Some(None),
-        (Some(p), _) => {
+    let change = match (join, password.as_deref().map(str::trim), protected) {
+        (Some(JoinMode::Name), _, _) => match lite.has_password {
+            true => HashChange::Clear,
+            false => HashChange::Keep,
+        },
+        (Some(JoinMode::Invite | JoinMode::Closed), _, _) => match lite.join_mode.by_name() {
+            true => HashChange::NoPermanent,
+            false => HashChange::Keep,
+        },
+        (Some(JoinMode::Password), None | Some(""), _) => HashChange::Keep,
+        (None, Some(""), Some(true)) => HashChange::NoPermanent,
+        (None, Some(""), _) | (None, None, Some(false)) => HashChange::Clear,
+        (_, Some(p), _) => HashChange::Set(p),
+        (None, None, Some(true)) if !lite.has_password => HashChange::NoPermanent,
+        (None, None, _) => HashChange::Keep,
+    };
+    let stored_after = match (join, change) {
+        (Some(mode), _) => Some(mode),
+        (None, HashChange::Keep) => stored,
+        (None, HashChange::Clear) => Some(JoinMode::Name),
+        (None, HashChange::NoPermanent) => stored.filter(|m| !m.by_name()),
+        (None, HashChange::Set(_)) => Some(JoinMode::Password),
+    };
+    let mode_after = match (join, change) {
+        (Some(mode), _) => Some(mode),
+        (None, HashChange::Keep) => Some(lite.join_mode),
+        (None, HashChange::Clear) => Some(JoinMode::Name),
+        (None, HashChange::NoPermanent) => {
+            join_mode_of(stored_after.map(JoinMode::as_str), Some(NO_PERMANENT_HASH))
+        }
+        (None, HashChange::Set(_)) => Some(JoinMode::Password),
+    };
+    if list == Some(true) && !mode_after.is_some_and(JoinMode::by_name) {
+        return Err(ApiError::invalid(LISTED_BY_NAME, "listed"));
+    }
+    let keyed_by_name = name.is_some() || stored.is_some_and(|m| !m.by_name());
+    let new_key = match keeps_key(
+        builtin,
+        stored_after,
+        mode_after.unwrap_or(JoinMode::Closed),
+    ) {
+        false if keyed_by_name => display.to_lowercase(),
+        _ => key.clone(),
+    };
+    if new_key != key {
+        rare::take(&state, Rare::ServerName, Some(&user))?;
+        match (name_free(&state.db, &new_key).await, &name) {
+            (Err(ApiError(StatusCode::BAD_REQUEST, _, _)), None) => {
+                return Err(ApiError::invalid(NAME_FOR_JOINING, "name"));
+            }
+            (res, _) => res?,
+        }
+    }
+    let password_hash = match change {
+        HashChange::Keep => None,
+        HashChange::Clear => Some(None),
+        HashChange::NoPermanent => Some(Some(NO_PERMANENT_HASH.to_string())),
+        HashChange::Set(p) => {
             rare::check(&state, Rare::ServerPassword, Some(&user))?;
             crate::api::passwords::check_strength(p)?;
             if new_key == key && access.is_live_extra_password(&state.db, p).await? {
@@ -2719,9 +3013,8 @@ pub(crate) async fn update_server(
             rare::take(&state, Rare::ServerPassword, Some(&user))?;
             Some(Some(hash))
         }
-        (None, Some(true)) if !lite.has_password => Some(Some(NO_PERMANENT_HASH.to_string())),
-        (None, _) => None,
     };
+    let closing = join == Some(JoinMode::Closed);
     let public_now = matches!(password_hash, Some(None));
     let actor = access.audit_actor(&state.db, Perm::DeleteServer).await?;
     let had_permanent = match password_hash {
@@ -2790,6 +3083,20 @@ pub(crate) async fn update_server(
             .execute(&mut *tx)
             .await?;
     }
+    if stored_after != stored {
+        sqlx::query("UPDATE servers SET join_mode = $1 WHERE name = $2")
+            .bind(stored_after.map(JoinMode::as_str))
+            .bind(&new_key)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if let Some(list) = list {
+        sqlx::query("UPDATE servers SET listed = $1 WHERE name = $2")
+            .bind(i64::from(list))
+            .bind(&new_key)
+            .execute(&mut *tx)
+            .await?;
+    }
     let (removed, kept, bypassed) = match purge {
         true => purge_members(&mut tx, &new_key, &user, mine, own).await?,
         false => (
@@ -2807,10 +3114,16 @@ pub(crate) async fn update_server(
             .execute(&mut *tx)
             .await?;
     }
-    let passwords_revoked = public_now || new_key != key;
+    let passwords_revoked = public_now || closing || new_key != key;
     if passwords_revoked {
         crate::api::passwords::revoke_all(&mut tx, &new_key).await?;
     }
+    let join_mode = match mode_after {
+        Some(mode) => mode,
+        None => crate::api::join_modes::legacy_mode(
+            crate::api::access::has_live_extra(&mut *tx, &new_key).await?,
+        ),
+    };
     let changed = audit::Details::new()
         .change("name", lite.display_name.as_str(), display.as_str())
         .change(
@@ -2842,7 +3155,8 @@ pub(crate) async fn update_server(
             "members_visible",
             lite.members_visible,
             members_visible.unwrap_or(lite.members_visible),
-        );
+        )
+        .change("listed", lite.listed, list.unwrap_or(lite.listed));
     if changed.has_changes() {
         let changed = match passwords_revoked && password_hash.is_none() {
             true => changed.set("passwords_revoked", true),
@@ -2856,9 +3170,21 @@ pub(crate) async fn update_server(
         )
         .await?;
     }
-    if let Some(hash) = &password_hash {
-        let permanent = hash.as_deref().is_some_and(|h| h != NO_PERMANENT_HASH);
+    if password_hash.is_some() || join_mode != lite.join_mode {
+        let hash = match &password_hash {
+            Some(hash) => hash.clone(),
+            None => lite.has_password.then(|| NO_PERMANENT_HASH.to_string()),
+        };
+        let permanent = match &password_hash {
+            Some(hash) => hash.as_deref().is_some_and(|h| h != NO_PERMANENT_HASH),
+            None => lite.join_mode == JoinMode::Password,
+        };
+        let had_permanent = match password_hash {
+            Some(_) => had_permanent,
+            None => permanent,
+        };
         let details = audit::Details::new()
+            .change("join_mode", lite.join_mode.as_str(), join_mode.as_str())
             .change("protected", lite.has_password, hash.is_some())
             .set(
                 "permanent_password",
@@ -2903,7 +3229,7 @@ pub(crate) async fn update_server(
         },
     });
     crate::ws::announce_purge(&state.hub, &server.name, &removed);
-    if password_hash.is_some() || public_read.is_some() {
+    if password_hash.is_some() || public_read.is_some() || closing {
         evict_unviewable(&state, &server.name, None).await;
     }
     if guest_voice == Some(false) {
@@ -2914,6 +3240,18 @@ pub(crate) async fn update_server(
         removed: removed.len() as i64,
         kept,
     }))
+}
+
+/// What an update does to a server's `password_hash`.
+#[derive(Clone, Copy)]
+enum HashChange<'a> {
+    Keep,
+    /// No password: anyone joins by name.
+    Clear,
+    /// Protected without a permanent password.
+    NoPermanent,
+    /// This new permanent password.
+    Set(&'a str),
 }
 
 /// The refusal of `public_read: true` while the instance has public reading off.
@@ -5672,6 +6010,7 @@ mod tests {
             Json(CreateServerReq {
                 name: name.to_string(),
                 password: None,
+                options: ServerOptions::default(),
             }),
         )
         .await
@@ -5695,6 +6034,8 @@ mod tests {
                 guest_chat_opt_in: None,
                 guest_voice_opt_in: None,
                 members_visible: None,
+                join: None,
+                listed: None,
             }),
         )
         .await
@@ -6818,6 +7159,8 @@ mod tests {
                 guest_chat_opt_in: None,
                 guest_voice_opt_in: None,
                 members_visible: None,
+                join: None,
+                listed: None,
             }),
         )
         .await
@@ -7265,6 +7608,8 @@ mod tests {
                 guest_chat_opt_in: None,
                 guest_voice_opt_in: None,
                 members_visible: None,
+                join: None,
+                listed: None,
             }),
         )
         .await
@@ -11119,6 +11464,8 @@ mod tests {
                 guest_chat_opt_in: None,
                 guest_voice_opt_in: None,
                 members_visible: None,
+                join: None,
+                listed: None,
             }),
         )
         .await

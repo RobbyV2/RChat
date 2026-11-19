@@ -10,12 +10,14 @@ use utoipa::ToSchema;
 use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, ServerAccess, password_lookup, resolve_server};
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
+use crate::api::join_modes::JoinMode;
 use crate::api::rare::{self, Rare};
 use crate::api::servers::guard_rchat;
 use crate::api::{
-    ApiError, ApiErrorBody, Authed, JoinedVia, OkResp, bad, check_len, ok, placeholders,
+    ApiError, ApiErrorBody, Authed, JoinedVia, OkResp, ServerSummaryLite, bad, check_len, ok,
+    placeholders,
 };
-use crate::db::{Db, NO_EXTRA_HASH, User, lock_server, now};
+use crate::db::{Db, NO_EXTRA_HASH, NO_PERMANENT_HASH, User, lock_server, now};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -390,6 +392,7 @@ pub(crate) async fn create_password(
         );
     };
     let info = password_row(&row, t)?;
+    let opened = open_closed(&mut tx, access.name()).await?;
     audit::record(
         &mut tx,
         Entry::new(access.name(), &actor, Action::PasswordCreate)
@@ -406,10 +409,31 @@ pub(crate) async fn create_password(
     )
     .await?;
     tx.commit().await?;
+    if opened {
+        state.hub.broadcast(WsEvent::ServerUpdated {
+            server: ServerSummaryLite {
+                join_mode: JoinMode::Invite,
+                ..access.lite().clone()
+            },
+        });
+    }
     Ok(Json(CreatedPassword {
         info,
         password: secret,
     }))
+}
+
+/// Opens a closed server to invites, as making a way in does. Whether it was closed.
+async fn open_closed(conn: &mut sqlx::AnyConnection, server: &str) -> sqlx::Result<bool> {
+    Ok(sqlx::query(
+        "UPDATE servers SET join_mode = 'invite' WHERE name = $1 AND join_mode = 'closed' AND password_hash = $2",
+    )
+    .bind(server)
+    .bind(NO_PERMANENT_HASH)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected()
+        > 0)
 }
 
 /// Revoke a server password

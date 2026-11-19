@@ -804,8 +804,11 @@ pub struct AdminServerReq {
     name: String,
     /// The account that gets the server: its admin with every permission.
     owner: String,
-    /// Optional join password, 8 characters or more.
+    /// Optional join password, 8 characters or more. Only for `join: password`.
     password: Option<String>,
+    /// How the server starts, as in `POST /api/v1/servers`.
+    #[serde(flatten)]
+    options: crate::api::servers::ServerOptions,
 }
 
 /// Creates a server for `owner`, whatever `server_creation` says: the operator's way to make
@@ -820,11 +823,12 @@ pub(crate) async fn create_server_for(
         name,
         owner,
         password,
+        options,
     } = req;
     let Some(owner) = get_user(&state.db, &owner).await? else {
         return Err(bad("No such account"));
     };
-    crate::api::servers::found_for(&state, &user, &name, password.as_deref(), &owner).await
+    crate::api::servers::found_for(&state, &user, &name, password.as_deref(), options, &owner).await
 }
 
 pub(crate) async fn overview(
@@ -893,7 +897,7 @@ pub(crate) async fn list_servers(
     let fuzzy = is_fuzzy(&q);
     let (rows, next) = name_page(
         &state.read(),
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging'",
+        &format!("SELECT {} FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging'", crate::api::access::LITE_COLUMNS),
         "name",
         &page,
     )
@@ -905,18 +909,7 @@ pub(crate) async fn list_servers(
         if !name_hit(&q, fuzzy, &name, &display_name) {
             continue;
         }
-        servers.push(ServerSummaryLite {
-            name,
-            display_name,
-            creator: r.try_get(2)?,
-            has_password: r.try_get::<Option<String>, _>(3)?.is_some(),
-            banner_color: r.try_get(4)?,
-            name_color: r.try_get(5)?,
-            public_read: crate::api::access::public_read(r, 6)?,
-            guest_voice: r.try_get::<i64, _>(7)? != 0,
-            guest_chat: r.try_get::<i64, _>(9)? != 0,
-            members_visible: r.try_get::<i64, _>(8)? != 0,
-        });
+        servers.push(crate::api::access::lite_row(&state.read(), r, 0).await?);
     }
     Ok(Paged(servers, next))
 }
@@ -1651,9 +1644,10 @@ pub(crate) async fn user_servers(
 ) -> Result<Paged<ServerSummaryLite>, ApiError> {
     require_site_admin(&user)?;
     let page = query.page()?;
-    let rows = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in FROM servers WHERE creator = $1 AND name > $2 AND COALESCE(password_hash, '') <> '!purging' ORDER BY name LIMIT $3 OFFSET $4",
-    )
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {} FROM servers WHERE creator = $1 AND name > $2 AND COALESCE(password_hash, '') <> '!purging' ORDER BY name LIMIT $3 OFFSET $4",
+        crate::api::access::LITE_COLUMNS
+    )))
     .bind(username.to_lowercase())
     .bind(page.after.clone().unwrap_or_default())
     .bind(page.limit + 1)
@@ -1666,18 +1660,7 @@ pub(crate) async fn user_servers(
     let more = rows.len() as i64 > page.limit;
     let mut servers = Vec::with_capacity(rows.len());
     for r in &rows {
-        servers.push(ServerSummaryLite {
-            name: r.try_get(0)?,
-            display_name: r.try_get(1)?,
-            creator: r.try_get(2)?,
-            has_password: r.try_get::<Option<String>, _>(3)?.is_some(),
-            banner_color: r.try_get(4)?,
-            name_color: r.try_get(5)?,
-            public_read: crate::api::access::public_read(r, 6)?,
-            guest_voice: r.try_get::<i64, _>(7)? != 0,
-            guest_chat: r.try_get::<i64, _>(9)? != 0,
-            members_visible: r.try_get::<i64, _>(8)? != 0,
-        });
+        servers.push(crate::api::access::lite_row(&state.read(), r, 0).await?);
     }
     servers.truncate(page.limit as usize);
     let next = match (more, servers.last()) {

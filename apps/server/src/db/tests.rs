@@ -3240,7 +3240,8 @@ async fn secrets_are_hashed_in_place_and_newer_databases_are_refused() {
     for stmt in late_indexes(true) {
         let name = stmt
             .split_whitespace()
-            .nth(5)
+            .take_while(|word| *word != "ON")
+            .last()
             .expect("index name")
             .to_string();
         sqlx::query(sqlx::AssertSqlSafe(format!("DROP INDEX {name}")))
@@ -7761,6 +7762,184 @@ async fn channel_labels_preserve_topics_and_channel_ids() {
                 .expect("label channel");
             close(&db).await;
         }
+    })
+    .await;
+}
+
+/// A database of the schema before join modes: a public, a password and a protected server
+/// without a permanent password, with extra passwords, members and a message.
+async fn old_join_mode_db(db: &Db) {
+    for stmt in [
+        "DROP INDEX IF EXISTS idx_server_passwords_code",
+        "ALTER TABLE servers DROP COLUMN join_mode",
+        "ALTER TABLE servers DROP COLUMN listed",
+        "ALTER TABLE server_passwords DROP COLUMN code",
+        "ALTER TABLE server_passwords DROP COLUMN code_lookup",
+        "UPDATE settings SET value = '36' WHERE key = 'schema_version'",
+        "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 5)",
+        "INSERT INTO servers(name, display_name, creator, member_count, created_at) VALUES('club', 'Club', 'alice', 1, 7)",
+        "INSERT INTO servers(name, display_name, creator, password_hash, member_count, public_read, created_at) VALUES('vault', 'Vault', 'alice', 'hash', 1, 1, 8)",
+        "INSERT INTO servers(name, display_name, creator, password_hash, member_count, created_at) VALUES('den', 'Den', 'alice', '!none', 1, 9)",
+        "INSERT INTO servers(name, display_name, creator, password_hash, member_count, created_at) VALUES('shut', 'Shut', 'alice', '!none', 0, 9)",
+        "INSERT INTO members(server, username, is_admin, joined_at) VALUES('club', 'alice', 1, 7), ('vault', 'alice', 1, 8), ('den', 'alice', 1, 9)",
+        "INSERT INTO server_passwords(server, label, hash, lookup, created_at) VALUES('den', 'Friends', '!lookup', 'den-friends', 9), ('vault', NULL, '!lookup', 'vault-ticket', 9)",
+        "INSERT INTO server_passwords(server, hash, lookup, created_at, revoked_at) VALUES('shut', '!lookup', 'shut-old', 9, 10)",
+        "INSERT INTO channels(server, name, created_at) VALUES('club', 'general', 7)",
+        "INSERT INTO messages(channel_id, author, content, created_at) SELECT id, 'alice', 'kept', 9 FROM channels WHERE server = 'club'",
+    ] {
+        sqlx::query(stmt).execute(db).await.expect(stmt);
+    }
+}
+
+type JoinRowBefore = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i64,
+    Option<i64>,
+);
+
+async fn join_rows_before(db: &Db) -> (Vec<JoinRowBefore>, Vec<(String, String, Option<i64>)>) {
+    let servers = sqlx::query("SELECT name, display_name, creator, password_hash, member_count, public_read FROM servers ORDER BY name")
+        .fetch_all(db)
+        .await
+        .expect("servers")
+        .iter()
+        .map(|r| {
+            (
+                r.try_get(0).expect("name"),
+                r.try_get(1).expect("display"),
+                r.try_get(2).expect("creator"),
+                r.try_get(3).expect("hash"),
+                r.try_get(4).expect("count"),
+                r.try_get(5).expect("public_read"),
+            )
+        })
+        .collect();
+    let passwords =
+        sqlx::query("SELECT server, lookup, revoked_at FROM server_passwords ORDER BY lookup")
+            .fetch_all(db)
+            .await
+            .expect("passwords")
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get(0).expect("server"),
+                    r.try_get(1).expect("lookup"),
+                    r.try_get(2).expect("revoked"),
+                )
+            })
+            .collect();
+    (servers, passwords)
+}
+
+#[tokio::test]
+async fn join_modes_are_added_to_an_old_database() {
+    on_each_database("join_mode_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        old_join_mode_db(&db).await;
+        assert_eq!(count(&db, STORED_SCHEMA).await, 36);
+        let before = join_rows_before(&db).await;
+        assert_eq!(before.0.len(), 5, "the built-in server and the four old ones");
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            const { assert!(SCHEMA_VERSION >= 37) };
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM servers WHERE join_mode IS NULL AND listed = 1"
+                )
+                .await,
+                5,
+                "start {round}: every old server reads its mode as before and stays listed"
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM server_passwords WHERE code IS NULL AND code_lookup IS NULL"
+                )
+                .await,
+                3,
+                "start {round}: old passwords are no codes"
+            );
+            assert_eq!(
+                join_rows_before(&db).await,
+                before,
+                "start {round}: the old rows are as they were"
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    "SELECT COUNT(*) FROM messages WHERE content = 'kept' AND author = 'alice'"
+                )
+                .await,
+                1
+            );
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM members").await, 3);
+            let staff = crate::api::test_util::mem_user("root", true);
+            for (key, mode) in [
+                ("club", crate::api::join_modes::JoinMode::Name),
+                ("vault", crate::api::join_modes::JoinMode::Password),
+                ("den", crate::api::join_modes::JoinMode::Invite),
+                ("shut", crate::api::join_modes::JoinMode::Closed),
+            ] {
+                let access = crate::api::access::resolve_server(
+                    &db,
+                    key,
+                    Some(&staff),
+                    &crate::api::access::Proof::none(),
+                )
+                .await
+                .expect(key);
+                assert_eq!(access.lite().join_mode, mode, "start {round}: {key}");
+                assert!(access.lite().listed, "{key}");
+            }
+            close(&db).await;
+        }
+        let db = open_started(Some(&url)).await.expect("open");
+        sqlx::query("INSERT INTO server_passwords(server, hash, lookup, created_at, code_lookup, code) VALUES('den', '!lookup', 'den-link', 11, 'same', 'abc')")
+            .execute(&db)
+            .await
+            .expect("a code");
+        assert!(
+            sqlx::query("INSERT INTO server_passwords(server, hash, lookup, created_at, code_lookup) VALUES('vault', '!lookup', 'vault-link', 11, 'same')")
+                .execute(&db)
+                .await
+                .is_err(),
+            "a code is unique on the instance"
+        );
+        sqlx::query("UPDATE servers SET join_mode = 'closed', listed = 0 WHERE name = 'den'")
+            .execute(&db)
+            .await
+            .expect("an owner closes it");
+        sqlx::query("INSERT INTO servers(name, display_name, created_at) VALUES('fresh', 'Fresh', 12)")
+            .execute(&db)
+            .await
+            .expect("a new server");
+        close(&db).await;
+        let db = open_started(Some(&url)).await.expect("restart");
+        assert_eq!(
+            count(&db, "SELECT listed FROM servers WHERE name = 'fresh'").await,
+            1,
+            "listed by default"
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM servers WHERE name = 'den' AND join_mode = 'closed' AND listed = 0"
+            )
+            .await,
+            1,
+            "a set mode survives a restart"
+        );
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM server_passwords WHERE code_lookup = 'same'").await,
+            1
+        );
+        close(&db).await;
     })
     .await;
 }

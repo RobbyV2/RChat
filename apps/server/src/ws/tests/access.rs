@@ -931,6 +931,8 @@ async fn outsiders_get_none_of_the_members(state: AppState) {
             has_password: true,
             public_read: Some(true),
             members_visible: visible,
+            join_mode: Default::default(),
+            listed: true,
             ..lite("vault")
         },
     };

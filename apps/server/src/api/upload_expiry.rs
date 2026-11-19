@@ -734,28 +734,13 @@ pub(crate) async fn set_upload_expiry(
     Json(req): Json<UploadExpiry>,
 ) -> Result<Json<UploadExpiryState>, ApiError> {
     let access = manage(&state, &user, &name).await?;
-    let UploadExpiry { mode, seconds } = req;
-    match (mode, seconds) {
-        (ExpiryMode::Custom, Some(s)) if (CUSTOM_MIN..=CUSTOM_MAX).contains(&s) => {}
-        (ExpiryMode::Custom, _) => {
-            return Err(bad("Choose a time from 1 hour to 365 days"));
-        }
-        (ExpiryMode::Default | ExpiryMode::Never, None) => {}
-        (ExpiryMode::Default | ExpiryMode::Never, Some(_)) => {
-            return Err(bad("Only a custom expiry takes seconds"));
-        }
+    let settings = Settings::cached(&state.db).await;
+    let cap = settings.upload_expiry_max_days;
+    if let Err(problem) = refusal(req, cap) {
+        return Err(bad(&problem));
     }
     let key = access.name().to_string();
     let actor = access.audit_actor(&state.db, Perm::DeleteServer).await?;
-    let settings = Settings::cached(&state.db).await;
-    let cap = settings.upload_expiry_max_days;
-    if cap > 0 && (mode == ExpiryMode::Never || seconds.is_some_and(|s| s > cap * DAY)) {
-        let days = match cap {
-            1 => "1 day".to_string(),
-            n => format!("{n} days"),
-        };
-        return Err(bad(&format!("This instance keeps files at most {days}")));
-    }
     let limits = KeptLimits::of(&state.limits);
     let mut tx = state.db.begin().await?;
     lock_kept(&mut tx, &key).await?;
@@ -797,6 +782,30 @@ pub(crate) async fn set_upload_expiry(
         owner_kept,
         extended: Some(extended),
     }))
+}
+
+/// What is wrong with `choice` under the instance cap `cap_days` (0 for none), if anything.
+pub(crate) fn refusal(choice: UploadExpiry, cap_days: i64) -> Result<(), String> {
+    let UploadExpiry { mode, seconds } = choice;
+    match (mode, seconds) {
+        (ExpiryMode::Custom, Some(s)) if (CUSTOM_MIN..=CUSTOM_MAX).contains(&s) => {}
+        (ExpiryMode::Custom, _) => return Err("Choose a time from 1 hour to 365 days".to_string()),
+        (ExpiryMode::Default | ExpiryMode::Never, None) => {}
+        (ExpiryMode::Default | ExpiryMode::Never, Some(_)) => {
+            return Err("Only a custom expiry takes seconds".to_string());
+        }
+    }
+    match cap_days > 0 && (mode == ExpiryMode::Never || seconds.is_some_and(|s| s > cap_days * DAY))
+    {
+        true => {
+            let days = match cap_days {
+                1 => "1 day".to_string(),
+                n => format!("{n} days"),
+            };
+            Err(format!("This instance keeps files at most {days}"))
+        }
+        false => Ok(()),
+    }
 }
 
 fn audit_value(choice: UploadExpiry) -> serde_json::Value {

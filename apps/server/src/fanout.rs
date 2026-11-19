@@ -945,6 +945,8 @@ mod tests {
                 guest_voice: false,
                 guest_chat: false,
                 members_visible: true,
+                join_mode: Default::default(),
+                listed: true,
             },
         });
         router.deliver(WsEvent::PresenceChanged {
@@ -987,6 +989,8 @@ mod tests {
                 guest_voice: false,
                 guest_chat: false,
                 members_visible: true,
+                join_mode: Default::default(),
+                listed: true,
             },
         });
         router.deliver(WsEvent::ChannelUpdated {

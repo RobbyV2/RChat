@@ -124,6 +124,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "members_visible {INT} NOT NULL DEFAULT 1"),
     ("banned_usernames", "username_key TEXT"),
     ("banned_usernames", "username_key_alt TEXT"),
+    ("servers", "join_mode TEXT"),
+    ("servers", "listed {INT} NOT NULL DEFAULT 1"),
+    ("server_passwords", "code TEXT"),
+    ("server_passwords", "code_lookup TEXT"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -223,10 +227,12 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 34: channel-scoped message search and the thread root timestamp for indexed replies.
 /// 35: guest chat sessions, channel widgets and explicit server opt-ins for guest text and voice.
 /// 36: `channels.sensitive`, the shared sensitive channel label.
-pub const SCHEMA_VERSION: i64 = 36;
+/// 37: join modes (`servers.join_mode`, `servers.listed`) and invite codes
+/// (`server_passwords.code`, `server_passwords.code_lookup` with its unique index).
+pub const SCHEMA_VERSION: i64 = 37;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
-pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 16] {
+pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 17] {
     [
         "CREATE INDEX IF NOT EXISTS idx_users_username_key ON users(username_key)",
         "CREATE INDEX IF NOT EXISTS idx_users_username_key_alt ON users(username_key_alt)",
@@ -235,6 +241,7 @@ pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 16] {
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_revoked ON server_passwords(revoked_at) WHERE revoked_at IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_expires ON server_passwords(expires_at) WHERE expires_at IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_server_passwords_used_up ON server_passwords(used_up_at) WHERE used_up_at IS NOT NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_server_passwords_code ON server_passwords(code_lookup) WHERE code_lookup IS NOT NULL",
         match is_sqlite {
             true => {
                 "CREATE INDEX IF NOT EXISTS idx_users_display_lower ON users(lower(display_name))"

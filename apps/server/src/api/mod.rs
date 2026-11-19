@@ -20,6 +20,7 @@ pub mod health;
 pub mod inbox;
 pub mod instance;
 pub mod instance_audit;
+pub mod join_modes;
 pub mod lookup;
 pub mod media;
 pub mod messages;
@@ -390,6 +391,15 @@ pub struct ServerSummaryLite {
     /// and is found by name, but not as a member of this server.
     #[serde(default = "yes")]
     pub members_visible: bool,
+    /// How people join: `name` (anyone who knows its name), `invite` (with an invite link, or
+    /// a password the managers made), `password` (its name and its password) or `closed`
+    /// (nobody new). `has_password` is `true` for every mode but `name`.
+    #[serde(default)]
+    pub join_mode: join_modes::JoinMode,
+    /// Whether server search lists it for people who aren't members, while anyone can read it
+    /// by its name. Only servers people join by name (`name` and `password`) are ever listed.
+    #[serde(default = "yes")]
+    pub listed: bool,
 }
 
 /// A channel in a server.
@@ -603,6 +613,11 @@ pub struct ServerDetail {
     /// "Members can be seen by people outside this server" (see `ServerSummaryLite`). Set with
     /// `PATCH /api/v1/servers/{name}`.
     pub members_visible: bool,
+    /// How people join (see `ServerSummaryLite`). Set with `PATCH /api/v1/servers/{name}`.
+    pub join_mode: join_modes::JoinMode,
+    /// Whether server search lists it (see `ServerSummaryLite`). Set with
+    /// `PATCH /api/v1/servers/{name}`.
+    pub listed: bool,
     /// Channels the caller can see, in list order (see `category_id` and `position`). Channels
     /// with permission rules that do not grant the caller `can_view` are left out.
     pub channels: Vec<Channel>,

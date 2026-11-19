@@ -11,6 +11,7 @@ use sqlx::{AnyConnection, Row};
 use crate::api::audit::Actor;
 use crate::api::auth::{Work, derive_key, dummy_hash, verify_in};
 use crate::api::budget::{self, Backoff, slow_down};
+use crate::api::join_modes::{join_mode_of, legacy_mode};
 use crate::api::policy::ServerJoining;
 use crate::api::{ApiError, Channel, ServerSummaryLite, header_grants};
 use crate::db::{ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, User, now, pool_key};
@@ -530,6 +531,51 @@ pub(crate) fn public_read(row: &AnyRow, idx: usize) -> sqlx::Result<Option<bool>
     Ok(row.try_get::<Option<i64>, _>(idx)?.map(|on| on != 0))
 }
 
+/// The `servers` columns that `lite_row` reads, in its order.
+pub(crate) const LITE_COLUMNS: &str = "name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in, join_mode, listed";
+
+/// The summary of a server from the columns of `LITE_COLUMNS` in `row`, starting at `at`. A
+/// server whose join mode the row doesn't say (a server without a permanent password from
+/// before join modes) is an invite server while it has a live extra password.
+pub(crate) async fn lite_row(db: &Db, row: &AnyRow, at: usize) -> sqlx::Result<ServerSummaryLite> {
+    let name: String = row.try_get(at)?;
+    let hash: Option<String> = row.try_get(at + 3)?;
+    let stored: Option<String> = row.try_get(at + 10)?;
+    let join_mode = match join_mode_of(stored.as_deref(), hash.as_deref()) {
+        Some(mode) => mode,
+        None => legacy_mode(has_live_extra(db, &name).await?),
+    };
+    Ok(ServerSummaryLite {
+        name,
+        display_name: row.try_get(at + 1)?,
+        creator: row.try_get(at + 2)?,
+        has_password: hash.is_some(),
+        banner_color: row.try_get(at + 4)?,
+        name_color: row.try_get(at + 5)?,
+        public_read: public_read(row, at + 6)?,
+        guest_voice: row.try_get::<i64, _>(at + 7)? != 0,
+        guest_chat: row.try_get::<i64, _>(at + 9)? != 0,
+        members_visible: row.try_get::<i64, _>(at + 8)? != 0,
+        join_mode,
+        listed: row.try_get::<i64, _>(at + 11)? != 0,
+    })
+}
+
+/// Whether `server` has an extra password that lets someone new in now.
+pub(crate) async fn has_live_extra<'e, E>(ex: E, server: &str) -> sqlx::Result<bool>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Any>,
+{
+    Ok(sqlx::query(
+        "SELECT 1 FROM server_passwords WHERE server = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $2) AND (max_uses IS NULL OR uses < max_uses) LIMIT 1",
+    )
+    .bind(server)
+    .bind(now())
+    .fetch_optional(ex)
+    .await?
+    .is_some())
+}
+
 async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Gate, ApiError> {
     let key = name.to_lowercase();
     let reading = Reading::now(db).await;
@@ -543,9 +589,9 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
         Slot::Open(Some(_)) => Some(Attempt::start(db, &key)?),
         Slot::Open(None) | Slot::Closed => None,
     };
-    let row = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
-    )
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {LITE_COLUMNS} FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'"
+    )))
     .bind(&key)
     .fetch_optional(db)
     .await?;
@@ -596,18 +642,7 @@ async fn gate(db: &Db, name: &str, who: Who<'_>, proof: &Proof<'_>) -> Result<Ga
             Slot::Open(None) => ask(),
         });
     };
-    let lite = ServerSummaryLite {
-        name: row.try_get(0)?,
-        display_name: row.try_get(1)?,
-        creator: row.try_get(2)?,
-        has_password: hash.is_some(),
-        banner_color: row.try_get(4)?,
-        name_color: row.try_get(5)?,
-        public_read: public_read(&row, 6)?,
-        guest_voice: row.try_get::<i64, _>(7)? != 0,
-        guest_chat: row.try_get::<i64, _>(9)? != 0,
-        members_visible: row.try_get::<i64, _>(8)? != 0,
-    };
+    let lite = lite_row(db, &row, 0).await?;
     let mut ticket = None;
     let readable = reading.reads(&lite);
     // What lets someone in who is no member and shows nothing: a server anyone may read by its
@@ -1179,7 +1214,7 @@ async fn configured_channel(
     rights: ChannelAccess,
 ) -> Result<ResolvedChannel, ApiError> {
     let r = sqlx::query(
-        "SELECT c.server, c.kind, c.name, c.slowmode_seconds, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice_opt_in, s.members_visible, s.guest_chat_opt_in, c.sensitive FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
+        "SELECT c.kind, c.name, c.slowmode_seconds, c.sensitive, s.name, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice_opt_in, s.members_visible, s.guest_chat_opt_in, s.join_mode, s.listed FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
     )
     .bind(id)
     .fetch_optional(db)
@@ -1187,27 +1222,16 @@ async fn configured_channel(
     .ok_or_else(not_found)?;
     Ok(ResolvedChannel {
         server: ServerAccess {
-            lite: ServerSummaryLite {
-                name: r.try_get(0)?,
-                display_name: r.try_get(4)?,
-                creator: r.try_get(5)?,
-                has_password: r.try_get::<Option<String>, _>(6)?.is_some(),
-                banner_color: r.try_get(7)?,
-                name_color: r.try_get(8)?,
-                public_read: public_read(&r, 9)?,
-                guest_voice: r.try_get::<i64, _>(10)? != 0,
-                guest_chat: r.try_get::<i64, _>(12)? != 0,
-                members_visible: r.try_get::<i64, _>(11)? != 0,
-            },
+            lite: lite_row(db, &r, 4).await?,
             via: Via::Public,
             user: None,
             ticket: None,
         },
         id,
-        kind: ChannelKind::parse(&r.try_get::<String, _>(1)?)?,
-        name: r.try_get(2)?,
-        slowmode: r.try_get(3)?,
-        sensitive: r.try_get::<i64, _>(13)? != 0,
+        kind: ChannelKind::parse(&r.try_get::<String, _>(0)?)?,
+        name: r.try_get(1)?,
+        slowmode: r.try_get(2)?,
+        sensitive: r.try_get::<i64, _>(3)? != 0,
         rights,
     })
 }
@@ -2509,25 +2533,14 @@ pub(crate) async fn ws_server_password_hash(
 /// Event rewrites: the summary of server `name`, `None` when it doesn't exist or is being purged.
 /// Never answers a client.
 pub(crate) async fn ws_server_lite(db: &Db, name: &str) -> sqlx::Result<Option<ServerSummaryLite>> {
-    let row = sqlx::query(
-        "SELECT name, display_name, creator, password_hash, banner_color, name_color, public_read, guest_voice_opt_in, members_visible, guest_chat_opt_in FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'",
-    )
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {LITE_COLUMNS} FROM servers WHERE name = $1 AND COALESCE(password_hash, '') <> '!purging'"
+    )))
     .bind(name)
     .fetch_optional(db)
     .await?;
     match row {
-        Some(r) => Ok(Some(ServerSummaryLite {
-            name: r.try_get(0)?,
-            display_name: r.try_get(1)?,
-            creator: r.try_get(2)?,
-            has_password: r.try_get::<Option<String>, _>(3)?.is_some(),
-            banner_color: r.try_get(4)?,
-            name_color: r.try_get(5)?,
-            public_read: public_read(&r, 6)?,
-            guest_voice: r.try_get::<i64, _>(7)? != 0,
-            guest_chat: r.try_get::<i64, _>(9)? != 0,
-            members_visible: r.try_get::<i64, _>(8)? != 0,
-        })),
+        Some(r) => Ok(Some(lite_row(db, &r, 0).await?)),
         None => Ok(None),
     }
 }

@@ -238,6 +238,8 @@ fn self_grants_are_recognized() {
             guest_voice: false,
             guest_chat: false,
             members_visible: true,
+            join_mode: Default::default(),
+            listed: true,
         },
     };
     assert_eq!(

@@ -777,6 +777,8 @@ fn indexes_follow_every_op() {
                     guest_voice: false,
                     guest_chat: false,
                     members_visible: true,
+                    join_mode: Default::default(),
+                    listed: true,
                 },
             },
         },
@@ -1506,6 +1508,8 @@ fn renamed(old_name: &str, name: &str) -> Op {
                 guest_voice: false,
                 guest_chat: false,
                 members_visible: true,
+                join_mode: Default::default(),
+                listed: true,
             },
         },
     }
