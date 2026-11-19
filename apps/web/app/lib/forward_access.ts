@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ForwardSource } from './forward'
-import { locateQuote, quoteSource, sourceAccess } from './forward_viewing'
+import { locateQuote, quoteSource, sourceAccess, sourceTarget } from './forward_viewing'
 import { useStore } from './store'
 import type { Message } from './types'
 import { useViewing, viewingKey } from './viewing'
@@ -45,5 +45,6 @@ export function useForwardAccess(
         .discoverChannels(sourceName)
         .catch(() => {})
   }, [active, sourceName, access, servers])
-  return { access, source, label }
+  const target = access === 'open' ? null : sourceTarget(useStore.getState(), source, label)
+  return { access, target }
 }

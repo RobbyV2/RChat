@@ -35,6 +35,7 @@ function Warning({
   return (
     <dialog
       ref={ref}
+      aria-modal="true"
       aria-labelledby="viewing-warning-title"
       aria-describedby="viewing-warning-description"
       onCancel={e => {

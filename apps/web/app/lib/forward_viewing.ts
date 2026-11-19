@@ -1,7 +1,7 @@
 import { ApiError } from './api'
 import { api } from './instances'
 import type { ForwardClip, ForwardSource } from './forward'
-import { peerVisible } from './p2p/app/viewing'
+import { peerTarget } from './p2p/app/viewing'
 import { useP2p } from './p2p/app/store'
 import type { RChatState } from './store_types'
 import type { ForwardRef, Message } from './types'
@@ -31,41 +31,44 @@ export const carriedTarget = (
       )
 
 // A frame shows a copy from its own room, and from another room open in its profile.
-export const frameCopyOpen = (
+export const frameCopyTarget = (
   fwd: Pick<ForwardRef, 'origin_dm' | 'origin_channel_id' | 'origin_sensitive'>,
   room: { server: string; channel_id: number },
   account: string | null,
   connection: Parameters<typeof channelTarget>[4]
-) => {
-  const target =
-    fwd.origin_channel_id === room.channel_id
-      ? null
-      : carriedTarget(fwd, account, room.server, connection)
+) =>
+  fwd.origin_channel_id === room.channel_id
+    ? null
+    : carriedTarget(fwd, account, room.server, connection)
+
+export const frameCopyOpen = (...args: Parameters<typeof frameCopyTarget>) => {
+  const target = frameCopyTarget(...args)
   return !target || canView(target)
 }
 
 // `label`: the source's shared label as a copy carries it, used for servers this client
 // hasn't loaded.
+export const sourceTarget = (
+  s: RChatState,
+  source: ForwardSource | undefined,
+  label?: boolean
+): ViewingTarget | null => {
+  if (source?.kind === 'p2p') return peerTarget(useP2p.getState(), source.room, source.ch) ?? null
+  if (source?.kind !== 'channel') return null
+  const server = sourceServer(s, source.id) ?? source.server
+  if (!server) return null
+  return !s.servers[server] && label !== undefined
+    ? channelTarget(s.me?.username ?? null, 'instance', server, { id: source.id, sensitive: label })
+    : instanceTarget(s, server, source.id)
+}
+
 export const sourceAccess = (
   s: RChatState,
   source: ForwardSource | undefined,
   label?: boolean
 ): SourceAccess => {
-  if (!source) return 'unknown'
-  if (source.kind === 'direct') return 'open'
-  if (source.kind === 'p2p') {
-    const p = useP2p.getState()
-    if (!p.servers[source.room]) return 'unknown'
-    return peerVisible(p, source.room, source.ch) ? 'open' : 'hidden'
-  }
-  const server = sourceServer(s, source.id) ?? source.server
-  const target =
-    server && !s.servers[server] && label !== undefined
-      ? channelTarget(s.me?.username ?? null, 'instance', server, {
-          id: source.id,
-          sensitive: label,
-        })
-      : server && instanceTarget(s, server, source.id)
+  if (source?.kind === 'direct') return 'open'
+  const target = sourceTarget(s, source, label)
   return target ? (canView(target) ? 'open' : 'hidden') : 'unknown'
 }
 

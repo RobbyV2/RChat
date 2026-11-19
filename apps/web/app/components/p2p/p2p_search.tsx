@@ -41,7 +41,8 @@ export function P2pSearchPanel() {
           content: h.m.fwd ? h.m.fwd.body : h.m.body,
           own: h.m.sender === me,
           forwarded: !!h.m.fwd,
-          file: att.length ? (att[0].spoiler ? 'Spoiler' : att[0].name) : null,
+          file: att[0]?.name ?? null,
+          fileSpoiler: att[0]?.spoiler,
           onOpen: () => void p2pSearch.openHit(h),
         }
       }),

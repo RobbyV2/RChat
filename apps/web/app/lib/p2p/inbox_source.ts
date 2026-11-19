@@ -1,4 +1,4 @@
-import { peerVisible } from './app/viewing'
+import { peerTarget, peerVisible } from './app/viewing'
 import { create } from 'zustand'
 import type { InboxAdapter, InboxView } from '../inbox'
 import { levelOf, type NotifyPrefs } from '../notify'
@@ -158,6 +158,10 @@ export const p2pInbox: InboxAdapter = {
   canPreview: entry => {
     const p = entry.raw as PingRec
     return !p.ch || peerVisible(useP2p.getState(), p.room, p.ch)
+  },
+  previewTarget: entry => {
+    const p = entry.raw as PingRec
+    return p.ch ? (peerTarget(useP2p.getState(), p.room, p.ch) ?? null) : null
   },
   load: async (view, cursor) => {
     const snap = await p2pPings.read()

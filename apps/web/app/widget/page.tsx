@@ -6,15 +6,19 @@ import { defineAction } from '../lib/actions/registry'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { isNotice } from '../lib/system_messages'
 import { groupPadCls, gutterTimeCls } from '../components/grouped_row'
-import { WidgetForwardOpen, WidgetLinkCards } from '../components/message_link_card'
+import { WidgetForwardAccess, WidgetLinkCards } from '../components/message_link_card'
 import { WidgetNotice } from '../components/widget_notice'
-import { frameCopyOpen } from '../lib/forward_viewing'
+import { RevealChannelPreview } from '../components/preview_reveal'
+import { frameCopyTarget } from '../lib/forward_viewing'
+import { SpoilerLine } from '../components/replies'
+import { snippetParts } from '../lib/replies'
+import { plainStamps } from '../lib/timestamps'
 import { ShortTime } from '../components/timestamp'
 import { MarkdownMessage } from '../components/markdown_message'
 import { ContextMenu, longPress } from '../components/context_menu'
 import { TextComposer } from '../components/text_composer'
 import { UserAvatar } from '../components/user_avatar'
-import { fieldCls, filledBtn, textBtn } from '../components/ui'
+import { fieldCls, filledBtn, Masked, textBtn } from '../components/ui'
 import { audibleStreams, guestLabel, isGuestName } from '../lib/guest_voice'
 import { restoreStreamer } from '../lib/start'
 import { errorText, useStore } from '../lib/store'
@@ -142,7 +146,9 @@ function ChatRow({
     time = 'widget-time-' + message.id
   const date = new Date(message.created_at * 1000)
   const canReply = client.canPost && message.kind === 'user'
-  const forwardOpen = useContext(WidgetForwardOpen)
+  const forwardAccess = useContext(WidgetForwardAccess)
+  const quoted = message.reply_to?.forward ? forwardAccess(message.reply_to.forward) : null
+  const body = message.forward ? forwardAccess(message.forward) : null
   const owner = 'widget-message-' + message.id
   useEffect(() => {
     return () => {
@@ -203,7 +209,10 @@ function ChatRow({
           className={place.first ? 'flex flex-wrap items-baseline gap-x-2' : 'sr-only'}
         >
           <strong id={sender} className="streamer min-w-0 max-w-full truncate text-sm">
-            {message.author.display_name}
+            <Masked
+              text={message.author.display_name}
+              own={message.author.username === client.account}
+            />
           </strong>
           <time
             id={time}
@@ -215,17 +224,46 @@ function ChatRow({
           </time>
         </div>
         {message.reply_to && (
-          <p className="truncate border-l-2 border-outline pl-2 text-xs">
-            <span className="streamer">{message.reply_to.author?.display_name}</span> ·{' '}
-            {message.reply_to.forward && !forwardOpen(message.reply_to.forward) ? (
-              <span className="italic">Forwarded message</span>
-            ) : (
-              message.reply_to.content
+          <div className="min-w-0 border-l-2 border-outline pl-2 text-xs break-words">
+            {message.reply_to.author && (
+              <>
+                <span className="streamer">
+                  <Masked
+                    text={message.reply_to.author.display_name}
+                    own={message.reply_to.author.username === client.account}
+                  />
+                </span>{' '}
+                ·{' '}
+              </>
             )}
-          </p>
+            {message.reply_to.deleted ? (
+              'Original message was deleted'
+            ) : quoted && !quoted.open ? (
+              <>
+                <span className="italic">Forwarded message</span>{' '}
+                {quoted.target && <RevealChannelPreview target={quoted.target} />}
+              </>
+            ) : message.reply_to.content ? (
+              <SpoilerLine
+                key={JSON.stringify([client.account, message.reply_to.id])}
+                parts={snippetParts(plainStamps(message.reply_to.content))}
+                own={
+                  !message.reply_to.forwarded &&
+                  message.reply_to.author?.username === client.account
+                }
+              />
+            ) : message.reply_to.has_media ? (
+              'Attachment'
+            ) : (
+              'Reply'
+            )}
+          </div>
         )}
-        {message.forward && !forwardOpen(message.forward) ? (
-          <p className="text-sm text-on-surface-variant italic">Forwarded message</p>
+        {body && !body.open ? (
+          <p className="text-sm text-on-surface-variant">
+            <span className="italic">Forwarded message</span>{' '}
+            {body.target && <RevealChannelPreview target={body.target} />}
+          </p>
         ) : (
           <MarkdownMessage message={message} />
         )}
@@ -257,7 +295,7 @@ function WidgetChat({ client, rows }: { client: WidgetConnection; rows: Message[
   return (
     <>
       <div className="min-h-16 min-w-0 flex-1 overflow-auto p-3" aria-label="Messages">
-        <WidgetForwardOpen.Provider value={fwd => copyOpen(fwd, client)}>
+        <WidgetForwardAccess.Provider value={fwd => copyAccess(fwd, client)}>
           <WidgetLinkCards.Provider value={client.linkCards}>
             {rows.map((message, i) => (
               <ChatRow
@@ -269,7 +307,7 @@ function WidgetChat({ client, rows }: { client: WidgetConnection; rows: Message[
               />
             ))}
           </WidgetLinkCards.Provider>
-        </WidgetForwardOpen.Provider>
+        </WidgetForwardAccess.Provider>
         <div ref={bottom} />
       </div>
       {client.canRestoreDraft ? (
@@ -327,8 +365,12 @@ const viewingTarget = (metadata: WidgetRoomMetadata, account: string | null) =>
     frameInstance()
   )
 
-const copyOpen = (fwd: ForwardRef, client: WidgetConnection) =>
-  !!client.metadata && frameCopyOpen(fwd, client.metadata, client.account, frameInstance())
+const copyAccess = (fwd: ForwardRef, client: WidgetConnection) => {
+  const target = client.metadata
+    ? frameCopyTarget(fwd, client.metadata, client.account, frameInstance())
+    : null
+  return { open: !!client.metadata && (!target || canView(target)), target }
+}
 
 export default function WidgetPage() {
   const [, redraw] = useReducer(n => n + 1, 0)
@@ -399,8 +441,10 @@ export default function WidgetPage() {
     [metadata, account]
   )
   const gated = target !== null && !canView(target)
+  // One-time openings end with the frame's identity; a revealed source room stays open with it.
+  const roomKey = target?.key
+  useEffect(() => leaveVisit(roomKey), [roomKey])
   useEffect(() => {
-    leaveVisit(target?.key)
     if (!target) {
       prompted.current = ''
       cancelViewing()

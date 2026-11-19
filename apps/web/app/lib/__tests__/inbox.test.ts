@@ -8,7 +8,7 @@ import {
   freshSource,
   hasMore,
   inboxAction,
-  inboxSnippet,
+  inboxPreview,
   markedRead,
   mergeEntries,
   refreshHead,
@@ -214,21 +214,26 @@ describe('rows', () => {
     expect(inboxAction(e({ kind: 'friend_accept' }))).toBe('accepted your friend request')
   })
 
-  test('snippets mask spoilers and markdown like toasts, then profanity; streamer hides them', () => {
+  test('text and file previews keep each spoiler separate and Streamer mode hides both', () => {
     const e = (content: string | null, over: Partial<InboxItem> = {}) =>
       entryOf('x', item('ping', 1, 1, { content, ...over }))
-    const mask = (t: string) => t.replace(/darn/g, '****')
-    const text = inboxSnippet(e('**hey** ||secret plan|| `darn` <t:0:R>'), false, mask)
-    expect(text.includes('secret')).toBe(false)
-    expect(text.startsWith('hey ')).toBe(true)
-    expect(text).toContain('█')
-    expect(text).toContain('****')
-    expect(inboxSnippet(e('a ||cut open'), false, mask).includes('cut open')).toBe(false)
-    expect(inboxSnippet(e('**hey** darn'), true, mask)).toBe('')
-    expect(inboxSnippet(e('', { media_filename: 'darn.png' }), false, mask)).toBe('****.png')
-    expect(
-      inboxSnippet(e('', { media_filename: 'plot.png', media_spoiler: true }), false, mask)
-    ).toBe('Spoiler')
+    const preview = inboxPreview(e('**hey** ||secret plan|| `darn` <t:0:R>'), false)
+    expect(preview?.kind === 'text' && preview.parts.slice(0, 2)).toEqual([
+      { text: 'hey ', spoiler: false },
+      { text: 'secret plan', spoiler: true },
+    ])
+    expect(preview?.kind === 'text' && preview.parts[2]?.text).toContain('darn')
+    expect(inboxPreview(e('a ||cut open'), false)).toEqual({
+      kind: 'text',
+      parts: [
+        { text: 'a ', spoiler: false },
+        { text: 'cut open', spoiler: true },
+      ],
+    })
+    expect(inboxPreview(e('**hey** darn'), true)).toBeNull()
+    const file = e('', { media_filename: 'plot.png', media_spoiler: true })
+    expect(inboxPreview(file, true)).toBeNull()
+    expect(inboxPreview(file, false)).toEqual({ kind: 'file', name: 'plot.png', spoiler: true })
   })
 
   test('places come from the item', () => {

@@ -25,7 +25,7 @@ import {
   invitePath,
   inviteVersion,
   pinnedPreview,
-  previewText,
+  previewParts,
   remoteInviteUrl,
   keepsPreview,
   refreshDelay,
@@ -49,7 +49,9 @@ import { serverInitial } from '../lib/rules'
 import { joinNeeds } from '../lib/joining'
 import type { InstanceInfo, Invite, InviteStatus, Message } from '../lib/types'
 import { ServerGlyph } from './server_rail'
-import { Dialog, fieldCls, FieldError, filledBtn, LinkPage, Masked, textBtn } from './ui'
+import { Dialog, fieldCls, FieldError, filledBtn, LinkPage, Masked, textBtn, useOwn } from './ui'
+import { SpoilerLine } from './replies'
+import { PreviewFilename, RevealChannelPreview } from './preview_reveal'
 import { NameWithUsername } from './display_name'
 import { InstanceChip } from './instance_badge'
 import { UserAvatar } from './user_avatar'
@@ -375,14 +377,16 @@ export function PreviewLine({
   const streamer = useStore(s => s.streamer)
   const account = useStore(s => s.me?.username ?? null)
   useViewing(s => s.revision)
-  const local = useForwardAccess(remote ? null : message, { server })
+  const copy = useForwardAccess(remote ? null : message, { server })
   const carried =
     remote && server && message.forward
       ? carriedTarget(message.forward, account, server, remote)
       : null
-  const hidden = remote ? !!carried && !canView(carried) : local.access !== 'open'
+  const hidden = remote ? !!carried && !canView(carried) : copy.access !== 'open'
+  const reveal = remote ? carried : copy.target
   const { author, content, media } = message
-  const text = previewText(plainStamps(content))
+  const own = useOwn(host || message.webhook ? null : author.username)
+  const parts = previewParts(plainStamps(content))
   return (
     <div className="flex min-w-0 items-start gap-2">
       <UserAvatar
@@ -404,11 +408,23 @@ export function PreviewLine({
           <NameWithUsername user={author} />
         </span>{' '}
         <span className="text-on-surface-variant">
-          {hidden ? <span className="italic">Forwarded message</span> : text}
+          {hidden ? (
+            <>
+              <span className="italic">Forwarded message</span>{' '}
+              {reveal && <RevealChannelPreview target={reveal} />}
+            </>
+          ) : (
+            <SpoilerLine parts={parts} own={own && !message.forward} />
+          )}
           {!hidden && media !== null && (
             <span className="ml-1 inline-flex items-center gap-0.5 align-middle">
               <Paperclip size={big ? 13 : 11} />
-              {media.spoiler ? 'Spoiler' : <Masked text={media.filename} file />}
+              <PreviewFilename
+                key={media.id}
+                name={media.filename}
+                own={own && !message.forward}
+                spoiler={media.spoiler}
+              />
             </span>
           )}
         </span>

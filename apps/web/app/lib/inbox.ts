@@ -1,6 +1,7 @@
 import type { InboxFilter, InboxItem, InboxKind, UserRef } from './types'
-import { alertBody } from './notices'
-import { maskOutsideCode } from './profanity'
+import type { ViewingTarget } from './viewing'
+import { previewParts } from './invite'
+import { plainStamps } from './timestamps'
 
 // What the inbox shows: the tab and the filters.
 export interface InboxView {
@@ -52,6 +53,8 @@ export interface InboxAdapter {
   id: string
   load: (view: InboxView, cursor: string | null) => Promise<SourcePage>
   canPreview?: (entry: InboxEntry) => boolean
+  // The room whose local viewing choice reveals a closed entry's preview.
+  previewTarget?: (entry: InboxEntry) => ViewingTarget | null
   markRead: (entry: InboxEntry) => Promise<void>
   // Marks what `view` lists, up to the newest entries this source has shown (`shown`, newest
   // first), so notifications that arrive meanwhile stay unread.
@@ -211,18 +214,15 @@ export const inboxAction = (e: Pick<InboxEntry, 'kind' | 'emoji' | 'role'>) => {
   return KIND_TEXT[e.kind]
 }
 
-// The text line: markdown and spoilers masked like toasts, the profanity mask applied, nothing
-// in streamer mode. A file stands in for empty text.
-export const inboxSnippet = (
+// The preview is absent in Streamer mode. A file stands in for empty message text.
+export const inboxPreview = (
   e: Pick<InboxEntry, 'content' | 'media' | 'mediaSpoiler'>,
-  streamer: boolean,
-  mask: (text: string) => string
-): string => {
-  if (streamer) return ''
-  const text = e.content ? alertBody(e.content, false) : ''
-  if (text) return maskOutsideCode(text, mask)
-  if (e.media) return e.mediaSpoiler ? 'Spoiler' : mask(e.media)
-  return ''
+  streamer: boolean
+) => {
+  if (streamer) return null
+  const parts = e.content && previewParts(plainStamps(e.content), true)
+  if (parts && parts.some(p => p.text.trim())) return { kind: 'text' as const, parts }
+  return e.media ? { kind: 'file' as const, name: e.media, spoiler: e.mediaSpoiler } : null
 }
 
 export const KIND_FILTERS: { value: InboxFilter | null; label: string }[] = [

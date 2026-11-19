@@ -1,9 +1,10 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Forward, Image as ImageIcon, X } from 'lucide-react'
-import { maskOutsideCode } from '../lib/profanity'
-import { useMask, useStore } from '../lib/store'
+import { BlockedQuote } from './blocking'
+import { PreviewRow, PreviewSpoiler, RevealChannelPreview } from './preview_reveal'
+import { useStore } from '../lib/store'
 import { useForwardAccess } from '../lib/forward_access'
 import { snippetParts, type SnippetPart } from '../lib/replies'
 import { plainStamps } from '../lib/timestamps'
@@ -44,39 +45,28 @@ export function Snippet({
         {quote.has_media && <ImageIcon size={14} className="shrink-0" />}
       </span>
     )
+  const parts = snippetParts(plainStamps(quote.content))
   return (
     <span className="flex min-w-0 items-center gap-1">
-      <span className="truncate">
-        <SpoilerLine parts={snippetParts(plainStamps(quote.content))} own={own} />
+      <span className={parts.some(p => p.spoiler) ? 'min-w-0 break-words' : 'truncate'}>
+        <SpoilerLine parts={parts} own={own} />
       </span>
       {quote.has_media && <ImageIcon size={14} className="shrink-0" />}
     </span>
   )
 }
 
-// One line of preview text with its spoilers as dark bars (they never reveal in previews).
-// `own`: your own text, never masked for you.
+// Each spoiler in the excerpt opens independently. The personal word filter still applies.
 export function SpoilerLine({ parts, own = false }: { parts: SnippetPart[]; own?: boolean }) {
-  const mask = useMask(own)
   return (
     <>
-      {parts.map((p, i) =>
-        p.spoiler ? (
-          <span
-            key={i}
-            data-reply-spoiler
-            role="img"
-            aria-label="Spoiler"
-            className="rounded-sm bg-on-surface-variant/70 select-none"
-          >
-            <span className="invisible" aria-hidden>
-              {maskOutsideCode(p.text, mask)}
-            </span>
-          </span>
+      {parts.map((part, i) =>
+        part.spoiler ? (
+          <PreviewSpoiler key={i + ':' + part.text}>
+            <Masked text={part.text} code own={own} />
+          </PreviewSpoiler>
         ) : (
-          <span key={i}>
-            <Masked text={p.text} code own={own} />
-          </span>
+          <Masked key={i} text={part.text} code own={own} />
         )
       )}
     </>
@@ -99,12 +89,15 @@ export function ReplyPreview({
   onJump: (id: number) => void
 }) {
   const blocked = useStore(s => (quote.author ? s.blocked[quote.author.username] === true : false))
+  const [shown, setShown] = useState<string | null>(null)
+  const viewer = useStore(s => s.me?.username)
+  const authorKey = JSON.stringify([viewer, quote.id, quote.author?.username])
   const own = useOwn(quote.author?.username)
   const streamer = useStore(s => s.streamer)
   const copy = useForwardAccess(
     quote.forward ? { forward: quote.forward, channel_id: null } : null,
     {
-      active: !local && !quote.partial && !quote.deleted && !blocked,
+      active: !local && !quote.partial && !quote.deleted && (!blocked || shown === authorKey),
     }
   )
   const connector = (
@@ -139,7 +132,7 @@ export function ReplyPreview({
       </div>
     )
   const { author } = quote
-  if (blocked)
+  if (blocked && shown !== authorKey)
     return (
       <div
         data-reply-to={quote.id}
@@ -147,24 +140,21 @@ export function ReplyPreview({
         style={indent}
       >
         {connector}
-        <span className="truncate italic">Blocked message</span>
+        <BlockedQuote onShow={() => setShown(authorKey)} />
       </div>
     )
   return (
     <div
       data-reply-to={quote.id}
-      className="relative mb-0.5 flex h-5 min-w-0 items-center text-xs"
+      className="relative mb-0.5 flex min-h-5 min-w-0 items-center text-xs"
       style={indent}
     >
       {connector}
-      <button
-        type="button"
+      <PreviewRow
         title="Jump to message"
-        onClick={e => {
-          e.stopPropagation()
-          onJump(quote.id)
-        }}
-        className="flex min-w-0 items-center gap-1.5 rounded-sm text-left text-on-surface-variant outline-offset-2 hover:text-on-surface focus-visible:outline-2 focus-visible:outline-primary"
+        onOpen={() => onJump(quote.id)}
+        className="min-w-0 rounded-sm text-xs text-on-surface-variant hover:text-on-surface"
+        contentClassName="flex min-w-0 items-center gap-1.5"
       >
         {local ? (
           <KeyAvatar ik={author.username} size={16} />
@@ -186,7 +176,10 @@ export function ReplyPreview({
             <Masked text={author.display_name} own={own} />
           </span>
         ) : (
-          <span style={{ color }} className="streamer shrink-0 font-medium text-on-surface">
+          <span
+            style={{ color }}
+            className="streamer max-w-[40%] shrink-0 truncate font-medium text-on-surface"
+          >
             {quote.mention ? '@' : ''}
             <NameWithUsername user={author} own={own} />
           </span>
@@ -194,11 +187,11 @@ export function ReplyPreview({
         {isWebhookAuthor(author.username) && <WebhookBadge />}
         {quote.forwarded && <ForwardedTag />}
         {copy.access === 'open' ? (
-          <Snippet quote={quote} own={own && !quote.forwarded} />
+          <Snippet key={authorKey} quote={quote} own={own && !quote.forwarded} />
         ) : (
-          <span className="truncate italic">Forwarded message</span>
+          copy.target && <RevealChannelPreview target={copy.target} />
         )}
-      </button>
+      </PreviewRow>
     </div>
   )
 }

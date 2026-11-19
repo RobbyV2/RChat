@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState } from 'react'
-import { canView, instanceTarget, useViewing } from '../lib/viewing'
+import { canView, instanceTarget, useViewing, type ViewingTarget } from '../lib/viewing'
 import { ChartColumn, CornerDownRight, Forward, Phone, Pin } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { useForwardAccess } from '../lib/forward_access'
@@ -10,14 +10,17 @@ import type { ForwardRef, MessageLocation } from '../lib/types'
 import { messagePath, type MessageTarget } from '../lib/view'
 import { MessageTime } from './timestamp'
 import { Snippet } from './replies'
+import { PreviewRow, RevealChannelPreview } from './preview_reveal'
 import { UserAvatar } from './user_avatar'
 import { BlockedQuote } from './blocking'
 import { Masked } from './ui'
 import { NameWithUsername } from './display_name'
 
 export const WidgetLinkCards = createContext<ReadonlyMap<number, MessageLocation> | null>(null)
-// Whether a frame may show a forwarded copy from this source.
-export const WidgetForwardOpen = createContext<(fwd: ForwardRef) => boolean>(() => true)
+// Whether a frame may show a forwarded copy from this source, and the room to ask about.
+export const WidgetForwardAccess = createContext<
+  (fwd: ForwardRef) => { open: boolean; target: ViewingTarget | null }
+>(() => ({ open: true, target: null }))
 
 export function WidgetMessageLinkCard({
   link,
@@ -26,7 +29,7 @@ export function WidgetMessageLinkCard({
   link: MessageTarget
   card?: MessageLocation
 }) {
-  const forwardOpen = useContext(WidgetForwardOpen)
+  const forwardAccess = useContext(WidgetForwardAccess)
   if (
     !card ||
     link.place.kind !== 'channel' ||
@@ -35,10 +38,13 @@ export function WidgetMessageLinkCard({
     card.thread_root_id !== link.thread
   )
     return null
+  const copy = card.forward ? forwardAccess(card.forward) : null
   return (
     <LinkCard
+      key={card.id}
       card={card}
-      gated={!!card.forward && !forwardOpen(card.forward)}
+      gated={!!copy && !copy.open}
+      reveal={copy?.target}
       jump={() => window.open(messagePath(link), '_blank', 'noopener,noreferrer')}
     />
   )
@@ -51,11 +57,12 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
   const card = useStore(s => s.linkCards[id])
   useViewing(s => s.revision)
   const target = link.place
-  const allowed = useStore(s => {
-    if (target.kind === 'dm') return true
+  const access = useStore(s => {
+    if (target.kind === 'dm') return 'open'
     const t = instanceTarget(s, target.server, target.channelId)
-    return !!t && canView(t)
+    return t ? (canView(t) ? 'open' : 'hidden') : 'unknown'
   })
+  const allowed = access === 'open'
   const sourceVisible = useStore(s => {
     if (!card || card.dm_id !== null) return true
     const t = card.server && instanceTarget(s, card.server, card.channel_id ?? -1)
@@ -69,17 +76,23 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
   const resolveLinkCard = useStore(s => s.resolveLinkCard)
   const openMessage = useStore(s => s.openMessage)
   useEffect(() => {
-    if (target.kind === 'channel' && !allowed)
+    if (target.kind === 'channel' && access === 'unknown')
       void useStore
         .getState()
         .discoverChannels(target.server)
         .catch(() => {})
     if (allowed && !known) resolveLinkCard(id, target)
-  }, [id, known, resolveLinkCard, target, allowed])
+  }, [id, known, resolveLinkCard, target, access, allowed])
+  if (access === 'hidden' && target.kind === 'channel' && (!known || card)) {
+    const channel = instanceTarget(useStore.getState(), target.server, target.channelId)
+    return channel && <RevealChannelPreview target={channel} />
+  }
   return allowed && sourceVisible && card ? (
     <LinkCard
+      key={card.id}
       card={card}
       gated={forward.access !== 'open'}
+      reveal={forward.target}
       jump={() => void openMessage(id, 'push', link.place)}
     />
   ) : null
@@ -89,10 +102,12 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
 function LinkCard({
   card,
   gated,
+  reveal,
   jump,
 }: {
   card: MessageLocation
   gated: boolean
+  reveal?: ViewingTarget | null
   jump: () => void
 }) {
   const { id } = card
@@ -117,7 +132,7 @@ function LinkCard({
       data-link-card={id}
       className="mt-1 flex max-w-160 min-w-0 items-center gap-3 rounded-xl border border-outline-variant bg-surface-container px-3 py-2"
     >
-      <button type="button" tabIndex={-1} onClick={onJump} className="min-w-0 flex-1 text-left">
+      <PreviewRow tabIndex={-1} onOpen={jump} className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
           <UserAvatar
             username={author.username}
@@ -132,12 +147,15 @@ function LinkCard({
         </div>
         <div className="mt-0.5 flex min-w-0 items-center gap-1 text-sm text-on-surface-variant">
           {gated ? (
-            <Label icon={<Forward size={14} className="shrink-0" />} text="Forwarded message" />
+            <>
+              <Label icon={<Forward size={14} className="shrink-0" />} text="Forwarded message" />
+              {reveal && <RevealChannelPreview target={reveal} />}
+            </>
           ) : (
             <CardText card={card} />
           )}
         </div>
-      </button>
+      </PreviewRow>
       <button
         type="button"
         title="Jump to message"

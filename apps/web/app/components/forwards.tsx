@@ -15,6 +15,7 @@ import { snippetParts } from '../lib/replies'
 import { MarkdownMessage } from './markdown_message'
 import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
+import { RevealChannelPreview } from './preview_reveal'
 import { BlockedQuote } from './blocking'
 import { MessageTime } from './timestamp'
 import { PollCard } from './poll_card'
@@ -110,7 +111,11 @@ export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: ()
         </span>
         <span className="flex min-w-0 items-center gap-1 text-xs">
           <span className="truncate">
-            <SpoilerLine parts={snippetParts(plainStamps(clip.snippet))} own={own} />
+            <SpoilerLine
+              key={JSON.stringify([me, clip.source, clip.id])}
+              parts={snippetParts(plainStamps(clip.snippet))}
+              own={own}
+            />
           </span>
           {clip.has_media && <ImageIcon size={12} className="shrink-0" aria-label="Attachment" />}
         </span>
@@ -137,7 +142,7 @@ export function ForwardCard({
   const fwd = m.forward
   const blocked = useStore(s => (fwd?.author ? s.blocked[fwd.author.username] === true : false))
   const [shown, setShown] = useState(false)
-  const { access } = useForwardAccess(m, { active: (!blocked || shown) && !local })
+  const { access, target } = useForwardAccess(m, { active: (!blocked || shown) && !local })
   if (!fwd) return null
   const { author } = fwd
   const origin = forwardOrigin(fwd)
@@ -160,7 +165,7 @@ export function ForwardCard({
   if (!local && access !== 'open')
     return (
       <div data-forward={fwd.source_id} className="min-w-0 text-sm text-on-surface-variant">
-        Forwarded message ·{' '}
+        Forwarded message · {target && <RevealChannelPreview target={target} />}{' '}
         <button
           type="button"
           className="min-h-8 cursor-pointer underline"

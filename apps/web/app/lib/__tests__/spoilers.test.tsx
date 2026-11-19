@@ -251,14 +251,14 @@ describe('previews keep spoilers hidden', () => {
     expect(snippetParts('||cut off')).toEqual([{ text: 'cut off', spoiler: true }])
   })
 
-  test('the reply preview and forward bar show spoilers as bars', () => {
+  test('preview spoilers start with a reveal control and omit the covered text', () => {
     const html = renderToStaticMarkup(
       <Snippet quote={{ content: plainLine('hey ||the ending|| ok'), has_media: false }} />
     )
     expect(html).toContain('data-reply-spoiler')
-    expect(html).toContain('role="img" aria-label="Spoiler"')
-    expect(html).toContain('<span class="invisible" aria-hidden="true">the ending</span>')
-    expect(html.includes('text-transparent')).toBe(false)
+    expect(html).toContain('aria-label="Reveal spoiler"')
+    expect(html).toContain('<button')
+    expect(html).not.toContain('the ending')
     const clip = clipOf(msg(4, { content: '||plot twist|| lol', author: user('bob') }))
     expect(snippetParts(clip.snippet)).toEqual([
       { text: 'plot twist', spoiler: true },

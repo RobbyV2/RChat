@@ -232,6 +232,10 @@ body {
   }
 }
 
+.preview-row-content :is(button, a, [role='button'], [data-masked-word], .streamer) {
+  pointer-events: auto;
+}
+
 .streamer-mode .streamer {
   filter: blur(5px);
   transition: filter 0.15s;

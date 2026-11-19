@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MarkdownMessage } from '../../components/markdown_message'
 import { Snippet, SpoilerLine } from '../../components/replies'
 import { clipOf } from '../forward'
-import { inboxSnippet } from '../inbox'
+import { inboxPreview } from '../inbox'
 import { hiddenOnScreen, hiddenWords } from '../masked_reveal'
 import { alertBody } from '../notices'
 import { snippet } from '../palette_results'
@@ -447,8 +447,10 @@ describe('everything that shortens a message keeps a crossed spoiler hidden', ()
     for (const text of all) {
       expect([text, leaks(alertBody(text, false))]).toEqual([text, false])
       expect([text, leaks(previewText(text))]).toEqual([text, false])
-      const row = inboxSnippet({ content: text, media: null, mediaSpoiler: false }, false, t => t)
-      expect([text, leaks(row)]).toEqual([text, false])
+      const row = inboxPreview({ content: text, media: null, mediaSpoiler: false }, false)
+      const html =
+        row?.kind === 'text' ? renderToStaticMarkup(<SpoilerLine parts={row.parts} />) : ''
+      expect([text, leaks(seen(html))]).toEqual([text, false])
     }
   })
 

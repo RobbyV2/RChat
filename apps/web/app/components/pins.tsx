@@ -2,18 +2,19 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ChartColumn, EyeOff, FileText, Pin, X } from 'lucide-react'
+import { ChartColumn, FileText, Pin, X } from 'lucide-react'
+import { PreviewSpoiler, RevealChannelPreview } from './preview_reveal'
 import { useMediaSrc } from '../lib/media_src'
 import { PINS_TITLE, noPinsText, pinPlace } from '../lib/pins'
-import { myPerms, useStore, viewKey } from '../lib/store'
+import { myPerms, useMask, useStore, viewKey } from '../lib/store'
 import { useForwardAccess } from '../lib/forward_access'
-import { Perm, hasPerm, type Message } from '../lib/types'
+import { Perm, hasPerm, type Message, type MessageMedia } from '../lib/types'
 import { longPress, useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
 import { IMAGE_EXT, MarkdownMessage } from './markdown_message'
 import { profileTrigger } from './profile_card'
 import { UserAvatar } from './user_avatar'
-import { CloseButton, Masked, SheetGrip } from './ui'
+import { CloseButton, Masked, SheetGrip, useOwn } from './ui'
 import { NameWithUsername } from './display_name'
 import { nameTriggerCls } from './message_pane'
 import { MessageTime } from './timestamp'
@@ -170,26 +171,31 @@ export function PinNotice({
 }
 
 function PinMedia({ m }: { m: Message }) {
-  const previews = useStore(s => s.settings.asset_previews)
-  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const media = m.media
-  const image = media?.kind === 'server' && previews && IMAGE_EXT.test(media.filename)
-  const src = useMediaSrc(media?.id ?? '', server, image && !media?.removed && !media?.spoiler)
   if (!media) return null
   if (media.removed)
     return <p className="mt-1 text-xs text-on-surface-variant italic">Attachment removed</p>
-  if (media.spoiler)
-    return (
-      <span className="mt-1 flex w-fit items-center gap-1.5 rounded-lg bg-surface-container-highest px-2 py-1 text-xs text-on-surface-variant">
-        <EyeOff size={12} />
-        Spoiler
-      </span>
-    )
+  const preview = <PinMediaContent media={media} by={m.webhook ? null : m.author.username} />
+  return media.spoiler ? (
+    <PreviewSpoiler key={media.id} file>
+      {preview}
+    </PreviewSpoiler>
+  ) : (
+    preview
+  )
+}
+
+function PinMediaContent({ media, by }: { media: MessageMedia; by: string | null }) {
+  const previews = useStore(s => s.settings.asset_previews)
+  const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
+  const image = media.kind === 'server' && previews && IMAGE_EXT.test(media.filename)
+  const filename = useMask(useOwn(by), true)
+  const src = useMediaSrc(media.id, server, image)
   if (image && src)
     return (
       <img
         src={src}
-        alt={media.filename}
+        alt={filename(media.filename)}
         loading="lazy"
         className="mt-1.5 max-h-28 max-w-full rounded-lg"
       />
@@ -198,7 +204,7 @@ function PinMedia({ m }: { m: Message }) {
     <span className="mt-1 flex w-fit max-w-full items-center gap-1.5 rounded-lg bg-surface-container-highest px-2 py-1 text-xs text-on-surface-variant">
       <FileText size={12} className="shrink-0 text-primary" />
       <span className="truncate">
-        <Masked text={media.filename} file by={m.webhook ? null : m.author.username} />
+        <Masked text={media.filename} file by={by} />
       </span>
     </span>
   )
@@ -218,7 +224,7 @@ function PinEntry({
   profiles: boolean
 }) {
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
-  const { access } = useForwardAccess(m, { server: server ?? undefined })
+  const { access, target } = useForwardAccess(m, { server: server ?? undefined })
   const text = { ...m, media: null, embeds: [] }
   const onClick = (e: MouseEvent) => {
     const hit = e.target instanceof Element ? e.target.closest('a, button, [role="button"]') : null
@@ -260,7 +266,10 @@ function PinEntry({
           <PinMedia m={m} />
         </>
       ) : (
-        <p className="mt-1 text-sm text-on-surface-variant italic">Forwarded message</p>
+        <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1 text-sm text-on-surface-variant">
+          <span className="italic">Forwarded message</span>
+          {target && <RevealChannelPreview target={target} />}
+        </p>
       )}
       <div className="absolute top-2 right-2 flex items-center gap-1">
         <button

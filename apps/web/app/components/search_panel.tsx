@@ -13,12 +13,11 @@ import { MessageTime } from './timestamp'
 import { plainStamps } from '../lib/timestamps'
 import { profileTrigger } from './profile_card'
 import { ForwardedTag, SpoilerLine } from './replies'
+import { PreviewRow, PreviewFilename, RevealChannelPreview } from './preview_reveal'
 import { spoilerParts } from '../lib/spoilers'
 import { useForwardAccess } from '../lib/forward_access'
-import type { Message, MessageMedia, SearchResult } from '../lib/types'
-
-const mediaLabel = (m: MessageMedia | null) =>
-  m === null ? '' : m.spoiler ? 'Spoiler' : m.filename
+import type { ViewingTarget } from '../lib/viewing'
+import type { Message, SearchResult } from '../lib/types'
 
 const chipCls = (on: boolean) =>
   `rounded-full border px-3 py-1 text-xs font-medium ${
@@ -42,28 +41,40 @@ export interface SearchHitView {
   forwarded: boolean
   // The attachment's label, or null without one.
   file: string | null
+  fileSpoiler?: boolean
   // A forwarded instance copy, shown only when its source room is open here.
   copy?: { message: Pick<Message, 'forward' | 'channel_id'>; server: string }
+  // A hit from a room closed here: the room to ask about before showing it.
+  reveal?: ViewingTarget
   onOpen: () => void
 }
 
 function HitText({ r }: { r: SearchHitView }) {
-  const { access } = useForwardAccess(r.copy?.message, { server: r.copy?.server })
-  if (access !== 'open')
-    return <p className="mt-0.5 text-sm text-on-surface-variant italic">Forwarded message</p>
+  const copy = useForwardAccess(r.copy?.message, { server: r.copy?.server })
+  if (r.reveal)
+    return (
+      <p className="mt-0.5 text-sm text-on-surface-variant">
+        <RevealChannelPreview target={r.reveal} />
+      </p>
+    )
+  if (copy.access !== 'open')
+    return (
+      <p className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1 text-sm text-on-surface-variant">
+        <span className="italic">Forwarded message</span>
+        {copy.target && <RevealChannelPreview target={copy.target} />}
+      </p>
+    )
   return (
     <>
-      <p className="mt-0.5 line-clamp-2 text-sm break-words text-on-surface">
-        {r.content ? (
+      {r.content && (
+        <p className="mt-0.5 line-clamp-2 text-sm break-words text-on-surface">
           <SpoilerLine parts={spoilerParts(plainStamps(r.content))} own={r.own && !r.forwarded} />
-        ) : (
-          r.file !== null && <Masked text={r.file} file own={r.own} />
-        )}
-      </p>
+        </p>
+      )}
       {r.file !== null && (
         <p className="mt-0.5 flex items-center gap-1 text-xs text-on-surface-variant">
           <FileText size={12} />
-          <Masked text={r.file} file own={r.own} />
+          <PreviewFilename name={r.file} spoiler={r.fileSpoiler} own={r.own && !r.forwarded} />
         </p>
       )}
     </>
@@ -246,9 +257,9 @@ export function SearchView({
           <p className="px-3 py-6 text-center text-sm text-on-surface-variant">No results.</p>
         )}
         {hits.map(r => (
-          <button
+          <PreviewRow
             key={r.key}
-            onClick={r.onOpen}
+            onOpen={r.onOpen}
             className="block w-full rounded-xl px-3 py-2 text-left hover:bg-surface-container-high"
           >
             <p className="flex min-w-0 items-center gap-1 text-xs text-on-surface-variant">
@@ -268,7 +279,7 @@ export function SearchView({
               )}
             </div>
             <HitText r={r} />
-          </button>
+          </PreviewRow>
         ))}
         {active && hasMore && <Sentinel key={pageKey} onVisible={endShown} onHidden={endHidden} />}
         {stepped && (hasMore || loading) && (
@@ -329,7 +340,8 @@ const instanceHit = (
   content: r.message.content,
   own: !r.message.webhook && r.message.author.username === me,
   forwarded: !!r.message.forward,
-  file: r.message.media ? mediaLabel(r.message.media) : null,
+  file: r.message.media?.filename ?? null,
+  fileSpoiler: r.message.media?.spoiler,
   ...(r.message.forward ? { copy: { message: r.message, server: r.server } } : {}),
   onOpen: () => open(r),
 })
@@ -376,6 +388,7 @@ export default function SearchPanel() {
         own: false,
         forwarded: false,
         file: null,
+        ...(t ? { reveal: t } : {}),
         onOpen: (): void => {
           void openResult(r)
         },

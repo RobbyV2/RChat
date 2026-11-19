@@ -6,6 +6,7 @@ import { PreviewLine } from '../../components/invite_card'
 import { ReplyPreview } from '../../components/replies'
 import { frameCopyOpen } from '../forward_viewing'
 import { pinnedPreview } from '../invite'
+import { instanceInbox } from '../inbox_source'
 import { home } from '../instances'
 import { resetSessionCaches, useStore } from '../store'
 import type { ForwardRef, Message, MessageLocation } from '../types'
@@ -88,6 +89,7 @@ test('a search hit of a forwarded copy from a closed room shows no text until th
   signedIn()
   expect(search(copy())).not.toContain(TEXT)
   expect(search(copy())).toContain('Forwarded message')
+  expect(search(copy())).toContain('Reveal preview')
   await openOnce(2, true)
   expect(search(copy())).toContain(TEXT)
 })
@@ -117,6 +119,7 @@ test('a link card to a forwarded copy follows its source room', async () => {
   }
   const html = () => renderToStaticMarkup(<MessageLinkCard link={link} />)
   expect(html()).toContain('Forwarded message')
+  expect(html()).toContain('Reveal preview')
   expect(html()).not.toContain(TEXT)
   await openOnce(2, true)
   expect(html()).toContain(TEXT)
@@ -126,6 +129,7 @@ test('a signed-out invite preview decides a forwarded copy by the label it carri
   const line = (m: Message) => renderToStaticMarkup(<PreviewLine message={m} big server="club" />)
   expect(line(copy())).not.toContain(TEXT)
   expect(line(copy())).toContain('Forwarded message')
+  expect(line(copy())).toContain('Reveal preview')
   expect(line(copy({ origin_sensitive: false }))).toContain(TEXT)
   markPersonally(channelTarget(null, 'instance', 'club', { id: 2 }), true)
   expect(line(copy({ origin_sensitive: false }))).not.toContain(TEXT)
@@ -215,7 +219,52 @@ test('a reply quoting a forwarded copy follows the copy source room', async () =
   const html = () =>
     renderToStaticMarkup(<ReplyPreview quote={quote} avatar={36} onJump={() => {}} />)
   expect(html()).not.toContain(TEXT)
-  expect(html()).toContain('Forwarded message')
+  expect(html()).toContain('Forwarded')
+  expect(html()).toContain('Reveal preview')
   await openOnce(2, true)
   expect(html()).toContain(TEXT)
+})
+
+test('a hit from a closed room offers its own reveal instead of its text', () => {
+  signedIn()
+  const target = channelTarget('reader', 'instance', 'club', proofroom)
+  const html = renderToStaticMarkup(
+    <SearchView
+      channels={undefined}
+      hits={[
+        {
+          key: '50',
+          channel: 'proofroom',
+          server: 'club',
+          avatar: null,
+          name: 'Open channel',
+          createdAt: 1,
+          content: '',
+          own: false,
+          forwarded: false,
+          file: null,
+          reveal: target,
+          onOpen: () => {},
+        },
+      ]}
+      loading={false}
+      hasMore={false}
+      pageKey="0"
+      scrollForMore={() => false}
+      onRun={() => {}}
+      onClose={() => {}}
+    />
+  )
+  expect(html).toContain('Reveal preview')
+})
+
+test('a closed inbox entry names the room whose choice reveals it', () => {
+  signedIn()
+  const entry = {
+    raw: { server: 'club', scope: 'c2' },
+  } as unknown as Parameters<NonNullable<typeof instanceInbox.previewTarget>>[0]
+  expect(instanceInbox.canPreview?.(entry)).toBe(false)
+  expect(instanceInbox.previewTarget?.(entry)?.key).toBe(
+    channelTarget('reader', 'instance', 'club', proofroom).key
+  )
 })

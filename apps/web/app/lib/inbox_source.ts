@@ -60,6 +60,11 @@ export const instanceInbox: InboxAdapter = {
     const t = instanceTarget(useStore.getState(), item.server, Number(item.scope.slice(1)))
     return !!t && canView(t)
   },
+  previewTarget: entry => {
+    const item = entry.raw as InboxItem
+    if (!item.server || !item.scope?.startsWith('c')) return null
+    return instanceTarget(useStore.getState(), item.server, Number(item.scope.slice(1)))
+  },
   load: async (view, cursor) => {
     let at = cursor
     for (let i = 0; ; i++) {

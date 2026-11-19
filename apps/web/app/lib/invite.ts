@@ -1,5 +1,5 @@
 import { sessionStore, shareOrigin } from './instances'
-import { replaceSpoilers } from './spoilers'
+import { replaceSpoilers, spoilerParts } from './spoilers'
 import type { Invite, InviteStatus } from './types'
 
 export interface InviteTarget {
@@ -175,14 +175,20 @@ export const safeNext = (raw: string | null | undefined) => {
 export const spoilerBlocks = (inner: string) =>
   inner.trim() ? '\u2588'.repeat(Math.min(8, Math.max(3, inner.trim().length))) : ''
 
-// One line of plain text for a preview, spoilers as blocks. `cut`: an excerpt, where an unclosed
-// spoiler hides the rest.
-export const previewText = (content: string, cut = false) =>
-  replaceSpoilers(content, spoilerBlocks, cut)
+const plainPreview = (text: string) =>
+  text
     .replace(/^\s{0,3}(#{1,6}|>)\s+/gm, '')
     .replace(/(\*\*|__|~~|`)/g, '')
     .replace(/\s+/g, ' ')
-    .trim()
+
+// Plain text for notifications and other previews where the reader cannot reveal a spoiler.
+export const previewText = (content: string, cut = false) =>
+  plainPreview(replaceSpoilers(content, spoilerBlocks, cut)).trim()
+
+// Keep the contents of each spoiler separate for in-app reveal controls. A truncated
+// excerpt can end inside a spoiler.
+export const previewParts = (content: string, cut = false) =>
+  spoilerParts(content, cut).map(p => ({ ...p, text: plainPreview(p.text) }))
 
 export const inviteEntry = (state: unknown, server: string): InviteEntry | null => {
   const saved = (state as { rchatInvite?: Partial<InviteEntry> } | null)?.rchatInvite

@@ -14,7 +14,8 @@ import { useViewing } from '../lib/viewing'
 import { AtSign, Bell, Check, CheckCheck, Hash, MessageSquare, UserPlus, X } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
 import { useMask, useStore } from '../lib/store'
-import { showText } from '../lib/profanity'
+import { PreviewFilename, PreviewRow, RevealChannelPreview } from './preview_reveal'
+import { SpoilerLine } from './replies'
 import { allPings } from '../lib/selectors'
 import {
   DEFAULT_VIEW,
@@ -25,7 +26,7 @@ import {
   freshSource,
   hasMore,
   inboxAction,
-  inboxSnippet,
+  inboxPreview,
   markedRead,
   mergeEntries,
   refreshHead,
@@ -237,19 +238,22 @@ function Row({
   const streamer = useStore(s => s.streamer)
   useViewing(s => s.revision)
   useStore(s => s.servers)
-  if (adapterOf(entry.adapter)?.canPreview?.(entry) === false) {
+  const adapter = adapterOf(entry.adapter)
+  if (adapter?.canPreview?.(entry) === false) {
+    const target = adapter.previewTarget?.(entry)
     return (
-      <li>
+      <li className="flex min-w-0 flex-wrap items-center gap-x-1 rounded-xl hover:bg-surface-container-high">
         <button
-          className="min-h-11 w-full cursor-pointer rounded-xl px-3 py-2 text-left hover:bg-surface-container-high"
+          className="min-h-11 min-w-0 flex-1 cursor-pointer rounded-xl px-3 py-2 text-left"
           onClick={() => onOpen(entry)}
         >
           Open channel · <Place entry={entry} />
         </button>
+        {target && <RevealChannelPreview target={target} />}
       </li>
     )
   }
-  const snippet = inboxSnippet(entry, streamer, showText)
+  const snippet = inboxPreview(entry, streamer)
   const menu = longPress((x, y) =>
     openActionMenu(x, y, {
       kind: 'inbox',
@@ -260,13 +264,13 @@ function Row({
   )
   return (
     <li className="group relative">
-      <button
-        type="button"
+      <PreviewRow
         {...menu}
         data-inbox-item={entry.key}
         data-unread={entry.unread ? 'true' : undefined}
-        onClick={() => onOpen(entry)}
-        className="flex w-full gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary"
+        onOpen={() => onOpen(entry)}
+        className="w-full rounded-xl px-3 py-2.5 text-left hover:bg-surface-container-high"
+        contentClassName="flex gap-3"
       >
         <span className="relative mt-0.5 shrink-0">
           <UserAvatar
@@ -305,12 +309,16 @@ function Row({
           </span>
           {snippet && (
             <span className="line-clamp-2 text-sm break-words text-on-surface">
-              <Masked text={snippet} code file={!entry.content} />
+              {snippet.kind === 'text' ? (
+                <SpoilerLine parts={snippet.parts} />
+              ) : (
+                <PreviewFilename name={snippet.name} spoiler={snippet.spoiler} />
+              )}
             </span>
           )}
           {entry.unread && <span className="sr-only">Unread</span>}
         </span>
-      </button>
+      </PreviewRow>
       {entry.unread && (
         <button
           type="button"
