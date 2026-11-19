@@ -6,9 +6,40 @@ license = "MIT"
 description = "RChat desktop shell logic, without the Tauri runtime"
 publish = false
 
+[features]
+default = ["server"]
+# The app's own server, on computers only.
+server = [
+  "dep:rust-next",
+  "dep:tokio",
+  "dep:axum",
+  "dep:sqlx",
+  "dep:reqwest",
+  "dep:tracing",
+  "dep:tracing-subscriber",
+]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+rust-next = { path = "../../server", optional = true }
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "sync",
+  "time",
+], optional = true }
+axum = { version = "0.8", optional = true }
+sqlx = { version = "0.9", features = [
+  "sqlite",
+  "runtime-tokio",
+], optional = true }
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls",
+], optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
 
 [dev-dependencies]
 png = "0.18"

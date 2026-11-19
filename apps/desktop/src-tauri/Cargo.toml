@@ -18,7 +18,7 @@ path = "src/main.rs"
 tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
-rchat-desktop-core = { path = "../core" }
+rchat-desktop-core = { path = "../core", default-features = false }
 tauri = { workspace = true }
 tauri-plugin-notification = "2.8"
 tauri-plugin-opener = "2.7"

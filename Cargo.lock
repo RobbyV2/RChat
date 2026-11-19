@@ -4873,9 +4873,16 @@ dependencies = [
 name = "rchat-desktop-core"
 version = "0.3.0"
 dependencies = [
+ "axum",
  "png",
+ "reqwest 0.13.5",
+ "rust-next",
  "serde",
  "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -123,6 +123,10 @@ jobs:
           bun scripts/release.ts tauri-config "$RUNNER_TEMP/tauri.ci.json"
           cat "$RUNNER_TEMP/tauri.ci.json"
 
+      # The app's own server, started for real: paths, ports and file locks differ by system.
+      - name: Core tests
+        run: cargo test -p rchat-desktop-core
+
       - name: Build
         working-directory: apps/desktop/src-tauri
         env:

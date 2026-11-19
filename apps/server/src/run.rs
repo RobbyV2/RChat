@@ -108,18 +108,38 @@ impl Running {
     /// Stops taking requests, lets the open ones finish, then closes the relay and the
     /// database. Tasks of open realtime connections end with the runtime.
     pub async fn shutdown(self) {
+        self.close(None).await;
+    }
+
+    /// Like `shutdown`, but the open requests get `grace` to finish. Then they are cut off, and
+    /// the relay and the database close all the same.
+    pub async fn shutdown_within(self, grace: Duration) {
+        self.close(Some(grace)).await;
+    }
+
+    async fn close(self, grace: Option<Duration>) {
         let Running {
             addr: _,
             state,
             held,
             stop,
-            serving,
+            mut serving,
         } = self;
         let _ = stop.send(true);
-        match serving.await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::error!("Server error: {e}"),
-            Err(e) => tracing::error!("Server task failed: {e}"),
+        let served = match grace {
+            None => Ok((&mut serving).await),
+            Some(grace) => tokio::time::timeout(grace, &mut serving)
+                .await
+                .map_err(|_| grace),
+        };
+        match served {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(e))) => tracing::error!("Server error: {e}"),
+            Ok(Err(e)) => tracing::error!("Server task failed: {e}"),
+            Err(grace) => {
+                serving.abort();
+                tracing::warn!("Open requests were cut off after {grace:?}");
+            }
         }
         crate::ws::depart(&state).await;
         held.release().await;
@@ -603,6 +623,37 @@ pub(crate) mod tests {
         }
         wipe(&path);
         wipe(&other);
+    }
+
+    #[tokio::test]
+    async fn a_stop_with_a_request_held_open_closes_the_database() {
+        use tokio::io::AsyncWriteExt;
+        let _one = ONE.lock().await;
+        let path = crate::db::temp_db_path("run_held");
+        wipe(&path);
+        let running = start(config(&path, 0, &[]), RunOptions::default())
+            .await
+            .expect("start");
+        let db = running.state.db.clone();
+        let reader = crate::db::reader(&db);
+        let mut held = tokio::net::TcpStream::connect(running.addr)
+            .await
+            .expect("connect");
+        held.write_all(
+            b"POST /api/auth/register HTTP/1.1\r\nhost: here\r\ncontent-type: application/json\r\ncontent-length: 100000\r\n\r\n{",
+        )
+        .await
+        .expect("send");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let began = tokio::time::Instant::now();
+        running.shutdown_within(Duration::from_millis(100)).await;
+        assert!(began.elapsed() < Duration::from_secs(10));
+        assert!(db.is_closed());
+        assert!(reader.is_closed());
+        assert!(crate::db::reader(&db).is_closed());
+        drop(held);
+        wipe(&path);
     }
 
     fn free_udp_port() -> u16 {
