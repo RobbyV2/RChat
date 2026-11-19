@@ -19,6 +19,19 @@ fn main() {
         "update_check",
         "update_install",
         "set_tray_state",
+        "server_status",
+        "server_save",
+        "server_start",
+        "server_stop",
+        "server_restart",
+        "server_logs",
+        "server_backup",
+        "server_restore",
+        "server_test_address",
+        "server_move",
+        "server_pick_folder",
+        "server_open_folder",
+        "server_remove",
     ];
     tauri_build::try_build(
         tauri_build::Attributes::new()

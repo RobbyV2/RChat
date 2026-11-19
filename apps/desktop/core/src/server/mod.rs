@@ -5,6 +5,7 @@ pub mod assets;
 pub mod backups;
 pub mod dirs;
 pub mod env;
+pub mod form;
 pub mod logs;
 pub mod ports;
 pub mod supervisor;

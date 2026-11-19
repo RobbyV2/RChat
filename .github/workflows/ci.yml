@@ -107,6 +107,8 @@ jobs:
           APP_MODE: api-only
           SERVER_PORT: '3470'
           DATABASE_URL: /tmp/rchat-smoke.db
+          # The app also runs its own server on this port, and the page checks it.
+          RCHAT_SMOKE_SERVER: '3471'
         run: |
           ./target/debug/server > /tmp/rchat-smoke-server.log 2>&1 &
           for _ in $(seq 60); do curl -sf http://localhost:3470/api/health > /dev/null && break; sleep 1; done

@@ -1,5 +1,27 @@
 mod files;
 mod links;
+#[cfg(all(desktop, feature = "server"))]
+mod server;
+// A build without the app's own server: none runs, and the tray has no server block.
+#[cfg(all(desktop, not(feature = "server")))]
+mod server {
+    use rchat_desktop_core::tray_menu::{Effect, Server};
+    use tauri::AppHandle;
+
+    pub fn running(_: &AppHandle) -> bool {
+        false
+    }
+
+    pub fn tray_block(_: &AppHandle) -> Option<Server> {
+        None
+    }
+
+    pub fn start_later(_: &AppHandle) {}
+
+    pub fn stop_now(_: &AppHandle) {}
+
+    pub fn pick(_: &AppHandle, _: Effect) {}
+}
 #[cfg(feature = "smoke")]
 mod smoke;
 #[cfg(desktop)]
@@ -58,6 +80,18 @@ impl Shell {
 
     fn settings(&self) -> Settings {
         lock(&self.settings).clone()
+    }
+
+    // Every change to the settings: made and written under one lock, so two writers can't undo
+    // each other. A refused change saves nothing.
+    fn change<T>(
+        &self,
+        change: impl FnOnce(&mut Settings) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut current = lock(&self.settings);
+        let changed = change(&mut current)?;
+        settings::save(&self.dir, &current).map_err(|e| plain(e, "Could not save settings"))?;
+        Ok(changed)
     }
 }
 
@@ -127,17 +161,19 @@ fn plain(e: impl std::fmt::Display, text: &str) -> String {
     text.to_string()
 }
 
+// The page gets the server's database address and extra settings blank, each with a flag that
+// says whether one is set.
 #[tauri::command]
-fn desktop_settings(shell: State<'_, Shell>) -> Settings {
-    shell.settings()
+fn desktop_settings(shell: State<'_, Shell>) -> serde_json::Value {
+    settings::for_page(&shell.settings())
 }
 
 #[tauri::command]
 fn set_desktop_settings(shell: State<'_, Shell>, settings: Settings) -> Result<(), String> {
-    let mut current = lock(&shell.settings);
-    let merged = settings::from_page(&current, settings);
-    *current = merged;
-    settings::save(&shell.dir, &current).map_err(|e| plain(e, "Could not save settings"))
+    shell.change(|current| {
+        *current = settings::from_page(current, settings);
+        Ok(())
+    })
 }
 
 // Commands that reach a mobile plugin run off the main thread there, as the plugins' own do.
@@ -352,16 +388,74 @@ async fn share_text(app: AppHandle, title: Option<String>, text: String) -> Resu
 #[cfg(desktop)]
 mod desktop {
     use super::*;
-    use rchat_desktop_core::close::{self, Close};
+    use rchat_desktop_core::close::{self, Close, Quit};
+    use rchat_desktop_core::launch::{self, Launch, Plan};
     use rchat_desktop_core::tray_menu::Snapshot;
     use serde::Serialize;
     use tauri_plugin_autostart::ManagerExt;
+    use tauri_plugin_dialog::MessageDialogButtons;
     use tauri_plugin_updater::UpdaterExt;
 
     const UPDATER_PLACEHOLDER: &str = "RCHAT_UPDATER_PUBKEY_PLACEHOLDER";
 
+    const QUIT_QUESTION: &str =
+        "Quit and stop your server? People connected to it are disconnected.";
+
     fn has_tray(app: &AppHandle) -> bool {
         lock(&app.state::<Shell>().tray).is_some()
+    }
+
+    // What this start does. A start after "Install and restart" takes its one-time flags, which
+    // are cleared here so the next start is an ordinary one.
+    pub fn plan(app: &AppHandle, tray: bool) -> Plan {
+        let shell = app.state::<Shell>();
+        let loaded = shell.settings();
+        let plan = launch::plan(Launch::from_args(std::env::args()), &loaded, tray);
+        if loaded.resume_server || loaded.resume_window {
+            let cleared = shell.change(|current| {
+                current.resume_server = false;
+                current.resume_window = false;
+                Ok(())
+            });
+            if let Err(e) = cleared {
+                eprintln!("{e}");
+            }
+        }
+        plan
+    }
+
+    fn ask_to_quit(app: &AppHandle) {
+        let quit = app.clone();
+        app.dialog()
+            .message(QUIT_QUESTION)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Quit".into(),
+                "Cancel".into(),
+            ))
+            .show(move |yes| {
+                if yes {
+                    quit.exit(0);
+                }
+            });
+    }
+
+    // Quitting stops the server for everyone connected to it, so it asks first while one runs.
+    pub fn request_quit(app: &AppHandle) {
+        let settings = app.state::<Shell>().settings();
+        match close::on_quit(&settings, server::running(app)) {
+            Quit::Now => app.exit(0),
+            Quit::Ask => ask_to_quit(app),
+        }
+    }
+
+    // An exit nobody confirmed (the last window went away, or the system's own Quit) waits for
+    // the answer while the server runs. `code` is set when the app itself decided to exit.
+    pub fn on_exit_requested(app: &AppHandle, code: Option<i32>, api: &tauri::ExitRequestApi) {
+        let settings = app.state::<Shell>().settings();
+        if code.is_none() && close::on_quit(&settings, server::running(app)) == Quit::Ask {
+            api.prevent_exit();
+            ask_to_quit(app);
+        }
     }
 
     // Puts up the tray; true when there is one.
@@ -372,7 +466,7 @@ mod desktop {
             webview: true,
             offline,
             muted: shell.settings().mute_notifications,
-            server: None,
+            server: server::tray_block(app),
         };
         match tray::start(app, snapshot, unread) {
             Ok(tray) => {
@@ -404,12 +498,16 @@ mod desktop {
         {
             let app = window.app_handle();
             let settings = app.state::<Shell>().settings();
-            match close::on_close(&settings, has_tray(app), false) {
+            match close::on_close(&settings, has_tray(app), server::running(app)) {
                 Close::Hide => {
                     api.prevent_close();
                     let _ = window.hide();
                 }
-                Close::Quit(_) => {}
+                Close::Quit(Quit::Ask) => {
+                    api.prevent_close();
+                    ask_to_quit(app);
+                }
+                Close::Quit(Quit::Now) => {}
             }
         }
     }
@@ -504,15 +602,51 @@ mod desktop {
         install(&app).await
     }
 
+    // Stops the server for the install and notes what the next start brings back: the server,
+    // and the window when it is open now.
+    fn before_install(app: &AppHandle) -> Result<bool, String> {
+        let ran = server::running(app);
+        let shown = main_window(app).is_some_and(|w| w.is_visible().unwrap_or(false));
+        app.state::<Shell>().change(|current| {
+            current.resume_server = ran;
+            current.resume_window = shown;
+            Ok(())
+        })?;
+        server::stop_now(app);
+        Ok(ran)
+    }
+
+    // An install that failed leaves the app as it was.
+    fn after_failed_install(app: &AppHandle, ran: bool) {
+        let cleared = app.state::<Shell>().change(|current| {
+            current.resume_server = false;
+            current.resume_window = false;
+            Ok(())
+        });
+        if let Err(e) = cleared {
+            eprintln!("{e}");
+        }
+        if ran {
+            server::start_later(app);
+        }
+    }
+
     pub async fn install(app: &AppHandle) -> Result<(), String> {
         let pending = lock(&app.state::<Shell>().update).take();
         let Some(update) = pending else {
             return Err("No update to install".into());
         };
-        update
-            .download_and_install(|_, _| {}, || {})
+        let failed = |e| plain(e, "Could not install the update");
+        // The server keeps running through the download.
+        let bytes = update.download(|_, _| {}, || {}).await.map_err(failed)?;
+        let prepare = app.clone();
+        let ran = tauri::async_runtime::spawn_blocking(move || before_install(&prepare))
             .await
-            .map_err(|e| plain(e, "Could not install the update"))?;
+            .map_err(|e| plain(e, "Could not install the update"))??;
+        if let Err(e) = update.install(bytes) {
+            after_failed_install(app, ran);
+            return Err(failed(e));
+        }
         app.restart()
     }
 
@@ -636,6 +770,32 @@ pub fn run() {
             desktop::update_install,
             #[cfg(desktop)]
             desktop::set_tray_state,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_status,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_save,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_start,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_stop,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_restart,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_logs,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_backup,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_restore,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_test_address,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_move,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_pick_folder,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_open_folder,
+            #[cfg(all(desktop, feature = "server"))]
+            server::server_remove,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -644,18 +804,31 @@ pub fn run() {
             #[cfg(desktop)]
             let auto_update = loaded.auto_update;
             app.manage(Shell::new(dir, loaded));
+            #[cfg(all(desktop, feature = "server"))]
+            server::init(&handle)?;
+            #[cfg(all(desktop, feature = "server", feature = "smoke"))]
+            smoke::own_server(&handle);
             #[cfg(any(windows, target_os = "linux"))]
             if cfg!(dev) || std::env::var_os("APPIMAGE").is_some() {
                 let _ = app.deep_link().register_all();
             }
             #[cfg(desktop)]
-            let hidden =
-                desktop::tray_now_or_later(&handle) && std::env::args().any(|a| a == "--hidden");
+            let (show, with_server) = {
+                let tray = desktop::tray_now_or_later(&handle);
+                let plan = desktop::plan(&handle, tray);
+                // A start without a window still gets a hidden one while there is a tray to
+                // open it from.
+                (plan.show || !(plan.webview || tray), plan.server)
+            };
             #[cfg(mobile)]
-            let hidden = false;
+            let show = true;
             let window = create_main(&handle)?;
-            if !hidden {
+            if show {
                 window.show()?;
+            }
+            #[cfg(desktop)]
+            if with_server {
+                server::start_later(&handle);
             }
             let link_app = handle.clone();
             app.deep_link().on_open_url(move |event| {
@@ -679,9 +852,16 @@ pub fn run() {
         .build(context)
         .expect("failed to build the app")
         .run(|app, event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = event {
-                show_main(app);
+            #[cfg(desktop)]
+            match &event {
+                tauri::RunEvent::ExitRequested { code, api, .. } => {
+                    desktop::on_exit_requested(app, *code, api);
+                }
+                // The server ends with the app: open requests get their time to finish.
+                tauri::RunEvent::Exit => server::stop_now(app),
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => show_main(app),
+                _ => {}
             }
             let _ = (app, event);
         });

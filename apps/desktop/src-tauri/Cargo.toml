@@ -49,4 +49,7 @@ tauri-plugin-fs = "2.7"
 tauri-plugin-rchat-share = { path = "../plugins/share" }
 
 [features]
+default = ["server"]
+# The app's own server, linked in on computers. Without it the app is only a client.
+server = ["rchat-desktop-core/server"]
 smoke = []

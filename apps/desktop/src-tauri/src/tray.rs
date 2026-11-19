@@ -3,8 +3,7 @@
 use crate::{Shell, desktop, lock, show_main};
 use rchat_desktop_core::badge;
 use rchat_desktop_core::pixmap::{self, Icon, Os, Pixmap};
-use rchat_desktop_core::settings;
-use rchat_desktop_core::tray_menu::{self, Action, Effect, Item, Redraw, Snapshot};
+use rchat_desktop_core::tray_menu::{self, Action, Effect, Item, Redraw, Snapshot, TrayAction};
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -355,11 +354,21 @@ fn pick(app: &AppHandle, action: Action) {
     match effect {
         Some(Effect::Open) => show_main(app),
         Some(Effect::Page(action)) => {
+            match action {
+                TrayAction::Settings { .. } => show_main(app),
+                TrayAction::Status { .. } => {}
+            }
             let _ = app.emit_to(crate::MAIN, "tray-action", action);
         }
         Some(Effect::Mute(on)) => mute(app, on),
+        Some(
+            effect @ (Effect::StartServer
+            | Effect::StopServer
+            | Effect::RestartServer
+            | Effect::CopyAddress),
+        ) => crate::server::pick(app, effect),
         Some(Effect::CheckUpdates) => check_updates(app),
-        Some(Effect::Quit) => app.exit(0),
+        Some(Effect::Quit) => desktop::request_quit(app),
         None => {}
     }
 }
@@ -369,14 +378,12 @@ fn mute(app: &AppHandle, on: bool) {
     if let Err(e) = update(app, |s| s.muted = on) {
         eprintln!("tray menu: {e}");
     }
-    let shell = app.state::<Shell>();
-    let saved = {
-        let mut current = lock(&shell.settings);
+    let saved = app.state::<Shell>().change(|current| {
         current.mute_notifications = on;
-        settings::save(&shell.dir, &current)
-    };
+        Ok(())
+    });
     if let Err(e) = saved {
-        eprintln!("Could not save settings: {e}");
+        eprintln!("{e}");
     }
     let _ = app.emit_to(crate::MAIN, "shell-settings", ());
 }

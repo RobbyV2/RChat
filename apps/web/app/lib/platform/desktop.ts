@@ -82,7 +82,8 @@ export interface ServerAccess {
   proxy_device: string
 }
 
-// Empty `data_dir`, `database_url` and `listen` mean the built-in choice.
+// Empty `data_dir`, `database_url` and `listen` mean the built-in choice. The shell sends
+// `database_url` and `extra` blank: the two flags say whether one is set.
 export interface ServerSettings {
   set_up: boolean
   run_on_open: boolean
@@ -96,6 +97,8 @@ export interface ServerSettings {
   listen: string
   relay: boolean
   extra: string
+  database_url_set: boolean
+  extra_set: boolean
 }
 
 export interface ShellSettings {
@@ -106,6 +109,7 @@ export interface ShellSettings {
   boot: BootSettings
   server: ServerSettings
   resume_server: boolean
+  resume_window: boolean
 }
 
 export interface FoundUpdate {
@@ -115,7 +119,8 @@ export interface FoundUpdate {
 
 export interface Shell {
   settings: () => Promise<ShellSettings>
-  // The shell keeps `server`, `resume_server` and `boot.on` as they are, whatever is sent.
+  // The shell keeps `server`, `resume_server`, `resume_window` and `boot.on` as they are,
+  // whatever is sent.
   setSettings: (next: ShellSettings) => Promise<void>
   autostart: () => Promise<boolean>
   setAutostart: (on: boolean) => Promise<void>

@@ -205,6 +205,8 @@ pub struct Settings {
     pub boot: Boot,
     pub server: ServerSettings,
     pub resume_server: bool,
+    // After "Install and restart", the next start shows the window however it was launched.
+    pub resume_window: bool,
 }
 
 impl Default for Settings {
@@ -217,6 +219,7 @@ impl Default for Settings {
             boot: Boot::default(),
             server: ServerSettings::default(),
             resume_server: false,
+            resume_window: false,
         }
     }
 }
@@ -288,6 +291,7 @@ fn parse_over(raw: &str, base: Settings) -> Settings {
         boot,
         server,
         resume_server,
+        resume_window,
     } = base;
     let fields: Option<Fields> = serde_json::from_str(raw).ok();
     let fields = fields.as_ref();
@@ -306,11 +310,12 @@ fn parse_over(raw: &str, base: Settings) -> Settings {
         boot: Boot::parse(group(fields, "boot"), boot),
         server: ServerSettings::parse(group(fields, "server"), server),
         resume_server: pick(fields, "resume_server", resume_server),
+        resume_window: pick(fields, "resume_window", resume_window),
     }
 }
 
 // What the page sent, without the fields that belong to the shell: the tray's Mute, the server
-// setup, the resume flag and the login entry. The page sends back the whole copy it read when it
+// setup, the resume flags and the login entry. The page sends back the whole copy it read when it
 // opened, which would otherwise undo what the shell wrote since.
 pub fn from_page(current: &Settings, sent: Settings) -> Settings {
     let Settings {
@@ -327,6 +332,7 @@ pub fn from_page(current: &Settings, sent: Settings) -> Settings {
             },
         server: _,
         resume_server: _,
+        resume_window: _,
     } = sent;
     Settings {
         minimize_to_tray,
@@ -341,7 +347,33 @@ pub fn from_page(current: &Settings, sent: Settings) -> Settings {
         },
         server: current.server.clone(),
         resume_server: current.resume_server,
+        resume_window: current.resume_window,
     }
+}
+
+// The settings as the page gets them. The server's database address and extra settings can hold
+// passwords and keys, so they go out blank, each with a flag that says whether one is set.
+pub fn for_page(settings: &Settings) -> Value {
+    let ServerSettings {
+        database_url,
+        extra,
+        ..
+    } = &settings.server;
+    let blank = Settings {
+        server: ServerSettings {
+            database_url: String::new(),
+            extra: String::new(),
+            ..settings.server.clone()
+        },
+        ..settings.clone()
+    };
+    let mut page = serde_json::to_value(blank).unwrap_or_default();
+    if let Some(server) = page.get_mut("server").and_then(Value::as_object_mut) {
+        for (flag, secret) in [("database_url_set", database_url), ("extra_set", extra)] {
+            server.insert(flag.into(), Value::Bool(!secret.trim().is_empty()));
+        }
+    }
+    page
 }
 
 pub fn path(dir: &Path) -> PathBuf {
@@ -416,6 +448,7 @@ mod tests {
                 extra: "MAX_UPLOAD_MIB=64\nGUESTS_ENABLED=false".into(),
             },
             resume_server: true,
+            resume_window: true,
         }
     }
 
@@ -454,6 +487,7 @@ mod tests {
                     extra: String::new(),
                 },
                 resume_server: false,
+                resume_window: false,
             }
         );
     }
@@ -563,7 +597,8 @@ mod tests {
                 "relay": true,
                 "extra": "MAX_UPLOAD_MIB=64\nGUESTS_ENABLED=false"
             },
-            "resume_server": true
+            "resume_server": true,
+            "resume_window": true
         }"#;
         assert_eq!(parse(raw), custom());
     }
@@ -858,6 +893,7 @@ mod tests {
                 },
                 server: current.server.clone(),
                 resume_server: current.resume_server,
+                resume_window: current.resume_window,
             }
         );
         assert_eq!(from_page(&sent, sent.clone()), sent);
@@ -892,6 +928,10 @@ mod tests {
                 ..current.clone()
             },
             Settings {
+                resume_window: false,
+                ..current.clone()
+            },
+            Settings {
                 mute_notifications: false,
                 ..current.clone()
             },
@@ -919,6 +959,7 @@ mod tests {
                 ..ServerSettings::default()
             },
             resume_server: true,
+            resume_window: true,
             ..fresh.clone()
         };
         assert_eq!(from_page(&fresh, grab), fresh);
@@ -975,6 +1016,64 @@ mod tests {
             let without: Settings = serde_json::from_str(r#"{"auto_update":true}"#).unwrap();
             assert_eq!(from_page(&current, without).mute_notifications, muted);
         }
+    }
+
+    #[test]
+    fn the_page_reads_the_server_secrets_blank_with_a_flag_each() {
+        let settings = custom();
+        let page = for_page(&settings);
+        assert_eq!(page["server"]["database_url"], "");
+        assert_eq!(page["server"]["extra"], "");
+        assert_eq!(page["server"]["database_url_set"], true);
+        assert_eq!(page["server"]["extra_set"], true);
+        let text = page.to_string();
+        for secret in ["postgres://", "u:p@db", "MAX_UPLOAD_MIB", "GUESTS_ENABLED"] {
+            assert!(!text.contains(secret), "{secret}");
+        }
+        let blanked = Settings {
+            server: ServerSettings {
+                database_url: String::new(),
+                extra: String::new(),
+                ..settings.server.clone()
+            },
+            ..settings
+        };
+        let read: Settings = serde_json::from_value(page).unwrap();
+        assert_eq!(read, blanked);
+    }
+
+    #[test]
+    fn unset_server_secrets_are_flagged_as_unset() {
+        let spaces = Settings {
+            server: ServerSettings {
+                database_url: "  ".into(),
+                extra: "\n".into(),
+                ..ServerSettings::default()
+            },
+            ..Settings::default()
+        };
+        for settings in [Settings::default(), spaces] {
+            let page = for_page(&settings);
+            assert_eq!(page["server"]["database_url_set"], false);
+            assert_eq!(page["server"]["extra_set"], false);
+            assert_eq!(page["server"]["port"], 3470);
+            assert_eq!(page["minimize_to_tray"], true);
+        }
+    }
+
+    #[test]
+    fn the_window_flag_for_after_an_update_is_stored() {
+        assert!(!Settings::default().resume_window);
+        assert!(parse(r#"{"version": 2, "resume_window": true}"#).resume_window);
+        assert!(!parse(r#"{"version": 2, "resume_window": "yes"}"#).resume_window);
+        let dir = std::env::temp_dir().join(format!("rchat-resume-window-{}", std::process::id()));
+        let settings = Settings {
+            resume_window: true,
+            ..Settings::default()
+        };
+        save(&dir, &settings).unwrap();
+        assert_eq!(load(&dir), settings);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

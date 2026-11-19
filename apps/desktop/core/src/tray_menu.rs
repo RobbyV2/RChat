@@ -196,11 +196,16 @@ pub fn menu(snapshot: &Snapshot) -> Vec<Item> {
     items
 }
 
+// The settings section of the app's own server.
+const SERVER: &str = "server";
+
 // The `tray-action` event: picks that the page carries out, because it holds the accounts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum TrayAction {
     Status { online: bool },
+    // Open the settings page at one of its sections.
+    Settings { section: &'static str },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -209,6 +214,10 @@ pub enum Effect {
     Page(TrayAction),
     // The new value.
     Mute(bool),
+    StartServer,
+    StopServer,
+    RestartServer,
+    CopyAddress,
     CheckUpdates,
     Quit,
 }
@@ -225,12 +234,32 @@ pub fn effect(action: Action, snapshot: &Snapshot) -> Option<Effect> {
         Action::Mute => Some(Effect::Mute(!snapshot.muted)),
         Action::CheckUpdates => Some(Effect::CheckUpdates),
         Action::Quit => Some(Effect::Quit),
-        // The server block comes with the app's own server.
         Action::StartServer
         | Action::StopServer
         | Action::RestartServer
         | Action::CopyAddress
-        | Action::ServerSettings => None,
+        | Action::ServerSettings => server_effect(action, snapshot),
+    }
+}
+
+// A server pick does something only while its item is there and enabled.
+fn server_effect(action: Action, snapshot: &Snapshot) -> Option<Effect> {
+    let enabled = menu(snapshot)
+        .iter()
+        .any(|item| matches!(item, Item::Button { action: a, enabled: true, .. } if *a == action));
+    match action {
+        _ if !enabled => None,
+        Action::StartServer => Some(Effect::StartServer),
+        Action::StopServer => Some(Effect::StopServer),
+        Action::RestartServer => Some(Effect::RestartServer),
+        Action::CopyAddress => Some(Effect::CopyAddress),
+        Action::ServerSettings => Some(Effect::Page(TrayAction::Settings { section: SERVER })),
+        Action::Open
+        | Action::Online
+        | Action::Offline
+        | Action::Mute
+        | Action::CheckUpdates
+        | Action::Quit => None,
     }
 }
 
@@ -645,19 +674,84 @@ mod tests {
         }
     }
 
+    const SERVER_PICKS: [Action; 5] = [
+        Action::StartServer,
+        Action::StopServer,
+        Action::RestartServer,
+        Action::CopyAddress,
+        Action::ServerSettings,
+    ];
+    const STATES: [ServerState; 5] = [
+        ServerState::Off,
+        ServerState::Starting,
+        ServerState::Running,
+        ServerState::Stopping,
+        ServerState::Failed,
+    ];
+
     #[test]
-    fn server_picks_wait_for_the_server() {
-        for action in [
-            Action::StartServer,
-            Action::StopServer,
-            Action::RestartServer,
-            Action::CopyAddress,
-            Action::ServerSettings,
-        ] {
+    fn server_picks_have_effects() {
+        let running = server(ServerState::Running, 1, false);
+        assert_eq!(effect(Action::StartServer, &running), None);
+        assert_eq!(
+            effect(Action::StopServer, &running),
+            Some(Effect::StopServer)
+        );
+        assert_eq!(
+            effect(Action::RestartServer, &running),
+            Some(Effect::RestartServer)
+        );
+        assert_eq!(
+            effect(Action::CopyAddress, &running),
+            Some(Effect::CopyAddress)
+        );
+        for state in [ServerState::Off, ServerState::Failed] {
+            let stopped = server(state, 0, false);
             assert_eq!(
-                effect(action, &server(ServerState::Running, 1, false)),
-                None
+                effect(Action::StartServer, &stopped),
+                Some(Effect::StartServer)
             );
+            for action in [
+                Action::StopServer,
+                Action::RestartServer,
+                Action::CopyAddress,
+            ] {
+                assert_eq!(effect(action, &stopped), None);
+            }
+        }
+        for state in STATES {
+            assert_eq!(
+                effect(Action::ServerSettings, &server(state, 0, false)),
+                Some(Effect::Page(TrayAction::Settings { section: "server" }))
+            );
+        }
+    }
+
+    // A disabled item does nothing, even if a tray host sends its click anyway.
+    #[test]
+    fn a_server_pick_works_exactly_when_its_item_is_enabled() {
+        for state in STATES {
+            for needs_restart in [false, true] {
+                let snapshot = server(state, 2, needs_restart);
+                let shown = menu(&snapshot);
+                for action in SERVER_PICKS {
+                    let enabled = shown.iter().any(|item| {
+                        matches!(item, Item::Button { action: a, enabled: true, .. } if *a == action)
+                    });
+                    assert_eq!(
+                        effect(action, &snapshot).is_some(),
+                        enabled,
+                        "{state:?} {action:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn server_picks_do_nothing_without_a_server() {
+        for action in SERVER_PICKS {
+            assert_eq!(effect(action, &PLAIN), None);
         }
     }
 
@@ -667,6 +761,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(TrayAction::Status { online: true }).unwrap(),
             serde_json::json!({"kind": "status", "online": true})
+        );
+        assert_eq!(
+            serde_json::to_value(TrayAction::Settings { section: "server" }).unwrap(),
+            serde_json::json!({"kind": "settings", "section": "server"})
         );
         assert_eq!(
             serde_json::to_value(TrayAction::Status { online: false }).unwrap(),

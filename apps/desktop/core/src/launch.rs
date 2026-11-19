@@ -70,8 +70,9 @@ pub fn plan(launch: Launch, settings: &Settings, tray: bool) -> Plan {
         Some(Boot { client: false, .. }) => (true, true),
     };
     Plan {
-        webview,
-        show,
+        // So does a window that was open when an update restarted the app.
+        webview: webview || settings.resume_window,
+        show: show || settings.resume_window,
         // A server stopped for an update comes back whatever started the app.
         server: set_up && (settings.resume_server || wanted),
     }
@@ -314,6 +315,30 @@ mod tests {
             ),
             HIDDEN
         );
+    }
+
+    // "Install and restart" starts the app again with the arguments it had.
+    #[test]
+    fn a_window_open_before_an_update_comes_back_shown() {
+        let hidden = boot(true, true, false);
+        let server_only = boot(false, true, true);
+        let again = |launch, b, resume_server| {
+            let s = Settings {
+                resume_window: true,
+                ..settings(b, true, false, resume_server)
+            };
+            plan(launch, &s, true)
+        };
+        assert_eq!(again(Launch::Autostart, hidden, false), SHOWN);
+        assert_eq!(again(Launch::LegacyHidden, hidden, false), SHOWN);
+        assert_eq!(again(Launch::Manual, hidden, false), SHOWN);
+        assert_eq!(again(Launch::Autostart, hidden, true), with_server(SHOWN));
+        assert_eq!(
+            again(Launch::Autostart, server_only, false),
+            with_server(SHOWN)
+        );
+        let closed = settings(hidden, true, false, true);
+        assert_eq!(plan(Launch::Autostart, &closed, true), with_server(HIDDEN));
     }
 
     #[test]

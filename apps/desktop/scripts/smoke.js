@@ -1,8 +1,9 @@
 // Smoke test for a desktop build made with `--features smoke`; scripts/smoke.sh prepends
 // SMOKE_INSTANCE and SMOKE_HOLD and starts the app with an `rchat://` link to the instance.
 // Checks that the link waits for a click before switching instance, enters as a guest, saves
-// files through the shell, opens Settings and checks the desktop parts, then reports through a
-// smoke:// navigation the shell turns into the exit code.
+// files through the shell, checks the app's own server when SMOKE_SERVER names its port, opens
+// Settings and checks the desktop parts, then reports through a smoke:// navigation the shell
+// turns into the exit code.
 ;(() => {
   if (window.top !== window) return
   const done = (ok, why = '') => {
@@ -64,6 +65,30 @@
     if (!stale) throw new Error('an aborted save took more data')
   }
 
+  // The app's own server, set up by the shell for this run: its API answers, it serves the
+  // bundled web app, and the shell reports it as running.
+  const ownServer = async () => {
+    if (!SMOKE_SERVER) return
+    const origin = `http://127.0.0.1:${SMOKE_SERVER}`
+    const health = await fetch(`${origin}/api/health`).then(r => r.json())
+    if (health.ok !== true) throw new Error('own server: no health answer')
+    const page = await fetch(`${origin}/`)
+    const html = await page.text()
+    if (!page.ok || !/<html/i.test(html) || !html.includes('/_next/static/'))
+      throw new Error(`own server: no web app at / (${page.status})`)
+    const missing = await fetch(`${origin}/_next/static/none.js`)
+    if (missing.status !== 404) throw new Error(`own server: a missing file gave ${missing.status}`)
+    const status = await invoke('server_status')
+    if (status.state !== 'running' || status.url !== origin)
+      throw new Error(`own server: status ${status.state} ${status.url} ${status.error}`)
+    const logs = await invoke('server_logs', { after: 0 })
+    if (!logs.lines.some(l => l.text.endsWith(`Listening on ${origin}`)))
+      throw new Error('own server: no start-up line in the log')
+    const prefs = await invoke('desktop_settings')
+    if (prefs.server.database_url !== '' || prefs.server.database_url_set !== false)
+      throw new Error('own server: settings without the secret flags')
+  }
+
   const run = async () => {
     if (!sessionStorage.getItem(PHASE)) return confirmLink()
     const info = window.__RCHAT_DESKTOP__
@@ -108,6 +133,7 @@
     if (!denied) throw new Error('a plugin command outside the capability was allowed')
     if ((await invoke('notify_permission')) !== 'granted') throw new Error('no notifications')
     await saves()
+    await ownServer()
 
     settings.click()
     await wait('desktop settings', () => {

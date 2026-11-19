@@ -3,6 +3,8 @@
 # display against a running instance, opened through an rchat:// link, and exits with its
 # verdict. Saves go to a temp folder and are checked afterwards.
 # Usage: apps/desktop/scripts/smoke.sh http://localhost:3000 [screenshot.png]
+# With RCHAT_SMOKE_SERVER=<port> the app also runs its own server on that port, and the page
+# checks that it answers and serves the web app.
 # Needs xvfb-run (and ImageMagick `import` for the screenshot), or a KDE kwin_wayland (and
 # spectacle for the screenshot).
 set -euo pipefail
@@ -26,6 +28,7 @@ fi
 
 {
   printf "var SMOKE_INSTANCE = '%s';\nvar SMOKE_HOLD = %s;\n" "$instance" "${SMOKE_HOLD:-3}"
+  printf "var SMOKE_SERVER = %d;\n" "${RCHAT_SMOKE_SERVER:-0}"
   cat "$here/smoke.js"
 } > "$work/smoke.js"
 

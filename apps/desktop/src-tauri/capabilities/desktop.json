@@ -31,6 +31,19 @@
     "allow-set-autostart",
     "allow-update-check",
     "allow-update-install",
-    "allow-set-tray-state"
+    "allow-set-tray-state",
+    "allow-server-status",
+    "allow-server-save",
+    "allow-server-start",
+    "allow-server-stop",
+    "allow-server-restart",
+    "allow-server-logs",
+    "allow-server-backup",
+    "allow-server-restore",
+    "allow-server-test-address",
+    "allow-server-move",
+    "allow-server-pick-folder",
+    "allow-server-open-folder",
+    "allow-server-remove"
   ]
 }

@@ -224,8 +224,11 @@ describe('shell commands', () => {
         listen: '',
         relay: false,
         extra: '',
+        database_url_set: false,
+        extra_set: false,
       },
       resume_server: false,
+      resume_window: false,
     }
     await shell.setSettings(settings)
     await shell.setAutostart(true)

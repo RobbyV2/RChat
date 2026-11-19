@@ -86,6 +86,8 @@ export default tseslint.config(
         sessionStorage: 'readonly',
         SMOKE_INSTANCE: 'readonly',
         SMOKE_HOLD: 'readonly',
+        SMOKE_SERVER: 'readonly',
+        fetch: 'readonly',
       },
     },
   }
