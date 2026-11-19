@@ -37,11 +37,18 @@ export function SourceNote({ row }: { row: AdminRow }) {
           <span className={chipCls}>From server config</span>
         </p>
       )
-    case 'differs':
+    case 'differs': {
+      const said = shownValue(control.config ?? '', options)
       return (
         <p data-source="differs" className={lineCls}>
           <span className="min-w-0 break-words">
-            Server config says {shownValue(control.config ?? '', options)}.
+            Server config says{' '}
+            {row.kind === 'names' || row.kind === 'link' ? (
+              <span className="streamer">{said}</span>
+            ) : (
+              said
+            )}
+            .
           </span>
           {patchFor(control.key, control.config ?? '') !== null && (
             <button onClick={() => apply([control])} className={`${textBtn} -my-1 shrink-0`}>
@@ -50,5 +57,6 @@ export function SourceNote({ row }: { row: AdminRow }) {
           )}
         </p>
       )
+    }
   }
 }

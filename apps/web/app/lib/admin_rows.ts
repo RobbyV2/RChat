@@ -54,6 +54,12 @@ export type AdminRow =
     })
   | (Base & { kind: 'number'; min: number; max: number; unit: string })
   | (Base & { kind: 'targets' })
+  // A list of usernames and server:role entries.
+  | (Base & { kind: 'names' })
+  // A control another section edits.
+  | (Base & { kind: 'link'; to: string; action: string })
+  // A control only the server config or its own editor sets.
+  | (Base & { kind: 'info' })
 
 export const ADMIN_ROWS: AdminRow[] = [
   {
@@ -122,6 +128,37 @@ export const ADMIN_ROWS: AdminRow[] = [
     keywords: ['recovery'],
   },
   {
+    key: 'server_creation',
+    env: 'SERVER_CREATION',
+    group: 'Servers',
+    kind: 'choice',
+    label: 'Who can create servers',
+    line: 'Existing servers and their owners are untouched.',
+    options: [
+      { value: 'everyone', label: 'Everyone', line: 'Anyone with an account can create a server.' },
+      {
+        value: 'nobody',
+        label: 'Nobody',
+        line: 'Nobody can create a server. You can still make one for someone in Servers.',
+      },
+      {
+        value: 'some',
+        label: 'Some people',
+        line: 'Only the people and holders of the roles on the list below.',
+      },
+    ],
+  },
+  {
+    key: 'server_creators',
+    env: 'SERVER_CREATORS',
+    group: 'Servers',
+    kind: 'names',
+    under: 'server_creation',
+    label: 'People who can create servers',
+    line: 'Usernames, and roles as server:role, for example lobby:Staff. Used while only some people can create servers.',
+    keywords: ['creators'],
+  },
+  {
     key: 'server_joining',
     env: 'SERVER_JOINING',
     group: 'Servers',
@@ -151,6 +188,26 @@ export const ADMIN_ROWS: AdminRow[] = [
     label: 'Public reading',
     line: "Lets a server's owner let people who aren't members read it.",
     off: 'Only members read servers.',
+  },
+  {
+    key: 'server_search',
+    env: 'SERVER_SEARCH',
+    group: 'Servers',
+    kind: 'switch',
+    label: 'Server search',
+    line: 'Lets people find servers by name.',
+    off: 'Browsing and join suggestions are hidden. Servers stay reachable by name or invite.',
+    keywords: ['discovery', 'browse'],
+  },
+  {
+    key: 'default_servers',
+    env: 'DEFAULT_SERVERS',
+    group: 'Servers',
+    kind: 'link',
+    to: 'servers',
+    action: 'Edit in Servers',
+    label: 'Default servers',
+    line: 'The servers every new account joins. Guests start in the ones anyone can read.',
   },
   {
     key: 'profile_visibility',
@@ -202,6 +259,33 @@ export const ADMIN_ROWS: AdminRow[] = [
     ],
   },
   {
+    key: 'dm_creation',
+    env: 'DM_CREATION',
+    group: 'Messages and files',
+    kind: 'choice',
+    label: 'Direct messages',
+    line: 'Who can start a direct conversation. Existing ones keep working.',
+    keywords: ['dm', 'dms'],
+    options: [
+      { value: 'everyone', label: 'Everyone', line: 'Anyone can start a direct conversation.' },
+      {
+        value: 'friends',
+        label: 'Only between friends',
+        line: 'Only friends can start a direct conversation.',
+      },
+      { value: 'nobody', label: 'Nobody', line: 'Nobody can start a new direct conversation.' },
+    ],
+  },
+  {
+    key: 'friend_requests',
+    env: 'FEATURE_FRIEND_REQUESTS',
+    group: 'Messages and files',
+    kind: 'switch',
+    label: 'Friend requests',
+    line: 'Lets people send friend requests.',
+    off: 'New requests are refused. Pending ones can still be answered, and friends stay.',
+  },
+  {
     key: 'asset_uploads',
     env: 'FEATURE_FILE_UPLOADS',
     group: 'Messages and files',
@@ -247,6 +331,25 @@ export const ADMIN_ROWS: AdminRow[] = [
     kind: 'switch',
     label: 'Outgoing webhooks',
     line: 'Lets server managers send events to URLs they choose.',
+  },
+  {
+    key: 'incoming_webhooks',
+    env: 'FEATURE_INCOMING_WEBHOOKS',
+    group: 'Messages and files',
+    kind: 'switch',
+    label: 'Incoming webhooks',
+    line: 'Lets server managers post messages from other services.',
+    off: 'None can be created and none post. Existing ones are kept.',
+  },
+  {
+    key: 'calls',
+    env: 'FEATURE_CALLS',
+    group: 'Calls',
+    kind: 'switch',
+    label: 'Calls',
+    line: 'Voice channels and calls through this instance.',
+    off: 'Running calls end and nobody can start one. Voice channels stay. P2P calls follow Peer-to-peer.',
+    keywords: ['voice'],
   },
   {
     key: 'sfu',
@@ -316,6 +419,14 @@ export const ADMIN_ROWS: AdminRow[] = [
     kind: 'switch',
     label: 'Instance reports',
     line: 'Lets people report to this instance.',
+  },
+  {
+    key: 'report_forms',
+    env: 'REPORT_FORMS_FILE',
+    group: 'Safety',
+    kind: 'info',
+    label: 'Report forms',
+    line: 'The report categories and their fields. The server config names a file that holds them.',
   },
   {
     key: 'widgets',
@@ -388,8 +499,8 @@ export const rowsUnder = (key: string) => ADMIN_ROWS.filter(r => r.under === key
 // What search finds in the Features section.
 export const featureSearchRows = (): SearchRow[] =>
   ADMIN_ROWS.map(r => ({
-    section: 'features',
-    group: r.group,
+    section: r.kind === 'link' ? r.to : 'features',
+    group: r.kind === 'link' ? undefined : r.group,
     id: r.key,
     label: r.label,
     line: [r.line, ...(r.kind === 'choice' ? r.options.map(o => o.label) : [])].join(' '),

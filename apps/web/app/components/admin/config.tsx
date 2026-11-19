@@ -37,6 +37,7 @@ function Control({ control }: { control: ConfigControl }) {
   const options = row?.kind === 'choice' ? row.options : []
   const source = sourceOf(control)
   const names = NAMES.has(control.key) ? 'streamer' : ''
+  const where = row?.kind === 'link' ? 'servers' : 'features'
   return (
     <PageRow
       id={`config-${control.key}`}
@@ -68,8 +69,8 @@ function Control({ control }: { control: ConfigControl }) {
           </button>
         )}
         {row && (
-          <button onClick={() => openAdmin('features', null, control.key)} className={textBtn}>
-            Show in Features
+          <button onClick={() => openAdmin(where, null, control.key)} className={textBtn}>
+            {where === 'servers' ? 'Show in Servers' : 'Show in Features'}
           </button>
         )}
       </div>

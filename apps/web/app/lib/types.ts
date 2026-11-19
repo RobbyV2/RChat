@@ -592,6 +592,22 @@ export interface SiteSettings {
   server_joining?: ServerJoining
   // Whether server owners can make servers publicly readable. Absent on older servers: on.
   public_reading?: boolean
+  // Who can create servers. `some` is a list only the site admin reads. Absent on older
+  // servers: everyone.
+  server_creation?: ServerCreation
+  // Absent on older servers: on.
+  server_search?: boolean
+  // Who can start a direct conversation. Absent on older servers: everyone.
+  dm_creation?: DmCreation
+  // Absent on older servers: on.
+  friend_requests?: boolean
+  calls?: boolean
+  incoming_webhooks?: boolean
+  // The default servers anyone can read, where guests start.
+  guest_servers?: string[]
+  // Whether the server every instance starts with is still there. Absent on older servers:
+  // kept.
+  builtin_server?: 'kept' | 'removed'
   // Who can see profiles. Absent on servers before it, which have no profile choice.
   profile_visibility?: ProfileLevel
   // What accounts may choose for their own profile; siteSettings fills it in once the level
@@ -602,6 +618,10 @@ export interface SiteSettings {
 export type Registration = 'open' | 'sso' | 'closed'
 
 export type ServerJoining = 'everyone' | 'invites' | 'nobody'
+
+export type ServerCreation = 'everyone' | 'nobody' | 'some'
+
+export type DmCreation = 'everyone' | 'friends' | 'nobody'
 
 export type SiteSettingsPatch = Partial<Omit<SiteSettings, 'profanity_targets'>> & {
   profanity_targets?: Partial<ProfanityTargets>

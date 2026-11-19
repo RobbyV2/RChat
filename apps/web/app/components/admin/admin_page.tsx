@@ -11,7 +11,7 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react'
-import { featureSearchRows } from '../../lib/admin_rows'
+import { adminRow, featureSearchRows } from '../../lib/admin_rows'
 import { useStore } from '../../lib/store'
 import type { AdminSection } from '../../lib/view'
 import { SettingsPage, type PageSection } from '../settings_page'
@@ -60,34 +60,61 @@ function Page() {
       ...SECTIONS[id],
       rows:
         id === 'features'
-          ? featureSearchRows()
-          : id === 'config'
+          ? [
+              ...featureSearchRows().filter(r => r.section === 'features'),
+              {
+                section: 'features',
+                group: 'P2P',
+                id: 'p2p_all',
+                label: 'Turn off all P2P',
+                line: 'Peer-to-peer, P2P attachments and P2P backups in one change.',
+              },
+            ]
+          : id === 'servers'
             ? [
-                ...(config?.controls ?? []).map(c => ({
-                  section: 'config',
-                  group: 'Settings',
-                  id: `config-${c.key}`,
-                  label: controlLabel(c),
-                  env: c.env,
-                })),
-                ...(config?.limits ?? []).map(l => ({
-                  section: 'config',
-                  group: 'Limits',
-                  id: `limit-${l.env}`,
-                  label: l.env,
-                  env: l.env,
-                })),
+                ...featureSearchRows().filter(r => r.section === 'servers'),
+                {
+                  section: 'servers',
+                  id: 'create_server',
+                  label: 'Create a server',
+                  line: 'Makes a server for an account, with an owner you pick.',
+                },
+                {
+                  section: 'servers',
+                  id: 'builtin_server',
+                  label: 'Built-in server',
+                  line: 'Rename or delete the server every instance starts with.',
+                },
               ]
-            : id === 'danger'
+            : id === 'config'
               ? [
-                  {
-                    section: 'danger',
-                    id: 'delete_message',
-                    label: 'Delete a message',
-                    line: 'Removes one message for everyone, by its id.',
-                  },
+                  ...(config?.controls ?? [])
+                    .filter(c => !adminRow(c.key))
+                    .map(c => ({
+                      section: 'config',
+                      group: 'Settings',
+                      id: `config-${c.key}`,
+                      label: controlLabel(c),
+                      env: c.env,
+                    })),
+                  ...(config?.limits ?? []).map(l => ({
+                    section: 'config',
+                    group: 'Limits',
+                    id: `limit-${l.env}`,
+                    label: l.env,
+                    env: l.env,
+                  })),
                 ]
-              : undefined,
+              : id === 'danger'
+                ? [
+                    {
+                      section: 'danger',
+                      id: 'delete_message',
+                      label: 'Delete a message',
+                      line: 'Removes one message for everyone, by its id.',
+                    },
+                  ]
+                : undefined,
       render: body[id],
     }))
   }, [item, config])

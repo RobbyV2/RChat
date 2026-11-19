@@ -114,6 +114,39 @@ describe('feature switches', () => {
     expect(odd.public_reading).toBe(true)
   })
 
+  test('an older instance has every newer control at its open value', () => {
+    const s = siteSettings(older)
+    expect([s.server_creation, s.dm_creation]).toEqual(['everyone', 'everyone'])
+    expect([s.server_search, s.friend_requests, s.calls, s.incoming_webhooks]).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ])
+    const sent = siteSettings({
+      ...older,
+      server_creation: 'some',
+      dm_creation: 'friends',
+      server_search: false,
+      friend_requests: false,
+      calls: false,
+      incoming_webhooks: false,
+    } as SiteSettings)
+    expect([sent.server_creation, sent.dm_creation]).toEqual(['some', 'friends'])
+    expect([sent.server_search, sent.friend_requests, sent.calls, sent.incoming_webhooks]).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ])
+    const odd = siteSettings({
+      ...older,
+      server_creation: 'staff',
+      dm_creation: 'mutuals',
+    } as unknown as SiteSettings)
+    expect([odd.server_creation, odd.dm_creation]).toEqual(['nobody', 'nobody'])
+  })
+
   test('other instances stay allowed unless the instance turns them off', () => {
     expect(siteSettings(older).client_other_instances).toBe(true)
     const off = siteSettings({ ...older, client_other_instances: false } as SiteSettings)

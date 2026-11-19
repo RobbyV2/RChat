@@ -806,6 +806,8 @@ export const endpoints = (c: ApiClient) => ({
   adminServers: (cursor: string | null, q: string) =>
     c.page<ServerSummaryLite>(withCursor(`/admin/servers?limit=50&q=${seg(q)}`, cursor)),
   adminDeleteServer: (name: string) => c.req<unknown>('DELETE', `/admin/servers/${seg(name)}`),
+  adminCreateServer: (body: { name: string; owner: string; password?: string }) =>
+    c.req<ServerDetail>('POST', '/admin/servers', body),
   adminDeleteUser: (username: string) => c.req<unknown>('DELETE', `/admin/users/${seg(username)}`),
   adminRemovePhrase: (username: string) =>
     c.req<{ removed: boolean }>('DELETE', `/admin/users/${seg(username)}/recovery`),

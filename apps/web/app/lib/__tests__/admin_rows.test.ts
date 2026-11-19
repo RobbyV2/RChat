@@ -10,6 +10,7 @@ import {
   registrationOptions,
   rowsUnder,
 } from '../admin_rows'
+import { patchFor } from '../admin_config'
 import { searchRows } from '../settings_search'
 import type { SiteSettings } from '../types'
 
@@ -45,7 +46,18 @@ const SETTINGS: Record<keyof SiteSettings, true> = {
   public_reading: true,
   profile_visibility: true,
   profile_choices: true,
+  server_creation: true,
+  server_search: true,
+  dm_creation: true,
+  friend_requests: true,
+  calls: true,
+  incoming_webhooks: true,
+  guest_servers: true,
+  builtin_server: true,
 }
+
+// Settings the server works out from others: nothing sets them directly.
+const DERIVED = ['guest_servers', 'builtin_server']
 
 const example = readFileSync(
   fileURLToPath(new URL('../../../../../.env.local.example', import.meta.url)),
@@ -70,7 +82,46 @@ const marked = example.flatMap((line, at) => {
 
 test('every site setting has a row', () => {
   const keys = ADMIN_ROWS.map(r => r.key)
-  for (const key of Object.keys(SETTINGS)) expect(keys).toContain(key)
+  for (const key of Object.keys(SETTINGS)) {
+    if (DERIVED.includes(key)) expect(keys).not.toContain(key)
+    else expect(keys).toContain(key)
+  }
+})
+
+test('every setting the server config marks for the admin page has a row', () => {
+  const envs = ADMIN_ROWS.map(r => r.env)
+  for (const env of marked) expect(envs).toContain(env)
+})
+
+test('the page sets every control the way its row says', () => {
+  for (const row of ADMIN_ROWS) {
+    const patch = patchFor(row.key, row.kind === 'number' ? '7' : 'x')
+    const value = (patch as Record<string, unknown> | null)?.[row.key]
+    switch (row.kind) {
+      case 'names':
+        expect(value).toEqual(['x'])
+        break
+      case 'link':
+        expect(row.key).toBe('default_servers')
+        expect(value).toEqual(['x'])
+        break
+      case 'number':
+        expect(value).toBe(7)
+        break
+      case 'info':
+        expect(patch).toBeNull()
+        break
+      case 'targets':
+        expect(Object.keys(patch ?? {})).toEqual(['profanity_targets'])
+        break
+      case 'switch':
+        expect(patchFor(row.key, 'on')).toEqual({ [row.key]: true } as never)
+        break
+      case 'choice':
+        expect(value).toBe('x')
+        break
+    }
+  }
 })
 
 test('rows are unique and each names a setting of the server config that the page can change', () => {
@@ -140,6 +191,8 @@ test('a choice row lists every value the setting can take', () => {
   expect(values('server_joining')).toEqual(['everyone', 'invites', 'nobody'])
   expect(values('profile_visibility').sort()).toEqual(['everyone', 'public_servers', 'shared'])
   expect(values('profile_choices')).toEqual(['any', 'narrower', 'site'])
+  expect(values('server_creation')).toEqual(['everyone', 'nobody', 'some'])
+  expect(values('dm_creation')).toEqual(['everyone', 'friends', 'nobody'])
 })
 
 test('sign-on only is offered only while it is the stored value', () => {
@@ -159,4 +212,6 @@ test('search finds rows by label, line, group, option and env name', () => {
   expect(ids('widgets').slice(0, 1)).toEqual(['widgets'])
   expect(ids('safety')).toContain('profanity_filter')
   expect(searchRows(sections, 'guests')[0].trail).toEqual(['Features', 'Accounts', 'Guests'])
+  expect(featureSearchRows().find(r => r.id === 'default_servers')?.section).toBe('servers')
+  expect(ids('SERVER_CREATORS')).toEqual(['server_creators'])
 })

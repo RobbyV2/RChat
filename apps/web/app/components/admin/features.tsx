@@ -1,7 +1,8 @@
 'use client'
 
 import { useId, useState } from 'react'
-import { saveWarning } from '../../lib/admin_config'
+import { X } from 'lucide-react'
+import { controlOf, saveWarning, shownValue } from '../../lib/admin_config'
 import {
   ADMIN_GROUPS,
   groupRows,
@@ -11,6 +12,7 @@ import {
   type AdminRow,
   type RowOption,
 } from '../../lib/admin_rows'
+import { P2P_KEYS, addCreator, listOf, p2pAll, removeEntry } from '../../lib/admin_servers'
 import {
   PROFANITY_TARGETS,
   profanityTargetLocked,
@@ -22,9 +24,9 @@ import type { SiteSettings, SiteSettingsPatch } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
 import { SettingSwitch } from '../settings_fields'
 import { Chips, FieldError } from '../ui'
-import { usePinned } from './config_state'
+import { useConfigStore, useControl, usePinned } from './config_state'
 import { SourceNote } from './source'
-import { fieldCls, filledBtn } from './touch'
+import { fieldCls, filledBtn, textBtn } from './touch'
 
 type ChoiceRow = Extract<AdminRow, { kind: 'choice' }>
 type NumberRow = Extract<AdminRow, { kind: 'number' }>
@@ -217,6 +219,151 @@ function SwitchControl({ row }: { row: SwitchRow }) {
   )
 }
 
+// A list of usernames and server:role entries, which only the config view carries.
+function NamesControl({ row }: { row: AdminRow }) {
+  const control = useControl(row.key)
+  const updateSettings = useStore(s => s.updateSettings)
+  const [text, setText] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const pinned = control?.pinned ?? false
+  const list = listOf(control?.value)
+  const save = (next: string[]) => {
+    setError(null)
+    void updateSettings(patchOf(row.key, next))
+  }
+  return (
+    <div className="flex flex-col gap-1.5 px-2 py-1.5">
+      <RowText row={row} />
+      {control === null ? (
+        <p className="text-xs text-on-surface-variant">Loading</p>
+      ) : (
+        <>
+          {list.length === 0 ? (
+            <p className="text-xs text-on-surface-variant">Nobody is on the list.</p>
+          ) : (
+            <ul className="flex flex-wrap gap-1.5">
+              {list.map((entry, i) => (
+                <li
+                  key={entry}
+                  className="flex max-w-full min-w-0 items-center gap-1 rounded-full border border-outline-variant pr-0.5 pl-3 text-sm md:py-0.5 md:pr-1"
+                >
+                  <span className="streamer min-w-0 break-all">{entry}</span>
+                  <button
+                    type="button"
+                    data-icon-only
+                    title="Remove from the list"
+                    aria-label="Remove from the list"
+                    disabled={pinned}
+                    onClick={() => save(removeEntry(list, i))}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-on-surface-variant enabled:hover:bg-surface-container-high disabled:opacity-50 md:h-7 md:w-7"
+                  >
+                    <X size={14} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form
+            onSubmit={e => {
+              e.preventDefault()
+              const edit = addCreator(list, text)
+              setError(edit.error)
+              if (edit.error !== null) return
+              setText('')
+              save(edit.list)
+            }}
+            className="flex gap-2"
+          >
+            <input
+              value={text}
+              disabled={pinned}
+              onChange={e => {
+                setError(null)
+                setText(e.target.value)
+              }}
+              placeholder="Username or server:role"
+              aria-label="Add a person or role"
+              className={`${fieldCls} streamer disabled:opacity-50`}
+            />
+            <button disabled={pinned} className={`${textBtn} shrink-0 disabled:opacity-50`}>
+              Add
+            </button>
+          </form>
+          <FieldError message={error} />
+        </>
+      )}
+    </div>
+  )
+}
+
+type LinkRow = Extract<AdminRow, { kind: 'link' }>
+
+function LinkControl({ row }: { row: LinkRow }) {
+  const openAdmin = useStore(s => s.openAdmin)
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-2 py-1.5">
+      <span className="min-w-40 flex-1">
+        <RowText row={row} />
+      </span>
+      <button
+        onClick={() => openAdmin(row.to === 'servers' ? 'servers' : 'features', null, row.key)}
+        className={`${textBtn} shrink-0`}
+      >
+        {row.action}
+      </button>
+    </div>
+  )
+}
+
+function InfoControl({ row }: { row: AdminRow }) {
+  const control = useControl(row.key)
+  return (
+    <div className="flex flex-col gap-1 px-2 py-1.5">
+      <RowText row={row} />
+      {control && (
+        <p className="text-xs break-words text-on-surface-variant">
+          Now: {shownValue(control.value)}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// Peer-to-peer, P2P attachments and P2P backups in one change.
+function P2pAll() {
+  const settings = useStore(s => s.settings)
+  const updateSettings = useStore(s => s.updateSettings)
+  const askConfirm = useStore(s => s.askConfirm)
+  const pinned = useConfigStore(s => P2P_KEYS.some(k => controlOf(s.config, k)?.pinned))
+  const { label, patch } = p2pAll(settings)
+  return (
+    <PageRow id="p2p_all" className="flex flex-wrap items-center gap-2 px-2 py-1.5">
+      <span className="flex min-w-40 flex-1 flex-col">
+        <span className="text-sm">All of P2P</span>
+        <span className="text-xs text-on-surface-variant">
+          Peer-to-peer, P2P attachments and P2P backups in one change.
+        </span>
+      </span>
+      <button
+        disabled={pinned}
+        onClick={() =>
+          askConfirm({
+            title: patch.p2p ? 'Turn On All P2P' : 'Turn Off All P2P',
+            body: patch.p2p
+              ? 'Turn on Peer-to-peer, P2P attachments and P2P backups?'
+              : 'Turn off Peer-to-peer, P2P attachments and P2P backups? The app hides P2P and stops P2P signaling. Data stays on devices.',
+            confirm: patch.p2p ? 'Turn on' : 'Turn off',
+            action: () => void updateSettings(patch),
+          })
+        }
+        className={`${textBtn} shrink-0 disabled:opacity-50`}
+      >
+        {label}
+      </button>
+    </PageRow>
+  )
+}
+
 function RowControl({ row }: { row: AdminRow }) {
   switch (row.kind) {
     case 'switch':
@@ -227,6 +374,12 @@ function RowControl({ row }: { row: AdminRow }) {
       return <NumberControl row={row} />
     case 'targets':
       return <TargetChecks row={row} />
+    case 'names':
+      return <NamesControl row={row} />
+    case 'link':
+      return <LinkControl row={row} />
+    case 'info':
+      return <InfoControl row={row} />
   }
 }
 
@@ -239,6 +392,7 @@ export function FeaturesSection() {
         if (rows.length === 0) return null
         return (
           <PageGroup key={group} label={group}>
+            {group === 'P2P' && <P2pAll />}
             {rows.flatMap(row =>
               [row, ...rowsUnder(row.key)].map(r => (
                 <PageRow key={r.key} id={r.key}>

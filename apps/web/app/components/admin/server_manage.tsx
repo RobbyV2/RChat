@@ -5,6 +5,7 @@ import { Trash2 } from 'lucide-react'
 import { api } from '../../lib/instances'
 import type { ServerDetail } from '../../lib/types'
 import { confirmKick, errorText, inSession, revokeAdminFor, useStore } from '../../lib/store'
+import { isBuiltin } from '../../lib/admin_servers'
 import { canDeleteChannel } from '../../lib/rules'
 import { UserAvatar } from '../user_avatar'
 import {
@@ -70,6 +71,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
   const cache = useStore(s => s.members[name])
   const loadMembers = useStore(s => s.loadMembers)
   const me = useStore(s => s.me)
+  const builtin = useStore(s => isBuiltin(name, s.settings))
   const [detail, setDetail] = useState<ServerDetail | null>(null)
   const [editingAdmin, setEditingAdmin] = useState<string | null>(null)
   const [banning, setBanning] = useState<string | null>(null)
@@ -99,21 +101,25 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
   const run = (fn: () => Promise<void>) => void fn().then(inSession(refresh))
 
   return (
-    <div className="space-y-2 border-t border-outline-variant px-3 py-3">
-      {name !== 'rchat' && (
+    <div className="space-y-2 px-3 py-3">
+      <NameForm
+        initial={detail.display_name}
+        placeholder="Server name"
+        submitLabel="Rename"
+        streamer
+        onSubmit={v =>
+          renameServer(name, v).then(
+            onCollapse,
+            inSession((e: unknown) => setError(errorText(e)))
+          )
+        }
+      />
+      {builtin ? (
+        <p className="text-xs text-on-surface-variant">
+          The built-in server keeps its address and has no password.
+        </p>
+      ) : (
         <>
-          <NameForm
-            initial={detail.display_name}
-            placeholder="Server name"
-            submitLabel="Rename"
-            streamer
-            onSubmit={v =>
-              renameServer(name, v).then(
-                onCollapse,
-                inSession((e: unknown) => setError(errorText(e)))
-              )
-            }
-          />
           <ServerPasswordField
             server={name}
             hasPassword={detail.has_password}

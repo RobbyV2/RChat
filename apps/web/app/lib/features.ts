@@ -1,5 +1,5 @@
 import { parseProfileChoices, parseProfileLevel } from './profile_choice'
-import type { Registration, ServerJoining, SiteSettings } from './types'
+import type { DmCreation, Registration, ServerCreation, ServerJoining, SiteSettings } from './types'
 
 // The site-wide feature switches (`GET /api/settings`), each a plain on or off.
 export const FEATURE_KEYS = [
@@ -55,6 +55,18 @@ const joiningOf = (value: unknown): ServerJoining => {
   return value === 'everyone' || value === 'invites' || value === 'nobody' ? value : 'nobody'
 }
 
+// An older instance lets everyone create servers. A value this app does not know reads as the
+// strictest.
+const creationOf = (value: unknown): ServerCreation => {
+  if (typeof value !== 'string') return 'everyone'
+  return value === 'everyone' || value === 'some' ? value : 'nobody'
+}
+
+const dmCreationOf = (value: unknown): DmCreation => {
+  if (typeof value !== 'string') return 'everyone'
+  return value === 'everyone' || value === 'friends' ? value : 'nobody'
+}
+
 // An instance from before profile visibility has neither; one from before the choices lets
 // accounts only narrow.
 const profileSettings = (sent: Record<string, unknown>) => {
@@ -81,6 +93,12 @@ export const siteSettings = (s: SiteSettings): SiteSettings => {
     registration: registrationOf(sent.registration),
     server_joining: joiningOf(sent.server_joining),
     public_reading: sent.public_reading !== false,
+    server_creation: creationOf(sent.server_creation),
+    server_search: sent.server_search !== false,
+    dm_creation: dmCreationOf(sent.dm_creation),
+    friend_requests: sent.friend_requests !== false,
+    calls: sent.calls !== false,
+    incoming_webhooks: sent.incoming_webhooks !== false,
     ...profileSettings(sent),
     upload_expiry_max_days:
       Number.isInteger(sent.upload_expiry_max_days) && (sent.upload_expiry_max_days as number) >= 0
