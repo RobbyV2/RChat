@@ -103,6 +103,7 @@ export interface PaletteItem {
   // Running it changes what the palette shows instead of closing it.
   keepOpen?: boolean
   arg?: ArgSpec
+  available?: () => boolean
   // `arg` is the text or choice value when the item has an `arg`.
   run: (arg?: string) => void | Promise<void>
 }

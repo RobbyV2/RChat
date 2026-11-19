@@ -1,5 +1,5 @@
 import type { ArgSpec, PaletteCommand } from '../palette'
-import { allActions, guardAction, isAvailable, labelOf } from './registry'
+import { actionById, allActions, guardAction, isAvailable, labelOf } from './registry'
 import {
   askable,
   confirmThenRun,
@@ -44,6 +44,7 @@ export const paletteRow = (a: Action, ctx: ActionCtx): PaletteCommand => {
     slash: a.slash,
     parse: step && parse && (text => guardAction(a, () => parse(text), null)),
     arg: step && argOf(step, ctx),
+    available: a.scope === 'app' ? () => actionById(a.id) === a && isAvailable(a, ctx) : undefined,
     run: arg => confirmThenRun(a, ctx, step && arg !== undefined ? { [step.name]: arg } : {}),
   }
 }

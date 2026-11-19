@@ -124,6 +124,7 @@ export interface AdminPlace {
 
 export type ActiveDialog =
   | { kind: 'add_server'; join?: string; locked?: boolean; tab?: 'create' | 'join' }
+  | { kind: 'app_preview'; server: string }
   | { kind: 'server_settings'; server: string }
   | { kind: 'audit_log'; server: string }
   | { kind: 'webhooks'; server: string }

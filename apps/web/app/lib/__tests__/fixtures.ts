@@ -13,6 +13,10 @@ import type {
 
 const memory = new Map<string, string>()
 export const memoryStorage = {
+  get length() {
+    return memory.size
+  },
+  key: (i: number) => [...memory.keys()][i] ?? null,
   getItem: (k: string) => memory.get(k) ?? null,
   setItem: (k: string, v: string) => void memory.set(k, String(v)),
   removeItem: (k: string) => void memory.delete(k),

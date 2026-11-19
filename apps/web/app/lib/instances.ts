@@ -457,7 +457,7 @@ const storage = (): StorageLike | null => {
   }
 }
 
-const local = (): StorageLike | null => (typeof localStorage === 'undefined' ? null : localStorage)
+const local = (): Storage | null => (typeof localStorage === 'undefined' ? null : localStorage)
 const session = (): StorageLike | null => window.sessionStorage
 
 // A value in the storage `store` gives; storage that throws (blocked, full or failing) reads as
@@ -485,6 +485,21 @@ function write(store: () => StorageLike | null, key: string, value: string | nul
 }
 
 export const readLocal = (key: string) => read(local, key)
+
+export const localKeys = (prefix: string): string[] => {
+  try {
+    const storage = local()
+    const keys: string[] = []
+    if (storage)
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i)
+        if (key?.startsWith(prefix)) keys.push(key)
+      }
+    return keys
+  } catch {
+    return []
+  }
+}
 
 export const writeLocal = (key: string, value: string | null) => write(local, key, value)
 

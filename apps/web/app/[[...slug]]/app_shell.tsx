@@ -23,6 +23,7 @@ import ServerSettings, { ConfirmDialog } from '../components/server_settings'
 import AuditLogDialog from '../components/audit_log'
 import WebhooksDialog from '../components/webhooks_dialog'
 import TimeoutDialog from '../components/timeout_dialog'
+import { AppPreview } from '../components/app_preview'
 import { ViewingPrompt } from '../components/viewing_prompt'
 import { RelayPrompt } from '../components/relay_settings'
 import SettingsMenu from '../components/settings_menu'
@@ -326,6 +327,7 @@ export default function AppShell() {
         <PaletteHost />
         <RelayPrompt />
         <ViewingPrompt />
+        <AppPreview />
         <P2pDialogs />
         <ProfileCard />
         <ContextMenu />

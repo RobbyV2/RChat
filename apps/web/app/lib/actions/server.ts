@@ -43,6 +43,20 @@ const onServer = { scope: 'server', targets: ['server'] } as const
 const onFolder = { scope: 'server', targets: ['folder'] } as const
 
 export const serverActions: Action[] = [
+  {
+    id: 'apps.preview',
+    title: 'App previews',
+    ...onServer,
+    available: ({ s, server }) =>
+      !!s.me &&
+      !s.guest &&
+      s.view?.kind === 'channel' &&
+      s.view.server === server &&
+      s.me.servers.some(x => x.name === server),
+    run: ({ server }) => {
+      if (server) get().openDialog({ kind: 'app_preview', server })
+    },
+  },
   notifySettings('server_notify', 'server', ['server'], ctx => {
     const server = railServer(ctx)
     return server === null ? null : { kind: 'server', name: server }

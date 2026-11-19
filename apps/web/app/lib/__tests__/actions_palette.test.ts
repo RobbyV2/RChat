@@ -383,6 +383,7 @@ const LOOKS = [
   ['settings_sync', 'Settings: Sync config', 'settings', 'Copy', '', '', ''],
   ['settings_palette', 'Settings: Command palette', 'settings', 'Command', '', '', ''],
   ['settings_information', 'Settings: Information', 'settings', 'Keyboard', '', '', ''],
+  ['apps.preview', 'App previews', 'commands', '', '', '', ''],
 ]
 const OTHER_LOOKS: Record<string, string[][]> = {
   dmState: [
@@ -470,7 +471,7 @@ const ORDER: Record<string, string> = {
     'audit_log webhooks timeout_member untimeout_s_bob leave_server poll mark_all_read mark_dms_read',
     'start_dm create_server join_server palette_help logout friends add_friends block',
     'accept_carol deny_carol unfriend_dave unblock_erin theme streamer typing profanity',
-    'spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information',
+    'spoilers appear_offline settings_settings settings_profile settings_general settings_notifications settings_privacy settings_sync settings_palette settings_information apps.preview',
   ].join(' '),
   dmState: [
     'home inbox mark_read_here jump_unread jump_present select pins copy_link_here',
@@ -737,7 +738,7 @@ test('rows come in the pinned order in each state', () => {
   expect(order(readOnlyState())).toBe(without(channel, 'poll'))
   expect(order(lobbyState())).toBe(without(channel, ...mod, 'leave_server'))
   expect(order(unloadedState())).toBe(
-    without(channel, 'search_channel', 'jump_date', ...mod, 'leave_server', 'poll')
+    without(channel, 'search_channel', 'jump_date', ...mod, 'leave_server', 'poll', 'apps.preview')
   )
   expect(order(selfDmState())).toBe(without(dm, 'call', 'video_call', 'close_dm'))
   expect(order(blockedDmState())).toBe(without(dm, 'call', 'video_call'))

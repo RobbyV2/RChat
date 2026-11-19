@@ -10,6 +10,7 @@ import type { Category, Channel, DmSummary, Message, UserRef } from '../types'
 
 export type Scope =
   | 'global'
+  | 'app'
   | 'server'
   | 'channel'
   | 'message'

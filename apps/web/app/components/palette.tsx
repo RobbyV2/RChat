@@ -79,7 +79,12 @@ export function PaletteHost() {
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (!paletteKey(e) || e.isComposing || e.repeat) return
-      if (useStore.getState().confirm) return
+      if (
+        useStore.getState().confirm ||
+        useViewing.getState().prompt ||
+        useStore.getState().activeDialog?.kind === 'app_preview'
+      )
+        return
       e.preventDefault()
       e.stopPropagation()
       togglePalette()
@@ -213,6 +218,7 @@ function ArgView({ item, onBack }: { item: PaletteItem; onBack: () => void }) {
   useEffect(() => inputRef.current?.focus(), [])
 
   const finish = (value: string) => {
+    if (item.available?.() === false) return onBack()
     if (counted(item.id)) noteUsed(item.id)
     closePalette()
     void item.run(value)
@@ -368,7 +374,7 @@ function ListView() {
   }, [current, listId])
 
   const pick = (item: PaletteItem | undefined) => {
-    if (!item) return
+    if (!item || item.available?.() === false) return
     if (item.arg) {
       setPaletteView({ kind: 'arg', item })
       return
@@ -525,9 +531,16 @@ const loadLists = () => {
 
 function Palette() {
   const stored = usePaletteUi(s => s.view)
+  useViewing(s => s.revision)
+  useSyncExternalStore(subscribeActions, actionsVersion, actionsVersion)
+  const revoked = stored.kind === 'arg' && stored.item.available?.() === false
+  useEffect(() => {
+    if (revoked) setPaletteView({ kind: 'list' })
+  }, [revoked])
   const noConsole = useStore(noApi)
   // Guests never get the API console, whatever asked for it.
-  const view = stored.kind === 'api' && noConsole ? ({ kind: 'list' } as const) : stored
+  const view =
+    revoked || (stored.kind === 'api' && noConsole) ? ({ kind: 'list' } as const) : stored
   useEffect(loadLists, [])
   const sheet = useMedia(SHEET)
   const pressed = useRef(false)

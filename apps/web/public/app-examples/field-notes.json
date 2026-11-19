@@ -1,0 +1,65 @@
+{
+  "format": 1,
+  "id": "field-notes",
+  "name": "Field notes",
+  "description": "Draft and review a field observation.",
+  "version": "1.0.0",
+  "author": { "name": "Field club" },
+  "requires": { "capabilities": [] },
+  "collections": [],
+  "actions": [
+    {
+      "name": "observe",
+      "label": "Draft an observation",
+      "scope": "app",
+      "authority": "invoker",
+      "rule": "true",
+      "palette": true,
+      "args": [{ "name": "subject", "type": "text", "label": "Subject" }],
+      "slash": "fieldnote",
+      "on": { "op": "open", "dialog": "observation" }
+    },
+    {
+      "name": "review",
+      "label": "Review observation",
+      "scope": "app",
+      "authority": "invoker",
+      "rule": "true",
+      "args": [],
+      "on": { "op": "open", "dialog": "summary" }
+    }
+  ],
+  "pages": [
+    {
+      "route": "/",
+      "title": "Notebook",
+      "view": {
+        "c": "stack",
+        "children": [
+          { "c": "text", "text": "Draft a field observation, then review the note." },
+          { "c": "button", "label": "New observation", "on": { "action": "observe" } },
+          {
+            "c": "dialog",
+            "name": "observation",
+            "title": "Field observation",
+            "children": [
+              { "c": "input", "field": "subject", "label": "Subject" },
+              { "c": "input", "field": "note", "kind": "multiline", "label": "What did you see?" },
+              { "c": "button", "label": "Review note", "on": { "action": "review" } }
+            ]
+          },
+          {
+            "c": "dialog",
+            "name": "summary",
+            "title": "Observation summary",
+            "children": [
+              { "c": "value", "bind": { "field": "subject" } },
+              { "c": "value", "bind": { "field": "note" } },
+              { "c": "button", "label": "Done", "on": { "op": "close" } }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

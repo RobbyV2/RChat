@@ -133,7 +133,16 @@ export const markPersonally = (t: ViewingTarget, personal: boolean) => {
   changed()
 }
 
-export const requestViewing = (target: ViewingTarget): Promise<boolean> => {
+export const approveAppVisit = (target: ViewingTarget, remember: boolean) => {
+  appVisit = target.key
+  if (remember) save(target.key, { ...choice(target.key), remember: true })
+  changed()
+}
+
+export const requestViewing = (
+  target: ViewingTarget,
+  afterAppChoice?: (remember: boolean) => void
+): Promise<boolean> => {
   cancelViewing()
   if (canView(target)) return Promise.resolve(true)
   return new Promise(resolve => {
@@ -142,7 +151,10 @@ export const requestViewing = (target: ViewingTarget): Promise<boolean> => {
       answer(open, remember) {
         if (useViewing.getState().prompt !== prompt) return
         if (open) {
-          if (remember) save(target.key, { ...choice(target.key), remember: true })
+          if (target.kind === 'app' && afterAppChoice) {
+            appVisit = target.key
+            afterAppChoice(remember)
+          } else if (remember) save(target.key, { ...choice(target.key), remember: true })
           else if (target.kind === 'app') appVisit = target.key
           else visits.add(target.key)
         }

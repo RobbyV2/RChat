@@ -47,6 +47,7 @@ import { useTextAssist } from './text_assist'
 import { FormatToolbar, useFormatting } from './format_toolbar'
 import { useMyTimeoutEnds, useNow } from './timeout_dialog'
 import { remainingText, timedOutLine } from '../lib/timeouts'
+import { dispatchPreviewText } from '../lib/apps/preview'
 import { CreatePollDialog } from './poll_dialog'
 import type { PollTarget } from '../lib/polls_store'
 import { RelayPicker } from './relay_settings'
@@ -507,6 +508,17 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       void sedEdit(key, sed).then(ok => {
         if (ok && draftNow() === text) setDraft(key, '')
       })
+      return
+    }
+    if (
+      !thread &&
+      !pending &&
+      !replying &&
+      !forwarding &&
+      view?.kind === 'channel' &&
+      dispatchPreviewText(text)
+    ) {
+      setText('')
       return
     }
     if (slowLeft > 0) return
