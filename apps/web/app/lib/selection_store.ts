@@ -4,6 +4,7 @@
 import type { BulkDeleteReq } from './api'
 import { ApiError } from './api'
 import { api } from './instances'
+import { canView, instanceTarget } from './viewing'
 import { Ended, live, sessionMark } from './slices/ctx'
 import { canForward } from './forward'
 import { messageLinkUrl } from './message_links'
@@ -139,9 +140,9 @@ export const exportBackoff = { ms: 1000 }
 
 // One export page, tried again (up to 5 times, waiting longer each time) when rate limited.
 // Nothing is asked once the session `at` ended.
-const fetchAfter = async (scope: string, after: number, at: object) => {
+const fetchAfter = async (scope: string, after: number, at: object, visible: () => boolean) => {
   for (let tries = 0; ; tries++) {
-    if (at !== sessionMark()) throw new Ended('The session ended')
+    if (at !== sessionMark() || !visible()) throw new Ended('The view ended')
     try {
       return await live(fetchPage(scope, after))
     } catch (e) {
@@ -222,7 +223,16 @@ export const selectionSlice = (d: SelectionDeps) => {
         `{"version":${EXPORT_VERSION},"scope":${JSON.stringify(sel.scope)},"exported_at":${Math.floor(Date.now() / 1000)},"messages":[`
       )
     for (;;) {
-      const page = await fetchAfter(sel.scope, after, at)
+      const visible = () => {
+        const s = get()
+        const { server, root } = scopePlace(s, sel.scope)
+        const id =
+          root?.channel_id ?? (sel.scope.startsWith('c') ? Number(sel.scope.slice(1)) : null)
+        const target = server && id !== null ? instanceTarget(s, server, id) : null
+        return s.selection?.scope === sel.scope && (!target || canView(target))
+      }
+      const page = await fetchAfter(sel.scope, after, at, visible)
+      if (!visible()) throw new Ended('The view ended')
       const kept = page.filter(m => isSelected(sel, m))
       if (kept.length) {
         const text =

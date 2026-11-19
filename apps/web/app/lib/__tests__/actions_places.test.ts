@@ -6,6 +6,7 @@ import { menuItems } from '../actions/menu'
 import { paletteCommands } from '../actions/palette'
 import { actionById } from '../actions/registry'
 import type { Target } from '../actions/types'
+import { endViewing } from '../viewing'
 import { useChannelEdit } from '../channel_edit'
 import { P2P_IP_HINT } from '../call_choice'
 import { emptyLayout, type Folder, type Layout } from '../nav_layout'
@@ -13,7 +14,7 @@ import { EMPTY_NOTIFY, setLevel, setMute, setSuppress, type NotifyPrefs } from '
 import { setSharing, sharing } from '../platform'
 import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
 import { Perm, type Channel, type DmSummary } from '../types'
-import { drain, me, member, paged, role, serverDetail, user } from './fixtures'
+import { drain, me, member, memoryStorage, paged, role, serverDetail, user } from './fixtures'
 
 const realSharing = sharing()
 const g = globalThis as { window?: unknown }
@@ -26,6 +27,8 @@ afterEach(() => {
   setSharing(realSharing)
   g.window = realWindow
   useStore.setState(initial, true)
+  memoryStorage.clear()
+  endViewing()
   useChannelEdit.getState().stop()
 })
 
@@ -109,6 +112,7 @@ const arg = (x: unknown) =>
 const recorder = () => {
   const calls: Call[] = []
   const names = [
+    'goHome',
     'openDialog',
     'markServerRead',
     'markServersRead',
@@ -121,6 +125,7 @@ const recorder = () => {
     'leaveServer',
     'joinPreview',
     'ungroupFolder',
+    'setChannelSensitive',
     'deleteChannel',
     'deleteCategory',
     'setCategoriesCollapsed',
@@ -146,7 +151,13 @@ const recorder = () => {
   })
   setSharing({ ...realSharing, copyText: async t => (calls.push(['copy', t]), true) })
   g.window = {
-    location: { origin: 'https://chat.test', protocol: 'https:' },
+    location: {
+      pathname: '/',
+      href: 'https://chat.test/',
+      origin: 'https://chat.test',
+      protocol: 'https:',
+    },
+    history: { pushState() {}, replaceState() {} },
     matchMedia: () => ({ matches: false }),
   }
   return calls
@@ -362,20 +373,29 @@ test('a text and a voice channel, as a member and as a manager', () => {
     ['Mark as read', false],
     ['Mute Channel', false],
     ['Notification settings', false],
+    ['Mark sensitive on this device', false],
     ['Copy Channel ID', false],
   ])
   expect(row(channelAt(random), 'Mark as read')?.disabled).toBe(true)
-  expect(labels(channelAt(talk))).toEqual(['Copy Channel ID'])
+  expect(labels(channelAt(talk))).toEqual(['Mark sensitive on this device', 'Copy Channel ID'])
   railState({ perms: Perm.ManageChannels })
   expect(labels(channelAt(general))).toEqual([
     'Mark as read',
     'Mute Channel',
     'Notification settings',
+    'Mark sensitive on this device',
+    'Mark sensitive for everyone',
     'Copy Channel ID',
     'Rename Channel',
     'Delete Channel',
   ])
-  expect(labels(channelAt(talk))).toEqual(['Copy Channel ID', 'Rename Channel', 'Delete Channel'])
+  expect(labels(channelAt(talk))).toEqual([
+    'Mark sensitive on this device',
+    'Mark sensitive for everyone',
+    'Copy Channel ID',
+    'Rename Channel',
+    'Delete Channel',
+  ])
   expect(row(channelAt(talk), 'Delete Channel')?.danger).toBe(true)
   railState({ perms: Perm.ManageChannels, channels: [general, talk] })
   expect(labels(channelAt(general))).not.toContain('Delete Channel')
@@ -384,6 +404,7 @@ test('a text and a voice channel, as a member and as a manager', () => {
   expect(labels(channelAt(general))).toEqual([
     'Mute Channel',
     'Notification settings',
+    'Mark sensitive on this device',
     'Copy Channel ID',
   ])
 })
@@ -393,6 +414,8 @@ test('channel rows: mark read, copy, rename and delete', async () => {
   const rows = items(channelAt(general)).filter(i => !i.submenu)
   expect(await effects(rows)).toEqual([
     ['Mark as read', [['markScopesRead', ['c1']]]],
+    ['Mark sensitive on this device', [['goHome']]],
+    ['Mark sensitive for everyone', [['setChannelSensitive', 's', 1, true]]],
     ['Copy Channel ID', [['copy', '1']]],
     ['Rename Channel', []],
     [
@@ -438,6 +461,8 @@ test('a channel row acts on its own channel, not the open one', async () => {
     ['All messages', [['setNotifyLevel', scope, 'all']]],
     ['Only @mentions', [['setNotifyLevel', scope, 'mentions']]],
     ['Nothing', [['setNotifyLevel', scope, 'nothing']]],
+    ['Mark sensitive on this device', []],
+    ['Mark sensitive for everyone', [['setChannelSensitive', 's', 2, true]]],
     ['Copy Channel ID', [['copy', '2']]],
     ['Rename Channel', []],
     [

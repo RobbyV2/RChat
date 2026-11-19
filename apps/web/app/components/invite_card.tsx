@@ -15,13 +15,16 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { ExternalLink, Globe, Hash, Link2Off, Lock, Paperclip } from 'lucide-react'
 import { ApiError } from '../lib/api'
-import { InstanceError, api } from '../lib/instances'
+import { InstanceError, api, home, registry, type InstanceConnection } from '../lib/instances'
+import { useForwardAccess } from '../lib/forward_access'
+import { carriedTarget } from '../lib/forward_viewing'
 import { errorText, useStore, type Nav } from '../lib/store'
 import {
   autoStep,
   hostParts,
   invitePath,
   inviteVersion,
+  pinnedPreview,
   previewText,
   remoteInviteUrl,
   keepsPreview,
@@ -31,6 +34,7 @@ import {
   watchInvites,
   type RemoteInvite,
 } from '../lib/invite'
+import { canView, channelTarget, requestViewing, useViewing, instanceTarget } from '../lib/viewing'
 import { formatQualified, hostOf } from '../lib/qualified'
 import {
   previewRequested,
@@ -61,7 +65,7 @@ const cache = new Map<string, { at: number; promise: Promise<Invite> }>()
 const fetchInvite = (key: string, server: string, password: string | null, maxAge: number) => {
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < maxAge) return hit.promise
-  const promise = api.getInvite(server, password)
+  const promise = api.getInvite(server, password, 'metadata')
   cache.delete(key)
   cache.set(key, { at: Date.now(), promise })
   const oldest = cache.keys().next().value
@@ -127,7 +131,8 @@ function useInvite(
   always: boolean
 ) {
   const viewer = useStore(s => s.me?.username ?? '')
-  const key = `${viewer}\n${server}\n${password ?? ''}`
+  const epoch = useStore(s => s.channelLabelEpoch)
+  const key = `${home.origin}\n${epoch}\n${viewer}\n${server}\n${password ?? ''}`
   const bumped = useSyncExternalStore(
     watchInvites,
     () => inviteVersion(server),
@@ -357,12 +362,25 @@ export function PreviewLine({
   message,
   big,
   host,
+  server,
+  remote,
 }: {
   message: Message
   big: boolean
   host?: string
+  server?: string
+  // Another instance's preview: only the label a copy carries can decide.
+  remote?: InstanceConnection
 }) {
   const streamer = useStore(s => s.streamer)
+  const account = useStore(s => s.me?.username ?? null)
+  useViewing(s => s.revision)
+  const local = useForwardAccess(remote ? null : message, { server })
+  const carried =
+    remote && server && message.forward
+      ? carriedTarget(message.forward, account, server, remote)
+      : null
+  const hidden = remote ? !!carried && !canView(carried) : local.access !== 'open'
   const { author, content, media } = message
   const text = previewText(plainStamps(content))
   return (
@@ -386,8 +404,8 @@ export function PreviewLine({
           <NameWithUsername user={author} />
         </span>{' '}
         <span className="text-on-surface-variant">
-          {text}
-          {media !== null && (
+          {hidden ? <span className="italic">Forwarded message</span> : text}
+          {!hidden && media !== null && (
             <span className="ml-1 inline-flex items-center gap-0.5 align-middle">
               <Paperclip size={big ? 13 : 11} />
               {media.spoiler ? 'Spoiler' : <Masked text={media.filename} file />}
@@ -399,8 +417,89 @@ export function PreviewLine({
   )
 }
 
-function Preview({ invite, big, host }: { invite: Invite; big: boolean; host?: string }) {
-  const { preview_channel, preview } = invite
+function Preview({
+  invite,
+  big,
+  host,
+  password,
+  origin,
+}: {
+  invite: Invite
+  big: boolean
+  host?: string
+  password: string | null
+  origin?: string
+}) {
+  const conn = origin ? registry.get(origin) : home
+  const account = useStore(s => s.me?.username ?? null)
+  const [seen, setSeen] = useState<{
+    of: Invite
+    id: number | null
+    label: boolean
+    name: string | null
+  } | null>(null)
+  const fresh = seen?.of === invite ? seen : null
+  const id = fresh ? fresh.id : invite.preview_channel_id
+  const server = invite.server.name
+  const label = fresh ? fresh.label : invite.preview_sensitive
+  const preview_channel = fresh ? fresh.name : invite.preview_channel
+  const local = useStore(s => {
+    if (origin || id == null || !s.servers[server]) return undefined
+    return instanceTarget(s, server, id)?.sensitive ?? null
+  })
+  useViewing(s => s.revision)
+  const target =
+    conn &&
+    id != null &&
+    typeof label === 'boolean' &&
+    local !== null &&
+    channelTarget(
+      account,
+      'instance',
+      server,
+      { id, name: preview_channel ?? server, sensitive: label || local === true },
+      conn
+    )
+  const allowed = !!target && canView(target)
+  const key = JSON.stringify([target && target.key, password, label])
+  const [loaded, setLoaded] = useState<{ key: string; data: Message[] } | null>(null)
+  useEffect(() => {
+    if (!origin && local === null)
+      void useStore
+        .getState()
+        .discoverChannels(server)
+        .catch(() => {})
+    if (!allowed || !conn) {
+      setLoaded(null)
+      return
+    }
+    let live = true
+    void conn.api
+      .getInvite(server, password, { revision: `${id}.${label ? 1 : 0}` })
+      .then(data => {
+        if (!live) return
+        const answer = pinnedPreview({ id, label }, data)
+        if (answer.changed) setSeen({ of: invite, ...answer.changed })
+        else setLoaded({ key, data: answer.messages })
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [allowed, conn, id, label, key, server, password, origin, local, invite])
+  if (!target || !preview_channel) return null
+  if (!allowed)
+    return (
+      <button
+        type="button"
+        className={textBtn + ' min-h-11 cursor-pointer'}
+        onClick={() => void requestViewing(target)}
+      >
+        Open channel preview
+      </button>
+    )
+  if (!loaded || loaded.key !== key) return null
+  const preview = loaded.data
   if (preview_channel === null || (preview.length === 0 && !big)) return null
   return (
     <div
@@ -413,7 +512,14 @@ function Preview({ invite, big, host }: { invite: Invite; big: boolean; host?: s
       {preview.length ? (
         <div className={`flex flex-col ${big ? 'mt-2 gap-2' : 'mt-1.5 gap-1'}`}>
           {preview.map(m => (
-            <PreviewLine key={m.id} message={m} big={big} host={host} />
+            <PreviewLine
+              key={m.id}
+              message={m}
+              big={big}
+              host={host}
+              server={server}
+              remote={origin ? (conn ?? undefined) : undefined}
+            />
           ))}
         </div>
       ) : (
@@ -639,7 +745,7 @@ export function InviteCard({
 
   const unlock = async (pw: string) => {
     try {
-      await api.getInvite(server, pw)
+      await api.getInvite(server, pw, 'metadata')
       setUnlocking(false)
       setUnlocked(pw)
       return null
@@ -826,7 +932,7 @@ export function InviteCard({
               {note}
             </p>
           )}
-          <Preview invite={data} big={big} />
+          <Preview invite={data} big={big} password={given} />
         </>
       ),
     }
@@ -1066,7 +1172,15 @@ export function RemoteInviteCard({
         </div>
       ),
       actions: openBtn,
-      extra: <Preview invite={data} big={false} host={host} />,
+      extra: (
+        <Preview
+          invite={data}
+          big={false}
+          host={host}
+          password={invite.password ?? null}
+          origin={invite.origin}
+        />
+      ),
     }
   }
   const view = body()

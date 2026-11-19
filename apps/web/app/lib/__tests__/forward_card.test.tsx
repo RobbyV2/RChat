@@ -18,7 +18,8 @@ const card = () =>
           author: { ...user('bart'), display_name: NAME },
           created_at: 3,
           source_id: 5,
-          origin: null,
+          origin_dm: true,
+          origin: 'Direct message',
           dropped: null,
         },
       })}

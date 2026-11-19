@@ -72,6 +72,7 @@ import { p2p, useP2p } from '../lib/p2p/app'
 import { addsContacts, p2pDmSection } from '../lib/p2p/conversations'
 import { ContactRow, lastTsOf } from './p2p/p2p_home'
 import { P2pBadge } from './p2p/p2p_badge'
+import { canView, channelTarget, useViewing } from '../lib/viewing'
 
 const base = 'flex h-full w-60 shrink-0 flex-col bg-surface-container-low'
 
@@ -144,6 +145,16 @@ function PrivateIcon() {
     </span>
   )
 }
+
+const NO_ROSTER: string[] = []
+// People in a room closed by a local viewing choice stay unnamed and uncounted.
+const rosterOf = (
+  account: string | null,
+  rosters: Record<number, string[]>,
+  server: string,
+  c: Channel
+) =>
+  canView(channelTarget(account, 'instance', server, c)) ? (rosters[c.id] ?? NO_ROSTER) : NO_ROSTER
 
 function VoiceChannelRow({
   channel,
@@ -594,11 +605,15 @@ export function ChannelSidebar() {
   const editing = useChannelEdit(e => e.editing)
   const name = useChannelEdit(e => e.name)
   const voiceServer = view?.kind === 'channel' ? view.server : null
+  useViewing(s => s.revision)
+  const account = useStore(s => s.me?.username ?? null)
   const voiceKey = useStore(s => {
     const channels = voiceServer ? s.servers[voiceServer]?.channels : undefined
-    if (!channels) return ''
+    if (!channels || !voiceServer) return ''
     const names = channels
-      .flatMap(c => (c.kind === 'voice' ? (s.voiceUsers[c.id] ?? []) : []))
+      .flatMap(c =>
+        c.kind === 'voice' ? rosterOf(s.me?.username ?? null, s.voiceUsers, voiceServer, c) : []
+      )
       .filter(u => !isGuestName(u))
     return [...new Set(names)].sort().join('\n')
   })
@@ -776,23 +791,26 @@ export function ChannelSidebar() {
     </button>
   )
 
-  const voiceRow = (c: Channel) => (
-    <div key={c.id} data-drag-box className="flex flex-col rounded-lg">
-      <VoiceChannelRow
-        channel={c}
-        own={ownServer}
-        active={activeId === c.id}
-        connected={voice?.channelId === c.id}
-        count={(voiceUsers[c.id] ?? []).length}
-        onJoin={() => void joinVoice(server, c.id)}
-        menu={channelMenu(c)}
-        drag={channelDragSpec(c)}
-      />
-      {(voiceUsers[c.id] ?? []).map(u => (
-        <VoiceMemberRow key={u} username={u} server={server} inRoom={voice?.channelId === c.id} />
-      ))}
-    </div>
-  )
+  const voiceRow = (c: Channel) => {
+    const roster = rosterOf(account, voiceUsers, server, c)
+    return (
+      <div key={c.id} data-drag-box className="flex flex-col rounded-lg">
+        <VoiceChannelRow
+          channel={c}
+          own={ownServer}
+          active={activeId === c.id}
+          connected={voice?.channelId === c.id}
+          count={roster.length}
+          onJoin={() => void joinVoice(server, c.id)}
+          menu={channelMenu(c)}
+          drag={channelDragSpec(c)}
+        />
+        {roster.map(u => (
+          <VoiceMemberRow key={u} username={u} server={server} inRoom={voice?.channelId === c.id} />
+        ))}
+      </div>
+    )
+  }
 
   const row = (c: Channel) =>
     editingHere?.mode === 'rename' && editingHere.id === c.id ? (

@@ -1,5 +1,17 @@
 import { create } from 'zustand'
+import {
+  canView,
+  channelTarget,
+  instanceTarget,
+  cleanupRemoval,
+  eventRoom,
+  useViewing,
+} from './viewing'
+import { sourceAccess } from './forward_viewing'
+import { p2p } from './p2p'
+import { useP2p } from './p2p/app/store'
 import { relayBook } from './relays'
+import { home } from './instances'
 import { NO_PINGS } from './pings'
 import { NO_GROUP_PINGS } from './group_pings'
 import { EMPTY_NOTIFY } from './notify'
@@ -82,6 +94,7 @@ let routed: readonly Handlers[] = []
 export const eventTables = () => routed
 
 let forgetStoreSession = () => {}
+let forgetChannelViews: (keys: string[]) => void = () => {}
 
 export const useStore = create<RChatState>()((set, get) => {
   const epochs: Record<string, number> = {}
@@ -159,6 +172,7 @@ export const useStore = create<RChatState>()((set, get) => {
     noteBlocked: (...a) => sessionHub.noteBlocked(...a),
     noteTyper,
     noteUnblocked: (...a) => sessionHub.noteUnblocked(...a),
+    navigationIntent: (): (() => boolean) => sessionHub.navigationIntent(),
     openChannelAt: (...a) => sessionHub.openChannelAt(...a),
     persistGuestServers: (...a) => sessionHub.persistGuestServers(...a),
     pinSelf,
@@ -330,6 +344,7 @@ export const useStore = create<RChatState>()((set, get) => {
     views,
   })
   forgetStoreSession = sessionHub.forgetSession
+  forgetChannelViews = messagesHub.forgetViews
 
   const tables = [
     presenceHub.handlers,
@@ -359,6 +374,8 @@ export const useStore = create<RChatState>()((set, get) => {
     guestGrants: {},
     guestNames: {},
     guestVoiceName: null,
+    channelLabelEpoch: 0,
+    channelLabelEpochs: {},
     servers: {},
     members: {},
     memberInfo: {},
@@ -485,6 +502,12 @@ export const useStore = create<RChatState>()((set, get) => {
     ...sessionHub.actions,
 
     applyWsEvent: ev => {
+      const room = eventRoom(ev)
+      const target = room && instanceTarget(get(), room.server, room.id)
+      if (room && (target ? !canView(target) : get().channelLabelEpoch > 0)) {
+        cleanupRemoval(ev, id => p2p.forgetMessage(id))
+        return
+      }
       if (friendsHub.onEvent(ev)) return
       if (pollsHub.onEvent(ev)) return
       if (selectionHub.onEvent(ev)) return
@@ -505,7 +528,94 @@ export const resetSessionCaches = () => {
   useStore.setState({ ...pristine }, true)
 }
 
+const clearHiddenForward = (s: RChatState) => {
+  const clip = s.forwardClip
+  if (
+    clip &&
+    (sourceAccess(s, clip.source) === 'hidden' ||
+      (clip.quoted && sourceAccess(s, clip.quoted) === 'hidden'))
+  )
+    s.clearForward()
+}
+useP2p.subscribe((s, prev) => {
+  if (s.servers !== prev.servers) clearHiddenForward(useStore.getState())
+})
+// Without each other's people: rosters drop out while their room is closed here.
+const withoutRooms = (marks: Record<number, string[]>, hidden: Set<number>) => {
+  const kept = Object.entries(marks).filter(([id]) => !hidden.has(Number(id)))
+  return kept.length === Object.keys(marks).length ? null : Object.fromEntries(kept)
+}
+let closedVoice = new Set<number>()
+const hideClosedRoom = (s: RChatState) => {
+  clearHiddenForward(s)
+  const hidden = new Set<number>()
+  const voiceRooms = new Set<number>()
+  for (const [server, detail] of Object.entries(s.servers)) {
+    for (const channel of detail.channels ?? []) {
+      const target = channelTarget(s.me?.username ?? null, 'instance', server, channel)
+      if (channel.kind === 'voice') voiceRooms.add(channel.id)
+      if (!canView(target)) hidden.add(channel.id)
+    }
+  }
+  // A voice room opened here gets its current roster again.
+  const reopened = [...closedVoice].some(id => voiceRooms.has(id) && !hidden.has(id))
+  closedVoice = new Set([...voiceRooms].filter(id => hidden.has(id)))
+  if (reopened) home.ws.resubscribe()
+  if (!hidden.size) return
+  const rosters = {
+    voiceUsers: withoutRooms(s.voiceUsers, hidden),
+    voiceMuted: withoutRooms(s.voiceMuted, hidden),
+    voiceHushed: withoutRooms(s.voiceHushed, hidden),
+  }
+  const pruned = Object.fromEntries(Object.entries(rosters).filter(([, v]) => v !== null))
+  if (Object.keys(pruned).length) useStore.setState(pruned)
+  const keys = new Set<string>()
+  for (const [key, list] of Object.entries(s.messages)) {
+    if (key.startsWith('c') && hidden.has(Number(key.slice(1)))) {
+      keys.add(key)
+      for (const root of list) keys.add('t' + root.id)
+    } else if (
+      key.startsWith('t') &&
+      list.some(m => m.channel_id !== null && hidden.has(m.channel_id))
+    )
+      keys.add(key)
+  }
+  forgetChannelViews([...keys])
+  if (
+    s.panel?.kind === 'thread' &&
+    s.panel.root.channel_id !== null &&
+    hidden.has(s.panel.root.channel_id)
+  )
+    useStore.setState({ panel: null })
+  const notices = s.notices.filter(
+    n => !keys.has(n.key) && !(n.key.startsWith('c') && hidden.has(Number(n.key.slice(1))))
+  )
+  const linkCards = Object.entries(s.linkCards).filter(
+    ([, c]) => c?.channel_id == null || !hidden.has(c.channel_id)
+  )
+  if (notices.length !== s.notices.length || linkCards.length !== Object.keys(s.linkCards).length)
+    useStore.setState({ notices, linkCards: Object.fromEntries(linkCards) })
+  const { view, voice } = s
+  const voiceTarget = voice && instanceTarget(s, voice.server, voice.channelId)
+  if (voiceTarget && !canView(voiceTarget)) s.leaveVoice()
+  const target = view?.kind === 'channel' && instanceTarget(s, view.server, view.channelId)
+  if (target && !canView(target)) {
+    useStore.setState({
+      panel: null,
+      pins: null,
+      contextMenu: null,
+      profile: null,
+      notices: [],
+      selection: null,
+    })
+    s.goHome()
+  }
+}
+useViewing.subscribe((s, prev) => {
+  if (s.revision !== prev.revision) hideClosedRoom(useStore.getState())
+})
 useStore.subscribe((s, prev) => {
+  if (s.servers !== prev.servers) hideClosedRoom(s)
   if (s.settings !== prev.settings) p2pGate.settings(s.settings)
 })
 

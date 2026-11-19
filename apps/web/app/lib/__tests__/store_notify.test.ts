@@ -445,7 +445,7 @@ describe('an instance view under P2P', () => {
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = String(input).replace(/^https?:\/\/[^/]+/, '')
       if (url === '/api/servers/s') return Response.json(st().servers.s)
-      if (url === '/api/messages/11/location')
+      if (url === '/api/messages/11/location' || url === '/api/messages/11/location?preview=false')
         return Response.json({
           id: 11,
           server: null,
@@ -693,6 +693,36 @@ describe('desktop notifications', () => {
     dispatch(inDm(11, 'it was ||the butler|| all along'))
     dispatch(pinged(ping({ id: 3, excerpt: 'hey @bob ||the end is cut' })))
     expect(fake.shown.map(n => n.body)).toEqual(['it was ████████ all along', 'hey @bob ████████'])
+  })
+
+  test('a forwarded copy from a closed room alerts without its text', () => {
+    useStore.setState({
+      servers: {
+        s: serverDetail('s', {
+          channels: [
+            { id: 1, name: 'general', kind: 'text', slowmode_seconds: 0 },
+            { id: 3, name: 'proofs', kind: 'text', slowmode_seconds: 0, sensitive: true },
+          ],
+        }),
+      },
+    })
+    const copy = (id: number, origin: number): WsEvent => {
+      const ev = inChannel(id, 'Amber folio')
+      if (ev.type === 'message')
+        ev.message.forward = {
+          author: user('carol'),
+          created_at: 1,
+          source_id: 5,
+          origin: null,
+          origin_channel_id: origin,
+          dropped: null,
+        }
+      return ev
+    }
+    st().setNotifyLevel(chan, 'all')
+    dispatch(copy(11, 3))
+    dispatch(copy(12, 1))
+    expect(fake.shown.map(n => n.body)).toEqual(['Forwarded message', 'Amber folio'])
   })
 
   test('a spoilered attachment without text is "Attachment", never its filename', () => {

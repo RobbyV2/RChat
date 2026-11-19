@@ -1,3 +1,4 @@
+import { peerVisible } from './app/viewing'
 import { create } from 'zustand'
 import type { InboxAdapter, InboxView } from '../inbox'
 import { levelOf, type NotifyPrefs } from '../notify'
@@ -154,6 +155,10 @@ const actorName = (st: P2pState, p: PingRec) => {
 // P2P mentions, @everyone, replies and reactions, from the pings this browser noted.
 export const p2pInbox: InboxAdapter = {
   id: P2P_INBOX,
+  canPreview: entry => {
+    const p = entry.raw as PingRec
+    return !p.ch || peerVisible(useP2p.getState(), p.room, p.ch)
+  },
   load: async (view, cursor) => {
     const snap = await p2pPings.read()
     const st = useP2p.getState()

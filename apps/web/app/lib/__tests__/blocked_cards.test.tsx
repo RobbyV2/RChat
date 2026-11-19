@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { useStore, resetSessionCaches } from '../store'
 import { ForwardCard } from '../../components/forwards'
 import { MessageLinkCard } from '../../components/message_link_card'
-import { me, msg, user } from './fixtures'
+import { me, msg, user, serverDetail, textChannel } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -13,7 +13,14 @@ const forward = (author: string) =>
       m={msg(9, {
         content: 'secret words',
         author: user('carol'),
-        forward: { author: user(author), created_at: 3, source_id: 5, origin: null, dropped: null },
+        forward: {
+          author: user(author),
+          created_at: 3,
+          source_id: 5,
+          origin_dm: true,
+          origin: 'Direct message',
+          dropped: null,
+        },
       })}
       canDelete={false}
     />
@@ -26,6 +33,7 @@ const setInitial = (part: Partial<typeof initial>) => Object.assign(initial, par
 
 const linkCard = (author: string) => {
   setInitial({
+    servers: { rchat: serverDetail('rchat', { channels: [textChannel(1)] }) },
     linkCards: {
       5: {
         id: 5,

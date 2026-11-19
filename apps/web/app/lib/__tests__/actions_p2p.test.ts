@@ -476,10 +476,7 @@ describe("a P2P channel's menu", () => {
     expect(labels(onChannel(server(), VOICE))).toEqual(['Join Voice', 'Copy Channel ID'])
     expect(labels(t)).toEqual(['Join Voice', 'Edit Channel', 'Delete Channel', 'Copy Channel ID'])
     expect(row(t, 'Join Voice')?.icon).toBe(Volume2)
-    expect(await run(row(t, 'Join Voice'))).toEqual([
-      ['server.openChannel', 'v1'],
-      ['voice.join', SRV, 'v1'],
-    ])
+    expect(await run(row(t, 'Join Voice'))).toEqual([['voice.join', SRV, 'v1']])
     expect((await run(row(t, 'Delete Channel')))[0]).toEqual([
       'confirm',
       'Delete Channel',

@@ -390,7 +390,8 @@ export function editChannel(cx: ServerCtx, room: string, id: string, patch: Chan
   const next: Record<string, unknown> = { ...knownChannel(cur), ...patch, id }
   if (patch.name !== undefined) next.name = clip(patch.name.trim(), cx.local.server.nameMax)
   if (next.topic === '') delete next.topic
-  for (const k of ['restrict_view', 'restrict_send']) if (next[k] !== true) delete next[k]
+  for (const k of ['restrict_view', 'restrict_send', 'sensitive'])
+    if (next[k] !== true) delete next[k]
   if (!Number.isSafeInteger(next.slow) || (next.slow as number) <= 0) delete next.slow
   return cx.emit(room, 'channel', () => next)
 }

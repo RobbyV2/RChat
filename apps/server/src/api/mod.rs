@@ -414,6 +414,9 @@ pub struct Channel {
     /// channels can send in it.
     #[serde(default)]
     pub restrict_send: bool,
+    /// Shared sensitive-content label. Defaults to false.
+    #[serde(default)]
+    pub sensitive: bool,
     /// Channel topic: plain text, links are shown as links. At most 1024 characters, no
     /// control characters other than newlines; `null` when the channel has none.
     #[serde(default)]
@@ -784,6 +787,9 @@ pub struct ReplyRef {
     /// The quoted message is itself a forward (shown with a small "Forwarded" marker).
     #[serde(default)]
     pub forwarded: bool,
+    /// For a quoted forward, its original as `Message.forward` describes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forward: Option<ForwardRef>,
 }
 
 /// A message in a channel, a direct-message conversation or a thread.
@@ -887,6 +893,12 @@ pub struct ForwardRef {
     #[serde(default)]
     #[schema(example = "general")]
     pub origin_channel: Option<String>,
+    /// Stable ID when the origin channel is public within the destination server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_channel_id: Option<i64>,
+    /// The channel named by `origin_channel_id` carries the shared sensitive-content label.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub origin_sensitive: bool,
     /// Display name of the server it came from, when forwarded inside the same server or when
     /// that server had no password; `null` otherwise.
     #[serde(default)]
@@ -909,10 +921,16 @@ impl ForwardRef {
     ) -> Self {
         let origin = stored_origin.map(Origin::parse);
         let label = origin.as_ref().map(Origin::label);
+        let origin_channel_id = match &origin {
+            Some(Origin::Channel { id, .. }) => *id,
+            _ => None,
+        };
         let (origin_dm, origin_channel, origin_server) = match origin {
             Some(Origin::Dm) => (true, None, None),
             Some(Origin::Server { server }) => (false, None, Some(server)),
-            Some(Origin::Channel { channel, server }) => (false, Some(channel), Some(server)),
+            Some(Origin::Channel {
+                channel, server, ..
+            }) => (false, Some(channel), Some(server)),
             None => (false, None, None),
         };
         ForwardRef {
@@ -921,6 +939,8 @@ impl ForwardRef {
             source_id,
             origin: label,
             origin_dm,
+            origin_channel_id,
+            origin_sensitive: false,
             origin_channel,
             origin_server,
             dropped,
@@ -934,8 +954,15 @@ impl ForwardRef {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum Origin {
     Dm,
-    Server { server: String },
-    Channel { channel: String, server: String },
+    Server {
+        server: String,
+    },
+    Channel {
+        channel: String,
+        server: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<i64>,
+    },
 }
 
 impl Origin {
@@ -947,7 +974,9 @@ impl Origin {
         match self {
             Origin::Dm => "Direct message".to_string(),
             Origin::Server { server } => server.clone(),
-            Origin::Channel { channel, server } => format!("#{channel} - {server}"),
+            Origin::Channel {
+                channel, server, ..
+            } => format!("#{channel} - {server}"),
         }
     }
 
@@ -963,6 +992,7 @@ impl Origin {
                 .and_then(|s| s.split_once(" \u{b7} "))
             {
                 Some((channel, server)) => Origin::Channel {
+                    id: None,
                     channel: channel.to_string(),
                     server: server.to_string(),
                 },
@@ -1940,6 +1970,7 @@ pub fn routes(
         }
         let invite_routes = Router::new()
             .route("/invites/{name}", get(servers::get_invite))
+            .route("/invites/{name}/metadata", get(servers::invite_metadata))
             .route_layer(limiter())
             .merge(
                 Router::new()
@@ -2251,7 +2282,7 @@ fn api_routes(
             delete(messages::delete_message).patch(messages::edit_message),
         )
         .route("/messages/{id}/media", delete(media::delete_media))
-        .route("/messages/{id}/location", get(messages::message_location))
+        .route("/messages/{id}/location", get(messages::message_lookup))
         .route("/messages/locations", post(messages::message_locations))
         .route("/messages/bulk_delete", post(bulk_delete::bulk_delete))
         .route("/messages/bulk_delete/jobs", get(bulk_delete::list_jobs))
@@ -3679,6 +3710,7 @@ mod tests {
     #[test]
     fn forward_origins_are_structured_and_old_labels_read() {
         let channel = Origin::Channel {
+            id: None,
             channel: "general".to_string(),
             server: "Rust \u{b7} Club".to_string(),
         };
@@ -3709,6 +3741,7 @@ mod tests {
             (
                 "#general \u{b7} RChat",
                 Origin::Channel {
+                    id: None,
                     channel: "general".to_string(),
                     server: "RChat".to_string(),
                 },

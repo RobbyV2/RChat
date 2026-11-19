@@ -1,6 +1,16 @@
 // The signed-in session: sign-in and sign-out, the account and its settings, the URL and what
 // is open, guests, invites, the socket and catch-up after outages.
 
+import {
+  cancelViewing,
+  canView,
+  endViewing,
+  instanceTarget,
+  leaveVisit,
+  requestViewing,
+  eventRoom,
+  cleanupRemoval,
+} from '../viewing'
 import { ApiError, type LoginRequest, type RegisterRequest } from '../api'
 import { catchUpDelay, due } from '../backoff'
 import { type Blocked, blockedSet, matchesBlockQuery, withoutTypers } from '../blocks'
@@ -324,6 +334,26 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }
     })
   })
+
+  let navigation = 0
+  const beginNavigation = () => {
+    navigation += 1
+    cancelViewing()
+    return navigation
+  }
+
+  const labelsOffline = () => get().channelLabelEpoch > 0 && get().wsStatus !== 'green'
+  const admitChannel = async (server: string, id: number, intent: number) => {
+    if (labelsOffline() || !instanceTarget(get(), server, id)) {
+      await get().discoverChannels(server, true)
+      if (intent !== navigation) return false
+    }
+    const target = instanceTarget(get(), server, id)
+    if (!target || intent !== navigation) return false
+    if (!canView(target) && !(await requestViewing(target))) return false
+    const current = instanceTarget(get(), server, id)
+    return intent === navigation && !!current && current.key === target.key && canView(current)
+  }
 
   const authRequest = async (path: string, body: LoginRequest | RegisterRequest) => {
     const res = await api.send('POST', path, body)
@@ -718,11 +748,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     if (!view) return
     try {
       const key = viewKey(view)
+      if (view.kind === 'channel') {
+        const detail = await fetchServer(view.server)
+        if (get().view !== view) return
+        putServer(view.server, detail)
+        const target = instanceTarget(get(), view.server, view.channelId)
+        if (!target || !canView(target) || get().view !== view) return
+      }
       if (detached(key)) {
-        if (view.kind === 'channel') {
-          const detail = await live(api.getServer(view.server))
-          putServer(view.server, detail)
-        }
         return
       }
       if (loadingHead(key)) return
@@ -752,10 +785,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         },
       }))
       askP2p(msgs)
-      if (view.kind === 'channel') {
-        const detail = await live(api.getServer(view.server))
-        putServer(view.server, detail)
-      }
     } catch (e) {
       if (e instanceof Ended) return
       if (view.kind === 'channel' && lockedOut(e)) guestLocked(view.server)
@@ -812,7 +841,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         friendsHub.reloadOpenLists()
         void selectionHub.loadJobs()
         const { view } = get()
-        if (view) askP2p(get().messages[viewKey(view)] ?? [])
+        if (view?.kind === 'channel' && !instanceTarget(get(), view.server, view.channelId)) {
+          void get()
+            .discoverChannels(view.server)
+            .catch(() => {})
+        } else if (view) askP2p(get().messages[viewKey(view)] ?? [])
         const { pins } = get()
         if (pins) loadPins(pins.key)
         catchUp()
@@ -884,12 +917,39 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     downSince = null
     stopCatchUp()
     listenPage()
-    home.ws.onEvent = ev => {
+    const dispatch = (ev: WsEvent) => {
       get().applyWsEvent(ev)
       for (const tap of wsTaps) tap(ev)
     }
+    home.ws.onEvent = ev => {
+      const room = eventRoom(ev)
+      if (room) {
+        const target = instanceTarget(get(), room.server, room.id)
+        if ((!target || !canView(target)) && cleanupRemoval(ev, id => p2p.forgetMessage(id))) return
+        if (!target) {
+          // A subscription may deliver messages before this tab opens the server.
+          void get()
+            .discoverChannels(room.server)
+            .then(
+              inSession(() => {
+                const found = instanceTarget(get(), room.server, room.id)
+                if (found && canView(found)) dispatch(ev)
+              })
+            )
+            .catch(() => {})
+          return
+        }
+        if (!canView(target)) return
+      }
+      dispatch(ev)
+    }
+    let interrupted = false
     home.ws.onStatus = wsStatus => {
-      set({ wsStatus })
+      const offline = wsStatus !== 'green'
+      if (offline !== interrupted) {
+        interrupted = offline
+        set(s => ({ wsStatus, channelLabelEpoch: s.channelLabelEpoch + 1 }))
+      } else set({ wsStatus })
       if (wsStatus !== 'green') {
         if (get().guestVoiceName !== null) set({ guestVoiceName: null })
         forgetTyping(false)
@@ -903,7 +963,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       if (get().me) p2p.announce()
       else if (get().token) void recoverMe()
       const { view } = get()
-      if (view) askP2p(get().messages[viewKey(view)] ?? [])
+      if (view?.kind === 'channel' && !instanceTarget(get(), view.server, view.channelId)) {
+        void get()
+          .discoverChannels(view.server)
+          .catch(() => {})
+      } else if (view) askP2p(get().messages[viewKey(view)] ?? [])
       if (connected) scheduleCatchUp(outage)
       connected = true
     }
@@ -1037,9 +1101,10 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   // `retrying`: a boot that tries again after a 429, so it must not fall back yet.
   const resolveUrl = async (nav: 'replace' | 'none', retrying = false) => {
+    const intent = beginNavigation()
     if (readInvite() || readConfigLink() || (!get().me && !get().guest)) return
     const at = sessionMark()
-    const ended = () => at !== sessionMark()
+    const ended = () => at !== sessionMark() || navigation !== intent
     const parsed = parsePath(window.location.pathname)
     // Only the site admin has admin paths. For everyone else they are paths nobody knows.
     if (parsed?.kind === 'admin' && get().me?.is_site_admin === true) {
@@ -1057,10 +1122,23 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     if (target?.kind === 'message') {
       await readsHub.ready()
       if (ended()) return
-      const opened = await openMessageAt(target.id, 'replace').catch((e: unknown) => {
-        fail(e)
-        return true
-      })
+      const place = target.place
+      if (
+        place.kind === 'channel' &&
+        !(await admitChannel(place.server, place.channelId, intent))
+      ) {
+        if (!ended()) {
+          syncUrl(get().view, 'replace')
+          if (!get().view) set({ home: true })
+        }
+        return
+      }
+      const opened = await openMessageAt(target.id, 'replace', () => !ended()).catch(
+        (e: unknown) => {
+          fail(e)
+          return true
+        }
+      )
       if (!opened) toast("You can't open this message")
       const now = get().view
       return now ? syncUrl(now, 'replace') : fallback()
@@ -1087,6 +1165,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         await live(Promise.all([fetchServer(target.server), ensureMembership(target.server)]))
       )[0]
     } catch (e) {
+      if (ended()) return
       if (e instanceof Banned) {
         const now = get().view
         if (now) syncUrl(now, 'replace')
@@ -1098,6 +1177,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       else fail(e)
       return
     }
+    if (ended()) return
     const { guest, guestServers } = get()
     if (guest && !guestServers.includes(target.server)) {
       persistGuestServers([...guestServers, target.server])
@@ -1148,10 +1228,12 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   // Leaves the current view for none (home); a previewed server is forgotten on the way out.
   const clearView = (nav: Nav = 'replace') => {
+    beginNavigation()
     readQueue.flush()
     leaveServerView(null)
     syncUrl(null, nav)
-    set({ view: null, pins: null, home: true })
+    set({ view: null, pins: null, panel: null, home: true })
+    leaveVisit()
     get().setViewing(null)
   }
 
@@ -1163,11 +1245,15 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     set(s => ({
       view,
       home: false,
+      panel: left !== key && s.panel?.kind === 'thread' ? null : s.panel,
       atBottom: { ...s.atBottom, [key]: true },
       focus: keyed(s.focus, key, null),
       unreadAnchor: left && left !== key ? keyed(s.unreadAnchor, left, null) : s.unreadAnchor,
       pins: s.pins && s.pins.key !== key ? null : s.pins,
     }))
+    leaveVisit(
+      view.kind === 'channel' ? instanceTarget(get(), view.server, view.channelId)?.key : undefined
+    )
     placeAnchor(key)
   }
 
@@ -1182,16 +1268,27 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     const here = v?.kind === 'channel' && v.channelId === channelId
     const at = threadRootId ?? id
     const mark = sessionMark()
-    set({ panel: null })
-    if (here) await get().jumpTo(viewKey({ kind: 'channel', server, channelId }), at)
-    else await get().openServer(server, channelId, nav, at)
-    if (threadRootId === null || mark !== sessionMark()) return
+    if (here) {
+      set({ panel: null })
+      await get().jumpTo(viewKey({ kind: 'channel', server, channelId }), at)
+    } else await get().openServer(server, channelId, nav, at)
+    const now = get().view
+    if (
+      threadRootId === null ||
+      mark !== sessionMark() ||
+      now?.kind !== 'channel' ||
+      now.server !== server ||
+      now.channelId !== channelId
+    )
+      return
     const root = (get().messages[`c${channelId}`] ?? []).find(m => m.id === threadRootId)
     if (root) await get().openThread(root, id)
   }
 
   // Drops the timers, queues and caches of the signed-in session.
   const forgetSession = () => {
+    beginNavigation()
+    endViewing(get().guest)
     endSession()
     dropLinkCards()
     hideTypers([])
@@ -1546,6 +1643,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         voiceMuted: {},
         voiceHushed: {},
         timeouts: {},
+        channelLabelEpoch: 0,
+        channelLabelEpochs: {},
         servers: {},
         members: {},
         memberInfo: {},
@@ -1653,7 +1752,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     openServer: (name, channelId, nav = 'push', at) =>
       act(async () => {
+        const intent = beginNavigation()
         const [detail] = await live(Promise.all([fetchServer(name), ensureMembership(name)]))
+        if (intent !== navigation) return
         putServer(name, detail)
         void pruneScopes()
         const target = detail.channels.find(c => c.id === channelId) ?? detail.channels[0]
@@ -1663,6 +1764,19 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     openChannel: (server, channelId, nav = 'push', at) =>
       act(async () => {
+        const intent = beginNavigation()
+        const target = instanceTarget(get(), server, channelId)
+        if (
+          (labelsOffline() || !target || !canView(target)) &&
+          !(await admitChannel(server, channelId, intent))
+        ) {
+          if (intent === navigation && nav !== 'push') {
+            syncUrl(get().view, 'replace')
+            if (!get().view) set({ home: true })
+          }
+          return
+        }
+        if (intent !== navigation) return
         const view: View = { kind: 'channel', server, channelId }
         const key = viewKey(view)
         const before = get().view
@@ -1680,12 +1794,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
           return
         }
         const msgs = await headLoad(key, () => fetchPage(key, {}))
+        if (intent !== navigation || get().view !== view) return
         firstPage(key, msgs)
         askP2p(msgs)
       }),
 
     openDm: (dmId, nav = 'push', at) =>
       act(async () => {
+        beginNavigation()
         const view: View = { kind: 'dm', dmId }
         const key = viewKey(view)
         readQueue.flush()
@@ -1818,6 +1934,23 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     openThread: (root, at) =>
       act(async () => {
+        const view = get().view
+        if (root.channel_id !== null) {
+          const id = root.channel_id
+          const server =
+            view?.kind === 'channel' && view.channelId === id
+              ? view.server
+              : Object.values(get().servers).find(d => d.channels.some(c => c.id === id))?.name
+          if (!server) return
+          const target = instanceTarget(get(), server, id)
+          if (labelsOffline() || !target || !canView(target)) {
+            const intent = beginNavigation()
+            if (!(await admitChannel(server, id, intent))) return
+            await get().openChannel(server, id)
+            const now = get().view
+            if (now?.kind !== 'channel' || now.channelId !== id) return
+          }
+        }
         const key = threadKey(root.id)
         set(s => ({ panel: { kind: 'thread', root }, focus: keyed(s.focus, key, null) }))
         if (at !== undefined) {
@@ -1852,6 +1985,10 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     lockedOut,
     noteBlocked,
     noteUnblocked,
+    navigationIntent: () => {
+      const intent = beginNavigation()
+      return () => intent === navigation
+    },
     openChannelAt,
     persistGrants,
     persistGuestNames,

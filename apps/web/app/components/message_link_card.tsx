@@ -1,10 +1,12 @@
 'use client'
 
-import { createContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
+import { canView, instanceTarget, useViewing } from '../lib/viewing'
 import { ChartColumn, CornerDownRight, Forward, Phone, Pin } from 'lucide-react'
 import { useStore } from '../lib/store'
+import { useForwardAccess } from '../lib/forward_access'
 import { cardLabel } from '../lib/message_links'
-import type { MessageLocation } from '../lib/types'
+import type { ForwardRef, MessageLocation } from '../lib/types'
 import { messagePath, type MessageTarget } from '../lib/view'
 import { MessageTime } from './timestamp'
 import { Snippet } from './replies'
@@ -14,6 +16,8 @@ import { Masked } from './ui'
 import { NameWithUsername } from './display_name'
 
 export const WidgetLinkCards = createContext<ReadonlyMap<number, MessageLocation> | null>(null)
+// Whether a frame may show a forwarded copy from this source.
+export const WidgetForwardOpen = createContext<(fwd: ForwardRef) => boolean>(() => true)
 
 export function WidgetMessageLinkCard({
   link,
@@ -22,6 +26,7 @@ export function WidgetMessageLinkCard({
   link: MessageTarget
   card?: MessageLocation
 }) {
+  const forwardOpen = useContext(WidgetForwardOpen)
   if (
     !card ||
     link.place.kind !== 'channel' ||
@@ -33,6 +38,7 @@ export function WidgetMessageLinkCard({
   return (
     <LinkCard
       card={card}
+      gated={!!card.forward && !forwardOpen(card.forward)}
       jump={() => window.open(messagePath(link), '_blank', 'noopener,noreferrer')}
     />
   )
@@ -43,16 +49,52 @@ export function WidgetMessageLinkCard({
 export function MessageLinkCard({ link }: { link: MessageTarget }) {
   const { id } = link
   const card = useStore(s => s.linkCards[id])
+  useViewing(s => s.revision)
+  const target = link.place
+  const allowed = useStore(s => {
+    if (target.kind === 'dm') return true
+    const t = instanceTarget(s, target.server, target.channelId)
+    return !!t && canView(t)
+  })
+  const sourceVisible = useStore(s => {
+    if (!card || card.dm_id !== null) return true
+    const t = card.server && instanceTarget(s, card.server, card.channel_id ?? -1)
+    return !!t && canView(t)
+  })
   const known = useStore(s => id in s.linkCards)
+  const forward = useForwardAccess(card, {
+    server: card?.server ?? undefined,
+    active: allowed && sourceVisible,
+  })
   const resolveLinkCard = useStore(s => s.resolveLinkCard)
   const openMessage = useStore(s => s.openMessage)
   useEffect(() => {
-    if (!known) resolveLinkCard(id)
-  }, [id, known, resolveLinkCard])
-  return card ? <LinkCard card={card} jump={() => void openMessage(id)} /> : null
+    if (target.kind === 'channel' && !allowed)
+      void useStore
+        .getState()
+        .discoverChannels(target.server)
+        .catch(() => {})
+    if (allowed && !known) resolveLinkCard(id, target)
+  }, [id, known, resolveLinkCard, target, allowed])
+  return allowed && sourceVisible && card ? (
+    <LinkCard
+      card={card}
+      gated={forward.access !== 'open'}
+      jump={() => void openMessage(id, 'push', link.place)}
+    />
+  ) : null
 }
 
-function LinkCard({ card, jump }: { card: MessageLocation; jump: () => void }) {
+// `gated`: a forwarded copy whose source room is closed here shows no text.
+function LinkCard({
+  card,
+  gated,
+  jump,
+}: {
+  card: MessageLocation
+  gated: boolean
+  jump: () => void
+}) {
   const { id } = card
   const blocked = useStore(s => s.blocked[card.author.username] === true)
   const [shown, setShown] = useState(false)
@@ -89,7 +131,11 @@ function LinkCard({ card, jump }: { card: MessageLocation; jump: () => void }) {
           <MessageTime ts={created_at} className="shrink-0 text-xs text-on-surface-variant" />
         </div>
         <div className="mt-0.5 flex min-w-0 items-center gap-1 text-sm text-on-surface-variant">
-          <CardText card={card} />
+          {gated ? (
+            <Label icon={<Forward size={14} className="shrink-0" />} text="Forwarded message" />
+          ) : (
+            <CardText card={card} />
+          )}
         </div>
       </button>
       <button

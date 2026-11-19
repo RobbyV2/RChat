@@ -73,7 +73,7 @@ const parseMessage = (pathname: string): MessageTarget | null => {
   if (channel) {
     const [, raw, channelId, thread, id] = channel
     try {
-      const server = decodeURIComponent(raw)
+      const server = decodeURIComponent(raw).toLowerCase()
       return {
         kind: 'message',
         place: { kind: 'channel', server, channelId: Number(channelId) },
@@ -102,7 +102,7 @@ export const parsePath = (pathname: string): PathTarget | null => {
   if (channel) {
     const [, raw, id] = channel
     try {
-      const server = decodeURIComponent(raw)
+      const server = decodeURIComponent(raw).toLowerCase()
       return id === undefined
         ? { kind: 'server', server }
         : { kind: 'channel', server, channelId: Number(id) }

@@ -12,6 +12,12 @@ type Event =
   | { type: 'widget_refresh' }
   | { type: 'widget_mutes'; users: string[] }
 
+const roomRevision = (room: WidgetRoomMetadata) => ({
+  'X-Widget-Room-Revision': room.channel_id + '.' + (room.sensitive ? '1' : '0'),
+})
+
+const roomChanged = (error: unknown) => error instanceof ApiError && error.status === 412
+
 export class WidgetConnection {
   private api = createApi(location.origin + '/api', 'omit')
   private socket: WebSocket | null = null
@@ -51,7 +57,7 @@ export class WidgetConnection {
   constructor(
     private id: string,
     private redraw: () => void,
-    private canView: (room: WidgetRoomMetadata) => boolean = () => true
+    private canView: (room: WidgetRoomMetadata, account: string | null) => boolean = () => true
   ) {
     this.rtc.onChange = redraw
     this.storageKey = 'rchat_widget:' + id + ':' + this.parent
@@ -107,10 +113,10 @@ export class WidgetConnection {
   }
   // Re-evaluate when local viewing settings change. Only authorized room metadata reaches
   // canView. A blocked room has no view request, live subscription or media connection.
-  async refresh(reconnect = true) {
+  async refresh(reconnect = true, retryRevision = true) {
     const seq = ++this.sequence
     const token = this.token
-    if (this.metadata && !this.canView(this.metadata)) this.hideContent()
+    if (this.metadata && !this.canView(this.metadata, this.account)) this.hideContent()
     try {
       if (token && !this.account) {
         const me = await this.api.me()
@@ -127,18 +133,23 @@ export class WidgetConnection {
       if (this.stopped || this.sequence !== seq) return
       this.metadata = metadata
       this.loaded = true
-      if (!this.canView(metadata)) {
+      if (!this.canView(metadata, this.account)) {
         this.hideContent()
         return
       }
-      const room = await this.api.req<WidgetRoom>(
-        'GET',
-        this.path + '/view',
-        undefined,
-        this.headers
-      )
+      const room = await this.api.req<WidgetRoom>('GET', this.path + '/view', undefined, {
+        ...this.headers,
+        ...roomRevision(metadata),
+      })
       if (this.stopped || this.sequence !== seq) return
-      if (!this.canView(metadata)) {
+      const confirmed = {
+        server: room.server,
+        channel_id: room.channel_id,
+        kind: room.kind,
+        sensitive: room.sensitive,
+      }
+      this.metadata = confirmed
+      if (!this.canView(confirmed, this.account)) {
         this.hideContent()
         return
       }
@@ -147,20 +158,27 @@ export class WidgetConnection {
       if (this.heldDraft && this.heldDraft.channel !== room.channel_id) this.heldDraft = null
       if (this.room?.channel_id !== room.channel_id) this.linkCards = new Map()
       this.room = room
-      void this.loadLinkCards(room, metadata, seq)
+      void this.loadLinkCards(room, confirmed, seq, retryRevision)
       if (!this.token && !room.participate && (this.inVoice || this.joining)) this.release()
       if (reconnect && !this.socket) this.connect()
     } catch (error) {
       if (this.stopped || this.sequence !== seq || this.expired(token, error)) return
-      this.metadata = null
-      this.loaded = true
+      const rediscover = retryRevision && roomChanged(error)
       const retry =
         error instanceof ApiError &&
         (error.status === 0 || error.status === 429 || error.status >= 500)
-      this.hideContent(retry)
+      await this.resetView(seq, reconnect, rediscover, retry || rediscover)
       return
     }
     this.changed()
+  }
+  // A changed room label closes the content and discovers the room once more.
+  private async resetView(seq: number, reconnect: boolean, rediscover: boolean, keepDraft = false) {
+    if (this.stopped || this.sequence !== seq) return
+    this.metadata = null
+    this.loaded = true
+    this.hideContent(keepDraft)
+    if (rediscover) await this.refresh(reconnect, false)
   }
   // Notices that arrive during a refresh lead to one more once it ends.
   private live: Promise<void> | null = null
@@ -177,7 +195,12 @@ export class WidgetConnection {
       this.liveRefresh()
     })
   }
-  private async loadLinkCards(room: WidgetRoom, metadata: WidgetRoomMetadata, seq: number) {
+  private async loadLinkCards(
+    room: WidgetRoom,
+    metadata: WidgetRoomMetadata,
+    seq: number,
+    retryRevision: boolean
+  ) {
     const token = this.token
     const ids = new Set<number>()
     for (const message of room.messages) {
@@ -194,23 +217,31 @@ export class WidgetConnection {
     // The previews shown keep their place until the new answer replaces them all.
     const cards = new Map<number, MessageLocation>()
     for (let i = 0; i < pending.length; i += 50) {
-      if (this.stopped || this.sequence !== seq || !this.canView(metadata)) return
+      if (this.stopped || this.sequence !== seq || !this.canView(metadata, this.account)) return
       try {
         const found = await this.api.req<MessageLocation[]>(
           'POST',
           this.path + '/locations',
           { ids: pending.slice(i, i + 50) },
-          this.scope
+          { ...this.scope, ...roomRevision(metadata) }
         )
-        if (this.stopped || this.sequence !== seq || !this.canView(metadata)) return
+        if (this.stopped || this.sequence !== seq || !this.canView(metadata, this.account)) return
         for (const card of found) cards.set(card.id, card)
       } catch (error) {
-        if (this.sequence === seq) this.expired(token, error)
+        if (this.sequence !== seq || this.expired(token, error)) return
+        if (roomChanged(error)) await this.resetView(seq, true, retryRevision, true)
         return // The link remains usable when its preview is unavailable.
       }
     }
     this.linkCards = cards
     this.changed()
+  }
+  updateViewing() {
+    if (!this.metadata || this.stopped) return
+    if (!this.canView(this.metadata, this.account)) {
+      this.sequence++
+      this.hideContent()
+    } else if (!this.room) void this.refresh()
   }
   private hideContent(keepDraft = false) {
     if (!keepDraft) {

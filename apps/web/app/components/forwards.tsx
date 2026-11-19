@@ -1,8 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Forward, Image as ImageIcon, SendHorizontal } from 'lucide-react'
 import { useStore } from '../lib/store'
+import { clipAllowed, sourceAccess } from '../lib/forward_viewing'
+import { useForwardAccess } from '../lib/forward_access'
+import { useP2p } from '../lib/p2p/app/store'
+import { useViewing } from '../lib/viewing'
 import { forwardOrigin, forwardPending } from '../lib/forward'
 import type { Message } from '../lib/types'
 import type { ToolbarAction } from './message_toolbar'
@@ -30,11 +34,31 @@ export const forwardAction = (onClick: () => void): ToolbarAction => ({
   onClick,
 })
 
+export const useForwardClip = () => {
+  useViewing(s => s.revision)
+  useP2p(s => s.servers)
+  const clip = useStore(s => s.forwardClip)
+  const allowed = useStore(s => !!clip && clipAllowed(s, clip))
+  useEffect(() => {
+    for (const origin of [clip?.source, clip?.quoted])
+      if (
+        origin?.kind === 'channel' &&
+        origin.server &&
+        sourceAccess(useStore.getState(), origin) === 'unknown'
+      )
+        void useStore
+          .getState()
+          .discoverChannels(origin.server)
+          .catch(() => {})
+  }, [clip, allowed])
+  return allowed ? clip : null
+}
+
 // The bar above a composer while the forward clipboard has a message. Send forwards it here. X
 // clears the clipboard.
 // `onSend` sends it somewhere other than an instance conversation (a P2P one).
 export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: () => void }) {
-  const clip = useStore(s => s.forwardClip)
+  const clip = useForwardClip()
   const busy = useStore(s => (clip ? forwardPending(s.outbox[draftKey], clip.id) : false))
   const sendForward = useStore(s => s.sendForward)
   const clearForward = useStore(s => s.clearForward)
@@ -113,6 +137,7 @@ export function ForwardCard({
   const fwd = m.forward
   const blocked = useStore(s => (fwd?.author ? s.blocked[fwd.author.username] === true : false))
   const [shown, setShown] = useState(false)
+  const { access } = useForwardAccess(m, { active: (!blocked || shown) && !local })
   if (!fwd) return null
   const { author } = fwd
   const origin = forwardOrigin(fwd)
@@ -130,6 +155,20 @@ export function ForwardCard({
         <div className="mt-1 max-w-160 min-w-0 rounded-xl border border-outline-variant bg-surface-container px-3 py-2">
           <BlockedQuote onShow={() => setShown(true)} />
         </div>
+      </div>
+    )
+  if (!local && access !== 'open')
+    return (
+      <div data-forward={fwd.source_id} className="min-w-0 text-sm text-on-surface-variant">
+        Forwarded message ·{' '}
+        <button
+          type="button"
+          className="min-h-8 cursor-pointer underline"
+          disabled={sending}
+          onClick={() => void openForward(m)}
+        >
+          Open original
+        </button>
       </div>
     )
   return (

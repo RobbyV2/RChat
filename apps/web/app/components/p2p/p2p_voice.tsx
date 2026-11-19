@@ -9,6 +9,8 @@ import { longPress } from '../context_menu'
 import { Masked } from '../ui'
 import { LiveBadge } from '../voice_grid'
 import { KeyAvatar } from './p2p_badge'
+import { peerTarget } from '../../lib/p2p/app/viewing'
+import { canView, useViewing } from '../../lib/viewing'
 
 // Voice channels of a P2P server in its sidebar: the row joins (and opens the stage), and who is
 // in the channel shows under it with identicons, as in instance servers.
@@ -99,7 +101,12 @@ export function P2pVoiceRow({
   const here = useP2p(s => s.voice?.room === v.id && s.voice.ch === c.id)
   const instance = useStore(s => s.voice !== null || s.call !== null)
   const connected = here && !instance
-  const users = v.voice[c.id] ?? NONE
+  useViewing(s => s.revision)
+  const closed = useP2p(s => {
+    const target = peerTarget(s, v.id, c.id)
+    return !!target && !canView(target)
+  })
+  const users = (!closed && v.voice[c.id]) || NONE
   const count = users.length
   return (
     <div className="flex flex-col rounded-lg">
@@ -110,8 +117,8 @@ export function P2pVoiceRow({
           count ? `, ${count} connected` : ''
         }`}
         onClick={() => {
-          p2pServer.openChannel(c.id)
-          if (!connected) void p2pVoice.join(v.id, c.id)
+          if (connected) void p2pServer.openChannel(c.id)
+          else void p2pVoice.join(v.id, c.id)
         }}
         {...longPress(menu)}
         className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm outline-offset-[-2px] transition-colors focus-visible:outline-2 focus-visible:outline-primary active:scale-[0.98] ${

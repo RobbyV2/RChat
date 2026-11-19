@@ -2,7 +2,14 @@ import { plainLine } from './replies'
 import type { ForwardRef, Message, UserRef } from './types'
 
 // The forward clipboard: one copied message per account, kept until it is sent or dismissed.
+export type ForwardSource =
+  | { kind: 'direct' }
+  | { kind: 'channel'; id: number; server?: string }
+  | { kind: 'p2p'; room: string; ch: string }
+
 export interface ForwardClip {
+  source?: ForwardSource
+  quoted?: ForwardSource
   id: number
   author: UserRef | null
   snippet: string
@@ -21,7 +28,11 @@ export const forwardKey = (username: string) => `rchat_forward:${username}`
 export const canForward = (m: Message) => (m.kind === 'user' || m.kind === 'poll') && m.id > 0
 
 // The original author and time travel with forwards of forwards (the server does the same).
-export const clipOf = (m: Message): ForwardClip => ({
+export const clipOf = (m: Message, server?: string): ForwardClip => ({
+  source:
+    m.channel_id == null
+      ? { kind: 'direct' }
+      : { kind: 'channel', id: m.channel_id, ...(server ? { server } : {}) },
   id: m.id,
   author: m.forward ? m.forward.author : m.author,
   snippet: plainLine(m.content),
@@ -41,6 +52,26 @@ const isUser = (u: unknown): u is UserRef => {
   )
 }
 
+const isSource = (value: unknown): value is ForwardSource => {
+  if (!value || typeof value !== 'object' || !('kind' in value)) return false
+  if (value.kind === 'direct') return true
+  if (value.kind === 'channel')
+    return (
+      'id' in value &&
+      typeof value.id === 'number' &&
+      Number.isSafeInteger(value.id) &&
+      value.id > 0 &&
+      (!('server' in value) || typeof value.server === 'string')
+    )
+  return (
+    value.kind === 'p2p' &&
+    'room' in value &&
+    typeof value.room === 'string' &&
+    'ch' in value &&
+    typeof value.ch === 'string'
+  )
+}
+
 export function parseForward(raw: string | null): ForwardClip | null {
   let data: unknown
   try {
@@ -51,8 +82,13 @@ export function parseForward(raw: string | null): ForwardClip | null {
   if (typeof data !== 'object' || data === null) return null
   const { v, clip } = data as Record<string, unknown>
   if (v !== 1 || typeof clip !== 'object' || clip === null) return null
-  const { id, author, snippet, has_media, created_at, body, p2p } = clip as Record<string, unknown>
+  const { id, author, snippet, has_media, created_at, body, p2p, source, quoted } = clip as Record<
+    string,
+    unknown
+  >
   if (
+    !isSource(source) ||
+    (quoted !== undefined && !isSource(quoted)) ||
     typeof id !== 'number' ||
     !Number.isSafeInteger(id) ||
     id <= 0 ||
@@ -65,6 +101,8 @@ export function parseForward(raw: string | null): ForwardClip | null {
   )
     return null
   return {
+    source,
+    ...(quoted ? { quoted } : {}),
     ...(typeof body === 'string' ? { body: [...body].slice(0, BODY_MAX).join('') } : {}),
     ...(p2p === true ? { p2p: true } : {}),
     id,

@@ -66,6 +66,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("messages", "call_kind TEXT"),
     ("messages", "call_video {INT}"),
     ("channels", "topic TEXT"),
+    ("channels", "sensitive {INT} NOT NULL DEFAULT 0"),
     ("channels", "category_id {INT}"),
     ("channels", "position {INT} NOT NULL DEFAULT 0"),
     ("servers", "layout_version {INT} NOT NULL DEFAULT 0"),
@@ -221,7 +222,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// `banned_usernames.username_key_alt`).
 /// 34: channel-scoped message search and the thread root timestamp for indexed replies.
 /// 35: guest chat sessions, channel widgets and explicit server opt-ins for guest text and voice.
-pub const SCHEMA_VERSION: i64 = 35;
+/// 36: `channels.sensitive`, the shared sensitive channel label.
+pub const SCHEMA_VERSION: i64 = 36;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 16] {

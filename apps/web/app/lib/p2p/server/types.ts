@@ -160,6 +160,7 @@ export const PIN_THREAD_TEXT = "Messages in threads can't be pinned"
 // What to search P2P servers for (search panel): words, authors, a channel, files, and times
 // (unix seconds, exclusive).
 export interface SearchQuery {
+  visible?: (room: string, ch: string) => boolean
   q: string
   from: readonly string[] | null
   room: string | null
@@ -439,6 +440,7 @@ export type ChannelPatch = {
   topic?: string
   gone?: true
   restrict_view?: boolean
+  sensitive?: boolean
   restrict_send?: boolean
   slow?: number
 }

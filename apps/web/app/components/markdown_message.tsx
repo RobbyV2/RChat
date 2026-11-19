@@ -395,7 +395,7 @@ export function MessageLink({ href, children, ...props }: React.ComponentProps<'
         onClick={e => {
           if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
           e.preventDefault()
-          void useStore.getState().openMessage(target.id)
+          void useStore.getState().openMessage(target.id, 'push', target.place)
         }}
         className="text-primary underline"
       >

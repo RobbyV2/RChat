@@ -1,13 +1,14 @@
 'use client'
-import { useEffect, useMemo, useReducer, useRef, useState, type FormEvent } from 'react'
+import { useContext, useEffect, useMemo, useReducer, useRef, useState, type FormEvent } from 'react'
 import { Reply } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
 import { defineAction } from '../lib/actions/registry'
 import { messagePlaces, type GroupPlace } from '../lib/message_groups'
 import { isNotice } from '../lib/system_messages'
 import { groupPadCls, gutterTimeCls } from '../components/grouped_row'
-import { WidgetLinkCards } from '../components/message_link_card'
+import { WidgetForwardOpen, WidgetLinkCards } from '../components/message_link_card'
 import { WidgetNotice } from '../components/widget_notice'
+import { frameCopyOpen } from '../lib/forward_viewing'
 import { ShortTime } from '../components/timestamp'
 import { MarkdownMessage } from '../components/markdown_message'
 import { ContextMenu, longPress } from '../components/context_menu'
@@ -18,7 +19,21 @@ import { audibleStreams, guestLabel, isGuestName } from '../lib/guest_voice'
 import { restoreStreamer } from '../lib/start'
 import { errorText, useStore } from '../lib/store'
 import { WidgetConnection } from '../lib/widget_connection'
-import type { Message } from '../lib/types'
+import { ViewingPrompt } from '../components/viewing_prompt'
+import {
+  canView,
+  cancelViewing,
+  channelTarget,
+  forgetViewing,
+  leaveVisit,
+  markPersonally,
+  personallyMarked,
+  needsWarning,
+  requestViewing,
+  useViewing,
+} from '../lib/viewing'
+import type { WidgetRoomMetadata } from '../lib/widgets'
+import type { ForwardRef, Message } from '../lib/types'
 
 function Audio({ stream }: { stream: MediaStream }) {
   const ref = useRef<HTMLAudioElement>(null)
@@ -127,6 +142,7 @@ function ChatRow({
     time = 'widget-time-' + message.id
   const date = new Date(message.created_at * 1000)
   const canReply = client.canPost && message.kind === 'user'
+  const forwardOpen = useContext(WidgetForwardOpen)
   const owner = 'widget-message-' + message.id
   useEffect(() => {
     return () => {
@@ -201,10 +217,18 @@ function ChatRow({
         {message.reply_to && (
           <p className="truncate border-l-2 border-outline pl-2 text-xs">
             <span className="streamer">{message.reply_to.author?.display_name}</span> ·{' '}
-            {message.reply_to.content}
+            {message.reply_to.forward && !forwardOpen(message.reply_to.forward) ? (
+              <span className="italic">Forwarded message</span>
+            ) : (
+              message.reply_to.content
+            )}
           </p>
         )}
-        <MarkdownMessage message={message} />
+        {message.forward && !forwardOpen(message.forward) ? (
+          <p className="text-sm text-on-surface-variant italic">Forwarded message</p>
+        ) : (
+          <MarkdownMessage message={message} />
+        )}
       </div>
       {canReply && (
         <button
@@ -233,17 +257,19 @@ function WidgetChat({ client, rows }: { client: WidgetConnection; rows: Message[
   return (
     <>
       <div className="min-h-16 min-w-0 flex-1 overflow-auto p-3" aria-label="Messages">
-        <WidgetLinkCards.Provider value={client.linkCards}>
-          {rows.map((message, i) => (
-            <ChatRow
-              key={message.id}
-              message={message}
-              place={groups[i]}
-              client={client}
-              reply={setReply}
-            />
-          ))}
-        </WidgetLinkCards.Provider>
+        <WidgetForwardOpen.Provider value={fwd => copyOpen(fwd, client)}>
+          <WidgetLinkCards.Provider value={client.linkCards}>
+            {rows.map((message, i) => (
+              <ChatRow
+                key={message.id}
+                message={message}
+                place={groups[i]}
+                client={client}
+                reply={setReply}
+              />
+            ))}
+          </WidgetLinkCards.Provider>
+        </WidgetForwardOpen.Provider>
         <div ref={bottom} />
       </div>
       {client.canRestoreDraft ? (
@@ -290,9 +316,25 @@ function WidgetChat({ client, rows }: { client: WidgetConnection; rows: Message[
   )
 }
 
+// The frame serves this origin even when the main app has selected another instance.
+const frameInstance = () => ({ origin: location.origin, scoped: (key: string) => key })
+const viewingTarget = (metadata: WidgetRoomMetadata, account: string | null) =>
+  channelTarget(
+    account,
+    'instance',
+    metadata.server,
+    { id: metadata.channel_id, sensitive: metadata.sensitive },
+    frameInstance()
+  )
+
+const copyOpen = (fwd: ForwardRef, client: WidgetConnection) =>
+  !!client.metadata && frameCopyOpen(fwd, client.metadata, client.account, frameInstance())
+
 export default function WidgetPage() {
   const [, redraw] = useReducer(n => n + 1, 0)
   const [client, setClient] = useState<WidgetConnection | null>(null)
+  const prompted = useRef('')
+  const revision = useViewing(s => s.revision)
   useEffect(
     () =>
       defineAction({
@@ -328,10 +370,20 @@ export default function WidgetPage() {
     const args = new URLSearchParams(location.search)
     const theme = args.get('theme')
     if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme
-    const connection = new WidgetConnection(args.get('id') ?? '', redraw)
+    const connection = new WidgetConnection(args.get('id') ?? '', redraw, (room, account) =>
+      canView(viewingTarget(room, account))
+    )
+    const unsubscribe = useViewing.subscribe((next, prior) => {
+      if (next.revision !== prior.revision) connection.updateViewing()
+    })
     setClient(connection)
     void connection.start()
-    const end = () => connection.destroy()
+    const end = () => {
+      unsubscribe()
+      connection.destroy()
+      cancelViewing()
+      leaveVisit()
+    }
     window.addEventListener('storage', connection.syncLogin)
     window.addEventListener('pagehide', end)
     return () => {
@@ -340,7 +392,24 @@ export default function WidgetPage() {
       end()
     }
   }, [])
-  const room = client?.room
+  const metadata = client?.metadata
+  const account = client?.account ?? null
+  const target = useMemo(
+    () => (metadata ? viewingTarget(metadata, account) : null),
+    [metadata, account]
+  )
+  const gated = target !== null && !canView(target)
+  useEffect(() => {
+    leaveVisit(target?.key)
+    if (!target) {
+      prompted.current = ''
+      cancelViewing()
+    } else if (gated && prompted.current !== target.key) {
+      prompted.current = target.key
+      void requestViewing(target)
+    }
+  }, [target, gated, revision])
+  const room = gated ? null : client?.room
   return (
     <main
       className="flex h-dvh min-w-0 flex-col overflow-y-auto bg-surface text-on-surface"
@@ -358,11 +427,7 @@ export default function WidgetPage() {
             )}
           </header>
           {room.kind === 'text' ? (
-            <WidgetChat
-              key={JSON.stringify([room.channel_id, client.account])}
-              client={client}
-              rows={room.messages}
-            />
+            <WidgetChat key={target?.key} client={client} rows={room.messages} />
           ) : (
             <section className="min-h-0 flex-1 space-y-3 overflow-auto p-3" aria-label="Voice room">
               <h2 className="text-sm font-medium">In voice</h2>
@@ -407,6 +472,19 @@ export default function WidgetPage() {
             </section>
           )}
         </>
+      ) : gated && target ? (
+        <div className="p-3">
+          <p role="status">This channel is marked sensitive.</p>
+          <button
+            className={textBtn + ' cursor-pointer'}
+            onClick={() => void requestViewing(target)}
+          >
+            Open channel
+          </button>
+          {client && client.mode !== 'public_read' && client.mode !== 'read_link' && (
+            <AccessForm client={client} />
+          )}
+        </div>
       ) : (
         <div className="p-3">
           <p role="status">
@@ -429,7 +507,38 @@ export default function WidgetPage() {
           This frame can remember you only while it is open.
         </p>
       )}
+      {target && (
+        <details className="shrink-0 border-t border-outline-variant px-3 py-1 text-xs">
+          <summary className="w-fit cursor-pointer py-1 text-on-surface-variant">
+            Viewing options
+          </summary>
+          <label className="flex min-h-8 w-fit cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              className="cursor-pointer"
+              checked={personallyMarked(target)}
+              onChange={e => {
+                prompted.current = target.key
+                markPersonally(target, e.target.checked)
+              }}
+            />
+            Mark sensitive on this device
+          </label>
+          {room && needsWarning(target) && (
+            <button
+              className={textBtn + ' cursor-pointer'}
+              onClick={() => {
+                prompted.current = target.key
+                forgetViewing(target)
+              }}
+            >
+              Hide channel
+            </button>
+          )}
+        </details>
+      )}
       <ContextMenu />
+      <ViewingPrompt />
     </main>
   )
 }

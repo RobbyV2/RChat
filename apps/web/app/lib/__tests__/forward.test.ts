@@ -36,6 +36,7 @@ describe('forward clipboard', () => {
   test('clipOf keeps the original author and time of a forwarded copy', () => {
     const plain = clipOf(msg(5, { content: '**Lunch** at noon\nmore', author: user('bob') }))
     expect(plain).toEqual({
+      source: { kind: 'channel', id: 1 },
       id: 5,
       author: user('bob'),
       snippet: 'Lunch at noon',

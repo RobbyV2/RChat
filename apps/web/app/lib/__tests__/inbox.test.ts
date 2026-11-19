@@ -1,3 +1,4 @@
+import { serverDetail } from './fixtures'
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { allPings, resetSessionCaches, useStore } from '../store'
 import {
@@ -283,7 +284,7 @@ describe('the instance source', () => {
       return new Response(JSON.stringify(page), { status: 200 })
     }) as unknown as typeof fetch
     try {
-      useStore.setState({ notifyPrefs: prefs })
+      useStore.setState({ notifyPrefs: prefs, servers: { s: serverDetail('s') } })
       const unread = await instanceInbox.load({ unread: true, kind: null, place: null }, null)
       expect(unread.entries.map(e => e.id)).toEqual([1])
       expect(unread.next).toBeNull()
@@ -320,6 +321,7 @@ describe('the instance source', () => {
   })
 
   test('loading, marking one and marking all call the API with the bounds', async () => {
+    useStore.setState({ servers: { s: serverDetail('s') } })
     const calls: { url: string; body: unknown }[] = []
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
       calls.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : null })

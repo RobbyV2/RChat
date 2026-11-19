@@ -6,6 +6,7 @@ import { ChartColumn, EyeOff, FileText, Pin, X } from 'lucide-react'
 import { useMediaSrc } from '../lib/media_src'
 import { PINS_TITLE, noPinsText, pinPlace } from '../lib/pins'
 import { myPerms, useStore, viewKey } from '../lib/store'
+import { useForwardAccess } from '../lib/forward_access'
 import { Perm, hasPerm, type Message } from '../lib/types'
 import { longPress, useMedia } from './context_menu'
 import { SHEET_QUERY } from './emoji_picker'
@@ -217,6 +218,7 @@ function PinEntry({
   profiles: boolean
 }) {
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
+  const { access } = useForwardAccess(m, { server: server ?? undefined })
   const text = { ...m, media: null, embeds: [] }
   const onClick = (e: MouseEvent) => {
     const hit = e.target instanceof Element ? e.target.closest('a, button, [role="button"]') : null
@@ -250,10 +252,16 @@ function PinEntry({
           Poll
         </p>
       )}
-      <div className="mt-1 max-h-36 overflow-hidden">
-        <MarkdownMessage message={text} />
-      </div>
-      <PinMedia m={m} />
+      {access === 'open' ? (
+        <>
+          <div className="mt-1 max-h-36 overflow-hidden">
+            <MarkdownMessage message={text} />
+          </div>
+          <PinMedia m={m} />
+        </>
+      ) : (
+        <p className="mt-1 text-sm text-on-surface-variant italic">Forwarded message</p>
+      )}
       <div className="absolute top-2 right-2 flex items-center gap-1">
         <button
           type="button"

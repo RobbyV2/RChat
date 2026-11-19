@@ -10,6 +10,7 @@ import {
   useSyncExternalStore,
   type KeyboardEvent,
 } from 'react'
+import { useViewing } from '../lib/viewing'
 import { AtSign, Bell, Check, CheckCheck, Hash, MessageSquare, UserPlus, X } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
 import { useMask, useStore } from '../lib/store'
@@ -234,6 +235,20 @@ function Row({
   onRead: (e: InboxEntry) => void
 }) {
   const streamer = useStore(s => s.streamer)
+  useViewing(s => s.revision)
+  useStore(s => s.servers)
+  if (adapterOf(entry.adapter)?.canPreview?.(entry) === false) {
+    return (
+      <li>
+        <button
+          className="min-h-11 w-full cursor-pointer rounded-xl px-3 py-2 text-left hover:bg-surface-container-high"
+          onClick={() => onOpen(entry)}
+        >
+          Open channel · <Place entry={entry} />
+        </button>
+      </li>
+    )
+  }
   const snippet = inboxSnippet(entry, streamer, showText)
   const menu = longPress((x, y) =>
     openActionMenu(x, y, {
@@ -329,7 +344,7 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
   const open = (entry: InboxEntry) => {
     const adapter = adapterOf(entry.adapter)
     if (!adapter) return
-    if (entry.unread) {
+    if (entry.unread && adapter.canPreview?.(entry) !== false) {
       markedHere()
       void adapter.markRead(entry).catch(() => {})
     }
@@ -510,7 +525,7 @@ export function InboxPreview({ max = 5 }: { max?: number }) {
   const open = (entry: InboxEntry) => {
     const adapter = adapterOf(entry.adapter)
     if (!adapter) return
-    if (entry.unread) {
+    if (entry.unread && adapter.canPreview?.(entry) !== false) {
       markedHere()
       void adapter.markRead(entry).catch(() => {})
     }

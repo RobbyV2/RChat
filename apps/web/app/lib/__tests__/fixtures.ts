@@ -106,6 +106,13 @@ export const member = (username: string, over: Partial<Member> = {}): Member => 
   ...over,
 })
 
+export const textChannel = (id: number) => ({
+  id,
+  name: `c${id}`,
+  kind: 'text' as const,
+  slowmode_seconds: 0,
+})
+
 export const serverDetail = (name: string, over: Partial<ServerDetail> = {}): ServerDetail => ({
   name,
   display_name: name,

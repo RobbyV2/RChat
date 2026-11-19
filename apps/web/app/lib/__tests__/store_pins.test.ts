@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { Message, WsEvent } from '../types'
-import { advance, drain, me, msg, serverDetail, until, user } from './fixtures'
+import { textChannel, advance, drain, me, msg, serverDetail, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -30,7 +30,11 @@ beforeEach(() => {
     const url = String(input)
     const method = init?.method ?? 'GET'
     requests.push({ method, url })
-    const body = url.endsWith('/pins') ? pinsReply : { ok: true }
+    const body = url.endsWith('/servers/s')
+      ? st().servers.s
+      : url.endsWith('/pins')
+        ? pinsReply
+        : { ok: true }
     return new Response(JSON.stringify(body), { status: 200 })
   }) as typeof fetch
   useStore.setState({
@@ -39,7 +43,7 @@ beforeEach(() => {
     guest: false,
     error: null,
     view: { kind: 'channel', server: 's', channelId: 1 },
-    servers: { s: serverDetail('s') },
+    servers: { s: serverDetail('s', { channels: [1].map(textChannel) }) },
     messages: {
       c1: [
         msg(9),

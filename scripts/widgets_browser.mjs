@@ -41,6 +41,7 @@ async function ok(...args) {
   )
   return r.data
 }
+const article = (f, message) => f.locator('article[data-mid="' + message.id + '"]')
 const signup = async username =>
   (await ok('POST', '/auth/register', { username, password, avatar_kind: 'identicon' })).token
 const admin = process.env.RCHAT_TEST_ADMIN_TOKEN || (await signup('admin' + suffix))
@@ -209,16 +210,23 @@ try {
       )
     const p = await ctx.newPage()
     const content = []
+    const reads = { account: 0, guest: 0 }
     const lookups = []
     p.on('request', req => {
       const url = new URL(req.url())
       if (url.origin === base && url.pathname.endsWith('/locations'))
-        lookups.push({ path: url.pathname, ids: req.postDataJSON()?.ids })
+        lookups.push({
+          path: url.pathname,
+          ids: req.postDataJSON()?.ids,
+          revision: req.headers()['x-widget-room-revision'],
+        })
       if (
         url.origin === base &&
         /\/(view|locations|messages|media|uploads|voice)(\/|$)/.test(url.pathname)
-      )
+      ) {
+        reads[req.headers().authorization ? 'account' : 'guest']++
         content.push(url.pathname)
+      }
     })
     let name
     p.on('websocket', socket => {
@@ -279,6 +287,7 @@ try {
       f,
       document,
       content,
+      reads,
       lookups,
       name: () => name,
       metadata: () => metadata,
@@ -318,6 +327,194 @@ try {
   console.log(
     'PASS authorized metadata precedes history, roster, content socket and media in chat and voice frames'
   )
+  const quiet = await channel('quiet-room', 'text')
+  const quietVoice = await channel('quiet-stage', 'voice')
+  const note = await ok(
+    'POST',
+    '/channels/' + quiet + '/messages',
+    { content: 'Friday morning programme' },
+    manager
+  )
+  await ok(
+    'POST',
+    '/channels/' + quiet + '/messages',
+    { content: base + '/s/' + server + '/' + quiet + '/' + note.id + '/' },
+    manager
+  )
+  const quietChat = await widget(quiet, 'public_chat')
+  const quietCall = await widget(quietVoice, 'voice')
+  for (const [w, id] of [
+    [quietChat, quiet],
+    [quietCall, quietVoice],
+  ]) {
+    const x = await frame(w, {}, host, { holdDiscovery: true })
+    await until(() => x.metadata(), 'Room discovery did not complete')
+    assert.equal(x.metadata().sensitive ?? false, false)
+    const pending = x.p.waitForResponse(response =>
+      new URL(response.url()).pathname.endsWith('/widgets/' + w.id + '/view')
+    )
+    await ok('PATCH', '/channels/' + id, { sensitive: true }, manager)
+    x.releaseDiscovery()
+    const response = await pending
+    assert.equal(response.request().headers()['x-widget-room-revision'], id + '.0')
+    assert.equal(response.status(), 412)
+    assert.equal((await response.json()).error, 'Room information changed')
+    await x.f.getByRole('dialog', { name: 'Open sensitive channel?' }).waitFor()
+    assert.equal(await x.f.locator('article, audio, [aria-label="Voice room"]').count(), 0)
+    assert.equal(await x.document().evaluate(() => window.widgetTestMedia.requests), 0)
+    assert.ok(!x.content.includes('socket'))
+    assert.equal(x.lookups.length, 0)
+    await x.ctx.close()
+  }
+  console.log('PASS chat and voice frames rediscover a changed shared label before opening')
+  for (const [w, isVoice] of [
+    [quietChat, false],
+    [quietCall, true],
+  ]) {
+    const x = await frame(w, isVoice ? { delegate: '1' } : {})
+    const dialog = x.f.getByRole('dialog', { name: 'Open sensitive channel?' })
+    await dialog.waitFor()
+    assert.deepEqual(x.content, [])
+    assert.equal(await x.f.locator('article, audio').count(), 0)
+    assert.equal(await x.document().evaluate(() => window.widgetTestMedia.requests), 0)
+    await on(dialog, 'Cancel').click()
+    await on(x.f, 'Open channel').waitFor()
+    assert.deepEqual(x.content, [])
+    await on(x.f, 'Open channel').click()
+    await on(dialog, 'Open').click()
+    if (isVoice) {
+      await on(x.f, 'Join voice').click()
+      await on(x.f, 'Leave voice').waitFor()
+      assert.equal(
+        await x
+          .document()
+          .evaluate(
+            () => window.widgetTestMedia.tracks.filter(t => t.readyState === 'live').length
+          ),
+        1
+      )
+    } else {
+      await x.f.locator('[data-link-card]').getByText(note.content, { exact: true }).waitFor()
+      assert.ok(x.lookups.length > 0)
+      assert.ok(x.lookups.every(lookup => lookup.revision === quiet + '.1'))
+    }
+    await x.f.getByText('Viewing options', { exact: true }).click()
+    await on(x.f, 'Hide channel').click()
+    await on(x.f, 'Open channel').waitFor()
+    assert.equal(await x.f.locator('article, audio').count(), 0)
+    if (isVoice)
+      assert.equal(
+        await x
+          .document()
+          .evaluate(
+            () => window.widgetTestMedia.tracks.filter(t => t.readyState === 'live').length
+          ),
+        0
+      )
+    const personal = x.f.getByRole('checkbox', { name: 'Mark sensitive on this device' })
+    await personal.check()
+    await personal.uncheck()
+    await on(x.f, 'Open channel').waitFor()
+    assert.equal(await x.f.locator('article, audio').count(), 0)
+    const fresh = await frame(w)
+    await fresh.f.getByRole('dialog', { name: 'Open sensitive channel?' }).waitFor()
+    assert.deepEqual(fresh.content, [])
+    await fresh.ctx.close()
+    await x.ctx.close()
+  }
+  console.log(
+    'PASS shared channel labels prompt each external viewer before history, previews, subscriptions or voice'
+  )
+  {
+    const switching = await frame(quietChat)
+    const prompt = switching.f.getByRole('dialog', { name: 'Open sensitive channel?' })
+    const signIn = async () => {
+      await on(switching.f, 'Sign in').click()
+      await switching.f.getByRole('textbox', { name: 'Username' }).fill(account)
+      await switching.f.getByLabel('Password', { exact: true }).fill(password)
+      await until(async () => {
+        const pending = switching.p.waitForResponse(r =>
+          new URL(r.url()).pathname.endsWith('/auth/login')
+        )
+        await on(switching.f, 'Sign in to widget').click()
+        const response = await pending
+        if (response.status() === 429) {
+          const seconds = Number(response.headers()['retry-after'])
+          assert.ok(seconds > 0)
+          await delay(seconds * 1000)
+          return false
+        }
+        assert.equal(response.status(), 200)
+        return true
+      }, 'The widget account did not sign in')
+    }
+    await on(prompt, 'Open').click()
+    const firstRow = article(switching.f, note)
+    await on(firstRow, 'Reply').click()
+    const guestDraft = switching.f.getByRole('textbox', { name: 'Message as a guest' })
+    await guestDraft.fill('Guest draft')
+    await on(switching.f, 'Cancel reply').waitFor()
+    const memberReads = switching.reads.account
+    switching.content.length = 0
+    await signIn()
+    await prompt.waitFor()
+    assert.equal(switching.reads.account, memberReads)
+    assert.ok(!switching.content.includes('socket'))
+    await on(prompt, 'Cancel').click()
+    assert.equal(await switching.f.locator('article').count(), 0)
+    await on(switching.f, 'Open channel').click()
+    await prompt.getByRole('checkbox', { name: 'Remember on this device' }).check()
+    await on(prompt, 'Open').click()
+    await firstRow.waitFor()
+    const memberDraft = switching.f.getByRole('textbox', { name: 'Message', exact: true })
+    assert.equal(await memberDraft.inputValue(), '')
+    assert.equal(await on(switching.f, 'Cancel reply').count(), 0)
+    const guestReads = switching.reads.guest
+    switching.content.length = 0
+    await on(switching.f, 'Sign out').click()
+    await prompt.waitFor()
+    assert.equal(switching.reads.guest, guestReads)
+    assert.ok(!switching.content.includes('socket'))
+    await on(prompt, 'Cancel').click()
+    await signIn()
+    await firstRow.waitFor()
+    assert.equal(await prompt.count(), 0)
+    await switching.ctx.close()
+    console.log(
+      'PASS widget account changes end a one-time visit and restore only its own remembered choice'
+    )
+  }
+  {
+    const local = await frame(chat)
+    await local.f.getByText('Selected channel history', { exact: true }).waitFor()
+    await local.f.getByText('Viewing options', { exact: true }).click()
+    await local.f.getByRole('checkbox', { name: 'Mark sensitive on this device' }).check()
+    await on(local.f, 'Open channel').waitFor()
+    assert.equal(await local.f.locator('article').count(), 0)
+    local.content.length = 0
+    await local.p.reload({ waitUntil: 'domcontentloaded' })
+    await local.f.getByRole('dialog', { name: 'Open sensitive channel?' }).waitFor()
+    assert.deepEqual(local.content, [])
+    await on(local.f, 'Cancel').click()
+    const otherHome = new URL(base)
+    otherHome.hostname = 'localhost'
+    await local
+      .document()
+      .evaluate(origin => localStorage.setItem('rchat_home', origin), otherHome.origin)
+    local.content.length = 0
+    await local.p.reload({ waitUntil: 'domcontentloaded' })
+    await local.f.getByRole('dialog', { name: 'Open sensitive channel?' }).waitFor()
+    assert.deepEqual(local.content, [])
+    await on(local.f, 'Cancel').click()
+    const second = await frame(chat)
+    await second.f.getByText('Selected channel history', { exact: true }).waitFor()
+    assert.equal(await second.f.getByRole('dialog').count(), 0)
+    await second.ctx.close()
+    await local.ctx.close()
+    console.log(
+      'PASS an additional local mark persists in its frame profile and leaves a fresh viewer free to enter'
+    )
+  }
   const denied = await frame(chat, {}, deniedHost)
   assert.equal(
     denied.p.frames().some(f => f.url().startsWith(base + '/widget/')),
@@ -351,7 +548,6 @@ try {
   assert.equal(posts.length, 2)
   assert.match(posts[0].author.username, /^@guest:/)
   assert.equal(posts[0].author.username, posts[1].author.username)
-  const article = (f, message) => f.locator('article[data-mid="' + message.id + '"]')
   const senderTime = async (f, message) => {
     const row = article(f, message)
     assert.ok(await row.getAttribute('aria-labelledby'))

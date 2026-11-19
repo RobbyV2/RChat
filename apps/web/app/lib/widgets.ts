@@ -17,6 +17,7 @@ export interface WidgetRoomMetadata {
   server: string
   channel_id: number
   kind: 'text' | 'voice'
+  sensitive?: boolean
 }
 export interface WidgetRoom extends WidgetRoomMetadata {
   name: string

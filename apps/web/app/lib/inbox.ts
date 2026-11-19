@@ -51,6 +51,7 @@ export interface SourcePage {
 export interface InboxAdapter {
   id: string
   load: (view: InboxView, cursor: string | null) => Promise<SourcePage>
+  canPreview?: (entry: InboxEntry) => boolean
   markRead: (entry: InboxEntry) => Promise<void>
   // Marks what `view` lists, up to the newest entries this source has shown (`shown`, newest
   // first), so notifications that arrive meanwhile stay unread.

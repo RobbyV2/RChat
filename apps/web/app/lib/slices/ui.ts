@@ -11,7 +11,7 @@ import {
 } from '../call_choice'
 import { EMPTY_PREFS, type EmojiPrefs, emojiKey, noteUse, parseEmojiPrefs, setTone } from '../emoji'
 import { type ForwardClip, forwardKey, forwardValue, parseForward } from '../forward'
-import { home, writeLocal } from '../instances'
+import { home, readLocal, writeLocal } from '../instances'
 import {
   type Layout,
   addToFolder as addIn,
@@ -234,7 +234,13 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     writeLocal(home.scoped(callRouteKey(username)), callRouteValue(route))
   }
 
-  const readForward = (username: string) => readScoped(forwardKey(username), parseForward, null)
+  const readForward = (username: string) => {
+    const key = home.scoped(forwardKey(username))
+    const raw = readLocal(key)
+    const clip = parseForward(raw)
+    if (raw && !clip) writeLocal(key, null)
+    return clip
+  }
 
   const notifyOwner = () => {
     const { me, guest } = get()

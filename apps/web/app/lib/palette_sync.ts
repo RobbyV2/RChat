@@ -7,6 +7,7 @@
 // register an adapter with `registerIndexSource` and feed their own documents.
 
 import { create } from 'zustand'
+import { canView, channelTarget } from './viewing'
 import { ApiError } from './api'
 import { api, home } from './instances'
 import { blobs } from './platform'
@@ -25,7 +26,7 @@ import {
 import { closePalette, closePalettePoll, loadPalettePrefs, usePaletteUi } from './palette_store'
 import { tapWs, useStore } from './store'
 import type { RChatState } from './store_types'
-import type { Member, Message, UserRef, WsEvent } from './types'
+import type { Channel, Member, Message, UserRef, WsEvent } from './types'
 
 export interface IndexSource {
   id: string
@@ -113,7 +114,7 @@ let wiping: Promise<void> = Promise.resolve()
 let seenMessages = new Map<string, Message[]>()
 let seenMembers = new Map<string, unknown>()
 // Channel ids of servers that are not loaded in the store, checked with the server.
-const verified = new Map<string, Set<number>>()
+const verified = new Map<string, Map<number, Channel>>()
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export const paletteIndex = () => index
@@ -183,7 +184,7 @@ const INDEXED_KINDS = new Set(['user', 'poll'])
 // Channel id to server name, over loaded servers and checked ones.
 export const channelServers = (s: RChatState) => {
   const out = new Map<number, string>()
-  for (const [server, ids] of verified) for (const id of ids) out.set(id, server)
+  for (const [server, ids] of verified) for (const id of ids.keys()) out.set(id, server)
   for (const [server, d] of Object.entries(s.servers))
     for (const c of d.channels) out.set(c.id, server)
   return out
@@ -236,7 +237,11 @@ export const memberDoc = (server: string, u: UserRef): IndexDoc => ({
 
 const channelIds = (s: RChatState, server: string): Set<number> | null => {
   const d = s.servers[server]
-  return d ? new Set(d.channels.map(c => c.id)) : (verified.get(server) ?? null)
+  return d
+    ? new Set(d.channels.map(c => c.id))
+    : verified.has(server)
+      ? new Set(verified.get(server)!.keys())
+      : null
 }
 
 const dmBlocked = (s: RChatState, dmId: number) => {
@@ -252,7 +257,11 @@ export const docVisible = (s: RChatState, d: IndexDoc): boolean => {
   if (d.kind === 'member') return d.server !== null && channelIds(s, d.server) !== null
   if (d.dm !== null) return !dmBlocked(s, d.dm)
   if (d.server === null || d.channel === null) return false
-  return channelIds(s, d.server)?.has(d.channel) ?? false
+  const detail = s.servers[d.server]
+  const channel = detail
+    ? detail.channels.find(c => c.id === d.channel)
+    : verified.get(d.server)?.get(d.channel)
+  return !!channel && canView(channelTarget(s.me?.username ?? null, 'instance', d.server, channel))
 }
 
 // --- following the store ---------------------------------------------------------------------
@@ -437,7 +446,7 @@ const verifyServer = async (server: string, g: number) => {
     const d = await api.getServer(server)
     if (g !== gen || !index) return
     const ids = new Set(d.channels.map(c => c.id))
-    verified.set(server, ids)
+    verified.set(server, new Map(d.channels.map(c => [c.id, c])))
     index.dropWhere(x => x.server === server && x.channel !== null && !ids.has(x.channel))
   } catch (e) {
     if (g !== gen || !index) return
@@ -479,7 +488,7 @@ const backfill = async (g: number) => {
     if (!channels) {
       try {
         channels = (await api.getServer(server)).channels
-        verified.set(server, new Set(channels.map(c => c.id)))
+        verified.set(server, new Map(channels.map(c => [c.id, c])))
       } catch {
         continue
       }
@@ -488,7 +497,21 @@ const backfill = async (g: number) => {
     if (!live()) return
     for (const c of channels)
       if (c.kind === 'text')
-        jobs.push({ bucket: `c${c.id}`, load: () => api.channelMessages(c.id) })
+        jobs.push({
+          bucket: `c${c.id}`,
+          load: async () => {
+            const st = useStore.getState()
+            const channel = st.servers[server]
+              ? st.servers[server].channels.find(x => x.id === c.id)
+              : verified.get(server)?.get(c.id)
+            if (
+              !channel ||
+              !canView(channelTarget(st.me?.username ?? null, 'instance', server, channel))
+            )
+              throw new Error('Channel is hidden')
+            return api.channelMessages(c.id)
+          },
+        })
   }
   for (const dm of s.dms)
     if (!dm.closed && !Object.hasOwn(s.blocked, dm.other.username))

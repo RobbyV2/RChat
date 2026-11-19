@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { Message, WsEvent } from '../types'
-import { me, msg, until, user } from './fixtures'
+import { textChannel, serverDetail, me, msg, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -47,11 +47,13 @@ beforeEach(() => {
     return reply(route(url))
   }) as typeof fetch
   useStore.setState({
-    me: me('alice'),
+    me: me('alice', {
+      servers: [{ name: 's', display_name: 's', creator: null, is_admin: false }],
+    }),
     token: null,
     guest: false,
     view: { kind: 'channel', server: 's', channelId: 2 },
-    servers: {},
+    servers: { s: serverDetail('s', { channels: [41].map(textChannel) }) },
     dms: [],
     messages: {},
     older: {},

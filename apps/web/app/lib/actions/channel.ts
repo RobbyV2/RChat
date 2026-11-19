@@ -1,6 +1,8 @@
 // The menus of a channel and of a category in the channel sidebar. Marking a channel read and
 // muting it are the open place's commands (place.ts).
 
+import { viewingActions } from './viewing'
+import { channelTarget } from '../viewing'
 import { channelGroups } from '../categories'
 import { useChannelEdit } from '../channel_edit'
 import { sharing } from '../platform'
@@ -39,6 +41,21 @@ const onChannel = { scope: 'channel', targets: ['channel'] } as const
 const onCategory = { scope: 'channel', targets: ['category'] } as const
 
 export const channelActions: Action[] = [
+  ...viewingActions(
+    'channel',
+    ctx => {
+      const at = channelOf(ctx)
+      return at && channelTarget(ctx.s.me?.username ?? null, 'instance', at.server, at.channel)
+    },
+    ctx => {
+      const at = channelOf(ctx)
+      return !!at && manages(ctx, at.server)
+    },
+    (ctx, sensitive) => {
+      const at = channelOf(ctx)
+      if (at) void get().setChannelSensitive(at.server, at.channel.id, sensitive)
+    }
+  ),
   notifySettings('channel_notify', 'channel', ['channel'], ctx => {
     const at = channelOf(ctx)
     return at?.channel.kind === 'text'

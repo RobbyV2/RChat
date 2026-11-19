@@ -7710,3 +7710,51 @@ async fn guest_participation_requires_explicit_choices_across_restarts() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn channel_labels_preserve_topics_and_channel_ids() {
+    on_each_database("channel_labels", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        let id = count(&db, "SELECT MIN(id) FROM channels").await;
+        sqlx::query("UPDATE channels SET topic = 'Local topic' WHERE id = $1")
+            .bind(id)
+            .execute(&db)
+            .await
+            .expect("topic");
+        sqlx::query("ALTER TABLE channels DROP COLUMN sensitive")
+            .execute(&db)
+            .await
+            .expect("unlabeled schema");
+        sqlx::query("UPDATE settings SET value = '35' WHERE key = 'schema_version'")
+            .execute(&db)
+            .await
+            .expect("version");
+        close(&db).await;
+        for expected in 0..=1 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM channels WHERE sensitive <> 0").await,
+                expected,
+                "old channels start unlabeled, a label survives a restart"
+            );
+            let flag: i64 = sqlx::query(
+                "SELECT sensitive FROM channels WHERE id = $1 AND topic = 'Local topic'",
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .expect("channel")
+            .try_get(0)
+            .expect("label");
+            assert_eq!(flag, expected);
+            sqlx::query("UPDATE channels SET sensitive = 1 WHERE id = $1")
+                .bind(id)
+                .execute(&db)
+                .await
+                .expect("label channel");
+            close(&db).await;
+        }
+    })
+    .await;
+}

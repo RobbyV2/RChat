@@ -1,3 +1,4 @@
+import { canView, instanceTarget } from './viewing'
 import type { InboxQuery } from './api'
 import { api } from './instances'
 import { DM_PLACE, entryOf, type InboxAdapter, type InboxEntry, type InboxView } from './inbox'
@@ -53,11 +54,24 @@ const EMPTY_PAGES_MAX = 5
 // The instance's notifications: pings, group mentions and friend pings.
 export const instanceInbox: InboxAdapter = {
   id: INSTANCE_INBOX,
+  canPreview: entry => {
+    const item = entry.raw as InboxItem
+    if (!item.server || !item.scope?.startsWith('c')) return true
+    const t = instanceTarget(useStore.getState(), item.server, Number(item.scope.slice(1)))
+    return !!t && canView(t)
+  },
   load: async (view, cursor) => {
     let at = cursor
     for (let i = 0; ; i++) {
       const page = await live(api.inbox(queryOf(view), at))
       if (page.until) shownUntil().set(viewKey(view), page.until)
+      for (const server of new Set(page.items.map(item => item.server))) {
+        if (server)
+          void useStore
+            .getState()
+            .discoverChannels(server)
+            .catch(() => {})
+      }
       const prefs = useStore.getState().notifyPrefs
       const items = view.unread ? page.items.filter(it => itemNotifies(prefs, it)) : page.items
       if (items.length || page.next === null || i + 1 >= EMPTY_PAGES_MAX)

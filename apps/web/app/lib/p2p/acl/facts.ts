@@ -717,7 +717,7 @@ export abstract class View {
     if (!r) return undefined
     const cs = r.maxes.map(x => this.ix.ev[x].c)
     const out: AclContent = { ...this.ix.ev[r.win].c }
-    for (const f of ['restrict_view', 'restrict_send', 'gone'])
+    for (const f of ['restrict_view', 'restrict_send', 'gone', 'sensitive'])
       if (cs.some(c => c[f] === true)) out[f] = true
     const slow = Math.max(
       0,

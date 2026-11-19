@@ -1,6 +1,6 @@
 import { sessionStore, shareOrigin } from './instances'
 import { replaceSpoilers } from './spoilers'
-import type { InviteStatus } from './types'
+import type { Invite, InviteStatus } from './types'
 
 export interface InviteTarget {
   server: string
@@ -273,3 +273,19 @@ export const hostParts = (text: string, host: string): { text: string; host: boo
     )
     .filter(p => p.text !== '')
 }
+
+// A pinned preview answer holds the room the viewer chose, or names the room's new state.
+export const pinnedPreview = (
+  asked: { id?: number | null; label?: boolean },
+  got: Pick<Invite, 'preview_channel_id' | 'preview_sensitive' | 'preview_channel' | 'preview'>
+) =>
+  (got.preview_channel_id ?? null) === (asked.id ?? null) && got.preview_sensitive === asked.label
+    ? { messages: got.preview, changed: null }
+    : {
+        messages: null,
+        changed: {
+          id: got.preview_channel_id ?? null,
+          label: got.preview_sensitive === true,
+          name: got.preview_channel,
+        },
+      }

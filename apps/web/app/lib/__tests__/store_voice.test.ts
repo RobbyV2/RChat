@@ -5,7 +5,7 @@ import { useStore, resetSessionCaches } from '../store'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from '../voice_layout'
 import type { VoiceMsg } from '../types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE } from '../timeouts'
-import { me, serverDetail } from './fixtures'
+import { me, serverDetail, until } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -68,7 +68,8 @@ beforeEach(() => {
     call: null,
     selfAudio: SELF_AUDIO_IDLE,
     error: null,
-    openChannel: async () => {},
+    openChannel: async (server, channelId) =>
+      useStore.setState({ view: { kind: 'channel', server, channelId } }),
   })
 })
 
@@ -303,9 +304,9 @@ describe('voice and call mic state', () => {
         )
       )
     const first = st().joinVoice('lounge', 11)
+    await until(() => grants.length === 1)
     const second = st().joinVoice('lounge', 12)
-    await Promise.resolve()
-    await Promise.resolve()
+    await until(() => grants.length === 2)
     grants[1]?.()
     await second
     grants[0]?.()

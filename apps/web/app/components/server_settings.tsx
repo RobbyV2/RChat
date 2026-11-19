@@ -597,6 +597,20 @@ export function ChannelControls({
             )}
           </span>
         )}
+        <label className="flex min-h-11 cursor-pointer items-center gap-1.5 text-sm">
+          <input
+            type="checkbox"
+            className="cursor-pointer accent-primary"
+            checked={channel.sensitive === true}
+            onChange={() =>
+              void useStore
+                .getState()
+                .setChannelSensitive(server, channel.id, !channel.sensitive)
+                .then(inSession(() => refresh?.()))
+            }
+          />
+          Sensitive channel
+        </label>
         {channel.kind === 'text' && <ChannelSlowmode channel={channel} refresh={refresh} />}
         <button
           onClick={() => setTopicOpen(!topicOpen)}

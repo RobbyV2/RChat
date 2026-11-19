@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { dmsUnread, serverUnread, useStore, resetSessionCaches } from '../store'
 import type { DmSummary, Message, ServerSummary, WsEvent } from '../types'
-import { advance, me, member, msg, paged, serverDetail, until, user } from './fixtures'
+import { advance, me, member, msg, paged, serverDetail, textChannel, until, user } from './fixtures'
 import { emptyLayout, layoutServers } from '../nav_layout'
 
 afterAll(resetSessionCaches)
@@ -377,6 +377,7 @@ describe('older history', () => {
   beforeEach(() => {
     useStore.setState({
       view: { kind: 'channel', server: 's', channelId: 5 },
+      servers: { s: serverDetail('s', { channels: [textChannel(5)] }) },
       messages: { c5: range(101, 150, { channel_id: 5 }) },
       older: {},
     })
@@ -408,7 +409,7 @@ describe('older history', () => {
   })
 
   test('a page that lands after the thread was reopened is dropped', async () => {
-    const root = msg(500)
+    const root = msg(500, { channel_id: 5 })
     const reply = { thread_root_id: 500 }
     useStore.setState({
       panel: { kind: 'thread', root },

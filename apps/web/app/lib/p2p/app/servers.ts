@@ -1,3 +1,5 @@
+import { canView, cancelViewing, leaveVisit, requestViewing, useViewing } from '../../viewing'
+import { peerTarget, peerVisible } from './viewing'
 import { resolve as resolveNotify } from '../../notify'
 import type { ConfirmRequest } from '../../store_types'
 import type { RoomRecord } from '../db'
@@ -43,7 +45,7 @@ import {
   p2pUser,
 } from './dms'
 import { channelLoaded, p2pOpenAt } from './inbox'
-import { ELSEWHERE_TEXT } from './calls'
+import { ELSEWHERE_TEXT, p2pVoice } from './calls'
 
 // ----- Servers -----
 
@@ -149,7 +151,7 @@ export const refreshServer = async (room: string) => {
     const ch = now.server.ch
     const first = v.channels.find(c => c.kind === 'text')?.id ?? null
     if (ch && !v.channels.some(c => c.id === ch)) p2pServer.openChannel(first)
-    else if (!ch && first) p2pServer.openChannel(first)
+    else if (!ch && first && !st.servers[room]?.channels.length) void p2pServer.openChannel(first)
   }
   if (now.chat?.ch && now.chat.room === room) {
     const ch = now.chat.ch
@@ -180,6 +182,7 @@ export const scheduleServer = (room: string) => {
 export const loadChannel = async (room: string, ch: string, keep = false) => {
   const sv = servers
   if (!sv) return
+  if (!peerVisible(useP2p.getState(), room, ch)) return
   const cur = useP2p.getState().chat
   const same = keep && cur?.room === room && cur.ch === ch
   if (same && cur.newer) return refreshWindow(cur)
@@ -227,7 +230,7 @@ export const p2pThread = {
     const rec = await s.event(root).catch(() => undefined)
     if (!rec || rec.room !== chat.room || rec.type !== 'msg' || !rec.chan || rec.thread) return
     if (rec.chan !== chat.ch) {
-      p2pServer.openChannel(rec.chan)
+      if (!(await p2pServer.openChannel(rec.chan))) return
       await channelLoaded(chat.room, rec.chan)
     }
     const same = st.thread?.room === chat.room && st.thread.root === root
@@ -336,6 +339,19 @@ const authorsNamed = (name: string) => {
 }
 
 let searchGen = 0
+let searchAccess: string | null = null
+const allowedSearchChannels = () => {
+  const st = useP2p.getState()
+  return JSON.stringify(
+    Object.entries(st.servers)
+      .flatMap(([room, server]) =>
+        server.channels
+          .filter(ch => peerVisible(st, room, ch.id))
+          .map(ch => JSON.stringify([room, ch.id]))
+      )
+      .sort()
+  )
+}
 
 // While the index is rebuilt (after the upgrade or an import), the panel says results may be
 // missing, until it is complete.
@@ -349,16 +365,21 @@ const watchIndex = () => {
 
 export const p2pSearch = {
   open() {
+    searchGen++
+    searchAccess = null
     const indexing = !!servers && !servers.indexed
     useP2p.setState({ panel: 'search', search: { ...emptySearch(), indexing }, thread: null })
     watchIndex()
   },
 
-  close: () =>
+  close() {
+    searchGen++
+    searchAccess = null
     useP2p.setState(st => ({
       panel: st.panel === 'search' ? null : st.panel,
       search: emptySearch(),
-    })),
+    }))
+  },
 
   // A first page (`fresh`) or the next one.
   async run(args: P2pSearchArgs, fresh: boolean) {
@@ -371,7 +392,13 @@ export const p2pSearch = {
     if (!fresh && (cur.loading || cur.next === null)) return
     const gen = fresh ? ++searchGen : searchGen
     const room = useP2p.getState().server?.room ?? null
+    searchAccess = allowedSearchChannels()
+    if (args.ch && (!room || !peerVisible(useP2p.getState(), room, args.ch))) {
+      useP2p.setState({ search: emptySearch() })
+      return
+    }
     const q: SearchQuery = {
+      visible: (r, ch) => gen === searchGen && peerVisible(useP2p.getState(), r, ch),
       q: args.q,
       from: authorsNamed(args.from),
       room: args.ch ? room : null,
@@ -394,7 +421,9 @@ export const p2pSearch = {
     if (gen !== searchGen) return
     useP2p.setState(st => ({
       search: {
-        hits: fresh ? page.hits : [...st.search.hits, ...page.hits],
+        hits: (fresh ? page.hits : [...st.search.hits, ...page.hits]).filter(h =>
+          peerVisible(st, h.room, h.ch)
+        ),
         next: page.next,
         loading: false,
         indexing: !sv.indexed,
@@ -448,6 +477,7 @@ const SERVER_PING: Record<NonNullable<ServerArrival['ping']>, string> = {
 // A new message in a server channel: toasts and desktop notifications follow the channel's
 // level (Only @mentions by default), like an instance server.
 export const serverArrived = (a: ServerArrival) => {
+  if (!peerVisible(useP2p.getState(), a.room, a.ch)) return
   if (a.ping) pingLog?.note(a.room, a.ch, a.ping, a.rec, a.thread)
   const st = useP2p.getState()
   const visible = typeof document === 'undefined' || document.visibilityState === 'visible'
@@ -588,15 +618,32 @@ export const p2pServer = {
     const v = useP2p.getState().servers[room]
     const pick = ch ?? lastChannel.get(room) ?? v?.channels.find(c => c.kind === 'text')?.id ?? null
     writeHome(null)
-    useP2p.setState({ home: false, dmList: false, server: { room, ch: null }, dialog: null })
-    p2pServer.openChannel(pick)
+    useP2p.setState({
+      home: false,
+      dmList: false,
+      server: { room, ch: null },
+      chat: null,
+      panel: null,
+      pins: null,
+      thread: null,
+      dialog: null,
+    })
+    return p2pServer.openChannel(pick)
   },
 
   // A voice channel opens its stage, without a conversation.
-  openChannel(ch: string | null) {
+  async openChannel(ch: string | null): Promise<boolean> {
+    cancelViewing()
     const cur = useP2p.getState().server
-    if (!cur) return
-    const kind = useP2p.getState().servers[cur.room]?.channels.find(c => c.id === ch)?.kind
+    if (!cur) return false
+    const st = useP2p.getState()
+    const channel = st.servers[cur.room]?.channels.find(c => c.id === ch)
+    const target = channel && peerTarget(st, cur.room, channel.id)
+    if (ch && !target) return false
+    if (target && !canView(target) && !(await requestViewing(target))) return false
+    if (useP2p.getState().server !== cur || (ch && !peerVisible(useP2p.getState(), cur.room, ch)))
+      return false
+    const kind = channel?.kind
     const text = !!ch && kind !== 'voice'
     if (ch && text) lastChannel.set(cur.room, ch)
     useP2p.setState(st => ({
@@ -624,7 +671,9 @@ export const p2pServer = {
           ? null
           : st.panel,
     }))
+    leaveVisit(target?.key)
     if (ch && text) void loadChannel(cur.room, ch)
+    return true
   },
 
   close: () =>
@@ -806,3 +855,35 @@ export const p2pDevices = {
 // Servers where a device flow didn't go through, and why (the first reason).
 const failedText = (failed: { why: string }[]) =>
   `Not done in ${failed.length === 1 ? 'one server' : `${failed.length} servers`}: ${failed[0].why}`
+
+const hidePeerChannel = () => {
+  const st = useP2p.getState()
+  if (searchAccess !== null) {
+    const access = allowedSearchChannels()
+    if (access !== searchAccess) {
+      searchGen++
+      searchAccess = access
+      useP2p.setState({
+        search: {
+          ...st.search,
+          loading: false,
+          next: null,
+          hits: st.search.hits.filter(h => peerVisible(st, h.room, h.ch)),
+        },
+      })
+    }
+  }
+  if (st.voice && !peerVisible(st, st.voice.room, st.voice.ch)) p2pVoice.leave()
+  if (st.server?.ch && !peerVisible(st, st.server.room, st.server.ch))
+    void p2pServer.openChannel(null)
+}
+useP2p.subscribe((s, prev) => {
+  if (s.servers !== prev.servers) hidePeerChannel()
+  if (prev.server && !s.server) {
+    cancelViewing()
+    leaveVisit()
+  }
+})
+useViewing.subscribe((s, prev) => {
+  if (s.revision !== prev.revision) hidePeerChannel()
+})

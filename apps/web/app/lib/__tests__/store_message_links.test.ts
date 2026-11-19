@@ -83,7 +83,7 @@ beforeEach(() => {
     }
     if (url === '/api/auth/login')
       return new Response(JSON.stringify({ token: 't2', user: me('bob') }), { status: 200 })
-    const loc = url.match(/^\/api\/messages\/(\d+)\/location$/)
+    const loc = url.match(/^\/api\/messages\/(\d+)\/location\?preview=false$/)
     if (loc) {
       const id = Number(loc[1])
       lookups.push(id)
@@ -227,7 +227,7 @@ describe('link cards', () => {
     await st().openMessage(40)
     expect(lookups).toEqual([40])
     expect(batches).toEqual([])
-    expect(st().linkCards[40]?.content).toBe('old news')
+    expect(st().linkCards[40]).toBeUndefined()
   })
 
   test('renames and avatar changes patch cached cards', async () => {

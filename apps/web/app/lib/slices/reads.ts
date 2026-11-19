@@ -1,5 +1,6 @@
 // Reads and pings: the read marks and their queue, ping badges, group pings and the unread list.
 
+import { canView, instanceTarget } from '../viewing'
 import { api } from '../instances'
 import {
   addGroupPing,
@@ -97,8 +98,15 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
   }
 
   const readQueue = createReadQueue({
-    send: (scope, id) =>
-      get().token ? api.postRead(scope, id, true, seenPings.get(scope) ?? 0) : Promise.resolve(),
+    send: (scope, id) => {
+      const s = get()
+      const server = s.reads[scope]?.server
+      const target =
+        scope.startsWith('c') && server ? instanceTarget(s, server, Number(scope.slice(1))) : null
+      return s.token && (!target || canView(target))
+        ? api.postRead(scope, id, true, seenPings.get(scope) ?? 0)
+        : Promise.resolve()
+    },
   })
 
   // Clears the badge of a scope (outside threads) or of a thread (`t<root id>`) here and,

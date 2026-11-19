@@ -1038,7 +1038,7 @@ impl ServerAccess {
             return Err(not_found());
         }
         let row = sqlx::query(
-            "SELECT server, kind, name, slowmode_seconds FROM channels WHERE id = $1 AND server = $2",
+            "SELECT server, kind, name, slowmode_seconds, sensitive FROM channels WHERE id = $1 AND server = $2",
         )
         .bind(id)
         .bind(self.name())
@@ -1054,6 +1054,7 @@ impl ServerAccess {
             kind: ChannelKind::parse(&row.try_get::<String, _>(1)?)?,
             name: row.try_get(2)?,
             slowmode: row.try_get(3)?,
+            sensitive: row.try_get::<i64, _>(4)? != 0,
             rights,
             server: self,
         })
@@ -1092,6 +1093,7 @@ pub struct ResolvedChannel {
     kind: ChannelKind,
     name: String,
     slowmode: i64,
+    sensitive: bool,
     rights: ChannelAccess,
 }
 
@@ -1155,7 +1157,7 @@ async fn configured_channel(
     rights: ChannelAccess,
 ) -> Result<ResolvedChannel, ApiError> {
     let r = sqlx::query(
-        "SELECT c.server, c.kind, c.name, c.slowmode_seconds, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice_opt_in, s.members_visible, s.guest_chat_opt_in FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
+        "SELECT c.server, c.kind, c.name, c.slowmode_seconds, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice_opt_in, s.members_visible, s.guest_chat_opt_in, c.sensitive FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
     )
     .bind(id)
     .fetch_optional(db)
@@ -1183,6 +1185,7 @@ async fn configured_channel(
         kind: ChannelKind::parse(&r.try_get::<String, _>(1)?)?,
         name: r.try_get(2)?,
         slowmode: r.try_get(3)?,
+        sensitive: r.try_get::<i64, _>(13)? != 0,
         rights,
     })
 }
@@ -1223,6 +1226,14 @@ impl ResolvedChannel {
 
     pub fn kind(&self) -> ChannelKind {
         self.kind
+    }
+
+    pub fn sensitive(&self) -> bool {
+        self.sensitive
+    }
+
+    pub(crate) fn viewing_revision(&self) -> String {
+        format!("{}.{}", self.id, u8::from(self.sensitive))
     }
 
     pub fn name(&self) -> &str {
@@ -2403,7 +2414,7 @@ where
 /// client.
 pub(crate) async fn ws_channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>> {
     let row =
-        sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position FROM channels WHERE id = $1")
+        sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive FROM channels WHERE id = $1")
             .bind(id)
             .fetch_optional(db)
             .await?;
@@ -2420,6 +2431,7 @@ pub(crate) async fn ws_channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(Str
                 topic: r.try_get(6)?,
                 category_id: r.try_get(7)?,
                 position: r.try_get(8)?,
+                sensitive: r.try_get::<i64, _>(9)? != 0,
             },
         ))),
         None => Ok(None),

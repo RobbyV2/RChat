@@ -318,7 +318,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
 
   const reloadServer = (server: string): Promise<void> => {
     if (!get().servers[server]) return Promise.resolve()
-    return live(api.getServer(server))
+    return fetchServer(server)
       .then(detail => {
         const { view } = get()
         const lost =
@@ -378,16 +378,31 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     return new Banned(BANNED)
   }
 
+  // Live channel updates can arrive while a server detail request is in flight.
+  const readingChannels = new Set<{
+    server: string
+    updates: Map<number, ServerDetail['channels'][number]>
+  }>()
+  const responseEpoch = new WeakMap<ServerDetail, number>()
   const fetchServer = async (name: string) => {
+    const epoch = get().channelLabelEpoch
+    const read = { server: name, updates: new Map<number, ServerDetail['channels'][number]>() }
+    readingChannels.add(read)
     try {
       const detail = await live(api.getServer(name))
       bannedHere.delete(name)
       if (get().guest) rememberGuestName(detail.name, detail.display_name)
-      return detail
+      const merged = read.updates.size
+        ? { ...detail, channels: detail.channels.map(c => read.updates.get(c.id) ?? c) }
+        : detail
+      responseEpoch.set(merged, epoch)
+      return merged
     } catch (e) {
       if (get().guest && e instanceof ApiError && (e.status === 401 || deniedAccess(e)))
         dropGrant(name)
       throw banCheck(e, name)
+    } finally {
+      readingChannels.delete(read)
     }
   }
 
@@ -470,7 +485,12 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
 
   // A loaded server detail; collapsed ids of categories it no longer has are dropped.
   const putServer = (name: string, detail: ServerDetail) => {
-    set(s => ({ servers: { ...s.servers, [name]: detail } }))
+    const epoch = responseEpoch.get(detail) ?? get().channelLabelEpoch
+    if (epoch !== get().channelLabelEpoch) return
+    set(s => ({
+      servers: { ...s.servers, [name]: detail },
+      channelLabelEpochs: { ...s.channelLabelEpochs, [name]: epoch },
+    }))
     saveLayout(
       keepCollapsed(
         get().layout,
@@ -653,6 +673,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
   const onChannelChange = (
     ev: Extract<WsEvent, { type: 'channel_renamed' | 'channel_updated' }>
   ) => {
+    for (const read of readingChannels)
+      if (read.server === ev.server) read.updates.set(ev.channel.id, ev.channel)
     patchServer(ev.server, d => ({
       ...d,
       channels: d.channels.map(c => (c.id === ev.channel.id ? ev.channel : c)),
@@ -723,11 +745,15 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     listSince.clear()
     pastOnline.clear()
     layoutSends.clear()
+    readingChannels.clear()
+    discoveries.clear()
   }
 
+  const discoveries = new Map<string, Promise<void>>()
   const actions: Pick<
     RChatState,
     | 'loadMoreServers'
+    | 'discoverChannels'
     | 'ensureServers'
     | 'createServer'
     | 'joinServer'
@@ -745,6 +771,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'renameChannel'
     | 'setSlowmode'
     | 'setChannelRestrict'
+    | 'setChannelSensitive'
     | 'setChannelTopic'
     | 'deleteChannel'
     | 'kickMember'
@@ -788,6 +815,23 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         if (get().me && get().serversMore) await serverPager.load()
       }),
 
+    discoverChannels: (name, refresh = false) => {
+      const s = get()
+      if (!refresh && s.servers[name] && (s.channelLabelEpochs[name] ?? 0) === s.channelLabelEpoch)
+        return Promise.resolve()
+      const key = JSON.stringify([s.channelLabelEpoch, name])
+      const pending = discoveries.get(key)
+      if (pending) return pending
+      const request = fetchServer(name)
+        .then(detail => {
+          if (discoveries.get(key) === request) putServer(name, detail)
+        })
+        .finally(() => {
+          if (discoveries.get(key) === request) discoveries.delete(key)
+        })
+      discoveries.set(key, request)
+      return request
+    },
     ensureServers: async names => {
       const me = get().me
       if (!me) return
@@ -865,6 +909,11 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     setSlowmode: (id, seconds) =>
       act(async () => void (await api.updateChannel(id, { slowmode_seconds: seconds }))),
     setChannelRestrict: (id, patch) => act(async () => void (await api.updateChannel(id, patch))),
+    setChannelSensitive: (server, id, sensitive) =>
+      act(async () => {
+        const channel = await live(api.updateChannel(id, { sensitive }))
+        onChannelChange({ type: 'channel_updated', server, channel })
+      }),
     setChannelTopic: async (server, id, topic) => {
       try {
         const channel = await live(api.updateChannel(id, { topic: cleanTopic(topic) || null }))

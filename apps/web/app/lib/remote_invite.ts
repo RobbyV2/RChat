@@ -60,7 +60,7 @@ export const remoteInvite = (
 ) =>
   bounded(invites, `${origin}\n${server}\n${password ?? ''}`, fresh ? 0 : INVITE_TTL, async () => {
     const conn = await remoteConnection(origin)
-    return conn.api.getInvite(server, password)
+    return conn.api.getInvite(server, password, 'metadata')
   })
 
 const requested = new Set<string>()

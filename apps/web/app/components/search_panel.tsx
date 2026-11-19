@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { canView, instanceTarget, useViewing } from '../lib/viewing'
 import { FileText, Hash, Search } from 'lucide-react'
 import { useMask, useStore } from '../lib/store'
 import { dayEndTs, dayStartTs, endOfList, shortSearch, type SearchArgs } from '../lib/search'
@@ -13,7 +14,8 @@ import { plainStamps } from '../lib/timestamps'
 import { profileTrigger } from './profile_card'
 import { ForwardedTag, SpoilerLine } from './replies'
 import { spoilerParts } from '../lib/spoilers'
-import type { MessageMedia, SearchResult } from '../lib/types'
+import { useForwardAccess } from '../lib/forward_access'
+import type { Message, MessageMedia, SearchResult } from '../lib/types'
 
 const mediaLabel = (m: MessageMedia | null) =>
   m === null ? '' : m.spoiler ? 'Spoiler' : m.filename
@@ -40,7 +42,32 @@ export interface SearchHitView {
   forwarded: boolean
   // The attachment's label, or null without one.
   file: string | null
+  // A forwarded instance copy, shown only when its source room is open here.
+  copy?: { message: Pick<Message, 'forward' | 'channel_id'>; server: string }
   onOpen: () => void
+}
+
+function HitText({ r }: { r: SearchHitView }) {
+  const { access } = useForwardAccess(r.copy?.message, { server: r.copy?.server })
+  if (access !== 'open')
+    return <p className="mt-0.5 text-sm text-on-surface-variant italic">Forwarded message</p>
+  return (
+    <>
+      <p className="mt-0.5 line-clamp-2 text-sm break-words text-on-surface">
+        {r.content ? (
+          <SpoilerLine parts={spoilerParts(plainStamps(r.content))} own={r.own && !r.forwarded} />
+        ) : (
+          r.file !== null && <Masked text={r.file} file own={r.own} />
+        )}
+      </p>
+      {r.file !== null && (
+        <p className="mt-0.5 flex items-center gap-1 text-xs text-on-surface-variant">
+          <FileText size={12} />
+          <Masked text={r.file} file own={r.own} />
+        </p>
+      )}
+    </>
+  )
 }
 
 // The filters as typed; `channel` is a channel id ('' for any).
@@ -240,22 +267,7 @@ export function SearchView({
                 </span>
               )}
             </div>
-            <p className="mt-0.5 line-clamp-2 text-sm break-words text-on-surface">
-              {r.content ? (
-                <SpoilerLine
-                  parts={spoilerParts(plainStamps(r.content))}
-                  own={r.own && !r.forwarded}
-                />
-              ) : (
-                r.file !== null && <Masked text={r.file} file own={r.own} />
-              )}
-            </p>
-            {r.file !== null && (
-              <p className="mt-0.5 flex items-center gap-1 text-xs text-on-surface-variant">
-                <FileText size={12} />
-                <Masked text={r.file} file own={r.own} />
-              </p>
-            )}
+            <HitText r={r} />
           </button>
         ))}
         {active && hasMore && <Sentinel key={pageKey} onVisible={endShown} onHidden={endHidden} />}
@@ -318,6 +330,7 @@ const instanceHit = (
   own: !r.message.webhook && r.message.author.username === me,
   forwarded: !!r.message.forward,
   file: r.message.media ? mediaLabel(r.message.media) : null,
+  ...(r.message.forward ? { copy: { message: r.message, server: r.server } } : {}),
   onOpen: () => open(r),
 })
 
@@ -335,11 +348,40 @@ export default function SearchPanel() {
   )
   const me = useStore(s => s.me?.username ?? null)
   const mine = useStore(s => s.me?.servers)
-  const hits = useMemo(() => {
+  const servers = useStore(s => s.servers)
+  const revision = useViewing(s => s.revision)
+  useEffect(() => {
+    for (const name of new Set(search.results.map(r => r.server))) {
+      if (!servers[name])
+        void useStore
+          .getState()
+          .discoverChannels(name)
+          .catch(() => {})
+    }
+  }, [search.results, servers])
+  const hits = useMemo<SearchHitView[]>(() => {
     const owns = (server: string) =>
       me !== null && mine?.find(x => x.name === server)?.creator === me
-    return search.results.map(r => instanceHit(r, me, owns, x => void openResult(x)))
-  }, [search.results, me, mine, openResult])
+    return search.results.map(r => {
+      const t = instanceTarget(useStore.getState(), r.server, r.message.channel_id ?? -1)
+      if (t && canView(t)) return instanceHit(r, me, owns, x => void openResult(x))
+      return {
+        key: String(r.message.id),
+        channel: <Masked text={r.channel_name} />,
+        server: <Masked text={r.server} />,
+        avatar: null,
+        name: 'Open channel',
+        createdAt: r.message.created_at,
+        content: '',
+        own: false,
+        forwarded: false,
+        file: null,
+        onOpen: (): void => {
+          void openResult(r)
+        },
+      }
+    })
+  }, [search.results, me, mine, openResult, servers, revision])
   const run = useCallback(
     (f: SearchFilters, fresh: boolean) =>
       void searchRun(

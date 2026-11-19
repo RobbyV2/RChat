@@ -14,6 +14,7 @@ import type { RChatState } from '../store_types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE, timedOutLine } from '../timeouts'
 import type { CallKind, VoiceMsg, WsEvent } from '../types'
 import { SELF_AUDIO_IDLE, type SelfAudio, toggleDeafenAudio, toggleMicAudio } from '../voice_layout'
+import { canView, instanceTarget } from '../viewing'
 import { sessionMark, type GetState, type Handlers, type SetState } from './ctx'
 
 export interface RtcDeps {
@@ -43,6 +44,12 @@ const keptFor = (marks: MuteMarks, channelId: number, users: string[]): MuteMark
   if (kept?.length) next[channelId] = kept
   else delete next[channelId]
   return next
+}
+
+// A room closed by a local viewing choice keeps its people out of this client.
+export const rosterClosed = (s: RChatState, server: string, channelId: number) => {
+  const target = instanceTarget(s, server, channelId)
+  return !!target && !canView(target)
 }
 
 // A channel's voice members, replaced by the server's list; muted marks go with members who left.
@@ -264,8 +271,11 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
         if (self === null) throw new Error(`${accountPrompt(settings)} to join voice`)
         const ends = myTimeoutEnds(get(), server)
         if (ends !== null) throw new Error(timedOutLine(ends))
-        home.ws.ensureConnected()
         await get().openChannel(server, channelId)
+        const view = get().view
+        if (view?.kind !== 'channel' || view.channelId !== channelId || view.server !== server)
+          return
+        home.ws.ensureConnected()
         const shut = guestVoiceOff(get(), server)
         if (shut !== null) throw new Error(shut)
         if (voice?.channelId === channelId) return
@@ -275,6 +285,10 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
           p2pVoice.leave()
           p2p.endMedia()
           await rtc.join(self, { channelId }, get().selfAudio.muted)
+          if (get().view !== view) {
+            rtc.leave()
+            return
+          }
           applyMic()
         } catch (e) {
           if (e instanceof JoinAborted) return
@@ -433,7 +447,9 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
 
   const handlers = {
     voice_state: ev => {
-      set(s => applyVoiceState(s, ev))
+      set(s =>
+        applyVoiceState(s, rosterClosed(s, ev.server, ev.channel_id) ? { ...ev, users: [] } : ev)
+      )
       const { voice } = get()
       const self = voiceSelf(get())
       if (self === null) return
@@ -450,11 +466,12 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     },
 
     voice_muted: ev => {
-      set(s =>
-        ev.staff === true
-          ? { voiceHushed: marked(s.voiceHushed, ev.channel_id, ev.username, ev.muted) }
-          : { voiceMuted: marked(s.voiceMuted, ev.channel_id, ev.username, ev.muted) }
-      )
+      if (!rosterClosed(get(), ev.server, ev.channel_id))
+        set(s =>
+          ev.staff === true
+            ? { voiceHushed: marked(s.voiceHushed, ev.channel_id, ev.username, ev.muted) }
+            : { voiceMuted: marked(s.voiceMuted, ev.channel_id, ev.username, ev.muted) }
+        )
       applyMic()
     },
 

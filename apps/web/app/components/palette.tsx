@@ -39,6 +39,7 @@ import {
   togglePalette,
   usePaletteUi,
 } from '../lib/palette_store'
+import { useViewing } from '../lib/viewing'
 import { docVisible, paletteIndex, startIndexSync, useIndexStatus } from '../lib/palette_sync'
 import { shortcutLabel } from '../lib/shortcuts'
 import { useMask, useStore } from '../lib/store'
@@ -306,6 +307,7 @@ function ArgView({ item, onBack }: { item: PaletteItem; onBack: () => void }) {
 }
 
 function useResults(text: string) {
+  const viewing = useViewing(s => s.revision)
   const s = useStore()
   const usage = usePaletteUi(x => x.prefs.used)
   const mask = useMask()
@@ -325,10 +327,11 @@ function useResults(text: string) {
       recents,
       mask,
     }
+    void viewing
     void indexTick
     void actions
     return buildSections(s, text, ctx)
-  }, [s, text, usage, mask, ops, history, recents, indexTick, actions])
+  }, [s, text, usage, mask, ops, history, recents, indexTick, actions, viewing])
 }
 
 function ListView() {

@@ -42,7 +42,7 @@ import { hideTip, useHome } from '../lib/home_store'
 import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
 import { useMedia } from './context_menu'
 import { ReplyBar } from './replies'
-import { ForwardBar } from './forwards'
+import { ForwardBar, useForwardClip } from './forwards'
 import { useTextAssist } from './text_assist'
 import { FormatToolbar, useFormatting } from './format_toolbar'
 import { useMyTimeoutEnds, useNow } from './timeout_dialog'
@@ -284,7 +284,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
   const setDraft = useStore(s => s.setDraft)
   const text = useStore(s => (draftKey ? (s.drafts[draftKey] ?? '') : ''))
   const replying = useStore(s => (draftKey ? s.replying[draftKey] !== undefined : false))
-  const forwarding = useStore(s => s.forwardClip !== null)
+  const forwarding = useForwardClip() !== null
   const threadChannel = useStore(s => (s.panel?.kind === 'thread' ? s.panel.root.channel_id : null))
   const cancelReply = useStore(s => s.cancelReply)
   const focusAsk = useStore(s => s.composerFocus)

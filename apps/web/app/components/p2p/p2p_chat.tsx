@@ -68,7 +68,8 @@ import { MessageEditor, editAction, type EditBinding } from '../message_editor'
 import { MessageToolbar, type ToolbarAction } from '../message_toolbar'
 import { QuickReactions, ReactionBar, rowAt } from '../reactions'
 import { ComposerBar, ReplyPreview } from '../replies'
-import { ForwardBar, ForwardCard, forwardAction } from '../forwards'
+import { clipAllowed } from '../../lib/forward_viewing'
+import { ForwardBar, ForwardCard, forwardAction, useForwardClip } from '../forwards'
 import { PinLine, PinsPanel, confirmUnpin } from '../pins'
 import { TypingIndicator } from '../typing_indicator'
 import { EmojiPicker, SHEET_QUERY } from '../emoji_picker'
@@ -571,7 +572,7 @@ export function P2pComposer({
   const text = useP2p(s => s.drafts[key] ?? '')
   const replying = useP2p(s => (s.replying?.room === key ? s.replying.id : null))
   const replyTo = useP2p(s => shownRow(s, replying))
-  const forwarding = useStore(s => s.forwardClip !== null)
+  const forwarding = useForwardClip() !== null
   const streamer = useStore(s => s.streamer)
   const sheet = useMedia(SHEET_QUERY)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -636,7 +637,7 @@ export function P2pComposer({
       draftKey={scope}
       onSend={() => {
         const clip = useStore.getState().forwardClip
-        if (!clip) return
+        if (!clip || !clipAllowed(useStore.getState(), clip)) return
         const author = clip.author?.display_name ?? 'Deleted user'
         void p2pDm
           .forward(key, {
@@ -989,8 +990,8 @@ export function useP2pList({
     []
   )
   const copyRow = useCallback(
-    (p: P2pMessage, m: Message) => copyForP2p(p, m, ownName(p.sender)),
-    [ownName]
+    (p: P2pMessage, m: Message) => copyForP2p(p, m, ownName(p.sender), draftKey),
+    [ownName, draftKey]
   )
   return {
     me,

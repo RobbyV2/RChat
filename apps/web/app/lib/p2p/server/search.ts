@@ -42,7 +42,7 @@ export async function search(
     for (const x of chunk) {
       const r = await cx.db.get('events', x.id)
       if (!r || r.room !== x.room || r.type !== 'msg' || !r.chan || r.purged || r.redacted) continue
-      if (q.ch !== null && r.chan !== q.ch) continue
+      if ((q.ch !== null && r.chan !== q.ch) || q.visible?.(r.room, r.chan) === false) continue
       if (from && !from.has(r.sender)) continue
       if (q.hasFile && !r.atts?.length) continue
       if (q.beforeTs !== null && r.effTs >= q.beforeTs * 1000) continue

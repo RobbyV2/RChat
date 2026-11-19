@@ -1000,7 +1000,7 @@ describe('the messages slice', () => {
       hold: 'GET /messages/9/location',
       start: () => st().openMessage(9),
       reply: (who, method, path) =>
-        path === '/messages/9/location'
+        path.startsWith('/messages/9/location')
           ? {
               id: 9,
               server: 's',

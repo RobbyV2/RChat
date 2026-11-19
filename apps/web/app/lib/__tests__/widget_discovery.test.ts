@@ -140,6 +140,49 @@ test('local viewing permission precedes room content and can close an open subsc
   )
 })
 
+test('a changed shared label returns the frame to discovery before the room opens', async () => {
+  let marked = false
+  let accepted = false
+  const revisions: (string | null)[] = []
+  const room = { server: 'music', channel_id: 15, kind: 'voice' } as const
+  await withWidget(
+    async (url, init) => {
+      const path = new URL(url).pathname.split('/').at(-1)
+      if (path === 'session') return Response.json({ mode: 'voice', ticket: 'ticket' })
+      if (path === 'room') return Response.json({ ...room, sensitive: marked })
+      if (path === 'view') {
+        revisions.push(new Headers(init.headers).get('X-Widget-Room-Revision'))
+        if (!marked) {
+          marked = true
+          return Response.json({ error: 'Room information changed' }, { status: 412 })
+        }
+        return Response.json({
+          ...room,
+          sensitive: true,
+          name: 'Lounge',
+          participate: true,
+          messages: [],
+          users: ['member'],
+        })
+      }
+      throw Error('Unexpected request')
+    },
+    async (client, sockets) => {
+      await client.start()
+      expect(client.metadata?.sensitive).toBe(true)
+      expect(client.room).toBeNull()
+      expect(sockets).toHaveLength(0)
+      expect(revisions).toEqual(['15.0'])
+      accepted = true
+      await client.refresh()
+      expect(client.room?.users).toEqual(['member'])
+      expect(revisions).toEqual(['15.0', '15.1'])
+      expect(sockets).toHaveLength(1)
+    },
+    metadata => !metadata.sensitive || accepted
+  )
+})
+
 test('an embedded guest renews an expired credential in the same widget session', async () => {
   const room = {
     server: 'orchard',
@@ -197,7 +240,10 @@ test('account sign-in and password grants belong to the individual widget', asyn
       return Response.json({ mode: 'voice', ticket: 'ticket' })
     }
     if (path === 'login') return Response.json({ token: 'framed-account', user: me('member') })
-    if (path === 'me') return Response.json(me('member'))
+    if (path === 'me') {
+      expect(new Headers(init.headers).get('authorization')).toBe('Bearer framed-account')
+      return Response.json(me('member'))
+    }
     if (path === 'guest-access') return Response.json({ grant: 'framed-grant' })
     if (path === 'room') requests.push(new Headers(init.headers))
     return Response.json({
@@ -219,8 +265,10 @@ test('account sign-in and password grants belong to the individual widget', asyn
       identity(null, null)
       await client.unlock('password')
       identity(null, 'framed-grant')
+      expect(client.account).toBeNull()
       await client.login('member', 'password')
       expect(client.signedIn).toBe(true)
+      expect(client.account).toBe('member')
       identity('Bearer framed-account', null)
     },
     undefined,
@@ -242,8 +290,10 @@ test('account sign-in and password grants belong to the individual widget', asyn
     async client => {
       await client.start()
       identity('Bearer framed-account', null)
+      expect(client.account).toBe('member')
       client.logout()
       expect(client.signedIn).toBe(false)
+      expect(client.account).toBeNull()
       identity(null, 'framed-grant')
       expect(storage.getItem('rchat_token')).toBe('app-account')
       expect(modes.every(mode => mode === 'omit')).toBe(true)

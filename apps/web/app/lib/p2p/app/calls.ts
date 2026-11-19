@@ -1,3 +1,5 @@
+import { p2pServer } from './servers'
+import { peerVisible } from './viewing'
 import { resolve as resolveNotify } from '../../notify'
 import { P2pStore } from '../db'
 import type { MissedCall } from '../dm'
@@ -104,6 +106,10 @@ export const p2pVoice = {
   async join(room: string, ch: string) {
     const sv = servers
     if (!sv) return p2pHost.toast(ELSEWHERE_TEXT)
+    const at = useP2p.getState().server
+    if (at?.room !== room || at.ch !== ch || !peerVisible(useP2p.getState(), room, ch)) {
+      if (!(await p2pServer.open(room, ch))) return
+    }
     const cur = sv.voice.current()
     if (cur?.room === room && cur.ch === ch) return
     try {
@@ -119,6 +125,8 @@ export const p2pVoice = {
           p2pHost.leaveInstanceCalls()
         },
       })
+      if (!peerVisible(useP2p.getState(), room, ch) && sv.voice.current()?.ch === ch)
+        sv.voice.leave()
     } catch (e) {
       if (!(e instanceof JoinAborted)) callFailed(e)
     }

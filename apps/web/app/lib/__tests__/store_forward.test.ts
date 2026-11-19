@@ -22,7 +22,12 @@ const tick = async () => {
   for (let i = 0; i < 10; i += 1) await Promise.resolve()
 }
 
-const source = msg(40, { author: user('carol'), content: 'look at this', created_at: 7 })
+const source = msg(40, {
+  channel_id: 77,
+  author: user('carol'),
+  content: 'look at this',
+  created_at: 7,
+})
 
 beforeEach(() => {
   memoryStorage.clear()
@@ -123,7 +128,7 @@ describe('sending a forward', () => {
   test('a forward sent while another was copied keeps the newer one', async () => {
     st().copyForward(source)
     st().sendForward('d3')
-    useStore.setState({ forwardClip: clipOf(msg(41)) })
+    useStore.setState({ forwardClip: clipOf(msg(41, { channel_id: 77 })) })
     await tick()
     expect(posts[0]?.url).toBe('/api/dms/3/messages')
     expect(st().forwardClip?.id).toBe(41)

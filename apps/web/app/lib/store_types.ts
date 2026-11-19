@@ -239,6 +239,8 @@ export interface RChatState {
   guestNames: Record<string, string>
   // The name this guest tab's connection has in voice rooms, from the server.
   guestVoiceName: string | null
+  channelLabelEpoch: number
+  channelLabelEpochs: Record<string, number>
   servers: Record<string, ServerDetail>
   members: Record<string, Paged<Member>>
   memberInfo: Record<string, Record<string, Member | null>>
@@ -407,6 +409,7 @@ export interface RChatState {
   loadMoreDms: () => Promise<void>
   loadMoreServers: () => Promise<void>
   ensureDms: (ids: number[]) => Promise<void>
+  discoverChannels: (server: string, refresh?: boolean) => Promise<void>
   ensureServers: (names: string[]) => Promise<void>
   moveServer: (name: string, index: number) => void
   moveFolder: (id: string, index: number) => void
@@ -510,8 +513,8 @@ export interface RChatState {
   noteTyping: (scope: string, active: boolean) => void
   sendForward: (key: string) => void
   openForward: (m: Message) => Promise<void>
-  openMessage: (id: number, nav?: Nav) => Promise<void>
-  resolveLinkCard: (id: number) => void
+  openMessage: (id: number, nav?: Nav, place?: View) => Promise<void>
+  resolveLinkCard: (id: number, place?: View) => void
   startEdit: (key: string, m: Message) => void
   setEditText: (text: string) => void
   cancelEdit: (refocus?: boolean) => void
@@ -580,6 +583,7 @@ export interface RChatState {
   moveCategory: (server: string, id: number, index: number) => void
   setCategoriesCollapsed: (server: string, ids: number[], collapsed: boolean) => void
   renameChannel: (id: number, name: string) => Promise<void>
+  setChannelSensitive: (server: string, id: number, sensitive: boolean) => Promise<void>
   setSlowmode: (id: number, seconds: number) => Promise<void>
   setChannelTopic: (server: string, id: number, topic: string) => Promise<string | null>
   setChannelRestrict: (

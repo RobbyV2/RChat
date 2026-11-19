@@ -1,4 +1,5 @@
 import type { IndexDoc, PaletteIndex } from '../palette_index'
+import { peerVisible } from './app/viewing'
 import {
   dropIndexBucket,
   dropIndexIn,
@@ -76,7 +77,7 @@ export const p2pDocVisible = (st: P2pState, d: IndexDoc) => {
     return !!peer && st.contacts.some(c => c.ik === peer) && !blocked(st, peer)
   }
   const v = st.servers[at.room]
-  return !!v && v.me === 'join' && v.channels.some(c => c.id === at.ch)
+  return !!v && v.me === 'join' && peerVisible(st, at.room, at.ch)
 }
 
 export const p2pDocPlace = (st: P2pState, d: IndexDoc) => {

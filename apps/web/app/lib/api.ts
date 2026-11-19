@@ -513,10 +513,14 @@ export const endpoints = (c: ApiClient) => ({
   getServer: (name: string) => c.req<ServerDetail>('GET', `/servers/${seg(name)}`),
   serverAvailable: (name: string) =>
     c.req<{ available: boolean }>('GET', `/servers/${seg(name)}/available`),
-  getInvite: (name: string, password?: string | null) =>
+  getInvite: (
+    name: string,
+    password?: string | null,
+    preview?: 'metadata' | { revision: string }
+  ) =>
     c.req<Invite>(
       'GET',
-      `/invites/${seg(name)}`,
+      `/invites/${seg(name)}${preview === 'metadata' ? '/metadata' : preview ? '?preview_revision=' + seg(preview.revision) : ''}`,
       undefined,
       password ? { 'X-Invite-Password': seg(password) } : {}
     ),
@@ -594,6 +598,7 @@ export const endpoints = (c: ApiClient) => ({
     id: number,
     patch: {
       name?: string
+      sensitive?: boolean
       slowmode_seconds?: number
       restrict_view?: boolean
       restrict_send?: boolean
@@ -753,8 +758,13 @@ export const endpoints = (c: ApiClient) => ({
     c.req<Message>('PATCH', `/messages/${id}`, { content }),
   deleteMedia: (id: number) => c.req<unknown>('DELETE', `/messages/${id}/media`),
   messageLocation: (id: number) => c.req<MessageLocation>('GET', `/messages/${id}/location`),
-  messageLocations: (ids: number[]) =>
-    c.req<MessageLocation[]>('POST', '/messages/locations', { ids }),
+  messagePlace: (id: number) =>
+    c.req<Pick<MessageLocation, 'server' | 'channel_id' | 'dm_id' | 'thread_root_id'>>(
+      'GET',
+      `/messages/${id}/location?preview=false`
+    ),
+  messageLocations: (ids: number[], expected?: Record<number, string>) =>
+    c.req<MessageLocation[]>('POST', '/messages/locations', { ids, expected }),
   pinMessage: (id: number) => c.req<unknown>('PUT', `/messages/${id}/pin`),
   unpinMessage: (id: number) => c.req<unknown>('DELETE', `/messages/${id}/pin`),
   channelPins: (id: number) => c.req<Message[]>('GET', `/channels/${id}/pins`),

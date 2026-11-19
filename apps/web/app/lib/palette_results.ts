@@ -2,6 +2,7 @@
 // local index, API operations and help, ranked and grouped. Pure apart from the actions the
 // items run, so it is tested without a DOM.
 
+import { canView, channelTarget } from './viewing'
 import {
   AtSign,
   Bot,
@@ -155,9 +156,11 @@ const THREADS_MAX = 40
 export const threadItems = (s: RChatState, mask: (t: string) => string): PaletteItem[] => {
   const roots: { m: Message; server: string }[] = []
   for (const [server, d] of Object.entries(s.servers))
-    for (const c of d.channels)
+    for (const c of d.channels) {
+      if (!canView(channelTarget(s.me?.username ?? null, 'instance', server, c))) continue
       for (const m of s.messages[`c${c.id}`] ?? [])
         if (m.reply_count > 0 && m.kind === 'user') roots.push({ m, server })
+    }
   roots.sort((a, b) => b.m.created_at - a.m.created_at)
   return roots.slice(0, THREADS_MAX).map(({ m, server }) => {
     const ch = m.channel_id !== null ? channelName(s, server, m.channel_id) : null

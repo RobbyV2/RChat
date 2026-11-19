@@ -70,7 +70,8 @@ export const confirmDelete = (id: string, skip = false) => {
 
 // Puts a message on the forward clipboard: Send in another conversation forwards it there (a
 // P2P one directly; an instance one after it says the text will be copied there).
-export const copyForP2p = (p: P2pMessage, m: Message, author: string) => {
+export const copyForP2p = (p: P2pMessage, m: Message, author: string, draftKey: string) => {
+  const [room, ch] = draftKey.split('#')[0].split('/')
   const clip: ForwardClip = {
     id: 1 + Math.floor(Math.random() * 2 ** 40),
     author: p.fwd ? (m.forward?.author ?? null) : p2pUser(p.sender, author),
@@ -79,6 +80,7 @@ export const copyForP2p = (p: P2pMessage, m: Message, author: string) => {
     created_at: p.fwd ? seconds(p.fwd.ts) : m.created_at,
     body: p.fwd ? p.fwd.body : p.body,
     p2p: true,
+    source: ch ? { kind: 'p2p', room, ch } : { kind: 'direct' },
   }
   get().copyForwardClip(clip)
 }
@@ -227,7 +229,7 @@ const messageActions: Action[] = [
       const t = rowOf(ctx)
       if (!t) return
       const author = t.chat.ownName(t.p.sender)
-      if (to === COPY) copyForP2p(t.p, t.m, author)
+      if (to === COPY) copyForP2p(t.p, t.m, author, t.chat.draftKey)
       else void forwardTo(to, t.p, author)
     },
   },

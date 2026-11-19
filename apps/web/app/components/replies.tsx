@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { Forward, Image as ImageIcon, X } from 'lucide-react'
 import { maskOutsideCode } from '../lib/profanity'
 import { useMask, useStore } from '../lib/store'
+import { useForwardAccess } from '../lib/forward_access'
 import { snippetParts, type SnippetPart } from '../lib/replies'
 import { plainStamps } from '../lib/timestamps'
 import type { ReplyRef } from '../lib/types'
@@ -100,6 +101,12 @@ export function ReplyPreview({
   const blocked = useStore(s => (quote.author ? s.blocked[quote.author.username] === true : false))
   const own = useOwn(quote.author?.username)
   const streamer = useStore(s => s.streamer)
+  const copy = useForwardAccess(
+    quote.forward ? { forward: quote.forward, channel_id: null } : null,
+    {
+      active: !local && !quote.partial && !quote.deleted && !blocked,
+    }
+  )
   const connector = (
     <span
       aria-hidden
@@ -186,7 +193,11 @@ export function ReplyPreview({
         )}
         {isWebhookAuthor(author.username) && <WebhookBadge />}
         {quote.forwarded && <ForwardedTag />}
-        <Snippet quote={quote} own={own && !quote.forwarded} />
+        {copy.access === 'open' ? (
+          <Snippet quote={quote} own={own && !quote.forwarded} />
+        ) : (
+          <span className="truncate italic">Forwarded message</span>
+        )}
       </button>
     </div>
   )

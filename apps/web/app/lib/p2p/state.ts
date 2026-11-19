@@ -39,6 +39,7 @@ export interface ChannelContent {
   topic?: string
   gone?: true
   restrict_view?: true
+  sensitive?: true
   restrict_send?: true
   // Slow mode, in seconds.
   slow?: number
@@ -68,6 +69,7 @@ const CHANNEL_FIELDS = [
   'gone',
   'restrict_view',
   'restrict_send',
+  'sensitive',
   'slow',
 ]
 export const knownChannel = (c: object) => pick(c as Record<string, unknown>, CHANNEL_FIELDS)
@@ -128,6 +130,7 @@ export const channelsOf = (s: Summary, lim: Pick<DisplayLimits, 'name' | 'topic'
     const ch: { id: string } & ChannelContent = { id, name, kind, pos: int(c.pos) ?? 0 }
     const topic = text(c.topic, lim.topic)
     if (topic) ch.topic = topic
+    if (c.sensitive === true) ch.sensitive = true
     if (c.restrict_view === true) ch.restrict_view = true
     if (c.restrict_send === true) ch.restrict_send = true
     const slow = int(c.slow)

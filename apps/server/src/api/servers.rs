@@ -190,6 +190,8 @@ pub struct ChannelPatch {
     /// manage channels) can send. With no rules, only they can. Voice channels only accept
     /// `false`.
     restrict_send: Option<bool>,
+    /// Set the shared sensitive-content label. Omit to keep it.
+    sensitive: Option<bool>,
     /// Channel topic, plain text where links show as links. At most 1024 characters (code
     /// points) after cleanup: trimmed, control characters other than newlines dropped, runs of
     /// 3 or more newlines cut to 2. Checked by the profanity filter (`channel_topics` target).
@@ -350,6 +352,10 @@ pub struct Invite {
     /// Name of the channel the preview comes from: the first text channel without any
     /// permission rules. `null` when the viewer is banned or no such channel exists.
     pub preview_channel: Option<String>,
+    /// Stable identifier of the authorized preview channel.
+    pub preview_channel_id: Option<i64>,
+    /// The shared viewing label of the authorized preview channel.
+    pub preview_sensitive: bool,
     /// The last 3 top-level messages of `preview_channel`. Empty when the viewer is banned or
     /// there is no preview channel.
     pub preview: Vec<Message>,
@@ -965,6 +971,7 @@ fn channel_row(r: &sqlx::any::AnyRow) -> Result<Channel, ApiError> {
         topic: r.try_get(6)?,
         category_id: r.try_get(7)?,
         position: r.try_get(8)?,
+        sensitive: r.try_get::<i64, _>(9)? != 0,
     })
 }
 
@@ -998,7 +1005,7 @@ async fn server_detail(
         members_visible,
     } = access.lite().clone();
     let rows = sqlx::query(
-        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position FROM channels WHERE server = $1 ORDER BY position, id",
+        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive FROM channels WHERE server = $1 ORDER BY position, id",
     )
     .bind(&name)
     .fetch_all(db)
@@ -2192,12 +2199,27 @@ fn invite_password(headers: &HeaderMap) -> Option<String> {
     }
 }
 
+#[derive(Default, Deserialize)]
+pub(crate) struct InvitePreviewQuery {
+    preview_revision: Option<String>,
+}
+
+#[derive(Default)]
+struct InvitePreview {
+    name: Option<String>,
+    id: Option<i64>,
+    sensitive: bool,
+    messages: Vec<Message>,
+}
+
 /// The preview channel and its latest messages, as the viewer may read them: messages from
 /// before the viewer's read-history floor are left out.
 async fn invite_preview(
     db: &Db,
     access: ServerAccess,
-) -> Result<(Option<String>, Vec<Message>), ApiError> {
+    contents: bool,
+    revision: Option<&str>,
+) -> Result<InvitePreview, ApiError> {
     let row = sqlx::query(
         "SELECT c.id, c.name FROM channels c WHERE c.server = $1 AND c.kind = 'text' AND c.restrict_view = 0 AND NOT EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = c.id AND cp.can_view = 0) ORDER BY c.id LIMIT 1",
     )
@@ -2205,18 +2227,27 @@ async fn invite_preview(
     .fetch_optional(db)
     .await?;
     let Some(r) = row else {
-        return Ok((None, Vec::new()));
+        return Ok(InvitePreview::default());
     };
     let (id, name): (i64, String) = (r.try_get(0)?, r.try_get(1)?);
     let Some(channel) = allowed(access.channel(db, id).await)? else {
-        return Ok((None, Vec::new()));
+        return Ok(InvitePreview::default());
     };
-    let floor = channel.read_since(db).await?;
-    let mut msgs = recent_channel_messages(db, id, INVITE_PREVIEW).await?;
-    if let Some(floor) = floor {
-        msgs.retain(|m| m.created_at >= floor);
+    let sensitive = channel.sensitive();
+    let mut preview = InvitePreview {
+        name: Some(name),
+        id: Some(id),
+        sensitive,
+        messages: Vec::new(),
+    };
+    if contents && revision.is_none_or(|r| r == channel.viewing_revision()) {
+        let floor = channel.read_since(db).await?;
+        preview.messages = recent_channel_messages(db, id, INVITE_PREVIEW).await?;
+        if let Some(floor) = floor {
+            preview.messages.retain(|m| m.created_at >= floor);
+        }
     }
-    Ok((Some(name), msgs))
+    Ok(preview)
 }
 
 /// Preview an invite
@@ -2243,6 +2274,7 @@ async fn invite_preview(
     path = "/api/v1/invites/{name}",
     tag = "Invites",
     params(
+        ("preview_revision" = Option<String>, Query, description = "Only include messages if the preview channel matches this previously observed channel ID and shared label, formatted as id.0 or id.1"),
         ("name" = String, Path, description = "Server name, case-insensitive"),
         ("X-Invite-Password" = Option<String>, Header, description = "Percent-encoded server password from the invite link or typed by the viewer; blank counts as absent"),
         ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests; a valid grant unlocks the card")
@@ -2261,6 +2293,54 @@ pub(crate) async fn get_invite(
     MaybeAuthed(viewer): MaybeAuthed,
     headers: HeaderMap,
     Path(name): Path<String>,
+    Query(query): Query<InvitePreviewQuery>,
+) -> Result<Json<Invite>, ApiError> {
+    invite_card(
+        state,
+        viewer,
+        headers,
+        name,
+        true,
+        query.preview_revision.as_deref(),
+    )
+    .await
+}
+
+/// Read invite card metadata
+///
+/// Returns the card with an empty message list. When the viewer can read the preview channel,
+/// the card includes its ID and shared sensitive label. Pass these values in `preview_revision`
+/// when requesting preview messages from `GET /api/v1/invites/{name}`.
+#[utoipa::path(
+    get, path = "/api/v1/invites/{name}/metadata", tag = "Invites",
+    params(
+        ("name" = String, Path, description = "Server name"),
+        ("X-Invite-Password" = Option<String>, Header, description = "Percent-encoded invite password"),
+        ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants")
+    ),
+    responses((status = 200, description = "Authorized card with an empty preview", body = Invite),
+        (status = 401, description = "Password required or guests disabled", body = ApiErrorBody),
+        (status = 403, description = "Access denied", body = ApiErrorBody),
+        (status = 404, description = "Unknown server or wrong password", body = ApiErrorBody),
+        (status = 429, description = "Too many requests")),
+    security((), ("bearer" = []))
+)]
+pub(crate) async fn invite_metadata(
+    State(state): State<AppState>,
+    MaybeAuthed(viewer): MaybeAuthed,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+) -> Result<Json<Invite>, ApiError> {
+    invite_card(state, viewer, headers, name, false, None).await
+}
+
+async fn invite_card(
+    state: AppState,
+    viewer: Option<User>,
+    headers: HeaderMap,
+    name: String,
+    contents: bool,
+    revision: Option<&str>,
 ) -> Result<Json<Invite>, ApiError> {
     let db = &state.read();
     require_guest_ok(db, viewer.as_ref()).await?;
@@ -2278,8 +2358,8 @@ pub(crate) async fn get_invite(
             None => return Err(e),
         },
     };
-    let (server, status, (preview_channel, preview), ticket) = match view {
-        InviteView::Banned(lite) => (lite, InviteStatus::Banned, (None, Vec::new()), None),
+    let (server, status, preview, ticket) = match view {
+        InviteView::Banned(lite) => (lite, InviteStatus::Banned, InvitePreview::default(), None),
         InviteView::Open(access) => {
             let status = match (access.is_member(), joins) {
                 (true, _) => InviteStatus::Member,
@@ -2288,9 +2368,9 @@ pub(crate) async fn get_invite(
             };
             let (lite, ticket) = (access.lite().clone(), access.ticket());
             let preview = match access.via() {
-                Via::Joinable => (None, Vec::new()),
+                Via::Joinable => InvitePreview::default(),
                 Via::Public | Via::Member | Via::Password | Via::Grant | Via::Staff => {
-                    invite_preview(db, *access).await?
+                    invite_preview(db, *access, contents, revision).await?
                 }
             };
             (lite, status, preview, ticket)
@@ -2301,8 +2381,10 @@ pub(crate) async fn get_invite(
         member_count: member_count(db, &server.name).await?,
         server,
         status,
-        preview_channel,
-        preview,
+        preview_channel: preview.name,
+        preview_channel_id: preview.id,
+        preview_sensitive: preview.sensitive,
+        preview: preview.messages,
         password_expires_at: ticket.and_then(|t| t.expires_at),
         password_uses_left: ticket.and_then(|t| t.uses_left),
     }))
@@ -3166,6 +3248,7 @@ pub(crate) async fn create_channel(
         name: channel_name,
         kind,
         slowmode_seconds: 0,
+        sensitive: false,
         restrict_view: req.restrict_view,
         restrict_send: false,
         topic: None,
@@ -3220,6 +3303,7 @@ pub(crate) async fn update_channel(
         slowmode_seconds,
         restrict_view,
         restrict_send,
+        sensitive,
         topic,
     } = req;
     let channel = resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
@@ -3274,7 +3358,7 @@ pub(crate) async fn update_channel(
         .audit_actor(&state.db, Perm::ManageChannels)
         .await?;
     let mut tx = state.db.begin().await?;
-    let old = sqlx::query("SELECT name, topic, slowmode_seconds, restrict_view, restrict_send, CASE WHEN EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = channels.id) THEN 1 ELSE 0 END FROM channels WHERE id = $1")
+    let old = sqlx::query("SELECT name, topic, slowmode_seconds, restrict_view, restrict_send, CASE WHEN EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = channels.id) THEN 1 ELSE 0 END, sensitive FROM channels WHERE id = $1")
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?
@@ -3283,6 +3367,7 @@ pub(crate) async fn update_channel(
     let (was_name, was_topic, was_slow): (String, Option<String>, i64) =
         (old.try_get(0)?, old.try_get(1)?, old.try_get(2)?);
     let ruled = old.try_get::<i64, _>(5)? != 0;
+    let was_sensitive = old.try_get::<i64, _>(6)? != 0;
     if let Some(channel_name) = &channel_name {
         let taken =
             sqlx::query("SELECT 1 FROM channels WHERE server = $1 AND name = $2 AND id != $3")
@@ -3316,6 +3401,7 @@ pub(crate) async fn update_channel(
             .await?;
     }
     for (column, value) in [
+        ("sensitive", sensitive),
         ("restrict_view", restrict_view),
         ("restrict_send", restrict_send),
     ] {
@@ -3334,6 +3420,11 @@ pub(crate) async fn update_channel(
             "name",
             was_name.as_str(),
             channel_name.as_deref().unwrap_or(&was_name),
+        )
+        .change(
+            "sensitive",
+            was_sensitive,
+            sensitive.unwrap_or(was_sensitive),
         )
         .change(
             "topic",
@@ -3370,7 +3461,7 @@ pub(crate) async fn update_channel(
     }
     tx.commit().await?;
     let row = sqlx::query(
-        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position FROM channels WHERE id = $1",
+        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive FROM channels WHERE id = $1",
     )
     .bind(id)
     .fetch_one(&state.db)
@@ -6678,6 +6769,7 @@ mod tests {
             MaybeAuthed(viewer),
             headers,
             Path(server.to_string()),
+            Query(InvitePreviewQuery::default()),
         )
         .await
         .map(|Json(invite)| invite)
@@ -6968,6 +7060,57 @@ mod tests {
         assert_eq!(unlocked.preview_channel.as_deref(), Some("general"));
         assert_eq!(contents(&unlocked), vec!["m4", "m5", "m6"]);
         assert_eq!(unlocked.preview[2].author.username, "alice");
+        let viewer = || Some(mem_user("alice", false));
+        let metadata = invite_card(
+            state.clone(),
+            viewer(),
+            HeaderMap::new(),
+            "club".into(),
+            false,
+            None,
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(metadata.preview_channel_id, Some(general));
+        assert!(!metadata.preview_sensitive);
+        assert!(metadata.preview.is_empty());
+        let version = format!("{general}.0");
+        let matching = invite_card(
+            state.clone(),
+            viewer(),
+            HeaderMap::new(),
+            "club".into(),
+            true,
+            Some(&version),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(contents(&matching), vec!["m4", "m5", "m6"]);
+        sqlx::query("UPDATE channels SET sensitive = 1 WHERE id = $1")
+            .bind(general)
+            .execute(db)
+            .await
+            .unwrap();
+        let changed = invite_card(
+            state.clone(),
+            viewer(),
+            HeaderMap::new(),
+            "club".into(),
+            true,
+            Some(&version),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert!(changed.preview_sensitive && changed.preview.is_empty());
+        sqlx::query("UPDATE channels SET sensitive = 0 WHERE id = $1")
+            .bind(general)
+            .execute(db)
+            .await
+            .unwrap();
+
         let grant = insert_grant(db, "club").await;
         let guest = invite_as(&state, None, "club", None, Some(&grant))
             .await
@@ -10437,6 +10580,7 @@ mod tests {
                 name: "general".to_string(),
                 kind: ChannelKind::Text,
                 slowmode_seconds: 0,
+                sensitive: false,
                 restrict_view: false,
                 restrict_send: false,
                 topic: None,

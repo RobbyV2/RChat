@@ -1,6 +1,8 @@
 // The menus of a P2P server: its rail tile and header, a P2P rail folder, its channels, its
 // members and its roles.
 
+import { viewingActions } from './viewing'
+import { peerTarget } from '../p2p/app/viewing'
 import { Bell, BellOff, CheckCheck, Crown, LogOut, Settings, UserPlus, Volume2 } from 'lucide-react'
 import { muteEnd, mutedText, parentScope, untilText, type NotifyScope } from '../notify'
 import { serverPings, serverUnread } from '../p2p/alerts'
@@ -352,6 +354,18 @@ const managed = (ctx: ActionCtx) => {
 }
 
 const channelActions: Action[] = [
+  ...viewingActions(
+    'p2p_channel',
+    ctx => {
+      const t = channelOf(ctx)
+      return t && (peerTarget(useP2p.getState(), t.v.id, t.ch.id) ?? null)
+    },
+    ctx => !!managed(ctx),
+    (ctx, sensitive) => {
+      const t = managed(ctx)
+      if (t) void p2pServer.editChannel(t.v.id, t.ch.id, { sensitive })
+    }
+  ),
   {
     id: 'p2p_channel_join_voice',
     title: 'Join Voice',
@@ -365,7 +379,6 @@ const channelActions: Action[] = [
     run: ctx => {
       const t = voiceChannel(ctx)
       if (!t) return
-      p2pServer.openChannel(t.ch.id)
       void p2pVoice.join(t.v.id, t.ch.id)
     },
   },

@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { Message, Unread, WsEvent } from '../types'
-import { me, msg, until, user } from './fixtures'
+import { textChannel, serverDetail, me, msg, until, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -43,7 +43,7 @@ beforeEach(() => {
     token: null,
     guest: false,
     view: { kind: 'channel', server: 's', channelId: 9 },
-    servers: {},
+    servers: { s: serverDetail('s', { channels: [1, 2].map(textChannel) }) },
     dms: [],
     messages: {},
     older: {},

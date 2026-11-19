@@ -363,9 +363,9 @@ export function P2pServerSidebar() {
     const name = (adding ?? '').trim()
     setAdding(null)
     if (!name) return
-    void p2pServer
-      .addChannel(v.id, name, kind)
-      .then(id => id && kind === 'text' && p2pServer.openChannel(id))
+    void p2pServer.addChannel(v.id, name, kind).then(id => {
+      if (id && kind === 'text') void p2pServer.openChannel(id)
+    })
   }
   const kindBtn = (k: 'text' | 'voice') => {
     const label = k === 'text' ? 'Text channel' : 'Voice channel'

@@ -315,6 +315,44 @@ fn valid_scope(scope: &str) -> bool {
         && bytes[1..].iter().all(|b| b.is_ascii_digit())
 }
 
+/// Sets `origin_sensitive` from the current shared label of each named origin channel.
+pub(crate) async fn label_origins<'a>(
+    db: &Db,
+    forwards: impl IntoIterator<Item = &'a mut ForwardRef>,
+) -> Result<(), ApiError> {
+    let mut forwards: Vec<&mut ForwardRef> = forwards
+        .into_iter()
+        .filter(|f| f.origin_channel_id.is_some())
+        .collect();
+    let mut ids: Vec<i64> = forwards
+        .iter()
+        .filter_map(|f| f.origin_channel_id)
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    let sql = format!(
+        "SELECT id FROM channels WHERE sensitive <> 0 AND id IN ({})",
+        placeholders(1, ids.len())
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for id in &ids {
+        query = query.bind(*id);
+    }
+    let marked = query
+        .fetch_all(db)
+        .await?
+        .iter()
+        .map(|r| r.try_get::<i64, _>(0))
+        .collect::<Result<std::collections::HashSet<i64>, _>>()?;
+    for fwd in forwards.iter_mut() {
+        fwd.origin_sensitive = fwd.origin_channel_id.is_some_and(|id| marked.contains(&id));
+    }
+    Ok(())
+}
+
 fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, ApiError> {
     let media = match r.try_get::<Option<String>, _>(6)? {
         Some(id) => {
@@ -380,6 +418,7 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
                 mention: r.try_get::<i64, _>(22)? != 0,
                 partial: false,
                 forwarded: false,
+                forward: None,
             }),
             None => None,
         },
@@ -436,6 +475,7 @@ pub(crate) fn partial_quote(mut message: Message) -> Message {
              mention,
              partial: _,
              forwarded: _,
+             forward: _,
          }| ReplyRef {
             id,
             author: None,
@@ -445,6 +485,7 @@ pub(crate) fn partial_quote(mut message: Message) -> Message {
             mention,
             partial: true,
             forwarded: false,
+            forward: None,
         },
     );
     message
@@ -464,6 +505,7 @@ async fn rows_messages(db: &Db, rows: &[AnyRow], quotes: Quotes) -> Result<Vec<M
         .map(|r| row_message(r, &refs))
         .collect::<Result<Vec<_>, _>>()?;
     crate::api::polls::attach(db, &mut msgs).await?;
+    label_origins(db, msgs.iter_mut().filter_map(|m| m.forward.as_mut())).await?;
     if let Quotes::Since(Some(floor)) = quotes {
         for (m, r) in msgs.iter_mut().zip(rows) {
             if r.try_get::<Option<i64>, _>(31)?.is_some_and(|t| t < floor) {
@@ -674,7 +716,7 @@ struct Original {
     content: String,
     has_media: bool,
     created_at: i64,
-    forwarded: bool,
+    forward: Option<ForwardRef>,
 }
 
 /// Fills in `reply_to` of `msgs` from the quoted messages in one query. A quoted message that
@@ -691,7 +733,7 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
         return Ok(());
     }
     let sql = format!(
-        "SELECT m.id, m.channel_id, m.dm_id, m.author, m.content, m.media_id, m.created_at, m.fwd_source_id, m.webhook_id, m.webhook_name, m.webhook_avatar FROM messages m WHERE m.id IN ({}) AND {LIVE_AUTHOR}",
+        "SELECT m.id, m.channel_id, m.dm_id, m.author, m.content, m.media_id, m.created_at, m.fwd_source_id, m.webhook_id, m.webhook_name, m.webhook_avatar, m.fwd_created_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_origin, m.fwd_dropped FROM messages m WHERE m.id IN ({}) AND {LIVE_AUTHOR}",
         placeholders(1, ids.len())
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
@@ -699,6 +741,12 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
         query = query.bind(*id);
     }
     let rows = query.fetch_all(db).await?;
+    let mut names = Vec::with_capacity(rows.len() * 2);
+    for r in &rows {
+        names.push(r.try_get::<String, _>(3)?);
+        names.extend(r.try_get::<Option<String>, _>(12)?);
+    }
+    let refs = user_refs(db, &names).await;
     let mut found: HashMap<i64, Original> = HashMap::with_capacity(rows.len());
     for r in &rows {
         found.insert(
@@ -718,12 +766,24 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
                 content: r.try_get(4)?,
                 has_media: r.try_get::<Option<String>, _>(5)?.is_some(),
                 created_at: r.try_get(6)?,
-                forwarded: r.try_get::<Option<i64>, _>(7)?.is_some(),
+                forward: match (
+                    r.try_get::<Option<i64>, _>(11)?,
+                    r.try_get::<Option<i64>, _>(7)?,
+                ) {
+                    (Some(at), Some(source)) => Some(ForwardRef::new(
+                        r.try_get::<Option<String>, _>(12)?
+                            .map(|a| user_from(&refs, &a)),
+                        at,
+                        source,
+                        r.try_get::<Option<String>, _>(13)?.as_deref(),
+                        r.try_get(14)?,
+                    )),
+                    _ => None,
+                },
             },
         );
     }
-    let authors: Vec<String> = found.values().map(|f| f.author.clone()).collect();
-    let refs = user_refs(db, &authors).await;
+    label_origins(db, found.values_mut().filter_map(|f| f.forward.as_mut())).await?;
     for m in msgs.iter_mut() {
         let (channel_id, dm_id) = (m.channel_id, m.dm_id);
         let Some(quote) = m.reply_to.as_mut() else {
@@ -737,7 +797,7 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
             content,
             has_media,
             created_at,
-            forwarded,
+            forward,
         }) = found.get(&quote.id)
         else {
             continue;
@@ -752,7 +812,8 @@ async fn attach_quotes(db: &Db, msgs: &mut [Message], floor: Option<i64>) -> Res
         });
         quote.content = reply_snippet(content);
         quote.has_media = *has_media;
-        quote.forwarded = *forwarded;
+        quote.forwarded = forward.is_some();
+        quote.forward = forward.clone();
         quote.deleted = false;
     }
     Ok(())
@@ -1304,6 +1365,7 @@ pub(crate) async fn insert_message(
             mention: q.mention,
             partial: false,
             forwarded: false,
+            forward: None,
         }),
         edited_at: None,
         forward: None,
@@ -1363,6 +1425,7 @@ async fn forwarded(
             match (dest == Some(server.name()), hidden) {
                 (true, _) => match channel.restricted(db).await? {
                     false => Some(Origin::Channel {
+                        id: Some(channel.id()),
                         channel: channel.name().to_string(),
                         server: server_name,
                     }),
@@ -1552,6 +1615,7 @@ async fn insert_forward(
     }];
     attach_embeds(db, &mut msgs).await?;
     crate::api::polls::attach(db, &mut msgs).await?;
+    label_origins(db, msgs.iter_mut().filter_map(|m| m.forward.as_mut())).await?;
     let [message] = msgs;
     Ok((message, previews > 0))
 }
@@ -1671,6 +1735,38 @@ pub struct MessageLocation {
     pub kind: String,
     /// It is a forwarded copy of another message.
     pub forwarded: bool,
+    /// For a forwarded copy, its original as `Message.forward` describes it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forward: Option<ForwardRef>,
+}
+
+/// The destination of a readable message.
+#[derive(Serialize, ToSchema)]
+pub struct MessagePlace {
+    /// Canonical server name for a channel message.
+    #[schema(example = "garden")]
+    server: Option<String>,
+    /// Destination channel ID for a channel message.
+    channel_id: Option<i64>,
+    /// Destination conversation ID for a direct message.
+    dm_id: Option<i64>,
+    /// Root message ID for a thread reply.
+    thread_root_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct LocationQuery {
+    preview: Option<bool>,
+}
+
+/// The readable destination, optionally including a preview of the message.
+#[derive(Serialize, ToSchema)]
+#[serde(untagged)]
+pub enum LocationResult {
+    /// Routing fields only.
+    Place(MessagePlace),
+    /// Routing fields and the message preview.
+    Preview(Box<MessageLocation>),
 }
 
 async fn locate_message(
@@ -1679,6 +1775,7 @@ async fn locate_message(
     user: Option<&User>,
     proof: &Proof<'_>,
     channel: Option<&super::access::ResolvedChannel>,
+    expected: Option<&str>,
 ) -> Result<MessageLocation, ApiError> {
     let scope = match channel {
         Some(channel) => channel.message_scope(db, id).await?,
@@ -1696,18 +1793,43 @@ async fn locate_message(
         server,
         dm_users: _,
     } = scope;
+    if let Some(expected) = expected {
+        let scope = channel_id
+            .map(|id| format!("c{id}"))
+            .or_else(|| dm_id.map(|id| format!("d{id}")));
+        if scope.as_deref() != Some(expected) {
+            return Err(crate::api::access::not_found());
+        }
+    }
     if channel_id.is_none() && dm_id.is_none() {
         return Err(crate::api::access::not_found());
     }
     let row = sqlx::query(
-        "SELECT content, created_at, fwd_created_at, fwd_source_id FROM messages WHERE id = $1",
+        "SELECT m.content, m.created_at, m.fwd_created_at, m.fwd_source_id, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_origin, m.fwd_dropped FROM messages m WHERE m.id = $1",
     )
     .bind(id)
     .fetch_optional(db)
     .await?
     .ok_or_else(crate::api::access::not_found)?;
     let content: String = row.try_get(0)?;
-    let refs = user_refs(db, std::slice::from_ref(&author)).await;
+    let original: Option<String> = row.try_get(4)?;
+    let mut names = vec![author.clone()];
+    names.extend(original.clone());
+    let refs = user_refs(db, &names).await;
+    let mut forward = match (
+        row.try_get::<Option<i64>, _>(2)?,
+        row.try_get::<Option<i64>, _>(3)?,
+    ) {
+        (Some(created_at), Some(source_id)) => Some(ForwardRef::new(
+            original.map(|a| user_from(&refs, &a)),
+            created_at,
+            source_id,
+            row.try_get::<Option<String>, _>(5)?.as_deref(),
+            row.try_get(6)?,
+        )),
+        _ => None,
+    };
+    label_origins(db, forward.as_mut()).await?;
     Ok(MessageLocation {
         id,
         server,
@@ -1719,8 +1841,8 @@ async fn locate_message(
         content: reply_snippet(&content),
         has_media: media_id.is_some(),
         kind,
-        forwarded: row.try_get::<Option<i64>, _>(2)?.is_some()
-            && row.try_get::<Option<i64>, _>(3)?.is_some(),
+        forwarded: forward.is_some(),
+        forward,
     })
 }
 
@@ -1730,9 +1852,40 @@ async fn locate_message(
 /// time, first line), for opening it from a forwarded copy or a message link. Access is checked exactly like reading the message: guests are allowed when
 /// guest access is on (with `X-Guest-Grant` for password-protected servers), signed-in callers
 /// need to be able to read it (a server without a password can be read without joining).
+/// With `preview=false` only the server, channel, DM and thread IDs are returned.
 /// Every refusal is the same `404 Not found` as for an id that does not exist. General
 /// rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/messages/{id}/location", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Where the message is", body = MessageLocation), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/messages/{id}/location", tag = "Messages", params(("id" = i64, Path, description = "Message id"), ("preview" = Option<bool>, Query, description = "Include the message preview (default true)")), responses((status = 200, description = "Where the message is", body = LocationResult), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security((), ("bearer" = [])))]
+pub(crate) async fn message_lookup(
+    State(state): State<AppState>,
+    MaybeAuthed(user): MaybeAuthed,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(query): Query<LocationQuery>,
+) -> Result<Json<LocationResult>, ApiError> {
+    if query.preview != Some(false) {
+        let Json(preview) =
+            message_location(State(state), MaybeAuthed(user), headers, Path(id)).await?;
+        return Ok(Json(LocationResult::Preview(Box::new(preview))));
+    }
+    let db = &state.read();
+    require_guest_ok(db, user.as_ref()).await?;
+    let scope = resolve_message(
+        db,
+        id,
+        user.as_ref(),
+        &Proof::headers(&headers, &state.limits),
+    )
+    .await?
+    .into_scope();
+    Ok(Json(LocationResult::Place(MessagePlace {
+        server: scope.server,
+        channel_id: scope.channel_id,
+        dm_id: scope.dm_id,
+        thread_root_id: scope.thread_root_id,
+    })))
+}
+
 pub(crate) async fn message_location(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -1746,6 +1899,7 @@ pub(crate) async fn message_location(
         id,
         user.as_ref(),
         &Proof::headers(&headers, &state.limits),
+        None,
         None,
     )
     .await?;
@@ -1769,6 +1923,9 @@ pub struct LocateBatchReq {
     /// Up to 50 message ids. Repeated ids count once.
     #[schema(example = json!([918, 920]))]
     ids: Vec<i64>,
+    /// Optional destination from each link, keyed by message ID. A mismatched destination is omitted.
+    #[serde(default)]
+    expected: HashMap<i64, String>,
 }
 
 /// Locate several messages
@@ -1806,8 +1963,8 @@ pub(crate) async fn locations(
     req: LocateBatchReq,
     channel: Option<&super::access::ResolvedChannel>,
 ) -> Result<Json<Vec<MessageLocation>>, ApiError> {
-    let LocateBatchReq { ids } = req;
-    if ids.len() > LOCATE_BATCH_MAX {
+    let LocateBatchReq { ids, expected } = req;
+    if ids.len() > LOCATE_BATCH_MAX || expected.len() > LOCATE_BATCH_MAX {
         return Err(bad("Too many messages"));
     }
     require_guest_ok(db, user).await?;
@@ -1825,7 +1982,16 @@ pub(crate) async fn locations(
         if !seen.insert(id) {
             continue;
         }
-        match locate_message(db, id, user, proof, channel).await {
+        match locate_message(
+            db,
+            id,
+            user,
+            proof,
+            channel,
+            expected.get(&id).map(String::as_str),
+        )
+        .await
+        {
             Ok(location) => found.push(location),
             Err(ApiError(code, _, _)) if code.is_client_error() => {}
             Err(e) => return Err(e),
@@ -9067,7 +9233,10 @@ mod tests {
             State(state.clone()),
             MaybeAuthed(user.map(|name| mem_user(name, false))),
             HeaderMap::new(),
-            Json(LocateBatchReq { ids: ids.to_vec() }),
+            Json(LocateBatchReq {
+                ids: ids.to_vec(),
+                expected: HashMap::new(),
+            }),
         )
         .await
         .map(|r| r.0)
@@ -9075,6 +9244,46 @@ mod tests {
 
     fn located(found: &[MessageLocation]) -> Vec<i64> {
         found.iter().map(|l| l.id).collect()
+    }
+
+    #[tokio::test]
+    async fn message_destinations_omit_previews_and_cards_match_the_linked_room() {
+        let (state, path) = temp_state("message_places").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "Alice").await;
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        let id = post(db, cid, "alice", "Secret note", 3).await;
+        let Json(found) = message_lookup(
+            State(state.clone()),
+            MaybeAuthed(Some(mem_user("alice", false))),
+            HeaderMap::new(),
+            Path(id),
+            Query(LocationQuery {
+                preview: Some(false),
+            }),
+        )
+        .await
+        .expect("place");
+        assert_eq!(
+            serde_json::to_value(found).expect("serialize"),
+            serde_json::json!({"server":"rchat","channel_id":cid,"dm_id":null,"thread_root_id":null})
+        );
+        for (scope, count) in [(format!("d{cid}"), 0), (format!("c{cid}"), 1)] {
+            let Json(cards) = message_locations(
+                State(state.clone()),
+                MaybeAuthed(Some(mem_user("alice", false))),
+                HeaderMap::new(),
+                Json(LocateBatchReq {
+                    ids: vec![id],
+                    expected: HashMap::from([(id, scope)]),
+                }),
+            )
+            .await
+            .expect("cards");
+            assert_eq!(cards.len(), count);
+        }
+        done(state, path).await;
     }
 
     #[tokio::test]
@@ -10495,6 +10704,77 @@ mod tests {
         )
         .await
         .map(|r| r.0)
+    }
+
+    #[tokio::test]
+    async fn forwarded_copies_name_the_current_label_of_their_origin() {
+        let (state, path) = temp_state("forward_origin_label").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "Alice").await;
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        let proofs = add_channel(db, "proofs", "text").await;
+        let source = post(db, proofs, "alice", "Amber folio", 1).await;
+        let copy = forward(&state, (Some(cid), None, None), "alice", source)
+            .await
+            .expect("forward");
+        let sent = copy.forward.as_ref().expect("forward ref");
+        assert_eq!(
+            (sent.origin_channel_id, sent.origin_sensitive),
+            (Some(proofs), false)
+        );
+        sqlx::query("UPDATE channels SET sensitive = 1 WHERE id = $1")
+            .bind(proofs)
+            .execute(db)
+            .await
+            .expect("label");
+        let answer = say_to(
+            &state,
+            (Some(cid), None, None),
+            "alice",
+            "about that",
+            Some(copy.id),
+            false,
+        )
+        .await
+        .expect("reply");
+        let read = list(&state, cid, Some("alice")).await.expect("history");
+        let quoted = read
+            .iter()
+            .find(|m| m.id == answer.id)
+            .and_then(|m| m.reply_to.as_ref())
+            .and_then(|q| q.forward.as_ref())
+            .expect("quoted copy");
+        assert_eq!(
+            (quoted.origin_channel_id, quoted.origin_sensitive),
+            (Some(proofs), true)
+        );
+        let read = read
+            .iter()
+            .find(|m| m.id == copy.id)
+            .and_then(|m| m.forward.as_ref())
+            .expect("copy");
+        assert!(read.origin_sensitive);
+        let located = locate(&state, Some("alice"), copy.id)
+            .await
+            .expect("location")
+            .forward
+            .expect("location forward");
+        assert_eq!(
+            (
+                located.source_id,
+                located.origin_channel_id,
+                located.origin_sensitive
+            ),
+            (source, Some(proofs), true)
+        );
+        let original = locate(&state, Some("alice"), source).await.expect("source");
+        assert!(original.forward.is_none());
+        let again = forward(&state, (Some(cid), None, None), "alice", source)
+            .await
+            .expect("forward again");
+        assert!(again.forward.expect("ref").origin_sensitive);
+        done(state, path).await;
     }
 
     #[tokio::test]

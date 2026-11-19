@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::extract::{FromRequestParts, Path, Query, State};
-use axum::http::{HeaderMap, header, request::Parts};
+use axum::http::{HeaderMap, StatusCode, header, request::Parts};
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -563,6 +563,9 @@ pub struct RoomMetadata {
     channel_id: i64,
     /// Text or voice.
     kind: ChannelKind,
+    /// The configured channel carries a shared sensitive-content label.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    sensitive: bool,
 }
 
 impl RoomMetadata {
@@ -571,14 +574,27 @@ impl RoomMetadata {
             server: channel.server().name().into(),
             channel_id: channel.id(),
             kind: channel.kind(),
+            sensitive: channel.sensitive(),
         }
     }
+}
+
+fn check_room_revision(headers: &HeaderMap, channel: &ResolvedChannel) -> Result<(), ApiError> {
+    if let Some(observed) = headers.get("x-widget-room-revision")
+        && observed.as_bytes() != channel.viewing_revision().as_bytes()
+    {
+        return Err(ApiError::conflict(
+            StatusCode::PRECONDITION_FAILED,
+            "Room information changed",
+        ));
+    }
+    Ok(())
 }
 
 /// Discover the widget's authorized room before opening its content.
 ///
 /// Uses the same widget session, parent origin, account and password-grant checks as the view.
-/// Only channel identity and kind are returned. History, roster, media and live subscriptions open separately.
+/// Only channel identity, kind and its shared sensitive-content label are returned. History, roster, media and live subscriptions open separately.
 #[utoipa::path(get, path = "/api/v1/widgets/{id}/room", tag = "Widgets", params(("id" = String, Path, description = "Widget id")), responses((status = 200, description = "Authorized room metadata", body = RoomMetadata), (status = 401, description = "The supplied account session has expired"), (status = 404, description = "Widget unavailable")), security((), ("bearer" = [])))]
 pub(crate) async fn metadata(
     State(state): State<AppState>,
@@ -617,7 +633,7 @@ pub struct View {
 /// Read only the widget's configured channel, subject to its viewer's access.
 ///
 /// Send X-Widget-Session and X-Widget-Parent. Members authenticate normally and guests in protected voice rooms also supply their password grant.
-#[utoipa::path(get, path = "/api/v1/widgets/{id}/view", tag = "Widgets", params(("id" = String, Path, description = "Widget id")), responses((status = 200, description = "Visible channel", body = View), (status = 401, description = "The supplied account session has expired"), (status = 404, description = "Widget unavailable")), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/widgets/{id}/view", tag = "Widgets", params(("id" = String, Path, description = "Widget id"), ("X-Widget-Room-Revision" = Option<String>, Header, description = "Channel ID and shared sensitive label from room discovery, formatted as id.0 or id.1")), responses((status = 200, description = "Visible channel", body = View), (status = 401, description = "The supplied account session has expired"), (status = 404, description = "Widget unavailable"), (status = 412, description = "Room information changed; repeat discovery before requesting content")), security((), ("bearer" = [])))]
 pub(crate) async fn view(
     State(state): State<AppState>,
     WidgetViewer(user): WidgetViewer,
@@ -638,6 +654,7 @@ pub(crate) async fn view(
         &Proof::headers(&headers, &state.limits),
     )
     .await?;
+    check_room_revision(&headers, &channel)?;
     if participate && user.is_none() && channel.kind() == ChannelKind::Text {
         participate = guest_chat::paused_until(&state.db, &widget.server, &headers)
             .await?
@@ -676,7 +693,7 @@ pub(crate) async fn view(
 /// Preview readable messages in the widget's configured text channel.
 ///
 /// Uses the same widget session and viewer credentials as the room. Omitted ids leave plain links.
-#[utoipa::path(post, path = "/api/v1/widgets/{id}/locations", tag = "Widgets", params(("id" = String, Path, description = "Widget id")), request_body = messages::LocateBatchReq, responses((status = 200, description = "Readable message previews in this channel", body = Vec<messages::MessageLocation>), (status = 400, description = "More than 50 ids"), (status = 401, description = "The supplied account session has expired"), (status = 404, description = "Widget unavailable"), (status = 429, description = "Too many requests")), security((), ("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/widgets/{id}/locations", tag = "Widgets", params(("id" = String, Path, description = "Widget id"), ("X-Widget-Room-Revision" = Option<String>, Header, description = "Channel ID and shared sensitive label from room discovery, formatted as id.0 or id.1")), request_body = messages::LocateBatchReq, responses((status = 200, description = "Readable message previews in this channel", body = Vec<messages::MessageLocation>), (status = 400, description = "More than 50 ids"), (status = 401, description = "The supplied account session has expired"), (status = 404, description = "Widget unavailable"), (status = 412, description = "Room information changed; repeat discovery before requesting previews"), (status = 429, description = "Too many requests")), security((), ("bearer" = [])))]
 pub(crate) async fn locations(
     State(state): State<AppState>,
     WidgetViewer(user): WidgetViewer,
@@ -694,6 +711,7 @@ pub(crate) async fn locations(
         &proof,
     )
     .await?;
+    check_room_revision(&headers, &channel)?;
     if channel.kind() != ChannelKind::Text {
         return Err(not_found());
     }
@@ -819,6 +837,103 @@ mod tests {
                 Err(ApiError(axum::http::StatusCode::UNAUTHORIZED, ref error, _)) if error == "Unauthorized"
             ));
         }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_widget_read_can_be_pinned_to_the_discovered_shared_label() {
+        let (state, path) = temp_state("widget_shared_label").await;
+        let id: i64 = sqlx::query_scalar(
+            "SELECT id FROM channels WHERE server='rchat' AND kind='text' ORDER BY id LIMIT 1",
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+        let viewer = mem_user("manager", true);
+        let channel = resolve_channel(&state.db, id, Some(&viewer), &Proof::none())
+            .await
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-widget-room-revision",
+            channel.viewing_revision().parse().unwrap(),
+        );
+        assert!(check_room_revision(&headers, &channel).is_ok());
+        sqlx::query("UPDATE channels SET sensitive=1 WHERE id=$1")
+            .bind(id)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let marked = resolve_channel(&state.db, id, Some(&viewer), &Proof::none())
+            .await
+            .unwrap();
+        assert_eq!(
+            check_room_revision(&headers, &marked).unwrap_err().0,
+            StatusCode::PRECONDITION_FAILED
+        );
+        assert!(check_room_revision(&HeaderMap::new(), &marked).is_ok());
+        headers.insert(
+            "x-widget-room-revision",
+            marked.viewing_revision().parse().unwrap(),
+        );
+        assert!(check_room_revision(&headers, &marked).is_ok());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn voice_card_requests_check_the_pinned_label_before_the_room_kind() {
+        let (state, path) = temp_state("widget_voice_cards").await;
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO channels(server, name, kind, created_at) VALUES('rchat', 'lounge', 'voice', 0) RETURNING id",
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO widgets(id,server,channel_id,mode,enabled,composer,origins,revision) VALUES('voicecards','rchat',$1,'voice',1,0,'[]','revision')")
+            .bind(id)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let parent = "https://parent.example";
+        let Json(session) = open(
+            State(state.clone()),
+            Path("voicecards".into()),
+            HeaderMap::new(),
+            Json(Open {
+                parent: parent.into(),
+                read_key: None,
+            }),
+        )
+        .await
+        .unwrap();
+        let cards = |pin: Option<String>| {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-widget-session", session.ticket.parse().unwrap());
+            headers.insert("x-widget-parent", parent.parse().unwrap());
+            if let Some(pin) = pin {
+                headers.insert("x-widget-room-revision", pin.parse().unwrap());
+            }
+            locations(
+                State(state.clone()),
+                WidgetViewer(Some(mem_user("manager", true))),
+                Path("voicecards".into()),
+                headers,
+                Json(serde_json::from_value(serde_json::json!({ "ids": [1] })).unwrap()),
+            )
+        };
+        let status = |r: Result<Json<Vec<messages::MessageLocation>>, ApiError>| match r {
+            Ok(_) => StatusCode::OK,
+            Err(e) => e.0,
+        };
+        assert_eq!(
+            status(cards(Some(format!("{id}.1"))).await),
+            StatusCode::PRECONDITION_FAILED
+        );
+        assert_eq!(
+            status(cards(Some(format!("{id}.0"))).await),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(status(cards(None).await), StatusCode::NOT_FOUND);
         done(state, path).await;
     }
 

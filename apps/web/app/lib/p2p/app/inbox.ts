@@ -1,3 +1,4 @@
+import { peerVisible } from './viewing'
 import type { MarkAllExtra } from '../../store_types'
 import { p2pUnread } from '../alerts'
 import { loadMessages, type P2pMessage } from '../dm'
@@ -30,11 +31,13 @@ export const p2pPings = {
 
   async text(p: PingRec): Promise<PingText | null> {
     const s = dbNow()
+    if (p.ch && !peerVisible(useP2p.getState(), p.room, p.ch)) return null
     return s ? pingText(s, p) : null
   },
 
   async alive(p: PingRec) {
     const s = dbNow()
+    if (p.ch && !peerVisible(useP2p.getState(), p.room, p.ch)) return false
     return s ? pingAlive(s, p) : false
   },
 
@@ -71,7 +74,7 @@ export const p2pOpenAt = async (room: string, ch: string | null, id: string) => 
     p2p.openHome()
     await p2pDm.openDm(peer)
   } else {
-    p2pServer.open(room, ch)
+    if (!(await p2pServer.open(room, ch))) return
     await channelLoaded(room, ch)
   }
   const chat = useP2p.getState().chat
@@ -102,7 +105,7 @@ export const channelLoaded = (room: string, ch: string) =>
 export const p2pRecent = async (room: string, ch: string | null): Promise<P2pMessage[] | null> => {
   const s = dbNow()
   const me = meNow()
-  if (!s || !me) return null
+  if (!s || !me || (ch && !peerVisible(useP2p.getState(), room, ch))) return null
   const limit = limits.dm.page
   try {
     if (ch !== null)

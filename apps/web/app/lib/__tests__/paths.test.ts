@@ -25,6 +25,17 @@ describe('viewPath / parsePath round-trips', () => {
     expect(parsePath(path)).toEqual({ kind: 'channel', server: 'café & co', channelId: 3 })
   })
 
+  test('server, channel and message links share the canonical server key for local choices', () => {
+    expect(parsePath('/s/Garden/')).toEqual({ kind: 'server', server: 'garden' })
+    expect(parsePath('/s/Garden/3/')).toEqual({ kind: 'channel', server: 'garden', channelId: 3 })
+    expect(parsePath('/s/Garden/3/10/')).toEqual({
+      kind: 'message',
+      place: { kind: 'channel', server: 'garden', channelId: 3 },
+      thread: null,
+      id: 10,
+    })
+  })
+
   test('missing trailing slash parses', () => {
     expect(parsePath('/s/rchat/5')).toEqual({ kind: 'channel', server: 'rchat', channelId: 5 })
     expect(parsePath('/dm/8')).toEqual({ kind: 'dm', dmId: 8 })

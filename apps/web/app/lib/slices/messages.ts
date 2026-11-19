@@ -1,6 +1,7 @@
 // Messages and DMs: the loaded windows with their tails and heads, live appends, quotes and
 // edits, pins, link cards, the outbox, embeds, P2P availability and the DM list.
 
+import { canView, instanceTarget, requestViewing } from '../viewing'
 import { ApiError, type PageOpts, type SearchParams, type SendOpts } from '../api'
 import {
   type PendingUpload,
@@ -10,6 +11,13 @@ import {
   startMode,
 } from '../attachments'
 import { accountPrompt } from '../features'
+import {
+  clipAllowed,
+  locateQuote,
+  quoteSource,
+  sourceAccess,
+  sourceServer,
+} from '../forward_viewing'
 import { type ForwardClip, canForward, clipOf, forwardPending } from '../forward'
 import { dropGroupMessage } from '../group_pings'
 import { limitsOf, tooLargeText } from '../instance_limits'
@@ -103,6 +111,7 @@ import {
 } from '../window'
 import {
   Ended,
+  emptySearch,
   type GetState,
   type Handlers,
   LIST_MAX,
@@ -130,6 +139,7 @@ export interface MessagesDeps {
   noteBlocked: (b: BlockedUser) => void
   noteTyper: (scope: string, username: string, name: string, on: boolean) => void
   noteUnblocked: (name: string) => void
+  navigationIntent: () => () => boolean
   openChannelAt: (
     server: string,
     channelId: number,
@@ -282,6 +292,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     noteBlocked,
     noteTyper,
     noteUnblocked,
+    navigationIntent,
     openChannelAt,
     persistGuestServers,
     pinSelf,
@@ -468,12 +479,24 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
   // The pins window reads through the gated list, so it only shows what the viewer may read.
   let pinsGen = 0
+  const labelsOffline = () => get().wsStatus !== 'green' && get().channelLabelEpoch > 0
   const loadPins = (key: string) => {
     pinsGen += 1
     const gen = pinsGen
     const id = Number(key.slice(1))
+    const view = get().view
     const current = () => gen === pinsGen && get().pins?.key === key
-    ;(key[0] === 'd' ? api.dmPins(id) : api.channelPins(id)).then(
+    const read = async () => {
+      if (key[0] === 'd') return api.dmPins(id)
+      if (view?.kind === 'channel') {
+        if (labelsOffline()) await get().discoverChannels(view.server, true)
+        const target = instanceTarget(get(), view.server, id)
+        if (!current() || (target ? !canView(target) : get().channelLabelEpoch > 0))
+          throw new Ended()
+      }
+      return api.channelPins(id)
+    }
+    void read().then(
       list => {
         if (!current()) return
         askP2p(list)
@@ -860,14 +883,38 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
   const fetchPage = async (key: string, page: PageOpts): Promise<Message[]> => {
     const id = Number(key.slice(1))
+    const before = get().view
+    const thread = get().panel
+    const visible = () =>
+      before === get().view &&
+      (key[0] !== 't' ||
+        (get().panel?.kind === 'thread' &&
+          thread?.kind === 'thread' &&
+          (get().panel as typeof thread).root.id === id))
     try {
+      if (key[0] !== 'd' && before?.kind === 'channel') {
+        if (labelsOffline()) await get().discoverChannels(before.server, true)
+        const target = instanceTarget(get(), before.server, before.channelId)
+        if (
+          !visible() ||
+          (target ? !canView(target) : get().channelLabelEpoch > 0) ||
+          (key[0] === 'c' && before.channelId !== id)
+        )
+          throw new Ended()
+      }
       switch (key[0]) {
-        case 'c':
-          return await live(api.channelMessages(id, page))
+        case 'c': {
+          const rows = await live(api.channelMessages(id, page))
+          if (!visible()) throw new Ended()
+          return rows
+        }
         case 'd':
           return await live(api.dmMessages(id, page))
-        default:
-          return await live(api.threadMessages(id, page))
+        default: {
+          const rows = await live(api.threadMessages(id, page))
+          if (!visible()) throw new Ended()
+          return rows
+        }
       }
     } catch (e) {
       const { servers, view } = get()
@@ -1009,7 +1056,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   const LINK_BATCH_DELAY = 50
   const LINK_BATCH_FLIGHTS = 2
   const linkOrder = new Set<number>()
-  const linkQueue = new Set<number>()
+  const linkQueue = new Map<number, View | undefined>()
   const linkLoads = new Set<number>()
   let linkTimer: ReturnType<typeof setTimeout> | null = null
   let linkFlights = 0
@@ -1067,13 +1114,43 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   const flushLinkCards = () => {
     linkTimer = null
     while (linkQueue.size && linkFlights < LINK_BATCH_FLIGHTS) {
-      const ids = [...linkQueue].slice(0, LINK_BATCH_MAX)
-      for (const id of ids) linkQueue.delete(id)
+      const batch = [...linkQueue].slice(0, LINK_BATCH_MAX)
+      for (const [id] of batch) linkQueue.delete(id)
+      const allowed = (place: View | undefined) => {
+        if (!place || place.kind === 'dm') return true
+        const t = instanceTarget(get(), place.server, place.channelId)
+        return !!t && canView(t)
+      }
+      const visible = batch.filter(([id, place]) => {
+        if (allowed(place)) return true
+        linkLoads.delete(id)
+        return false
+      })
+      if (!visible.length) continue
+      const ids = visible.map(([id]) => id)
       linkFlights += 1
       const gen = linkGen
       const at = sessionMark()
-      void api
-        .messageLocations(ids)
+      const read = async () => {
+        if (labelsOffline()) {
+          const names = new Set(
+            visible.flatMap(([, place]) => (place?.kind === 'channel' ? [place.server] : []))
+          )
+          await Promise.all([...names].map(name => get().discoverChannels(name, true)))
+        }
+        if (at !== sessionMark() || gen !== linkGen) return []
+        const ready = visible.filter(([, place]) => allowed(place))
+        const expected = Object.fromEntries(
+          ready.flatMap(([id, place]) => (place ? [[id, viewKey(place)]] : []))
+        )
+        return ready.length
+          ? api.messageLocations(
+              ready.map(([id]) => id),
+              Object.keys(expected).length ? expected : undefined
+            )
+          : []
+      }
+      void read()
         .then(
           found => found,
           e => (refused(e) ? [] : undefined)
@@ -1082,10 +1159,14 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           if (at !== sessionMark()) return
           linkFlights -= 1
           for (const id of ids) linkLoads.delete(id)
-          if (gen !== linkGen) for (const id of ids) get().resolveLinkCard(id)
+          if (gen !== linkGen) for (const [id, place] of visible) get().resolveLinkCard(id, place)
           else if (found) {
             const byId = new Map(found.map(card => [card.id, card]))
-            keepLinkCards(ids.map(id => [id, byId.get(id) ?? null]))
+            keepLinkCards(
+              visible
+                .filter(([, place]) => allowed(place))
+                .map(([id]) => [id, byId.get(id) ?? null])
+            )
           }
           queueLinkCards()
         })
@@ -1098,9 +1179,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   // Where a message is, through the same gate as reading it; null for every refusal.
   const locateMessage = async (id: number) => {
     try {
-      const loc = await live(api.messageLocation(id))
-      keepLinkCard(id, loc)
-      return loc
+      return await live(api.messagePlace(id))
     } catch (e) {
       if (!refused(e)) throw e
       keepLinkCard(id, null)
@@ -1108,8 +1187,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     }
   }
 
-  const openMessageAt = async (id: number, nav: Nav) => {
+  const openMessageAt = async (id: number, nav: Nav, current: () => boolean) => {
     const loc = await locateMessage(id)
+    if (!current()) return true
     if (!loc) return false
     if (loc.dm_id !== null) {
       const v = shownView(get().view)
@@ -1534,8 +1614,31 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     copyForward: m => {
       const { me, guest } = get()
       if (!me || guest || !canForward(m)) return
-      saveForward(clipOf(m))
-      toast('Message copied for forwarding')
+      const state = get()
+      const clip = clipOf(m, m.channel_id == null ? undefined : sourceServer(state, m.channel_id))
+      const stage = (quoted?: ForwardClip['source']) => {
+        if (
+          get().me?.username !== me.username ||
+          sourceAccess(get(), clip.source) === 'hidden' ||
+          (quoted && sourceAccess(get(), quoted) !== 'open')
+        )
+          return
+        saveForward(quoted ? { ...clip, quoted } : clip)
+        toast('Message copied for forwarding')
+      }
+      const known = quoteSource(state, m)
+      if (!m.forward || known) stage(known)
+      else
+        void locateQuote(m.forward.source_id)
+          .then(
+            inSession(async origin => {
+              if (!origin) return
+              if (origin.kind === 'channel' && origin.server)
+                await get().discoverChannels(origin.server)
+              stage(origin)
+            })
+          )
+          .catch(() => {})
     },
 
     clearForward: () => saveForward(null),
@@ -1585,7 +1688,14 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     sendForward: key => {
       const { me, guest, forwardClip: clip } = get()
-      if (!me || guest || !clip || forwardPending(get().outbox[key], clip.id)) return
+      if (
+        !me ||
+        guest ||
+        !clip ||
+        !clipAllowed(get(), clip) ||
+        forwardPending(get().outbox[key], clip.id)
+      )
+        return
       // From a P2P conversation: the instance has no original to point at, so this posts a copy
       // of the text (the forward bar asked first).
       if (clip.p2p) {
@@ -1668,15 +1778,23 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       return fwd ? get().openMessage(fwd.source_id) : Promise.resolve()
     },
 
-    openMessage: (id, nav = 'push') =>
+    openMessage: (id, nav = 'push', place) =>
       act(async () => {
-        if (!(await openMessageAt(id, nav))) toast("You can't open this message")
+        const current = navigationIntent()
+        if (place?.kind === 'channel') {
+          await get().discoverChannels(place.server, labelsOffline())
+          if (!current()) return
+          const target = instanceTarget(get(), place.server, place.channelId)
+          if (!target || (!canView(target) && !(await requestViewing(target)))) return
+        }
+        if (current() && !(await openMessageAt(id, nav, current)))
+          toast("You can't open this message")
       }),
 
-    resolveLinkCard: id => {
+    resolveLinkCard: (id, place) => {
       if (id in get().linkCards || linkLoads.has(id)) return
       linkLoads.add(id)
-      linkQueue.add(id)
+      linkQueue.set(id, place)
       queueLinkCards()
     },
 
@@ -1953,6 +2071,15 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     searchRun: (args, reset) =>
       act(async () => {
+        if (args.channelId !== null) {
+          const s = get()
+          const name = s.view?.kind === 'channel' ? s.view.server : null
+          const target = name && instanceTarget(s, name, args.channelId)
+          if (!target || !canView(target)) {
+            set({ search: emptySearch() })
+            return
+          }
+        }
         const cur = get().search
         if (!reset && (cur.loading || !cur.hasMore || !sameSearch(args, searchFor))) return
         if (reset) {
@@ -2170,7 +2297,18 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const host = ev.server !== null ? get().servers[ev.server] : undefined
       const channel =
         channel_id !== null ? (host?.channels.find(c => c.id === channel_id)?.name ?? null) : null
-      const file = m.kind !== 'pin' && !isSystem(m) && !m.content && !m.media?.spoiler
+      const source = m.forward ? quoteSource(get(), m, ev.server ?? undefined) : undefined
+      const closedCopy =
+        !!m.forward &&
+        sourceAccess(
+          get(),
+          source,
+          source?.kind === 'channel' && source.id === m.forward.origin_channel_id
+            ? m.forward.origin_sensitive === true
+            : undefined
+        ) !== 'open'
+      const file =
+        !closedCopy && m.kind !== 'pin' && !isSystem(m) && !m.content && !m.media?.spoiler
       alertUser({
         key: scope,
         actor: m.author,
@@ -2180,7 +2318,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
             ? 'Pinned a message'
             : isSystem(m)
               ? systemText(m)
-              : m.content || (m.media?.spoiler ? '' : m.media?.filename) || 'Attachment',
+              : closedCopy
+                ? 'Forwarded message'
+                : m.content || (m.media?.spoiler ? '' : m.media?.filename) || 'Attachment',
         file: file && !!m.media?.filename,
         server: dm_id === null ? (host?.display_name ?? null) : null,
         channel,

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { useStore, resetSessionCaches } from '../store'
 import { p2p } from '../p2p'
 import type { Message, WsEvent } from '../types'
-import { me, media, msg, result, serverDetail, user } from './fixtures'
+import { textChannel, me, media, msg, result, serverDetail, user } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -46,7 +46,7 @@ beforeEach(() => {
     token: null,
     guest: false,
     view: { kind: 'channel', server: 's', channelId: 1 },
-    servers: {},
+    servers: { s: serverDetail('s', { channels: [1, 2, 3].map(textChannel) }) },
     serversMore: false,
     dmsMore: false,
     messages: {},

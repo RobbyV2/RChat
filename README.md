@@ -33,6 +33,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 - Moderation, a profanity filter and a site admin panel
 - Guests who read public servers without an account, and post or talk where the site and server allow it
 - Chat and voice channels that other sites can embed, set up in Server Settings
+- Sensitive channels that ask before they open, marked by a manager or on your own device
 - Accounts with no email or phone number
 - Search, a command palette, notification settings and settings sync
 - Dark and light themes, a PWA, and desktop and mobile apps

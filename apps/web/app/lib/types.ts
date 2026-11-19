@@ -77,6 +77,7 @@ export interface Channel {
   name: string
   kind: ChannelKind
   slowmode_seconds: number
+  sensitive?: boolean
   restrict_view?: boolean
   restrict_send?: boolean
   topic?: string | null
@@ -249,6 +250,8 @@ export interface Invite {
   member_count: number
   online_count: number
   status: InviteStatus
+  preview_channel_id?: number | null
+  preview_sensitive?: boolean
   preview_channel: string | null
   preview: Message[]
   password_expires_at: number | null
@@ -456,6 +459,9 @@ export interface ForwardRef {
   // ASCII fallback label for older servers
   origin: string | null
   origin_dm?: boolean
+  origin_channel_id?: number | null
+  // The channel named by origin_channel_id carries the shared sensitive label
+  origin_sensitive?: boolean
   origin_channel?: string | null
   origin_server?: string | null
   dropped: string | null
@@ -473,6 +479,7 @@ export interface MessageLocation {
   has_media: boolean
   kind: string
   forwarded: boolean
+  forward?: ForwardRef
 }
 
 export interface ReplyRef {
@@ -484,6 +491,8 @@ export interface ReplyRef {
   mention: boolean
   partial?: boolean
   forwarded?: boolean
+  // For a quoted forward, where its original came from
+  forward?: ForwardRef
 }
 
 export interface Reaction {
