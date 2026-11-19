@@ -510,13 +510,14 @@ async fn control_rows(conn: &mut sqlx::AnyConnection) -> sqlx::Result<HashMap<St
 }
 
 /// One control in the config view: its stored value, what the server config said at the last
-/// start that set it, and whether the config pins it.
+/// start that set it, whether the stored value says the same, and whether the config pins it.
 #[derive(Serialize)]
 pub struct ControlRow {
     pub key: &'static str,
     pub env: &'static str,
     pub value: String,
     pub config: Option<String>,
+    pub same: bool,
     pub pinned: bool,
 }
 
@@ -544,12 +545,18 @@ pub(crate) async fn get_config(
     let stored = control_rows(&mut *state.db.acquire().await?).await?;
     let controls = Control::all()
         .iter()
-        .map(|c| ControlRow {
-            key: c.key,
-            env: c.env,
-            value: c.shown(c.read(&stored).as_deref().unwrap_or(c.default)),
-            config: records.config(c).map(|value| c.shown(value)),
-            pinned: records.pins(c),
+        .map(|c| {
+            let value = c.read(&stored);
+            let value = value.as_deref().unwrap_or(c.default);
+            let config = records.config(c);
+            ControlRow {
+                key: c.key,
+                env: c.env,
+                value: c.shown(value),
+                config: config.map(|env| c.shown(env)),
+                same: config.is_some_and(|env| c.same(value, env)),
+                pinned: records.pins(c),
+            }
         })
         .collect();
     let defaults = crate::limits::Limits::default().rows();
@@ -3467,7 +3474,7 @@ mod tests {
             .clone();
         assert_eq!(
             row,
-            json!({"key": "upload_expiry_max_days", "env": "UPLOAD_EXPIRY_MAX_DAYS", "value": "7", "config": null, "pinned": false})
+            json!({"key": "upload_expiry_max_days", "env": "UPLOAD_EXPIRY_MAX_DAYS", "value": "7", "config": null, "same": false, "pinned": false})
         );
         Settings::forget(&state.db);
         done(state, path).await;
@@ -3533,19 +3540,19 @@ mod tests {
         };
         assert_eq!(
             control("p2p"),
-            json!({"key": "p2p", "env": "FEATURE_P2P", "value": "off", "config": "off", "pinned": true})
+            json!({"key": "p2p", "env": "FEATURE_P2P", "value": "off", "config": "off", "same": true, "pinned": true})
         );
         assert_eq!(
             control("registration"),
-            json!({"key": "registration", "env": "AUTH_REGISTRATION", "value": "sso", "config": "closed", "pinned": false})
+            json!({"key": "registration", "env": "AUTH_REGISTRATION", "value": "sso", "config": "closed", "same": false, "pinned": false})
         );
         assert_eq!(
             control("sfu"),
-            json!({"key": "sfu", "env": "FEATURE_SFU", "value": "off", "config": null, "pinned": false})
+            json!({"key": "sfu", "env": "FEATURE_SFU", "value": "off", "config": null, "same": false, "pinned": false})
         );
         assert_eq!(
             control("profanity_targets"),
-            json!({"key": "profanity_targets", "env": "PROFANITY_TARGETS", "value": "messages,links", "config": "messages,links", "pinned": false})
+            json!({"key": "profanity_targets", "env": "PROFANITY_TARGETS", "value": "messages,links", "config": "messages,links", "same": true, "pinned": false})
         );
 
         let limits = view["limits"].as_array().expect("limits");
@@ -3608,6 +3615,53 @@ mod tests {
                 .expect("value");
             assert!(!value.is_empty() && !text.contains(&value), "{key}");
         }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_config_view_compares_report_forms_by_content() {
+        let (state, path) = temp_state("config_forms_same").await;
+        async fn forms(state: &AppState) -> serde_json::Value {
+            let root = Authed(crate::api::test_util::mem_user("root", true));
+            let view = get_config(State(state.clone()), root)
+                .await
+                .expect("config")
+                .0;
+            serde_json::to_value(view).expect("json")["controls"]
+                .as_array()
+                .expect("controls")
+                .iter()
+                .find(|c| c["key"] == "report_forms")
+                .expect("listed")
+                .clone()
+        }
+        let mut stored = ReportForms::defaults();
+        stored.rev = 2;
+        for (key, value) in [
+            ("env:report_forms", ReportForms::defaults().stored()),
+            ("report_forms", stored.stored()),
+        ] {
+            sqlx::query(
+                "INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            )
+            .bind(key)
+            .bind(value)
+            .execute(&state.db)
+            .await
+            .expect(key);
+        }
+        assert_eq!(
+            forms(&state).await,
+            json!({"key": "report_forms", "env": "REPORT_FORMS_FILE", "value": "rev 2, 5 categories", "config": "rev 1, 5 categories", "same": true, "pinned": false}),
+            "the same forms at another revision"
+        );
+        stored.forms[1].label = "Bug".to_string();
+        sqlx::query("UPDATE settings SET value = $1 WHERE key = 'report_forms'")
+            .bind(stored.stored())
+            .execute(&state.db)
+            .await
+            .expect("edited");
+        assert_eq!(forms(&state).await["same"], json!(false), "edited forms");
         done(state, path).await;
     }
 

@@ -3,6 +3,7 @@ import { localUntil, type TimeoutWire } from './timeouts'
 import { DEFAULT_DM_QUERY, queryParams, type DmQuery } from './dm_list'
 import { ALL_PERMS } from './types'
 import type {
+  AdminConfig,
   AdminOverview,
   InstanceAuditEntry,
   AuditEntry,
@@ -799,6 +800,7 @@ export const endpoints = (c: ApiClient) => ({
   getSettings: () => c.req<SiteSettings>('GET', '/settings'),
   patchSettings: (body: SiteSettingsPatch) => c.req<SiteSettings>('PATCH', '/admin/settings', body),
   adminOverview: () => c.req<AdminOverview>('GET', '/admin/overview'),
+  adminConfig: () => c.req<AdminConfig>('GET', '/admin/config'),
   adminUsers: (cursor: string | null, q: string) =>
     c.page<UserRef>(withCursor(`/admin/users?limit=50&q=${seg(q)}`, cursor)),
   adminServers: (cursor: string | null, q: string) =>

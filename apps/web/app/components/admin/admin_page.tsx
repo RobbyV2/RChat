@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   ScrollText,
   Server,
+  SlidersHorizontal,
   ToggleRight,
   TriangleAlert,
   Users,
@@ -16,6 +17,8 @@ import type { AdminSection } from '../../lib/view'
 import { SettingsPage, type PageSection } from '../settings_page'
 import AdminDialogs from './dialogs'
 import { AuditSection } from './audit'
+import { ConfigSection, controlLabel } from './config'
+import { useConfigStore, useConfigSync } from './config_state'
 import { DangerSection } from './danger'
 import { FeaturesSection } from './features'
 import { OverviewSection, OverviewSummary } from './overview'
@@ -28,6 +31,7 @@ const SECTIONS: Record<AdminSection, { label: string; icon: LucideIcon }> = {
   users: { label: 'Users', icon: Users },
   servers: { label: 'Servers', icon: Server },
   audit: { label: 'Audit log', icon: ScrollText },
+  config: { label: 'Config', icon: SlidersHorizontal },
   danger: { label: 'Danger zone', icon: TriangleAlert },
 }
 
@@ -39,6 +43,8 @@ function Page() {
   const openAdmin = useStore(s => s.openAdmin)
   const closeAdmin = useStore(s => s.closeAdmin)
   const item = place?.item ?? null
+  const config = useConfigStore(s => s.config)
+  useConfigSync(place !== null)
   const sections = useMemo((): PageSection[] => {
     const body: Record<AdminSection, PageSection['render']> = {
       overview: () => <OverviewSection />,
@@ -46,6 +52,7 @@ function Page() {
       users: () => (item === null ? <UsersSection /> : <UserPage key={item} username={item} />),
       servers: () => (item === null ? <ServersSection /> : <ServerPage key={item} name={item} />),
       audit: () => <AuditSection />,
+      config: () => <ConfigSection />,
       danger: () => <DangerSection />,
     }
     return (Object.keys(SECTIONS) as AdminSection[]).map(id => ({
@@ -54,19 +61,36 @@ function Page() {
       rows:
         id === 'features'
           ? featureSearchRows()
-          : id === 'danger'
+          : id === 'config'
             ? [
-                {
-                  section: 'danger',
-                  id: 'delete_message',
-                  label: 'Delete a message',
-                  line: 'Removes one message for everyone, by its id.',
-                },
+                ...(config?.controls ?? []).map(c => ({
+                  section: 'config',
+                  group: 'Settings',
+                  id: `config-${c.key}`,
+                  label: controlLabel(c),
+                  env: c.env,
+                })),
+                ...(config?.limits ?? []).map(l => ({
+                  section: 'config',
+                  group: 'Limits',
+                  id: `limit-${l.env}`,
+                  label: l.env,
+                  env: l.env,
+                })),
               ]
-            : undefined,
+            : id === 'danger'
+              ? [
+                  {
+                    section: 'danger',
+                    id: 'delete_message',
+                    label: 'Delete a message',
+                    line: 'Removes one message for everyone, by its id.',
+                  },
+                ]
+              : undefined,
       render: body[id],
     }))
-  }, [item])
+  }, [item, config])
   if (!place) return null
   return (
     <SettingsPage

@@ -1,6 +1,7 @@
 'use client'
 
 import { useId, useState } from 'react'
+import { saveWarning } from '../../lib/admin_config'
 import {
   ADMIN_GROUPS,
   groupRows,
@@ -21,6 +22,8 @@ import type { SiteSettings, SiteSettingsPatch } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
 import { SettingSwitch } from '../settings_fields'
 import { Chips, FieldError } from '../ui'
+import { usePinned } from './config_state'
+import { SourceNote } from './source'
 import { fieldCls, filledBtn } from './touch'
 
 type ChoiceRow = Extract<AdminRow, { kind: 'choice' }>
@@ -47,6 +50,7 @@ function ChoiceControl({ row }: { row: ChoiceRow }) {
   const settings = useStore(s => s.settings)
   const updateSettings = useStore(s => s.updateSettings)
   const name = useId()
+  const pinned = usePinned(row.key)
   const value = String(settingOf(settings, row.key) ?? '')
   const options = optionsOf(row, settings)
   const set = (v: string) => void updateSettings(patchOf(row.key, v))
@@ -58,12 +62,15 @@ function ChoiceControl({ row }: { row: ChoiceRow }) {
           {options.map(o => (
             <label
               key={o.value}
-              className="flex min-h-11 min-w-0 items-start gap-3 rounded-xl px-2 py-1.5 hover:bg-surface-container md:min-h-0"
+              className={`flex min-h-11 min-w-0 items-start gap-3 rounded-xl px-2 py-1.5 md:min-h-0 ${
+                pinned ? 'cursor-not-allowed opacity-60' : 'hover:bg-surface-container'
+              }`}
             >
               <input
                 type="radio"
                 name={name}
                 checked={value === o.value}
+                disabled={pinned}
                 onChange={() => set(o.value)}
                 className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
               />
@@ -76,7 +83,14 @@ function ChoiceControl({ row }: { row: ChoiceRow }) {
         </div>
       ) : (
         <>
-          <Chips label={row.label} value={value} options={options} onChange={set} touch />
+          <Chips
+            label={row.label}
+            value={value}
+            options={options}
+            onChange={set}
+            disabled={pinned}
+            touch
+          />
           <p className="text-xs text-on-surface-variant">
             {options.find(o => o.value === value)?.line}
           </p>
@@ -90,9 +104,11 @@ function ChoiceControl({ row }: { row: ChoiceRow }) {
 function NumberControl({ row }: { row: NumberRow }) {
   const stored = useStore(s => Number(settingOf(s.settings, row.key) ?? 0))
   const updateSettings = useStore(s => s.updateSettings)
+  const askConfirm = useStore(s => s.askConfirm)
   const [text, setText] = useState(String(stored))
   const [seen, setSeen] = useState(stored)
   const [error, setError] = useState<string | null>(null)
+  const pinned = usePinned(row.key)
   const id = useId()
   if (seen !== stored) {
     setSeen(stored)
@@ -107,7 +123,10 @@ function NumberControl({ row }: { row: NumberRow }) {
         e.preventDefault()
         if (!valid) return setError(`Enter ${row.min} to ${row.max} ${row.unit}.`)
         setError(null)
-        void updateSettings(patchOf(row.key, value))
+        const save = () => void updateSettings(patchOf(row.key, value))
+        const warning = saveWarning(row.key, String(stored), String(value))
+        if (warning === null) return save()
+        askConfirm({ title: 'Lower the Limit', body: warning, confirm: 'Save', action: save })
       }}
       className="flex flex-col gap-1.5 px-2 py-1.5"
     >
@@ -122,11 +141,12 @@ function NumberControl({ row }: { row: NumberRow }) {
           min={row.min}
           max={row.max}
           value={text}
+          disabled={pinned}
           onChange={e => setText(e.target.value)}
-          className={`${fieldCls} max-w-24 flex-none`}
+          className={`${fieldCls} max-w-24 flex-none disabled:opacity-50`}
         />
         <span className="text-sm text-on-surface-variant">{row.unit}</span>
-        <button disabled={!valid || value === stored} className={filledBtn}>
+        <button disabled={pinned || !valid || value === stored} className={filledBtn}>
           Save
         </button>
       </span>
@@ -138,6 +158,7 @@ function NumberControl({ row }: { row: NumberRow }) {
 function TargetChecks({ row }: { row: AdminRow }) {
   const settings = useStore(s => s.settings)
   const updateSettings = useStore(s => s.updateSettings)
+  const pinned = usePinned(row.key)
   return (
     <fieldset
       aria-label={row.label}
@@ -146,7 +167,7 @@ function TargetChecks({ row }: { row: AdminRow }) {
       }`}
     >
       {PROFANITY_TARGETS.map(({ key, label }) => {
-        const locked = profanityTargetLocked(settings, key)
+        const locked = pinned || profanityTargetLocked(settings, key)
         return (
           <label
             key={key}
@@ -175,6 +196,7 @@ function TargetChecks({ row }: { row: AdminRow }) {
 function SwitchControl({ row }: { row: SwitchRow }) {
   const settings = useStore(s => s.settings)
   const updateSettings = useStore(s => s.updateSettings)
+  const pinned = usePinned(row.key)
   const on = settingOf(settings, row.key) === true
   const textOnly =
     row.key === 'p2p_attachments' && !settings.asset_uploads && !settings.p2p_attachments
@@ -184,7 +206,9 @@ function SwitchControl({ row }: { row: SwitchRow }) {
         label={row.label}
         hint={row.line}
         value={on}
-        disabled={row.key === 'profanity_strict_file_names' && strictFileNamesLocked(settings)}
+        disabled={
+          pinned || (row.key === 'profanity_strict_file_names' && strictFileNamesLocked(settings))
+        }
         onChange={v => void updateSettings(patchOf(row.key, v))}
       />
       {!on && row.off && <p className={noteCls}>Off: {row.off}</p>}
@@ -219,6 +243,7 @@ export function FeaturesSection() {
               [row, ...rowsUnder(row.key)].map(r => (
                 <PageRow key={r.key} id={r.key}>
                   <RowControl row={r} />
+                  <SourceNote row={r} />
                 </PageRow>
               ))
             )}

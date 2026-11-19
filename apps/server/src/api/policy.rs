@@ -1804,7 +1804,7 @@ mod tests {
             .clone();
         assert_eq!(
             row,
-            json!({"key": "server_creators", "env": "SERVER_CREATORS", "value": "bob,lobby:Staff", "config": null, "pinned": false})
+            json!({"key": "server_creators", "env": "SERVER_CREATORS", "value": "bob,lobby:Staff", "config": null, "same": false, "pinned": false})
         );
         let many: Vec<String> = (0..501).map(|n| format!("user{n}")).collect();
         for (bad, why) in [

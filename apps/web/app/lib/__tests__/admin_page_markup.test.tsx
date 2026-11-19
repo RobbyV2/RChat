@@ -47,7 +47,15 @@ const page = (adminPage: AdminPlace | null, admin = true, part: Partial<typeof i
 test('the page lists every section and shows the open one', () => {
   const html = page(place('features'))
   expect(html).toContain('Site administration')
-  for (const label of ['Overview', 'Features', 'Users', 'Servers', 'Audit log', 'Danger zone'])
+  for (const label of [
+    'Overview',
+    'Features',
+    'Users',
+    'Servers',
+    'Audit log',
+    'Config',
+    'Danger zone',
+  ])
     expect(html).toContain(`>${label}</span>`)
   expect(html.match(/aria-current="page"/g)).toHaveLength(1)
   expect(html).toContain('data-screen="section"')

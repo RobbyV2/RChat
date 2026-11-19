@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, type ReactNode } from 'react'
+import { summaryLine } from '../../lib/admin_config'
 import { adminRow } from '../../lib/admin_rows'
 import { home } from '../../lib/instances'
 import { useStore } from '../../lib/store'
 import type { RelayStatus } from '../../lib/types'
+import { useConfigStore } from './config_state'
 import { textBtn } from './touch'
 
 const cardCls = 'flex min-w-0 flex-col gap-1 rounded-xl bg-surface-container px-4 py-3'
@@ -74,11 +76,12 @@ const relayRows = (relay: RelayStatus): [string, string][] =>
       ]
     : [['Relay', 'Off']]
 
-export function OverviewSection({ extra }: { extra?: ReactNode }) {
+export function OverviewSection() {
   const signUp = useSignUp()
   const overview = useCounts()
   const sfu = useStore(s => s.settings.sfu)
   const openAdmin = useStore(s => s.openAdmin)
+  const config = useConfigStore(s => s.config)
   const info = home.info
   const facts: [string, string][] = [
     ...(info
@@ -122,7 +125,17 @@ export function OverviewSection({ extra }: { extra?: ReactNode }) {
             <p className="text-sm text-on-surface-variant">Loading</p>
           )}
         </div>
-        {extra}
+        {config && (
+          <div className={cardCls}>
+            <p className={cardTitleCls}>Server config</p>
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 flex-1 text-sm break-words">{summaryLine(config)}</span>
+              <button onClick={() => openAdmin('config')} className={`${textBtn} shrink-0`}>
+                Config
+              </button>
+            </div>
+          </div>
+        )}
       </div>
       <dl className="space-y-1 rounded-xl bg-surface-container px-4 py-3 text-sm">
         {facts.map(([label, value]) => (

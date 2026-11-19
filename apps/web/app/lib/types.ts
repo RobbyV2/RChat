@@ -605,6 +605,10 @@ export type ServerJoining = 'everyone' | 'invites' | 'nobody'
 
 export type SiteSettingsPatch = Partial<Omit<SiteSettings, 'profanity_targets'>> & {
   profanity_targets?: Partial<ProfanityTargets>
+  // Lists only the site admin reads, in the config view: who "some" means for creating
+  // servers (usernames and server:role entries), and the servers new accounts join.
+  server_creators?: string[]
+  default_servers?: string[]
 }
 
 // One row of the instance audit log, which only the site admin's panel lists.
@@ -624,6 +628,33 @@ export interface RelayStatus {
   port: number | null
   // Null when the relay runs in another process.
   allocations: number | null
+}
+
+// One control in the site admin's config view: its value, what the server config said at the
+// last start that set it (null when it does not set it), and whether the config pins it. Values
+// are written as the server config writes them.
+export interface ConfigControl {
+  key: string
+  env: string
+  value: string
+  config: string | null
+  // Whether the stored value says what the config says; an older server leaves it out.
+  same?: boolean
+  pinned: boolean
+}
+
+// One limit of the server config; limits change only there, at a start.
+export interface ConfigLimit {
+  env: string
+  value: number | null
+  default: number | null
+  // "low-high", or empty.
+  range: string
+}
+
+export interface AdminConfig {
+  controls: ConfigControl[]
+  limits: ConfigLimit[]
 }
 
 export interface AdminOverview {

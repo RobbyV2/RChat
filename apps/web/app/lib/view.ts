@@ -17,6 +17,7 @@ export const ADMIN_SECTIONS = [
   'users',
   'servers',
   'audit',
+  'config',
   'danger',
 ] as const
 
