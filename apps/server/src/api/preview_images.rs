@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -12,12 +12,13 @@ use tokio::sync::Semaphore;
 use url::Url;
 
 use crate::api::access::{Proof, resolve_message};
-use crate::api::budget::{Budget, slow_down};
+use crate::api::budget::slow_down;
 use crate::api::embeds::preview_policy;
 use crate::api::{
     ApiError, ApiErrorBody, Settings, request_token, require_guest_ok, user_for_token,
 };
 use crate::db::{Db, now};
+use crate::limits::bucket::{self, Keyed};
 use crate::net_guard::Policy;
 use crate::state::AppState;
 
@@ -54,8 +55,15 @@ static FETCHES: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::
 static SERVES: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(SERVES_MAX)));
 static SERVE_BYTES: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(SERVE_KIB)));
-static REQUESTS: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(REQUESTS_PER_MINUTE, Duration::from_secs(60), 100_000));
+static REQUESTS: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        bucket::Policy::Window {
+            limit: REQUESTS_PER_MINUTE,
+            window: Duration::from_secs(60),
+        },
+        100_000,
+    )
+});
 
 fn not_found() -> ApiError {
     ApiError(StatusCode::NOT_FOUND, "Image not found".to_string(), None)
@@ -443,7 +451,7 @@ pub(crate) async fn serve(
             crate::db::pool_key(db),
             crate::api::budget::group(ip)
         );
-        if !REQUESTS.take(&key) {
+        if !REQUESTS.take(&key, 1.0, Instant::now()) {
             return Err(slow_down());
         }
     }

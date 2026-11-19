@@ -4,46 +4,12 @@ use tokio::time::Instant;
 
 use super::access::Access;
 use super::event::WsEvent;
-use super::{
-    MSG_BURST, MSG_RATE, TYPING_BURST, TYPING_RATE, TYPING_REFRESH, TYPING_SCOPE_MAX, TYPING_TTL,
-};
+use super::{TYPING_BURST, TYPING_RATE, TYPING_REFRESH, TYPING_SCOPE_MAX, TYPING_TTL};
 
 use crate::api::access::{TypingPlace, typing_scope, ws_typing_place};
 use crate::db::{Db, now};
+use crate::limits::bucket::{Policy, Single};
 use crate::state::AppState;
-
-pub(super) struct Bucket {
-    pub(super) tokens: f64,
-    pub(super) at: Instant,
-    rate: f64,
-    burst: f64,
-}
-
-impl Bucket {
-    pub(super) fn new() -> Bucket {
-        Bucket::with(MSG_RATE, MSG_BURST)
-    }
-
-    fn with(rate: f64, burst: f64) -> Bucket {
-        Bucket {
-            tokens: burst,
-            at: Instant::now(),
-            rate,
-            burst,
-        }
-    }
-
-    pub(super) fn take(&mut self, now: Instant) -> Option<bool> {
-        let refill = now.duration_since(self.at).as_secs_f64() * self.rate;
-        self.tokens = (self.tokens + refill).min(self.burst) - 1.0;
-        self.at = now;
-        match self.tokens {
-            t if t >= 0.0 => Some(true),
-            t if t < -self.burst => None,
-            _ => Some(false),
-        }
-    }
-}
 
 fn typing_event(place: &TypingPlace, scope: &str, username: &str, until: i64) -> WsEvent {
     let TypingPlace {
@@ -68,14 +34,20 @@ fn typing_event(place: &TypingPlace, scope: &str, username: &str, until: i64) ->
 // One connection's typing indicator: at most one scope at a time, checked against the send
 // gate whenever it is shown again. Starts are paced; a stop only ends the one shown.
 pub(super) struct Typer {
-    pub(super) bucket: Bucket,
+    pub(super) bucket: Single,
     active: Option<(String, TypingPlace, Instant)>,
 }
 
 impl Typer {
     pub(super) fn new() -> Typer {
         Typer {
-            bucket: Bucket::with(TYPING_RATE, TYPING_BURST),
+            bucket: Single::new(
+                Policy::Tokens {
+                    burst: TYPING_BURST,
+                    per_sec: TYPING_RATE,
+                },
+                Instant::now().into_std(),
+            ),
             active: None,
         }
     }
@@ -115,9 +87,7 @@ impl Typer {
         {
             return Vec::new();
         }
-        let allowed = self.bucket.take(at) == Some(true);
-        self.bucket.tokens = self.bucket.tokens.max(-TYPING_BURST);
-        if !allowed {
+        if self.bucket.spend(1.0, at.into_std()) < 0.0 {
             return Vec::new();
         }
         let place = ws_typing_place(db, user, &scope).await;

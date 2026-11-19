@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::http::{HeaderMap, StatusCode};
 use hmac::{Hmac, KeyInit, Mac};
@@ -10,11 +10,12 @@ use sqlx::{AnyConnection, Row};
 
 use crate::api::audit::Actor;
 use crate::api::auth::{Work, derive_key, dummy_hash, verify_in};
-use crate::api::budget::{self, Backoff, Budget, slow_down};
+use crate::api::budget::{self, Backoff, slow_down};
 use crate::api::policy::ServerJoining;
 use crate::api::{ApiError, Channel, ServerSummaryLite, header_grants};
 use crate::db::{ChannelKind, Db, LIVE_AUTHOR, LIVE_DM, MediaKind, User, now, pool_key};
 use crate::limits::Limits;
+use crate::limits::bucket::{Keyed, Policy};
 use crate::ws::UserScope;
 
 pub mod perms;
@@ -329,13 +330,27 @@ async fn exists(db: &Db, sql: &'static str, server: &str, username: &str) -> sql
 
 /// Password attempts per client address (an IPv6 /64 counts as one address), across joins,
 /// invites and guest access.
-static PASSWORD_TRIES: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(30, Duration::from_secs(600), 100_000));
+static PASSWORD_TRIES: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: 30,
+            window: Duration::from_secs(600),
+        },
+        100_000,
+    )
+});
 
 /// Password attempts per wider network (IPv4 /24, IPv6 /48) across all names. Attempts with the
 /// right password are given back.
-static NETWORK_TRIES: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(NETWORK_TRIES_MAX, Duration::from_secs(600), 100_000));
+static NETWORK_TRIES: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: NETWORK_TRIES_MAX,
+            window: Duration::from_secs(600),
+        },
+        100_000,
+    )
+});
 
 pub(crate) const NETWORK_TRIES_MAX: u32 = 150;
 
@@ -347,8 +362,15 @@ static NAME_TRIES: LazyLock<Backoff> =
 
 /// Failed password attempts per server name, from all addresses. Past the limit the name is
 /// hot. Names that do not exist count the same way, so nothing shows whether a server exists.
-static PASSWORD_FAILURES: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(PASSWORD_FAILURES_MAX, Duration::from_secs(3600), 100_000));
+static PASSWORD_FAILURES: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: PASSWORD_FAILURES_MAX,
+            window: Duration::from_secs(3600),
+        },
+        100_000,
+    )
+});
 
 pub(crate) const PASSWORD_FAILURES_MAX: u32 = 50;
 
@@ -359,7 +381,7 @@ fn budget_key(db: &Db, part: &str) -> String {
 /// A password attempt with its budgets reserved before the password is checked. It counts as
 /// failed unless `passed` or `refund` gives it back. Every refusal is the same 429 for every name.
 struct Attempt {
-    network: Option<(String, std::time::Instant)>,
+    network: Option<(String, Instant)>,
     name: String,
     server: String,
 }
@@ -374,7 +396,7 @@ impl Attempt {
         let network = match ip {
             Some(ip) => {
                 let key = budget_key(db, &budget::wide(ip).to_string());
-                match NETWORK_TRIES.reserve(&key) {
+                match NETWORK_TRIES.reserve(&key, 1.0, Instant::now()) {
                     Some(at) => Some((key, at)),
                     None => return Err(slow_down()),
                 }
@@ -386,11 +408,11 @@ impl Attempt {
             name: budget_key(db, &format!("{address}\n{server}")),
             server: budget_key(db, server),
         };
-        if ip.is_some() && !PASSWORD_TRIES.take(&budget_key(db, &address)) {
+        if ip.is_some() && !PASSWORD_TRIES.take(&budget_key(db, &address), 1.0, Instant::now()) {
             attempt.give_back_network();
             return Err(slow_down());
         }
-        let hot = PASSWORD_FAILURES.spent(&attempt.server);
+        let hot = PASSWORD_FAILURES.remaining(&attempt.server, Instant::now()) < 1.0;
         match NAME_TRIES.reserve(&attempt.name, hot) {
             true => Ok(attempt),
             false => {
@@ -402,7 +424,7 @@ impl Attempt {
 
     fn give_back_network(&self) {
         if let Some((key, at)) = &self.network {
-            NETWORK_TRIES.refund(key, *at);
+            NETWORK_TRIES.refund(key, 1.0, *at);
         }
     }
 
@@ -414,7 +436,7 @@ impl Attempt {
 
     fn failed(self) -> ApiError {
         NAME_TRIES.failed(&self.name);
-        PASSWORD_FAILURES.note(&self.server);
+        PASSWORD_FAILURES.spend(&self.server, 1.0, Instant::now());
         denied()
     }
 }
@@ -1419,14 +1441,23 @@ impl ResolvedChannel {
 }
 
 /// Reactions, pins and edits per user. Each of them sends an event to everyone in the scope.
-static ACTIONS: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(ACTIONS_MAX, Duration::from_secs(10), 100_000));
+static ACTIONS: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: ACTIONS_MAX,
+            window: Duration::from_secs(10),
+        },
+        100_000,
+    )
+});
 
 pub(crate) const ACTIONS_MAX: u32 = 30;
 
 fn pace(db: &Db, user: Option<&User>) -> Result<(), ApiError> {
     match user {
-        Some(user) if !ACTIONS.take(&budget_key(db, &user.username)) => Err(slow_down()),
+        Some(user) if !ACTIONS.take(&budget_key(db, &user.username), 1.0, Instant::now()) => {
+            Err(slow_down())
+        }
         Some(_) | None => Ok(()),
     }
 }
@@ -5896,7 +5927,7 @@ mod tests {
         );
         for name in ["vault", "ghost"] {
             for _ in 0..PASSWORD_FAILURES_MAX {
-                PASSWORD_FAILURES.note(&budget_key(db, name));
+                PASSWORD_FAILURES.spend(&budget_key(db, name), 1.0, Instant::now());
             }
         }
         assert_eq!(
@@ -5947,7 +5978,11 @@ mod tests {
         );
         let v6 = ip("2001:db8::1");
         for _ in 1..30 {
-            PASSWORD_TRIES.take(&budget_key(db, &budget::group(v6).to_string()));
+            PASSWORD_TRIES.take(
+                &budget_key(db, &budget::group(v6).to_string()),
+                1.0,
+                Instant::now(),
+            );
         }
         assert_eq!(attempt(ip("2001:db8::2"), "third", "wrong").await, denied);
         assert_eq!(
@@ -5957,7 +5992,7 @@ mod tests {
         );
         let network = budget_key(db, &budget::wide(ip("100.64.7.1")).to_string());
         for _ in 1..NETWORK_TRIES_MAX {
-            NETWORK_TRIES.take(&network);
+            NETWORK_TRIES.take(&network, 1.0, Instant::now());
         }
         assert_eq!(attempt(ip("100.64.7.2"), "vault", "pw").await, ok);
         assert_eq!(
@@ -5997,7 +6032,7 @@ mod tests {
         };
         let network = budget_key(db, &budget::wide(in_network(0)).to_string());
         for _ in 0..NETWORK_TRIES_MAX {
-            NETWORK_TRIES.take(&network);
+            NETWORK_TRIES.take(&network, 1.0, Instant::now());
         }
         for n in 0..20 {
             assert_eq!(attempt(in_network(n)).await, Err(429));
@@ -6012,14 +6047,14 @@ mod tests {
             std::net::IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0xdb8, 0x78, 1, 0, 0, 0, 1));
         let address = budget_key(db, &budget::group(spent).to_string());
         for _ in 0..30 {
-            PASSWORD_TRIES.take(&address);
+            PASSWORD_TRIES.take(&address, 1.0, Instant::now());
         }
         let wide = budget_key(db, &budget::wide(spent).to_string());
-        NETWORK_TRIES.take(&wide);
+        NETWORK_TRIES.take(&wide, 1.0, Instant::now());
         assert_eq!(attempt(spent).await, Err(429));
         assert_eq!(
             NETWORK_TRIES.used(&wide),
-            Some(1),
+            Some(1.0),
             "a refused address gives the network try back"
         );
         done(state, path).await;

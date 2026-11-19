@@ -1,10 +1,9 @@
-use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use super::{Hub, PACED_USERS_MAX};
+use crate::limits::bucket::{Keyed, Policy};
 
 /// Per-user bounds on realtime connections: at most `conns_per_user` open at once across all
 /// instances (the oldest is closed), and `connect_burst` new ones, then one per
@@ -46,55 +45,6 @@ impl Default for Limits {
     }
 }
 
-/// A token bucket per user: `burst` units at once, then one more per `every`.
-pub(super) struct Pacer {
-    burst: AtomicU64,
-    every: Duration,
-    users: Mutex<HashMap<String, (f64, Instant)>>,
-}
-
-impl Pacer {
-    fn new(burst: f64, every: Duration) -> Pacer {
-        Pacer {
-            burst: AtomicU64::new(burst.to_bits()),
-            every,
-            users: Mutex::new(HashMap::new()),
-        }
-    }
-
-    fn burst(&self) -> f64 {
-        f64::from_bits(self.burst.load(Ordering::Relaxed))
-    }
-
-    pub(super) fn set_burst(&self, burst: f64) {
-        self.burst.store(burst.to_bits(), Ordering::Relaxed);
-    }
-
-    pub(super) fn take(&self, key: &str, cost: f64) -> bool {
-        self.take_at(key, cost, Instant::now())
-    }
-
-    pub(super) fn take_at(&self, key: &str, cost: f64, now: Instant) -> bool {
-        let burst = self.burst();
-        let mut users = self.users.lock().unwrap();
-        if users.len() > PACED_USERS_MAX {
-            let full = self.every.mul_f64(burst);
-            users.retain(|_, (_, at)| now.duration_since(*at) < full);
-        }
-        let (tokens, at) = users.entry(key.to_string()).or_insert((burst, now));
-        let refill = now.duration_since(*at).as_secs_f64() / self.every.as_secs_f64();
-        *tokens = (*tokens + refill).min(burst);
-        *at = now;
-        match *tokens >= cost {
-            true => {
-                *tokens -= cost;
-                true
-            }
-            false => false,
-        }
-    }
-}
-
 pub const VOICE_BURST: u32 = 5;
 pub const VOICE_EVERY: Duration = Duration::from_millis(250);
 pub const CALL_BURST: u32 = 5;
@@ -111,12 +61,12 @@ pub const TYPING_USER_EVERY: Duration = Duration::from_millis(500);
 /// Per-account pacing of realtime commands, across all of a user's connections on this
 /// instance.
 pub(super) struct Pacing {
-    pub(super) voice: Pacer,
-    pub(super) calls: Pacer,
-    pub(super) dm_calls: Pacer,
-    pub(super) accepts: Pacer,
-    pub(super) signals: Pacer,
-    pub(super) typing: Pacer,
+    pub(super) voice: Keyed,
+    pub(super) calls: Keyed,
+    pub(super) dm_calls: Keyed,
+    pub(super) accepts: Keyed,
+    pub(super) signals: Keyed,
+    pub(super) typing: Keyed,
 }
 
 /// Signalling bytes one account may send at once: at least enough to negotiate with a full voice
@@ -130,18 +80,36 @@ pub(super) fn signal_burst_for(room_max: usize) -> usize {
     SIGNAL_BURST.max(2 * room * crate::ws::SIGNAL_MAX)
 }
 
+/// New realtime connections of one user on this instance: `connect_burst` at once, then one
+/// per `connect_every`.
+pub(super) fn connect_policy(limits: Limits) -> Policy {
+    Policy::every(f64::from(limits.connect_burst), limits.connect_every)
+}
+
+/// The signalling bytes one account may send: `signal_burst_for(room_max)` at once, then
+/// `SIGNAL_BYTES_PER_SEC`.
+pub(super) fn signal_policy(room_max: usize) -> Policy {
+    Policy::Tokens {
+        burst: signal_burst_for(room_max) as f64,
+        per_sec: f64::from(SIGNAL_BYTES_PER_SEC),
+    }
+}
+
 impl Default for Pacing {
     fn default() -> Pacing {
+        let paced = |burst: u32, every: Duration| {
+            Keyed::new(Policy::every(f64::from(burst), every), PACED_USERS_MAX)
+        };
         Pacing {
-            voice: Pacer::new(f64::from(VOICE_BURST), VOICE_EVERY),
-            calls: Pacer::new(f64::from(CALL_BURST), CALL_EVERY),
-            dm_calls: Pacer::new(f64::from(DM_CALL_BURST), DM_CALL_EVERY),
-            accepts: Pacer::new(f64::from(ACCEPT_BURST), ACCEPT_EVERY),
-            signals: Pacer::new(
-                signal_burst_for(Limits::default().voice_room_max) as f64,
-                Duration::from_secs(1) / SIGNAL_BYTES_PER_SEC,
+            voice: paced(VOICE_BURST, VOICE_EVERY),
+            calls: paced(CALL_BURST, CALL_EVERY),
+            dm_calls: paced(DM_CALL_BURST, DM_CALL_EVERY),
+            accepts: paced(ACCEPT_BURST, ACCEPT_EVERY),
+            signals: Keyed::new(
+                signal_policy(Limits::default().voice_room_max),
+                PACED_USERS_MAX,
             ),
-            typing: Pacer::new(f64::from(TYPING_USER_BURST), TYPING_USER_EVERY),
+            typing: paced(TYPING_USER_BURST, TYPING_USER_EVERY),
         }
     }
 }
@@ -196,31 +164,5 @@ impl Drop for AddrSlot {
                 addrs.remove(&self.addr);
             }
         }
-    }
-}
-
-pub(super) fn take_token(
-    buckets: &mut HashMap<String, (f64, Instant)>,
-    key: &str,
-    burst: u32,
-    every: Duration,
-    users_max: usize,
-) -> bool {
-    let now = Instant::now();
-    if buckets.len() > users_max {
-        buckets.retain(|_, (_, at)| now.duration_since(*at) < every * burst);
-    }
-    let (tokens, at) = buckets
-        .entry(key.to_string())
-        .or_insert((burst as f64, now));
-    let refill = now.duration_since(*at).as_secs_f64() / every.as_secs_f64().max(f64::EPSILON);
-    *tokens = (*tokens + refill).min(burst as f64);
-    *at = now;
-    match *tokens >= 1.0 {
-        true => {
-            *tokens -= 1.0;
-            true
-        }
-        false => false,
     }
 }

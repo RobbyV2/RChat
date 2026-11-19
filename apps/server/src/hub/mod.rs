@@ -8,13 +8,14 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::warn;
 
 use crate::fanout::{Channels, Inbox, Router, Topic};
+use crate::limits::bucket::{Keyed, Policy};
 use crate::ws::{CallKind, WsEvent};
 
 mod limits;
 mod link;
 mod replica;
 
-use limits::{Pacing, signal_burst_for, take_token};
+use limits::{Pacing, connect_policy, signal_burst_for, signal_policy};
 use link::{Link, Posted, Reply, Resolved, Store, late_purge};
 
 pub use limits::{
@@ -115,8 +116,8 @@ struct Inner {
     aftermath_rx: Mutex<Option<mpsc::UnboundedReceiver<Aftermath>>>,
     shown: mpsc::UnboundedSender<(String, bool)>,
     shown_rx: Mutex<Option<mpsc::UnboundedReceiver<(String, bool)>>>,
-    release: Mutex<HashMap<String, (f64, Instant)>>,
-    connects: Mutex<HashMap<String, (f64, Instant)>>,
+    release: Keyed,
+    connects: Keyed,
     pacing: Pacing,
     addrs: Mutex<HashMap<IpAddr, (usize, usize)>>,
     guests: AtomicUsize,
@@ -167,8 +168,11 @@ impl Hub {
                 aftermath_rx: Mutex::new(Some(aftermath_rx)),
                 shown,
                 shown_rx: Mutex::new(Some(shown_rx)),
-                release: Mutex::new(HashMap::new()),
-                connects: Mutex::new(HashMap::new()),
+                release: Keyed::new(
+                    Policy::every(f64::from(RELEASE_BURST), RELEASE_EVERY),
+                    RELEASE_USERS_MAX,
+                ),
+                connects: Keyed::new(connect_policy(Limits::default()), CONNECT_USERS_MAX),
                 pacing: Pacing::default(),
                 addrs: Mutex::new(HashMap::new()),
                 guests: AtomicUsize::new(0),
@@ -1101,13 +1105,7 @@ impl Hub {
     // Peer id requests for downloads: a burst of RELEASE_BURST, then one every RELEASE_EVERY,
     // per user and per process.
     pub fn release_ok(&self, user: &str) -> bool {
-        take_token(
-            &mut self.inner.release.lock().unwrap(),
-            user,
-            RELEASE_BURST,
-            RELEASE_EVERY,
-            RELEASE_USERS_MAX,
-        )
+        self.inner.release.take(user, 1.0, Instant::now())
     }
 
     /// Whether `user` may open another realtime connection now: within the burst and rate
@@ -1130,13 +1128,7 @@ impl Hub {
         if opened.saturating_sub((i64::from(connect_burst) - 1) * every) > clock {
             return false;
         }
-        take_token(
-            &mut self.inner.connects.lock().unwrap(),
-            user,
-            connect_burst,
-            connect_every,
-            CONNECT_USERS_MAX,
-        )
+        self.inner.connects.take(user, 1.0, Instant::now())
     }
 
     pub fn limits(&self) -> Limits {
@@ -1174,7 +1166,7 @@ impl Hub {
 
     /// Whether `user` may join or leave voice at `now`.
     pub fn voice_ok_at(&self, user: &str, now: Instant) -> bool {
-        self.inner.pacing.voice.take_at(user, 1.0, now)
+        self.inner.pacing.voice.take(user, 1.0, now)
     }
 
     /// How long a new realtime socket has to send its `auth` frame.
@@ -1205,22 +1197,28 @@ impl Hub {
             signals: _,
             typing: _,
         } = &self.inner.pacing;
-        dm_calls.take(&format!("{user}\0{dm_id}"), 1.0) && calls.take(user, 1.0)
+        let now = Instant::now();
+        calls.remaining(user, now) >= 1.0
+            && dm_calls.take(&format!("{user}\0{dm_id}"), 1.0, now)
+            && calls.take(user, 1.0, now)
     }
 
     /// Whether `user` may answer a call now, apart from their voice hops.
     pub fn accept_ok(&self, user: &str) -> bool {
-        self.inner.pacing.accepts.take(user, 1.0)
+        self.inner.pacing.accepts.take(user, 1.0, Instant::now())
     }
 
     /// Whether `user` may send `bytes` more of RTC signalling now.
     pub fn signal_ok(&self, user: &str, bytes: usize) -> bool {
-        self.inner.pacing.signals.take(user, bytes as f64)
+        self.inner
+            .pacing
+            .signals
+            .take(user, bytes as f64, Instant::now())
     }
 
     /// Whether `user` may show a typing indicator now, across all their connections.
     pub fn typing_ok(&self, user: &str) -> bool {
-        self.inner.pacing.typing.take(user, 1.0)
+        self.inner.pacing.typing.take(user, 1.0, Instant::now())
     }
 
     /// Why a call between `user` and `other` would be refused now, read from the replica.
@@ -1236,7 +1234,8 @@ impl Hub {
         self.inner
             .pacing
             .signals
-            .set_burst(signal_burst_for(limits.voice_room_max) as f64);
+            .set_policy(signal_policy(limits.voice_room_max));
+        self.inner.connects.set_policy(connect_policy(limits));
         *self.inner.limits.lock().unwrap() = limits;
     }
 

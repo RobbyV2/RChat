@@ -262,7 +262,8 @@ async fn hosting_broadcasts_reach_others_only_through_p2p_who() {
         p2p_visible(&state, &mut bob, "bob", "alice").await,
         Some(vec![s("pub"), s("dm")])
     );
-    bob.who.pace.fire(Instant::now());
+    let fired = Instant::now();
+    bob.who.pace.fire(fired);
     bob.who
         .media
         .insert((s("alice"), s("new")), (Instant::now(), false));
@@ -292,7 +293,7 @@ async fn hosting_broadcasts_reach_others_only_through_p2p_who() {
     assert_eq!(bob.who.pending, [s("alice")]);
     assert_eq!(
         bob.who.pace.due,
-        bob.who.pace.last.map(|last| last + P2P_WHO_EVERY),
+        Some(fired + P2P_WHO_EVERY),
         "a hoster's new attachment is re-asked about on the next paced p2p_who"
     );
     crate::api::test_util::done(state, path).await;

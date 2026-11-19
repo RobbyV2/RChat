@@ -15,6 +15,7 @@ use serde_json::Value;
 use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
 
+use crate::limits::bucket::{Policy, Single};
 use crate::server::client_ip::ClientIp;
 
 /// The key every client uses (the PeerJS default).
@@ -258,33 +259,12 @@ struct Joined {
 }
 
 /// How many frames one connection relays: a burst, then so many per second.
-struct Pace {
-    burst: f64,
-    per_sec: f64,
-    left: f64,
-    at: Instant,
-}
-
-impl Pace {
-    fn new(burst: u32, per_sec: u32, now: Instant) -> Pace {
-        Pace {
-            burst: f64::from(burst),
-            per_sec: f64::from(per_sec),
-            left: f64::from(burst),
-            at: now,
-        }
-    }
-
-    fn take(&mut self, now: Instant) -> bool {
-        let gained = now.saturating_duration_since(self.at).as_secs_f64() * self.per_sec;
-        self.left = (self.left + gained).min(self.burst);
-        self.at = now;
-        let fits = self.left >= 1.0;
-        if fits {
-            self.left -= 1.0;
-        }
-        fits
-    }
+fn frame_pace(burst: u32, per_sec: u32, now: Instant) -> Single {
+    let policy = Policy::Tokens {
+        burst: f64::from(burst),
+        per_sec: f64::from(per_sec),
+    };
+    Single::new(policy, now.into_std())
 }
 
 /// A message kept for a peer that is not connected, with its sender and the sender's client
@@ -647,7 +627,7 @@ impl Peers {
 
     /// What the connection `conn` of `id` sent. Only the connection that holds the id relays
     /// under it. A frame past the connection's `pace` is refused with `EXPIRE`.
-    fn heard(&self, id: &str, conn: u64, text: &str, pace: &mut Pace) -> Heard {
+    fn heard(&self, id: &str, conn: u64, text: &str, pace: &mut Single) -> Heard {
         let Ok(Incoming { kind, dst, payload }) = serde_json::from_str(text) else {
             return Heard::Other;
         };
@@ -663,7 +643,7 @@ impl Peers {
                 Heard::Gone
             }
             OFFER | ANSWER | CANDIDATE | LEAVE | EXPIRE if dst.len() <= ID_MAX => {
-                match pace.take(Instant::now()) {
+                match pace.take(1.0, Instant::now().into_std()) {
                     true => realm.relay(&kind, id, dst, payload.as_ref()),
                     false => realm.relay(EXPIRE, dst, id, None),
                 }
@@ -847,7 +827,7 @@ async fn serve(peers: Peers, mut socket: WebSocket, hello: Hello, slot: Slot) {
         Ok(joined) => joined,
         Err(frame) => return refuse(socket, frame).await,
     };
-    let mut pace = Pace::new(burst, per_sec, Instant::now());
+    let mut pace = frame_pace(burst, per_sec, Instant::now());
     let mut until = Instant::now() + alive;
     let mut slow = false;
     loop {
@@ -2032,7 +2012,7 @@ mod tests {
     fn only_the_connection_that_holds_an_id_relays_under_it() {
         let peers = Peers::new(Settings::default());
         let home = client("203.0.113.1");
-        let mut pace = Pace::new(1000, 0, Instant::now());
+        let mut pace = frame_pace(1000, 0, Instant::now());
         let offer = r#"{"type":"OFFER","dst":"bob","payload":1}"#;
         let first = peers.realm().join("alice", "t", 10, &home).expect("join");
         let mut bob = {
@@ -2090,22 +2070,24 @@ mod tests {
     #[test]
     fn a_connection_relays_a_burst_and_then_at_a_pace() {
         let start = Instant::now();
-        let mut pace = Pace::new(100, 10, start);
+        let mut frames = frame_pace(100, 10, start);
+        let mut take = |at: Instant| frames.take(1.0, at.into_std());
         for _ in 0..100 {
-            assert!(pace.take(start));
+            assert!(take(start));
         }
-        assert!(!pace.take(start));
-        assert!(!pace.take(start + Duration::from_millis(50)));
-        assert!(pace.take(start + Duration::from_millis(150)));
-        assert!(!pace.take(start + Duration::from_millis(150)));
+        assert!(!take(start));
+        assert!(!take(start + Duration::from_millis(50)));
+        assert!(take(start + Duration::from_millis(150)));
+        assert!(!take(start + Duration::from_millis(150)));
         let later = start + Duration::from_secs(1);
-        let passed = (0..50).filter(|_| pace.take(later)).count();
+        let passed = (0..50).filter(|_| take(later)).count();
         assert_eq!(passed, 9);
         let idle = start + Duration::from_secs(3600);
-        let passed = (0..500).filter(|_| pace.take(idle)).count();
+        let passed = (0..500).filter(|_| take(idle)).count();
         assert_eq!(passed, 100, "idle time never adds more than the burst");
-        let mut none = Pace::new(2, 0, start);
-        assert!(none.take(idle) && none.take(idle) && !none.take(idle + Duration::from_secs(60)));
+        let mut none = frame_pace(2, 0, start);
+        let mut take = |at: Instant| none.take(1.0, at.into_std());
+        assert!(take(idle) && take(idle) && !take(idle + Duration::from_secs(60)));
         let stock = Settings::default();
         assert_eq!((stock.burst, stock.per_sec), (1000, 100));
     }

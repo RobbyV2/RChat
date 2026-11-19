@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -8,9 +8,9 @@ use sqlx::Row;
 use utoipa::ToSchema;
 
 use crate::api::access::ResolvedChannel;
-use crate::api::budget::Budget;
 use crate::api::{ApiError, Message, NAME_MAX, UserRef, placeholders};
 use crate::db::{Db, User, now};
+use crate::limits::bucket::{Keyed, Policy};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -422,11 +422,25 @@ async fn trim_unseen(
 }
 
 /// Pings from one actor to one recipient.
-static PAIR_PACE: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(PAIR_MAX, Duration::from_secs(60), 100_000));
+static PAIR_PACE: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: PAIR_MAX,
+            window: Duration::from_secs(60),
+        },
+        100_000,
+    )
+});
 /// Pings from one actor to everyone.
-static ACTOR_PACE: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(ACTOR_MAX, Duration::from_secs(60), 100_000));
+static ACTOR_PACE: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: ACTOR_MAX,
+            window: Duration::from_secs(60),
+        },
+        100_000,
+    )
+});
 
 pub const PAIR_MAX: u32 = 20;
 pub const ACTOR_MAX: u32 = 100;
@@ -437,9 +451,9 @@ fn paced(db: &Db, actor: &str, recipients: &[String]) -> Vec<String> {
     recipients
         .iter()
         .filter(|r| {
-            !ACTOR_PACE.spent(&format!("{pool}\n{actor}"))
-                && PAIR_PACE.take(&format!("{pool}\n{actor}\n{r}"))
-                && ACTOR_PACE.take(&format!("{pool}\n{actor}"))
+            ACTOR_PACE.remaining(&format!("{pool}\n{actor}"), Instant::now()) >= 1.0
+                && PAIR_PACE.take(&format!("{pool}\n{actor}\n{r}"), 1.0, Instant::now())
+                && ACTOR_PACE.take(&format!("{pool}\n{actor}"), 1.0, Instant::now())
         })
         .cloned()
         .collect()

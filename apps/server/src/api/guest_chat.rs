@@ -4,24 +4,33 @@ use axum::http::{HeaderMap, StatusCode};
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::{sync::LazyLock, time::Duration};
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 use utoipa::ToSchema;
 
 use super::access::perms::Perm;
 use super::access::{Proof, forbidden, not_found, resolve_channel, resolve_message};
 use super::audit::{self, Action, Details, Entry, Target};
-use super::budget::{self, Budget};
+use super::budget;
 use super::messages::{Quotes, cannot_reply, load_message, partial_quote};
 use super::{
     ApiError, Authed, Message, OkResp, ProfanityTarget, bad, check_len, check_profanity, ok,
 };
 use crate::db::{ChannelKind, Db, lock_server, now, pool_key, secret_key};
 use crate::identity::random_id;
+use crate::limits::bucket::{Keyed, Policy};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
-static NEW_SESSIONS: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(20, Duration::from_secs(3600), 100_000));
+static NEW_SESSIONS: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: 20,
+            window: Duration::from_secs(3600),
+        },
+        100_000,
+    )
+});
 pub(crate) const SESSION_TTL: i64 = 30 * 86400;
 const PAUSE: i64 = 600;
 const PAUSED_UNTIL: &str = "SELECT MAX(blocked_until) FROM guest_chat_sessions WHERE server = $1 AND (address = $2 OR secret = $3) AND blocked_until > $4";
@@ -185,7 +194,7 @@ pub(crate) async fn post(
             (raw.to_owned(), row.try_get::<String, _>(0)?)
         }
         None => {
-            if !NEW_SESSIONS.take(&format!("{}:{addr}", pool_key(db))) {
+            if !NEW_SESSIONS.take(&format!("{}:{addr}", pool_key(db)), 1.0, Instant::now()) {
                 return Err(budget::slow_down());
             }
             let raw = random_id();

@@ -10,10 +10,9 @@ use crate::fanout::Topic;
 use crate::server::client_ip::ClientIp;
 use crate::ws::access::{Access, Pace, catch_up};
 use crate::ws::calls::voice_msg;
-use crate::ws::conn::{sub_held, subscribe};
+use crate::ws::conn::{admit_frame, frame_bucket, sub_held, subscribe};
 use crate::ws::filter::on_event;
 use crate::ws::protocol::ClientMsg;
-use crate::ws::typing::Bucket;
 
 #[tokio::test]
 async fn an_overflowed_inbox_drops_stale_events_and_resyncs() {
@@ -83,22 +82,23 @@ async fn an_overflowed_inbox_drops_stale_events_and_resyncs() {
 
 #[test]
 fn flooding_clients_are_throttled_then_closed() {
-    let mut bucket = Bucket::new();
-    let now = bucket.at;
+    let now = Instant::now();
+    let mut frames = frame_bucket(now);
     let mut allowed = 0;
     let mut dropped = 0;
     loop {
-        match bucket.take(now) {
+        match admit_frame(&mut frames, now) {
             Some(true) => allowed += 1,
             Some(false) => dropped += 1,
             None => break,
         }
     }
     assert_eq!((allowed, dropped), (MSG_BURST as usize, MSG_BURST as usize));
-    let mut bucket = Bucket::new();
+    let mut frames = frame_bucket(now);
+    let mut at = now;
     for i in 0..1_000 {
-        let at = bucket.at + Duration::from_millis(25);
-        assert_eq!(bucket.take(at), Some(true), "message {i}");
+        at += Duration::from_millis(25);
+        assert_eq!(admit_frame(&mut frames, at), Some(true), "message {i}");
     }
 }
 

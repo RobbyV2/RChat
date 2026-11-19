@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -9,268 +9,12 @@ use axum::response::Response;
 use tokio::sync::Notify;
 
 use crate::api::ApiError;
+use crate::limits::bucket::Table;
 
 fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     match m.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
-    }
-}
-
-/// Entries with a time stamp. When the table is full, a new key takes the place of the entry
-/// with the oldest stamp, one entry at a time.
-struct Table<V> {
-    max: usize,
-    map: HashMap<String, (Instant, V)>,
-    order: VecDeque<(Instant, String)>,
-}
-
-impl<V> Table<V> {
-    fn new(max: usize) -> Table<V> {
-        Table {
-            max: max.max(1),
-            map: HashMap::new(),
-            order: VecDeque::new(),
-        }
-    }
-
-    fn entry(&mut self, key: &str, now: Instant, fresh: impl FnOnce() -> V) -> &mut (Instant, V) {
-        if !self.map.contains_key(key) {
-            while self.map.len() >= self.max {
-                let Some((at, old)) = self.order.pop_front() else {
-                    break;
-                };
-                if self.map.get(&old).is_some_and(|(stamp, _)| *stamp == at) {
-                    self.map.remove(&old);
-                }
-            }
-            self.order.push_back((now, key.to_string()));
-        }
-        self.map
-            .entry(key.to_string())
-            .or_insert_with(|| (now, fresh()))
-    }
-
-    fn restamp(&mut self, key: &str, at: Instant) {
-        if let Some(entry) = self.map.get_mut(key) {
-            entry.0 = at;
-            self.order.push_back((at, key.to_string()));
-        }
-        if self.order.len() > 2 * self.map.len() + 16 {
-            let mut order: Vec<(Instant, String)> = self
-                .map
-                .iter()
-                .map(|(k, (at, _))| (*at, k.clone()))
-                .collect();
-            order.sort();
-            self.order = order.into();
-        }
-    }
-}
-
-/// A fixed-window counter per key, kept in memory. Each process has its own counters.
-pub struct Budget {
-    limit: u32,
-    window: Duration,
-    table: Mutex<Table<u32>>,
-}
-
-impl Budget {
-    pub fn new(limit: u32, window: Duration, max_keys: usize) -> Budget {
-        Budget {
-            limit,
-            window,
-            table: Mutex::new(Table::new(max_keys)),
-        }
-    }
-
-    fn with<T>(&self, key: &str, f: impl FnOnce(Instant, &mut u32) -> T) -> T {
-        self.with_at(key, Instant::now(), f)
-    }
-
-    fn with_at<T>(&self, key: &str, now: Instant, f: impl FnOnce(Instant, &mut u32) -> T) -> T {
-        let mut table = locked(&self.table);
-        let start = table.entry(key, now, || 0).0;
-        if now.duration_since(start) >= self.window {
-            table.restamp(key, now);
-            if let Some(entry) = table.map.get_mut(key) {
-                entry.1 = 0;
-            }
-        }
-        match table.map.get_mut(key) {
-            Some((start, n)) => f(*start, n),
-            None => f(now, &mut 0),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn forget_prefix(&self, prefix: &str) {
-        let mut table = locked(&self.table);
-        let keys: Vec<String> = table
-            .map
-            .keys()
-            .filter(|k| k.starts_with(prefix))
-            .cloned()
-            .collect();
-        for k in keys {
-            if let Some(entry) = table.map.get_mut(&k) {
-                entry.1 = 0;
-            }
-        }
-    }
-
-    /// Counts one use. False when the key already used its budget in this window.
-    pub fn take(&self, key: &str) -> bool {
-        self.reserve(key).is_some()
-    }
-
-    /// Like `take`, but returns the start of the window the use counts in, for `refund`.
-    pub fn reserve(&self, key: &str) -> Option<Instant> {
-        self.reserve_within(key, self.limit)
-    }
-
-    /// Like `reserve`, with `limit` in place of the budget's own.
-    pub fn reserve_within(&self, key: &str, limit: u32) -> Option<Instant> {
-        self.reserve_within_at(key, limit, Instant::now())
-    }
-
-    /// Like `reserve_within`, at the time `now`.
-    pub fn reserve_within_at(&self, key: &str, limit: u32, now: Instant) -> Option<Instant> {
-        self.with_at(key, now, |start, n| match *n < limit {
-            true => {
-                *n += 1;
-                Some(start)
-            }
-            false => None,
-        })
-    }
-
-    /// Gives back one use reserved in the window that started at `start`.
-    pub fn refund(&self, key: &str, start: Instant) {
-        let mut table = locked(&self.table);
-        if let Some((at, n)) = table.map.get_mut(key)
-            && *at == start
-        {
-            *n = n.saturating_sub(1);
-        }
-    }
-
-    /// Whether the key used its budget in this window, without counting a use.
-    pub fn spent(&self, key: &str) -> bool {
-        let limit = self.limit;
-        self.with(key, |_, n| *n >= limit)
-    }
-
-    /// Whether the key used `limit` uses in the window at the time `now`, without counting one.
-    pub fn spent_within_at(&self, key: &str, limit: u32, now: Instant) -> bool {
-        self.with_at(key, now, |_, n| *n >= limit)
-    }
-
-    /// Counts one use without a check.
-    pub fn note(&self, key: &str) {
-        self.with(key, |_, n| *n = n.saturating_add(1));
-    }
-
-    /// The time until the key's window ends.
-    pub fn left(&self, key: &str) -> Duration {
-        self.left_at(key, Instant::now())
-    }
-
-    /// The time from `now` until the key's window ends.
-    pub fn left_at(&self, key: &str, now: Instant) -> Duration {
-        let window = self.window;
-        self.with_at(key, now, |start, _| {
-            window.saturating_sub(now.saturating_duration_since(start))
-        })
-    }
-
-    #[cfg(test)]
-    pub fn used(&self, key: &str) -> Option<u32> {
-        locked(&self.table).map.get(key).map(|(_, n)| *n)
-    }
-}
-
-/// Tokens per key, kept in memory: a bucket holds at most its burst and gains tokens at a
-/// steady rate. Each process has its own buckets.
-pub struct Bucket {
-    table: Mutex<Table<f64>>,
-}
-
-/// A reserved token returns to its bucket on drop until the request spends it.
-#[must_use]
-pub struct Token<'a> {
-    bucket: &'a Bucket,
-    key: String,
-    burst: Option<u32>,
-}
-
-impl Token<'_> {
-    pub fn spend(mut self) {
-        self.burst = None;
-    }
-}
-
-impl Drop for Token<'_> {
-    fn drop(&mut self) {
-        if let Some(burst) = self.burst {
-            self.bucket.give_back(&self.key, burst);
-        }
-    }
-}
-
-impl Bucket {
-    pub fn new(max_keys: usize) -> Bucket {
-        Bucket {
-            table: Mutex::new(Table::new(max_keys)),
-        }
-    }
-
-    /// Takes one token of `key`, whose bucket holds `burst` and gains `per_minute` a minute.
-    /// When it is empty, the error is the wait until the next token.
-    pub fn take(&self, key: &str, burst: u32, per_minute: u32) -> Result<(), Duration> {
-        self.take_at(key, burst, per_minute, Instant::now())
-    }
-
-    pub fn reserve(&self, key: String, burst: u32, per_minute: u32) -> Result<Token<'_>, Duration> {
-        self.take(&key, burst, per_minute)?;
-        Ok(Token {
-            bucket: self,
-            key,
-            burst: Some(burst),
-        })
-    }
-
-    fn take_at(
-        &self,
-        key: &str,
-        burst: u32,
-        per_minute: u32,
-        now: Instant,
-    ) -> Result<(), Duration> {
-        let (burst, rate) = (f64::from(burst.max(1)), f64::from(per_minute.max(1)) / 60.0);
-        let mut table = locked(&self.table);
-        let (at, tokens) = *table.entry(key, now, || burst);
-        let gained = now.saturating_duration_since(at).as_secs_f64() * rate;
-        let tokens = (tokens + gained).min(burst);
-        let (left, answer) = match tokens >= 1.0 {
-            true => (tokens - 1.0, Ok(())),
-            false => (tokens, Err(Duration::from_secs_f64((1.0 - tokens) / rate))),
-        };
-        if now >= at {
-            table.restamp(key, now);
-        }
-        if let Some(entry) = table.map.get_mut(key) {
-            entry.1 = left;
-        }
-        answer
-    }
-
-    /// Gives back one token taken from `key`, whose bucket holds `burst`.
-    pub fn give_back(&self, key: &str, burst: u32) {
-        let mut table = locked(&self.table);
-        if let Some(entry) = table.map.get_mut(key) {
-            entry.1 = (entry.1 + 1.0).min(f64::from(burst.max(1)));
-        }
     }
 }
 
@@ -282,7 +26,7 @@ pub struct Backoff {
     free: u32,
     hot_free: u32,
     cap: Duration,
-    table: Mutex<Table<u32>>,
+    table: Mutex<Table<String, u32>>,
 }
 
 impl Backoff {
@@ -308,7 +52,7 @@ impl Backoff {
     pub fn reserve(&self, key: &str, hot: bool) -> bool {
         let now = Instant::now();
         let mut table = locked(&self.table);
-        let (last, fails) = *table.entry(key, now, || 0);
+        let (last, fails) = table.get(key).copied().unwrap_or((now, 0));
         let fails = match now.duration_since(last) >= self.cap {
             true => 0,
             false => fails,
@@ -316,22 +60,21 @@ impl Backoff {
         if fails > 0 && now.duration_since(last) < self.wait(fails, hot) {
             return false;
         }
-        table.restamp(key, now);
-        if let Some(entry) = table.map.get_mut(key) {
-            entry.1 = fails.saturating_add(1);
-        }
+        table.put(key, now, fails.saturating_add(1));
         true
     }
 
     /// Marks a reserved attempt as failed now, so the wait counts from the end of the check.
     pub fn failed(&self, key: &str) {
-        locked(&self.table).restamp(key, Instant::now());
+        let mut table = locked(&self.table);
+        if let Some(&(_, fails)) = table.get(key) {
+            table.put(key, Instant::now(), fails);
+        }
     }
 
     /// Gives back one reserved attempt (it did not fail).
     pub fn refund(&self, key: &str) {
-        let mut table = locked(&self.table);
-        if let Some((_, fails)) = table.map.get_mut(key) {
+        if let Some(fails) = locked(&self.table).get_mut(key) {
             *fails = fails.saturating_sub(1);
         }
     }
@@ -528,184 +271,6 @@ mod tests {
     use std::sync::LazyLock;
 
     use super::*;
-
-    #[test]
-    fn budgets_count_per_key_and_window() {
-        let b = Budget::new(2, Duration::from_secs(60), 10);
-        assert!(b.take("a"));
-        assert!(b.take("a"));
-        assert!(!b.take("a"));
-        assert!(b.spent("a"));
-        assert!(b.take("b"));
-        assert!(!b.spent("b"));
-        let short = Budget::new(1, Duration::from_millis(1), 10);
-        assert!(short.take("a"));
-        std::thread::sleep(Duration::from_millis(5));
-        assert!(short.take("a"));
-    }
-
-    #[test]
-    fn budgets_reserve_within_a_limit_and_tell_what_is_left_of_the_window() {
-        let b = Budget::new(u32::MAX, Duration::from_secs(60), 10);
-        let first = b.reserve_within("a", 2).expect("one");
-        assert!(b.reserve_within("a", 2).is_some());
-        assert!(
-            b.reserve_within("a", 2).is_none(),
-            "two is the limit asked for"
-        );
-        assert!(
-            b.reserve_within("a", 3).is_some(),
-            "the next call can ask for more"
-        );
-        assert!(
-            b.reserve_within("b", 2).is_some(),
-            "each key has its own count"
-        );
-        b.refund("a", first);
-        assert_eq!(b.used("a"), Some(2));
-        let left = b.left("a");
-        assert!(
-            left > Duration::from_secs(50) && left <= Duration::from_secs(60),
-            "{left:?}"
-        );
-        let short = Budget::new(u32::MAX, Duration::from_millis(1), 10);
-        assert!(short.reserve_within("a", 1).is_some());
-        std::thread::sleep(Duration::from_millis(5));
-        assert!(
-            short.reserve_within("a", 1).is_some(),
-            "a new window starts at 0"
-        );
-    }
-
-    #[test]
-    fn budgets_count_at_the_time_they_are_given() {
-        let b = Budget::new(u32::MAX, Duration::from_secs(60), 10);
-        let t0 = Instant::now();
-        assert!(b.reserve_within_at("a", 1, t0).is_some());
-        let late = t0 + Duration::from_secs(59);
-        assert!(
-            b.reserve_within_at("a", 1, late).is_none(),
-            "the same window"
-        );
-        assert_eq!(b.left_at("a", late), Duration::from_secs(1));
-        let next = t0 + Duration::from_secs(60);
-        assert!(b.reserve_within_at("a", 1, next).is_some(), "a new window");
-        assert_eq!(b.left_at("a", next), Duration::from_secs(60));
-        assert!(b.reserve_within_at("b", 1, t0).is_some(), "keys are apart");
-    }
-
-    #[test]
-    fn a_bucket_queue_stays_near_its_live_keys() {
-        let b = Bucket::new(200_000);
-        let start = Instant::now();
-        for n in 0..20_000u64 {
-            let key = format!("k{}", n % 5);
-            let _ = b.take_at(&key, 30, 600, start + Duration::from_millis(n));
-            let table = locked(&b.table);
-            assert!(
-                table.order.len() <= 2 * table.map.len() + 16,
-                "{} queued for {} keys at take {n}",
-                table.order.len(),
-                table.map.len()
-            );
-        }
-    }
-
-    #[test]
-    fn buckets_hold_a_burst_and_refill_at_their_rate() {
-        let b = Bucket::new(10);
-        let t0 = Instant::now();
-        let secs = |res: Result<(), Duration>| res.expect_err("refused").as_secs_f64();
-        for n in 0..5 {
-            assert_eq!(b.take_at("a", 5, 60, t0), Ok(()), "{n}");
-        }
-        assert!(
-            (secs(b.take_at("a", 5, 60, t0)) - 1.0).abs() < 1e-6,
-            "a second"
-        );
-        assert_eq!(b.take_at("b", 5, 60, t0), Ok(()), "keys are apart");
-        let half = t0 + Duration::from_millis(500);
-        assert!((secs(b.take_at("a", 5, 60, half)) - 0.5).abs() < 1e-6);
-        let one = t0 + Duration::from_secs(1);
-        assert_eq!(b.take_at("a", 5, 60, one), Ok(()), "one came back");
-        assert!(b.take_at("a", 5, 60, one).is_err());
-        let later = t0 + Duration::from_secs(3600);
-        let taken = (0..20)
-            .take_while(|_| b.take_at("a", 5, 60, later).is_ok())
-            .count();
-        assert_eq!(taken, 5, "an idle bucket fills to its burst, not past it");
-        assert_eq!(
-            b.take_at("a", 5, 60, t0),
-            Err(Duration::from_secs(1)),
-            "a clock that steps back gives nothing"
-        );
-        let quick = Bucket::new(10);
-        assert_eq!(quick.take("k", 1, 10_000), Ok(()));
-        assert!(quick.take("k", 1, 10_000).is_err());
-        std::thread::sleep(Duration::from_millis(20));
-        assert_eq!(quick.take("k", 1, 10_000), Ok(()), "by the real clock too");
-    }
-
-    #[test]
-    fn a_token_given_back_can_be_taken_again_up_to_the_burst() {
-        let b = Bucket::new(10);
-        let t0 = Instant::now();
-        for n in 0..3 {
-            assert_eq!(b.take_at("a", 3, 60, t0), Ok(()), "{n}");
-        }
-        assert!(b.take_at("a", 3, 60, t0).is_err());
-        b.give_back("a", 3);
-        assert_eq!(b.take_at("a", 3, 60, t0), Ok(()), "the token came back");
-        assert!(b.take_at("a", 3, 60, t0).is_err(), "only one");
-        for _ in 0..10 {
-            b.give_back("a", 3);
-        }
-        let taken = (0..10)
-            .take_while(|_| b.take_at("a", 3, 60, t0).is_ok())
-            .count();
-        assert_eq!(taken, 3, "a bucket holds at most its burst");
-        b.give_back("b", 3);
-        let fresh = (0..10)
-            .take_while(|_| b.take_at("b", 3, 60, t0).is_ok())
-            .count();
-        assert_eq!(fresh, 3, "a key without a bucket gains nothing");
-    }
-
-    #[test]
-    fn a_full_table_evicts_only_the_oldest_window() {
-        let b = Budget::new(1, Duration::from_secs(60), 3);
-        for key in ["a", "b", "c"] {
-            assert!(b.take(key));
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        assert!(b.take("d"), "a new key gets a place");
-        assert!(b.spent("b") && b.spent("c"), "younger counters are kept");
-        assert!(!b.spent("a"), "only the oldest window made room");
-        for n in 0..1000 {
-            b.note(&format!("x{n}"));
-        }
-        assert!(locked(&b.table).order.len() <= 2 * 3 + 16 + 1);
-    }
-
-    #[test]
-    fn reserved_uses_are_atomic_and_can_be_refunded() {
-        let b = std::sync::Arc::new(Budget::new(5, Duration::from_secs(60), 10));
-        let threads: Vec<_> = (0..32)
-            .map(|_| {
-                let b = b.clone();
-                std::thread::spawn(move || b.reserve("k"))
-            })
-            .collect();
-        let won: Vec<Instant> = threads
-            .into_iter()
-            .filter_map(|t| t.join().expect("thread"))
-            .collect();
-        assert_eq!(won.len(), 5, "no more than the limit under contention");
-        assert!(b.reserve("k").is_none());
-        b.refund("k", won[0]);
-        assert!(b.reserve("k").is_some(), "a refund gives one use back");
-        assert!(b.reserve("k").is_none());
-    }
 
     #[test]
     fn backoff_grows_and_hot_keys_get_fewer_tries() {

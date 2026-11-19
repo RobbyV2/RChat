@@ -30,6 +30,7 @@ use turn::server::request::Request;
 use utoipa::ToSchema;
 use webrtc_util::Conn;
 
+use crate::limits::bucket::{Keyed, Policy, Single};
 pub use crate::net_guard::blocked;
 use crate::net_guard::embedded_v4;
 pub use crate::server::client_ip::Cidr;
@@ -284,96 +285,11 @@ impl Default for Limits {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Bucket {
-    tokens: f64,
-    at: Instant,
-}
-
-impl Bucket {
-    fn new(burst: f64, now: Instant) -> Bucket {
-        Bucket {
-            tokens: burst,
-            at: now,
-        }
-    }
-
-    fn level(&self, rate: f64, burst: f64, now: Instant) -> f64 {
-        (self.tokens + now.saturating_duration_since(self.at).as_secs_f64() * rate).min(burst)
-    }
-
-    fn refill(&mut self, rate: f64, burst: f64, now: Instant) {
-        self.tokens = self.level(rate, burst, now);
-        self.at = now;
-    }
-
-    fn take(&mut self, rate: f64, burst: f64, n: f64, now: Instant) -> bool {
-        self.refill(rate, burst, now);
-        match self.tokens >= n {
-            true => {
-                self.tokens -= n;
-                true
-            }
-            false => false,
-        }
-    }
-}
-
-/// Token buckets per key, at most `cap` of them: when full, refilled buckets are dropped
-/// first, then an arbitrary one.
-struct Buckets {
-    rate: f64,
-    burst: f64,
-    cap: usize,
-    map: HashMap<IpAddr, Bucket>,
-}
-
-impl Buckets {
-    fn new(rate: f64, burst: f64, cap: usize) -> Buckets {
-        Buckets {
-            rate,
-            burst,
-            cap,
-            map: HashMap::new(),
-        }
-    }
-
-    fn level(&mut self, key: IpAddr, now: Instant) -> f64 {
-        let (rate, burst) = (self.rate, self.burst);
-        if !self.map.contains_key(&key) && self.map.len() >= self.cap {
-            self.prune(now);
-            if self.map.len() >= self.cap
-                && let Some(evict) = self.map.keys().next().copied()
-            {
-                self.map.remove(&evict);
-            }
-        }
-        self.map
-            .entry(key)
-            .or_insert_with(|| Bucket::new(burst, now))
-            .level(rate, burst, now)
-    }
-
-    fn take(&mut self, key: IpAddr, now: Instant) {
-        let (rate, burst) = (self.rate, self.burst);
-        if let Some(b) = self.map.get_mut(&key) {
-            b.take(rate, burst, 1.0, now);
-        }
-    }
-
-    fn prune(&mut self, now: Instant) {
-        let (rate, burst) = (self.rate, self.burst);
-        self.map.retain(|_, b| b.level(rate, burst, now) < burst);
-    }
-}
-
 struct Limiter {
     nonce_cap: usize,
-    global_rate: f64,
-    global_burst: f64,
-    global: Bucket,
-    sources: Buckets,
-    blocks: Buckets,
+    global: Single,
+    sources: Keyed<IpAddr>,
+    blocks: Keyed<IpAddr>,
 }
 
 fn mask(ip: IpAddr, v4: u8, v6: u8) -> IpAddr {
@@ -403,13 +319,12 @@ impl Limiter {
             nonce_cap,
             sources_cap,
         } = limits;
+        let tokens = |burst, per_sec| Policy::Tokens { burst, per_sec };
         Limiter {
             nonce_cap,
-            global_rate,
-            global_burst,
-            global: Bucket::new(global_burst, Instant::now()),
-            sources: Buckets::new(source_rate, source_burst, sources_cap),
-            blocks: Buckets::new(block_rate, block_burst, sources_cap),
+            global: Single::new(tokens(global_burst, global_rate), Instant::now()),
+            sources: Keyed::new(tokens(source_burst, source_rate), sources_cap),
+            blocks: Keyed::new(tokens(block_burst, block_rate), sources_cap),
         }
     }
 
@@ -418,20 +333,17 @@ impl Limiter {
     /// charged, so dropped requests spend nothing upstream.
     fn admit(&mut self, ip: IpAddr, holder: bool, now: Instant) -> bool {
         let (source, block) = (source_key(ip), block_key(ip));
-        if self.sources.level(source, now) < 1.0 {
+        if self.sources.remaining(&source, now) < 1.0 {
             return false;
         }
-        if !holder
-            && (self.blocks.level(block, now) < 1.0
-                || self.global.level(self.global_rate, self.global_burst, now) < 1.0)
+        if !holder && (self.blocks.remaining(&block, now) < 1.0 || self.global.remaining(now) < 1.0)
         {
             return false;
         }
-        self.sources.take(source, now);
+        self.sources.take(&source, 1.0, now);
         if !holder {
-            self.blocks.take(block, now);
-            self.global
-                .take(self.global_rate, self.global_burst, 1.0, now);
+            self.blocks.take(&block, 1.0, now);
+            self.global.take(1.0, now);
         }
         true
     }
@@ -830,13 +742,21 @@ impl AuthHandler for RestAuth {
 
 struct Usage {
     allocations: usize,
-    bandwidth: Bucket,
+    bandwidth: Single,
 }
 
 struct QuotaState {
     users: HashMap<String, Usage>,
     total: usize,
-    bandwidth: Bucket,
+    bandwidth: Single,
+}
+
+// `BURST_SECS` of bandwidth at once, then `bytes_per_sec`.
+fn bandwidth(bytes_per_sec: f64) -> Policy {
+    Policy::Tokens {
+        burst: bytes_per_sec * BURST_SECS,
+        per_sec: bytes_per_sec,
+    }
 }
 
 /// Allocation counts and bandwidth budgets, per user (keyed by the opaque part of the TURN
@@ -853,7 +773,7 @@ impl Quotas {
             state: Mutex::new(QuotaState {
                 users: HashMap::new(),
                 total: 0,
-                bandwidth: Bucket::new(capacity.total_bytes_per_sec * BURST_SECS, now),
+                bandwidth: Single::new(bandwidth(capacity.total_bytes_per_sec), now),
             }),
             capacity,
         }
@@ -864,10 +784,9 @@ impl Quotas {
         if state.total >= self.capacity.total_allocations {
             return None;
         }
-        let burst = self.capacity.user_bytes_per_sec * BURST_SECS;
         let usage = state.users.entry(user.to_string()).or_insert(Usage {
             allocations: 0,
-            bandwidth: Bucket::new(burst, Instant::now()),
+            bandwidth: Single::new(bandwidth(self.capacity.user_bytes_per_sec), Instant::now()),
         });
         if usage.allocations >= self.capacity.user_allocations {
             return None;
@@ -897,33 +816,21 @@ impl Quotas {
     }
 
     fn take(&self, user: &str, bytes: usize) -> bool {
-        let Capacity {
-            user_allocations: _,
-            total_allocations: _,
-            user_bytes_per_sec,
-            total_bytes_per_sec,
-        } = self.capacity;
         let Ok(mut state) = self.state.lock() else {
             return false;
         };
         let now = Instant::now();
         let n = bytes as f64;
-        let total_burst = total_bytes_per_sec * BURST_SECS;
-        if state.bandwidth.level(total_bytes_per_sec, total_burst, now) < n {
+        if state.bandwidth.remaining(now) < n {
             return false;
         }
         let Some(usage) = state.users.get_mut(user) else {
             return false;
         };
-        if !usage
-            .bandwidth
-            .take(user_bytes_per_sec, user_bytes_per_sec * BURST_SECS, n, now)
-        {
+        if !usage.bandwidth.take(n, now) {
             return false;
         }
-        state
-            .bandwidth
-            .take(total_bytes_per_sec, total_burst, n, now)
+        state.bandwidth.take(n, now)
     }
 
     pub fn allocations(&self) -> usize {
@@ -2088,7 +1995,7 @@ mod tests {
         for i in 0..10_000u32 {
             let ip = IpAddr::V4(Ipv4Addr::from(0x0b00_0000 + (i << 8)));
             admitted += usize::from(limiter.admit(ip, false, now));
-            assert!(limiter.sources.map.len() <= 64 && limiter.blocks.map.len() <= 64);
+            assert!(limiter.sources.len() <= 64 && limiter.blocks.len() <= 64);
         }
         assert_eq!(admitted, 100, "process budget across many blocks");
         let holder: IpAddr = "198.51.100.77".parse().unwrap();
@@ -2133,7 +2040,7 @@ mod tests {
         assert_eq!(per_64, 2, "one /48 shares a block budget");
         assert!(limiter.admit(one, false, now + Duration::from_secs(5)));
         limiter.prune(now + Duration::from_secs(60));
-        assert!(limiter.sources.map.is_empty() && limiter.blocks.map.is_empty());
+        assert!(limiter.sources.is_empty() && limiter.blocks.is_empty());
     }
 
     #[test]
@@ -3134,7 +3041,7 @@ mod tests {
                 assert!(nonces <= bound.min(nonce_cap), "{nonces} nonces");
                 {
                     let limiter = relay.shared.limiter.lock().unwrap();
-                    assert!(limiter.sources.map.len() <= 16 && limiter.blocks.map.len() <= 16);
+                    assert!(limiter.sources.len() <= 16 && limiter.blocks.len() <= 16);
                 }
                 let one = &sockets[sockets.len() - 1..];
                 for _ in 0..5 {

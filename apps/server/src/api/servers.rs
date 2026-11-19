@@ -2128,17 +2128,25 @@ pub(crate) async fn guest_access(
 }
 
 /// Guest grants minted per client address (an IPv6 /64 counts as one address).
-static GRANT_MINTS: std::sync::LazyLock<crate::api::budget::Budget> =
+static GRANT_MINTS: std::sync::LazyLock<crate::limits::bucket::Keyed> =
     std::sync::LazyLock::new(|| {
-        crate::api::budget::Budget::new(20, std::time::Duration::from_secs(3600), 100_000)
+        crate::limits::bucket::Keyed::new(
+            crate::limits::bucket::Policy::Window {
+                limit: 20,
+                window: std::time::Duration::from_secs(3600),
+            },
+            100_000,
+        )
     });
 
 /// Guest grants minted per wider network (IPv4 /24, IPv6 /48), across all servers.
-static GRANT_NETWORK_MINTS: std::sync::LazyLock<crate::api::budget::Budget> =
+static GRANT_NETWORK_MINTS: std::sync::LazyLock<crate::limits::bucket::Keyed> =
     std::sync::LazyLock::new(|| {
-        crate::api::budget::Budget::new(
-            GRANT_NETWORK_MINTS_MAX,
-            std::time::Duration::from_secs(3600),
+        crate::limits::bucket::Keyed::new(
+            crate::limits::bucket::Policy::Window {
+                limit: GRANT_NETWORK_MINTS_MAX,
+                window: std::time::Duration::from_secs(3600),
+            },
             100_000,
         )
     });
@@ -2161,8 +2169,9 @@ async fn grant_network(db: &Db) -> Result<String, ApiError> {
     if let Some(ip) = ip {
         let pool = crate::db::pool_key(db);
         let group = crate::api::budget::group(ip);
-        if !GRANT_NETWORK_MINTS.take(&format!("{pool}\n{wide}"))
-            || !GRANT_MINTS.take(&format!("{pool}\n{group}"))
+        let now = std::time::Instant::now();
+        if !GRANT_NETWORK_MINTS.take(&format!("{pool}\n{wide}"), 1.0, now)
+            || !GRANT_MINTS.take(&format!("{pool}\n{group}"), 1.0, now)
         {
             return Err(crate::api::budget::slow_down());
         }

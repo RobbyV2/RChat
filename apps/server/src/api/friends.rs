@@ -1,5 +1,5 @@
 use std::sync::LazyLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -9,13 +9,13 @@ use sqlx::Row;
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::blocks::{is_blocked, prefix_pattern};
-use crate::api::budget::Budget;
 use crate::api::pings::{Ping, PingKind};
 use crate::api::{
     ApiError, ApiErrorBody, Authed, OkResp, Paged, UserRef, bad, cursor_int, decode_cursor,
     encode_cursor, ok,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now};
+use crate::limits::bucket::{Keyed, Policy};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -43,13 +43,27 @@ pub const REFUSED: &str = "Could not send a friend request to that user.";
 const YOU_BLOCKED: &str = "You blocked this user. Unblock them to add them as a friend.";
 const SLOW_DOWN: &str = "Too many friend requests. Try again later.";
 
-static REQUEST_PACE: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(REQUESTS_PER_WINDOW, REQUEST_WINDOW, 100_000));
+static REQUEST_PACE: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: REQUESTS_PER_WINDOW,
+            window: REQUEST_WINDOW,
+        },
+        100_000,
+    )
+});
 /// Request pings one sender may cause one recipient per hour; past it the request is still
 /// stored, but the recipient is not pinged again.
 const PAIR_PINGS: u32 = 3;
-static PAIR_PACE: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(PAIR_PINGS, Duration::from_secs(3600), 100_000));
+static PAIR_PACE: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: PAIR_PINGS,
+            window: Duration::from_secs(3600),
+        },
+        100_000,
+    )
+});
 
 /// Who may open a DM with you or write in one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -831,7 +845,7 @@ pub(crate) async fn send_request(
     }
     crate::api::lookup::contact(&state, &user)?;
     let pace = format!("{}\n{}", crate::db::pool_key(&state.db), user.username);
-    if !REQUEST_PACE.take(&pace) {
+    if !REQUEST_PACE.take(&pace, 1.0, Instant::now()) {
         return Err(ApiError::rate(SLOW_DOWN, None));
     }
     if target == user.username {
@@ -924,7 +938,7 @@ pub(crate) async fn send_request(
         user.username,
         other.username
     );
-    if PAIR_PACE.take(&pair) {
+    if PAIR_PACE.take(&pair, 1.0, Instant::now()) {
         ping(&state, &other.username, &user, PingKind::FriendRequest).await?;
     }
     outcome(RequestStatus::Sent)

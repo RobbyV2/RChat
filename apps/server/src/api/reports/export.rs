@@ -12,10 +12,10 @@ use super::forms::{FieldKind, ReportForms, StoredAnswer};
 use super::{ReportQuery, ReportRow, query};
 use crate::api::access::{ReportMode, ReportScope, report_scope};
 use crate::api::audit::{self, Action, Details, Entry};
-use crate::api::budget::Budget;
 use crate::api::policy::Policy;
 use crate::api::{ApiError, ApiErrorBody, Authed, instance_audit};
 use crate::db::{User, pool_key};
+use crate::limits::bucket::{self, Keyed};
 use crate::state::AppState;
 
 /// The most reports one export holds.
@@ -24,8 +24,15 @@ pub const EXPORT_MAX: usize = 5000;
 pub const EXPORTS_PER_HOUR: u32 = 10;
 pub const TOO_MANY_EXPORTS: &str = "Too many exports. Try again later.";
 
-static EXPORTS: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(EXPORTS_PER_HOUR, Duration::from_secs(3600), 100_000));
+static EXPORTS: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        bucket::Policy::Window {
+            limit: EXPORTS_PER_HOUR,
+            window: Duration::from_secs(3600),
+        },
+        100_000,
+    )
+});
 
 /// The columns every CSV export starts with.
 pub const COLUMNS: [&str; 12] = [
@@ -219,8 +226,8 @@ pub(crate) async fn export_in(
     format: Format,
 ) -> Result<Response, ApiError> {
     let key = format!("{}\n{}", pool_key(&state.db), user.username);
-    if !EXPORTS.take(&key) {
-        let wait = EXPORTS.left(&key).as_secs_f64().ceil().max(1.0) as u64;
+    if let Err(wait) = EXPORTS.try_take(&key, 1.0, std::time::Instant::now()) {
+        let wait = wait.as_secs_f64().ceil().max(1.0) as u64;
         return Err(ApiError::rate(TOO_MANY_EXPORTS, Some(wait)));
     }
     let rows = query::export(&state.read(), scope, q, EXPORT_MAX).await?;

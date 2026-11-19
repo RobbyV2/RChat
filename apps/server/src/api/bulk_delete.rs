@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -16,11 +16,12 @@ use crate::api::access::{
     resolve_message, typing_scope,
 };
 use crate::api::audit;
-use crate::api::budget::{Budget, slow_down};
+use crate::api::budget::slow_down;
 use crate::api::messages::moderated;
 use crate::api::pings::{announce_counts, pinged_by};
 use crate::api::{ApiError, ApiErrorBody, Authed, allowed, bad, placeholders};
 use crate::db::{Db, LIVE_AUTHOR, User, get_user, now, pool_key};
+use crate::limits::bucket::{Keyed, Policy};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -43,11 +44,25 @@ const AUTHORS_KEPT: usize = 500;
 const PAUSE: Duration = Duration::from_millis(100);
 
 const REQUESTS_MAX: u32 = 20;
-static REQUESTS: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(REQUESTS_MAX, Duration::from_secs(60), 100_000));
+static REQUESTS: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: REQUESTS_MAX,
+            window: Duration::from_secs(60),
+        },
+        100_000,
+    )
+});
 const COUNTS_MAX: u32 = 60;
-static COUNTS: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(COUNTS_MAX, Duration::from_secs(60), 100_000));
+static COUNTS: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: COUNTS_MAX,
+            window: Duration::from_secs(60),
+        },
+        100_000,
+    )
+});
 static RUNNING: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 pub const TOO_MANY_JOBS: &str = "Too many deletions are running. Wait for one to finish";
@@ -708,7 +723,11 @@ pub(crate) async fn bulk_delete(
         true => &*COUNTS,
         false => &*REQUESTS,
     };
-    if !budget.take(&format!("{}\n{}", pool_key(&state.db), user.username)) {
+    if !budget.take(
+        &format!("{}\n{}", pool_key(&state.db), user.username),
+        1.0,
+        Instant::now(),
+    ) {
         return Err(slow_down());
     }
     let place = resolve_place(&state.db, &scope, &user).await?;

@@ -4,9 +4,10 @@ use std::time::{Duration, Instant};
 use axum::http::StatusCode;
 
 use crate::api::ApiError;
-use crate::api::budget::Budget;
 use crate::api::lookup;
 use crate::db::User;
+use crate::limits::Limits;
+use crate::limits::bucket::{Keyed, Policy};
 use crate::state::AppState;
 
 /// A kind of request a person makes a few times a day at most. Each kind has its own count per
@@ -130,8 +131,16 @@ const PER_DAY: &str = "RARE_REQUESTS_PER_DAY";
 const HOUR: Duration = Duration::from_secs(3600);
 const DAY: Duration = Duration::from_secs(86_400);
 
-static HOURS: LazyLock<Budget> = LazyLock::new(|| Budget::new(u32::MAX, HOUR, 200_000));
-static DAYS: LazyLock<Budget> = LazyLock::new(|| Budget::new(u32::MAX, DAY, 200_000));
+/// Rare requests per caller and kind in an hour, under `RARE_REQUESTS_PER_HOUR`.
+static HOURS: LazyLock<Keyed> =
+    LazyLock::new(|| Keyed::new(per(HOUR, Limits::default().rare_requests_per_hour), 200_000));
+/// Rare requests per caller and kind in a day, under `RARE_REQUESTS_PER_DAY`.
+static DAYS: LazyLock<Keyed> =
+    LazyLock::new(|| Keyed::new(per(DAY, Limits::default().rare_requests_per_day), 200_000));
+
+fn per(window: Duration, limit: u32) -> Policy {
+    Policy::Window { limit, window }
+}
 
 /// One rare request, counted while its handler runs. Dropped before `answered`, or answered
 /// with a refusal by another limit or for capacity, it is given back.
@@ -165,20 +174,16 @@ impl Held {
 impl Drop for Held {
     fn drop(&mut self) {
         if let Some(start) = self.hour.take() {
-            HOURS.refund(&self.key, start);
+            HOURS.refund(&self.key, 1.0, start);
         }
         if let Some(start) = self.day.take() {
-            DAYS.refund(&self.key, start);
+            DAYS.refund(&self.key, 1.0, start);
         }
     }
 }
 
 fn key(state: &AppState, kind: Rare, caller: Option<&User>) -> String {
     format!("{}\n{}", lookup::who(state, caller), kind.name())
-}
-
-fn too_often(budget: &Budget, limit: &'static str, key: &str, now: Instant) -> ApiError {
-    lookup::limited(limit, TOO_OFTEN, budget.left_at(key, now))
 }
 
 /// Holds one request of `kind` against the caller's account, or against the client address
@@ -197,15 +202,18 @@ pub fn hold(state: &AppState, kind: Rare, caller: Option<&User>) -> Result<Held,
         day: None,
     };
     if per_day > 0 {
-        match DAYS.reserve_within_at(&held.key, per_day, now) {
-            Some(start) => held.day = Some(start),
-            None => return Err(too_often(&DAYS, PER_DAY, &held.key, now)),
+        match DAYS.under(per(DAY, per_day)).try_take(&held.key, 1.0, now) {
+            Ok(start) => held.day = Some(start),
+            Err(wait) => return Err(lookup::limited(PER_DAY, TOO_OFTEN, wait)),
         }
     }
     if per_hour > 0 {
-        match HOURS.reserve_within_at(&held.key, per_hour, now) {
-            Some(start) => held.hour = Some(start),
-            None => return Err(too_often(&HOURS, PER_HOUR, &held.key, now)),
+        match HOURS
+            .under(per(HOUR, per_hour))
+            .try_take(&held.key, 1.0, now)
+        {
+            Ok(start) => held.hour = Some(start),
+            Err(wait) => return Err(lookup::limited(PER_HOUR, TOO_OFTEN, wait)),
         }
     }
     Ok(held)
@@ -232,11 +240,14 @@ pub fn check(state: &AppState, kind: Rare, caller: Option<&User>) -> Result<(), 
         state.limits.rare_requests_per_hour,
         state.limits.rare_requests_per_day,
     );
-    if per_day > 0 && DAYS.spent_within_at(&key, per_day, now) {
-        return Err(too_often(&DAYS, PER_DAY, &key, now));
-    }
-    if per_hour > 0 && HOURS.spent_within_at(&key, per_hour, now) {
-        return Err(too_often(&HOURS, PER_HOUR, &key, now));
+    for (limit, budget, policy) in [
+        (PER_DAY, &DAYS, per(DAY, per_day)),
+        (PER_HOUR, &HOURS, per(HOUR, per_hour)),
+    ] {
+        let wait = budget.under(policy).wait(&key, 1.0, now);
+        if policy.full() > 0.0 && !wait.is_zero() {
+            return Err(lookup::limited(limit, TOO_OFTEN, wait));
+        }
     }
     Ok(())
 }

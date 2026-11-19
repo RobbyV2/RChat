@@ -27,6 +27,7 @@ use crate::db::{Db, now, setting_on};
 use crate::fanout::Topic;
 use crate::hub::{Epoch, Hub, PRESENCE_SERVERS_MAX, Scope};
 use crate::limits::Limits;
+use crate::limits::bucket::{Policy, Single};
 use crate::state::AppState;
 
 struct Gate {
@@ -197,37 +198,43 @@ impl Retry {
     }
 }
 
+// At most one run per `every`: a run asked for sooner waits until `due`.
 pub(super) struct Pace {
-    pub(super) every: Duration,
-    pub(super) last: Option<Instant>,
+    bucket: Single,
     pub(super) due: Option<Instant>,
 }
 
 impl Pace {
     pub(super) fn new(every: Duration) -> Pace {
+        let policy = Policy::Window {
+            limit: 1,
+            window: every,
+        };
         Pace {
-            every,
-            last: None,
+            bucket: Single::new(policy, Instant::now().into_std()),
             due: None,
         }
     }
 
     pub(super) fn hit(&mut self, now: Instant) -> bool {
-        match self.last {
-            Some(last) if now < last + self.every => {
-                self.due = Some(last + self.every);
-                false
-            }
-            Some(_) | None => {
-                self.fire(now);
-                true
-            }
-        }
+        let ran = self.bucket.take(1.0, now.into_std());
+        self.due = match ran {
+            true => None,
+            false => self.next(now),
+        };
+        ran
     }
 
     pub(super) fn fire(&mut self, now: Instant) {
-        self.last = Some(now);
+        self.bucket.spend(1.0, now.into_std());
         self.due = None;
+    }
+
+    // When the next run may start, at `now` or later.
+    pub(super) fn next(&self, now: Instant) -> Option<Instant> {
+        self.bucket
+            .ready_at(1.0, now.into_std())
+            .map(Instant::from_std)
     }
 }
 
@@ -235,10 +242,7 @@ impl Pace {
 // newly checks, from a bucket of checks. A request past the bucket waits, and a later one
 // replaces it.
 pub(super) struct SubPace {
-    tokens: f64,
-    at: Instant,
-    rate: f64,
-    burst: f64,
+    bucket: Single,
     cap: usize,
     pub(super) wanted: Option<(Vec<String>, HashMap<String, String>)>,
     pub(super) due: Option<Instant>,
@@ -248,7 +252,7 @@ pub(super) const SUB_FRAME_COST: f64 = 10.0;
 
 impl SubPace {
     pub(super) fn new(signed_in: bool) -> SubPace {
-        let (rate, burst, cap) = match signed_in {
+        let (per_sec, burst, cap) = match signed_in {
             true => (SUB_CHECKS_RATE, SUB_CHECKS_BURST, SUBSCRIBE_CAP),
             false => (
                 GUEST_SUB_CHECKS_RATE,
@@ -257,10 +261,7 @@ impl SubPace {
             ),
         };
         SubPace {
-            tokens: burst,
-            at: Instant::now(),
-            rate,
-            burst,
+            bucket: Single::new(Policy::Tokens { burst, per_sec }, Instant::now().into_std()),
             cap,
             wanted: None,
             due: None,
@@ -292,15 +293,14 @@ impl SubPace {
     ) -> Option<(Vec<String>, HashMap<String, String>)> {
         let (servers, grants) = self.wanted.take()?;
         let cost = SUB_FRAME_COST + fresh(&servers, &grants) as f64;
-        self.tokens =
-            (self.tokens + now.duration_since(self.at).as_secs_f64() * self.rate).min(self.burst);
-        self.at = now;
-        if self.tokens < cost {
-            self.due = Some(now + Duration::from_secs_f64((cost - self.tokens) / self.rate));
+        if !self.bucket.take(cost, now.into_std()) {
+            self.due = self
+                .bucket
+                .ready_at(cost, now.into_std())
+                .map(Instant::from_std);
             self.wanted = Some((servers, grants));
             return None;
         }
-        self.tokens -= cost;
         self.due = None;
         Some((servers, grants))
     }

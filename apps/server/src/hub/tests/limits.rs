@@ -143,3 +143,15 @@ fn the_voice_room_limit_sizes_the_signal_budget() {
     assert!(!hub.signal_ok("alice", burst / 2));
     assert!(hub.signal_ok("bob", burst));
 }
+
+#[test]
+fn a_call_start_churn_keeps_the_dm_pace() {
+    let hub = Hub::new();
+    let rings: Vec<bool> = (0..4).map(|_| hub.call_ok("alice", 7)).collect();
+    assert_eq!(rings, [true, true, true, false]);
+    for n in 0..PACED_USERS_MAX as i64 {
+        hub.call_ok("mallory", 1_000_000 + n);
+    }
+    assert!(!hub.call_ok("alice", 7), "a spent DM stays spent");
+    assert!(hub.call_ok("alice", 8));
+}

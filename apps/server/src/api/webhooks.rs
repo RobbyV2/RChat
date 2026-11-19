@@ -25,7 +25,7 @@ use crate::api::access::{
     resolve_channel, resolve_message, resolve_server, timed_out_error, webhook_channel,
 };
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
-use crate::api::budget::{Budget, slow_down};
+use crate::api::budget::slow_down;
 use crate::api::messages::{
     Place, Quoted, Quotes, SendReq, attach_embeds, cannot_reply, insert_message, load_broadcast,
     load_message, partial_quote, replied,
@@ -42,6 +42,7 @@ use crate::api::{
     bad, check_len, embeds, media, ok, placeholders, valid_color,
 };
 use crate::db::{AvatarKind, ChannelKind, Db, User, get_user, lock_server, now, pepper};
+use crate::limits::bucket::{self, Keyed};
 use crate::net_guard::{self, AllowedHost, Http, Policy};
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
@@ -1081,16 +1082,33 @@ pub struct WebhookInfo {
     pub avatar_color: Option<String>,
 }
 
-static HOOK_PACE: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(HOOK_BURST, HOOK_WINDOW, 100_000));
-static CHANNEL_PACE: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(CHANNEL_BUDGET, Duration::from_secs(60), 100_000));
+static HOOK_PACE: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        bucket::Policy::Window {
+            limit: HOOK_BURST,
+            window: HOOK_WINDOW,
+        },
+        100_000,
+    )
+});
+static CHANNEL_PACE: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        bucket::Policy::Window {
+            limit: CHANNEL_BUDGET,
+            window: Duration::from_secs(60),
+        },
+        100_000,
+    )
+});
 
 fn paced(db: &Db, hook: &Hook) -> Result<(), ApiError> {
     let pool = crate::db::pool_key(db);
-    match HOOK_PACE.take(&format!("{pool}\nh{}", hook.id))
-        && CHANNEL_PACE.take(&format!("{pool}\nc{}", hook.channel_id))
-    {
+    match HOOK_PACE.take(&format!("{pool}\nh{}", hook.id), 1.0, Instant::now())
+        && CHANNEL_PACE.take(
+            &format!("{pool}\nc{}", hook.channel_id),
+            1.0,
+            Instant::now(),
+        ) {
         true => Ok(()),
         false => Err(slow_down()),
     }

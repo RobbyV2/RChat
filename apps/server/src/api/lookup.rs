@@ -4,10 +4,11 @@ use std::time::{Duration, Instant};
 use axum::http::{Method, StatusCode};
 
 use crate::api::ApiError;
-use crate::api::budget::{self, Bucket, Budget, Token};
+use crate::api::budget;
 use crate::api::servers::MemberListQuery;
 use crate::db::{User, pool_key};
 use crate::limits::Limits;
+use crate::limits::bucket::{Keyed, Policy, Token};
 use crate::state::AppState;
 
 /// What a lookup of accounts or servers is for. Each class has its own budget per account, or
@@ -62,6 +63,12 @@ impl LookupClass {
         };
         (per_minute.saturating_mul(held) / default).max(5)
     }
+
+    /// Its bucket: `burst` lookups at once, then `per_minute` a minute.
+    pub fn policy(self, limits: &Limits) -> Policy {
+        let per_minute = self.per_minute(limits);
+        Policy::per_minute(self.burst(per_minute), per_minute)
+    }
 }
 
 /// The class of the lookup a request makes, by its method and its path under the API prefix
@@ -95,14 +102,39 @@ pub const CONTACTS_PER_WINDOW: u32 = 30;
 /// Blocks per account and window, apart from DMs and friend requests.
 pub const BLOCKS_PER_WINDOW: u32 = 120;
 const CONTACT_WINDOW: Duration = Duration::from_secs(600);
+const MISS_WINDOW: Duration = Duration::from_secs(3600);
 
-static TOKENS: LazyLock<Bucket> = LazyLock::new(|| Bucket::new(200_000));
-static MISSED: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(u32::MAX, Duration::from_secs(3600), 100_000));
-static CONTACTS: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(CONTACTS_PER_WINDOW, CONTACT_WINDOW, 100_000));
-static BLOCKS: LazyLock<Budget> =
-    LazyLock::new(|| Budget::new(BLOCKS_PER_WINDOW, CONTACT_WINDOW, 100_000));
+/// Lookups per caller and class, each class under its own policy (`LookupClass::policy`).
+static TOKENS: LazyLock<Keyed> =
+    LazyLock::new(|| Keyed::new(LookupClass::List.policy(&Limits::default()), 200_000));
+/// Misses per caller, under `LOOKUP_MISSES_PER_HOUR`.
+static MISSED: LazyLock<Keyed> =
+    LazyLock::new(|| Keyed::new(misses(Limits::default().lookup_misses_per_hour), 100_000));
+static CONTACTS: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: CONTACTS_PER_WINDOW,
+            window: CONTACT_WINDOW,
+        },
+        100_000,
+    )
+});
+static BLOCKS: LazyLock<Keyed> = LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: BLOCKS_PER_WINDOW,
+            window: CONTACT_WINDOW,
+        },
+        100_000,
+    )
+});
+
+fn misses(per_hour: u32) -> Policy {
+    Policy::Window {
+        limit: per_hour,
+        window: MISS_WINDOW,
+    }
+}
 
 /// The refusal of the limit `limit` (its env name, `contact` or `blocks`): 429 with the reason
 /// `rate` and the time to wait in whole seconds, rounded up and at least one, also as
@@ -144,7 +176,7 @@ impl Held {
 impl Drop for Held {
     fn drop(&mut self) {
         if let Some(start) = self.start.take() {
-            MISSED.refund(&self.who, start);
+            MISSED.refund(&self.who, 1.0, start);
         }
     }
 }
@@ -157,9 +189,12 @@ pub fn unmissed(state: &AppState, caller: Option<&User>) -> Result<Held, ApiErro
     let who = who(state, caller);
     let start = match state.limits.lookup_misses_per_hour {
         0 => None,
-        misses => match MISSED.reserve_within(&who, misses) {
-            Some(start) => Some(start),
-            None => return Err(limited(MISSES, TOO_MANY, MISSED.left(&who))),
+        per_hour => match MISSED
+            .under(misses(per_hour))
+            .try_take(&who, 1.0, Instant::now())
+        {
+            Ok(start) => Some(start),
+            Err(wait) => return Err(limited(MISSES, TOO_MANY, wait)),
         },
     };
     Ok(Held { who, start })
@@ -183,14 +218,10 @@ pub(super) fn reserve(
     class: LookupClass,
     caller: Option<&User>,
 ) -> Result<Token<'static>, ApiError> {
-    let who = who(state, caller);
-    let per_minute = class.per_minute(&state.limits);
+    let key = format!("{}\n{}", who(state, caller), class.env());
     TOKENS
-        .reserve(
-            format!("{who}\n{}", class.env()),
-            class.burst(per_minute),
-            per_minute,
-        )
+        .under(class.policy(&state.limits))
+        .hold(key, 1.0, Instant::now())
         .map_err(|wait| limited(class.env(), TOO_MANY, wait))
 }
 
@@ -207,9 +238,9 @@ pub fn counted<T>(mut held: Held, answer: Result<T, ApiError>) -> Result<T, ApiE
 /// minutes it is refused, whoever the name is.
 pub fn contact(state: &AppState, user: &User) -> Result<(), ApiError> {
     let key = format!("{}\n{}", pool_key(&state.db), user.username);
-    match CONTACTS.take(&key) {
-        true => Ok(()),
-        false => Err(limited("contact", TOO_MANY_CONTACTS, CONTACTS.left(&key))),
+    match CONTACTS.try_take(&key, 1.0, Instant::now()) {
+        Ok(_) => Ok(()),
+        Err(wait) => Err(limited("contact", TOO_MANY_CONTACTS, wait)),
     }
 }
 
@@ -219,9 +250,9 @@ pub fn contact(state: &AppState, user: &User) -> Result<(), ApiError> {
 pub fn block(state: &AppState, user: &User) -> Result<Held, ApiError> {
     let held = unmissed(state, Some(user))?;
     let key = format!("{}\n{}", pool_key(&state.db), user.username);
-    match BLOCKS.take(&key) {
-        true => Ok(held),
-        false => Err(limited("blocks", TOO_MANY_BLOCKS, BLOCKS.left(&key))),
+    match BLOCKS.try_take(&key, 1.0, Instant::now()) {
+        Ok(_) => Ok(held),
+        Err(wait) => Err(limited("blocks", TOO_MANY_BLOCKS, wait)),
     }
 }
 

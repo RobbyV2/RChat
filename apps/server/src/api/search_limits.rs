@@ -6,9 +6,11 @@ use std::time::Duration;
 use axum::http::StatusCode;
 use tokio::time::Instant;
 
-use crate::api::budget::{self, Bucket, Share, Shares};
+use crate::api::budget::{self, Share, Shares};
 use crate::api::{ApiError, lookup};
 use crate::db::{User, pool_key};
+use crate::limits::Limits;
+use crate::limits::bucket::{Keyed, Policy};
 use crate::state::AppState;
 
 pub const TOO_MANY: &str = "Too many searches. Try again in a moment.";
@@ -32,7 +34,8 @@ const RUNNING_WAIT: Duration = Duration::from_secs(1);
 /// Seconds a caller refused at capacity is told to wait.
 const FULL_WAIT_SECS: u64 = 2;
 
-static TOKENS: LazyLock<Bucket> = LazyLock::new(|| Bucket::new(200_000));
+/// Message searches per caller, under `policy`.
+static TOKENS: LazyLock<Keyed> = LazyLock::new(|| Keyed::new(policy(&Limits::default()), 200_000));
 static RUNNING: LazyLock<Shares> = LazyLock::new(Shares::default);
 /// The number of the turn each caller has waiting for one of its places.
 static WAITING: LazyLock<Mutex<HashMap<String, u64>>> = LazyLock::new(Default::default);
@@ -41,6 +44,12 @@ static TURNS: AtomicU64 = AtomicU64::new(0);
 /// Message searches a caller holds at once when it gains `per_minute`: 10 of 30, at least 5.
 pub fn burst(per_minute: u32) -> u32 {
     (per_minute.saturating_mul(10) / 30).max(5)
+}
+
+/// A caller's bucket of message searches: `burst` at once, then `MESSAGE_SEARCH_PER_MINUTE`.
+fn policy(limits: &Limits) -> Policy {
+    let per_minute = limits.message_search_per_minute;
+    Policy::per_minute(burst(per_minute), per_minute)
 }
 
 /// Message searches this process runs at once: `MESSAGE_SEARCH_CONCURRENT_LIMIT`, or half the
@@ -124,10 +133,9 @@ async fn own_place(who: &str, most: u64) -> Result<Share, ApiError> {
 pub async fn admit(state: &AppState, caller: Option<&User>) -> Result<Admitted, ApiError> {
     let who = lookup::who(state, caller);
     let limits = &state.limits;
-    let per_minute = limits.message_search_per_minute;
-    let burst = burst(per_minute);
     let token = TOKENS
-        .reserve(who.clone(), burst, per_minute)
+        .under(policy(limits))
+        .hold(who.clone(), 1.0, std::time::Instant::now())
         .map_err(|wait| lookup::limited(PER_MINUTE, TOO_MANY, wait))?;
     let own = own_place(&who, u64::from(limits.message_search_at_once)).await?;
     let deadline = Instant::now() + SITE_WAIT;

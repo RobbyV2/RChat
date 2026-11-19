@@ -9,10 +9,10 @@ use tokio::time::Instant;
 
 use super::access::Access;
 use super::calls::{finalize_call_log, voice_cmd};
+use super::conn::{admit_frame, frame_bucket};
 use super::filter::event_channel;
 use super::guests::guest_name;
 use super::protocol::{ClientMsg, Refused};
-use super::typing::Bucket;
 use super::{SEND_TIMEOUT, WsEvent};
 use crate::api::access::{Proof, not_found};
 use crate::api::budget::Shares;
@@ -342,7 +342,7 @@ pub(super) async fn run(state: AppState, id: String, mut socket: WebSocket, mut 
         recheck_at: None,
         refresh_at: None,
     };
-    let mut bucket = Bucket::new();
+    let mut frames = frame_bucket(Instant::now());
     let mut check = tokio::time::interval_at(Instant::now() + RECHECK_EVERY, RECHECK_EVERY);
     check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut heard = Instant::now();
@@ -353,7 +353,7 @@ pub(super) async fn run(state: AppState, id: String, mut socket: WebSocket, mut 
                     heard = Instant::now();
                     match frame {
                         Some(Ok(Frame::Text(text))) => {
-                            if bucket.take(heard) != Some(true) || !seat.command(&access, &mut socket, &text).await { break; }
+                            if admit_frame(&mut frames, heard) != Some(true) || !seat.command(&access, &mut socket, &text).await { break; }
                         }
                         Some(Ok(Frame::Pong(_) | Frame::Ping(_))) => {}
                         _ => break,

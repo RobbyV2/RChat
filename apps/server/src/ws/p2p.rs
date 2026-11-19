@@ -108,11 +108,7 @@ impl Who {
     pub(super) fn soon(&mut self, hoster: &str, now: Instant) {
         self.ask(vec![hoster.to_string()]);
         if self.pace.due.is_none() {
-            self.pace.due = Some(
-                self.pace
-                    .last
-                    .map_or(now, |last| (last + self.pace.every).max(now)),
-            );
+            self.pace.due = self.pace.next(now);
         }
     }
 

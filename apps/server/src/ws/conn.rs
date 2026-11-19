@@ -25,10 +25,10 @@ use super::protocol::{
     ClientMsg, close_frame, first_frame, refuse,
 };
 use super::rewrite::{channel_for, event_frame, layout_for, own_timeout, presence_snapshot};
-use super::typing::{Bucket, Typer, type_in};
+use super::typing::{Typer, type_in};
 use super::{
-    FRAME_MAX, LAG_REAUTH_EVERY, OUT_FRAMES, PING_EVERY, SEND_TIMEOUT, SILENT_LIMIT, authed_sub_ok,
-    guest_sub_ok,
+    FRAME_MAX, LAG_REAUTH_EVERY, MSG_BURST, MSG_RATE, OUT_FRAMES, PING_EVERY, SEND_TIMEOUT,
+    SILENT_LIMIT, authed_sub_ok, guest_sub_ok,
 };
 
 use crate::api::access::{is_member, presence_mode, ws_banned, ws_live_hosted, ws_member_servers};
@@ -36,6 +36,7 @@ use crate::api::{Settings, token_row};
 use crate::db::{now, setting_on};
 use crate::fanout::Topic;
 use crate::hub::{AddrSlot, Hub};
+use crate::limits::bucket::{Policy, Single};
 use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
 
@@ -181,6 +182,25 @@ pub(super) fn sent(access: &mut Access, res: Sent) -> bool {
     }
 }
 
+// A connection's client frames: `MSG_BURST` at once, then `MSG_RATE` a second.
+pub(super) fn frame_bucket(now: Instant) -> Single {
+    let policy = Policy::Tokens {
+        burst: MSG_BURST,
+        per_sec: MSG_RATE,
+    };
+    Single::new(policy, now.into_std())
+}
+
+// Whether a client frame is read, dropped (`Some(false)`), or ends a connection that kept
+// sending past a second burst (`None`).
+pub(super) fn admit_frame(frames: &mut Single, now: Instant) -> Option<bool> {
+    match frames.spend(1.0, now.into_std()) {
+        left if left >= 0.0 => Some(true),
+        left if left < -MSG_BURST => None,
+        _ => Some(false),
+    }
+}
+
 struct Listening {
     hub: Hub,
     conn: u64,
@@ -278,7 +298,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
     let (sink, mut stream) = socket.split();
     let out = Out::spawn(sink);
     let mut through = 0;
-    let mut bucket = Bucket::new();
+    let mut frames = frame_bucket(Instant::now());
     let mut typer = Typer::new();
     let mut voice = VoiceWait::default();
     let mut ping = tokio::time::interval_at(Instant::now() + PING_EVERY, PING_EVERY);
@@ -357,7 +377,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
             msg = stream.next() => {
                 heard = Instant::now();
                 if matches!(msg, Some(Ok(Frame::Text(_)))) {
-                    match bucket.take(heard) {
+                    match admit_frame(&mut frames, heard) {
                         Some(true) => {}
                         Some(false) => continue,
                         None => {

@@ -184,19 +184,23 @@ async fn typing_follows_the_send_gate() {
             .is_empty()
     );
     assert!(typer.stop(user).is_none());
-    typer.bucket.tokens = 0.0;
+    typer.bucket.set_remaining(0.0, std::time::Instant::now());
     assert!(
         typer
             .command(db, user, format!("d{dm}"), true)
             .await
             .is_empty()
     );
-    typer.bucket.tokens = TYPING_BURST;
+    typer
+        .bucket
+        .set_remaining(TYPING_BURST, std::time::Instant::now());
     assert_eq!(
         typer.command(db, user, format!("d{dm}"), true).await.len(),
         1
     );
-    typer.bucket.tokens = -TYPING_BURST;
+    typer
+        .bucket
+        .set_remaining(-TYPING_BURST, std::time::Instant::now());
     let paced = typer.command(db, user, format!("d{dm}"), false).await;
     assert!(matches!(
         paced.as_slice(),
@@ -206,9 +210,11 @@ async fn typing_follows_the_send_gate() {
         typer.command(db, user, format!("d{dm}"), true).await.len(),
         0
     );
-    typer.bucket.tokens = TYPING_BURST;
+    typer
+        .bucket
+        .set_remaining(TYPING_BURST, std::time::Instant::now());
     typer.command(db, user, format!("d{dm}"), true).await;
-    assert!(typer.bucket.tokens >= 0.0);
+    assert!(typer.bucket.remaining(std::time::Instant::now()) >= 0.0);
     assert!(matches!(
         typer.stop(user),
         Some(WsEvent::Typing { until: 0, .. })
@@ -219,7 +225,7 @@ async fn typing_follows_the_send_gate() {
             .command(db, user, format!("c{}", chat + i + 100), true)
             .await;
     }
-    assert!(flood.bucket.tokens >= -TYPING_BURST);
+    assert!(flood.bucket.remaining(std::time::Instant::now()) >= -TYPING_BURST);
     let mut canon = Typer::new();
     let first = canon.command(db, user, format!("c+{chat}"), true).await;
     assert!(matches!(

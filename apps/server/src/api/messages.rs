@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use axum::Json;
 use axum::extract::{Path, Query, RawQuery, State};
@@ -15,7 +16,7 @@ use crate::api::access::{
 };
 use crate::api::admin::like_pattern;
 use crate::api::audit;
-use crate::api::budget::{Budget, slow_down};
+use crate::api::budget::slow_down;
 use crate::api::pings::{
     GroupMention, GroupPing, PingScope, ScopePings, SeenScope, ThreadPings, announce_counts,
     group_mentions, group_unseen, mark_seen, parse_group_mentions, ping_message, pinged_by,
@@ -32,6 +33,7 @@ use crate::db::{
     Db, LIVE_AUTHOR, MediaKind, Tokenizer, User, has_channel_index, has_fts, is_sqlite, now,
     pool_key, touch_interaction,
 };
+use crate::limits::bucket::{Keyed, Policy};
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 
@@ -1909,10 +1911,12 @@ pub(crate) async fn message_location(
 pub(crate) const LOCATE_BATCH_MAX: usize = 50;
 pub(crate) const LOCATE_BATCHES_PER_MINUTE: u32 = 60;
 
-static LOCATE_BATCHES: std::sync::LazyLock<Budget> = std::sync::LazyLock::new(|| {
-    Budget::new(
-        LOCATE_BATCHES_PER_MINUTE,
-        std::time::Duration::from_secs(60),
+static LOCATE_BATCHES: std::sync::LazyLock<Keyed> = std::sync::LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: LOCATE_BATCHES_PER_MINUTE,
+            window: std::time::Duration::from_secs(60),
+        },
         100_000,
     )
 });
@@ -1973,7 +1977,11 @@ pub(crate) async fn locations(
         (None, Some(ip)) => format!("g:{}", crate::api::budget::group(ip)),
         (None, None) => "g:".to_string(),
     };
-    if !LOCATE_BATCHES.take(&format!("{}\n{caller}", pool_key(&state.db))) {
+    if !LOCATE_BATCHES.take(
+        &format!("{}\n{caller}", pool_key(&state.db)),
+        1.0,
+        Instant::now(),
+    ) {
         return Err(slow_down());
     }
     let mut seen = std::collections::HashSet::with_capacity(ids.len());
@@ -3985,10 +3993,12 @@ pub(crate) async fn read_dm_latest(state: &AppState, user: &User, id: i64) -> Re
 pub(crate) const READ_BATCH_MAX: usize = 200;
 pub(crate) const READ_BATCHES_PER_MINUTE: u32 = 30;
 
-static READ_BATCHES: std::sync::LazyLock<Budget> = std::sync::LazyLock::new(|| {
-    Budget::new(
-        READ_BATCHES_PER_MINUTE,
-        std::time::Duration::from_secs(60),
+static READ_BATCHES: std::sync::LazyLock<Keyed> = std::sync::LazyLock::new(|| {
+    Keyed::new(
+        Policy::Window {
+            limit: READ_BATCHES_PER_MINUTE,
+            window: std::time::Duration::from_secs(60),
+        },
         100_000,
     )
 });
@@ -4029,7 +4039,11 @@ pub(crate) async fn mark_read_batch(
             targets.push((scope, target));
         }
     }
-    if !READ_BATCHES.take(&format!("{}\n{}", pool_key(&state.db), user.username)) {
+    if !READ_BATCHES.take(
+        &format!("{}\n{}", pool_key(&state.db), user.username),
+        1.0,
+        Instant::now(),
+    ) {
         return Err(slow_down());
     }
     for (scope, target) in targets {
