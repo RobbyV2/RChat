@@ -15,6 +15,7 @@ import {
   type SyntheticEvent,
 } from 'react'
 import { X, type LucideIcon } from 'lucide-react'
+import { layerCovered, type EscapeLayer } from '../lib/escape_layers'
 import { maskOutsideCode, maskRuns } from '../lib/profanity'
 import { useMask, useStore } from '../lib/store'
 import { useChatSource } from './chat_source'
@@ -82,8 +83,6 @@ export function FieldError({ message, id }: { message: string | null; id?: strin
   )
 }
 
-type EscapeLayer = 'stage' | 'panel' | 'dialog' | 'confirm'
-
 // Each handler sees the store as it was at keydown. So a handler that runs after another closed
 // its layer still knows that the layer was covered.
 const pressed = new WeakMap<Event, ReturnType<typeof useStore.getState>>()
@@ -91,18 +90,7 @@ const pressed = new WeakMap<Event, ReturnType<typeof useStore.getState>>()
 const covered = (layer: EscapeLayer, e: Event) => {
   const s = pressed.get(e) ?? useStore.getState()
   pressed.set(e, s)
-  if (s.contextMenu) return true
-  if (layer === 'confirm') return false
-  if (s.confirm) return true
-  if (layer === 'dialog') return false
-  if (
-    s.activeDialog !== null ||
-    s.profile !== null ||
-    s.invite !== null ||
-    document.querySelector('[aria-modal="true"]') !== null
-  )
-    return true
-  return layer === 'stage' && s.panel !== null
+  return layerCovered(layer, s, () => document.querySelector('[aria-modal="true"]') !== null)
 }
 
 export function useEscape(onEscape: (e: KeyboardEvent) => void, layer: EscapeLayer = 'dialog') {
