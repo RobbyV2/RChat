@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
   FEATURE_KEYS,
-  FEATURE_ROWS,
-  NEW_ACCOUNTS,
   accountPrompt,
   createP2pGate,
   passwordSignup,
@@ -122,11 +120,6 @@ describe('feature switches', () => {
     expect(off.client_other_instances).toBe(false)
     const odd = siteSettings({ ...older, client_other_instances: 0 } as unknown as SiteSettings)
     expect(odd.client_other_instances).toBe(true)
-    expect(FEATURE_ROWS.find(r => r.key === 'client_other_instances')).toEqual({
-      key: 'client_other_instances',
-      label: "Other instances in this site's app",
-      line: "Lets people add other instances in this site's web app. Other apps ignore it.",
-    })
   })
 
   test('password sign-up needs open registration and password sign-in', () => {
@@ -145,31 +138,9 @@ describe('feature switches', () => {
     expect(accountPrompt({ ...s, password_login: false })).toBe('Log in')
   })
 
-  test('the Features section lists every switch once with one plain line', () => {
+  test('the feature keys are the switches', () => {
     const switches: string[] = [...FEATURE_KEYS]
     expect(switches.sort()).toEqual([...SWITCHES].sort())
-    const keys = FEATURE_ROWS.map(r => r.key)
-    expect(new Set(keys).size).toBe(keys.length)
-    for (const key of [
-      ...SWITCHES,
-      'registration',
-      'profanity_filter',
-      'asset_previews',
-      'asset_uploads',
-      'p2p_attachments',
-      'guests_enabled',
-      'outgoing_webhooks',
-    ])
-      expect(keys).toContain(key)
-    for (const { label, line } of FEATURE_ROWS) {
-      expect(label.length).toBeGreaterThan(0)
-      expect(line.length).toBeLessThanOrEqual(80)
-      expect(line).not.toContain('\n')
-      expect(/[—–]/.test(label + line)).toBe(false)
-      expect(/rchat/i.test(label + line)).toBe(false)
-      expect(line.endsWith('.')).toBe(true)
-    }
-    expect(NEW_ACCOUNTS.map(o => o.value)).toEqual(['open', 'sso', 'closed'])
   })
 })
 

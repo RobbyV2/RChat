@@ -7,7 +7,7 @@ import { ruleSummary, type NotifyScope, type Rule } from '../lib/notify'
 import { useP2p } from '../lib/p2p/app'
 import { p2pOverride } from '../lib/p2p/alerts'
 import { displayName } from '../lib/p2p/contacts'
-import { SettingSwitch } from './admin_panel'
+import { SettingSwitch } from './settings_fields'
 import { Masked, sectionCls, textBtn } from './ui'
 
 interface Override {

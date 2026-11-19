@@ -17,7 +17,7 @@ import {
 } from '../../lib/p2p/user_limits'
 import { iceOffer } from '../../lib/ice'
 import { fmtSize } from '../../lib/bytes'
-import { SettingSwitch } from '../admin_panel'
+import { SettingSwitch } from '../settings_fields'
 import { dangerBtn, fieldCls, filledBtn, sectionCls, textBtn } from '../ui'
 import { DevicesSection } from './p2p_server_flows'
 import { MyCode } from './add_contact'

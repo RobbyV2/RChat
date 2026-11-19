@@ -17,7 +17,7 @@ import { ServerDialogs } from '../components/server_dialogs'
 import { FolderDialog } from '../components/folder_dialog'
 import { CategoryDialog } from '../components/category_dialog'
 import MemberSidebar from '../components/member_sidebar'
-import AdminPanel from '../components/admin_panel'
+import { AdminHost } from '../components/admin/admin_host'
 import ServerSettings, { ConfirmDialog } from '../components/server_settings'
 import AuditLogDialog from '../components/audit_log'
 import WebhooksDialog from '../components/webhooks_dialog'
@@ -191,12 +191,13 @@ export default function AppShell() {
   }, [p2pPanel])
 
   const paletteOpen = usePaletteUi(s => s.open)
+  const adminOpen = useStore(s => s.adminPage !== null)
   useEffect(() => {
-    if (dialog || confirming || paletteOpen) {
+    if (dialog || confirming || paletteOpen || adminOpen) {
       setLeftOpen(false)
       setRightOpen(false)
     }
-  }, [dialog, confirming, paletteOpen])
+  }, [dialog, confirming, paletteOpen, adminOpen])
 
   if (!me && !guest) {
     return (
@@ -301,6 +302,7 @@ export default function AppShell() {
             </div>
           </div>
         )}
+        <AdminHost />
         <ServerDialogs />
         <FolderDialog />
         <CategoryDialog />
@@ -311,7 +313,6 @@ export default function AppShell() {
         <WebhooksDialog />
         <TimeoutDialog />
         <SettingsMenu />
-        <AdminPanel />
         <ConfirmDialog />
         <InboxHost />
         <PaletteHost />

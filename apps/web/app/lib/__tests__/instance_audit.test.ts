@@ -118,3 +118,12 @@ test('the list of server creators holds names, so its values are marked', () => 
   expect(names(list)).toEqual(['root', 'bob,lobby:Staff'])
   expect(names(entry())).toEqual(['root'])
 })
+
+test('the default servers are server names, so their values are marked', () => {
+  const list = entry({
+    target: 'default_servers',
+    detail: { key: 'default_servers', from: 'rchat', to: 'rchat,lounge' },
+  })
+  expect(text(list)).toBe('root changed default_servers from rchat to rchat,lounge')
+  expect(names(list)).toEqual(['root', 'rchat', 'rchat,lounge'])
+})

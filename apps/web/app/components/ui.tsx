@@ -44,12 +44,15 @@ export function Chips<T extends string | number>({
   options,
   onChange,
   disabled,
+  touch = false,
 }: {
   label: string
   value: T
   options: readonly { value: T; label: string }[]
   onChange: (v: T) => void
   disabled?: boolean
+  // 44 px high on touch screens.
+  touch?: boolean
 }) {
   return (
     <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
@@ -62,6 +65,8 @@ export function Chips<T extends string | number>({
           disabled={disabled}
           onClick={() => onChange(o.value)}
           className={`cursor-pointer rounded-full border px-3 py-1.5 text-sm disabled:cursor-default disabled:opacity-50 ${
+            touch ? 'min-h-11 md:min-h-0' : ''
+          } ${
             value === o.value
               ? 'border-transparent bg-secondary-container text-on-secondary-container'
               : 'border-outline text-on-surface-variant hover:bg-surface-container-highest'

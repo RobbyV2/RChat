@@ -314,6 +314,7 @@ export function ServerRail() {
   const serversMore = useStore(s => s.serversMore)
   const loadMoreServers = useStore(s => s.loadMoreServers)
   const openDialog = useStore(s => s.openDialog)
+  const openAdmin = useStore(s => s.openAdmin)
   const logout = useStore(s => s.logout)
   const saved = useStore(s => s.layout.servers)
   const p2pHome = useP2p(s => s.home || s.server !== null)
@@ -407,7 +408,8 @@ export function ServerRail() {
         {me?.is_site_admin && (
           <button
             title="Site administration"
-            onClick={() => openDialog({ kind: 'admin_panel' })}
+            aria-label="Site administration"
+            onClick={() => openAdmin()}
             className={iconBtn}
           >
             <Shield size={20} />

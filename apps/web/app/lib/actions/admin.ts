@@ -1,6 +1,6 @@
 // Site admin actions. They show only in the hidden site admin's own session.
 
-import { KeyRound } from 'lucide-react'
+import { KeyRound, Shield } from 'lucide-react'
 import { useStore } from '../store'
 import { isNotice } from '../system_messages'
 import type { UserRef } from '../types'
@@ -27,6 +27,15 @@ const banned = ({ s, target }: ActionCtx): UserRef | null => {
 }
 
 export const adminActions: Action[] = [
+  {
+    id: 'open_site_admin',
+    title: 'Open site administration',
+    scope: 'admin',
+    icon: Shield,
+    keywords: ['admin', 'features', 'users', 'servers', 'audit'],
+    available: ({ s }) => signedIn(s) && s.me?.is_site_admin === true,
+    run: () => useStore.getState().openAdmin(),
+  },
   {
     id: 'admin_ban_site_wide',
     title: 'Ban site-wide',

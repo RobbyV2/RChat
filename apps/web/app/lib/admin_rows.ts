@@ -1,0 +1,415 @@
+// The rows of the site administration page's Features section: every control the page changes,
+// with the name of its setting in the server config.
+
+import type { SearchRow } from './settings_search'
+import type { SiteSettings } from './types'
+
+export const ADMIN_GROUPS = [
+  'Accounts',
+  'Servers',
+  'Privacy',
+  'Messages and files',
+  'Calls',
+  'P2P',
+  'Safety',
+  'Widgets',
+  'Encryption',
+  "This site's app",
+] as const
+
+export type AdminGroup = (typeof ADMIN_GROUPS)[number]
+
+export interface RowOption {
+  value: string
+  label: string
+  // What choosing it means.
+  line?: string
+}
+
+interface Base {
+  // The setting's name in the settings and in the server's list of controls.
+  key: string
+  env: string
+  group: AdminGroup
+  label: string
+  line: string
+  // The key of the row it sits under.
+  under?: string
+  keywords?: string[]
+}
+
+export type AdminRow =
+  | (Base & {
+      kind: 'switch'
+      // What off means, shown while it is off.
+      off?: string
+    })
+  | (Base & {
+      kind: 'choice'
+      options: RowOption[]
+      // A list with each option's line, instead of chips.
+      list?: boolean
+      // Shown under the choices.
+      note?: string
+    })
+  | (Base & { kind: 'number'; min: number; max: number; unit: string })
+  | (Base & { kind: 'targets' })
+
+export const ADMIN_ROWS: AdminRow[] = [
+  {
+    key: 'registration',
+    env: 'AUTH_REGISTRATION',
+    group: 'Accounts',
+    kind: 'choice',
+    list: true,
+    label: 'New accounts',
+    line: 'Who can sign up with a password.',
+    keywords: ['sign-up', 'signup', 'registration', 'register'],
+    options: [
+      { value: 'open', label: 'Open', line: 'Anyone can create an account.' },
+      {
+        value: 'sso',
+        label: 'Sign-on only',
+        line: 'Accounts come from your sign-in provider.',
+      },
+      { value: 'closed', label: 'Closed', line: 'Nobody can sign up.' },
+    ],
+  },
+  {
+    key: 'password_login',
+    env: 'AUTH_PASSWORD_LOGIN',
+    group: 'Accounts',
+    kind: 'switch',
+    label: 'Password sign-in',
+    line: 'Lets people sign in and sign up with a password.',
+    off: 'No new passwords. Existing ones still work.',
+    keywords: ['login', 'log in'],
+  },
+  {
+    key: 'guests_enabled',
+    env: 'GUESTS_ENABLED',
+    group: 'Accounts',
+    kind: 'switch',
+    label: 'Guests',
+    line: 'Lets people read servers without an account.',
+    off: "Guests can't read anything. Their pages show sign-in.",
+  },
+  {
+    key: 'display_names',
+    env: 'FEATURE_DISPLAY_NAMES',
+    group: 'Accounts',
+    kind: 'switch',
+    label: 'Display names',
+    line: 'Lets people change their display name.',
+    off: 'Display names stay as they are.',
+  },
+  {
+    key: 'onboarding',
+    env: 'FEATURE_ONBOARDING',
+    group: 'Accounts',
+    kind: 'switch',
+    label: 'Onboarding',
+    line: 'Shows new accounts a short tour.',
+  },
+  {
+    key: 'backup_phrase',
+    env: 'FEATURE_BACKUP_PHRASE',
+    group: 'Accounts',
+    kind: 'switch',
+    label: 'Backup phrase',
+    line: 'Lets people set or reset a backup phrase.',
+    off: 'Existing phrases still work.',
+    keywords: ['recovery'],
+  },
+  {
+    key: 'server_joining',
+    env: 'SERVER_JOINING',
+    group: 'Servers',
+    kind: 'choice',
+    label: 'How people join servers',
+    line: 'Members stay whatever you choose, and leaving works.',
+    keywords: ['invite', 'private'],
+    options: [
+      { value: 'everyone', label: 'Everyone', line: 'Anyone can join a server by its name.' },
+      {
+        value: 'invites',
+        label: 'Only with an invite or password',
+        line: "Servers can't be opened or joined by name alone.",
+      },
+      {
+        value: 'nobody',
+        label: 'Nobody',
+        line: 'Only members can open servers. Nobody new can join.',
+      },
+    ],
+  },
+  {
+    key: 'public_reading',
+    env: 'PUBLIC_READING',
+    group: 'Servers',
+    kind: 'switch',
+    label: 'Public reading',
+    line: "Lets a server's owner let people who aren't members read it.",
+    off: 'Only members read servers.',
+  },
+  {
+    key: 'profile_visibility',
+    env: 'PROFILE_VISIBILITY',
+    group: 'Privacy',
+    kind: 'choice',
+    list: true,
+    label: 'Who can see profiles',
+    line: 'Description, banner and account age.',
+    options: [
+      {
+        value: 'everyone',
+        label: 'Everyone',
+        line: 'Anyone who can use the app here sees every profile.',
+      },
+      {
+        value: 'public_servers',
+        label: 'People in public servers',
+        line: 'Profiles of people in a public server are open to all. Others show only to people who share a server with them.',
+      },
+      {
+        value: 'shared',
+        label: 'People who share a server',
+        line: 'A profile shows only to people who share a server, a DM or a friendship with that person.',
+      },
+    ],
+    note: 'Names next to messages and in member lists always show where people can read them.',
+  },
+  {
+    key: 'profile_choices',
+    env: 'PROFILE_CHOICES',
+    group: 'Privacy',
+    kind: 'choice',
+    list: true,
+    label: 'What accounts may choose',
+    line: 'For "Who can see your profile and find you by name" in their settings.',
+    options: [
+      {
+        value: 'any',
+        label: 'Anything',
+        line: 'Friends only, people who share a server, or everyone.',
+      },
+      {
+        value: 'narrower',
+        label: 'Only narrower',
+        line: 'Only choices that show the profile to fewer people than the site does.',
+      },
+      { value: 'site', label: 'Nothing', line: 'Every account follows the site.' },
+    ],
+  },
+  {
+    key: 'asset_uploads',
+    env: 'FEATURE_FILE_UPLOADS',
+    group: 'Messages and files',
+    kind: 'switch',
+    label: 'File uploads',
+    line: 'Lets people upload files to this instance.',
+    off: 'Files already uploaded stay.',
+    keywords: ['attachments'],
+  },
+  {
+    key: 'upload_expiry_max_days',
+    env: 'UPLOAD_EXPIRY_MAX_DAYS',
+    group: 'Messages and files',
+    kind: 'number',
+    under: 'asset_uploads',
+    min: 0,
+    max: 365,
+    unit: 'days',
+    label: 'Longest file expiry',
+    line: 'Days a server may keep uploaded files, 1 to 365. 0: no limit, and servers may keep files until they are removed.',
+  },
+  {
+    key: 'p2p_attachments',
+    env: 'P2P_ATTACHMENTS',
+    group: 'Messages and files',
+    kind: 'switch',
+    label: 'P2P attachments',
+    line: "Files stay in the sender's browser, with no size limit.",
+  },
+  {
+    key: 'asset_previews',
+    env: 'FEATURE_LINK_PREVIEWS',
+    group: 'Messages and files',
+    kind: 'switch',
+    label: 'Link previews',
+    line: 'Shows a preview of links in messages.',
+    keywords: ['embeds'],
+  },
+  {
+    key: 'outgoing_webhooks',
+    env: 'OUTGOING_WEBHOOKS',
+    group: 'Messages and files',
+    kind: 'switch',
+    label: 'Outgoing webhooks',
+    line: 'Lets server managers send events to URLs they choose.',
+  },
+  {
+    key: 'sfu',
+    env: 'FEATURE_SFU',
+    group: 'Calls',
+    kind: 'switch',
+    label: 'Media server',
+    line: 'Sends calls through the media server when it runs.',
+    keywords: ['sfu'],
+  },
+  {
+    key: 'p2p',
+    env: 'FEATURE_P2P',
+    group: 'P2P',
+    kind: 'switch',
+    label: 'Peer-to-peer',
+    line: 'Shows P2P servers and conversations in the app.',
+    off: 'The app hides P2P. Data stays on devices.',
+  },
+  {
+    key: 'p2p_backup',
+    env: 'FEATURE_P2P_BACKUP',
+    group: 'P2P',
+    kind: 'switch',
+    label: 'P2P backups',
+    line: 'Lets people store P2P backups here.',
+    off: 'No new backups. Restores always work.',
+  },
+  {
+    key: 'profanity_filter',
+    env: 'PROFANITY_FILTER',
+    group: 'Safety',
+    kind: 'switch',
+    label: 'Profanity filter',
+    line: 'Blocks profanity in what people post.',
+  },
+  {
+    key: 'profanity_targets',
+    env: 'PROFANITY_TARGETS',
+    group: 'Safety',
+    kind: 'targets',
+    under: 'profanity_filter',
+    label: 'Profanity filter applies to',
+    line: 'What the filter checks while it is on.',
+  },
+  {
+    key: 'profanity_strict_file_names',
+    env: 'PROFANITY_STRICT_FILE_NAMES',
+    group: 'Safety',
+    kind: 'switch',
+    under: 'profanity_filter',
+    label: 'Strict file names',
+    line: 'Also checks file names and the paths of links like messages, extension included. Only while the filter checks file names.',
+  },
+  {
+    key: 'server_reports',
+    env: 'FEATURE_SERVER_REPORTS',
+    group: 'Safety',
+    kind: 'switch',
+    label: 'Server reports',
+    line: "Lets people report to a server's moderators.",
+  },
+  {
+    key: 'instance_reports',
+    env: 'FEATURE_INSTANCE_REPORTS',
+    group: 'Safety',
+    kind: 'switch',
+    label: 'Instance reports',
+    line: 'Lets people report to this instance.',
+  },
+  {
+    key: 'widgets',
+    env: 'WIDGETS',
+    group: 'Widgets',
+    kind: 'switch',
+    label: 'Widgets',
+    line: 'Lets servers embed their chat on other sites.',
+  },
+  {
+    key: 'widget_chat',
+    env: 'FEATURE_WIDGET_CHAT',
+    group: 'Widgets',
+    kind: 'switch',
+    label: 'Widget chat',
+    line: 'Lets widget visitors send messages and quick join.',
+  },
+  {
+    key: 'widget_read_links',
+    env: 'FEATURE_WIDGET_READ_LINKS',
+    group: 'Widgets',
+    kind: 'switch',
+    label: 'Widget read links',
+    line: 'Lets read-only widget links work.',
+  },
+  {
+    key: 'widget_bridge',
+    env: 'WIDGET_BRIDGE',
+    group: 'Widgets',
+    kind: 'switch',
+    label: 'Widget bridge',
+    line: 'Serves widgets for P2P servers through a bridge.',
+  },
+  {
+    key: 'e2ee',
+    env: 'E2EE',
+    group: 'Encryption',
+    kind: 'switch',
+    label: 'Encryption',
+    line: 'Lets servers and DMs turn on end-to-end encryption.',
+    keywords: ['e2ee'],
+  },
+  {
+    key: 'e2ee_compliance',
+    env: 'E2EE_COMPLIANCE',
+    group: 'Encryption',
+    kind: 'switch',
+    label: 'Encryption archive',
+    line: 'Adds a compliance archive to new encrypted spaces.',
+  },
+  {
+    key: 'client_other_instances',
+    env: 'FEATURE_CLIENT_OTHER_INSTANCES',
+    group: "This site's app",
+    kind: 'switch',
+    label: "Other instances in this site's app",
+    line: "Lets people add other instances in this site's web app. Other apps ignore it.",
+  },
+]
+
+export const adminRow = (key: string) => ADMIN_ROWS.find(r => r.key === key)
+
+// The rows of a group that stand on their own, in order.
+export const groupRows = (group: AdminGroup) =>
+  ADMIN_ROWS.filter(r => r.group === group && r.under === undefined)
+
+// The rows that sit under `key`.
+export const rowsUnder = (key: string) => ADMIN_ROWS.filter(r => r.under === key)
+
+// What search finds in the Features section.
+export const featureSearchRows = (): SearchRow[] =>
+  ADMIN_ROWS.map(r => ({
+    section: 'features',
+    group: r.group,
+    id: r.key,
+    label: r.label,
+    line: [r.line, ...(r.kind === 'choice' ? r.options.map(o => o.label) : [])].join(' '),
+    keywords: r.keywords,
+    env: r.env,
+  }))
+
+// The options of the New accounts row: sign-on only shows only while it is the stored value,
+// since no sign-in provider can be set up.
+export const registrationOptions = (stored: SiteSettings['registration']): RowOption[] => {
+  const row = adminRow('registration')
+  const options = row?.kind === 'choice' ? row.options : []
+  return options.flatMap(o => {
+    if (o.value !== 'sso') return [o]
+    return stored === 'sso'
+      ? [{ ...o, line: 'No sign-in provider is set up, so nobody can sign up.' }]
+      : []
+  })
+}
+
+// A setting's value as a row's control reads it.
+export const settingOf = (settings: SiteSettings, key: string): unknown =>
+  (settings as unknown as Record<string, unknown>)[key]

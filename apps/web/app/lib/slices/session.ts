@@ -76,7 +76,7 @@ import type {
   WsEvent,
 } from '../types'
 import { hideTypers } from '../typing'
-import { type Nav, type View, parsePath, threadKey, viewKey, viewPath } from '../view'
+import { type Nav, type View, adminPath, parsePath, threadKey, viewKey, viewPath } from '../view'
 import { SELF_AUDIO_IDLE } from '../voice_layout'
 import { trimWindow } from '../window'
 import {
@@ -999,8 +999,35 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   const atHome = () => window.location.pathname === viewPath(null)
 
+  // The history entry of the open admin page: how many entries the page has pushed, and the
+  // address it was opened over, when it was opened from inside the app.
+  const adminEntry = (): { depth: number; from: string | null } => {
+    const held = (window.history.state as { rchatAdmin?: unknown } | null)?.rchatAdmin
+    const { depth, from } = (typeof held === 'object' && held !== null ? held : {}) as {
+      depth?: unknown
+      from?: unknown
+    }
+    return typeof depth === 'number' && depth > 0 && typeof from === 'string'
+      ? { depth, from }
+      : { depth: 0, from: null }
+  }
+
+  const hashRow = () => {
+    try {
+      return decodeURIComponent((window.location.hash ?? '').slice(1)) || null
+    } catch {
+      return null
+    }
+  }
+
+  // While the admin page is open the address is its own: only going somewhere on purpose
+  // (a push) leaves it.
   const syncUrl = (view: View | null, nav: Nav) => {
     leaveInvite()
+    if (get().adminPage) {
+      if (nav !== 'push') return
+      set({ adminPage: null })
+    }
     if (nav === 'none') return
     const path = viewPath(view)
     if (window.location.pathname === path) return
@@ -1013,7 +1040,15 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     if (readInvite() || readConfigLink() || (!get().me && !get().guest)) return
     const at = sessionMark()
     const ended = () => at !== sessionMark()
-    const target = parsePath(window.location.pathname)
+    const parsed = parsePath(window.location.pathname)
+    // Only the site admin has admin paths. For everyone else they are paths nobody knows.
+    if (parsed?.kind === 'admin' && get().me?.is_site_admin === true) {
+      set({ adminPage: { section: parsed.section, item: parsed.item, row: hashRow() } })
+      if (!get().view && !get().home) set({ home: true })
+      return
+    }
+    if (get().adminPage) set({ adminPage: null })
+    const target = parsed?.kind === 'admin' ? null : parsed
     const fallback = async () => {
       await readsHub.ready()
       if (ended()) return
@@ -1194,6 +1229,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'changePassword'
     | 'bootstrap'
     | 'syncFromUrl'
+    | 'openAdmin'
+    | 'closeAdmin'
     | 'register'
     | 'login'
     | 'logout'
@@ -1411,6 +1448,44 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     syncFromUrl: nav => resolveUrl(nav),
 
+    openAdmin: (section = null, item = null, row = null) => {
+      if (!get().me?.is_site_admin) return
+      const open = get().adminPage !== null
+      const entry = adminEntry()
+      const path = adminPath(section, item)
+      const url = row === null ? path : `${path}#${encodeURIComponent(row)}`
+      leaveInvite()
+      if (open && window.location.pathname === path)
+        window.history.replaceState(window.history.state, '', url)
+      else if (open)
+        window.history.pushState(
+          { rchatAdmin: entry.from === null ? null : { depth: entry.depth + 1, from: entry.from } },
+          '',
+          url
+        )
+      else
+        window.history.pushState(
+          { rchatAdmin: { depth: 1, from: window.location.pathname } },
+          '',
+          url
+        )
+      set(
+        open
+          ? { adminPage: { section, item, row } }
+          : { adminPage: { section, item, row }, activeDialog: null }
+      )
+    },
+
+    closeAdmin: () => {
+      if (!get().adminPage) return
+      const { depth, from } = adminEntry()
+      const view = get().view
+      if (from !== null && from === viewPath(view)) return window.history.go(-depth)
+      set({ adminPage: null })
+      window.history.replaceState(null, '', viewPath(view))
+      if (!view) set({ home: true })
+    },
+
     register: async body => {
       try {
         enter(await authRequest('/auth/register', body))
@@ -1536,6 +1611,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         bootError: null,
         search: emptySearch(),
         adminOverview: null,
+        adminPage: null,
       })
     },
 

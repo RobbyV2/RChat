@@ -33,8 +33,8 @@ const valuePart = (value: string, names: boolean): AuditPart => {
   return names ? { text, name: true } : { text }
 }
 
-// Settings whose values are usernames.
-const NAME_LISTS = new Set(['server_creators'])
+// Settings whose values are usernames or server names.
+const NAME_LISTS = new Set(['server_creators', 'default_servers'])
 
 // A changed setting: its key and, when the entry has them, the old and the new value.
 const settingLine = (e: InstanceAuditEntry): AuditPart[] => {
@@ -78,4 +78,59 @@ export const instanceAuditLine = (e: InstanceAuditEntry): AuditPart[] => {
         ? [{ text: ' a deleted user' }]
         : []
   return [actor, { text: ` ${known?.verb ?? e.action}` }, ...target]
+}
+
+// The kinds the audit list filters by.
+export const AUDIT_KINDS = [
+  { value: 'all', label: 'All' },
+  { value: 'settings', label: 'Settings' },
+  { value: 'accounts', label: 'Accounts' },
+  { value: 'servers', label: 'Servers' },
+  { value: 'sign_in', label: 'Sign-in' },
+] as const
+
+export type AuditKind = (typeof AUDIT_KINDS)[number]['value']
+
+const KIND_PREFIXES: [string, Exclude<AuditKind, 'all'>][] = [
+  ['settings.', 'settings'],
+  ['report_forms.', 'settings'],
+  ['user.', 'accounts'],
+  ['server.', 'servers'],
+  ['sso.', 'sign_in'],
+  ['auth.', 'sign_in'],
+]
+
+// The kind of an entry, from its action; null for an action of no listed kind.
+export const auditKind = (action: string): Exclude<AuditKind, 'all'> | null =>
+  KIND_PREFIXES.find(([prefix]) => action.startsWith(prefix))?.[1] ?? null
+
+const personOf = (person: string) => person.trim().replace(/^@+/, '').toLowerCase()
+
+// Whether an entry is of `kind` and its line names `person`: who did it, whom it was done to,
+// or a name in what changed.
+export const auditMatches = (e: InstanceAuditEntry, kind: AuditKind, person: string) => {
+  if (kind !== 'all' && auditKind(e.action) !== kind) return false
+  const name = personOf(person)
+  if (name === '') return true
+  return instanceAuditLine(e).some(p => p.name === true && p.text.toLowerCase().includes(name))
+}
+
+// Whether the filters leave out any entry.
+export const auditFiltered = (kind: AuditKind, person: string) =>
+  kind !== 'all' || personOf(person) !== ''
+
+// How many pages in a row without a match a filtered list loads before it waits to be asked.
+export const QUIET_PAGES = 3
+
+// Whether the list loads its next page by itself, after `quiet` pages in a row without a match.
+export const autoLoads = (filtered: boolean, quiet: number) => !filtered || quiet < QUIET_PAGES
+
+// How many of the last loaded pages, in a row, have no entry the filters keep.
+export const quietPages = (pages: InstanceAuditEntry[][], kind: AuditKind, person: string) => {
+  let quiet = 0
+  for (let i = pages.length - 1; i >= 0; i--) {
+    if (pages[i].some(e => auditMatches(e, kind, person))) break
+    quiet++
+  }
+  return quiet
 }

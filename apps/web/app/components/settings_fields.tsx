@@ -1,13 +1,61 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { SLOWMODE_MAX } from '../lib/rules'
 import { CUSTOM, SLOWMODE_PRESETS, customSeconds, isPreset, slowLabel } from '../lib/slowmode'
 import { restrictionItems, type RestrictKey } from '../lib/channel_access'
 import { fieldCls, textBtn } from './ui'
 
-// Settings controls shared by instance servers and P2P servers: permission checks, a role's color,
+// Settings controls shared across the app: an on or off row, permission checks, a role's color,
 // name and creation, slow mode, and a channel's restrictions. Callers pass their own actions.
+
+export function SettingSwitch({
+  label,
+  hint,
+  value,
+  onChange,
+  disabled = false,
+}: {
+  label: string
+  hint?: string
+  value: boolean
+  onChange: (value: boolean) => void
+  disabled?: boolean
+}) {
+  const hintId = useId()
+  return (
+    <button
+      role="switch"
+      aria-checked={value}
+      aria-label={label}
+      aria-describedby={hint ? hintId : undefined}
+      title={label}
+      disabled={disabled}
+      onClick={() => onChange(!value)}
+      className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-1.5 text-left enabled:hover:bg-surface-container disabled:opacity-50"
+    >
+      {hint ? (
+        <span className="flex min-w-0 flex-col">
+          <span className="text-sm">{label}</span>
+          <span id={hintId} className="text-xs text-on-surface-variant">
+            {hint}
+          </span>
+        </span>
+      ) : (
+        <span className="text-sm">{label}</span>
+      )}
+      <span
+        className={`flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition-colors ${
+          value
+            ? 'justify-end bg-primary'
+            : 'justify-start border border-outline bg-surface-container-highest'
+        }`}
+      >
+        <span className={`h-5 w-5 rounded-full ${value ? 'bg-on-primary' : 'bg-outline'}`} />
+      </span>
+    </button>
+  )
+}
 
 export const GRANT_NOTE = 'You can only give permissions you have.'
 

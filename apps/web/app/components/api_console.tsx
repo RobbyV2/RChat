@@ -26,7 +26,7 @@ import { holdEscape } from '../lib/palette_store'
 import { sharing } from '../lib/platform'
 import { sessionMark, useStore } from '../lib/store'
 import { CodeBlock } from './code_block'
-import { SettingSwitch } from './admin_panel'
+import { SettingSwitch } from './settings_fields'
 import { dangerBtn, filledBtn, filledDangerBtn, iconBtn, textBtn, useCopied } from './ui'
 import { useInstanceLabel } from './instance_badge'
 

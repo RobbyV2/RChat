@@ -60,7 +60,7 @@ import type {
   WsEvent,
   WsStatus,
 } from './types'
-import type { View, Nav } from './view'
+import type { AdminSection, View, Nav } from './view'
 import type { Timeout } from './timeouts'
 import type { TypingMap } from './typing'
 import type { SelfAudio } from './voice_layout'
@@ -115,13 +115,19 @@ export interface ConfirmRequest {
   choices?: ConfirmChoice[]
 }
 
+export interface AdminPlace {
+  section: AdminSection | null
+  item: string | null
+  // The row to scroll to.
+  row: string | null
+}
+
 export type ActiveDialog =
   | { kind: 'add_server'; join?: string; locked?: boolean; tab?: 'create' | 'join' }
   | { kind: 'server_settings'; server: string }
   | { kind: 'audit_log'; server: string }
   | { kind: 'webhooks'; server: string }
   | { kind: 'timeout'; server: string; user: UserRef }
-  | { kind: 'admin_panel' }
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }
   | { kind: 'remove_phrase_confirm'; username: string }
@@ -346,6 +352,9 @@ export interface RChatState {
   search: SearchState
   error: string | null
   adminOverview: AdminOverview | null
+  // The open place of the site administration page; null while it is closed. Only the site
+  // admin's session ever sets it.
+  adminPage: AdminPlace | null
   settings: SiteSettings
   instance: InstanceInfo | null
   instanceHost: string
@@ -370,6 +379,10 @@ export interface RChatState {
   changePassword: (current: Secret, next: Secret, kind: PassKind) => Promise<string | null>
   refreshAccount: () => Promise<void>
   syncFromUrl: (nav: 'replace' | 'none') => Promise<void>
+  // Opens the site administration page at a section, one of its accounts or servers, or a row.
+  openAdmin: (section?: AdminSection | null, item?: string | null, row?: string | null) => void
+  // Goes back to where the page was opened from, or home.
+  closeAdmin: () => void
   register: (body: RegisterRequest) => Promise<SignupFailure | null>
   login: (body: LoginRequest) => Promise<void>
   logout: () => void

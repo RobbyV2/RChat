@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { desktopInfo, inShell } from '../lib/platform'
 import { shell, shellError, type FoundUpdate, type ShellSettings } from '../lib/platform/desktop'
-import { SettingSwitch } from './admin_panel'
+import { SettingSwitch } from './settings_fields'
 import { filledBtn, sectionCls, textBtn } from './ui'
 
 type Check =

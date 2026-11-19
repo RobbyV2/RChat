@@ -444,6 +444,7 @@ export const useStore = create<RChatState>()((set, get) => {
     search: emptySearch(),
     error: null,
     adminOverview: null,
+    adminPage: null,
     settings: {
       profanity_filter: false,
       profanity_targets: {

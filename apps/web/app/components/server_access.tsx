@@ -52,7 +52,7 @@ import type {
   ServerPasswords,
 } from '../lib/types'
 import { WITH_OPTION, keepGuestsChoices } from './server_settings'
-import { SettingSwitch } from './admin_panel'
+import { SettingSwitch } from './settings_fields'
 import { GUEST_VOICE_OFF, GUEST_VOICE_ON } from '../lib/guest_voice'
 import {
   Chips,

@@ -58,6 +58,18 @@ export function PageRow({
   )
 }
 
+// A titled group of rows in a section.
+export function PageGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <section aria-label={label} className="pb-5">
+      <h2 className="pb-2 text-xs font-medium tracking-wide text-on-surface-variant uppercase">
+        {label}
+      </h2>
+      <div className="space-y-1">{children}</div>
+    </section>
+  )
+}
+
 function SearchField({
   query,
   setQuery,
@@ -95,7 +107,7 @@ function SearchField({
           title="Clear search"
           aria-label="Clear search"
           onClick={() => setQuery('')}
-          className="-mr-1.5 shrink-0 rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-high"
+          className="-mr-2.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high md:-mr-1.5 md:h-7 md:w-7"
         >
           <X size={16} />
         </button>
@@ -141,6 +153,7 @@ export function SettingsPage({
   onClose,
   onBack,
   heading,
+  headingName = false,
   row = null,
   summary,
   search = true,
@@ -155,6 +168,8 @@ export function SettingsPage({
   onBack?: () => void
   // The name of what the section shows, when it is one item of it.
   heading?: string
+  // Whether `heading` is a username or a server name.
+  headingName?: boolean
   // The row to scroll to and flash.
   row?: string | null
   // Shown above the list of sections on narrow screens.
@@ -392,7 +407,9 @@ export function SettingsPage({
           >
             <ArrowLeft size={20} />
           </button>
-          <span className="min-w-0 flex-1 truncate px-1 font-medium">
+          <span
+            className={`min-w-0 flex-1 truncate px-1 font-medium ${heading !== undefined && headingName ? 'streamer' : ''}`}
+          >
             {heading ?? section?.label}
           </span>
           {searchButton}
@@ -407,7 +424,9 @@ export function SettingsPage({
           />
         )}
         <div className="hidden shrink-0 items-center gap-3 px-10 pt-6 pb-2 md:flex">
-          <h1 className="min-w-0 flex-1 truncate text-xl font-medium">
+          <h1
+            className={`min-w-0 flex-1 truncate text-xl font-medium ${heading !== undefined && headingName ? 'streamer' : ''}`}
+          >
             {heading ?? section?.label}
           </h1>
           <button

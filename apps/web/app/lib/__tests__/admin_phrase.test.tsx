@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import AdminPanel from '../../components/admin_panel'
+import AdminDialogs from '../../components/admin/dialogs'
+import { UserPage } from '../../components/admin/users'
 import { ctxFor, paletteCtx } from '../actions/ctx'
 import { menuItems } from '../actions/menu'
 import { paletteCommands } from '../actions/palette'
@@ -55,25 +56,29 @@ test('audit lines name who did what to whom, and mark names', () => {
   expect(text(entry({ action: 'sso.config', target: 'okta' }))).toBe('root sso.config okta')
 })
 
-const render = (part: Partial<typeof initial>) => {
+const signIn = (part: Partial<typeof initial>) =>
   Object.assign(initial, {
     token: 'tok',
     me: me('root', { is_site_admin: true }),
     adminUsers: paged([user('root'), user('bob', { display_name: 'Bobby' })]),
     ...part,
   })
-  return renderToStaticMarkup(<AdminPanel />)
+
+const render = (part: Partial<typeof initial>) => {
+  signIn(part)
+  return renderToStaticMarkup(<AdminDialogs />)
 }
 
-test('the admin user rows offer to remove a backup phrase, except their own', () => {
-  const html = render({ activeDialog: { kind: 'admin_panel' } })
-  expect(html.match(/Remove backup phrase/g)?.length).toBe(1)
-  expect(html).toContain('Audit log')
-  const other = render({
-    activeDialog: { kind: 'admin_panel' },
-    me: me('alice', { is_site_admin: false }),
-  })
-  expect(other).toBe('')
+test('an account page offers to remove a backup phrase, except on their own', () => {
+  signIn({})
+  const bob = renderToStaticMarkup(<UserPage username="bob" />)
+  expect(bob.match(/Remove backup phrase/g)?.length).toBe(1)
+  expect(bob).toContain('Ban site-wide')
+  expect(bob).toContain('Delete account')
+  expect(bob).toContain('Bobby')
+  const own = renderToStaticMarkup(<UserPage username="root" />)
+  expect(own).not.toContain('Remove backup phrase')
+  expect(own).not.toContain('Ban site-wide')
 })
 
 test('the confirm dialog says it only removes a way back in', () => {

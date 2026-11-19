@@ -15,7 +15,7 @@ import {
   type RelayChoice,
   type RelayPrefs,
 } from '../lib/relays'
-import { SettingSwitch } from './admin_panel'
+import { SettingSwitch } from './settings_fields'
 import { Dialog, FieldError, fieldCls, filledBtn, iconBtn, sectionCls, textBtn } from './ui'
 
 const relayLabel = (url: string) => displayHost(hostOf(url) ?? url)
