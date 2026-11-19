@@ -204,7 +204,7 @@ fn clean_reason(reason: Option<String>) -> Result<Option<String>, ApiError> {
         (status = 403, description = "Missing the Timeout members permission, or the member's server permissions are not a strict subset of yours", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not a member (`Not a member`)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -294,7 +294,7 @@ pub(crate) async fn set_timeout(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Timeout members permission, or the user's server permissions are not a strict subset of yours", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]

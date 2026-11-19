@@ -13,22 +13,16 @@ use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 
 type ProxyClient = Client<HttpConnector, Body>;
-use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
-
 use crate::config::AppConfig;
-use crate::limits::Limits;
+use crate::limits::{Limits, http};
 use crate::peerjs::Peers;
 use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
 
+/// `router` behind a general bucket of its own (`RATE_LIMIT_BURST`, `RATE_LIMIT_PER_SECOND`).
 fn limited(router: Router, key: ClientIp, limits: &Limits) -> Router {
-    let governor_conf = GovernorConfigBuilder::default()
-        .per_millisecond((1000 / limits.rate_limit_per_second.max(1)).max(1))
-        .burst_size(limits.rate_limit_burst)
-        .key_extractor(key)
-        .finish()
-        .expect("invalid rate limit config");
-    router.layer(GovernorLayer::new(governor_conf))
+    let bucket = http::bucket(limits.rate_limit_burst, limits.rate_limit_per_second);
+    router.layer(http::layer(bucket, key))
 }
 
 /// The API versions this server serves, each under `/api/<version>`.

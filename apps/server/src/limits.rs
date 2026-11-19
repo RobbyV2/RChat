@@ -10,6 +10,7 @@ use crate::hub::{
 use crate::relay::{DEFAULT_TOTAL_KIB_PER_SEC, DEFAULT_USER_ALLOCATIONS, DEFAULT_USER_KIB_PER_SEC};
 
 pub mod bucket;
+pub mod http;
 
 const MIB: usize = 1024 * 1024;
 

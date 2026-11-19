@@ -299,7 +299,7 @@ pub(crate) async fn export_in(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`Missing permission`: a member without Manage reports. Or banned from the server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "`Too many exports. Try again later.` with a `Retry-After` header (JSON): more than 10 exports this hour. Or too many requests in the strict bucket (plain text)", body = ApiErrorBody)
+        (status = 429, description = "`Too many exports. Try again later.` with a `Retry-After` header (JSON): more than 10 exports this hour. Or too many requests in the strict bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]

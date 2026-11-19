@@ -111,7 +111,7 @@ pub fn check_expiry(expires_in: i64) -> Result<(), ApiError> {
         (status = 400, description = "Not a config string, larger than 16384 bytes, an expiry that is not one of the choices, or already 20 active links. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token (guests cannot share)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -168,7 +168,7 @@ pub(crate) async fn create_share(
     responses(
         (status = 200, description = "Your active links", body = [ConfigShare]),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the strict bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -207,7 +207,7 @@ pub(crate) async fn list_shares(
     responses(
         (status = 200, description = "The config string", body = SharedConfig),
         (status = 404, description = "`Not found`: no such link, or it expired or was revoked (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the strict bucket", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -244,7 +244,7 @@ pub(crate) async fn get_share(
         (status = 200, description = "Revoked", body = OkResp),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such link of yours (identical for other accounts' links)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the strict bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the strict bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]

@@ -659,7 +659,7 @@ async fn manage(state: &AppState, user: &User, name: &str) -> Result<ServerAcces
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Delete server permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -723,7 +723,7 @@ pub(crate) async fn get_upload_expiry(
         (status = 403, description = "Missing the Delete server permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]

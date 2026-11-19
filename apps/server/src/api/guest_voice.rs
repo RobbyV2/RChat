@@ -125,7 +125,7 @@ async fn hush_at(state: &AppState, at: &OnGuest, guest: &str, muted: bool) -> Re
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or `Not found`: no guest of that name is in this server's voice, or you don't hold Kick in this server (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -171,7 +171,7 @@ async fn set_hushed(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or `Not found`: no guest of that name is in this server's voice, or you don't hold Timeout members in this server (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -199,7 +199,7 @@ pub(crate) async fn mute_guest(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or `Not found`: no guest of that name is in this server's voice, or you don't hold Timeout members in this server (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]

@@ -832,7 +832,7 @@ struct Raw {
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the View audit log permission, or banned from the server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, one you are not a member of, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]

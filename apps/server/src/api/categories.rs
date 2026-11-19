@@ -329,7 +329,7 @@ async fn clean_name(db: &Db, raw: &str) -> Result<String, ApiError> {
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -401,7 +401,7 @@ pub(crate) async fn create_category(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such category, one in a server you have no access to, or you lack the Manage channels permission there (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -472,7 +472,7 @@ pub(crate) async fn rename_category(
         (status = 400, description = "A non-integer `id` gives a plain-text 400", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such category, one in a server you have no access to, or you lack the Manage channels permission there (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -591,7 +591,7 @@ fn check_order(req: &LayoutReq, current: &ChannelLayout) -> Result<(), ApiError>
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 409, description = "`The channel list changed. Reload it and try again`: `version` is not the current layout version", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]

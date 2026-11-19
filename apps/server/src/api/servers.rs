@@ -859,7 +859,7 @@ pub(crate) async fn my_servers_by_names(
         (status = 200, description = "A page of the servers you joined, oldest membership first, or just the requested `names`", body = Vec<ServerSummary>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
         (status = 400, description = "Invalid cursor, or a non-integer `offset` or `limit`", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1286,7 +1286,7 @@ async fn members_page(
         (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `list` lookups, or with `suggest` its `typeahead` lookups. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `list` lookups, or with `suggest` its `typeahead` lookups. Or too many requests in the general bucket", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -1445,7 +1445,7 @@ pub struct MentionQuery {
         (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `typeahead` lookups. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `typeahead` lookups. Or too many requests in the general bucket", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -1598,7 +1598,7 @@ async fn seen_pairs(
         (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "The caller used up its list lookups, a newer request replaced this one, or no place is available. JSON with the reason `rate` and a `Retry-After` header. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
+        (status = 429, description = "The caller used up its list lookups, a newer request replaced this one, or no place is available. JSON with the reason `rate` and a `Retry-After` header. Or too many requests in the general bucket", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -1729,7 +1729,7 @@ async fn interacted_page(
         (status = 404, description = "`Not found`: the instance does not let this account create servers", body = ApiErrorBody),
         (status = 409, description = "That name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1900,7 +1900,7 @@ pub(crate) async fn found_for(
         (status = 401, description = "Guest access is disabled (no or unknown token)", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`; for password-protected servers only when you took part in the server before", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -1942,7 +1942,7 @@ pub(crate) async fn get_server(
         (status = 200, description = "Whether the name is free; `false` for every taken name, protected or not, and for names of deleted servers still being purged", body = ServerAvailable),
         (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter)", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket (plain text). Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket. Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1984,7 +1984,7 @@ pub(crate) async fn server_available(
         (status = 200, description = "Up to 10 servers without a password or that you are a member of, whose name or display name matches the query", body = Vec<ServerMatch>),
         (status = 401, description = "Guest access is disabled and no valid token was sent", body = ApiErrorBody),
         (status = 404, description = "`Not found`: server search is off on this instance", body = ApiErrorBody),
-        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `search` lookups. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its `search` lookups. Or too many requests in the general bucket", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -2068,7 +2068,7 @@ pub(crate) async fn search_servers(
         (status = 401, description = "`Password required`: no `password` was given and the name is not a server without a password (password-protected and nonexistent names answer identically). Also `Guest access is disabled` for guests without a valid token when guest access is off", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: the same body for a wrong password and for a name that does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the strict or the general bucket (plain text). Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords. `Too many guests use this password. Try again later` (JSON) when the password already has 2000 live guest grants, or 50 for your network. Grants made per address (20 an hour) and per network (60 an hour, across servers) are limited too, with `Too many attempts. Try again later`", content((ApiErrorBody = "application/json"), (String = "text/plain")))
+        (status = 429, description = "Too many requests in the strict or the general bucket. Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords. `Too many guests use this password. Try again later` (JSON) when the password already has 2000 live guest grants, or 50 for your network. Grants made per address (20 an hour) and per network (60 an hour, across servers) are limited too, with `Too many attempts. Try again later`", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -2293,7 +2293,7 @@ async fn invite_preview(
         (status = 401, description = "`Password required`: identical for password-protected servers you have not unlocked and for names that do not exist. Also `Guest access is disabled` when guest access is off and no valid token was sent", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`, only after access was proven (correct password, or you took part in the server before)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: identical for a wrong `X-Invite-Password` and for a name that does not exist", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the invite or the general bucket (plain text). Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
+        (status = 429, description = "Too many requests in the invite or the general bucket. Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -2466,7 +2466,7 @@ async fn insert_member(
         (status = 403, description = "`You are banned from this server`, only after access was proven", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: identical for a wrong password and for a name that does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the join or the general bucket (plain text). Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
+        (status = 429, description = "Too many requests in the join or the general bucket. Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -2562,7 +2562,7 @@ async fn end_membership(
         (status = 400, description = "Not a member", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -2632,7 +2632,7 @@ pub(crate) async fn leave_server(
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 409, description = "The new name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket (plain text), or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket, or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -3125,7 +3125,7 @@ async fn purge_members(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Delete server permission, or the server is the protected rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the general bucket", content((ApiErrorBody = "application/json"), (String = "text/plain")))
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -3165,7 +3165,7 @@ pub(crate) async fn delete_server(
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses). `Category not found`: `category_id` is not a category of this server", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -3297,7 +3297,7 @@ pub(crate) async fn create_channel(
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -3519,7 +3519,7 @@ pub(crate) async fn update_channel(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -3621,7 +3621,7 @@ pub(crate) async fn delete_channel(
         (status = 403, description = "Missing the Kick permission, or the member's server permissions are not a strict subset of yours", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -3692,7 +3692,7 @@ pub(crate) async fn kick_member(
         (status = 403, description = "Missing the Kick permission, or the user's server permissions are not a strict subset of yours", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "`Too many bans of people outside this server. Try again later.` with a `Retry-After` header (JSON, reason `rate`): a ban of someone who is not a member after the caller's misses for the hour (`LOOKUP_MISSES_PER_HOUR`). Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
+        (status = 429, description = "`Too many bans of people outside this server. Try again later.` with a `Retry-After` header (JSON, reason `rate`): a ban of someone who is not a member after the caller's misses for the hour (`LOOKUP_MISSES_PER_HOUR`). Or too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -3784,7 +3784,7 @@ pub(crate) async fn ban_member(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Kick permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not banned", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -3833,7 +3833,7 @@ pub(crate) async fn unban_member(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Kick permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -4005,7 +4005,7 @@ async fn set_admin(
         (status = 403, description = "Missing the Manage admins permission, or you don't hold every permission (`You can't grant permissions you don't have`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -4044,7 +4044,7 @@ pub(crate) async fn grant_admin(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage admins permission, or the admin's roles have permissions that neither their admin permissions nor yours include (`They hold roles with permissions you don't have, so revoking their admin would give them those`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not a member", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -4086,7 +4086,7 @@ pub(crate) async fn revoke_admin(
         (status = 403, description = "Missing the Manage admins permission; the target would get permissions you don't have (`You can't grant permissions you don't have`); or your own roles have permissions your admin permissions don't include, which you would gain by giving up admin", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -4189,7 +4189,7 @@ pub(crate) async fn transfer_admin(
         (status = 403, description = "Missing the Manage admins permission, or the change adds permissions and the new permissions include some you don't have (`You can't grant permissions you don't have`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the user is not an admin of it", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -4473,7 +4473,7 @@ fn check_color(color: &str) -> Result<(), ApiError> {
         (status = 403, description = "Missing the Manage admins permission, or the role's permissions include some you don't have (`You can't grant permissions you don't have`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -4577,7 +4577,7 @@ pub(crate) async fn create_role(
         (status = 403, description = "Nothing is saved. Missing the Manage admins permission; the role has permissions you don't have (`You can't change a role that has permissions you don't have`); another holder of the role does not have fewer permissions than you (`You can't change a role held by a member you can't moderate`); or the new permissions include some you don't have (`You can't grant permissions you don't have`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -4749,7 +4749,7 @@ pub(crate) async fn update_role(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage admins permission; the role has permissions you don't have (`You can't change a role that has permissions you don't have`); another holder of the role does not have fewer permissions than you (`You can't change a role held by a member you can't moderate`); or the role limits access to a channel and you lack Manage channels (`This role limits access to a channel, so deleting it would widen that access. That needs Manage channels`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -4842,7 +4842,7 @@ pub(crate) async fn delete_role(
         (status = 403, description = "Missing the Manage admins permission, the member does not have fewer permissions than you (`You can't moderate this member`), the role has permissions you don't have (`You can't grant permissions you don't have`), or its channel rules give access you don't have (`This role gives channel access you don't have`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it, or the user is not a member", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -4944,7 +4944,7 @@ pub(crate) async fn assign_role(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage admins permission, the member does not have fewer permissions than you (`You can't moderate this member`), or the role limits access to a channel and you lack Manage channels (`This role limits access to a channel, so removing it would widen that access. That needs Manage channels`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or the role does not exist in it, or the user does not hold the role", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -5120,7 +5120,7 @@ pub struct ChannelPermsQuery {
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -5186,7 +5186,7 @@ pub(crate) async fn list_channel_perms(
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses); or the subject's role does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -5298,7 +5298,7 @@ pub(crate) async fn set_channel_perm(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a password-protected server you have no access to (identical responses); or no rule for that subject", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]

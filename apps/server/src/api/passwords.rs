@@ -207,7 +207,7 @@ async fn live_count(db: &Db, server: &str, t: i64) -> Result<i64, ApiError> {
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Delete server permission, or the rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -288,7 +288,7 @@ fn expiry(
         (status = 403, description = "Missing the Delete server permission, or the rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket (plain text), or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", content((ApiErrorBody = "application/json"), (String = "text/plain")))
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket, or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -432,7 +432,7 @@ pub(crate) async fn create_password(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Delete server permission, or the rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or `Password not found`", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]

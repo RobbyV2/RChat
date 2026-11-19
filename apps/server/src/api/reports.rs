@@ -626,7 +626,7 @@ async fn resolve_references(
         (status = 403, description = "`You are banned from this server`", body = ApiErrorBody),
         (status = 404, description = "`Not found` or `Server not found or wrong password`: the target, or something an answer names, does not exist or you can't see it (identical responses), and every member of a server whose members you can't see. Also `Not found` while reports of this `to` are turned off on this instance (reason `off_site`)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "`You've sent a lot of reports. Try again later.` (JSON): past a report limit. `Too many lookups. Try again later.` with a `Retry-After` header (JSON): more 404s for names this hour than `LOOKUP_MISSES_PER_HOUR`. Or too many requests in the strict bucket (plain text)", body = ApiErrorBody)
+        (status = 429, description = "`You've sent a lot of reports. Try again later.` (JSON): past a report limit. `Too many lookups. Try again later.` with a `Retry-After` header (JSON): more 404s for names this hour than `LOOKUP_MISSES_PER_HOUR`. Or too many requests in the strict bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1007,7 +1007,7 @@ pub struct Open {
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`Missing permission`: a member without Manage reports. Or banned from the server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1042,7 +1042,7 @@ pub(crate) async fn list_reports(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`Missing permission`: a member without Manage reports. Or banned from the server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1072,7 +1072,7 @@ pub(crate) async fn list_groups(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`Missing permission`: a member without Manage reports. Or banned from the server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1109,7 +1109,7 @@ pub struct OpenQuery {
         (status = 200, description = "A page of servers with open reports", body = Vec<OpenCount>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))),
         (status = 400, description = "An invalid cursor", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1164,7 +1164,7 @@ pub(crate) async fn my_open(
         (status = 200, description = "The report", body = ReportDetail),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such report, one you don't handle, one about you, or one about a message in a channel you can't view (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1200,7 +1200,7 @@ pub struct EventsQuery {
         (status = 400, description = "An invalid cursor", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such report, one you don't handle, one about you, or one about a message in a channel you can't view (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1491,7 +1491,7 @@ impl Done {
         (status = 403, description = "`You are timed out in this server`", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such report, one you don't handle, one about you, or one about a message in a channel you can't view (identical responses). `Server not found or wrong password`: you can read the report but are not a member of its server. `Server not found`: the reported server is gone", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1560,7 +1560,7 @@ pub(crate) async fn patch_report(
         (status = 403, description = "`You are timed out in this server`", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such report, one you don't handle, one about you, or one about a message in a channel you can't view (identical responses). `Server not found or wrong password`: you can read the report but are not a member of its server", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1597,7 +1597,7 @@ pub(crate) async fn add_note(
         (status = 403, description = "`You are timed out in this server`", body = ApiErrorBody),
         (status = 404, description = "`Not found`: no such report, one you don't handle, one about you, or one about a message in a channel you can't view (identical responses); also while reports to the instance are turned off (reason `off_site`). `Server not found or wrong password`: you can read the report but are not a member of its server", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1697,7 +1697,7 @@ pub(crate) async fn resolve_in(
         (status = 403, description = "`Missing permission`: a member without Manage reports. `You are timed out in this server`. Or banned from the server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1727,7 +1727,7 @@ pub(crate) async fn bulk_resolve(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`Missing permission`: a member without Manage reports. Or banned from the server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1761,7 +1761,7 @@ pub(crate) async fn list_mutes(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`Missing permission`: a member without Manage reports. `You are timed out in this server`. Or banned from the server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses). `Not found`: no account by that name, or one that is no member and sent no report here that you can see (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller got more 404s for names this hour than `LOOKUP_MISSES_PER_HOUR`. Or too many requests in the general bucket (plain text)", body = ApiErrorBody)
+        (status = 429, description = "`Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller got more 404s for names this hour than `LOOKUP_MISSES_PER_HOUR`. Or too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1799,7 +1799,7 @@ pub(crate) async fn mute_reporter(
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`Missing permission`: a member without Manage reports. `You are timed out in this server`. Or banned from the server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or one you are not a member of (identical responses)", body = ApiErrorBody),
-        (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]

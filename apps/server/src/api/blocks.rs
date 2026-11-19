@@ -209,7 +209,7 @@ async fn drop_pings(state: &AppState, blocker: &str, blocked: &str) -> Result<()
 /// see, also count as a miss (`LOOKUP_MISSES_PER_HOUR`, as for `GET
 /// /api/v1/users/{username}/card`); past the misses every block is refused until the hour ends.
 /// Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/blocks", tag = "Blocking", request_body = BlockReq, responses((status = 200, description = "The blocked user (also when they were blocked already)", body = BlockedUser), (status = 400, description = "`You cannot block yourself`, or `You can block at most 1000 users`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "User not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many blocks. Try again later.` with a `Retry-After` header (JSON): more than 120 blocks in 10 minutes. `Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its misses for the hour (`LOOKUP_MISSES_PER_HOUR`). Or too many requests in the general bucket (plain text)", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/blocks", tag = "Blocking", request_body = BlockReq, responses((status = 200, description = "The blocked user (also when they were blocked already)", body = BlockedUser), (status = 400, description = "`You cannot block yourself`, or `You can block at most 1000 users`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "User not found", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many blocks. Try again later.` with a `Retry-After` header (JSON): more than 120 blocks in 10 minutes. `Too many lookups. Try again later.` with a `Retry-After` header (JSON): the caller used up its misses for the hour (`LOOKUP_MISSES_PER_HOUR`). Or too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn block_user(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -291,7 +291,7 @@ pub(crate) async fn block_user(
 /// or `POST /api/v1/dms` reopens it). Emits `user_unblocked` (`{username, blocked}`) to your
 /// connections when the user was blocked; unblocking someone who is not blocked changes nothing.
 /// Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(delete, path = "/api/v1/blocks/{username}", tag = "Blocking", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "Not blocked anymore; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(delete, path = "/api/v1/blocks/{username}", tag = "Blocking", params(("username" = String, Path, description = "Username, case-insensitive")), responses((status = 200, description = "Not blocked anymore; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn unblock_user(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -388,7 +388,7 @@ pub(crate) async fn block_page(
 /// Returns the signed-in user's blocked users, most recently blocked first, a page at a time
 /// (default and max 50), optionally only those whose username or display name starts with `q`.
 /// Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/blocks", tag = "Blocking", params(BlockListQuery), responses((status = 200, description = "A page of blocked users, most recently blocked first", body = Vec<BlockedUser>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON), or a non-integer `limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/blocks", tag = "Blocking", params(BlockListQuery), responses((status = 200, description = "A page of blocked users, most recently blocked first", body = Vec<BlockedUser>, headers(("x-next-cursor" = String, description = "Cursor for the next page; absent on the last page"))), (status = 400, description = "Invalid cursor (JSON), or a non-integer `limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn list_blocks(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -413,7 +413,7 @@ pub(crate) async fn list_blocks(
 /// Returns the usernames of everyone the signed-in user blocked (at most 1000), most recently
 /// blocked first, so a client can hide their messages and typing everywhere. Requires a bearer
 /// token. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/blocks/usernames", tag = "Blocking", responses((status = 200, description = "Lowercase usernames, most recently blocked first", body = Vec<String>), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/blocks/usernames", tag = "Blocking", responses((status = 200, description = "Lowercase usernames, most recently blocked first", body = Vec<String>), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn blocked_usernames(
     State(state): State<AppState>,
     Authed(user): Authed,

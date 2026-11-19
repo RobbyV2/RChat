@@ -936,7 +936,7 @@ async fn inbox_page(
 /// left out without a gap. `unread=true` lists only unread items; `kind`, `server` and `dms`
 /// narrow the list. The text is the raw start of the message. Requires a bearer token. General
 /// rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/inbox", tag = "Inbox", params(InboxQuery), responses((status = 200, description = "A page of the inbox, with the cursor for the next page and the bounds for marking all read", body = InboxPage), (status = 400, description = "Invalid cursor, `server` combined with `dms` (`Choose a server or DMs, not both`), or an unknown `kind` or a non-integer `limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/inbox", tag = "Inbox", params(InboxQuery), responses((status = 200, description = "A page of the inbox, with the cursor for the next page and the bounds for marking all read", body = InboxPage), (status = 400, description = "Invalid cursor, `server` combined with `dms` (`Choose a server or DMs, not both`), or an unknown `kind` or a non-integer `limit` (plain-text framework error)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn list_inbox(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1020,7 +1020,7 @@ async fn mark_groups(state: &AppState, user: &User, rows: &[GroupRow]) -> Result
 /// Items that are already read stay read. Emits `ping_count` for the ping's scope (or the
 /// `friends` scope) or `group_pings_seen`, to the user's connections only, when something
 /// changed. Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/inbox/read", tag = "Inbox", request_body = InboxRef, responses((status = 200, description = "Read; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such item in your inbox (it does not exist, is not yours, or is no longer shown); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/inbox/read", tag = "Inbox", request_body = InboxRef, responses((status = 200, description = "Read; body `{\"ok\": true}`", body = OkResp), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such item in your inbox (it does not exist, is not yours, or is no longer shown); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn read_item(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1094,7 +1094,7 @@ pub(crate) async fn read_item(
 /// Emits `ping_count` for each scope that changed (and the `friends` scope) and
 /// `group_pings_seen`, to the user's connections only. Requires a bearer token. General
 /// rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/inbox/read_all", tag = "Inbox", request_body = InboxReadAll, responses((status = 200, description = "Read; body `{\"ok\": true}`", body = OkResp), (status = 400, description = "`server` combined with `dms` (`Choose a server or DMs, not both`)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/inbox/read_all", tag = "Inbox", request_body = InboxReadAll, responses((status = 200, description = "Read; body `{\"ok\": true}`", body = OkResp), (status = 400, description = "`server` combined with `dms` (`Choose a server or DMs, not both`)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn read_all(
     State(state): State<AppState>,
     Authed(user): Authed,

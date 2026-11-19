@@ -948,7 +948,7 @@ pub fn validate_answers(
 /// from a message and is not for a list of categories. The `ETag` changes whenever the answer
 /// does: send it back as `If-None-Match` to get 304 without a body. Needs an account: guests
 /// get 401. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/report_forms", tag = "Reports", params(("If-None-Match" = Option<String>, Header, description = "The `ETag` of the copy you hold")), responses((status = 200, description = "The forms, with their `ETag`", body = ReportForms, headers(("ETag" = String, description = "Changes when the forms or the report switches change"))), (status = 304, description = "Your copy is current"), (status = 401, description = "Missing or invalid token, or a guest", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", content_type = "text/plain", body = String)))]
+#[utoipa::path(get, path = "/api/v1/report_forms", tag = "Reports", params(("If-None-Match" = Option<String>, Header, description = "The `ETag` of the copy you hold")), responses((status = 200, description = "The forms, with their `ETag`", body = ReportForms, headers(("ETag" = String, description = "Changes when the forms or the report switches change"))), (status = 304, description = "Your copy is current"), (status = 401, description = "Missing or invalid token, or a guest", body = crate::api::ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = crate::api::ApiErrorBody)))]
 pub(crate) async fn get_forms(
     State(state): State<AppState>,
     Authed(_user): Authed,

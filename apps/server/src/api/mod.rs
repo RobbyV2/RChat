@@ -65,8 +65,6 @@ pub(crate) use rchat_profanity::{
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::any::AnyRow;
-use tower_governor::key_extractor::KeyExtractor;
-use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use utoipa::ToSchema;
 
 use crate::api::access::subjects::{Level, ProfileChoices};
@@ -78,6 +76,7 @@ use crate::api::features::{Feature, Registration};
 use crate::api::policy::{Builtin, DmCreation, ServerCreation, ServerJoining};
 use crate::config::Roles;
 use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, pool_key};
+use crate::limits::http;
 use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
 
@@ -1946,16 +1945,7 @@ pub fn routes(
     key: ClientIp,
     swagger_ui: Option<&str>,
 ) -> Router<AppState> {
-    let limiter = || {
-        GovernorLayer::new(
-            GovernorConfigBuilder::default()
-                .per_millisecond(500)
-                .burst_size(30)
-                .key_extractor(key.clone())
-                .finish()
-                .expect("invalid strict rate limit config"),
-        )
-    };
+    let limiter = || http::layer(http::bucket(30, 2), key.clone());
     let strict = limiter();
     let upload_body = DefaultBodyLimit::max(state.limits.upload_body_bytes());
     let mut router = Router::new();

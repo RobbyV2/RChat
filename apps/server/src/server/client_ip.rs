@@ -5,8 +5,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use axum::extract::ConnectInfo;
 use axum::http::header::FORWARDED;
 use axum::http::{Extensions, HeaderMap, Request};
-use tower_governor::GovernorError;
-use tower_governor::key_extractor::KeyExtractor;
 use tracing::warn;
 
 static WARNED: AtomicBool = AtomicBool::new(false);
@@ -167,16 +165,12 @@ fn hops(headers: &HeaderMap) -> Vec<Option<IpAddr>> {
 #[derive(Clone)]
 pub struct ClientIp(pub ProxyTrust);
 
-impl KeyExtractor for ClientIp {
-    type Key = IpAddr;
-
-    fn extract<T>(&self, req: &Request<T>) -> Result<IpAddr, GovernorError> {
-        self.of(req.extensions(), req.headers())
-            .ok_or(GovernorError::UnableToExtractKey)
-    }
-}
-
 impl ClientIp {
+    /// The rate-limit key of `req`, as `of` gives it.
+    pub fn extract<T>(&self, req: &Request<T>) -> Option<IpAddr> {
+        self.of(req.extensions(), req.headers())
+    }
+
     /// The rate-limit key of a request from its extensions and headers: the client address,
     /// an IPv6 /64 as one.
     pub fn of(&self, extensions: &Extensions, headers: &HeaderMap) -> Option<IpAddr> {
@@ -348,7 +342,7 @@ mod tests {
             .header("x-forwarded-for", "203.0.113.9")
             .body(())
             .unwrap();
-        assert!(key.extract(&req).is_err());
+        assert!(key.extract(&req).is_none());
         req.extensions_mut()
             .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 5000))));
         assert_eq!(key.extract(&req).unwrap(), ip("203.0.113.9"));
