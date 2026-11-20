@@ -287,6 +287,7 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
         .with_limits(Arc::new(config.limits.clone()));
     crate::api::webhooks::configure(config.outbound()?);
     crate::api::media::configure(config.upload_limits());
+    crate::api::auth::configure(&config.limits);
     held.hold(crate::api::webhooks::spawn(&state, roles.jobs));
     held.hold(crate::ws::spawn_aftermath(&state));
     held.hold([crate::api::Settings::follow(&state)]);

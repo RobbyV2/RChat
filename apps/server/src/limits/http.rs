@@ -185,6 +185,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn strict_and_invite_buckets_are_configurable() {
+        let (state, path) = temp_state("http_limit_settings").await;
+        let state = state.with_limits(Arc::new(Limits {
+            rate_limit_burst: 1000,
+            rate_limit_per_second: 1000,
+            rate_limit_strict_burst: 2,
+            rate_limit_strict_per_second: 1,
+            rate_limit_invite_burst: 3,
+            rate_limit_invite_per_second: 1,
+            ..Limits::default()
+        }));
+        let served = serve(&state).await;
+        let client = reqwest::Client::new();
+        let login = format!("{}/api/v1/auth/login", served.base);
+        let (passed, refused) = until_refused(10, || client.post(&login).body("x")).await;
+        assert_eq!(passed, 2, "the third login from one address is refused");
+        says_its_wait(&refused.expect("refused"));
+        let invite = format!("{}/api/v1/invites/nowhere", served.base);
+        let (passed, refused) = until_refused(10, || client.get(&invite)).await;
+        assert_eq!(passed, 3, "the invite bucket holds its own burst");
+        says_its_wait(&refused.expect("refused"));
+        served.server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn refusals_say_how_long_to_wait_rounded_up_with_the_rate_reason() {
         let (state, path) = temp_state("http_limit_reason").await;
         let state = limited(state, 1, 1);

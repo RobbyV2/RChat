@@ -2997,7 +2997,13 @@ fn sqlite_keeps_one_writer_and_trigger_versions_track_definitions() {
     assert_eq!(writer_connections(true, Some(8)), 1);
     assert_eq!(writer_connections(true, None), 1);
     assert_eq!(writer_connections(false, Some(20)), 20);
-    assert_eq!(writer_connections(false, None), 8);
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    assert_eq!(writer_connections(false, None), default_pool(cores));
+    assert_eq!(
+        [1, 4, 8, 12, 16, 64].map(default_pool),
+        [8, 8, 16, 24, 32, 32],
+        "two per core, from 8 to 32"
+    );
     let v = trigger_version(POSTGRES_TRIGGERS);
     assert_eq!(v, trigger_version(POSTGRES_TRIGGERS));
     assert_eq!(v.len(), 16);

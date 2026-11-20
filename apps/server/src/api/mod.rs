@@ -1945,8 +1945,21 @@ pub fn routes(
     key: ClientIp,
     swagger_ui: Option<&str>,
 ) -> Router<AppState> {
-    let limiter = || http::layer(http::bucket(30, 2), key.clone());
-    let strict = limiter();
+    let limits = state.limits.clone();
+    let strict = http::layer(
+        http::bucket(
+            limits.rate_limit_strict_burst,
+            limits.rate_limit_strict_per_second,
+        ),
+        key.clone(),
+    );
+    let invite = || {
+        let bucket = http::bucket(
+            limits.rate_limit_invite_burst,
+            limits.rate_limit_invite_per_second,
+        );
+        http::layer(bucket, key.clone())
+    };
     let upload_body = DefaultBodyLimit::max(state.limits.upload_body_bytes());
     let mut router = Router::new();
     if roles.api || roles.web {
@@ -1961,11 +1974,11 @@ pub fn routes(
         let invite_routes = Router::new()
             .route("/invites/{name}", get(servers::get_invite))
             .route("/invites/{name}/metadata", get(servers::invite_metadata))
-            .route_layer(limiter())
+            .route_layer(invite())
             .merge(
                 Router::new()
                     .route("/servers/{name}/join", post(servers::join_server))
-                    .route_layer(limiter()),
+                    .route_layer(invite()),
             );
         let strict_routes = Router::new()
             .route("/auth/register", post(auth::register))
@@ -2045,7 +2058,7 @@ pub fn routes(
                     "/webhooks/{id}/{token}/messages/{message_id}",
                     patch(webhooks::edit_hook_message).delete(webhooks::delete_hook_message),
                 )
-                .route_layer(limiter()),
+                .route_layer(invite()),
         );
         router = router.merge(api_routes(state, strict_routes, invite_routes, swagger_ui));
     }

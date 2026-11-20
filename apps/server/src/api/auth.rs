@@ -1,8 +1,8 @@
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, RwLock};
 
-use argon2::Argon2;
 use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
+use argon2::{Algorithm, Argon2, Params, Version};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -28,6 +28,7 @@ use crate::api::{
 use crate::db::{
     AvatarKind, Db, NotAdded, User, get_user, lock_server, now, secret_key, shift_member_count,
 };
+use crate::limits::Limits;
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -190,19 +191,83 @@ pub(crate) fn reserved_permits(cores: usize) -> usize {
     (cores / 4).max(1)
 }
 
-static SHARED: LazyLock<Semaphore> =
-    LazyLock::new(|| Semaphore::new(cores().saturating_sub(reserved_permits(cores())).max(1)));
-static RESERVED: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(reserved_permits(cores())));
+/// Argon2 permits on `cores`: the shared ones (`configured`, or with 0 every core but the
+/// reserved ones) and the ones reserved for `Account` work.
+pub fn permits(cores: usize, configured: u32) -> (usize, usize) {
+    let reserved = reserved_permits(cores);
+    let shared = match configured {
+        0 => cores.saturating_sub(reserved).max(1),
+        n => n as usize,
+    };
+    (shared, reserved)
+}
+
+/// Argon2id at the cost `ARGON2_MEMORY_KIB`, `ARGON2_ITERATIONS` and `ARGON2_PARALLELISM`, for
+/// new password hashes. A stored hash verifies with the cost in its own PHC string.
+pub fn argon2(l: &Limits) -> Argon2<'static> {
+    let params = Params::new(
+        l.argon2_memory_kib,
+        l.argon2_iterations,
+        l.argon2_parallelism,
+        None,
+    )
+    .unwrap_or_default();
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+}
+
+/// The Argon2 cost, its permits and the server work queue, set at start.
+struct Hashing {
+    argon2: Argon2<'static>,
+    shared: Arc<Semaphore>,
+    reserved: Arc<Semaphore>,
+    queue_max: usize,
+    per_address: usize,
+    per_network: usize,
+}
+
+impl Hashing {
+    fn new(l: &Limits) -> Hashing {
+        let (shared, reserved) = permits(cores(), l.argon2_permits);
+        Hashing {
+            argon2: argon2(l),
+            shared: Arc::new(Semaphore::new(shared)),
+            reserved: Arc::new(Semaphore::new(reserved)),
+            queue_max: l.server_password_queue_max,
+            per_address: l.server_password_queue_per_address,
+            per_network: l.server_password_queue_per_network,
+        }
+    }
+}
+
+static HASHING: LazyLock<RwLock<Arc<Hashing>>> =
+    LazyLock::new(|| RwLock::new(Arc::new(Hashing::new(&Limits::default()))));
 static SERVER_WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Sets the Argon2 cost and permits and the server work queue from `limits` at start. A later
+/// start in the same process replaces them.
+pub fn configure(limits: &Limits) {
+    let hashing = Arc::new(Hashing::new(limits));
+    match HASHING.write() {
+        Ok(mut held) => *held = hashing,
+        Err(poisoned) => *poisoned.into_inner() = hashing,
+    }
+}
+
+fn hashing() -> Arc<Hashing> {
+    match HASHING.read() {
+        Ok(held) => Arc::clone(&held),
+        Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+    }
+}
 
 pub(crate) const SERVER_QUEUE_MAX: usize = 64;
 
 /// Places in the server work queue (waiting or running) per client address (an IPv6 /64) and
 /// per wider network (IPv4 /24, IPv6 /48), so that many addresses of one network can not fill it.
 static SERVER_ADDRESS: LazyLock<crate::api::budget::Slots> =
-    LazyLock::new(|| crate::api::budget::Slots::new(SERVER_ADDRESS_MAX));
+    LazyLock::new(crate::api::budget::Slots::default);
 static SERVER_NETWORK: LazyLock<crate::api::budget::Slots> =
-    LazyLock::new(|| crate::api::budget::Slots::new(SERVER_NETWORK_MAX));
+    LazyLock::new(crate::api::budget::Slots::default);
 
 pub(crate) const SERVER_ADDRESS_MAX: usize = 16;
 pub(crate) const SERVER_NETWORK_MAX: usize = 32;
@@ -213,8 +278,9 @@ fn client_slots() -> Result<Vec<crate::api::budget::Slot>, ApiError> {
     let Some(ip) = client() else {
         return Ok(Vec::new());
     };
-    let address = SERVER_ADDRESS.enter(group(ip).to_string());
-    let network = SERVER_NETWORK.enter(wide(ip).to_string());
+    let hashing = hashing();
+    let address = SERVER_ADDRESS.enter(group(ip).to_string(), hashing.per_address);
+    let network = SERVER_NETWORK.enter(wide(ip).to_string(), hashing.per_network);
     match (address, network) {
         (Some(a), Some(n)) => Ok(vec![a, n]),
         (_, _) => Err(slow_down()),
@@ -251,17 +317,21 @@ async fn off_runtime<T: Send + 'static>(
     work: Work,
     job: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ApiError> {
+    let hashing = hashing();
     let _held = match work {
         Work::Account => tokio::select! {
-            p = SHARED.acquire() => (p.map_err(internal)?, Vec::new()),
-            p = RESERVED.acquire() => (p.map_err(internal)?, Vec::new()),
+            p = Arc::clone(&hashing.shared).acquire_owned() => (p.map_err(internal)?, Vec::new()),
+            p = Arc::clone(&hashing.reserved).acquire_owned() => (p.map_err(internal)?, Vec::new()),
         },
         Work::Server => {
             let slots = client_slots()?;
-            let Some(waiting) = Waiting::enter(&SERVER_WAITING, SERVER_QUEUE_MAX) else {
+            let Some(waiting) = Waiting::enter(&SERVER_WAITING, hashing.queue_max) else {
                 return Err(crate::api::budget::slow_down());
             };
-            let permit = SHARED.acquire().await.map_err(internal)?;
+            let permit = Arc::clone(&hashing.shared)
+                .acquire_owned()
+                .await
+                .map_err(internal)?;
             drop(waiting);
             (permit, slots)
         }
@@ -269,8 +339,8 @@ async fn off_runtime<T: Send + 'static>(
     tokio::task::spawn_blocking(job).await.map_err(internal)
 }
 
-fn hash_now(secret: &str) -> Result<String, ApiError> {
-    match Argon2::default().hash_password(secret.as_bytes()) {
+fn hash_now(argon2: &Argon2<'_>, secret: &str) -> Result<String, ApiError> {
+    match argon2.hash_password(secret.as_bytes()) {
         Ok(hash) => Ok(hash.to_string()),
         Err(e) => Err(anyhow::anyhow!(e).into()),
     }
@@ -302,8 +372,8 @@ pub(crate) fn hash_runs() -> u64 {
 pub(crate) async fn hash_in(work: Work, secret: &str) -> Result<String, ApiError> {
     #[cfg(test)]
     HASH_RUNS.with(|c| c.set(c.get() + 1));
-    let secret = secret.to_string();
-    off_runtime(work, move || hash_now(&secret)).await?
+    let (secret, argon2) = (secret.to_string(), hashing().argon2.clone());
+    off_runtime(work, move || hash_now(&argon2, &secret)).await?
 }
 
 #[cfg(test)]
@@ -339,8 +409,8 @@ pub(crate) fn derive_runs() -> u64 {
     DERIVE_RUNS.with(|c| c.get())
 }
 
-/// Argon2id of `secret` under a fixed `salt`, with the same parameters as `verify_password`,
-/// hex-encoded. Deterministic, so it can be looked up.
+/// Argon2id of `secret` under a fixed `salt`, hex-encoded, always with Argon2's default cost
+/// (never `ARGON2_*`). Deterministic, so a stored key can be looked up.
 pub(crate) async fn derive_key(secret: &str, salt: [u8; 16]) -> Result<String, ApiError> {
     #[cfg(test)]
     DERIVE_RUNS.with(|c| c.set(c.get() + 1));
@@ -1250,6 +1320,33 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn argon2_cost_comes_from_limits() {
+        let light = crate::limits::Limits {
+            argon2_memory_kib: 8192,
+            argon2_iterations: 1,
+            ..crate::limits::Limits::default()
+        };
+        let hash = hash_now(&argon2(&light), "correct horse").expect("hash");
+        assert!(hash.contains("m=8192,t=1,p=1"), "{hash}");
+        assert!(verify_now("correct horse", &hash));
+        assert!(!verify_now("wrong horse", &hash));
+        let stock = hash_now(&argon2(&crate::limits::Limits::default()), "battery").expect("hash");
+        assert!(stock.contains("m=19456,t=2,p=1"), "{stock}");
+        assert!(
+            verify_now("battery", &stock),
+            "a hash made with the default cost verifies whatever the cost is now"
+        );
+    }
+
+    #[test]
+    fn permits_follow_cores_or_the_setting() {
+        assert_eq!(permits(24, 0), (18, 6));
+        assert_eq!(permits(24, 4).0, 4);
+        assert_eq!(permits(24, 4).1, 6, "the reserved permits stay");
+        assert_eq!(permits(1, 0), (1, 1));
     }
 
     #[test]

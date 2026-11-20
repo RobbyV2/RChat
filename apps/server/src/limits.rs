@@ -18,9 +18,20 @@ const MIB: usize = 1024 * 1024;
 pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 56] = [
+const RANGES: [(&str, i64, i64); 72] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
+    ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
+    ("RATE_LIMIT_STRICT_BURST", 1, 1_000_000),
+    ("RATE_LIMIT_INVITE_PER_SECOND", 1, 1_000),
+    ("RATE_LIMIT_INVITE_BURST", 1, 1_000_000),
+    ("ARGON2_PERMITS", 0, 1_024),
+    ("ARGON2_MEMORY_KIB", 4_096, 1_048_576),
+    ("ARGON2_ITERATIONS", 1, 64),
+    ("ARGON2_PARALLELISM", 1, 16),
+    ("SERVER_PASSWORD_QUEUE_MAX", 1, 100_000),
+    ("SERVER_PASSWORD_QUEUE_PER_ADDRESS", 1, 100_000),
+    ("SERVER_PASSWORD_QUEUE_PER_NETWORK", 1, 100_000),
     ("WS_CONNECTIONS_PER_USER", 1, 10_000),
     ("WS_CONNECT_BURST", 1, 10_000),
     ("WS_CONNECTS_PER_MINUTE", 1, 60_000),
@@ -41,6 +52,11 @@ const RANGES: [(&str, i64, i64); 56] = [
     ("UPLOAD_OWNER_KEPT_MIB", 0, 1_048_576),
     ("MESSAGE_MAX_CHARS", 1, 100_000),
     ("GUEST_GRANT_DAYS", 1, 3_650),
+    ("GUEST_GRANTS_PER_PASSWORD", 1, 1_000_000),
+    ("GUEST_GRANTS_PER_NETWORK", 1, 1_000_000),
+    ("GUEST_GRANT_MINTS_PER_NETWORK", 1, 1_000_000),
+    ("WEBHOOK_HOOK_BURST", 1, 10_000),
+    ("WEBHOOK_CHANNEL_PER_MINUTE", 1, 100_000),
     ("EMBED_CACHE_DAYS", 1, 3_650),
     ("VOICE_IDLE_SECS", 5, 86_400),
     ("VOICE_ROOM_MAX", 0, 10_000),
@@ -183,6 +199,17 @@ fn ascii(text: &str) -> String {
 pub struct Limits {
     pub rate_limit_per_second: u64,
     pub rate_limit_burst: u32,
+    pub rate_limit_strict_per_second: u64,
+    pub rate_limit_strict_burst: u32,
+    pub rate_limit_invite_per_second: u64,
+    pub rate_limit_invite_burst: u32,
+    pub argon2_permits: u32,
+    pub argon2_memory_kib: u32,
+    pub argon2_iterations: u32,
+    pub argon2_parallelism: u32,
+    pub server_password_queue_max: usize,
+    pub server_password_queue_per_address: usize,
+    pub server_password_queue_per_network: usize,
     pub ws_connections_per_user: usize,
     pub ws_connect_burst: u32,
     pub ws_connects_per_minute: u32,
@@ -203,6 +230,11 @@ pub struct Limits {
     pub upload_owner_kept_mib: u64,
     pub message_max_chars: usize,
     pub guest_grant_days: i64,
+    pub guest_grants_per_password: u32,
+    pub guest_grants_per_network: u32,
+    pub guest_grant_mints_per_network: u32,
+    pub webhook_hook_burst: u32,
+    pub webhook_channel_per_minute: u32,
     pub embed_cache_days: i64,
     pub voice_idle_secs: i64,
     pub voice_room_max: usize,
@@ -250,6 +282,17 @@ impl Default for Limits {
         Limits {
             rate_limit_per_second: 10,
             rate_limit_burst: 60,
+            rate_limit_strict_per_second: 2,
+            rate_limit_strict_burst: 30,
+            rate_limit_invite_per_second: 2,
+            rate_limit_invite_burst: 30,
+            argon2_permits: 0,
+            argon2_memory_kib: argon2::Params::DEFAULT_M_COST,
+            argon2_iterations: argon2::Params::DEFAULT_T_COST,
+            argon2_parallelism: argon2::Params::DEFAULT_P_COST,
+            server_password_queue_max: crate::api::auth::SERVER_QUEUE_MAX,
+            server_password_queue_per_address: crate::api::auth::SERVER_ADDRESS_MAX,
+            server_password_queue_per_network: crate::api::auth::SERVER_NETWORK_MAX,
             ws_connections_per_user: CONNS_PER_USER,
             ws_connect_burst: CONNECT_BURST,
             ws_connects_per_minute: CONNECTS_PER_MINUTE,
@@ -270,6 +313,11 @@ impl Default for Limits {
             upload_owner_kept_mib: 16384,
             message_max_chars: 4000,
             guest_grant_days: 30,
+            guest_grants_per_password: crate::api::servers::GRANTS_PER_PASSWORD as u32,
+            guest_grants_per_network: crate::api::servers::GRANTS_PER_NETWORK as u32,
+            guest_grant_mints_per_network: crate::api::servers::GRANT_NETWORK_MINTS_MAX,
+            webhook_hook_burst: crate::api::webhooks::HOOK_BURST,
+            webhook_channel_per_minute: crate::api::webhooks::CHANNEL_BUDGET,
             embed_cache_days: 30,
             voice_idle_secs: 60,
             voice_room_max: crate::ws::VOICE_ROOM_MAX,
@@ -448,6 +496,30 @@ impl Limits {
         let limits = Limits {
             rate_limit_per_second: e.num("RATE_LIMIT_PER_SECOND", d.rate_limit_per_second)?,
             rate_limit_burst: e.num("RATE_LIMIT_BURST", d.rate_limit_burst)?,
+            rate_limit_strict_per_second: e.num(
+                "RATE_LIMIT_STRICT_PER_SECOND",
+                d.rate_limit_strict_per_second,
+            )?,
+            rate_limit_strict_burst: e.num("RATE_LIMIT_STRICT_BURST", d.rate_limit_strict_burst)?,
+            rate_limit_invite_per_second: e.num(
+                "RATE_LIMIT_INVITE_PER_SECOND",
+                d.rate_limit_invite_per_second,
+            )?,
+            rate_limit_invite_burst: e.num("RATE_LIMIT_INVITE_BURST", d.rate_limit_invite_burst)?,
+            argon2_permits: e.num("ARGON2_PERMITS", d.argon2_permits)?,
+            argon2_memory_kib: e.num("ARGON2_MEMORY_KIB", d.argon2_memory_kib)?,
+            argon2_iterations: e.num("ARGON2_ITERATIONS", d.argon2_iterations)?,
+            argon2_parallelism: e.num("ARGON2_PARALLELISM", d.argon2_parallelism)?,
+            server_password_queue_max: e
+                .num("SERVER_PASSWORD_QUEUE_MAX", d.server_password_queue_max)?,
+            server_password_queue_per_address: e.num(
+                "SERVER_PASSWORD_QUEUE_PER_ADDRESS",
+                d.server_password_queue_per_address,
+            )?,
+            server_password_queue_per_network: e.num(
+                "SERVER_PASSWORD_QUEUE_PER_NETWORK",
+                d.server_password_queue_per_network,
+            )?,
             ws_connections_per_user: e.num("WS_CONNECTIONS_PER_USER", d.ws_connections_per_user)?,
             ws_connect_burst: e.num("WS_CONNECT_BURST", d.ws_connect_burst)?,
             ws_connects_per_minute: e.num("WS_CONNECTS_PER_MINUTE", d.ws_connects_per_minute)?,
@@ -472,6 +544,17 @@ impl Limits {
             upload_owner_kept_mib: e.num("UPLOAD_OWNER_KEPT_MIB", d.upload_owner_kept_mib)?,
             message_max_chars: e.num("MESSAGE_MAX_CHARS", d.message_max_chars)?,
             guest_grant_days: e.num("GUEST_GRANT_DAYS", d.guest_grant_days)?,
+            guest_grants_per_password: e
+                .num("GUEST_GRANTS_PER_PASSWORD", d.guest_grants_per_password)?,
+            guest_grants_per_network: e
+                .num("GUEST_GRANTS_PER_NETWORK", d.guest_grants_per_network)?,
+            guest_grant_mints_per_network: e.num(
+                "GUEST_GRANT_MINTS_PER_NETWORK",
+                d.guest_grant_mints_per_network,
+            )?,
+            webhook_hook_burst: e.num("WEBHOOK_HOOK_BURST", d.webhook_hook_burst)?,
+            webhook_channel_per_minute: e
+                .num("WEBHOOK_CHANNEL_PER_MINUTE", d.webhook_channel_per_minute)?,
             embed_cache_days: e.num("EMBED_CACHE_DAYS", d.embed_cache_days)?,
             voice_idle_secs: e.num("VOICE_IDLE_SECS", d.voice_idle_secs)?,
             voice_room_max: e.num("VOICE_ROOM_MAX", d.voice_room_max)?,
@@ -529,6 +612,17 @@ impl Limits {
         let Limits {
             rate_limit_per_second,
             rate_limit_burst,
+            rate_limit_strict_per_second,
+            rate_limit_strict_burst,
+            rate_limit_invite_per_second,
+            rate_limit_invite_burst,
+            argon2_permits,
+            argon2_memory_kib,
+            argon2_iterations,
+            argon2_parallelism,
+            server_password_queue_max,
+            server_password_queue_per_address,
+            server_password_queue_per_network,
             ws_connections_per_user,
             ws_connect_burst,
             ws_connects_per_minute,
@@ -549,6 +643,11 @@ impl Limits {
             upload_owner_kept_mib,
             message_max_chars,
             guest_grant_days,
+            guest_grants_per_password,
+            guest_grants_per_network,
+            guest_grant_mints_per_network,
+            webhook_hook_burst,
+            webhook_channel_per_minute,
             embed_cache_days,
             voice_idle_secs,
             voice_room_max,
@@ -597,6 +696,29 @@ impl Limits {
         vec![
             ("RATE_LIMIT_PER_SECOND", set(rate_limit_per_second)),
             ("RATE_LIMIT_BURST", set(rate_limit_burst)),
+            (
+                "RATE_LIMIT_STRICT_PER_SECOND",
+                set(rate_limit_strict_per_second),
+            ),
+            ("RATE_LIMIT_STRICT_BURST", set(rate_limit_strict_burst)),
+            (
+                "RATE_LIMIT_INVITE_PER_SECOND",
+                set(rate_limit_invite_per_second),
+            ),
+            ("RATE_LIMIT_INVITE_BURST", set(rate_limit_invite_burst)),
+            ("ARGON2_PERMITS", set(argon2_permits)),
+            ("ARGON2_MEMORY_KIB", set(argon2_memory_kib)),
+            ("ARGON2_ITERATIONS", set(argon2_iterations)),
+            ("ARGON2_PARALLELISM", set(argon2_parallelism)),
+            ("SERVER_PASSWORD_QUEUE_MAX", set(server_password_queue_max)),
+            (
+                "SERVER_PASSWORD_QUEUE_PER_ADDRESS",
+                set(server_password_queue_per_address),
+            ),
+            (
+                "SERVER_PASSWORD_QUEUE_PER_NETWORK",
+                set(server_password_queue_per_network),
+            ),
             ("WS_CONNECTIONS_PER_USER", set(ws_connections_per_user)),
             ("WS_CONNECT_BURST", set(ws_connect_burst)),
             ("WS_CONNECTS_PER_MINUTE", set(ws_connects_per_minute)),
@@ -623,6 +745,17 @@ impl Limits {
             ("UPLOAD_OWNER_KEPT_MIB", set(upload_owner_kept_mib)),
             ("MESSAGE_MAX_CHARS", set(message_max_chars)),
             ("GUEST_GRANT_DAYS", set(guest_grant_days)),
+            ("GUEST_GRANTS_PER_PASSWORD", set(guest_grants_per_password)),
+            ("GUEST_GRANTS_PER_NETWORK", set(guest_grants_per_network)),
+            (
+                "GUEST_GRANT_MINTS_PER_NETWORK",
+                set(guest_grant_mints_per_network),
+            ),
+            ("WEBHOOK_HOOK_BURST", set(webhook_hook_burst)),
+            (
+                "WEBHOOK_CHANNEL_PER_MINUTE",
+                set(webhook_channel_per_minute),
+            ),
             ("EMBED_CACHE_DAYS", set(embed_cache_days)),
             ("VOICE_IDLE_SECS", set(voice_idle_secs)),
             ("VOICE_ROOM_MAX", set(voice_room_max)),
@@ -1061,6 +1194,68 @@ mod tests {
                 format!("{name}: expected {range}, got {bad}")
             );
         }
+    }
+
+    #[test]
+    fn request_limits_have_their_defaults_and_ranges() {
+        let d = load(&[]).expect("defaults");
+        assert_eq!(
+            (
+                d.rate_limit_strict_per_second,
+                d.rate_limit_strict_burst,
+                d.rate_limit_invite_per_second,
+                d.rate_limit_invite_burst
+            ),
+            (2, 30, 2, 30)
+        );
+        assert_eq!(
+            (
+                d.argon2_permits,
+                d.argon2_memory_kib,
+                d.argon2_iterations,
+                d.argon2_parallelism
+            ),
+            (0, 19456, 2, 1)
+        );
+        assert_eq!(
+            (
+                d.server_password_queue_max,
+                d.server_password_queue_per_address,
+                d.server_password_queue_per_network
+            ),
+            (64, 16, 32)
+        );
+        assert_eq!(
+            (
+                d.guest_grants_per_password,
+                d.guest_grants_per_network,
+                d.guest_grant_mints_per_network,
+                d.webhook_hook_burst,
+                d.webhook_channel_per_minute
+            ),
+            (2000, 50, 60, 5, 30)
+        );
+        for (name, bad, range) in [
+            ("RATE_LIMIT_STRICT_BURST", "0", "1 to 1000000"),
+            ("RATE_LIMIT_INVITE_PER_SECOND", "1001", "1 to 1000"),
+            ("ARGON2_MEMORY_KIB", "1024", "4096 to 1048576"),
+            ("ARGON2_PARALLELISM", "17", "1 to 16"),
+            ("SERVER_PASSWORD_QUEUE_MAX", "0", "1 to 100000"),
+            ("GUEST_GRANTS_PER_NETWORK", "none", "1 to 1000000"),
+            ("WEBHOOK_HOOK_BURST", "-5", "1 to 10000"),
+        ] {
+            let err = load(&[(name, bad.to_string())]).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("{name}: expected {range}, got {bad}")
+            );
+        }
+        let set = load(&[
+            ("ARGON2_PERMITS", "4".to_string()),
+            ("RATE_LIMIT_STRICT_BURST", "5".to_string()),
+        ])
+        .expect("set");
+        assert_eq!((set.argon2_permits, set.rate_limit_strict_burst), (4, 5));
     }
 
     #[test]

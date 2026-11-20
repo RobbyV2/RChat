@@ -81,8 +81,8 @@ impl Backoff {
 }
 
 /// Places held at once per key, for a shared queue: one key can not take all of it.
+#[derive(Default)]
 pub struct Slots {
-    max: usize,
     held: Mutex<HashMap<String, usize>>,
 }
 
@@ -93,17 +93,11 @@ pub struct Slot {
 }
 
 impl Slots {
-    pub fn new(max: usize) -> Slots {
-        Slots {
-            max,
-            held: Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub fn enter(&'static self, key: String) -> Option<Slot> {
+    /// One more place for `key`, unless it holds `max` already.
+    pub fn enter(&'static self, key: String, max: usize) -> Option<Slot> {
         let mut held = locked(&self.held);
         let n = held.get(&key).copied().unwrap_or(0);
-        match n < self.max {
+        match n < max {
             true => {
                 held.insert(key.clone(), n + 1);
                 Some(Slot { slots: self, key })
@@ -322,14 +316,21 @@ mod tests {
 
     #[test]
     fn slots_cap_each_key() {
-        static SLOTS: LazyLock<Slots> = LazyLock::new(|| Slots::new(2));
-        let a = SLOTS.enter("a".to_string()).expect("first");
-        let _b = SLOTS.enter("a".to_string()).expect("second");
-        assert!(SLOTS.enter("a".to_string()).is_none(), "the key is full");
-        assert!(SLOTS.enter("b".to_string()).is_some(), "other keys are not");
+        static SLOTS: LazyLock<Slots> = LazyLock::new(Slots::default);
+        let a = SLOTS.enter("a".to_string(), 2).expect("first");
+        let _b = SLOTS.enter("a".to_string(), 2).expect("second");
+        assert!(SLOTS.enter("a".to_string(), 2).is_none(), "the key is full");
+        assert!(
+            SLOTS.enter("a".to_string(), 3).is_some(),
+            "a larger most has room"
+        );
+        assert!(
+            SLOTS.enter("b".to_string(), 2).is_some(),
+            "other keys are not"
+        );
         drop(a);
         assert!(
-            SLOTS.enter("a".to_string()).is_some(),
+            SLOTS.enter("a".to_string(), 2).is_some(),
             "a dropped slot frees a place"
         );
     }

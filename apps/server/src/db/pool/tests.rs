@@ -525,7 +525,10 @@ async fn connection_budget_names_the_numbers() {
         .await
         .expect("settings")
         .get(0);
-    assert_eq!((read.pool, read.allowed), (8, allowed));
+    assert_eq!(
+        (read.pool, read.allowed),
+        (writer_connections(false, None), allowed)
+    );
     assert!(read.used >= 1 && read.used <= allowed, "{read:?}");
     close(&db).await;
     drop(pg);

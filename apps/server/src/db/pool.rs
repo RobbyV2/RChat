@@ -394,8 +394,18 @@ pub fn writer_connections(is_sqlite: bool, configured: Option<u32>) -> u32 {
     match (is_sqlite, configured) {
         (true, _) => 1,
         (false, Some(n)) => n,
-        (false, None) => 8,
+        (false, None) => default_pool(
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4),
+        ),
     }
+}
+
+/// The Postgres pool of a copy that sets no `DATABASE_MAX_CONNECTIONS`: two connections per
+/// core, from 8 to 32.
+pub fn default_pool(cores: usize) -> u32 {
+    (2 * cores).clamp(8, 32) as u32
 }
 
 fn pool_options(max: u32, acquire_timeout_secs: u64) -> AnyPoolOptions {

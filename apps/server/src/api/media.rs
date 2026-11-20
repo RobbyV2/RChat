@@ -204,7 +204,7 @@ const BODY_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 pub const UPLOADS_PER_ACCOUNT: usize = 3;
 
 static READING: std::sync::LazyLock<crate::api::budget::Slots> =
-    std::sync::LazyLock::new(|| crate::api::budget::Slots::new(UPLOADS_PER_ACCOUNT));
+    std::sync::LazyLock::new(crate::api::budget::Slots::default);
 
 /// How long reading an upload body may wait, for tests to shorten.
 #[derive(Clone, Copy)]
@@ -255,7 +255,10 @@ fn waits() -> Waits {
 /// its body is read and stored. 429 when the account already reads that many.
 pub(crate) fn reading_slot(db: &Db, account: &str) -> Result<crate::api::budget::Slot, ApiError> {
     READING
-        .enter(format!("{}\n{account}", crate::db::pool_key(db)))
+        .enter(
+            format!("{}\n{account}", crate::db::pool_key(db)),
+            UPLOADS_PER_ACCOUNT,
+        )
         .ok_or_else(|| {
             ApiError::limit(
                 StatusCode::TOO_MANY_REQUESTS,

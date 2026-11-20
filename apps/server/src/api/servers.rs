@@ -2043,9 +2043,10 @@ pub(crate) async fn search_servers(
 /// Checks the password of a password-protected server and returns a guest grant. Guests send the
 /// grant in the `X-Guest-Grant` header to view the server without an account; it expires after
 /// `GUEST_GRANT_DAYS` days without use (30 by default) and is revoked when the password changes
-/// (unless the change kept guests). Each password has at most 2000 live grants (the permanent
-/// password counts as one), and at most 50 of them per network (an IPv4 /24 or IPv6 /48); past
-/// that no new grant is given until older ones expire. The API drives the
+/// (unless the change kept guests). Each password has at most 2000 live grants by default
+/// (`GUEST_GRANTS_PER_PASSWORD`; the permanent password counts as one), and at most 50 of them
+/// per network by default (`GUEST_GRANTS_PER_NETWORK`; an IPv4 /24 or IPv6 /48); past that no
+/// new grant is given until older ones expire. The API drives the
 /// password step: without `password` every
 /// name that is not a server without a password gets the same `401 Password required`, and a
 /// wrong password or a name that does not exist gets the same `404 Server not found or wrong
@@ -2068,7 +2069,7 @@ pub(crate) async fn search_servers(
         (status = 401, description = "`Password required`: no `password` was given and the name is not a server without a password (password-protected and nonexistent names answer identically). Also `Guest access is disabled` for guests without a valid token when guest access is off", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: the same body for a wrong password and for a name that does not exist", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "Too many requests in the strict or the general bucket. Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords. `Too many guests use this password. Try again later` (JSON) when the password already has 2000 live guest grants, or 50 for your network. Grants made per address (20 an hour) and per network (60 an hour, across servers) are limited too, with `Too many attempts. Try again later`", body = ApiErrorBody)
+        (status = 429, description = "Too many requests in the strict or the general bucket. Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 wrong passwords for this name from your address (then a wait that doubles up to an hour; 3 an hour while many addresses get the name wrong; names that do not exist count the same way), or while the server is busy checking passwords. `Too many guests use this password. Try again later` (JSON) when the password already has its live guest grants (by default 2000, `GUEST_GRANTS_PER_PASSWORD`), or your network has its share (by default 50, `GUEST_GRANTS_PER_NETWORK`). Grants made per address (20 an hour) and per network (by default 60 an hour across servers, `GUEST_GRANT_MINTS_PER_NETWORK`) are limited too, with `Too many attempts. Try again later`", body = ApiErrorBody)
     ),
     security((), ("bearer" = []))
 )]
@@ -2089,7 +2090,7 @@ pub(crate) async fn guest_access(
     if access.via() == Via::Public {
         return Ok(Json(GuestGrant { grant: None }));
     }
-    let network = grant_network(&state.db).await?;
+    let network = grant_network(&state.db, &state.limits).await?;
     let grant = new_token();
     let t = now();
     let cutoff = t - state.limits.guest_grant_ttl();
@@ -2108,9 +2109,9 @@ pub(crate) async fn guest_access(
         .bind(t)
         .bind(access.password_id())
         .bind(password_id)
-        .bind(GRANTS_PER_PASSWORD)
+        .bind(i64::from(state.limits.guest_grants_per_password))
         .bind(&network)
-        .bind(GRANTS_PER_NETWORK)
+        .bind(i64::from(state.limits.guest_grants_per_network))
         .execute(&mut *tx)
         .await?
         .rows_affected();
@@ -2139,17 +2140,19 @@ static GRANT_MINTS: std::sync::LazyLock<crate::limits::bucket::Keyed> =
         )
     });
 
-/// Guest grants minted per wider network (IPv4 /24, IPv6 /48), across all servers.
+/// Guest grants minted per wider network (IPv4 /24, IPv6 /48) in an hour, across all servers,
+/// under `GUEST_GRANT_MINTS_PER_NETWORK`.
 static GRANT_NETWORK_MINTS: std::sync::LazyLock<crate::limits::bucket::Keyed> =
     std::sync::LazyLock::new(|| {
-        crate::limits::bucket::Keyed::new(
-            crate::limits::bucket::Policy::Window {
-                limit: GRANT_NETWORK_MINTS_MAX,
-                window: std::time::Duration::from_secs(3600),
-            },
-            100_000,
-        )
+        crate::limits::bucket::Keyed::new(network_mints(GRANT_NETWORK_MINTS_MAX), 100_000)
     });
+
+fn network_mints(limit: u32) -> crate::limits::bucket::Policy {
+    crate::limits::bucket::Policy::Window {
+        limit,
+        window: std::time::Duration::from_secs(3600),
+    }
+}
 
 pub(crate) const GRANT_NETWORK_MINTS_MAX: u32 = 60;
 
@@ -2159,7 +2162,7 @@ pub const GRANTS_PER_NETWORK: i64 = 50;
 
 /// Takes the mint budgets of the client's network, then of its address, and returns the stored
 /// network marker: an HMAC of the IPv4 /24 or IPv6 /48 under the instance pepper.
-async fn grant_network(db: &Db) -> Result<String, ApiError> {
+async fn grant_network(db: &Db, limits: &crate::limits::Limits) -> Result<String, ApiError> {
     use hmac::{Hmac, KeyInit, Mac};
     let ip = crate::api::budget::client();
     let wide = match ip {
@@ -2170,7 +2173,9 @@ async fn grant_network(db: &Db) -> Result<String, ApiError> {
         let pool = crate::db::pool_key(db);
         let group = crate::api::budget::group(ip);
         let now = std::time::Instant::now();
-        if !GRANT_NETWORK_MINTS.take(&format!("{pool}\n{wide}"), 1.0, now)
+        if !GRANT_NETWORK_MINTS
+            .under(network_mints(limits.guest_grant_mints_per_network))
+            .take(&format!("{pool}\n{wide}"), 1.0, now)
             || !GRANT_MINTS.take(&format!("{pool}\n{group}"), 1.0, now)
         {
             return Err(crate::api::budget::slow_down());
@@ -11184,6 +11189,49 @@ mod tests {
                 .all(|r| *r == Err((429, crate::api::budget::SLOW_DOWN.to_string()))),
             "the network mint budget spans all servers"
         );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn guest_grant_caps_are_configurable() {
+        let (state, path) = temp_state("grant_caps_set").await;
+        let state = state.with_limits(std::sync::Arc::new(crate::limits::Limits {
+            guest_grants_per_password: 4,
+            guest_grants_per_network: 2,
+            guest_grant_mints_per_network: 3,
+            ..crate::limits::Limits::default()
+        }));
+        let _ = make_server(&state, "club").await.expect("club");
+        set_password(&state, "club-password").await;
+        let mint = |from: std::net::IpAddr| {
+            let state = state.clone();
+            crate::api::budget::as_client(from, async move {
+                guest_access(
+                    State(state),
+                    MaybeAuthed(None),
+                    Path("club".to_string()),
+                    Json(GuestAccessReq {
+                        password: Some("club-password".to_string()),
+                    }),
+                )
+                .await
+                .map(|Json(made)| made.grant.is_some())
+                .map_err(|ApiError(status, body, _)| (status.as_u16(), body))
+            })
+        };
+        let full = Err((429, TOO_MANY_GUESTS.to_string()));
+        let net = |a: u8, b: u8| std::net::IpAddr::from([198, 51, a, b]);
+        assert_eq!(mint(net(1, 1)).await, Ok(true));
+        assert_eq!(mint(net(1, 2)).await, Ok(true));
+        assert_eq!(mint(net(1, 3)).await, full, "two grants per network");
+        assert_eq!(
+            mint(net(1, 4)).await,
+            Err((429, crate::api::budget::SLOW_DOWN.to_string())),
+            "three mints an hour per network"
+        );
+        assert_eq!(mint(net(2, 1)).await, Ok(true));
+        assert_eq!(mint(net(2, 2)).await, Ok(true));
+        assert_eq!(mint(net(3, 1)).await, full, "four grants per password");
         done(state, path).await;
     }
 

@@ -1082,33 +1082,37 @@ pub struct WebhookInfo {
     pub avatar_color: Option<String>,
 }
 
-static HOOK_PACE: LazyLock<Keyed> = LazyLock::new(|| {
-    Keyed::new(
-        bucket::Policy::Window {
-            limit: HOOK_BURST,
-            window: HOOK_WINDOW,
-        },
-        100_000,
-    )
-});
-static CHANNEL_PACE: LazyLock<Keyed> = LazyLock::new(|| {
-    Keyed::new(
-        bucket::Policy::Window {
-            limit: CHANNEL_BUDGET,
-            window: Duration::from_secs(60),
-        },
-        100_000,
-    )
-});
+/// Executions per webhook in `HOOK_WINDOW`, under `WEBHOOK_HOOK_BURST`.
+static HOOK_PACE: LazyLock<Keyed> = LazyLock::new(|| Keyed::new(hook_pace(HOOK_BURST), 100_000));
+/// Webhook messages per channel in a minute, under `WEBHOOK_CHANNEL_PER_MINUTE`.
+static CHANNEL_PACE: LazyLock<Keyed> =
+    LazyLock::new(|| Keyed::new(channel_pace(CHANNEL_BUDGET), 100_000));
 
-fn paced(db: &Db, hook: &Hook) -> Result<(), ApiError> {
-    let pool = crate::db::pool_key(db);
-    match HOOK_PACE.take(&format!("{pool}\nh{}", hook.id), 1.0, Instant::now())
-        && CHANNEL_PACE.take(
-            &format!("{pool}\nc{}", hook.channel_id),
-            1.0,
-            Instant::now(),
-        ) {
+fn hook_pace(limit: u32) -> bucket::Policy {
+    bucket::Policy::Window {
+        limit,
+        window: HOOK_WINDOW,
+    }
+}
+
+fn channel_pace(limit: u32) -> bucket::Policy {
+    bucket::Policy::Window {
+        limit,
+        window: Duration::from_secs(60),
+    }
+}
+
+fn paced(state: &AppState, hook: &Hook) -> Result<(), ApiError> {
+    let pool = crate::db::pool_key(&state.db);
+    let (limits, now) = (&state.limits, Instant::now());
+    match HOOK_PACE.under(hook_pace(limits.webhook_hook_burst)).take(
+        &format!("{pool}\nh{}", hook.id),
+        1.0,
+        now,
+    ) && CHANNEL_PACE
+        .under(channel_pace(limits.webhook_channel_per_minute))
+        .take(&format!("{pool}\nc{}", hook.channel_id), 1.0, now)
+    {
         true => Ok(()),
         false => Err(slow_down()),
     }
@@ -1514,9 +1518,10 @@ async fn post(
 /// `@username` mentions ping as usual unless `allowed_mentions` narrows them; `@everyone`,
 /// `@here` and roles ping only when `allowed_mentions` asks and the webhook's creator had
 /// and still has the Mention everyone permission (mentionable roles also when asked). Rate
-/// limits: 5 per 2 seconds per webhook, 30 per minute per channel, and the strict bucket per
-/// IP. Wrong ids, wrong tokens and deleted webhooks all get the same 404.
-#[utoipa::path(post, path = "/api/v1/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ExecuteQuery), request_body(content = ExecuteReq, description = "JSON, or multipart with `payload_json` and one file", content_type = "application/json"), responses((status = 200, description = "With `wait=true`: the posted message", body = Message), (status = 204, description = "Posted"), (status = 400, description = "Empty message, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), invalid embeds, name, avatar, poll, `reply_to` (`Cannot reply to that message`) or `thread_id` (`Unknown thread`), the profanity filter, or a malformed multipart body (\"Error parsing `multipart/form-data` request\"), which includes a part head over 16 KiB: from the start of the body, or the end of the part before, to the blank line after the part's headers", body = ApiErrorBody), (status = 403, description = "`File uploads are turned off on this server`, or `This webhook has no owner, so it cannot upload files`: for a file part, or a multipart body declared over 2 MiB and 64 KiB", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`: no such webhook or a wrong token (identical responses). `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`), or JSON (the body or `payload_json`) over 2 MiB, or a multipart body over 2 MiB and 64 KiB for a webhook that can not upload (`JSON exceeds 2MB limit`)", body = ApiErrorBody), (status = 429, description = "Slow mode (`Slow mode: wait Ns`), the webhook or channel budget (`Too many attempts. Try again later`), the upload budget of the webhook's owner or of the server's webhooks (`Upload limit reached: ...`), 3 uploads or multipart bodies of the owner, or ones holding the owner's share of the upload buffer, already being read, for a file part or a multipart body declared over 2 MiB and 64 KiB (`Too many uploads at once: ...`), or the strict bucket", body = ApiErrorBody), (status = 503, description = "`Too many uploads right now, try again in a moment`", body = ApiErrorBody)), security(()))]
+/// limits: by default 5 per 2 seconds per webhook (`WEBHOOK_HOOK_BURST`), 30 per minute per
+/// channel (`WEBHOOK_CHANNEL_PER_MINUTE`), and the webhook bucket per IP. Wrong ids, wrong
+/// tokens and deleted webhooks all get the same 404.
+#[utoipa::path(post, path = "/api/v1/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ExecuteQuery), request_body(content = ExecuteReq, description = "JSON, or multipart with `payload_json` and one file", content_type = "application/json"), responses((status = 200, description = "With `wait=true`: the posted message", body = Message), (status = 204, description = "Posted"), (status = 400, description = "Empty message, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), invalid embeds, name, avatar, poll, `reply_to` (`Cannot reply to that message`) or `thread_id` (`Unknown thread`), the profanity filter, or a malformed multipart body (\"Error parsing `multipart/form-data` request\"), which includes a part head over 16 KiB: from the start of the body, or the end of the part before, to the blank line after the part's headers", body = ApiErrorBody), (status = 403, description = "`File uploads are turned off on this server`, or `This webhook has no owner, so it cannot upload files`: for a file part, or a multipart body declared over 2 MiB and 64 KiB", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`: no such webhook or a wrong token (identical responses). `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 408, description = "`The upload stopped sending data`: the body sent nothing for 30 seconds or took over 10 minutes", body = ApiErrorBody), (status = 413, description = "File over `limits.upload_bytes`, by default 25 MiB (`UPLOAD_MAX_MIB`), or JSON (the body or `payload_json`) over 2 MiB, or a multipart body over 2 MiB and 64 KiB for a webhook that can not upload (`JSON exceeds 2MB limit`)", body = ApiErrorBody), (status = 429, description = "Slow mode (`Slow mode: wait Ns`), the webhook or channel budget (`Too many attempts. Try again later`), the upload budget of the webhook's owner or of the server's webhooks (`Upload limit reached: ...`), 3 uploads or multipart bodies of the owner, or ones holding the owner's share of the upload buffer, already being read, for a file part or a multipart body declared over 2 MiB and 64 KiB (`Too many uploads at once: ...`), or the webhook bucket", body = ApiErrorBody), (status = 503, description = "`Too many uploads right now, try again in a moment`", body = ApiErrorBody)), security(()))]
 pub(crate) async fn execute(
     State(state): State<AppState>,
     Path((id, token)): Path<(String, String)>,
@@ -1525,7 +1530,7 @@ pub(crate) async fn execute(
 ) -> Result<Response, ApiError> {
     switched_on(&state.db).await?;
     let hook = hook_for(&state.db, &id, &token).await?;
-    paced(&state.db, &hook)?;
+    paced(&state, &hook)?;
     let (body, file) = read_execute(&state, &hook, req).await?;
     let message = post(&state, &hook, body, file).await?;
     Ok(match query.wait {
@@ -1537,7 +1542,7 @@ pub(crate) async fn execute(
 /// Get a webhook through its token
 ///
 /// The webhook's id, channel, name and avatar, to check a URL. No bearer token. Wrong ids and
-/// tokens get the same 404. Strict rate-limit bucket.
+/// tokens get the same 404. Webhook rate-limit bucket.
 #[utoipa::path(get, path = "/api/v1/webhooks/{id}/{token}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token")), responses((status = 200, description = "The webhook", body = WebhookInfo), (status = 404, description = "`Unknown webhook`. `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 429, description = "Too many requests", body = ApiErrorBody)), security(()))]
 pub(crate) async fn webhook_info(
     State(state): State<AppState>,
@@ -1597,8 +1602,8 @@ pub struct WebhookEdit {
 ///
 /// Changes the text or embeds of a message this webhook posted (no other message). Checked
 /// like a new message; edits never ping. Poll messages cannot be edited. No bearer token.
-/// Strict rate-limit bucket.
-#[utoipa::path(patch, path = "/api/v1/webhooks/{id}/{token}/messages/{message_id}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ("message_id" = String, Path, description = "Message id")), request_body = WebhookEdit, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Empty result, too long, invalid embeds, the profanity filter, or a poll (`Cannot edit this message`)", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`, or `Unknown message` (not one of this webhook's messages). `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 429, description = "The webhook budget or the strict bucket", body = ApiErrorBody)), security(()))]
+/// Webhook rate-limit bucket.
+#[utoipa::path(patch, path = "/api/v1/webhooks/{id}/{token}/messages/{message_id}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ("message_id" = String, Path, description = "Message id")), request_body = WebhookEdit, responses((status = 200, description = "The edited message", body = Message), (status = 400, description = "Empty result, too long, invalid embeds, the profanity filter, or a poll (`Cannot edit this message`)", body = ApiErrorBody), (status = 404, description = "`Unknown webhook`, or `Unknown message` (not one of this webhook's messages). `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 429, description = "The webhook budget or the webhook bucket", body = ApiErrorBody)), security(()))]
 pub(crate) async fn edit_hook_message(
     State(state): State<AppState>,
     Path((id, token, message_id)): Path<(String, String, String)>,
@@ -1611,7 +1616,7 @@ pub(crate) async fn edit_hook_message(
     let db = &state.db;
     switched_on(db).await?;
     let hook = hook_for(db, &id, &token).await?;
-    paced(db, &hook)?;
+    paced(&state, &hook)?;
     let mid = own_message(db, &hook, &message_id).await?;
     let row = sqlx::query(
         "SELECT content, kind, media_id, media_removed, webhook_embeds FROM messages WHERE id = $1",
@@ -1685,9 +1690,9 @@ pub(crate) async fn edit_hook_message(
 
 /// Delete a webhook message
 ///
-/// Deletes a message this webhook posted (no other message). No bearer token. Strict
+/// Deletes a message this webhook posted (no other message). No bearer token. Webhook
 /// rate-limit bucket.
-#[utoipa::path(delete, path = "/api/v1/webhooks/{id}/{token}/messages/{message_id}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ("message_id" = String, Path, description = "Message id")), responses((status = 204, description = "Deleted"), (status = 404, description = "`Unknown webhook`, or `Unknown message`. `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 429, description = "The webhook budget or the strict bucket", body = ApiErrorBody)), security(()))]
+#[utoipa::path(delete, path = "/api/v1/webhooks/{id}/{token}/messages/{message_id}", tag = "Webhooks", params(("id" = String, Path, description = "Webhook id"), ("token" = String, Path, description = "Webhook token"), ("message_id" = String, Path, description = "Message id")), responses((status = 204, description = "Deleted"), (status = 404, description = "`Unknown webhook`, or `Unknown message`. `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 429, description = "The webhook budget or the webhook bucket", body = ApiErrorBody)), security(()))]
 pub(crate) async fn delete_hook_message(
     State(state): State<AppState>,
     Path((id, token, message_id)): Path<(String, String, String)>,
@@ -1695,7 +1700,7 @@ pub(crate) async fn delete_hook_message(
     let db = &state.db;
     switched_on(db).await?;
     let hook = hook_for(db, &id, &token).await?;
-    paced(db, &hook)?;
+    paced(&state, &hook)?;
     let mid = own_message(db, &hook, &message_id).await?;
     let root: Option<i64> = sqlx::query("SELECT thread_root_id FROM messages WHERE id = $1")
         .bind(mid)
@@ -4408,6 +4413,46 @@ mod tests {
             }
         }
         assert!(limited);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn webhook_pacing_is_configurable() {
+        let (state, path, cid) = setup("wh_pace_set").await;
+        let state = state.with_limits(std::sync::Arc::new(crate::limits::Limits {
+            webhook_hook_burst: 2,
+            webhook_channel_per_minute: 3,
+            ..crate::limits::Limits::default()
+        }));
+        let first = create(&state, "owner", cid, "One").await.expect("create");
+        let second = create(&state, "owner", cid, "Two").await.expect("create");
+        let mut sent = Vec::new();
+        for (made, n) in [
+            (&first, 0),
+            (&first, 1),
+            (&first, 2),
+            (&second, 3),
+            (&second, 4),
+        ] {
+            let id = made.webhook.id.to_string();
+            let answer = run(
+                &state,
+                &id,
+                &made.token,
+                json!({"content": format!("n{n}")}),
+            )
+            .await;
+            sent.push(match answer {
+                Ok(_) => "sent",
+                Err(ApiError(StatusCode::TOO_MANY_REQUESTS, _, _)) => "paced",
+                Err(ApiError(status, body, _)) => panic!("{status} {body}"),
+            });
+        }
+        assert_eq!(
+            sent,
+            ["sent", "sent", "paced", "sent", "paced"],
+            "two per webhook in its window, three per channel in a minute"
+        );
         done(state, path).await;
     }
 
