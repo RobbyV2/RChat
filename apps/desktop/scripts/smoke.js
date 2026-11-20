@@ -110,7 +110,10 @@
     await saves()
 
     settings.click()
-    await wait('desktop settings', () => find('p', 'Desktop app'))
+    await wait('desktop settings', () => {
+      document.querySelector('[data-settings-section="general"]')?.click()
+      return find('p', 'Desktop app')
+    })
     await wait('update button', () => exact('button', 'Check for updates'))
     await sleep(SMOKE_HOLD * 1000)
     done(true)
