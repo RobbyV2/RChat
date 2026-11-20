@@ -10,6 +10,7 @@ use futures_util::future::BoxFuture;
 
 use crate::api::ApiError;
 use crate::limits::bucket::{Keyed, Policy};
+use crate::limits::shared::Shared;
 use crate::server::client_ip::ClientIp;
 
 /// Client addresses each HTTP bucket keeps; past it the address used longest ago makes room.
@@ -20,6 +21,7 @@ pub const ADDRESSES_MAX: usize = 100_000;
 pub struct Limit {
     bucket: Arc<Keyed<IpAddr>>,
     key: ClientIp,
+    shared: Option<(Shared, &'static str)>,
 }
 
 type Check = fn(State<Limit>, Request, Next) -> BoxFuture<'static, Response>;
@@ -36,8 +38,30 @@ pub fn bucket(burst: u32, per_sec: u64) -> Arc<Keyed<IpAddr>> {
     Arc::new(Keyed::new(policy, ADDRESSES_MAX))
 }
 
+/// The bucket counts in this process.
 pub fn layer(bucket: Arc<Keyed<IpAddr>>, key: ClientIp) -> Layer {
-    from_fn_with_state(Limit { bucket, key }, check as Check)
+    let limit = Limit {
+        bucket,
+        key,
+        shared: None,
+    };
+    from_fn_with_state(limit, check as Check)
+}
+
+/// The bucket counts in Redis as `name`, together with every copy on the same Redis and
+/// prefix, when `shared` is given; in this process otherwise and while Redis does not answer.
+pub fn shared_layer(
+    bucket: Arc<Keyed<IpAddr>>,
+    key: ClientIp,
+    shared: Option<Shared>,
+    name: &'static str,
+) -> Layer {
+    let limit = Limit {
+        bucket,
+        key,
+        shared: shared.map(|shared| (shared, name)),
+    };
+    from_fn_with_state(limit, check as Check)
 }
 
 fn check(State(limit): State<Limit>, req: Request, next: Next) -> BoxFuture<'static, Response> {
@@ -45,8 +69,17 @@ fn check(State(limit): State<Limit>, req: Request, next: Next) -> BoxFuture<'sta
         let Some(ip) = limit.key.extract(&req) else {
             return ApiError::internal("no client address for the rate limiter").into_response();
         };
-        match limit.bucket.try_take(&ip, 1.0, Instant::now()) {
-            Ok(_) => next.run(req).await,
+        let counted = match &limit.shared {
+            Some((shared, name)) => {
+                let key = format!("http:{name}:{ip}");
+                shared.try_take(&key, limit.bucket.policy(), 1.0).await
+            }
+            None => None,
+        };
+        let answer =
+            counted.unwrap_or_else(|| limit.bucket.try_take(&ip, 1.0, Instant::now()).map(|_| ()));
+        match answer {
+            Ok(()) => next.run(req).await,
             Err(wait) => refused(wait),
         }
     })
@@ -207,6 +240,76 @@ mod tests {
         assert_eq!(passed, 3, "the invite bucket holds its own burst");
         says_its_wait(&refused.expect("refused"));
         served.server.abort();
+        done(state, path).await;
+    }
+
+    /// The join route of `served`, `n` times from one client: how many passed.
+    async fn joins(served: &Served, n: usize) -> usize {
+        let client = reqwest::Client::new();
+        let join = format!("{}/api/v1/servers/club/join", served.base);
+        until_refused(n, || client.post(&join).body("{}")).await.0
+    }
+
+    fn invites(state: AppState, burst: u32) -> AppState {
+        state.with_limits(Arc::new(Limits {
+            rate_limit_burst: 1000,
+            rate_limit_per_second: 1000,
+            rate_limit_invite_burst: burst,
+            rate_limit_invite_per_second: 1,
+            ..Limits::default()
+        }))
+    }
+
+    #[tokio::test]
+    async fn without_redis_buckets_stay_local() {
+        let (state, path) = temp_state("http_limit_local").await;
+        let state = invites(state, 2);
+        let (one, two) = (serve(&state).await, serve(&state).await);
+        assert_eq!(joins(&one, 5).await, 2, "one copy holds its burst");
+        assert_eq!(joins(&two, 5).await, 2, "another copy counts apart");
+        one.server.abort();
+        two.server.abort();
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "needs a Redis-protocol server at REDIS_URL"]
+    async fn join_bucket_is_shared_across_copies() {
+        let Ok(url) = std::env::var("REDIS_URL") else {
+            return;
+        };
+        let (state, path) = temp_state("http_limit_shared").await;
+        let state = invites(state, 3);
+        let prefix = format!("rchat-test-{:08x}", rand::random::<u32>());
+        let copy = |prefix: String| {
+            let (url, state) = (url.clone(), state.clone());
+            async move {
+                let (hub, bus) =
+                    crate::bus::connect(&url, &prefix, crate::bus::DEFAULT_HUB_MAXLEN, Roles::ALL)
+                        .await
+                        .expect("redis");
+                let copy = AppState::new(
+                    state.db.clone(),
+                    hub,
+                    None,
+                    Some(bus.clone()),
+                    state.instance.clone(),
+                )
+                .with_limits(state.limits.clone());
+                (serve(&copy).await, bus)
+            }
+        };
+        let (one, one_bus) = copy(prefix.clone()).await;
+        let (two, two_bus) = copy(prefix.clone()).await;
+        let (apart, apart_bus) = copy(format!("{prefix}-apart")).await;
+        assert_eq!(joins(&one, 2).await, 2);
+        assert_eq!(joins(&two, 5).await, 1, "both copies spend one bucket");
+        assert_eq!(joins(&one, 5).await, 0);
+        assert_eq!(joins(&apart, 5).await, 3, "another prefix counts apart");
+        for (served, bus) in [(one, one_bus), (two, two_bus), (apart, apart_bus)] {
+            served.server.abort();
+            bus.stop();
+        }
         done(state, path).await;
     }
 

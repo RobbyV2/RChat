@@ -16,6 +16,7 @@ use crate::api::{
 };
 use crate::db::{AvatarKind, Db, User, get_user, now};
 use crate::limits::bucket::{Keyed, Policy};
+use crate::limits::shared::Rate;
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -43,15 +44,12 @@ pub const REFUSED: &str = "Could not send a friend request to that user.";
 const YOU_BLOCKED: &str = "You blocked this user. Unblock them to add them as a friend.";
 const SLOW_DOWN: &str = "Too many friend requests. Try again later.";
 
-static REQUEST_PACE: LazyLock<Keyed> = LazyLock::new(|| {
-    Keyed::new(
-        Policy::Window {
-            limit: REQUESTS_PER_WINDOW,
-            window: REQUEST_WINDOW,
-        },
-        100_000,
-    )
-});
+/// Friend requests per account, in Redis across copies when the instance has one.
+static REQUEST_PACE: LazyLock<Rate> = LazyLock::new(|| Rate::new("friend_requests", 100_000));
+const REQUEST_POLICY: Policy = Policy::Window {
+    limit: REQUESTS_PER_WINDOW,
+    window: REQUEST_WINDOW,
+};
 /// Request pings one sender may cause one recipient per hour; past it the request is still
 /// stored, but the recipient is not pinged again.
 const PAIR_PINGS: u32 = 3;
@@ -826,7 +824,7 @@ fn unfriend_events(state: &AppState, a: &str, b: &str) {
 /// (`friend_requests` in `GET /api/v1/settings`); answering a request they sent you still
 /// works. At most 100 pending sent requests and 20 requests per 10 minutes.
 /// Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/friends/requests", tag = "Friends", request_body = FriendReq, responses((status = 200, description = "Sent, accepted (they had asked you) or already friends", body = RequestOutcome), (status = 400, description = "`You cannot add yourself as a friend`, `You have too many pending friend requests`, `You can have at most 1000 friends` or `That user has too many friends`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "You blocked this user", body = ApiErrorBody), (status = 404, description = "`Could not send a friend request to that user.`: no such user, they do not take requests from you, or friend requests are off on this instance", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many friend requests. Try again later.` (JSON): more than 20 in 10 minutes. `Too many actions on other accounts. Try again later.` with a `Retry-After` header (JSON): more than 30 new DMs and friend requests in 10 minutes. Or too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/friends/requests", tag = "Friends", request_body = FriendReq, responses((status = 200, description = "Sent, accepted (they had asked you) or already friends", body = RequestOutcome), (status = 400, description = "`You cannot add yourself as a friend`, `You have too many pending friend requests`, `You can have at most 1000 friends` or `That user has too many friends`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "You blocked this user", body = ApiErrorBody), (status = 404, description = "`Could not send a friend request to that user.`: no such user, they do not take requests from you, or friend requests are off on this instance", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many friend requests. Try again later.` (JSON, with `Retry-After`): more than 20 in 10 minutes, counted across copies when `REDIS_URL` is set. `Too many actions on other accounts. Try again later.` with a `Retry-After` header (JSON): more than 30 new DMs and friend requests in 10 minutes. Or too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn send_request(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -844,9 +842,15 @@ pub(crate) async fn send_request(
         ));
     }
     crate::api::lookup::contact(&state, &user)?;
-    let pace = format!("{}\n{}", crate::db::pool_key(&state.db), user.username);
-    if !REQUEST_PACE.take(&pace, 1.0, Instant::now()) {
-        return Err(ApiError::rate(SLOW_DOWN, None));
+    if let Err(wait) = REQUEST_PACE
+        .take(&state, &user.username, REQUEST_POLICY, 1.0)
+        .await
+    {
+        return Err(crate::api::lookup::limited(
+            "friend_requests",
+            SLOW_DOWN,
+            wait,
+        ));
     }
     if target == user.username {
         return Err(bad("You cannot add yourself as a friend"));
@@ -1944,6 +1948,59 @@ mod tests {
             "failed requests count toward the pace"
         );
         done(state, path).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "needs a Redis-protocol server at REDIS_URL"]
+    async fn friend_requests_count_across_copies() {
+        let Ok(url) = std::env::var("REDIS_URL") else {
+            return;
+        };
+        let prefix = format!("rchat-test-{:08x}", rand::random::<u32>());
+        let copy = |tag: &'static str| {
+            let (url, prefix) = (url.clone(), prefix.clone());
+            async move {
+                let (state, path) = temp_state(tag).await;
+                let (hub, bus) = crate::bus::connect(
+                    &url,
+                    &prefix,
+                    crate::bus::DEFAULT_HUB_MAXLEN,
+                    crate::config::Roles::ALL,
+                )
+                .await
+                .expect("redis");
+                let shared = AppState::new(
+                    state.db.clone(),
+                    hub,
+                    None,
+                    Some(bus.clone()),
+                    state.instance.clone(),
+                );
+                (shared, bus, state, path)
+            }
+        };
+        let (one, one_bus, one_state, one_path) = copy("friends_shared_one").await;
+        let (two, two_bus, two_state, two_path) = copy("friends_shared_two").await;
+        for _ in 0..REQUESTS_PER_WINDOW {
+            assert_ne!(
+                code(send(&one, "erin", "nobody").await),
+                Some((StatusCode::TOO_MANY_REQUESTS, SLOW_DOWN.to_string()))
+            );
+        }
+        assert_eq!(
+            code(send(&two, "erin", "nobody").await),
+            Some((StatusCode::TOO_MANY_REQUESTS, SLOW_DOWN.to_string())),
+            "the other copy counts the same account"
+        );
+        assert_ne!(
+            code(send(&two_state, "erin", "nobody").await),
+            Some((StatusCode::TOO_MANY_REQUESTS, SLOW_DOWN.to_string())),
+            "without Redis a process counts its own"
+        );
+        one_bus.stop();
+        two_bus.stop();
+        done(one_state, one_path).await;
+        done(two_state, two_path).await;
     }
 
     #[tokio::test]

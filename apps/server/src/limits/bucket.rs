@@ -310,6 +310,11 @@ impl<K: Hash + Eq + Clone> Keyed<K> {
         self.own().wait(key, cost, now)
     }
 
+    /// The stored policy.
+    pub fn policy(&self) -> Policy {
+        self.lock().0
+    }
+
     /// Applies to every key from its next use.
     pub fn set_policy(&self, policy: Policy) {
         self.lock().0 = policy;

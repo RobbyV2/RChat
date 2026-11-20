@@ -1953,13 +1953,15 @@ pub fn routes(
         ),
         key.clone(),
     );
-    let invite = || {
-        let bucket = http::bucket(
+    let invite_bucket = || {
+        http::bucket(
             limits.rate_limit_invite_burst,
             limits.rate_limit_invite_per_second,
-        );
-        http::layer(bucket, key.clone())
+        )
     };
+    let invite = || http::layer(invite_bucket(), key.clone());
+    let shared = state.bus.as_ref().map(crate::bus::Bus::shared);
+    let across = |name| http::shared_layer(invite_bucket(), key.clone(), shared.clone(), name);
     let upload_body = DefaultBodyLimit::max(state.limits.upload_body_bytes());
     let mut router = Router::new();
     if roles.api || roles.web {
@@ -1974,11 +1976,11 @@ pub fn routes(
         let invite_routes = Router::new()
             .route("/invites/{name}", get(servers::get_invite))
             .route("/invites/{name}/metadata", get(servers::invite_metadata))
-            .route_layer(invite())
+            .route_layer(across("invites"))
             .merge(
                 Router::new()
                     .route("/servers/{name}/join", post(servers::join_server))
-                    .route_layer(invite()),
+                    .route_layer(across("joins")),
             );
         let strict_routes = Router::new()
             .route("/auth/register", post(auth::register))
