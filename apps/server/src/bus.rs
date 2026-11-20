@@ -50,6 +50,18 @@ const CLAIM_EVERY: Duration = Duration::from_secs(30);
 const MAX_DELIVERIES: usize = 3;
 const CONSUMER_IDLE_MS: usize = 600_000;
 
+/// How long a limit counted in Redis waits for an answer before it counts in this process.
+const LIMITS_WAIT: Duration = Duration::from_millis(500);
+
+/// The connection of limits counted in Redis: it never waits long or retries, so a request
+/// that Redis can't answer counts in this process.
+fn limits_config() -> ConnectionManagerConfig {
+    ConnectionManagerConfig::new()
+        .set_connection_timeout(Some(LIMITS_WAIT))
+        .set_response_timeout(Some(LIMITS_WAIT))
+        .set_number_of_retries(0)
+}
+
 const SAVE_SNAPSHOT: &str = "
 local cur = redis.call('HGET', KEYS[1], 'id')
 if cur then
@@ -67,6 +79,7 @@ return 1
 #[derive(Clone)]
 pub struct Bus {
     conn: ConnectionManager,
+    limits: crate::limits::shared::Shared,
     client: Client,
     prefix: Arc<str>,
     roles: Roles,
@@ -216,6 +229,10 @@ pub async fn connect(
     ]));
     let bus = Bus {
         conn,
+        limits: crate::limits::shared::Shared::new(
+            client.get_connection_manager_lazy(limits_config())?,
+            prefix,
+        ),
         client,
         prefix: Arc::from(prefix),
         roles,
@@ -553,6 +570,11 @@ async fn snapshots(bus: Bus, key: String, hub: Hub) {
 impl Bus {
     fn key(&self, name: &str) -> String {
         format!("{}:{name}", self.prefix)
+    }
+
+    /// Buckets in this Redis, for limits counted across copies.
+    pub fn shared(&self) -> crate::limits::shared::Shared {
+        self.limits.clone()
     }
 
     pub fn unfurls_locally(&self) -> bool {

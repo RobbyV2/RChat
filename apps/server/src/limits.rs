@@ -11,6 +11,7 @@ use crate::relay::{DEFAULT_TOTAL_KIB_PER_SEC, DEFAULT_USER_ALLOCATIONS, DEFAULT_
 
 pub mod bucket;
 pub mod http;
+pub mod shared;
 
 const MIB: usize = 1024 * 1024;
 
@@ -18,7 +19,7 @@ const MIB: usize = 1024 * 1024;
 pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 72] = [
+const RANGES: [(&str, i64, i64); 74] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
@@ -51,6 +52,8 @@ const RANGES: [(&str, i64, i64); 72] = [
     ("UPLOAD_SERVER_KEPT_MIB", 0, 1_048_576),
     ("UPLOAD_OWNER_KEPT_MIB", 0, 1_048_576),
     ("MESSAGE_MAX_CHARS", 1, 100_000),
+    ("MESSAGE_RATE_PER_MINUTE", 0, 100_000),
+    ("MESSAGE_RATE_BURST", 0, 100_000),
     ("GUEST_GRANT_DAYS", 1, 3_650),
     ("GUEST_GRANTS_PER_PASSWORD", 1, 1_000_000),
     ("GUEST_GRANTS_PER_NETWORK", 1, 1_000_000),
@@ -229,6 +232,8 @@ pub struct Limits {
     pub upload_server_kept_mib: u64,
     pub upload_owner_kept_mib: u64,
     pub message_max_chars: usize,
+    pub message_rate_per_minute: u32,
+    pub message_rate_burst: u32,
     pub guest_grant_days: i64,
     pub guest_grants_per_password: u32,
     pub guest_grants_per_network: u32,
@@ -312,6 +317,8 @@ impl Default for Limits {
             upload_server_kept_mib: 8192,
             upload_owner_kept_mib: 16384,
             message_max_chars: 4000,
+            message_rate_per_minute: 2400,
+            message_rate_burst: 100,
             guest_grant_days: 30,
             guest_grants_per_password: crate::api::servers::GRANTS_PER_PASSWORD as u32,
             guest_grants_per_network: crate::api::servers::GRANTS_PER_NETWORK as u32,
@@ -543,6 +550,8 @@ impl Limits {
             upload_server_kept_mib: e.num("UPLOAD_SERVER_KEPT_MIB", d.upload_server_kept_mib)?,
             upload_owner_kept_mib: e.num("UPLOAD_OWNER_KEPT_MIB", d.upload_owner_kept_mib)?,
             message_max_chars: e.num("MESSAGE_MAX_CHARS", d.message_max_chars)?,
+            message_rate_per_minute: e.num("MESSAGE_RATE_PER_MINUTE", d.message_rate_per_minute)?,
+            message_rate_burst: e.num("MESSAGE_RATE_BURST", d.message_rate_burst)?,
             guest_grant_days: e.num("GUEST_GRANT_DAYS", d.guest_grant_days)?,
             guest_grants_per_password: e
                 .num("GUEST_GRANTS_PER_PASSWORD", d.guest_grants_per_password)?,
@@ -642,6 +651,8 @@ impl Limits {
             upload_server_kept_mib,
             upload_owner_kept_mib,
             message_max_chars,
+            message_rate_per_minute,
+            message_rate_burst,
             guest_grant_days,
             guest_grants_per_password,
             guest_grants_per_network,
@@ -744,6 +755,8 @@ impl Limits {
             ("UPLOAD_SERVER_KEPT_MIB", set(upload_server_kept_mib)),
             ("UPLOAD_OWNER_KEPT_MIB", set(upload_owner_kept_mib)),
             ("MESSAGE_MAX_CHARS", set(message_max_chars)),
+            ("MESSAGE_RATE_PER_MINUTE", set(message_rate_per_minute)),
+            ("MESSAGE_RATE_BURST", set(message_rate_burst)),
             ("GUEST_GRANT_DAYS", set(guest_grant_days)),
             ("GUEST_GRANTS_PER_PASSWORD", set(guest_grants_per_password)),
             ("GUEST_GRANTS_PER_NETWORK", set(guest_grants_per_network)),
@@ -859,6 +872,15 @@ impl Limits {
                 "P2P_BACKUP_TOTAL_MIB is {total}, under P2P_BACKUP_MAX_MIB ({max}): backups over {total} MiB are refused as storage full. Keep it at least 35 times the typical backup."
             )),
             false => None,
+        }
+    }
+
+    /// The bucket of messages each account sends (`MESSAGE_RATE_BURST` at once, then
+    /// `MESSAGE_RATE_PER_MINUTE`); `None` when either is 0.
+    pub fn message_rate(&self) -> Option<bucket::Policy> {
+        match (self.message_rate_burst, self.message_rate_per_minute) {
+            (0, _) | (_, 0) => None,
+            (burst, per_minute) => Some(bucket::Policy::per_minute(burst, per_minute)),
         }
     }
 
@@ -1192,6 +1214,28 @@ mod tests {
             assert_eq!(
                 err.to_string(),
                 format!("{name}: expected {range}, got {bad}")
+            );
+        }
+    }
+
+    #[test]
+    fn the_message_rate_has_its_defaults_and_0_turns_it_off() {
+        let d = load(&[]).expect("defaults");
+        assert_eq!(
+            (d.message_rate_burst, d.message_rate_per_minute),
+            (100, 2400)
+        );
+        assert_eq!(
+            d.message_rate(),
+            Some(super::bucket::Policy::per_minute(100, 2400))
+        );
+        for off in ["MESSAGE_RATE_PER_MINUTE", "MESSAGE_RATE_BURST"] {
+            let none = load(&[(off, "0".to_string())]).expect("0");
+            assert_eq!(none.message_rate(), None, "{off}=0");
+            let err = load(&[(off, "100001".to_string())]).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("{off}: expected 0 to 100000, got 100001")
             );
         }
     }

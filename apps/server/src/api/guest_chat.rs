@@ -120,7 +120,7 @@ pub(crate) async fn status(
 ///
 /// A first send returns a private session. Present it in X-Guest-Session for later sends.
 /// Private servers also require their live X-Guest-Grant. Guest replies never notify anyone.
-#[utoipa::path(post, path = "/api/v1/channels/{id}/guest-messages", tag = "Messages", params(("id" = i64, Path, description = "Text channel id")), request_body = GuestText, responses((status = 200, description = "Message sent", body = Posted), (status = 400, description = "Invalid text or reply"), (status = 401, description = "Guest session expired"), (status = 403, description = "Guest posting paused"), (status = 404, description = "Channel unavailable"), (status = 429, description = "Slow mode or request limit")))]
+#[utoipa::path(post, path = "/api/v1/channels/{id}/guest-messages", tag = "Messages", params(("id" = i64, Path, description = "Text channel id")), request_body = GuestText, responses((status = 200, description = "Message sent", body = Posted), (status = 400, description = "Invalid text or reply"), (status = 401, description = "Guest session expired"), (status = 403, description = "Guest posting paused"), (status = 404, description = "Channel unavailable"), (status = 429, description = "Slow mode, the message rate of the client address (`Sending too fast, try again in a moment`, with `Retry-After`) or request limit")))]
 pub(crate) async fn post(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -164,6 +164,7 @@ pub(crate) async fn post(
         }
     }
 
+    super::messages::guest_message_rate(&state).await?;
     let server = channel.server().name();
     let addr = address(db, server).await?;
     let t = now();
@@ -924,6 +925,44 @@ mod tests {
         say(&state, general, None, "elsewhere")
             .await
             .expect("another address still gets one");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn guest_text_counts_against_the_message_rate_of_its_address() {
+        let (state, path, general) = open_world("guest_text_rate").await;
+        let state = state.with_limits(std::sync::Arc::new(crate::limits::Limits {
+            message_rate_burst: 2,
+            message_rate_per_minute: 1,
+            ..crate::limits::Limits::default()
+        }));
+        let first = say(&state, general, None, "one").await.expect("one");
+        say(&state, general, Some(&first.session), "two")
+            .await
+            .expect("two");
+        let too_fast = Err((429, crate::api::messages::SENDING_TOO_FAST.to_string()));
+        assert_eq!(
+            say(&state, general, Some(&first.session), "three")
+                .await
+                .map(|_| ()),
+            too_fast
+        );
+        assert_eq!(
+            say(&state, general, None, "a new session")
+                .await
+                .map(|_| ()),
+            too_fast,
+            "a new session of the same address counts with it"
+        );
+        send(
+            &state,
+            general,
+            headers(None, None),
+            2,
+            serde_json::json!({ "content": "elsewhere" }),
+        )
+        .await
+        .expect("another address has its own rate");
         done(state, path).await;
     }
 

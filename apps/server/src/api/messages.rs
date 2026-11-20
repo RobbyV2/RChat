@@ -34,6 +34,7 @@ use crate::db::{
     pool_key, touch_interaction,
 };
 use crate::limits::bucket::{Keyed, Policy};
+use crate::limits::shared::Rate;
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 
@@ -1622,6 +1623,41 @@ async fn insert_forward(
     Ok((message, previews > 0))
 }
 
+/// The answer past the per-account message rate.
+pub const SENDING_TOO_FAST: &str = "Sending too fast, try again in a moment";
+
+/// Messages per account: channel, thread and DM messages, forwards and polls; and guest text
+/// per client address.
+static MESSAGE_RATE: std::sync::LazyLock<Rate> =
+    std::sync::LazyLock::new(|| Rate::new("messages", 100_000));
+
+/// Counts one message of `user` against `MESSAGE_RATE_BURST` and `MESSAGE_RATE_PER_MINUTE`,
+/// across copies when the instance has Redis.
+async fn message_rate(state: &AppState, user: &User) -> Result<(), ApiError> {
+    sender_rate(state, &user.username).await
+}
+
+/// Counts one guest message against the message rate of the guest's client address (an IPv6
+/// /64 counts as one), like an account's.
+pub(crate) async fn guest_message_rate(state: &AppState) -> Result<(), ApiError> {
+    let address = crate::api::budget::client()
+        .map(|ip| crate::api::budget::group(ip).to_string())
+        .unwrap_or_default();
+    sender_rate(state, &format!("guest\n{address}")).await
+}
+
+async fn sender_rate(state: &AppState, sender: &str) -> Result<(), ApiError> {
+    let Some(policy) = state.limits.message_rate() else {
+        return Ok(());
+    };
+    MESSAGE_RATE
+        .take(state, sender, policy, 1.0)
+        .await
+        .map_err(|wait| {
+            crate::api::lookup::limited("MESSAGE_RATE_PER_MINUTE", SENDING_TOO_FAST, wait)
+        })
+}
+
 /// Stores a message sent to `place` after the access gate allowed it, and its group pings
 /// before the `message` event (a client reloading its unread counts on it finds them), then
 /// announces it: link previews, the `message` event and pings (forwards ping nobody).
@@ -1632,6 +1668,7 @@ async fn deliver(
     place: Place,
     scope: PingScope<'_>,
 ) -> Result<Json<Message>, ApiError> {
+    message_rate(state, user).await?;
     let thread_root_id = match place {
         Place::Thread(root) => Some(root),
         Place::Channel(_) | Place::Dm(_) => None,
@@ -2072,7 +2109,7 @@ pub(crate) async fn read_channel(
 /// channel. With `mention_reply` (default), its author gets one `reply` ping instead. With
 /// `forward_of`, the message is a copy of a message you can read (see `SendReq`). Forwards never
 /// ping. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), voice channel, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (`Too Many Requests! Wait for Ns`)", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/channels/{id}/messages", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), request_body = SendReq, responses((status = 200, description = "The posted message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), voice channel, text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (`Too Many Requests! Wait for Ns`). Or `Sending too fast, try again in a moment` (JSON, reason `rate`, with `Retry-After`): more messages from your account than `MESSAGE_RATE_BURST` at once (by default 100) or `MESSAGE_RATE_PER_MINUTE` a minute after that (by default 2400), counted across copies when `REDIS_URL` is set", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn send_channel_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2138,7 +2175,7 @@ pub(crate) async fn thread_messages(
 /// of the thread. With `mention_reply` (default), its author gets a `reply` ping instead of a
 /// mention ping. With `forward_of`, the reply is a copy of a message you can read (see `SendReq`)
 /// and pings nobody. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (`Too Many Requests! Wait for Ns`)", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/messages/{id}/thread", tag = "Threads", params(("id" = i64, Path, description = "Id of the thread's root message")), request_body = SendReq, responses((status = 200, description = "The posted thread reply; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "The root is a DM message or itself a reply, blocked by the profanity filter (text or the file name of a server upload; P2P file names are never checked), text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the server, no permission to send in the channel, or `media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Slow mode: the channel has `slowmode_seconds` and you posted in it (including thread replies) less than that long ago; JSON `Slow mode: wait Ns`. Or too many requests in the general bucket (`Too Many Requests! Wait for Ns`). Or `Sending too fast, try again in a moment` (JSON, reason `rate`, with `Retry-After`): more messages from your account than `MESSAGE_RATE_BURST` at once (by default 100) or `MESSAGE_RATE_PER_MINUTE` a minute after that (by default 2400), counted across copies when `REDIS_URL` is set", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn send_thread_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2190,7 +2227,7 @@ pub(crate) async fn dm_messages(
 /// event). `reply_to` may quote a message of the same conversation; with `mention_reply`
 /// (default) its author gets a `reply` ping instead. With `forward_of` the message is a copy
 /// of a message you can read (see `SendReq`) and pings nobody. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off), or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/dms/{id}/messages", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), request_body = SendReq, responses((status = 200, description = "The posted DM message; link previews arrive later as an `embeds_resolved` WebSocket event", body = Message), (status = 400, description = "Text over `limits.message_chars` characters (by default 4000, `MESSAGE_MAX_CHARS`), empty message without attachment, both `media_id` and `p2p`, unknown or already attached `media_id`, an invalid `p2p` attachment, a `reply_to` you cannot reply to (`Cannot reply to that message`), or a `forward_of` you cannot forward (`Cannot forward that message`); both are the same for ids that do not exist. A non-numeric id, malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`media_id` was uploaded by someone else, or that kind of attachment is turned off (`File uploads are turned off on this server`, `P2P attachments are turned off on this server`, or `Attachments are turned off on this server` when both are off), or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "Too many requests in the general bucket. Or `Sending too fast, try again in a moment` (JSON, reason `rate`, with `Retry-After`): more messages from your account than `MESSAGE_RATE_BURST` at once (by default 100) or `MESSAGE_RATE_PER_MINUTE` a minute after that (by default 2400), counted across copies when `REDIS_URL` is set", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn send_dm_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -4701,6 +4738,131 @@ mod tests {
             Some("a.txt".to_string())
         );
         done(state, path).await;
+    }
+
+    fn message_rate(burst: u32, per_minute: u32) -> std::sync::Arc<crate::limits::Limits> {
+        std::sync::Arc::new(crate::limits::Limits {
+            message_rate_burst: burst,
+            message_rate_per_minute: per_minute,
+            ..crate::limits::Limits::default()
+        })
+    }
+
+    fn too_fast(answer: Result<Json<Message>, ApiError>) -> u64 {
+        match answer {
+            Err(ApiError(StatusCode::TOO_MANY_REQUESTS, text, Some(reason))) => {
+                assert_eq!(text, SENDING_TOO_FAST);
+                assert_eq!(reason.kind, crate::api::ReasonKind::Rate);
+                reason.retry_after.expect("a wait")
+            }
+            Err(e) => panic!("{e:?}"),
+            Ok(_) => panic!("sent past the rate"),
+        }
+    }
+
+    #[tokio::test]
+    async fn account_message_rate_refuses_past_burst() {
+        let (state, path) = temp_state("message_rate").await;
+        let state = state.with_limits(message_rate(3, 1));
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, now()).await;
+        add_member(db, "rchat", "bob", 0, 0, now()).await;
+        let root = send(&state, cid, "alice").await.expect("first").0.id;
+        let _ = send(&state, cid, "alice").await.expect("second");
+        let reply = |who: &'static str| {
+            send_thread_message(
+                State(state.clone()),
+                Path(root),
+                Authed(mem_user(who, false)),
+                Json(SendReq {
+                    content: "in the thread".to_string(),
+                    media_id: None,
+                    media_spoiler: None,
+                    p2p: None,
+                    reply_to: None,
+                    mention_reply: true,
+                    forward_of: None,
+                    poll: None,
+                }),
+            )
+        };
+        let _ = reply("alice").await.expect("third, in a thread");
+        assert_eq!(too_fast(send(&state, cid, "alice").await), 60);
+        too_fast(reply("alice").await);
+        let dm: i64 =
+            sqlx::query("INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id")
+                .fetch_one(db)
+                .await
+                .expect("dm")
+                .try_get(0)
+                .expect("dm id");
+        let in_dm = |who: &'static str| {
+            send_dm_message(
+                State(state.clone()),
+                Path(dm),
+                Authed(mem_user(who, false)),
+                Json(SendReq {
+                    content: "direct".to_string(),
+                    media_id: None,
+                    media_spoiler: None,
+                    p2p: None,
+                    reply_to: None,
+                    mention_reply: true,
+                    forward_of: None,
+                    poll: None,
+                }),
+            )
+        };
+        too_fast(in_dm("alice").await);
+        let _ = in_dm("bob")
+            .await
+            .expect("another account has its own count");
+        let state = state.with_limits(message_rate(3, 60_000));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let _ = send(&state, cid, "alice")
+            .await
+            .expect("passes again after the refill");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn rate_is_per_account_not_per_address() {
+        let (state, path) = temp_state("message_rate_who").await;
+        let state = state.with_limits(message_rate(2, 1));
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_member(db, "rchat", "alice", 0, 0, now()).await;
+        add_member(db, "rchat", "bob", 0, 0, now()).await;
+        let from = |who: &'static str, ip: [u8; 4]| {
+            let state = state.clone();
+            crate::api::budget::as_client(std::net::IpAddr::from(ip), async move {
+                send(&state, cid, who).await
+            })
+        };
+        let _ = from("alice", [192, 0, 2, 1]).await.expect("one");
+        let _ = from("alice", [192, 0, 2, 1]).await.expect("two");
+        too_fast(from("alice", [198, 51, 100, 7]).await);
+        let _ = from("bob", [192, 0, 2, 1])
+            .await
+            .expect("the same address, another account");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn zero_means_no_rate() {
+        for (burst, per_minute) in [(0, 600), (3, 0)] {
+            let (state, path) = temp_state("message_rate_off").await;
+            let state = state.with_limits(message_rate(burst, per_minute));
+            let cid = general_id(&state.db).await;
+            add_member(&state.db, "rchat", "alice", 0, 0, now()).await;
+            for n in 0..10 {
+                let _ = send(&state, cid, "alice")
+                    .await
+                    .unwrap_or_else(|e| panic!("{burst}/{per_minute} send {n}: {e:?}"));
+            }
+            done(state, path).await;
+        }
     }
 
     #[tokio::test]
