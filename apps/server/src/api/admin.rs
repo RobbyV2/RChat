@@ -18,8 +18,7 @@ use crate::api::policy::{
 use crate::api::reports::forms::{self, Form, ReportForms};
 use crate::api::{
     ApiError, Authed, OkResp, Paged, ProfanitySwitch, PublicSettings, STRICT_FILE_NAMES,
-    ServerDetail, ServerSummaryLite, UserRef, bad, decode_cursor, encode_cursor, ok, reports,
-    upload_expiry,
+    ServerSummaryLite, UserRef, bad, decode_cursor, encode_cursor, ok, reports, upload_expiry,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now, purge_messages, recount_members, user_row};
 use crate::state::AppState;
@@ -817,7 +816,7 @@ pub(crate) async fn create_server_for(
     State(state): State<AppState>,
     Authed(user): Authed,
     Json(req): Json<AdminServerReq>,
-) -> Result<Json<ServerDetail>, ApiError> {
+) -> Result<Json<crate::api::servers::CreatedServer>, ApiError> {
     require_site_admin(&user)?;
     let AdminServerReq {
         name,
@@ -1827,7 +1826,8 @@ mod tests {
             )
             .await
             .expect("create")
-            .0;
+            .0
+            .server;
             assert_eq!(made.creator.as_deref(), Some(maker));
         }
         let _ = join_server(
@@ -4033,7 +4033,8 @@ mod tests {
         )
         .await
         .expect("create")
-        .0;
+        .0
+        .server;
         assert_eq!(
             (detail.name.as_str(), detail.display_name.as_str()),
             ("club", "Club")
@@ -4098,7 +4099,8 @@ mod tests {
         )
         .await
         .expect("the admin as owner, with a password")
-        .0;
+        .0
+        .server;
         assert_eq!(own.creator, None);
         assert_eq!(
             count(db, "SELECT COUNT(*) FROM servers WHERE name = 'vault' AND creator IS NULL AND password_hash IS NOT NULL").await,

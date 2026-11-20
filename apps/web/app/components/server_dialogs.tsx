@@ -1,11 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { api } from '../lib/instances'
+import { api, shareOrigin } from '../lib/instances'
 import { errorText, inSession, useStore } from '../lib/store'
 import type { ServerMatch } from '../lib/types'
 import { enterKey } from '../lib/keys'
-import { JOIN_NOTE, runJoinStep, type JoinStep } from '../lib/join_flow'
+import { JOIN_NOTE, joinByCode, joinInput, runJoinStep, type JoinStep } from '../lib/join_flow'
 import { SHORT_PASSWORD, tooShort } from '../lib/passwords'
 import { Dialog, FieldError, Masked } from './ui'
 
@@ -35,9 +35,10 @@ function AddServerDialog({
   const joining = !creating
   const id = name.trim().toLowerCase()
   const nameTaken = creating && taken?.id === id && taken.taken
+  const link = joining ? joinInput(name, shareOrigin()) : null
 
   useEffect(() => {
-    if (!joining || !id) {
+    if (!joining || !id || id.includes('/')) {
       setSuggestions([])
       return
     }
@@ -89,10 +90,31 @@ function AddServerDialog({
       }
       return
     }
+    const join = (server: string, pw?: string) =>
+      guest ? guestJoinServer(server, pw) : joinServer(server, pw)
+    if (link?.code) {
+      const failed = await joinByCode(
+        link.code,
+        code => api.inviteByCode(code).then(card => card.server.name),
+        join,
+        errorText
+      )
+      if (failed === null) close()
+      else {
+        setError(failed)
+        setBusy(false)
+      }
+      return
+    }
+    const target = link?.server ?? trimmed
+    if (link) {
+      setName(link.server)
+      if (link.password) setPassword(link.password)
+    }
     const out = await runJoinStep(
-      step,
-      password,
-      pw => (guest ? guestJoinServer(trimmed, pw) : joinServer(trimmed, pw)),
+      link?.password ? 'password' : step,
+      link?.password ?? password,
+      pw => join(target, pw),
       errorText
     )
     if (out.done) {
@@ -130,7 +152,7 @@ function AddServerDialog({
       <p className="mb-3 text-sm text-on-surface-variant">
         {creating
           ? 'The server name doubles as its invite code.'
-          : 'Enter a server name to join it. The name is the invite code.'}
+          : 'Enter a server name, or paste an invite link.'}
       </p>
       <input
         autoFocus={step === 'name'}
@@ -139,8 +161,8 @@ function AddServerDialog({
         onKeyDown={e => {
           if (enterKey(e)) void submit()
         }}
-        placeholder="server name"
-        aria-label="Server name"
+        placeholder={joining ? 'server name or invite link' : 'server name'}
+        aria-label={joining ? 'Server name or invite link' : 'Server name'}
         aria-invalid={nameTaken}
         className="streamer w-full rounded-xl border border-outline bg-transparent px-3 py-2 text-base outline-none focus:border-primary md:text-sm"
       />

@@ -397,7 +397,7 @@ export interface RChatState {
   openDm: (dmId: number, nav?: Nav, at?: number) => Promise<void>
   openLastDm: () => void
   goHome: () => void
-  openInvite: (server: string, password?: string | null) => void
+  openInvite: (server: string, password?: string | null, code?: string | null) => void
   closeInvite: () => void
   syncInvite: () => boolean
   syncConfigLink: () => boolean

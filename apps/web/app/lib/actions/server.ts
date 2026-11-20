@@ -2,7 +2,8 @@
 // Marking read, muting and leaving a server are the server's palette commands (place.ts).
 
 import { Bell, BellOff, CheckCheck } from 'lucide-react'
-import { inviteUrl } from '../invite'
+import { api } from '../instances'
+import { inviteUrl, sharedByCode, shareLink } from '../invite'
 import { muteEnd, mutedText } from '../notify'
 import { sharing } from '../platform'
 import { myPerms, previewServer, serverNames, serversMarkTargets, useStore } from '../store'
@@ -85,7 +86,17 @@ export const serverActions: Action[] = [
     available: ctx => railServer(ctx) !== null,
     run: ctx => {
       const server = railServer(ctx)
-      if (server) copy(inviteUrl(server))
+      if (!server) return
+      const mode = get().servers[server]?.join_mode
+      if (!sharedByCode(mode)) return copy(inviteUrl(server))
+      void api.standingInvite(server).then(
+        link => {
+          const url = shareLink(server, mode, link)
+          if (url) copy(url)
+          else get().setError('This server has no invite link. Its managers can make one.')
+        },
+        () => get().setError("Couldn't get the invite link. Try again.")
+      )
     },
   },
   {

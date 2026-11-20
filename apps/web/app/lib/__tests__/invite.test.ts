@@ -5,6 +5,8 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   autoStep,
+  codePath,
+  codeUrl,
   findInvites,
   findRemoteInvites,
   entryState,
@@ -17,6 +19,7 @@ import {
   inviteVersion,
   invitePath,
   inviteUrl,
+  isCode,
   parseInvite,
   parseInviteAt,
   previewText,
@@ -25,7 +28,11 @@ import {
   refreshDelay,
   remoteKey,
   safeNext,
+  sameInvite,
+  sharedByCode,
+  shareLink,
   staleInvites,
+  targetPath,
   watchInvites,
 } from '../invite'
 
@@ -433,5 +440,96 @@ describe('autoStep', () => {
   test('never joins a server an account may only read', () => {
     expect(autoStep('readable', false)).toBe('stop')
     expect(autoStep('readable', true)).toBe('join')
+  })
+})
+
+describe('invite codes', () => {
+  test('code links carry only the code', () => {
+    expect(codePath('k7m2p9xq4tzr')).toBe('/i/k7m2p9xq4tzr/')
+    expect(codeUrl('k7m2p9xq4tzr', ORIGIN)).toBe('https://chat.example.com/i/k7m2p9xq4tzr/')
+    expect(targetPath({ server: '', password: null, code: 'k7m2p9xq4tzr' })).toBe(
+      '/i/k7m2p9xq4tzr/'
+    )
+    expect(targetPath({ server: 'club', password: 'pw' })).toBe('/invite/club/')
+  })
+
+  test('codes use letters and digits that read clearly', () => {
+    expect(isCode('k7m2p9xq4tzr')).toBe(true)
+    for (const bad of [
+      '',
+      'abc',
+      'k7m2p9xq4tz0',
+      'k7m2p9xq4tzl',
+      'K7M2P9',
+      'k7m2-p9x',
+      'x'.repeat(33),
+    ])
+      expect(isCode(bad)).toBe(false)
+  })
+
+  test('parses code links on this origin, in any case, and nothing else under /i/', () => {
+    expect(parseInvite(`${ORIGIN}/i/k7m2p9xq4tzr/`, ORIGIN)).toEqual({
+      server: '',
+      password: null,
+      code: 'k7m2p9xq4tzr',
+    })
+    expect(parseInvite(`${ORIGIN}/i/K7M2P9XQ4TZR`, ORIGIN)?.code).toBe('k7m2p9xq4tzr')
+    expect(parseInvite('/i/k7m2p9xq4tzr/', ORIGIN)?.code).toBe('k7m2p9xq4tzr')
+    expect(parseInvite('https://other.example/i/k7m2p9xq4tzr/', ORIGIN)).toBeNull()
+    for (const bad of ['/i/', '/i/k7m2p9xq4tzr/more', '/i/no%20code/', '/i/0000000000/'])
+      expect(parseInvite(bad, ORIGIN)).toBeNull()
+    expect(parseInvite(`${ORIGIN}/invite/club/`, ORIGIN)).toEqual({
+      server: 'club',
+      password: null,
+    })
+  })
+
+  test('finds code links in messages next to name links, once each', () => {
+    const text = [
+      `join ${ORIGIN}/i/k7m2p9xq4tzr/.`,
+      `again ${ORIGIN}/i/K7M2P9XQ4TZR/`,
+      `${ORIGIN}/invite/club/`,
+      `\`${ORIGIN}/i/hhhhhhhhhhhh/\``,
+    ].join('\n')
+    expect(findInvites(text, ORIGIN).map(i => i.code ?? i.server)).toEqual(['k7m2p9xq4tzr', 'club'])
+    expect(
+      sameInvite({ server: '', password: null, code: 'a' }, { server: '', password: null })
+    ).toBe(false)
+  })
+
+  test('code links of other instances get no remote card', () => {
+    const found = findRemoteInvites('https://b.example/i/k7m2p9xq4tzr/', [ORIGIN], () => true)
+    expect(found).toEqual([])
+  })
+
+  test('history entries and sign-in handoffs keep the code', () => {
+    const entry = { server: '', password: null, code: 'k7m2p9xq4tzr', pushed: true }
+    expect(inviteEntry(entryState(entry), '', 'k7m2p9xq4tzr')).toEqual(entry)
+    expect(inviteEntry(entryState(entry), '', 'hhhhhhhhhhhh')).toBeNull()
+    expect(inviteEntry(entryState(entry), '')).toBeNull()
+    const saved = JSON.stringify({ server: '', password: null, code: 'k7m2p9xq4tzr', at: 1000 })
+    expect(handoffFor(saved, '', 1000, 'k7m2p9xq4tzr')).toEqual({
+      server: '',
+      password: null,
+      code: 'k7m2p9xq4tzr',
+    })
+    expect(handoffFor(saved, '', 1000, 'hhhhhhhhhhhh')).toBeNull()
+    expect(handoffFor(saved, '', 1000)).toBeNull()
+  })
+})
+
+describe('shareLink', () => {
+  test('servers people join by name share their name; others their invite link', () => {
+    expect(shareLink('club', 'name', undefined, ORIGIN)).toBe(`${ORIGIN}/invite/club/`)
+    expect(shareLink('club', 'password', undefined, ORIGIN)).toBe(`${ORIGIN}/invite/club/`)
+    expect(shareLink('club', undefined, undefined, ORIGIN)).toBe(`${ORIGIN}/invite/club/`)
+    const link = { code: 'k7m2p9xq4tzr', path: '/i/k7m2p9xq4tzr/' }
+    expect(shareLink('x2y3z4w5v6', 'invite', link, ORIGIN)).toBe(`${ORIGIN}/i/k7m2p9xq4tzr/`)
+    expect(shareLink('x2y3z4w5v6', 'invite', null, ORIGIN)).toBeNull()
+    expect(shareLink('x2y3z4w5v6', 'closed', null, ORIGIN)).toBeNull()
+    expect(sharedByCode('invite')).toBe(true)
+    expect(sharedByCode('closed')).toBe(true)
+    expect(sharedByCode('name')).toBe(false)
+    expect(sharedByCode(undefined)).toBe(false)
   })
 })

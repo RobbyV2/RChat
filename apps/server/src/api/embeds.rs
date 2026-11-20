@@ -202,7 +202,7 @@ fn is_invite(url: &Url) -> bool {
     let mut parts = url.path().split('/').skip(1);
     matches!(
         (parts.next(), parts.next(), parts.next(), parts.next()),
-        (Some("invite"), Some(name), None | Some(""), None) if !name.is_empty()
+        (Some("invite" | "i"), Some(name), None | Some(""), None) if !name.is_empty()
     )
 }
 

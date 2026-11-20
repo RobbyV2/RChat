@@ -1,10 +1,13 @@
 import { sessionStore, shareOrigin } from './instances'
 import { replaceSpoilers, spoilerParts } from './spoilers'
-import type { Invite, InviteStatus } from './types'
+import type { Invite, InviteLinkInfo, InviteStatus, JoinMode } from './types'
 
+// An invite by name (`server`, with `password` when the link has one), or by an invite code
+// (`code`, with `server` empty until the code is looked up).
 export interface InviteTarget {
   server: string
   password: string | null
+  code?: string
 }
 
 export interface InviteLink extends InviteTarget {
@@ -44,6 +47,37 @@ export const autoStep = (status: InviteStatus, guest: boolean): 'open' | 'stop' 
 
 export const invitePath = (server: string) => `/invite/${strictEncode(server)}/`
 
+// Invite codes use lowercase letters and digits that can't be mistaken for each other.
+const CODE = /^[2-9a-hjkmnp-z]{6,32}$/
+
+export const isCode = (raw: string) => CODE.test(raw)
+
+export const codePath = (code: string) => `/i/${code}/`
+
+export const codeUrl = (code: string, origin?: string) =>
+  `${origin ?? shareOrigin()}${codePath(code)}`
+
+export const targetPath = (target: InviteTarget) =>
+  target.code ? codePath(target.code) : invitePath(target.server)
+
+export const sameInvite = (a: InviteTarget, b: InviteTarget) =>
+  a.server === b.server && (a.code ?? null) === (b.code ?? null)
+
+// Whether people get into a server through its invite link rather than its name.
+export const sharedByCode = (mode: JoinMode | undefined) => mode === 'invite' || mode === 'closed'
+
+// The link that invites someone to `server`: its name link, or for a server people join with an
+// invite, its invite link (`link`, null when it has none).
+export const shareLink = (
+  server: string,
+  mode: JoinMode | undefined,
+  link: InviteLinkInfo | null | undefined,
+  origin?: string
+) => {
+  if (!sharedByCode(mode)) return inviteUrl(server, null, origin)
+  return link ? codeUrl(link.code, origin) : null
+}
+
 export const inviteUrl = (server: string, password?: string | null, origin?: string) => {
   const pw = password?.trim()
   const base = origin ?? shareOrigin()
@@ -69,6 +103,11 @@ export const parseInviteAt = (href: string, base: string): RemoteInvite | null =
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
   if (url.username || url.password) return null
+  const coded = url.pathname.match(/^\/i\/([^/]+)\/?$/)?.[1].toLowerCase()
+  if (coded !== undefined)
+    return isCode(coded)
+      ? { origin: url.origin, server: '', password: null, code: coded, url: url.href }
+      : null
   const match = url.pathname.match(/^\/invite\/([^/]+)\/?$/)
   if (!match) return null
   let server: string
@@ -84,7 +123,8 @@ export const parseInviteAt = (href: string, base: string): RemoteInvite | null =
 export const parseInvite = (href: string, origin: string): InviteTarget | null => {
   const found = parseInviteAt(href, origin)
   if (!found || found.origin !== origin) return null
-  return { server: found.server, password: found.password }
+  const { server, password, code } = found
+  return code ? { server, password, code } : { server, password }
 }
 
 const withoutCodeBlocks = (text: string) => {
@@ -136,7 +176,7 @@ export const findInvites = (text: string, origin: string, max = 3): InviteLink[]
   const out: InviteLink[] = []
   for (const url of visibleLinks(text)) {
     const target = parseInvite(url, origin)
-    if (!target || out.some(o => o.server === target.server)) continue
+    if (!target || out.some(o => sameInvite(o, target))) continue
     out.push({ ...target, url })
     if (out.length === max) break
   }
@@ -152,7 +192,7 @@ export const findRemoteInvites = (
   const out: RemoteInvite[] = []
   for (const url of visibleLinks(text)) {
     const found = parseInviteAt(url, 'http://invalid')
-    if (!found || local.includes(found.origin) || !allowed(found.origin)) continue
+    if (!found || found.code || local.includes(found.origin) || !allowed(found.origin)) continue
     if (out.some(o => o.origin === found.origin && o.server === found.server)) continue
     out.push({ ...found, url })
     if (out.length === max) break
@@ -190,11 +230,17 @@ export const previewText = (content: string, cut = false) =>
 export const previewParts = (content: string, cut = false) =>
   spoilerParts(content, cut).map(p => ({ ...p, text: plainPreview(p.text) }))
 
-export const inviteEntry = (state: unknown, server: string): InviteEntry | null => {
+export const inviteEntry = (
+  state: unknown,
+  server: string,
+  code: string | null = null
+): InviteEntry | null => {
   const saved = (state as { rchatInvite?: Partial<InviteEntry> } | null)?.rchatInvite
-  if (!saved || saved.server !== server) return null
+  if (!saved || saved.server !== server || (saved.code ?? null) !== code) return null
   const password = typeof saved.password === 'string' ? saved.password : null
-  return { server, password, pushed: saved.pushed === true }
+  return code
+    ? { server, password, code, pushed: saved.pushed === true }
+    : { server, password, pushed: saved.pushed === true }
 }
 
 export const entryState = (entry: InviteEntry) => ({ rchatInvite: entry })
@@ -202,14 +248,16 @@ export const entryState = (entry: InviteEntry) => ({ rchatInvite: entry })
 export const handoffFor = (
   raw: string | null,
   server: string,
-  now: number
+  now: number,
+  code: string | null = null
 ): InviteTarget | null => {
   if (!raw) return null
   try {
     const saved = JSON.parse(raw) as Partial<InviteTarget & { at: number }>
     const fresh = typeof saved.at === 'number' && saved.at <= now && now - saved.at < HANDOFF_MS
-    if (!fresh || saved.server !== server) return null
-    return { server, password: typeof saved.password === 'string' ? saved.password : null }
+    if (!fresh || saved.server !== server || (saved.code ?? null) !== code) return null
+    const password = typeof saved.password === 'string' ? saved.password : null
+    return code ? { server, password, code } : { server, password }
   } catch {
     return null
   }
@@ -218,10 +266,10 @@ export const handoffFor = (
 export const stashInvite = (target: InviteTarget) =>
   sessionStore.setItem(STASH, JSON.stringify({ ...target, at: Date.now() }))
 
-export const takeStashedInvite = (server: string | null) => {
+export const takeStashedInvite = (server: string | null, code: string | null = null) => {
   const raw = sessionStore.getItem(STASH)
   if (raw !== null) sessionStore.removeItem(STASH)
-  return server === null ? null : handoffFor(raw, server, Date.now())
+  return server === null ? null : handoffFor(raw, server, Date.now(), code)
 }
 
 export const dropStashedInvite = () => sessionStore.removeItem(STASH)

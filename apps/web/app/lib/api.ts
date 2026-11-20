@@ -27,6 +27,7 @@ import type {
   IceServers,
   InstanceInfo,
   Invite,
+  InviteLinkInfo,
   Me,
   Member,
   Message,
@@ -524,6 +525,9 @@ export const endpoints = (c: ApiClient) => ({
       undefined,
       password ? { 'X-Invite-Password': seg(password) } : {}
     ),
+  inviteByCode: (code: string) => c.req<Invite>('GET', `/invite_codes/${seg(code)}`),
+  standingInvite: (name: string) =>
+    c.req<InviteLinkInfo | null>('GET', `/servers/${seg(name)}/invite`),
   searchServers: (q: string) => c.req<ServerMatch[]>('GET', `/server_search?q=${seg(q)}`),
   guestAccess: (name: string, password?: string) =>
     c.req<{ grant: string | null }>('POST', `/servers/${seg(name)}/guest_access`, { password }),

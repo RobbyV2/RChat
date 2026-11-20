@@ -49,9 +49,10 @@ import {
   dropStashedInvite,
   entryState,
   inviteEntry,
-  invitePath,
   parseInvite,
+  sameInvite,
   takeStashedInvite,
+  targetPath,
 } from '../invite'
 import { deniedAccess } from '../join_flow'
 import { keyed, mergeHead, refreshTail, samePrefix } from '../lists'
@@ -1040,24 +1041,31 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   const rememberInvite = (entry: InviteEntry) =>
     queueMicrotask(() => {
-      if (parseInvite(pageHref(), shareOrigin())?.server !== entry.server) return
-      window.history.replaceState(entryState(entry), '', invitePath(entry.server))
+      const shown = parseInvite(pageHref(), shareOrigin())
+      if (!shown || !sameInvite(shown, entry)) return
+      window.history.replaceState(entryState(entry), '', targetPath(entry))
     })
 
   const readInvite = () => {
     const target = parseInvite(pageHref(), shareOrigin())
-    const handoff = takeStashedInvite(target?.server ?? null)
+    const code = target?.code ?? null
+    const handoff = takeStashedInvite(target?.server ?? null, code)
     if (!target) {
       leaveInvite()
       return false
+    }
+    const { me, guest } = get()
+    const join = handoff !== null && (me !== null || guest)
+    if (code) {
+      set({ invite: { server: '', password: null, code, join } })
+      return true
     }
     const { server } = target
     const entry = inviteEntry(window.history.state, server)
     const password = target.password ?? entry?.password ?? handoff?.password ?? null
     if (target.password !== null || password !== (entry?.password ?? null))
       rememberInvite({ server, password, pushed: entry?.pushed ?? false })
-    const { me, guest } = get()
-    set({ invite: { server, password, join: handoff !== null && (me !== null || guest) } })
+    set({ invite: { server, password, join } })
     return true
   }
 
@@ -1825,17 +1833,20 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         askP2p(msgs)
       }),
 
-    openInvite: (server, password = null) => {
-      const invite: OpenInvite = { server, password, join: false }
+    openInvite: (server, password = null, code = null) => {
+      const target = code ? { server: '', password: null, code } : { server, password }
+      const invite: OpenInvite = { ...target, join: false }
       set({ invite, contextMenu: null, profile: null, activeDialog: null })
-      const path = invitePath(server)
+      const path = targetPath(target)
       if (window.location.pathname !== path)
-        window.history.pushState(entryState({ server, password, pushed: true }), '', path)
+        window.history.pushState(entryState({ ...target, pushed: true }), '', path)
     },
 
     closeInvite: () => {
       const { view, invite } = get()
-      const pushed = invite !== null && inviteEntry(window.history.state, invite.server)?.pushed
+      const pushed =
+        invite !== null &&
+        inviteEntry(window.history.state, invite.server, invite.code ?? null)?.pushed
       leaveInvite()
       if (pushed) window.history.back()
       else if (view) syncUrl(view, 'push')

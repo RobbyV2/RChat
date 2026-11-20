@@ -60,6 +60,7 @@ import {
   findInvites,
   findRemoteInvites,
   parseInvite,
+  sameInvite,
   parseInviteAt,
   remoteKey,
 } from '../lib/invite'
@@ -415,7 +416,7 @@ export function MessageLink({ href, children, ...props }: React.ComponentProps<'
       onClick={e => {
         if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
         e.preventDefault()
-        useStore.getState().openInvite(invite.server, invite.password)
+        useStore.getState().openInvite(invite.server, invite.password, invite.code)
       }}
       className="text-primary underline"
     >
@@ -1205,7 +1206,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   )
   const invites = useMemo(() => {
     const found = local.flatMap(origin => findInvites(content, origin))
-    return found.filter((i, at) => found.findIndex(o => o.server === i.server) === at).slice(0, 3)
+    return found.filter((i, at) => found.findIndex(o => sameInvite(o, i)) === at).slice(0, 3)
   }, [content, local])
   const messageLinks = useMemo(() => findMessageLinks(content, local), [content, local])
   const remotes = useMemo(
@@ -1285,7 +1286,13 @@ export const MarkdownMessage = memo(function MarkdownMessage({
       {!src &&
         !widget &&
         invites.map(i => (
-          <InviteCard key={i.server} variant="embed" server={i.server} password={i.password} />
+          <InviteCard
+            key={i.code ?? i.server}
+            variant="embed"
+            server={i.server}
+            password={i.password}
+            code={i.code ?? null}
+          />
         ))}
       {previews &&
         !src &&

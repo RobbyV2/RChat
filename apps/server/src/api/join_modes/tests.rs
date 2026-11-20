@@ -134,7 +134,7 @@ pub(crate) async fn create_as(
         Json(serde_json::from_value(body).expect("create body")),
     )
     .await
-    .map(|Json(detail)| detail)
+    .map(|Json(created)| created.server)
 }
 
 pub(crate) async fn patch_as(
@@ -718,8 +718,8 @@ async fn renames_keep_the_key_of_servers_not_found_by_name() {
     );
     assert_eq!(
         live_passwords(db, &links.name).await,
-        1,
-        "its passwords keep working"
+        2,
+        "its invite link and its password keep working"
     );
 
     exec(db, "INSERT INTO servers(name, display_name, password_hash, created_at) VALUES('old', 'Old', '!none', 1)").await;

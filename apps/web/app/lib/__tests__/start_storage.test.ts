@@ -161,6 +161,16 @@ for (const [browser, storage] of BROWSERS)
       expect(st().error).toBeNull()
     })
 
+    test('an invite code link opens signed out', async () => {
+      install(storage)
+      path = '/i/k7m2p9xq4tzr/'
+      let toLogin = 0
+      await startApp(() => (toLogin += 1))
+      expect(toLogin).toBe(0)
+      expect(st().invite).toEqual({ server: '', password: null, code: 'k7m2p9xq4tzr', join: false })
+      expect(st().error).toBeNull()
+    })
+
     test('signing in starts the app signed in for this tab', async () => {
       install(storage)
       await st().login({ username: 'bob', password: 'x' } as never)

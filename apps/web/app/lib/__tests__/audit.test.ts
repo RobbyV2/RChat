@@ -246,6 +246,48 @@ describe('audit sentences', () => {
   })
 })
 
+describe('join audit sentences', () => {
+  const password = (name: string | null) => ({
+    kind: 'password',
+    id: 41,
+    name,
+    user: null,
+    staff: false,
+    deleted: false,
+  })
+
+  test('joins name the link or password by its label and number, never its code', () => {
+    const join = (kind: string, name: string | null) =>
+      sentenceText(entry({ action: 'member.join', target: password(name), details: { kind } }))
+    expect(join('standing', null)).toBe('Alice joined with the invite link (#41)')
+    expect(join('link', 'Friends')).toBe('Alice joined with the link "Friends" (#41)')
+    expect(join('link', null)).toBe('Alice joined with a link (#41)')
+    expect(join('password', 'Friends')).toBe('Alice joined with the extra password "Friends" (#41)')
+    expect(join('password', null)).toBe('Alice joined with an extra password (#41)')
+  })
+
+  test('a change of how people join says the new way', () => {
+    const mode = (before: string, after: string) =>
+      sentenceText(
+        entry({
+          action: 'access.mode',
+          target: null,
+          details: {
+            changes: [
+              { field: 'join_mode', before, after },
+              { field: 'protected', before: before !== 'name', after: after !== 'name' },
+            ],
+          },
+        })
+      )
+    expect(mode('invite', 'name')).toBe('Alice let anyone join with the server name')
+    expect(mode('name', 'invite')).toBe('Alice made the server invite only')
+    expect(mode('invite', 'password')).toBe('Alice made the server need a password to join')
+    expect(mode('invite', 'closed')).toBe('Alice closed the server to new members')
+    expect(groupOf('member.join')).toBe('member')
+  })
+})
+
 describe('audit values and filters', () => {
   test('values read naturally', () => {
     expect(valueText('perms', Perm.Kick | Perm.ViewAuditLog)).toBe('Kick, View audit log')

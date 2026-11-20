@@ -64,6 +64,7 @@ const API_PATHS = [
   '/servers/club/join',
   '/servers/club/members',
   '/invites/club',
+  '/invite_codes/k7m2p9xq4tzr',
   '/search',
   '/server_search',
   '/webhooks/1/token',
@@ -97,6 +98,7 @@ describe('deploy routing of both API prefixes', () => {
       expect(at(`${prefix}/servers/a/guest_access`)).toEqual({ upstream: 'api', limit: 'strict' })
       expect(at(`${prefix}/servers/a/join`)).toEqual({ upstream: 'api', limit: 'joins' })
       expect(at(`${prefix}/invites/a`)).toEqual({ upstream: 'api', limit: 'invites' })
+      expect(at(`${prefix}/invite_codes/a`)).toEqual({ upstream: 'api', limit: 'invites' })
       expect(at(`${prefix}/search`)).toEqual({ upstream: 'search', limit: null })
       expect(at(`${prefix}/server_search`)).toEqual({ upstream: 'search', limit: null })
       expect(at(`${prefix}/me`)).toEqual({ upstream: 'api', limit: null })

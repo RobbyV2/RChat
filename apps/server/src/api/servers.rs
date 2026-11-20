@@ -117,6 +117,21 @@ pub struct ServerOptions {
     /// the instance's time.
     #[serde(default)]
     pub(crate) upload_expiry: Option<crate::api::upload_expiry::UploadExpiry>,
+    /// For `join: invite`: give it an invite link now, which any member may share (default
+    /// `true`); `false` leaves it to links its managers make later. Only for invite servers.
+    #[serde(default)]
+    pub(crate) standing_link: Option<bool>,
+}
+
+/// A new server, with its invite link.
+#[derive(Serialize, ToSchema)]
+pub struct CreatedServer {
+    /// The server (its fields appear at the top level).
+    #[serde(flatten)]
+    pub server: ServerDetail,
+    /// The invite link of a new `invite` server, unless `standing_link` was `false`; `null`
+    /// otherwise.
+    pub invite: Option<crate::api::passwords::InviteLinkInfo>,
 }
 
 /// Optional request body for joining a server.
@@ -1787,7 +1802,7 @@ async fn interacted_page(
     tag = "Servers",
     request_body = CreateServerReq,
     responses(
-        (status = 200, description = "The created server, with the caller as admin and a default `general` text channel", body = ServerDetail),
+        (status = 200, description = "The created server, with the caller as admin, its channels and, for an `invite` server, its invite link", body = CreatedServer),
         (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken (for `name` and `password` servers), or a password shorter than 8 characters. With reason `invalid` and its `field`: `Pick one way to join` (a `password` for another mode than `password`), `A password needs 8 characters` (`join: password` without one), `Listed is only for servers people join by name` (`listed: true` for an `invite` or `closed` server), or an invalid `upload_expiry`. `This instance needs invites to join. Pick invite or password.` with reason `off_site` and control `server_joining`: `join: name` while the instance's `server_joining` is `invites`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`Public reading is turned off on this site` with reason `off_site` and control `public_reading`: `public_read: true` while the instance has public reading off", body = ApiErrorBody),
@@ -1802,7 +1817,7 @@ pub(crate) async fn create_server(
     State(state): State<AppState>,
     Authed(user): Authed,
     Json(req): Json<CreateServerReq>,
-) -> Result<Json<ServerDetail>, ApiError> {
+) -> Result<Json<CreatedServer>, ApiError> {
     let allowed = crate::api::policy::effective(&state.db, Some(&user)).await;
     if !allowed.can_create_servers().await? {
         let answer = crate::api::access::not_found();
@@ -1824,9 +1839,12 @@ pub(crate) async fn create_server(
         let new = check_new_server(&state, &user, &name, password.as_deref(), options).await?;
         found_server(&state, new, founder).await
     };
-    let key = rare::counted(held, founded.await)?;
+    let (key, invite) = rare::counted(held, founded.await)?;
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
-    Ok(Json(server_detail(&state.db, &state.hub, &access).await?))
+    Ok(Json(CreatedServer {
+        server: server_detail(&state.db, &state.hub, &access).await?,
+        invite,
+    }))
 }
 
 /// Who a new server belongs to.
@@ -1849,6 +1867,8 @@ struct NewServer {
     channels: StartChannels,
     notices: bool,
     upload_expiry: Option<crate::api::upload_expiry::UploadExpiry>,
+    /// Make its invite link.
+    standing: bool,
 }
 
 const PICK_ONE: &str = "Pick one way to join";
@@ -1885,6 +1905,7 @@ async fn check_new_server(
         channels,
         notices,
         upload_expiry,
+        standing_link,
     } = options;
     let db = &state.db;
     let display = name.trim().to_string();
@@ -1908,6 +1929,17 @@ async fn check_new_server(
     if listed == Some(true) && !mode.by_name() {
         return Err(ApiError::invalid(LISTED_BY_NAME, "listed"));
     }
+    let standing = match (mode, standing_link) {
+        (JoinMode::Invite, Some(made)) => made,
+        (JoinMode::Invite, None) => true,
+        (JoinMode::Name | JoinMode::Password | JoinMode::Closed, Some(true)) => {
+            return Err(ApiError::invalid(
+                "Only invite servers have an invite link",
+                "standing_link",
+            ));
+        }
+        (JoinMode::Name | JoinMode::Password | JoinMode::Closed, _) => false,
+    };
     if let Some(choice) = upload_expiry {
         let cap = Settings::cached(db).await.upload_expiry_max_days;
         if let Err(problem) = crate::api::upload_expiry::refusal(choice, cap) {
@@ -1931,6 +1963,7 @@ async fn check_new_server(
         channels: channels.unwrap_or_default(),
         notices: notices.unwrap_or(true),
         upload_expiry,
+        standing,
     })
 }
 
@@ -1950,13 +1983,13 @@ async fn free_key(db: &Db) -> Result<String, ApiError> {
     Err(ApiError::internal("no free server key"))
 }
 
-/// Creates the server `new` with its channels and its founder as the only member, and
-/// announces it. Returns its key.
+/// Creates the server `new` with its channels, its founder as the only member and its
+/// invite link, and announces it. Returns its key and its invite link.
 async fn found_server(
     state: &AppState,
     new: NewServer,
     founder: Founder<'_>,
-) -> Result<String, ApiError> {
+) -> Result<(String, Option<crate::api::passwords::InviteLinkInfo>), ApiError> {
     let NewServer {
         display,
         mode,
@@ -1966,6 +1999,7 @@ async fn found_server(
         channels,
         notices,
         upload_expiry,
+        standing,
     } = new;
     let key = match mode.by_name() {
         true => {
@@ -1987,6 +2021,10 @@ async fn found_server(
     let expiry_by = upload_expiry
         .filter(|choice| crate::api::upload_expiry::extends(choice.ttl(0)))
         .map(|_| member);
+    let link = match standing {
+        true => Some(crate::api::passwords::NewLink::make(&state.db, &key).await?),
+        false => None,
+    };
     let t = now();
     let mut tx = state.db.begin().await?;
     sqlx::query(
@@ -2026,6 +2064,9 @@ async fn found_server(
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(link) = &link {
+        link.insert(&mut tx, &key, Some(member), t).await?;
+    }
     if let Founder::Owner { owner, by } = founder {
         crate::api::instance_audit::record_in(
             &mut tx,
@@ -2054,7 +2095,7 @@ async fn found_server(
             listed,
         },
     });
-    Ok(key)
+    Ok((key, link.map(|link| link.info())))
 }
 
 /// Creates a server for `owner` on behalf of the site admin `admin`, whatever the instance
@@ -2066,13 +2107,13 @@ pub(crate) async fn found_for(
     password: Option<&str>,
     options: ServerOptions,
     owner: &User,
-) -> Result<Json<ServerDetail>, ApiError> {
+) -> Result<Json<CreatedServer>, ApiError> {
     let founder = Founder::Owner {
         owner: &owner.username,
         by: &admin.username,
     };
     let new = check_new_server(state, admin, name, password, options).await?;
-    let key = found_server(state, new, founder).await?;
+    let (key, invite) = found_server(state, new, founder).await?;
     let member = build_member(
         &state.db,
         &state.hub,
@@ -2088,7 +2129,10 @@ pub(crate) async fn found_for(
         member,
     });
     let access = resolve_server(&state.db, &key, Some(admin), &Proof::none()).await?;
-    Ok(Json(server_detail(&state.db, &state.hub, &access).await?))
+    Ok(Json(CreatedServer {
+        server: server_detail(&state.db, &state.hub, &access).await?,
+        invite,
+    }))
 }
 
 /// Get a server
@@ -2586,6 +2630,69 @@ async fn invite_card(
             None => return Err(e),
         },
     };
+    Ok(Json(
+        card_of(&state, db, view, joins, contents, revision).await?,
+    ))
+}
+
+/// Preview an invite code
+///
+/// Returns the invite card of an invite link (`/i/{code}/`) with an empty message list: the
+/// server with the key to join it by (`server.name`), the viewer `status`, member and online
+/// counts, and, when the viewer can read the preview channel, its ID and shared sensitive label.
+/// Load the preview messages with `GET /api/v1/invites/{name}` and the code as
+/// `X-Invite-Password`. Join with `POST /api/v1/servers/{name}/join` and the code as `password`;
+/// guests get access with `POST /api/v1/servers/{name}/guest_access` and the code. Codes are
+/// found case-blind. An unknown code, and one that is revoked, expired or used up, all get the
+/// same `404 Not found`, after the same work; each counts as a wrong password of your address
+/// and network.
+///
+/// Signed-in users may call it, and guests when guest access is on. Invite and general
+/// rate-limit buckets.
+#[utoipa::path(
+    get,
+    path = "/api/v1/invite_codes/{code}",
+    tag = "Invites",
+    params(
+        ("code" = String, Path, description = "The invite code"),
+        ("X-Guest-Grant" = Option<String>, Header, description = "Guest grants from `POST /api/v1/servers/{name}/guest_access`, comma-separated, up to 100. Only read for guests")
+    ),
+    responses(
+        (status = 200, description = "Invite card for the server the code opens, with an empty preview", body = Invite),
+        (status = 401, description = "`Guest access is disabled` when guest access is off and no valid token was sent", body = ApiErrorBody),
+        (status = 403, description = "`You are banned from this server`", body = ApiErrorBody),
+        (status = 404, description = "`Not found`: identical for unknown, revoked, expired and used-up codes", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the invite or the general bucket. Also `Too many attempts. Try again later` (JSON) after too many password attempts from your address (an IPv6 /64 counts as one) or your network (an IPv4 /24 or IPv6 /48), after 5 codes that work nowhere from your address (then a wait that doubles up to an hour), or while the server is busy checking passwords", body = ApiErrorBody)
+    ),
+    security((), ("bearer" = []))
+)]
+pub(crate) async fn get_invite_code(
+    State(state): State<AppState>,
+    MaybeAuthed(viewer): MaybeAuthed,
+    headers: HeaderMap,
+    Path(code): Path<String>,
+) -> Result<Json<Invite>, ApiError> {
+    let db = &state.read();
+    require_guest_ok(db, viewer.as_ref()).await?;
+    let grants = match viewer {
+        Some(_) => Vec::new(),
+        None => header_grants(&headers),
+    };
+    let view =
+        crate::api::access::resolve_code(db, &code, viewer.as_ref(), grants, &state.limits).await?;
+    Ok(Json(card_of(&state, db, view, true, false, None).await?))
+}
+
+/// The invite card of `view`; `joins` when what the viewer showed lets them join, `contents`
+/// with the preview messages when `revision` is none or the preview channel's.
+async fn card_of(
+    state: &AppState,
+    db: &Db,
+    view: InviteView,
+    joins: bool,
+    contents: bool,
+    revision: Option<&str>,
+) -> Result<Invite, ApiError> {
     let (server, status, preview, ticket) = match view {
         InviteView::Banned(lite) => (lite, InviteStatus::Banned, InvitePreview::default(), None),
         InviteView::Open(access) => {
@@ -2604,7 +2711,7 @@ async fn invite_card(
             (lite, status, preview, ticket)
         }
     };
-    Ok(Json(Invite {
+    Ok(Invite {
         online_count: state.hub.online_count(&server.name),
         member_count: member_count(db, &server.name).await?,
         server,
@@ -2615,7 +2722,7 @@ async fn invite_card(
         preview: preview.messages,
         password_expires_at: ticket.and_then(|t| t.expires_at),
         password_uses_left: ticket.and_then(|t| t.uses_left),
-    }))
+    })
 }
 
 /// A membership `insert_member` created, with its join message when one was posted.
@@ -2644,6 +2751,21 @@ async fn insert_member(
     if inserted > 0 {
         shift_member_count(&mut tx, server, 1).await?;
         access.spend_ticket(&mut tx).await?;
+        if let Some(id) = access.password_id()
+            && let Some((kind, label)) = crate::api::passwords::joined_with(&mut tx, id).await?
+        {
+            audit::record(
+                &mut tx,
+                Entry::new(
+                    server,
+                    &audit::Actor::User(username.to_string()),
+                    audit::Action::MemberJoin,
+                )
+                .target(Target::with_id(TargetKind::Password, id, label.as_deref()))
+                .details(Details::new().set("kind", crate::api::passwords::kind_word(kind))),
+            )
+            .await?;
+        }
         let notice = post_system(&mut tx, server, username, SystemKind::Join).await?;
         tx.commit().await?;
         return Ok(Some(NewMember { notice }));
@@ -6014,6 +6136,7 @@ mod tests {
             }),
         )
         .await
+        .map(|Json(created)| Json(created.server))
     }
 
     async fn rename(state: &AppState, server: &str, name: &str) -> Result<(), ApiError> {

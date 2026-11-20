@@ -2,9 +2,12 @@ import { describe, expect, test } from 'bun:test'
 import { ApiError } from '../api'
 import {
   ACCESS_DENIED,
+  CODE_GONE,
   JOIN_NOTE,
   PASSWORD_REQUIRED,
   deniedAccess,
+  joinByCode,
+  joinInput,
   needsPassword,
   runJoinStep,
 } from '../join_flow'
@@ -92,5 +95,48 @@ describe('uniform API errors', () => {
   test('the join note copy has no em dashes and no app name', () => {
     expect(JOIN_NOTE.includes('\u2014')).toBe(false)
     expect(JOIN_NOTE.toLowerCase().includes('rchat')).toBe(false)
+  })
+})
+
+describe('join input', () => {
+  const ORIGIN = 'https://chat.example.com'
+
+  test('a pasted invite link joins what it names; anything else is a server name', () => {
+    expect(joinInput(` ${ORIGIN}/i/k7m2p9xq4tzr/ `, ORIGIN)).toEqual({
+      server: '',
+      password: null,
+      code: 'k7m2p9xq4tzr',
+    })
+    expect(joinInput(`${ORIGIN}/invite/Club/#password=pw`, ORIGIN)).toEqual({
+      server: 'club',
+      password: 'pw',
+    })
+    expect(joinInput('/i/k7m2p9xq4tzr', ORIGIN)?.code).toBe('k7m2p9xq4tzr')
+    for (const name of ['club', 'k7m2p9xq4tzr', 'a/b', 'https://other.example/i/k7m2p9xq4tzr/'])
+      expect(joinInput(name, ORIGIN)).toBeNull()
+  })
+
+  test('joins with a code through the server it names', async () => {
+    const calls: string[] = []
+    const lookup = async (code: string) => {
+      calls.push(`look ${code}`)
+      if (code !== 'k7m2p9xq4tzr') throw new ApiError('Not found', 404, { error: 'Not found' })
+      return 'x2y3z4w5v6'
+    }
+    const join = async (server: string, password?: string) => {
+      calls.push(`join ${server} ${password}`)
+    }
+    expect(await joinByCode('k7m2p9xq4tzr', lookup, join, describeError)).toBeNull()
+    expect(calls).toEqual(['look k7m2p9xq4tzr', 'join x2y3z4w5v6 k7m2p9xq4tzr'])
+    expect(await joinByCode('hhhhhhhhhhhh', lookup, join, describeError)).toBe(CODE_GONE)
+    const banned = async () => {
+      throw new ApiError('You are banned from this server', 403, {
+        error: 'You are banned from this server',
+      })
+    }
+    expect(await joinByCode('k7m2p9xq4tzr', lookup, banned, describeError)).toBe(
+      'You are banned from this server'
+    )
+    expect(CODE_GONE.includes('\u2014')).toBe(false)
   })
 })

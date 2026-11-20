@@ -23,7 +23,7 @@ use crate::api::config_shares::create_share;
 use crate::api::instance::{Peer, p2p_binding};
 use crate::api::p2p_backup::{PutError, put_backup};
 use crate::api::p2p_identity::put_identity;
-use crate::api::passwords::create_password;
+use crate::api::passwords::{create_password, make_standing_invite};
 use crate::api::reauth::{AuthedSession, Session};
 use crate::api::recovery::{challenge, recover, remove_phrase, set_phrase};
 use crate::api::servers::{create_server, delete_server, server_available, update_server};
@@ -231,6 +231,7 @@ enum Route {
     DeleteServer,
     NewPassword,
     NewPermanent,
+    NewLink,
     NewWebhook,
     WebhookToken,
     NewOutgoing,
@@ -243,7 +244,7 @@ enum Route {
 }
 
 impl Route {
-    const ALL: [Route; 22] = [
+    const ALL: [Route; 23] = [
         Route::DisplayName,
         Route::SignUp,
         Route::Password,
@@ -257,6 +258,7 @@ impl Route {
         Route::DeleteServer,
         Route::NewPassword,
         Route::NewPermanent,
+        Route::NewLink,
         Route::NewWebhook,
         Route::WebhookToken,
         Route::NewOutgoing,
@@ -288,6 +290,11 @@ impl Route {
                 "/api/v1/servers/{name}/passwords",
             ),
             Route::NewPermanent => (Rare::ServerPassword, "patch", "/api/v1/servers/{name}"),
+            Route::NewLink => (
+                Rare::ServerPassword,
+                "post",
+                "/api/v1/servers/{name}/invite",
+            ),
             Route::NewWebhook => (Rare::Webhook, "post", "/api/v1/servers/{name}/webhooks"),
             Route::WebhookToken => (
                 Rare::Webhook,
@@ -426,6 +433,7 @@ impl Route {
             Route::NewPassword => {
                 answer(create_password(state(), me(), Path(server), body(json!({}))).await)
             }
+            Route::NewLink => answer(make_standing_invite(state(), me(), Path(server)).await),
             Route::NewPermanent => answer(
                 update_server(
                     state(),

@@ -117,4 +117,6 @@ pub enum StartChannels {
 }
 
 #[cfg(test)]
+mod code_tests;
+#[cfg(test)]
 mod tests;

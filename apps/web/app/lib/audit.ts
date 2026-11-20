@@ -237,7 +237,17 @@ function channelUpdate(entry: AuditEntry, actor: Part[]): Part[] {
   ]
 }
 
+const JOIN_WORDS: Record<string, string> = {
+  name: ' let anyone join with the server name',
+  invite: ' made the server invite only',
+  password: ' made the server need a password to join',
+  closed: ' closed the server to new members',
+}
+
 function accessMode(entry: AuditEntry, actor: Part[]): Part[] {
+  const j = changesOf(entry).find(c => c.field === 'join_mode')
+  const words = j ? JOIN_WORDS[str(j.after) ?? ''] : undefined
+  if (words) return [...actor, t(words)]
   const p = changesOf(entry).find(c => c.field === 'protected')
   if (p)
     return [
@@ -249,6 +259,18 @@ function accessMode(entry: AuditEntry, actor: Part[]): Part[] {
   if (mode === 'changed') return [...actor, t(' changed the server password')]
   if (mode === 'removed') return [...actor, t(' removed the server password')]
   return [...actor, t(' changed who can join')]
+}
+
+// How someone joined: the server's invite link, a link or an extra password, by its label and
+// number.
+function joinedWith(kind: string | null, label: string, id: number | null): string {
+  const n = id === null ? '' : ` (#${id})`
+  if (kind === 'standing') return ` joined with the invite link${n}`
+  if (kind === 'link')
+    return label ? ` joined with the link ${label}${n}` : ` joined with a link${n}`
+  return label
+    ? ` joined with the extra password ${label}${n}`
+    : ` joined with an extra password${n}`
 }
 
 function systemMessages(entry: AuditEntry, actor: Part[]): Part[] {
@@ -302,6 +324,8 @@ export function sentence(entry: AuditEntry): Part[] {
     }
     case 'member.untimeout':
       return [...actor, t(' removed the timeout of '), ...user]
+    case 'member.join':
+      return [...actor, t(joinedWith(str(entry.details.kind), label, entry.target?.id ?? null))]
     case 'member.voice_disconnect':
       return [...actor, t(' disconnected '), ...user, t(` from voice in ${ch()}`)]
     case 'member.voice_mute':

@@ -138,6 +138,8 @@ export const applyServerChange = (
       guest_voice: server.guest_voice === true,
       guest_chat: server.guest_chat === true,
       members_visible: server.members_visible ?? detail.members_visible,
+      join_mode: server.join_mode ?? detail.join_mode,
+      listed: server.listed ?? detail.listed,
     }
   }
   const members = renameKey(s.members, old_name, server.name)

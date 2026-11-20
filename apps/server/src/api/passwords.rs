@@ -8,9 +8,9 @@ use sqlx::Row;
 use utoipa::ToSchema;
 
 use crate::api::access::perms::Perm;
-use crate::api::access::{Proof, ServerAccess, password_lookup, resolve_server};
+use crate::api::access::{Proof, ServerAccess, code_lookup, password_lookup, resolve_server};
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
-use crate::api::join_modes::JoinMode;
+use crate::api::join_modes::{ALPHABET, JoinMode, random_text};
 use crate::api::rare::{self, Rare};
 use crate::api::servers::guard_rchat;
 use crate::api::{
@@ -35,6 +35,50 @@ const LABEL_MAX: usize = 100;
 const SECRET_MAX: usize = 200;
 const LIST_MAX: i64 = 100;
 const WORDS: usize = 4;
+/// Length of a generated invite code.
+pub const CODE_LEN: usize = 12;
+
+/// What an extra password is: `password` (typed, or four generated words), `link` (an invite
+/// link: a generated code people join with at `/i/{code}/`) or `standing` (the server's own
+/// invite link, which members share; see `GET /api/v1/servers/{name}/invite`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PasswordKind {
+    Password,
+    Link,
+    Standing,
+}
+
+/// An invite link: its code and the path of the link on this instance.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct InviteLinkInfo {
+    /// The code. It is the whole link: whoever has it can join while it works.
+    #[schema(example = "k7m2p9xq4tzr")]
+    pub code: String,
+    /// The path of the link on this instance, `/i/{code}/`.
+    #[schema(example = "/i/k7m2p9xq4tzr/")]
+    pub path: String,
+}
+
+impl InviteLinkInfo {
+    pub fn of(code: String) -> InviteLinkInfo {
+        InviteLinkInfo {
+            path: format!("/i/{code}/"),
+            code,
+        }
+    }
+}
+
+/// A new invite code: `CODE_LEN` letters and digits that can't be mistaken for each other.
+pub fn new_code() -> String {
+    random_text(CODE_LEN)
+}
+
+/// `raw` as an invite code, trimmed and in lowercase; `None` when it can't be one.
+pub fn clean_code(raw: &str) -> Option<String> {
+    let code = raw.trim().to_lowercase();
+    ((6..=32).contains(&code.len()) && code.bytes().all(|b| ALPHABET.contains(&b))).then_some(code)
+}
 
 /// `live` passwords let new people join; `expired`, `used_up` and `revoked` ones no longer do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -81,6 +125,9 @@ pub struct ServerPassword {
     pub uses: i64,
     /// Whether it still works.
     pub status: PasswordStatus,
+    /// What it is: a typed or generated `password`, an invite `link`, or the server's `standing`
+    /// invite link.
+    pub kind: PasswordKind,
 }
 
 /// The access settings of a server.
@@ -115,6 +162,11 @@ pub struct NewPassword {
     expires_at: Option<i64>,
     /// How many joins and guest grants it allows, 1 to 10000; omit for unlimited.
     max_uses: Option<i64>,
+    /// `password` (the default) or `link`: an invite link, a generated code (returned in
+    /// `password` and `link`) that people join with at `/i/{code}/`, found by the code alone.
+    /// A link takes no `password`.
+    #[serde(default)]
+    kind: Option<PasswordKind>,
 }
 
 /// A newly created extra password, with the password itself. This is the only time the
@@ -124,8 +176,10 @@ pub struct CreatedPassword {
     /// The new password's details (its fields appear at the top level).
     #[serde(flatten)]
     pub info: ServerPassword,
-    /// The password itself.
+    /// The password itself; for a link, its code.
     pub password: String,
+    /// For a link, its code and its path; `null` for a password.
+    pub link: Option<InviteLinkInfo>,
 }
 
 static WORD_LIST: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
@@ -175,10 +229,15 @@ fn password_row(r: &sqlx::any::AnyRow, t: i64) -> sqlx::Result<ServerPassword> {
         max_uses,
         uses,
         status: status(t, expires_at, max_uses, uses, revoked),
+        kind: match r.try_get::<String, _>(8)?.as_str() {
+            "standing" => PasswordKind::Standing,
+            "link" => PasswordKind::Link,
+            _ => PasswordKind::Password,
+        },
     })
 }
 
-const COLUMNS: &str = "id, label, created_by, created_at, expires_at, max_uses, uses, revoked_at";
+const COLUMNS: &str = "id, label, created_by, created_at, expires_at, max_uses, uses, revoked_at, CASE WHEN code IS NOT NULL THEN 'standing' WHEN code_lookup IS NOT NULL THEN 'link' ELSE 'password' END";
 
 const LIVE: &str = "revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $2) AND (max_uses IS NULL OR uses < max_uses)";
 
@@ -306,12 +365,26 @@ pub(crate) async fn create_password(
         expires_in,
         expires_at,
         max_uses,
+        kind,
     } = req;
     let access = manage(&state, &user, &name).await?;
     rare::check(&state, Rare::ServerPassword, Some(&user))?;
     let db = &state.db;
     if !access.lite().has_password {
         return Err(bad("Make the server password protected first"));
+    }
+    let link = match kind.unwrap_or(PasswordKind::Password) {
+        PasswordKind::Password => false,
+        PasswordKind::Link => true,
+        PasswordKind::Standing => {
+            return Err(ApiError::invalid(
+                "Make the invite link with POST /api/v1/servers/{name}/invite",
+                "kind",
+            ));
+        }
+    };
+    if link && password.as_deref().is_some_and(|p| !p.trim().is_empty()) {
+        return Err(ApiError::invalid("A link makes its own code", "password"));
     }
     let label = label
         .map(|l| l.trim().to_string())
@@ -325,7 +398,10 @@ pub(crate) async fn create_password(
             check_strength(p)?;
             p.to_string()
         }
-        _ => generate(),
+        _ => match link {
+            true => new_code(),
+            false => generate(),
+        },
     };
     let t = now();
     let expires_at = expiry(t, expires_in, expires_at)?;
@@ -350,6 +426,10 @@ pub(crate) async fn create_password(
     if taken {
         return Err(bad("That password was already used here. Pick another one"));
     }
+    let found_by = match link {
+        true => Some(code_lookup(db, &secret).await?),
+        false => None,
+    };
     rare::take(&state, Rare::ServerPassword, Some(&user))?;
     let actor = access.audit_actor(db, Perm::DeleteServer).await?;
     let created_by = match &actor {
@@ -359,7 +439,7 @@ pub(crate) async fn create_password(
     let mut tx = db.begin().await?;
     lock_server(&mut tx, access.name()).await?;
     let sql = format!(
-        "INSERT INTO server_passwords(server, label, hash, lookup, created_by, created_at, expires_at, max_uses) SELECT $1, $2, $3, $4, $5, $6, $7, $8 WHERE (SELECT COUNT(*) FROM server_passwords WHERE server = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $6) AND (max_uses IS NULL OR uses < max_uses)) < $9 AND (SELECT COUNT(*) FROM server_passwords WHERE server = $1) < $10 RETURNING {COLUMNS}"
+        "INSERT INTO server_passwords(server, label, hash, lookup, created_by, created_at, expires_at, max_uses, code_lookup) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $11 WHERE (SELECT COUNT(*) FROM server_passwords WHERE server = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $6) AND (max_uses IS NULL OR uses < max_uses)) < $9 AND (SELECT COUNT(*) FROM server_passwords WHERE server = $1) < $10 RETURNING {COLUMNS}"
     );
     let row = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(access.name())
@@ -372,6 +452,7 @@ pub(crate) async fn create_password(
         .bind(max_uses)
         .bind(ACTIVE_MAX)
         .bind(ROWS_MAX)
+        .bind(&found_by)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| match &e {
@@ -403,6 +484,7 @@ pub(crate) async fn create_password(
             ))
             .details(
                 Details::new()
+                    .set("kind", kind_word(info.kind))
                     .set("expires_at", info.expires_at)
                     .set("max_uses", info.max_uses),
             ),
@@ -419,8 +501,274 @@ pub(crate) async fn create_password(
     }
     Ok(Json(CreatedPassword {
         info,
+        link: link.then(|| InviteLinkInfo::of(secret.clone())),
         password: secret,
     }))
+}
+
+pub(crate) fn kind_word(kind: PasswordKind) -> &'static str {
+    match kind {
+        PasswordKind::Password => "password",
+        PasswordKind::Link => "link",
+        PasswordKind::Standing => "standing",
+    }
+}
+
+/// The kind of the extra password `id`, and its label, for `member.join` audit entries.
+pub(crate) async fn joined_with(
+    conn: &mut sqlx::AnyConnection,
+    id: i64,
+) -> sqlx::Result<Option<(PasswordKind, Option<String>)>> {
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM server_passwords WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    row.map(|r| password_row(&r, 0).map(|p| (p.kind, p.label)))
+        .transpose()
+}
+
+/// The live invite link of `server`, if it has one.
+pub(crate) async fn standing_code(db: &Db, server: &str) -> Result<Option<String>, ApiError> {
+    Ok(sqlx::query("SELECT code FROM server_passwords WHERE server = $1 AND code IS NOT NULL AND revoked_at IS NULL ORDER BY id DESC LIMIT 1")
+        .bind(server)
+        .fetch_optional(db)
+        .await?
+        .map(|r| r.try_get(0))
+        .transpose()?)
+}
+
+/// A new invite link for a server, its keys worked out before any lock is taken.
+pub(crate) struct NewLink {
+    code: String,
+    lookup: String,
+    found_by: String,
+}
+
+impl NewLink {
+    pub(crate) async fn make(db: &Db, server: &str) -> Result<NewLink, ApiError> {
+        let code = new_code();
+        Ok(NewLink {
+            lookup: password_lookup(db, server, &code).await?,
+            found_by: code_lookup(db, &code).await?,
+            code,
+        })
+    }
+
+    pub(crate) fn info(&self) -> InviteLinkInfo {
+        InviteLinkInfo::of(self.code.clone())
+    }
+
+    /// Stores it as the invite link of `server`, within the caps of live and stored passwords.
+    /// `None` when they are reached.
+    pub(crate) async fn insert(
+        &self,
+        conn: &mut sqlx::AnyConnection,
+        server: &str,
+        created_by: Option<&str>,
+        t: i64,
+    ) -> Result<Option<i64>, ApiError> {
+        Ok(sqlx::query("INSERT INTO server_passwords(server, hash, lookup, created_by, created_at, code, code_lookup) SELECT $1, $2, $3, $4, $5, $6, $7 WHERE (SELECT COUNT(*) FROM server_passwords WHERE server = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $5) AND (max_uses IS NULL OR uses < max_uses)) < $8 AND (SELECT COUNT(*) FROM server_passwords WHERE server = $1) < $9 RETURNING id")
+            .bind(server)
+            .bind(NO_EXTRA_HASH)
+            .bind(&self.lookup)
+            .bind(created_by)
+            .bind(t)
+            .bind(&self.code)
+            .bind(&self.found_by)
+            .bind(ACTIVE_MAX)
+            .bind(ROWS_MAX)
+            .fetch_optional(&mut *conn)
+            .await?
+            .map(|r| r.try_get(0))
+            .transpose()?)
+    }
+}
+
+/// Revokes the invite link of `server`, ends the guest grants it gave and logs it. Whoever
+/// joined with it stays.
+async fn end_standing(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    server: &str,
+    actor: &Actor,
+    t: i64,
+) -> Result<(), ApiError> {
+    let ids: Vec<i64> = sqlx::query("SELECT id FROM server_passwords WHERE server = $1 AND code IS NOT NULL AND revoked_at IS NULL")
+        .bind(server)
+        .fetch_all(&mut **tx)
+        .await?
+        .iter()
+        .map(|r| r.try_get(0))
+        .collect::<sqlx::Result<_>>()?;
+    for id in ids {
+        sqlx::query("UPDATE server_passwords SET revoked_at = $1 WHERE id = $2")
+            .bind(t)
+            .bind(id)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("DELETE FROM guest_grants WHERE password_id = $1")
+            .bind(id)
+            .execute(&mut **tx)
+            .await?;
+        audit::record(
+            tx,
+            Entry::new(server, actor, Action::PasswordRevoke)
+                .target(Target::with_id(TargetKind::Password, id, None))
+                .details(Details::new().set("kind", "standing")),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Get the invite link
+///
+/// Returns the server's invite link, which any member may share: its code and the path of the
+/// link (`/i/{code}/`), or `null` when the server has none. A server people join with an invite
+/// gets one when it is made, unless it was made without; its managers replace or remove it with
+/// `POST` and `DELETE` on this path. Requires a bearer token and membership. General rate-limit
+/// bucket.
+#[utoipa::path(
+    get,
+    path = "/api/v1/servers/{name}/invite",
+    tag = "Servers",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    responses(
+        (status = 200, description = "The invite link, or `null`", body = Option<InviteLinkInfo>),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "`Not a member`", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn get_standing_invite(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+) -> Result<Json<Option<InviteLinkInfo>>, ApiError> {
+    let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
+    access.require_member()?;
+    Ok(Json(
+        standing_code(&state.db, access.name())
+            .await?
+            .map(InviteLinkInfo::of),
+    ))
+}
+
+/// Make a new invite link
+///
+/// Gives the server a new invite link and revokes the one before: whoever joined with the old
+/// one stays, and the guest grants it gave end. A closed server opens to invites. Only for
+/// servers people join with an invite or a password. Requires the Delete server permission. Not
+/// available on the rchat server. Emits `server_updated` to the server. Strict and general
+/// rate-limit buckets. New invite links count with new server passwords as rare requests: at
+/// most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per
+/// account by default.
+#[utoipa::path(
+    post,
+    path = "/api/v1/servers/{name}/invite",
+    tag = "Servers",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    responses(
+        (status = 200, description = "The new invite link", body = InviteLinkInfo),
+        (status = 400, description = "`Anyone can join this server by its name` with reason `invalid` and field `join_mode`: a server without a password needs no link. Or the server already has 50 live extra passwords or 500 stored ones", body = ApiErrorBody),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Delete server permission, or the rchat server", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket, or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", body = ApiErrorBody)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn make_standing_invite(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+) -> Result<Json<InviteLinkInfo>, ApiError> {
+    let access = manage(&state, &user, &name).await?;
+    rare::check(&state, Rare::ServerPassword, Some(&user))?;
+    if !access.lite().has_password {
+        return Err(ApiError::invalid(
+            "Anyone can join this server by its name",
+            "join_mode",
+        ));
+    }
+    let db = &state.db;
+    let link = NewLink::make(db, access.name()).await?;
+    rare::take(&state, Rare::ServerPassword, Some(&user))?;
+    let actor = access.audit_actor(db, Perm::DeleteServer).await?;
+    let created_by = match &actor {
+        Actor::Staff => None,
+        Actor::User(name) => Some(name.clone()),
+    };
+    let t = now();
+    let mut tx = db.begin().await?;
+    lock_server(&mut tx, access.name()).await?;
+    end_standing(&mut tx, access.name(), &actor, t).await?;
+    let Some(id) = link
+        .insert(&mut tx, access.name(), created_by.as_deref(), t)
+        .await?
+    else {
+        drop(tx);
+        return Err(bad(FULL));
+    };
+    let opened = open_closed(&mut tx, access.name()).await?;
+    audit::record(
+        &mut tx,
+        Entry::new(access.name(), &actor, Action::PasswordCreate)
+            .target(Target::with_id(TargetKind::Password, id, None))
+            .details(Details::new().set("kind", "standing")),
+    )
+    .await?;
+    tx.commit().await?;
+    state.hub.broadcast(WsEvent::ServerUpdated {
+        server: ServerSummaryLite {
+            join_mode: match opened {
+                true => JoinMode::Invite,
+                false => access.lite().join_mode,
+            },
+            ..access.lite().clone()
+        },
+    });
+    Ok(Json(link.info()))
+}
+
+/// Remove the invite link
+///
+/// Revokes the server's invite link: whoever joined with it stays, and the guest grants it gave
+/// end. Removing it when there is none does nothing. Requires the Delete server permission. Not
+/// available on the rchat server. Emits `server_updated` to the server. General rate-limit
+/// bucket.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/servers/{name}/invite",
+    tag = "Servers",
+    params(("name" = String, Path, description = "Server name, case-insensitive")),
+    responses(
+        (status = 200, description = "Removed", body = OkResp),
+        (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
+        (status = 403, description = "Missing the Delete server permission, or the rchat server", body = ApiErrorBody),
+        (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
+        (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
+    ),
+    security(("bearer" = []))
+)]
+pub(crate) async fn delete_standing_invite(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(name): Path<String>,
+) -> Result<Json<OkResp>, ApiError> {
+    let access = manage(&state, &user, &name).await?;
+    let actor = access.audit_actor(&state.db, Perm::DeleteServer).await?;
+    let mut tx = state.db.begin().await?;
+    lock_server(&mut tx, access.name()).await?;
+    end_standing(&mut tx, access.name(), &actor, now()).await?;
+    tx.commit().await?;
+    state.hub.broadcast(WsEvent::ServerUpdated {
+        server: access.lite().clone(),
+    });
+    Ok(ok())
 }
 
 /// Opens a closed server to invites, as making a way in does. Whether it was closed.

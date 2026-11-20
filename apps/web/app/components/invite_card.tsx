@@ -22,7 +22,6 @@ import { errorText, useStore, type Nav } from '../lib/store'
 import {
   autoStep,
   hostParts,
-  invitePath,
   inviteVersion,
   pinnedPreview,
   previewParts,
@@ -30,7 +29,9 @@ import {
   keepsPreview,
   refreshDelay,
   remoteKey,
+  sharedByCode,
   stashInvite,
+  targetPath,
   watchInvites,
   type RemoteInvite,
 } from '../lib/invite'
@@ -64,10 +65,16 @@ const FRESH = 1_000
 const CACHE_MAX = 100
 const cache = new Map<string, { at: number; promise: Promise<Invite> }>()
 
-const fetchInvite = (key: string, server: string, password: string | null, maxAge: number) => {
+const fetchInvite = (
+  key: string,
+  server: string,
+  password: string | null,
+  code: string | null,
+  maxAge: number
+) => {
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < maxAge) return hit.promise
-  const promise = api.getInvite(server, password, 'metadata')
+  const promise = code ? api.inviteByCode(code) : api.getInvite(server, password, 'metadata')
   cache.delete(key)
   cache.set(key, { at: Date.now(), promise })
   const oldest = cache.keys().next().value
@@ -129,25 +136,28 @@ const transient = (error: unknown) => keepsPreview(error instanceof ApiError ? e
 function useInvite(
   server: string,
   password: string | null,
+  code: string | null,
   root: RefObject<HTMLElement | null>,
   always: boolean
 ) {
   const viewer = useStore(s => s.me?.username ?? '')
   const epoch = useStore(s => s.channelLabelEpoch)
-  const key = `${home.origin}\n${epoch}\n${viewer}\n${server}\n${password ?? ''}`
+  const scope = `${home.origin}\n${epoch}\n${viewer}`
+  const key = code ? `${scope}\n\n\n${code}` : `${scope}\n${server}\n${password ?? ''}`
+  const [loaded, setLoaded] = useState<Loaded | null>(null)
+  const watched = code ? (loaded?.data?.server.name ?? '') : server
   const bumped = useSyncExternalStore(
     watchInvites,
-    () => inviteVersion(server),
+    () => inviteVersion(watched),
     () => 0
   )
   const visible = useVisible(root, always)
   const version = useSettledVersion(bumped, visible)
-  const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [tick, setTick] = useState(0)
   const maxAge = useRef(TTL)
   useEffect(() => {
     let live = true
-    fetchInvite(`${key}\n${version}`, server, password, maxAge.current).then(
+    fetchInvite(`${key}\n${version}`, server, password, code, maxAge.current).then(
       data => {
         if (live) setLoaded({ key, data, error: null })
       },
@@ -164,7 +174,7 @@ function useInvite(
     return () => {
       live = false
     }
-  }, [key, server, password, tick, version])
+  }, [key, server, password, code, tick, version])
   const reload = useCallback(() => {
     maxAge.current = FRESH
     setTick(t => t + 1)
@@ -658,31 +668,38 @@ function Skeleton({ big }: { big: boolean }) {
 type Outcome = { ok: true } | { ok: false; password: boolean; banned: boolean; message: string }
 
 export function InviteCard({
-  server,
+  server: named,
   password,
+  code = null,
   variant,
   autoJoin = false,
 }: {
   server: string
   password: string | null
+  code?: string | null
   variant: InviteVariant
   autoJoin?: boolean
 }) {
   const router = useRouter()
-  const me = useStore(s => s.me)
-  const guest = useStore(s => s.guest)
-  const hasGrant = useStore(s => s.guestGrants[server] !== undefined)
-  const guestsEnabled = useStore(s => s.settings.guests_enabled)
-  const joining = useStore(s => s.settings.server_joining)
-  const consume = useStore(s => s.consumeInviteJoin)
-  const joined = useStore(s =>
-    s.me ? s.me.servers.some(x => x.name === server) : s.guest && s.guestServers.includes(server)
-  )
   const root = useRef<HTMLDivElement>(null)
   const big = variant === 'page'
   const [unlocked, setUnlocked] = useState<string | null>(null)
-  const given = unlocked ?? password
-  const { data, error, reload } = useInvite(server, given, root, big)
+  const given = code ?? unlocked ?? password
+  const { data, error, reload } = useInvite(named, given, code, root, big)
+  const server = code ? (data?.server.name ?? '') : named
+  const me = useStore(s => s.me)
+  const guest = useStore(s => s.guest)
+  const hasGrant = useStore(s => server !== '' && s.guestGrants[server] !== undefined)
+  const guestsEnabled = useStore(s => s.settings.guests_enabled)
+  const joining = useStore(s => s.settings.server_joining)
+  const consume = useStore(s => s.consumeInviteJoin)
+  const joined = useStore(
+    s =>
+      server !== '' &&
+      (s.me
+        ? s.me.servers.some(x => x.name === server)
+        : s.guest && s.guestServers.includes(server))
+  )
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const [asking, setAsking] = useState<{ guest: boolean; error: string | null } | null>(null)
@@ -749,8 +766,9 @@ export function InviteCard({
 
   const logIn = () => {
     consume()
-    stashInvite({ server, password })
-    router.push(`/login/?next=${encodeURIComponent(invitePath(server))}`)
+    const target = code ? { server: '', password: null, code } : { server, password }
+    stashInvite(target)
+    router.push(`/login/?next=${encodeURIComponent(targetPath(target))}`)
   }
 
   const continueAsGuest = async () => {
@@ -786,9 +804,10 @@ export function InviteCard({
     ticketEnds === null ? 60_000 : tickMs(ticketEnds - Math.floor(Date.now() / 1000))
   )
   const ticketGone = ticketEnds !== null && ticketEnds <= now
-  const hidden = needsPassword(error) || deniedAccess(error) || ticketGone
-  const invalid = errorCode === 404 && !hidden
+  const hidden = !code && (needsPassword(error) || deniedAccess(error) || ticketGone)
+  const invalid = (errorCode === 404 || (code !== null && ticketGone)) && !hidden
   const locked = !authed && errorCode === 401 && !hidden
+  const label = code ? 'Server invite' : server
 
   const body = (): Body | null => {
     if (hidden)
@@ -846,10 +865,14 @@ export function InviteCard({
       return {
         icon: (
           <Tile big={big} tone="bg-primary-container text-on-primary-container">
-            <span className="streamer">{serverInitial(server)}</span>
+            {code ? (
+              <Lock size={big ? 32 : 20} />
+            ) : (
+              <span className="streamer">{serverInitial(server)}</span>
+            )}
           </Tile>
         ),
-        title: <span className={`streamer min-w-0 ${fit}`}>{server}</span>,
+        title: code ? label : <span className={`streamer min-w-0 ${fit}`}>{server}</span>,
         sub: <p className="text-xs text-on-surface-variant">Log in to see who&apos;s here.</p>,
         actions: (
           <button onClick={logIn} className={`${filledBtn} ${btn}`}>
@@ -882,7 +905,7 @@ export function InviteCard({
           <span className={`streamer min-w-0 ${fit}`}>
             <Masked text={display_name} />
           </span>
-          {has_password && status !== 'member' && (
+          {has_password && status !== 'member' && !sharedByCode(data.server.join_mode) && (
             <span title="Password protected" className="shrink-0 text-on-surface-variant">
               <Lock size={big ? 18 : 13} />
             </span>
@@ -1218,10 +1241,11 @@ export function InvitePage() {
   return (
     <LinkPage closeTitle="Close invite" onClose={closeInvite}>
       <InviteCard
-        key={`${invite.server}\n${invite.password ?? ''}`}
+        key={`${invite.server}\n${invite.password ?? ''}\n${invite.code ?? ''}`}
         variant="page"
         server={invite.server}
         password={invite.password}
+        code={invite.code ?? null}
         autoJoin={invite.join}
       />
     </LinkPage>

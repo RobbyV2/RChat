@@ -19,6 +19,18 @@ const lite = (over: Partial<ServerSummaryLite> = {}): ServerSummaryLite => ({
 })
 
 describe('servers reducers', () => {
+  test('server_updated carries how people join and whether search lists it', () => {
+    const detail = serverDetail('s', { join_mode: 'name', listed: true })
+    const s = state({ servers: { s: detail }, view: null, voice: null })
+    const out = applyServerChange(s, {
+      type: 'server_updated',
+      server: lite({ join_mode: 'invite', listed: false }),
+    })
+    expect([out.servers!.s.join_mode, out.servers!.s.listed]).toEqual(['invite', false])
+    const older = applyServerChange(s, { type: 'server_updated', server: lite() })
+    expect([older.servers!.s.join_mode, older.servers!.s.listed]).toEqual(['name', true])
+  })
+
   test('server_updated patches only the named fields', () => {
     const detail = serverDetail('s', {
       display_name: 'Old',

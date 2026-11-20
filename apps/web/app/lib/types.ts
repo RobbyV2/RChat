@@ -54,6 +54,18 @@ export interface ServerSummaryLite {
   guest_chat?: boolean
   // "Members can be seen by people outside this server". Absent on older servers: on.
   members_visible?: boolean
+  // How people join. Absent on older servers: `name` without a password, else `password`.
+  join_mode?: JoinMode
+  // Whether search lists it. Absent on older servers: listed.
+  listed?: boolean
+}
+
+export type JoinMode = 'name' | 'invite' | 'password' | 'closed'
+
+// A server's invite link: the code, and the path of the link on its instance.
+export interface InviteLinkInfo {
+  code: string
+  path: string
 }
 
 export type PasswordMembers = 'keep' | 'remove'
@@ -222,6 +234,10 @@ export interface ServerDetail {
   guest_chat?: boolean
   // "Members can be seen by people outside this server". Absent on older servers: on.
   members_visible?: boolean
+  // How people join. Absent on older servers: `name` without a password, else `password`.
+  join_mode?: JoinMode
+  // Whether search lists it. Absent on older servers: listed.
+  listed?: boolean
   channels: Channel[]
   categories?: Category[]
   layout_version?: number

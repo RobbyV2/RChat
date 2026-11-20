@@ -194,7 +194,8 @@ spec:
                 port:
                   name: http
 ---
-# Invite lookups get the same limit in their own bucket, so they cannot block logins or uploads.
+# Invite lookups, by name or by code, get the same limit in their own bucket, so they cannot block
+# logins or uploads.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -216,6 +217,20 @@ spec:
                 port:
                   name: http
           - path: /api/v1/invites/
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
+          - path: /api/invite_codes/
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rchat-api
+                port:
+                  name: http
+          - path: /api/v1/invite_codes/
             pathType: ImplementationSpecific
             backend:
               service:

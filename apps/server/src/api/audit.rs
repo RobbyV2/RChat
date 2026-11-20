@@ -24,6 +24,7 @@ const TARGET_QUERY_MAX: usize = 100;
 /// What happened. Stored as the dotted name; the part before the dot is the group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
+    MemberJoin,
     MemberKick,
     MemberBan,
     MemberUnban,
@@ -80,6 +81,7 @@ pub enum Action {
 }
 
 pub const ACTIONS: &[Action] = &[
+    Action::MemberJoin,
     Action::MemberKick,
     Action::MemberBan,
     Action::MemberUnban,
@@ -143,6 +145,7 @@ pub const GROUPS: &[&str] = &[
 impl Action {
     pub fn as_str(self) -> &'static str {
         match self {
+            Action::MemberJoin => "member.join",
             Action::MemberKick => "member.kick",
             Action::MemberBan => "member.ban",
             Action::MemberUnban => "member.unban",
@@ -665,7 +668,9 @@ pub struct AuditTarget {
 pub struct AuditEntry {
     /// Entry id.
     pub id: i64,
-    /// Dotted action name; the part before the dot is its group. `member`: `kick`, `ban`,
+    /// Dotted action name; the part before the dot is its group. `member`: `join` (with an
+    /// extra password or invite link: the target is that password by its id and label, never
+    /// its code; `kind` in the details is `password`, `link` or `standing`), `kick`, `ban`,
     /// `unban`, `timeout`, `untimeout`, `voice_disconnect`, `voice_mute`, `voice_unmute` (of a
     /// guest in voice), `admin_grant`, `admin_revoke`, `admin_transfer`, `admin_perms`. `role`: `create`,
     /// `update`, `delete`, `assign`, `unassign`. `channel`: `create`, `update` (name, topic, slow

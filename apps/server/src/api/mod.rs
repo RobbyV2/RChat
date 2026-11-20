@@ -1991,6 +1991,7 @@ pub fn routes(
         let invite_routes = Router::new()
             .route("/invites/{name}", get(servers::get_invite))
             .route("/invites/{name}/metadata", get(servers::invite_metadata))
+            .route("/invite_codes/{code}", get(servers::get_invite_code))
             .route_layer(across("invites"))
             .merge(
                 Router::new()
@@ -2028,6 +2029,10 @@ pub fn routes(
             .route(
                 "/servers/{name}/passwords",
                 post(passwords::create_password),
+            )
+            .route(
+                "/servers/{name}/invite",
+                post(passwords::make_standing_invite),
             )
             .route("/servers/{name}/available", get(servers::server_available))
             .route("/reports", post(reports::create_report))
@@ -2155,6 +2160,10 @@ fn api_routes(
             patch(servers::update_channel).delete(servers::delete_channel),
         )
         .route("/servers/{name}/passwords", get(passwords::list_passwords))
+        .route(
+            "/servers/{name}/invite",
+            get(passwords::get_standing_invite).delete(passwords::delete_standing_invite),
+        )
         .route(
             "/servers/{name}/passwords/{id}",
             delete(passwords::revoke_password),
@@ -3109,7 +3118,7 @@ mod tests {
         };
         let club = server("Club").await.expect("club").0;
         let _ = server("Spare").await.expect("spare");
-        let general = club.channels[0].id;
+        let general = club.server.channels[0].id;
         let mods = role("mods").await.expect("mods").0;
         let send =
             |body: Value| messages::send_channel_message(st(), Path(general), alice(), req(body));

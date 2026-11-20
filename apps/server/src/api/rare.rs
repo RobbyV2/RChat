@@ -105,6 +105,7 @@ impl Rare {
             Rare::ServerPassword => &[
                 ("post", "/api/v1/servers/{name}/passwords"),
                 ("patch", "/api/v1/servers/{name}"),
+                ("post", "/api/v1/servers/{name}/invite"),
             ],
             Rare::Webhook => &[
                 ("post", "/api/v1/servers/{name}/webhooks"),

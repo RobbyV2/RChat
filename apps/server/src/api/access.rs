@@ -219,6 +219,87 @@ pub async fn password_lookup(db: &Db, server: &str, password: &str) -> Result<St
     derive_key(password, salt).await
 }
 
+/// The instance-wide key of an invite code: HMAC-SHA256 of the code under the instance pepper,
+/// hex-encoded. It only finds the server; the code then proves itself as that server's extra
+/// password.
+pub async fn code_lookup(db: &Db, code: &str) -> Result<String, ApiError> {
+    let pepper = crate::db::pepper(db).await?;
+    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(&pepper)
+        .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+    mac.update(b"invite code\n");
+    mac.update(code.as_bytes());
+    Ok(hex::encode(mac.finalize().into_bytes()))
+}
+
+/// The name invite code lookups count their attempts under, which no server has (server names
+/// can't hold NUL). It never reaches the database.
+const CODE_ATTEMPTS: &str = "\0code";
+
+/// The server an invite code opens, as `viewer` sees it with the code as its password: the
+/// gate checks it like any password, attempt budgets included. An unknown code, and one that is
+/// revoked, expired or used up, get the uniform `not_found` after the same password work, and
+/// count as a wrong password of the caller's address and network. Past the attempt budgets,
+/// working and unknown codes get the same 429.
+pub async fn resolve_code(
+    db: &Db,
+    code: &str,
+    viewer: Option<&User>,
+    grants: Vec<String>,
+    limits: &Limits,
+) -> Result<InviteView, ApiError> {
+    let code = crate::api::passwords::clean_code(code);
+    let found = match &code {
+        Some(code) => sqlx::query("SELECT server, id, expires_at, max_uses, uses, revoked_at FROM server_passwords WHERE code_lookup = $1")
+            .bind(code_lookup(db, code).await?)
+            .fetch_optional(db)
+            .await?
+            .map(|r| -> sqlx::Result<(String, Extra)> {
+                Ok((
+                    r.try_get(0)?,
+                    Extra {
+                        id: r.try_get(1)?,
+                        expires_at: r.try_get(2)?,
+                        max_uses: r.try_get(3)?,
+                        uses: r.try_get(4)?,
+                        revoked: r.try_get::<Option<i64>, _>(5)?.is_some(),
+                    },
+                ))
+            })
+            .transpose()?
+            .filter(|(_, extra)| extra.ticket(now()).is_some()),
+        None => None,
+    };
+    match (code, found) {
+        (Some(code), Some((server, _))) => {
+            let proof = Proof::password(Some(&code)).and_grants(grants, limits);
+            resolve_invite(db, &server, viewer, &proof)
+                .await
+                .map_err(|e| match e.0 {
+                    StatusCode::TOO_MANY_REQUESTS => e,
+                    _ => hidden(e),
+                })
+        }
+        (code, _) => {
+            let attempt = Attempt::start(db, CODE_ATTEMPTS)?;
+            let given = code.unwrap_or_default();
+            let work = tokio::join!(
+                check_password(&given, None),
+                password_lookup(db, CODE_ATTEMPTS, &given),
+            );
+            match work {
+                (Err(e), _) | (Ok(_), Err(e)) => {
+                    attempt.refund();
+                    Err(e)
+                }
+                (Ok(_), Ok(_)) => {
+                    attempt.failed();
+                    Err(not_found())
+                }
+            }
+        }
+    }
+}
+
 struct Extra {
     id: i64,
     expires_at: Option<i64>,
