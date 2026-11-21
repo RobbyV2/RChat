@@ -65,6 +65,8 @@ Open http://localhost:3000. The first account you register is the site admin.
 - Docker Compose with nginx, many copies: put hex passwords (`openssl rand -hex 24`) for `POSTGRES_PASSWORD` and `VALKEY_PASSWORD` in `deploy/.env`, then `docker compose -f deploy/compose.scale.yml up -d` (serves on port 8080).
 - Kubernetes: copy `deploy/k8s/secrets.env.example` to `deploy/k8s/secrets.env` and fill it in, replace the `REPLACE` values in `deploy/k8s/config.yaml` and `chat.example.com` in `deploy/k8s/ingress.yaml`, then `kubectl apply -k deploy/k8s`.
 
+Accounts from the command line, also while the server runs: `server user create <name>` makes an account with a temporary password (the first account is the site admin, also with sign-up closed), and `server user reset-password <name>` gives one a new temporary password. From source it is `cargo run --bin server -- user create <name>`, in Docker `docker exec <container> /app/server user create <name>`.
+
 A proxy in front needs one domain on port 443. It sends every path to `SERVER_PORT` and passes the WebSocket upgrade for `/api/ws` and `/peerjs`.
 
 For indexed channel search on Postgres, install `btree_gist` and `intarray` or allow the server to create them.
@@ -79,19 +81,19 @@ For more load, run many copies of the same image on one Postgres database and on
 
 Settings live in `.env.local` or in the environment (`docker run -e NAME=value`). The scaled Compose example reads `RCHAT_*` values such as `RCHAT_PUBLIC_URL` from `deploy/.env`, and Kubernetes reads `deploy/k8s/config.yaml`. `.env.local.example` lists every setting with its default and range. These are the ones almost everyone sets:
 
-| Variable               | Default     | What it does                                                                                            |
-| ---------------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
-| `APP_MODE`             | `full`      | `full` serves the API and the app. `api-only` serves only the API.                                      |
-| `HOST`                 | `127.0.0.1` | The address the server listens on. Use `0.0.0.0` for remote access.                                     |
-| `SERVER_PORT`          | `3000`      | The public port.                                                                                        |
-| `DATABASE_URL`         | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                                                  |
-| `PUBLIC_URL`           | none        | The address people open, for example `https://chat.example.com`.                                        |
-| `INSTANCE_NAME`        | `RChat`     | The name people see for your instance.                                                                  |
-| `AUTH_REGISTRATION`    | `open`      | Who can sign up with a password: `open`, `sso` or `closed`. Keep it open until your own account exists. |
-| `FEATURE_FILE_UPLOADS` | `on`        | File uploads to this instance, `on` or `off`.                                                           |
-| `UPLOAD_MAX_MIB`       | `25`        | The largest upload in MiB. Raise your proxy's body size limit to match.                                 |
-| `S3_ENDPOINT`          | none        | Stores uploads in an S3 bucket, with `S3_BUCKET`, `S3_ACCESS_KEY` and `S3_SECRET_KEY`.                  |
-| `TRUSTED_PROXIES`      | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.                            |
+| Variable               | Default     | What it does                                                                                                                        |
+| ---------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_MODE`             | `full`      | `full` serves the API and the app. `api-only` serves only the API.                                                                  |
+| `HOST`                 | `127.0.0.1` | The address the server listens on. Use `0.0.0.0` for remote access.                                                                 |
+| `SERVER_PORT`          | `3000`      | The public port.                                                                                                                    |
+| `DATABASE_URL`         | `rchat.db`  | A sqlite file, or a `postgres://` URL.                                                                                              |
+| `PUBLIC_URL`           | none        | The address people open, for example `https://chat.example.com`.                                                                    |
+| `INSTANCE_NAME`        | `RChat`     | The name people see for your instance.                                                                                              |
+| `AUTH_REGISTRATION`    | `open`      | Who can sign up with a password: `open`, `sso` or `closed`. Closed before any account exists: make yours with `server user create`. |
+| `FEATURE_FILE_UPLOADS` | `on`        | File uploads to this instance, `on` or `off`.                                                                                       |
+| `UPLOAD_MAX_MIB`       | `25`        | The largest upload in MiB. Raise your proxy's body size limit to match.                                                             |
+| `S3_ENDPOINT`          | none        | Stores uploads in an S3 bucket, with `S3_BUCKET`, `S3_ACCESS_KEY` and `S3_SECRET_KEY`.                                              |
+| `TRUSTED_PROXIES`      | none        | Proxy addresses to trust for the real client address. Set it behind a proxy.                                                        |
 
 Other instances accept this instance's identity assertions only when its public address uses port 443.
 

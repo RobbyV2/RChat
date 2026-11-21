@@ -50,6 +50,17 @@ test('no actor without the config mark is a deleted account, on every action', (
   ).toBe('Deleted user removed the backup phrase of bob')
 })
 
+test('an entry the command line made is shown as made by it', () => {
+  const made = entry({
+    actor: null,
+    action: 'user.remove_phrase',
+    target: 'bob',
+    detail: { by: 'cli' },
+  })
+  expect(text(made)).toBe('Command line removed the backup phrase of bob')
+  expect(names(made)).toEqual(['bob'])
+})
+
 test('the config mark is read on any action', () => {
   const later = entry({
     actor: null,

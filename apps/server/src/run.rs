@@ -413,6 +413,9 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
                     Ok(n) => info!("ended {n} sessions past their age or idle limit"),
                     Err(e) => tracing::warn!("session sweep failed: {e}"),
                 }
+                if let Err(e) = crate::api::admin_cli::announce_resets(&sessions).await {
+                    tracing::warn!("could not look for passwords reset at the command line: {e}");
+                }
             }
         }
     });

@@ -1,5 +1,6 @@
 pub mod access;
 pub mod admin;
+pub mod admin_cli;
 pub mod admin_users;
 pub mod audit;
 pub mod auth;

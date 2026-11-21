@@ -658,7 +658,7 @@ pub(crate) async fn register(
     let t = now();
     let joined = add_account(
         &mut tx,
-        &state,
+        &state.limits,
         &defaults,
         NewAccount {
             username: &key,
@@ -731,7 +731,7 @@ pub(crate) type Joined = Vec<(String, Option<i64>)>;
 /// caller commits and then calls `announce_account`.
 pub(crate) async fn add_account(
     tx: &mut sqlx::Transaction<'_, sqlx::Any>,
-    state: &AppState,
+    limits: &Limits,
     defaults: &[String],
     account: NewAccount<'_>,
     t: i64,
@@ -748,6 +748,7 @@ pub(crate) async fn add_account(
     for server in lock_order(defaults) {
         lock_server(tx, server).await?;
     }
+    crate::db::lock_new_usernames(tx).await?;
     let user_count: i64 = sqlx::query("SELECT COUNT(*) FROM (SELECT 1 FROM users LIMIT 1) t")
         .fetch_one(&mut **tx)
         .await?
@@ -768,8 +769,8 @@ pub(crate) async fn add_account(
     .await?;
     let mut joined = Vec::new();
     for server in defaults {
-        let room = crate::api::servers::account_has_room(tx, &state.limits, key).await?
-            && crate::api::servers::server_has_room(tx, &state.limits, server).await?;
+        let room = crate::api::servers::account_has_room(tx, limits, key).await?
+            && crate::api::servers::server_has_room(tx, limits, server).await?;
         if !room {
             continue;
         }

@@ -19,10 +19,12 @@ const detailOf = (e: InstanceAuditEntry): Record<string, unknown> =>
   typeof e.detail === 'object' && e.detail !== null ? (e.detail as Record<string, unknown>) : {}
 
 // Who made an entry. No actor means the account was deleted since, except on the entries the
-// server marks as made by its config at a start.
+// server marks as made by its config at a start or at its command line.
 const actorOf = (e: InstanceAuditEntry): AuditPart => {
   if (e.actor !== null) return { text: e.actor, name: true }
-  return detailOf(e).by === 'config' ? { text: 'Server config' } : { text: 'Deleted user' }
+  const by = detailOf(e).by
+  if (by === 'config') return { text: 'Server config' }
+  return by === 'cli' ? { text: 'Command line' } : { text: 'Deleted user' }
 }
 
 // A setting's value in a line: an empty one reads "nothing", a long list is cut. `names` marks

@@ -300,7 +300,7 @@ pub(crate) async fn create_account(
     let mut tx = state.db.begin().await?;
     let joined = add_account(
         &mut tx,
-        &state,
+        &state.limits,
         &defaults,
         NewAccount {
             username: &key,

@@ -290,6 +290,19 @@ impl From<sqlx::Error> for NotAdded {
     }
 }
 
+/// Holds the lock on new usernames until the transaction ends (on Postgres; SQLite has one
+/// writer), so accounts are added one at a time. Whoever counts the accounts to decide what a
+/// new one becomes takes it before counting.
+pub async fn lock_new_usernames(conn: &mut AnyConnection) -> sqlx::Result<()> {
+    if conn.backend_name() == "PostgreSQL" {
+        sqlx::query("SELECT COUNT(*) FROM pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind("new usernames")
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Adds an account in the caller's transaction. Every account creation goes through here. It
 /// refuses a username or display name that holds a hidden character or passes for a taken or
 /// banned username (`names::refusal`), and stores the look-alike keys of the username
@@ -300,12 +313,7 @@ pub async fn insert_user(
     tx: &mut sqlx::Transaction<'_, sqlx::Any>,
     user: NewUser<'_>,
 ) -> Result<(), NotAdded> {
-    if tx.backend_name() == "PostgreSQL" {
-        sqlx::query("SELECT COUNT(*) FROM pg_advisory_xact_lock(hashtextextended($1, 0))")
-            .bind("new usernames")
-            .execute(&mut **tx)
-            .await?;
-    }
+    lock_new_usernames(tx).await?;
     if let Some(refusal) = crate::api::names::refusal(tx, user.username, user.display_name).await? {
         return Err(NotAdded::Refused(refusal));
     }
