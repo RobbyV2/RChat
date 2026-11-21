@@ -7,11 +7,33 @@ export const backoffDelay = (
   attempt: number,
   rand: () => number = Math.random,
   base = BACKOFF_BASE,
-  cap = BACKOFF_CAP
+  cap = BACKOFF_CAP,
+  floor = BACKOFF_FLOOR
 ): number => {
   const ceiling = Math.min(cap, base * 2 ** Math.max(0, Math.min(attempt, 30)))
-  return Math.max(BACKOFF_FLOOR, Math.floor(rand() * ceiling))
+  return Math.max(floor, Math.floor(rand() * ceiling))
 }
+
+// The realtime reconnect timings an instance sets.
+export interface ReconnectTimings {
+  reconnect_base_ms: number
+  reconnect_cap_ms: number
+  reconnect_floor_ms: number
+}
+
+// The wait before reconnect `attempt` under `timings`.
+export const reconnectDelay = (
+  attempt: number,
+  timings: ReconnectTimings,
+  rand: () => number = Math.random
+): number =>
+  backoffDelay(
+    attempt,
+    rand,
+    timings.reconnect_base_ms,
+    timings.reconnect_cap_ms,
+    timings.reconnect_floor_ms
+  )
 
 export const nextAttempt = (attempt: number, openFor: number | null): number =>
   openFor !== null && openFor >= STABLE_AFTER ? 1 : attempt + 1

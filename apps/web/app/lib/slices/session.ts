@@ -30,6 +30,7 @@ import { forwardKey } from '../forward'
 import { type FriendsDeps, friendsInitial, type friendsSlice } from '../friends_store'
 import { NO_GROUP_PINGS } from '../group_pings'
 import { ice, iceKey, iceValue, parseIce } from '../ice'
+import { limitsOf } from '../instance_limits'
 import {
   api,
   fitsHome,
@@ -154,8 +155,6 @@ const readJson = <T>(key: string, fallback: T): T => {
   }
 }
 
-const RESYNC_JITTER = 10_000
-const CATCH_UP_VIEW_MAX = 5_000
 const POLL_EVERY = 60_000
 
 // P2P for the signed-in account, once the instance's settings say it is on. store.ts feeds it
@@ -851,7 +850,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         if (pins) loadPins(pins.key)
         catchUp()
       },
-      250 + Math.random() * RESYNC_JITTER
+      250 + Math.random() * limitsOf(get().instance).resync_jitter_ms
     )
   }
 
@@ -875,13 +874,16 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         viewTimer = null
         void refreshView()
       },
-      catchUpDelay(outage, Math.random, CATCH_UP_VIEW_MAX)
+      catchUpDelay(outage, Math.random, limitsOf(get().instance).catch_up_delay_ms)
     )
-    catchUpTimer = setTimeout(() => {
-      catchUpTimer = null
-      refreshMe()
-      catchUpLists()
-    }, catchUpDelay(outage))
+    catchUpTimer = setTimeout(
+      () => {
+        catchUpTimer = null
+        refreshMe()
+        catchUpLists()
+      },
+      catchUpDelay(outage, Math.random, limitsOf(get().instance).reconnect_cap_ms)
+    )
   }
 
   let listening = false

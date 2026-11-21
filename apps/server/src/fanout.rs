@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use axum::extract::ws::Utf8Bytes;
@@ -8,8 +8,10 @@ use tokio::sync::{OnceCell, mpsc};
 use crate::api::access::ChannelPolicy;
 use crate::ws::WsEvent;
 
-const INBOX: usize = 512;
-const CHANNELS_KEPT: usize = 100_000;
+/// Events each connection's inbox holds by default.
+pub const INBOX: usize = 512;
+/// Channel policies kept by default.
+pub const CHANNELS_KEPT: usize = 100_000;
 
 pub struct Fanned {
     pub ev: WsEvent,
@@ -588,10 +590,20 @@ impl Index {
     }
 }
 
-#[derive(Default)]
 pub struct Router {
     index: RwLock<Index>,
     seq: AtomicU64,
+    inbox: AtomicUsize,
+}
+
+impl Default for Router {
+    fn default() -> Router {
+        Router {
+            index: RwLock::default(),
+            seq: AtomicU64::new(0),
+            inbox: AtomicUsize::new(INBOX),
+        }
+    }
 }
 
 pub struct Inbox {
@@ -621,8 +633,13 @@ impl Inbox {
 }
 
 impl Router {
+    /// Events each new connection's inbox holds (`WS_INBOX_FRAMES`).
+    pub fn set_inbox(&self, frames: usize) {
+        self.inbox.store(frames.max(1), Ordering::Relaxed);
+    }
+
     pub fn open(&self, conn: u64, topics: &HashSet<Topic>) -> Inbox {
-        let (tx, rx) = mpsc::channel(INBOX);
+        let (tx, rx) = mpsc::channel(self.inbox.load(Ordering::Relaxed));
         let lagged = Arc::new(AtomicBool::new(false));
         let evicted = Arc::new(AtomicBool::new(false));
         let mut index = self.index.write().unwrap();
@@ -781,15 +798,30 @@ impl Router {
 
 type ChannelSlot = Arc<OnceCell<Option<ChannelPolicy>>>;
 
-#[derive(Default)]
 pub struct Channels {
     slots: Mutex<HashMap<i64, ChannelSlot>>,
+    kept: AtomicUsize,
+}
+
+impl Default for Channels {
+    fn default() -> Channels {
+        Channels {
+            slots: Mutex::default(),
+            kept: AtomicUsize::new(CHANNELS_KEPT),
+        }
+    }
 }
 
 impl Channels {
+    /// Channel policies kept before they all start over (`WS_CHANNEL_SLOTS`).
+    pub fn set_kept(&self, kept: usize) {
+        self.kept.store(kept.max(1), Ordering::Relaxed);
+    }
+
     pub fn slot(&self, channel_id: i64) -> ChannelSlot {
         let mut slots = self.slots.lock().unwrap();
-        if slots.len() >= CHANNELS_KEPT && !slots.contains_key(&channel_id) {
+        let kept = self.kept.load(Ordering::Relaxed);
+        if slots.len() >= kept && !slots.contains_key(&channel_id) {
             slots.clear();
         }
         slots.entry(channel_id).or_default().clone()

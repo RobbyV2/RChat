@@ -52,6 +52,35 @@ afterEach(() => {
   sockets.length = 0
 })
 
+describe('realtime reconnects', () => {
+  test('wait as long as the instance asks', () => {
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket
+    globalThis.fetch = (async () => new Response('ok')) as unknown as typeof fetch
+    const waits: number[] = []
+    const realSetTimeout = globalThis.setTimeout
+    globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+      waits.push(ms ?? 0)
+      return realSetTimeout(() => {}, 0)
+    }) as typeof setTimeout
+    try {
+      const timings = { reconnect_base_ms: 9000, reconnect_cap_ms: 9000, reconnect_floor_ms: 8000 }
+      const client = new WsClient({
+        url: () => 'ws://x/api/ws',
+        probe: () => 'http://x/api/health',
+        timings: () => timings,
+      })
+      client.start('token')
+      const ws = sockets[sockets.length - 1]
+      ws.readyState = 3
+      ws.onclose?.({ code: 1006 })
+      expect(waits.some(ms => ms >= 8000 && ms < 9000)).toBe(true)
+      client.stop()
+    } finally {
+      globalThis.setTimeout = realSetTimeout
+    }
+  })
+})
+
 describe('realtime close codes', () => {
   test('only a connection closed for too many open ones waits to be used again', () => {
     expect(reconnectsAfter(CLOSE_TOO_MANY)).toBe(false)

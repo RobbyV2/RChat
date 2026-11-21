@@ -119,6 +119,11 @@ impl<K: Hash + Eq + Clone, V> Table<K, V> {
         }
     }
 
+    /// Keys the table holds from now on; past it, new keys make room as before.
+    fn set_max(&mut self, max: usize) {
+        self.max = max.max(1);
+    }
+
     fn hash<Q: Hash + ?Sized>(&self, key: &Q) -> u64 {
         self.hasher.hash_one(key)
     }
@@ -443,6 +448,16 @@ impl<K: Hash + Eq + Clone> Keyed<K> {
     pub fn set_policy(&self, policy: Policy) {
         for mut shard in self.each() {
             shard.0 = policy;
+        }
+    }
+
+    /// Keeps at most `max_keys` keys from now on, shared out over the shards as at the start.
+    pub fn set_max_keys(&self, max_keys: usize) {
+        let count = self.shards.len();
+        for (n, mut shard) in self.each().enumerate() {
+            shard
+                .1
+                .set_max(max_keys / count + usize::from(n < max_keys % count));
         }
     }
 

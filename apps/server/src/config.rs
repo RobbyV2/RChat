@@ -793,6 +793,11 @@ mod tests {
             ("WS_SOCKETS_PER_IP", "30"),
             ("WS_GUEST_SOCKETS_PER_IP", "0"),
             ("WS_GUEST_SOCKETS_MAX", "7"),
+            ("WS_INBOX_FRAMES", "64"),
+            ("WS_CHANNEL_SLOTS", "5000"),
+            ("WS_PACED_USERS_MAX", "300"),
+            ("HUB_AFTERMATH_MAX", "8"),
+            ("HUB_SHOWN_MAX", "9"),
         ];
         let limits = AppConfig::load_from(&cli(None, None), env(&set))
             .unwrap()
@@ -808,6 +813,11 @@ mod tests {
                 guests_per_ip: 0,
                 guests_max: 7,
                 voice_room_max: crate::ws::VOICE_ROOM_MAX,
+                inbox_frames: 64,
+                channel_slots: 5000,
+                paced_users_max: 300,
+                aftermath_max: 8,
+                shown_max: 9,
             }
         );
         assert!(

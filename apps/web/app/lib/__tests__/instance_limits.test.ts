@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
+import { reconnectDelay } from '../backoff'
 import { DEFAULT_LIMITS, limitsOf, tooLargeText } from '../instance_limits'
+import { InstanceConnection } from '../instances'
 import { resetSessionCaches, startMode, useStore } from '../store'
 import type { InstanceInfo, SiteSettings } from '../types'
 
@@ -74,6 +76,44 @@ describe('instance limits', () => {
       upload_bytes: MIB,
       servers_per_account: 1000,
     })
+  })
+
+  test('reconnect timings come from the instance', () => {
+    const timed = {
+      ...info,
+      limits: {
+        ...info.limits,
+        reconnect_base_ms: 2000,
+        reconnect_cap_ms: 5000,
+        reconnect_floor_ms: 400,
+        resync_jitter_ms: 0,
+        catch_up_delay_ms: 100,
+      },
+    }
+    const limits = limitsOf(timed)
+    expect([limits.resync_jitter_ms, limits.catch_up_delay_ms]).toEqual([0, 100])
+    const top = () => 0.999999
+    expect(reconnectDelay(0, limits, top)).toBe(1999)
+    expect(reconnectDelay(1, limits, top)).toBe(3999)
+    expect(reconnectDelay(5, limits, top)).toBe(4999)
+    expect(reconnectDelay(3, limits, () => 0)).toBe(400)
+    expect(reconnectDelay(0, limitsOf(null), top)).toBe(999)
+    expect(reconnectDelay(0, limitsOf(null), () => 0)).toBe(250)
+    const ends = {
+      origin: 'https://chat.example.com',
+      api: 'https://chat.example.com',
+      url: () => 'wss://chat.example.com/api/ws',
+      probe: () => 'https://chat.example.com/api/health',
+      peer: () => null,
+    }
+    const conn = new InstanceConnection(
+      ends as unknown as ConstructorParameters<typeof InstanceConnection>[0],
+      timed
+    )
+    const pinned = (conn as unknown as { pinned: { timings: () => unknown } }).pinned
+    expect(pinned.timings()).toEqual(limits)
+    conn.info = null
+    expect(pinned.timings()).toEqual(DEFAULT_LIMITS)
   })
 
   test('the same info gives the same limits object', () => {

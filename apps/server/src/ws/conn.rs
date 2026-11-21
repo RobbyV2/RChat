@@ -27,8 +27,8 @@ use super::protocol::{
 use super::rewrite::{channel_for, event_frame, layout_for, own_timeout, presence_snapshot};
 use super::typing::{Typer, type_in};
 use super::{
-    FRAME_MAX, LAG_REAUTH_EVERY, MSG_BURST, MSG_RATE, OUT_FRAMES, PING_EVERY, SEND_TIMEOUT,
-    SILENT_LIMIT, authed_sub_ok, guest_sub_ok,
+    FRAME_MAX, LAG_REAUTH_EVERY, MSG_BURST, MSG_RATE, PING_EVERY, SILENT_LIMIT, authed_sub_ok,
+    guest_sub_ok,
 };
 
 use crate::api::access::{is_member, presence_mode, ws_banned, ws_live_hosted, ws_member_servers};
@@ -111,14 +111,22 @@ pub async fn handler(
             return (StatusCode::TOO_MANY_REQUESTS, CLOSE_TOO_MANY_ADDR.1).into_response();
         }
     };
-    ws.max_message_size(FRAME_MAX)
+    let limits = &state.limits;
+    let ws = ws
+        .max_message_size(FRAME_MAX)
         .max_frame_size(FRAME_MAX)
-        .on_upgrade(move |socket| async move {
-            match query.widget {
-                Some(id) => super::widget_socket::run(state, id, socket, slot).await,
-                None => run(state, socket, slot).await,
-            }
-        })
+        .read_buffer_size(limits.ws_read_buffer_kib * 1024)
+        .write_buffer_size(limits.ws_write_buffer_kib * 1024);
+    let ws = match limits.ws_max_write_buffer_kib {
+        0 => ws,
+        kib => ws.max_write_buffer_size(kib * 1024),
+    };
+    ws.on_upgrade(move |socket| async move {
+        match query.widget {
+            Some(id) => super::widget_socket::run(state, id, socket, slot).await,
+            None => run(state, socket, slot).await,
+        }
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -137,16 +145,22 @@ pub(super) struct Out {
 }
 
 impl Out {
-    fn spawn(mut sink: SplitSink<WebSocket, Frame>) -> Out {
-        let (tx, mut rx) = mpsc::channel::<Frame>(OUT_FRAMES);
+    /// A writer that holds `frames` frames (`WS_OUT_FRAMES`) and gives up on a socket that takes
+    /// longer than `wait` (`WS_SEND_TIMEOUT_SECS`) to accept one.
+    fn spawn(
+        mut sink: SplitSink<WebSocket, Frame>,
+        frames: usize,
+        wait: std::time::Duration,
+    ) -> Out {
+        let (tx, mut rx) = mpsc::channel::<Frame>(frames.max(1));
         tokio::spawn(async move {
             while let Some(frame) = rx.recv().await {
-                match tokio::time::timeout(SEND_TIMEOUT, sink.send(frame)).await {
+                match tokio::time::timeout(wait, sink.send(frame)).await {
                     Ok(Ok(())) => {}
                     Ok(Err(_)) | Err(_) => break,
                 }
             }
-            let _ = tokio::time::timeout(SEND_TIMEOUT, sink.close()).await;
+            let _ = tokio::time::timeout(wait, sink.close()).await;
         });
         Out { tx }
     }
@@ -296,7 +310,11 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
     access.token = token.filter(|_| access.user.is_some());
     state.hub.reconcile(conn, &access.topics(), 0);
     let (sink, mut stream) = socket.split();
-    let out = Out::spawn(sink);
+    let out = Out::spawn(
+        sink,
+        state.limits.ws_out_frames,
+        state.limits.ws_send_timeout(),
+    );
     let mut through = 0;
     let mut frames = frame_bucket(Instant::now());
     let mut typer = Typer::new();

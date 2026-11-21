@@ -9,6 +9,7 @@ import { shellInfo } from './platform/desktop'
 import type { InstanceInfo } from './types'
 
 import { DEFAULT_INSTANCE_NAME, instanceLabel } from './instance_label'
+import { limitsOf } from './instance_limits'
 
 export { DEFAULT_INSTANCE_NAME }
 
@@ -346,6 +347,7 @@ export class InstanceConnection {
   private pinned = {
     url: () => versionedUrl(this.ends.url(), this.api.prefix),
     probe: () => this.health(),
+    timings: () => limitsOf(this.info),
   }
 
   health() {

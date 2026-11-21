@@ -2,7 +2,7 @@ use std::net::IpAddr;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use super::{Hub, PACED_USERS_MAX};
+use super::Hub;
 use crate::limits::bucket::{Keyed, Policy};
 
 /// Per-user bounds on realtime connections: at most `conns_per_user` open at once across all
@@ -10,7 +10,10 @@ use crate::limits::bucket::{Keyed, Policy};
 /// `connect_every`, per instance. Per client address (an IPv6 /64 counts as one), at most
 /// `sockets_per_ip` open on this instance, `guests_per_ip` of them as guests. At most
 /// `guests_max` guest sockets on this instance from all addresses together (0 turns guests off).
-/// At most `voice_room_max` people in one voice channel (0 for no limit).
+/// At most `voice_room_max` people in one voice channel (0 for no limit). Each connection's
+/// inbox holds `inbox_frames`; the hub keeps `channel_slots` channel policies and the paces of
+/// `paced_users_max` accounts per kind; `aftermath_max` and `shown_max` bound its two follow-up
+/// queues (0 for no bound).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Limits {
     pub conns_per_user: usize,
@@ -20,6 +23,11 @@ pub struct Limits {
     pub guests_per_ip: usize,
     pub guests_max: usize,
     pub voice_room_max: usize,
+    pub inbox_frames: usize,
+    pub channel_slots: usize,
+    pub paced_users_max: usize,
+    pub aftermath_max: usize,
+    pub shown_max: usize,
 }
 
 pub const CONNS_PER_USER: usize = 20;
@@ -30,6 +38,8 @@ pub const SOCKETS_PER_IP: usize = 200;
 pub const AUTH_WAIT: Duration = Duration::from_secs(10);
 pub const GUESTS_PER_IP: usize = 50;
 pub const GUESTS_MAX: usize = 2000;
+/// Accounts each pacing map keeps by default; past it the one paced longest ago makes room.
+pub const PACED_USERS_MAX: usize = 10_000;
 
 impl Default for Limits {
     fn default() -> Limits {
@@ -41,6 +51,11 @@ impl Default for Limits {
             guests_per_ip: GUESTS_PER_IP,
             guests_max: GUESTS_MAX,
             voice_room_max: crate::ws::VOICE_ROOM_MAX,
+            inbox_frames: crate::fanout::INBOX,
+            channel_slots: crate::fanout::CHANNELS_KEPT,
+            paced_users_max: PACED_USERS_MAX,
+            aftermath_max: 0,
+            shown_max: 0,
         }
     }
 }
@@ -92,6 +107,21 @@ pub(super) fn signal_policy(room_max: usize) -> Policy {
     Policy::Tokens {
         burst: signal_burst_for(room_max) as f64,
         per_sec: f64::from(SIGNAL_BYTES_PER_SEC),
+    }
+}
+
+impl Pacing {
+    /// Every pacing map.
+    pub(super) fn each(&self) -> [&Keyed; 6] {
+        let Pacing {
+            voice,
+            calls,
+            dm_calls,
+            accepts,
+            signals,
+            typing,
+        } = self;
+        [voice, calls, dm_calls, accepts, signals, typing]
     }
 }
 

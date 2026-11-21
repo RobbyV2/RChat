@@ -1055,7 +1055,7 @@ mod tests {
         }
     }
 
-    fn take_reposts(aftermath: &mut mpsc::UnboundedReceiver<Aftermath>) -> Vec<Op> {
+    fn take_reposts(aftermath: &mut crate::hub::Feed<Aftermath>) -> Vec<Op> {
         let mut ops = Vec::new();
         while let Ok(job) = aftermath.try_recv() {
             if let Aftermath::Repost(lost) = job {

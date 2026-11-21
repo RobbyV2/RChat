@@ -11,17 +11,20 @@ use crate::fanout::{Channels, Inbox, Router, Topic};
 use crate::limits::bucket::{Keyed, Policy};
 use crate::ws::{CallKind, WsEvent};
 
+mod feed;
 mod limits;
 mod link;
 mod replica;
 
+pub use feed::Feed;
+use feed::{FeedTx, feed};
 use limits::{Pacing, connect_policy, signal_burst_for, signal_policy};
 use link::{Link, Posted, Reply, Resolved, Store, late_purge};
 
 pub use limits::{
     ACCEPT_BURST, ACCEPT_EVERY, AUTH_WAIT, AddrSlot, CALL_BURST, CALL_EVERY, CONNECT_BURST,
     CONNECTS_PER_MINUTE, CONNS_PER_USER, DM_CALL_BURST, DM_CALL_EVERY, GUESTS_MAX, GUESTS_PER_IP,
-    Limits, SIGNAL_BURST, SIGNAL_BYTES_PER_SEC, SOCKETS_PER_IP, TYPING_USER_BURST,
+    Limits, PACED_USERS_MAX, SIGNAL_BURST, SIGNAL_BYTES_PER_SEC, SOCKETS_PER_IP, TYPING_USER_BURST,
     TYPING_USER_EVERY, VOICE_BURST, VOICE_EVERY,
 };
 pub use replica::{
@@ -37,7 +40,6 @@ pub const PRESENCE_SERVERS_MAX: usize = 1000;
 pub const SHOW_BURST: i64 = 4;
 pub const SHOW_EVERY_MS: i64 = PRESENCE_GRACE_MS;
 const REANNOUNCE_EVERY: Duration = Duration::from_secs(10);
-const CONNECT_USERS_MAX: usize = 10_000;
 const GAPS_KEPT: usize = 32;
 const OUT_CAP: usize = 10_000;
 const PENDING_CAP: usize = 50_000;
@@ -48,8 +50,6 @@ pub const CALL_TIMEOUT: Duration = match cfg!(test) {
 pub const READ_FLUSH: Duration = Duration::from_millis(500);
 pub const RELEASE_BURST: u32 = 30;
 pub const RELEASE_EVERY: Duration = Duration::from_secs(2);
-const RELEASE_USERS_MAX: usize = 10_000;
-const PACED_USERS_MAX: usize = 10_000;
 // Unconfirmed RTC signals kept for a repost, per call or voice room; older ones are dropped.
 const SIGNALS_PENDING: usize = 64;
 const SIGNAL_CALLS_MAX: usize = 1024;
@@ -112,10 +112,10 @@ struct Inner {
     link: Option<Link>,
     epoch: watch::Sender<Epoch>,
     settings: watch::Sender<u64>,
-    aftermath: mpsc::UnboundedSender<Aftermath>,
-    aftermath_rx: Mutex<Option<mpsc::UnboundedReceiver<Aftermath>>>,
-    shown: mpsc::UnboundedSender<(String, bool)>,
-    shown_rx: Mutex<Option<mpsc::UnboundedReceiver<(String, bool)>>>,
+    aftermath: FeedTx<Aftermath>,
+    aftermath_rx: Mutex<Option<Feed<Aftermath>>>,
+    shown: FeedTx<(String, bool)>,
+    shown_rx: Mutex<Option<Feed<(String, bool)>>>,
     release: Keyed,
     connects: Keyed,
     pacing: Pacing,
@@ -145,8 +145,8 @@ impl Default for Hub {
 
 impl Hub {
     fn build(link: Option<Link>) -> Hub {
-        let (aftermath, aftermath_rx) = mpsc::unbounded_channel();
-        let (shown, shown_rx) = mpsc::unbounded_channel();
+        let (aftermath, aftermath_rx) = feed(0);
+        let (shown, shown_rx) = feed(0);
         Hub {
             inner: Arc::new(Inner {
                 instance: rand::random(),
@@ -170,9 +170,9 @@ impl Hub {
                 shown_rx: Mutex::new(Some(shown_rx)),
                 release: Keyed::new(
                     Policy::every(f64::from(RELEASE_BURST), RELEASE_EVERY),
-                    RELEASE_USERS_MAX,
+                    PACED_USERS_MAX,
                 ),
-                connects: Keyed::new(connect_policy(Limits::default()), CONNECT_USERS_MAX),
+                connects: Keyed::new(connect_policy(Limits::default()), PACED_USERS_MAX),
                 pacing: Pacing::default(),
                 addrs: Mutex::new(HashMap::new()),
                 guests: AtomicUsize::new(0),
@@ -332,13 +332,13 @@ impl Hub {
         });
     }
 
-    pub fn take_aftermath(&self) -> Option<mpsc::UnboundedReceiver<Aftermath>> {
+    pub fn take_aftermath(&self) -> Option<Feed<Aftermath>> {
         self.inner.aftermath_rx.lock().unwrap().take()
     }
 
     /// Users who became visible on the site (`true`) or stopped being visible (`false`), in
     /// order, as this instance's replica sees it (`WsEvent::UserShown`, never delivered).
-    pub fn take_shown(&self) -> Option<mpsc::UnboundedReceiver<(String, bool)>> {
+    pub fn take_shown(&self) -> Option<Feed<(String, bool)>> {
         self.inner.shown_rx.lock().unwrap().take()
     }
 
@@ -349,7 +349,7 @@ impl Hub {
                 continue;
             }
             if let WsEvent::UserShown { username, online } = ev {
-                let _ = self.inner.shown.send((username, online));
+                self.inner.shown.send((username, online));
                 continue;
             }
             if let WsEvent::SettingsChanged { settings: _ } = ev {
@@ -377,7 +377,7 @@ impl Hub {
         drop(order);
         self.evict(&evicted);
         if !purge.is_empty() {
-            let _ = self.inner.aftermath.send(Aftermath::Settle(purge));
+            self.inner.aftermath.send(Aftermath::Settle(purge));
         }
         outcome
     }
@@ -478,14 +478,14 @@ impl Hub {
                 self.send(link, &mut seq, op, Reply::Forget);
             }
             if !checked.is_empty() {
-                let _ = self.inner.aftermath.send(Aftermath::Repost(checked));
+                self.inner.aftermath.send(Aftermath::Repost(checked));
             }
         }
         drop(seq);
         for (op, outcome) in late {
             let purge = late_purge(op, outcome);
             if !purge.is_empty() {
-                let _ = self.inner.aftermath.send(Aftermath::Settle(purge));
+                self.inner.aftermath.send(Aftermath::Settle(purge));
             }
         }
     }
@@ -576,7 +576,7 @@ impl Hub {
                 false => None,
             });
             if !purge.is_empty() {
-                let _ = self.inner.aftermath.send(Aftermath::Settle(purge));
+                self.inner.aftermath.send(Aftermath::Settle(purge));
             }
             if link.overflow.swap(false, Ordering::Relaxed) {
                 warn!("realtime ops were dropped while the bus was unreachable; resyncing clients");
@@ -1121,6 +1121,11 @@ impl Hub {
             guests_per_ip: _,
             guests_max: _,
             voice_room_max: _,
+            inbox_frames: _,
+            channel_slots: _,
+            paced_users_max: _,
+            aftermath_max: _,
+            shown_max: _,
         } = self.limits();
         let every = connect_every.as_millis() as i64;
         let (opened, clock) =
@@ -1231,12 +1236,23 @@ impl Hub {
     }
 
     pub(crate) fn set_limits(&self, limits: Limits) {
-        self.inner
+        let inner = &self.inner;
+        inner
             .pacing
             .signals
             .set_policy(signal_policy(limits.voice_room_max));
-        self.inner.connects.set_policy(connect_policy(limits));
-        *self.inner.limits.lock().unwrap() = limits;
+        inner.connects.set_policy(connect_policy(limits));
+        inner.router.set_inbox(limits.inbox_frames);
+        inner.channels.set_kept(limits.channel_slots);
+        for keyed in [&inner.release, &inner.connects]
+            .into_iter()
+            .chain(inner.pacing.each())
+        {
+            keyed.set_max_keys(limits.paced_users_max);
+        }
+        inner.aftermath.set_bound(limits.aftermath_max);
+        inner.shown.set_bound(limits.shown_max);
+        *inner.limits.lock().unwrap() = limits;
     }
 
     /// The signalling bytes one account may send at once (see `signal_burst_for`).

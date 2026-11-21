@@ -19,7 +19,7 @@ const MIB: usize = 1024 * 1024;
 pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 98] = [
+const RANGES: [(&str, i64, i64); 113] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
@@ -118,6 +118,21 @@ const RANGES: [(&str, i64, i64); 98] = [
     ("PREVIEW_CACHE_DAYS", 1, 3_650),
     ("EMBED_FETCHES", 1, 1_024),
     ("EMBED_QUEUE", 1, 100_000),
+    ("WS_INBOX_FRAMES", 16, 65_536),
+    ("WS_OUT_FRAMES", 16, 65_536),
+    ("WS_SEND_TIMEOUT_SECS", 1, 600),
+    ("WS_READ_BUFFER_KIB", 4, 65_536),
+    ("WS_WRITE_BUFFER_KIB", 0, 65_536),
+    ("WS_MAX_WRITE_BUFFER_KIB", 0, 1_048_576),
+    ("WS_PACED_USERS_MAX", 100, 10_000_000),
+    ("WS_CHANNEL_SLOTS", 1_000, 10_000_000),
+    ("HUB_AFTERMATH_MAX", 0, 1_000_000),
+    ("HUB_SHOWN_MAX", 0, 1_000_000),
+    ("RECONNECT_BASE_MS", 100, 60_000),
+    ("RECONNECT_CAP_MS", 1_000, 3_600_000),
+    ("RECONNECT_FLOOR_MS", 0, 60_000),
+    ("RESYNC_JITTER_MS", 0, 600_000),
+    ("CATCH_UP_DELAY_MS", 0, 600_000),
 ];
 
 /// The P2P limits registry, generated from the web app's `p2p/limits.ts`: each device-local name
@@ -324,6 +339,21 @@ pub struct Limits {
     pub preview_cache_days: i64,
     pub embed_fetches: usize,
     pub embed_queue: usize,
+    pub ws_inbox_frames: usize,
+    pub ws_out_frames: usize,
+    pub ws_send_timeout_secs: u64,
+    pub ws_read_buffer_kib: usize,
+    pub ws_write_buffer_kib: usize,
+    pub ws_max_write_buffer_kib: usize,
+    pub ws_paced_users_max: usize,
+    pub ws_channel_slots: usize,
+    pub hub_aftermath_max: usize,
+    pub hub_shown_max: usize,
+    pub reconnect_base_ms: u64,
+    pub reconnect_cap_ms: u64,
+    pub reconnect_floor_ms: u64,
+    pub resync_jitter_ms: u64,
+    pub catch_up_delay_ms: u64,
     /// `P2P_LIMITS`: the names given that the P2P registry has, with their values.
     pub p2p: BTreeMap<String, f64>,
     /// Names in `P2P_LIMITS` the registry doesn't have, left out of `p2p`.
@@ -433,6 +463,21 @@ impl Default for Limits {
             preview_cache_days: 7,
             embed_fetches: 16,
             embed_queue: 256,
+            ws_inbox_frames: 512,
+            ws_out_frames: 256,
+            ws_send_timeout_secs: 10,
+            ws_read_buffer_kib: 128,
+            ws_write_buffer_kib: 128,
+            ws_max_write_buffer_kib: 0,
+            ws_paced_users_max: 10000,
+            ws_channel_slots: 100000,
+            hub_aftermath_max: 0,
+            hub_shown_max: 0,
+            reconnect_base_ms: 1000,
+            reconnect_cap_ms: 30000,
+            reconnect_floor_ms: 250,
+            resync_jitter_ms: 10000,
+            catch_up_delay_ms: 5000,
             p2p: BTreeMap::new(),
             p2p_unknown: Vec::new(),
         }
@@ -709,6 +754,21 @@ impl Limits {
             preview_cache_days: e.num("PREVIEW_CACHE_DAYS", d.preview_cache_days)?,
             embed_fetches: e.num("EMBED_FETCHES", d.embed_fetches)?,
             embed_queue: e.num("EMBED_QUEUE", d.embed_queue)?,
+            ws_inbox_frames: e.num("WS_INBOX_FRAMES", d.ws_inbox_frames)?,
+            ws_out_frames: e.num("WS_OUT_FRAMES", d.ws_out_frames)?,
+            ws_send_timeout_secs: e.num("WS_SEND_TIMEOUT_SECS", d.ws_send_timeout_secs)?,
+            ws_read_buffer_kib: e.num("WS_READ_BUFFER_KIB", d.ws_read_buffer_kib)?,
+            ws_write_buffer_kib: e.num("WS_WRITE_BUFFER_KIB", d.ws_write_buffer_kib)?,
+            ws_max_write_buffer_kib: e.num("WS_MAX_WRITE_BUFFER_KIB", d.ws_max_write_buffer_kib)?,
+            ws_paced_users_max: e.num("WS_PACED_USERS_MAX", d.ws_paced_users_max)?,
+            ws_channel_slots: e.num("WS_CHANNEL_SLOTS", d.ws_channel_slots)?,
+            hub_aftermath_max: e.num("HUB_AFTERMATH_MAX", d.hub_aftermath_max)?,
+            hub_shown_max: e.num("HUB_SHOWN_MAX", d.hub_shown_max)?,
+            reconnect_base_ms: e.num("RECONNECT_BASE_MS", d.reconnect_base_ms)?,
+            reconnect_cap_ms: e.num("RECONNECT_CAP_MS", d.reconnect_cap_ms)?,
+            reconnect_floor_ms: e.num("RECONNECT_FLOOR_MS", d.reconnect_floor_ms)?,
+            resync_jitter_ms: e.num("RESYNC_JITTER_MS", d.resync_jitter_ms)?,
+            catch_up_delay_ms: e.num("CATCH_UP_DELAY_MS", d.catch_up_delay_ms)?,
             p2p,
             p2p_unknown,
         };
@@ -820,6 +880,21 @@ impl Limits {
             preview_cache_days,
             embed_fetches,
             embed_queue,
+            ws_inbox_frames,
+            ws_out_frames,
+            ws_send_timeout_secs,
+            ws_read_buffer_kib,
+            ws_write_buffer_kib,
+            ws_max_write_buffer_kib,
+            ws_paced_users_max,
+            ws_channel_slots,
+            hub_aftermath_max,
+            hub_shown_max,
+            reconnect_base_ms,
+            reconnect_cap_ms,
+            reconnect_floor_ms,
+            resync_jitter_ms,
+            catch_up_delay_ms,
             p2p: _,
             p2p_unknown: _,
         } = *self;
@@ -964,6 +1039,21 @@ impl Limits {
             ("PREVIEW_CACHE_DAYS", set(preview_cache_days)),
             ("EMBED_FETCHES", set(embed_fetches)),
             ("EMBED_QUEUE", set(embed_queue)),
+            ("WS_INBOX_FRAMES", set(ws_inbox_frames)),
+            ("WS_OUT_FRAMES", set(ws_out_frames)),
+            ("WS_SEND_TIMEOUT_SECS", set(ws_send_timeout_secs)),
+            ("WS_READ_BUFFER_KIB", set(ws_read_buffer_kib)),
+            ("WS_WRITE_BUFFER_KIB", set(ws_write_buffer_kib)),
+            ("WS_MAX_WRITE_BUFFER_KIB", set(ws_max_write_buffer_kib)),
+            ("WS_PACED_USERS_MAX", set(ws_paced_users_max)),
+            ("WS_CHANNEL_SLOTS", set(ws_channel_slots)),
+            ("HUB_AFTERMATH_MAX", set(hub_aftermath_max)),
+            ("HUB_SHOWN_MAX", set(hub_shown_max)),
+            ("RECONNECT_BASE_MS", set(reconnect_base_ms)),
+            ("RECONNECT_CAP_MS", set(reconnect_cap_ms)),
+            ("RECONNECT_FLOOR_MS", set(reconnect_floor_ms)),
+            ("RESYNC_JITTER_MS", set(resync_jitter_ms)),
+            ("CATCH_UP_DELAY_MS", set(catch_up_delay_ms)),
         ]
     }
 
@@ -988,6 +1078,29 @@ impl Limits {
                 "UPLOAD_BUFFER_MIB: expected at least UPLOAD_MAX_MIB ({}), got {}",
                 self.upload_max_mib,
                 self.upload_buffer_mib
+            );
+        }
+        if self.reconnect_floor_ms > self.reconnect_base_ms {
+            anyhow::bail!(
+                "RECONNECT_FLOOR_MS: expected at most RECONNECT_BASE_MS ({}), got {}",
+                self.reconnect_base_ms,
+                self.reconnect_floor_ms
+            );
+        }
+        if self.reconnect_base_ms > self.reconnect_cap_ms {
+            anyhow::bail!(
+                "RECONNECT_CAP_MS: expected at least RECONNECT_BASE_MS ({}), got {}",
+                self.reconnect_base_ms,
+                self.reconnect_cap_ms
+            );
+        }
+        if self.ws_max_write_buffer_kib != 0
+            && self.ws_max_write_buffer_kib <= self.ws_write_buffer_kib
+        {
+            anyhow::bail!(
+                "WS_MAX_WRITE_BUFFER_KIB: expected 0 or more than WS_WRITE_BUFFER_KIB ({}), got {}",
+                self.ws_write_buffer_kib,
+                self.ws_max_write_buffer_kib
             );
         }
         Ok(())
@@ -1052,7 +1165,17 @@ impl Limits {
             guests_per_ip: self.ws_guest_sockets_per_ip,
             guests_max: self.ws_guest_sockets_max,
             voice_room_max: self.voice_room_max,
+            inbox_frames: self.ws_inbox_frames,
+            channel_slots: self.ws_channel_slots,
+            paced_users_max: self.ws_paced_users_max,
+            aftermath_max: self.hub_aftermath_max,
+            shown_max: self.hub_shown_max,
         }
+    }
+
+    /// How long a realtime socket may take to accept a frame (`WS_SEND_TIMEOUT_SECS`).
+    pub fn ws_send_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.ws_send_timeout_secs.max(1))
     }
 
     /// The largest upload in bytes (`UPLOAD_MAX_MIB`).
@@ -1152,6 +1275,23 @@ mod tests {
         Limits::load(&|name| set.get(name).cloned())
     }
 
+    /// Values of other limits that let `name` take every value of its range.
+    fn companions(name: &str) -> Vec<(&'static str, String)> {
+        let pairs: &[(&'static str, &str)] = match name {
+            "UPLOAD_MAX_MIB" => &[("UPLOAD_BUFFER_MIB", "1048576")],
+            "UPLOAD_BUFFER_MIB" => &[("UPLOAD_MAX_MIB", "1")],
+            "RECONNECT_FLOOR_MS" => &[
+                ("RECONNECT_BASE_MS", "60000"),
+                ("RECONNECT_CAP_MS", "3600000"),
+            ],
+            "RECONNECT_BASE_MS" => &[("RECONNECT_FLOOR_MS", "0"), ("RECONNECT_CAP_MS", "3600000")],
+            "RECONNECT_CAP_MS" => &[("RECONNECT_FLOOR_MS", "0"), ("RECONNECT_BASE_MS", "100")],
+            "WS_WRITE_BUFFER_KIB" => &[("WS_MAX_WRITE_BUFFER_KIB", "0")],
+            _ => &[],
+        };
+        pairs.iter().map(|(n, v)| (*n, v.to_string())).collect()
+    }
+
     /// The env names `Limits::load` reads, in order.
     fn names() -> Vec<String> {
         let asked = RefCell::new(Vec::new());
@@ -1170,11 +1310,7 @@ mod tests {
             assert!(read.iter().any(|n| n == name), "{name} is read");
             let with = |v: i64| {
                 let mut pairs = vec![(name, v.to_string())];
-                match name {
-                    "UPLOAD_MAX_MIB" => pairs.push(("UPLOAD_BUFFER_MIB", "1048576".to_string())),
-                    "UPLOAD_BUFFER_MIB" => pairs.push(("UPLOAD_MAX_MIB", "1".to_string())),
-                    _ => {}
-                }
+                pairs.extend(companions(name));
                 load(&pairs)
             };
             for edge in [lo, hi] {
@@ -1246,11 +1382,7 @@ mod tests {
         );
         for (name, lo, hi) in RANGES {
             let mut pairs = vec![(name, hi.to_string())];
-            match name {
-                "UPLOAD_MAX_MIB" => pairs.push(("UPLOAD_BUFFER_MIB", "1048576".to_string())),
-                "UPLOAD_BUFFER_MIB" => pairs.push(("UPLOAD_MAX_MIB", "1".to_string())),
-                _ => {}
-            }
+            pairs.extend(companions(name));
             let rows = load(&pairs).expect("loads").rows();
             let value = rows.iter().find(|(n, _)| *n == name).map(|(_, v)| *v);
             assert_eq!(value, Some(Some(hi)), "{name}");
@@ -1551,6 +1683,83 @@ mod tests {
             "SERVER_CHANNELS_MAX: expected 1 to 10000, got 0"
         );
         assert_eq!(Limits::most("CHANNEL_PINS_MAX"), 1000);
+    }
+
+    #[test]
+    fn realtime_limits_load_from_env() {
+        let d = load(&[]).expect("defaults");
+        assert_eq!(
+            (
+                d.ws_inbox_frames,
+                d.ws_out_frames,
+                d.ws_send_timeout(),
+                d.ws_read_buffer_kib,
+                d.ws_write_buffer_kib,
+                d.ws_max_write_buffer_kib,
+                d.ws_paced_users_max,
+                d.ws_channel_slots,
+                d.hub_aftermath_max,
+                d.hub_shown_max,
+            ),
+            (
+                512,
+                256,
+                std::time::Duration::from_secs(10),
+                128,
+                128,
+                0,
+                10_000,
+                100_000,
+                0,
+                0
+            )
+        );
+        assert_eq!(
+            (
+                d.reconnect_base_ms,
+                d.reconnect_cap_ms,
+                d.reconnect_floor_ms,
+                d.resync_jitter_ms,
+                d.catch_up_delay_ms,
+            ),
+            (1000, 30000, 250, 10000, 5000)
+        );
+        let set = load(&[
+            ("WS_OUT_FRAMES", "64".to_string()),
+            ("WS_SEND_TIMEOUT_SECS", "3".to_string()),
+            ("RECONNECT_BASE_MS", "2000".to_string()),
+            ("RECONNECT_CAP_MS", "60000".to_string()),
+            ("WS_MAX_WRITE_BUFFER_KIB", "1024".to_string()),
+        ])
+        .expect("set");
+        assert_eq!(
+            (
+                set.ws_out_frames,
+                set.ws_send_timeout(),
+                set.reconnect_base_ms,
+                set.reconnect_cap_ms,
+                set.ws_max_write_buffer_kib
+            ),
+            (64, std::time::Duration::from_secs(3), 2000, 60000, 1024)
+        );
+        for (pairs, err) in [
+            (
+                vec![("RECONNECT_FLOOR_MS", "2000")],
+                "RECONNECT_FLOOR_MS: expected at most RECONNECT_BASE_MS (1000), got 2000",
+            ),
+            (
+                vec![("RECONNECT_BASE_MS", "40000")],
+                "RECONNECT_CAP_MS: expected at least RECONNECT_BASE_MS (40000), got 30000",
+            ),
+            (
+                vec![("WS_MAX_WRITE_BUFFER_KIB", "128")],
+                "WS_MAX_WRITE_BUFFER_KIB: expected 0 or more than WS_WRITE_BUFFER_KIB (128), got 128",
+            ),
+        ] {
+            let pairs: Vec<(&str, String)> =
+                pairs.into_iter().map(|(k, v)| (k, v.to_string())).collect();
+            assert_eq!(load(&pairs).unwrap_err().to_string(), err);
+        }
     }
 
     #[test]

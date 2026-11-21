@@ -563,6 +563,20 @@ mod tests {
         .await;
         assert_eq!(info["limits"]["upload_bytes"], 25 * 1024 * 1024);
         assert_eq!(info["limits"]["message_chars"], 4000);
+        let timings = |info: &serde_json::Value| {
+            [
+                "reconnect_base_ms",
+                "reconnect_cap_ms",
+                "reconnect_floor_ms",
+                "resync_jitter_ms",
+                "catch_up_delay_ms",
+            ]
+            .map(|k| info["limits"][k].as_u64())
+        };
+        assert_eq!(
+            timings(&info),
+            [Some(1000), Some(30000), Some(250), Some(10000), Some(5000)]
+        );
         assert_eq!(
             (&info["e2ee"], &info["sfu"], &info["widgets"]),
             (
@@ -576,6 +590,11 @@ mod tests {
             upload_max_mib: 10,
             message_max_chars: 500,
             sfu_enabled: true,
+            reconnect_base_ms: 2000,
+            reconnect_cap_ms: 60000,
+            reconnect_floor_ms: 500,
+            resync_jitter_ms: 0,
+            catch_up_delay_ms: 100,
             ..Default::default()
         }));
         let (addr, server) = serve(state.clone()).await;
@@ -588,6 +607,10 @@ mod tests {
         assert_eq!(info["limits"]["upload_bytes"], 10_485_760);
         assert_eq!(info["limits"]["message_chars"], 500);
         assert_eq!(info["limits"]["name_chars"], 100);
+        assert_eq!(
+            timings(&info),
+            [Some(2000), Some(60000), Some(500), Some(0), Some(100)]
+        );
         assert_eq!(
             (&info["e2ee"], &info["sfu"], &info["widgets"]),
             (

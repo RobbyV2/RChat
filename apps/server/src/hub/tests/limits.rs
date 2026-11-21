@@ -155,3 +155,105 @@ fn a_call_start_churn_keeps_the_dm_pace() {
     assert!(!hub.call_ok("alice", 7), "a spent DM stays spent");
     assert!(hub.call_ok("alice", 8));
 }
+
+#[tokio::test]
+async fn a_bounded_shown_queue_keeps_the_last_state() {
+    let hub = Hub::new();
+    hub.set_limits(Limits {
+        shown_max: 1,
+        ..Limits::default()
+    });
+    let mut shown = hub.take_shown().expect("feed");
+    for (user, online) in [("alice", true), ("bob", true), ("alice", false)] {
+        hub.inner.shown.send((user.to_string(), online));
+        assert!(hub.inner.shown.queued() <= 1, "never past the bound");
+    }
+    let mut last = HashMap::new();
+    while let Ok((user, online)) = shown.try_recv() {
+        last.insert(user, online);
+    }
+    assert_eq!(
+        last,
+        HashMap::from([("alice".to_string(), false), ("bob".to_string(), true)])
+    );
+    hub.inner.shown.send(("carol".to_string(), true));
+    assert_eq!(
+        shown.recv().await,
+        Some(("carol".to_string(), true)),
+        "the queue takes items again once the consumer caught up"
+    );
+}
+
+#[tokio::test]
+async fn a_bounded_aftermath_queue_loses_no_work() {
+    let hub = Hub::new();
+    hub.set_limits(Limits {
+        aftermath_max: 1,
+        ..Limits::default()
+    });
+    let mut work = hub.take_aftermath().expect("feed");
+    for log_id in 1..=3 {
+        let purge = Purge {
+            ends: vec![CallEnd {
+                log_id,
+                answered: true,
+                dm_users: Vec::new(),
+            }],
+            p2p: Vec::new(),
+        };
+        hub.inner.aftermath.send(Aftermath::Settle(purge));
+        assert!(hub.inner.aftermath.queued() <= 1, "never past the bound");
+    }
+    let mut ended = Vec::new();
+    while let Some(job) = tokio::time::timeout(Duration::from_millis(50), work.recv())
+        .await
+        .ok()
+        .flatten()
+    {
+        if let Aftermath::Settle(purge) = job {
+            ended.extend(purge.ends.iter().map(|end| end.log_id));
+        }
+    }
+    assert_eq!(ended, [1, 2, 3], "every call log is finalized");
+}
+
+#[tokio::test]
+async fn an_unbounded_queue_keeps_every_item_in_order() {
+    let hub = Hub::new();
+    let mut shown = hub.take_shown().expect("feed");
+    for n in 0..100 {
+        hub.inner.shown.send((format!("u{n}"), n % 2 == 0));
+    }
+    assert_eq!(hub.inner.shown.queued(), 100);
+    for n in 0..100 {
+        assert_eq!(shown.recv().await, Some((format!("u{n}"), n % 2 == 0)));
+    }
+}
+
+#[test]
+fn inbox_and_pacing_sizes_follow_the_limits() {
+    let hub = Hub::new();
+    hub.set_limits(Limits {
+        inbox_frames: 4,
+        paced_users_max: 100,
+        ..Limits::default()
+    });
+    let conn = hub.next_conn();
+    let mut inbox = hub.open(conn, &HashSet::from([Topic::User("alice".to_string())]));
+    for n in 0..10 {
+        hub.inner.router.deliver(WsEvent::UserUnblocked {
+            username: "alice".to_string(),
+            blocked: format!("b{n}"),
+        });
+    }
+    let mut got = 0;
+    while inbox.rx.try_recv().is_ok() {
+        got += 1;
+    }
+    assert_eq!(got, 4, "the inbox holds WS_INBOX_FRAMES");
+    let now = Instant::now();
+    for n in 0..500 {
+        hub.voice_ok_at(&format!("u{n}"), now);
+    }
+    assert!(hub.inner.pacing.voice.len() <= 100);
+}

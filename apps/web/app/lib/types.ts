@@ -1072,6 +1072,12 @@ export interface InstanceLimits {
   upload_kept_limited?: boolean
   // P2P_LIMITS: `local.<section>.<key>` and `agreed.<key>` to a number. Not every server sends it.
   p2p?: Record<string, number>
+  // Realtime reconnect and reload timings in milliseconds. Not every server sends them.
+  reconnect_base_ms?: number
+  reconnect_cap_ms?: number
+  reconnect_floor_ms?: number
+  resync_jitter_ms?: number
+  catch_up_delay_ms?: number
 }
 
 export interface InstanceInfo {

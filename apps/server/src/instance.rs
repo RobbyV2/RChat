@@ -502,6 +502,24 @@ pub struct Limits {
     /// the defaults. Empty when it sets none.
     #[schema(example = json!({"local.gossip.perRoom": 16}))]
     pub p2p: BTreeMap<String, f64>,
+    /// Milliseconds before the first realtime reconnect, doubling with each try: by default
+    /// 1000 (`RECONNECT_BASE_MS`). Clients wait a random time up to it.
+    #[schema(example = 1000)]
+    pub reconnect_base_ms: u64,
+    /// Most milliseconds between realtime reconnects: by default 30000 (`RECONNECT_CAP_MS`).
+    #[schema(example = 30000)]
+    pub reconnect_cap_ms: u64,
+    /// Fewest milliseconds before a realtime reconnect: by default 250 (`RECONNECT_FLOOR_MS`).
+    #[schema(example = 250)]
+    pub reconnect_floor_ms: u64,
+    /// Most milliseconds a client waits at random before it reloads what it shows after the
+    /// server asked all clients to: by default 10000 (`RESYNC_JITTER_MS`).
+    #[schema(example = 10000)]
+    pub resync_jitter_ms: u64,
+    /// Most milliseconds a client waits at random before it reloads the open view after a
+    /// reconnect: by default 5000 (`CATCH_UP_DELAY_MS`).
+    #[schema(example = 5000)]
+    pub catch_up_delay_ms: u64,
 }
 
 impl Limits {
@@ -518,6 +536,11 @@ impl Limits {
             p2p_backup_bytes: limits.p2p_backup_bytes(),
             p2p_backup_total_bytes: limits.p2p_backup_total_bytes(),
             p2p: limits.p2p.clone(),
+            reconnect_base_ms: limits.reconnect_base_ms,
+            reconnect_cap_ms: limits.reconnect_cap_ms,
+            reconnect_floor_ms: limits.reconnect_floor_ms,
+            resync_jitter_ms: limits.resync_jitter_ms,
+            catch_up_delay_ms: limits.catch_up_delay_ms,
         }
     }
 }

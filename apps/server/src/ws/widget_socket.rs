@@ -7,13 +7,13 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::time::Instant;
 
+use super::WsEvent;
 use super::access::Access;
 use super::calls::{finalize_call_log, voice_cmd};
 use super::conn::{admit_frame, frame_bucket};
 use super::filter::event_channel;
 use super::guests::guest_name;
 use super::protocol::{ClientMsg, Refused};
-use super::{SEND_TIMEOUT, WsEvent};
 use crate::api::access::{Proof, not_found};
 use crate::api::budget::Shares;
 use crate::api::widgets::{Room, room};
@@ -54,12 +54,12 @@ impl Hello {
     }
 }
 
-async fn send(socket: &mut WebSocket, value: impl serde::Serialize) -> bool {
+async fn send(socket: &mut WebSocket, value: impl serde::Serialize, wait: Duration) -> bool {
     let Ok(text) = serde_json::to_string(&value) else {
         return false;
     };
     matches!(
-        tokio::time::timeout(SEND_TIMEOUT, socket.send(Frame::Text(text.into()))).await,
+        tokio::time::timeout(wait, socket.send(Frame::Text(text.into()))).await,
         Ok(Ok(()))
     )
 }
@@ -165,7 +165,12 @@ impl Seat<'_> {
         if self.refresh_at.is_some_and(|at| at <= now) {
             self.refresh_at = None;
             self.refreshed = now;
-            return send(socket, json!({"type":"widget_refresh"})).await;
+            return send(
+                socket,
+                json!({"type":"widget_refresh"}),
+                self.state.limits.ws_send_timeout(),
+            )
+            .await;
         }
         true
     }
@@ -196,7 +201,7 @@ impl Seat<'_> {
             if !joining && matches!(e, Refused::NoSharedVoice) {
                 return true;
             }
-            send(socket, e.frame()).await;
+            send(socket, e.frame(), self.state.limits.ws_send_timeout()).await;
             return false;
         }
         self.active |= joining;
@@ -237,10 +242,10 @@ impl Seat<'_> {
                 {
                     return true;
                 }
-                send(socket, ev).await
+                send(socket, ev, self.state.limits.ws_send_timeout()).await
             }
             WsEvent::VoiceState { users, .. } if here && self.active => {
-                if !self.owns() || !send(socket, ev).await {
+                if !self.owns() || !send(socket, ev, self.state.limits.ws_send_timeout()).await {
                     return false;
                 }
                 let Ok(timeouts) =
@@ -253,12 +258,19 @@ impl Seat<'_> {
                     .iter()
                     .filter(|u| self.state.hub.hushed(u, self.server) || timeouts.contains_key(*u))
                     .collect();
-                send(socket, json!({"type":"widget_mutes","users":muted})).await
+                send(
+                    socket,
+                    json!({"type":"widget_mutes","users":muted}),
+                    self.state.limits.ws_send_timeout(),
+                )
+                .await
             }
             WsEvent::VoiceMuted { .. } if here && self.active => {
-                self.owns() && send(socket, ev).await
+                self.owns() && send(socket, ev, self.state.limits.ws_send_timeout()).await
             }
-            WsEvent::VoiceState { .. } if here => !self.roster || send(socket, ev).await,
+            WsEvent::VoiceState { .. } if here => {
+                !self.roster || send(socket, ev, self.state.limits.ws_send_timeout()).await
+            }
             WsEvent::VoiceMuted { .. } | WsEvent::Typing { .. } => true,
             _ => {
                 if here {
@@ -346,7 +358,13 @@ pub(super) async fn run(state: AppState, id: String, mut socket: WebSocket, mut 
     let mut check = tokio::time::interval_at(Instant::now() + RECHECK_EVERY, RECHECK_EVERY);
     check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut heard = Instant::now();
-    if send(&mut socket, json!({"type":"widget_ready","name":name})).await {
+    if send(
+        &mut socket,
+        json!({"type":"widget_ready","name":name}),
+        state.limits.ws_send_timeout(),
+    )
+    .await
+    {
         loop {
             tokio::select! {
                 frame = socket.recv() => {
@@ -373,7 +391,7 @@ pub(super) async fn run(state: AppState, id: String, mut socket: WebSocket, mut 
                         seat.later_refresh();
                     }
                     let ping = socket.send(Frame::Ping(Default::default()));
-                    if !matches!(tokio::time::timeout(SEND_TIMEOUT, ping).await, Ok(Ok(()))) { break; }
+                    if !matches!(tokio::time::timeout(state.limits.ws_send_timeout(), ping).await, Ok(Ok(()))) { break; }
                 }
             }
         }

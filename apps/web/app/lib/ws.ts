@@ -1,4 +1,5 @@
-import { backoffDelay, nextAttempt } from './backoff'
+import { nextAttempt, reconnectDelay, type ReconnectTimings } from './backoff'
+import { DEFAULT_LIMITS } from './instance_limits'
 import type { VoiceMsg, WsEvent, WsStatus } from './types'
 import type { TypingMsg } from './typing'
 
@@ -48,6 +49,8 @@ export const mayConnectEarly = (failedAt: number | null, now: number, limited: b
 export interface WsEndpoints {
   url: () => string
   probe: () => string
+  // The instance's reconnect timings; the defaults without it.
+  timings?: () => ReconnectTimings
 }
 
 export class WsClient {
@@ -203,7 +206,7 @@ export class WsClient {
         this.reconnectTimer = null
         this.connect()
       },
-      backoffDelay(this.attempt - 1)
+      reconnectDelay(this.attempt - 1, this.endpoints.timings?.() ?? DEFAULT_LIMITS)
     )
   }
 
