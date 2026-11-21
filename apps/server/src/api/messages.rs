@@ -2669,6 +2669,13 @@ async fn search_screened(
     let Some(scope) = search_scope(db, user, proof, sq.servers.take()).await? else {
         return Ok((Vec::new(), None));
     };
+    let scope = match (sq.server.as_deref(), sq.channel_id) {
+        (Some(server), None) => match on_server(db, scope, server).await? {
+            Some(scope) => scope,
+            None => return Ok((Vec::new(), None)),
+        },
+        (_, _) => scope,
+    };
     let scope = &scope;
     let text = sq.q.as_deref().map(str::trim).unwrap_or("");
     let short = text.chars().count() < FTS_MIN_CHARS || !has_fts(db);
@@ -3361,6 +3368,8 @@ struct Scope {
     floor: Option<String>,
     since: Option<String>,
     binds: Vec<Bind>,
+    /// The placeholders of the channel ids a search of one server reads, when it names one.
+    channels: Option<String>,
 }
 
 impl Scope {
@@ -3473,7 +3482,38 @@ async fn search_scope(
         floor,
         since,
         binds,
+        channels: None,
     }))
+}
+
+/// `scope` narrowed to the channels of `server` it may read, one bind per channel id, so a
+/// search of one server reads those channels' messages through their index. `None` when it may
+/// read none of them: the search then reads no message.
+async fn on_server(db: &Db, mut scope: Scope, server: &str) -> Result<Option<Scope>, ApiError> {
+    let sql = format!(
+        "SELECT c.id FROM channels c WHERE {} AND c.server = ${} ORDER BY c.id",
+        scope.place(),
+        scope.binds.len() + 1
+    );
+    let ids: Vec<i64> = bind_all(sqlx::query(sqlx::AssertSqlSafe(sql)), &scope.binds)
+        .bind(server.to_lowercase())
+        .fetch_all(db)
+        .await?
+        .iter()
+        .map(|r| r.try_get(0))
+        .collect::<sqlx::Result<_>>()?;
+    if ids.is_empty() {
+        return Ok(None);
+    }
+    let mut list = Vec::with_capacity(ids.len());
+    for id in ids {
+        scope.binds.push(Bind::I(id));
+        list.push(format!("${}", scope.binds.len()));
+    }
+    let list = list.join(", ");
+    scope.place.push(format!("c.id IN ({list})"));
+    scope.channels = Some(list);
+    Ok(Some(scope))
 }
 
 /// One search query under `scope`, with the binds that follow the scope's.
@@ -3513,7 +3553,13 @@ fn search_sql(
             "LEAST(m.created_at,m.search_root_at) >= c.since".to_string(),
             "rchat_search_grams(lower(m.content)) @> c.grams".to_string(),
         ],
-        false => vec![place.clone(), scope.row()],
+        false => {
+            let mut conds = vec![place.clone(), scope.row()];
+            if let Some(list) = &scope.channels {
+                conds.push(format!("m.channel_id IN ({list})"));
+            }
+            conds
+        }
     };
     let mut binds: Vec<Bind> = Vec::new();
     let at = scope.binds.len();
@@ -5674,6 +5720,193 @@ mod tests {
             }
         }
         done(state, path).await;
+    }
+
+    /// Two servers alice is in, `rchat` and `club`, with messages of `text` mixed in the order
+    /// they were sent, a channel of `rchat` she can't view and one of `club`.
+    async fn two_servers(db: &Db) -> (i64, i64) {
+        sqlx::query(
+            "INSERT INTO servers(name, display_name, created_at) VALUES('club', 'Club', 0)",
+        )
+        .execute(db)
+        .await
+        .expect("club");
+        let club: i64 = sqlx::query(
+            "INSERT INTO channels(server, name, created_at) VALUES('club', 'lounge', 0) RETURNING id",
+        )
+        .fetch_one(db)
+        .await
+        .expect("club channel")
+        .try_get(0)
+        .expect("id");
+        let hidden = add_channel(db, "hidden", "text").await;
+        perm(db, hidden, "u:bob", 1).await;
+        for server in ["rchat", "club"] {
+            add_member(db, server, "alice", 0, 0, 0).await;
+        }
+        let general = general_id(db).await;
+        for n in 0..90 {
+            let (cid, text) = match n % 3 {
+                0 => (general, format!("ab needle {n}")),
+                1 => (club, format!("ab needle {n}")),
+                _ => (hidden, format!("ab needle {n}")),
+            };
+            post(db, cid, "bob", &text, n).await;
+        }
+        (hidden, club)
+    }
+
+    /// Every result of `sq` for `user`, page by page, as (id, server).
+    async fn all_hits(state: &AppState, user: &User, sq: SearchQuery) -> Vec<(i64, String)> {
+        let mut out = Vec::new();
+        let mut before = None;
+        for _ in 0..50 {
+            let mut page = sq.clone();
+            page.before = before;
+            let (rows, next) = search_paged(state, Some(user), &HeaderMap::new(), page)
+                .await
+                .expect("search");
+            out.extend(rows.into_iter().map(|r| (r.message.id, r.server)));
+            match next {
+                Some(id) => before = Some(id),
+                None => return out,
+            }
+        }
+        panic!("the search never ended");
+    }
+
+    #[tokio::test]
+    async fn scoped_search_equals_unscoped_filtered() {
+        for (state, temp) in crate::api::test_util::each_db("search_scoped").await {
+            scoped_equals_filtered(&state).await;
+            temp.done(state).await;
+        }
+    }
+
+    async fn scoped_equals_filtered(state: &AppState) {
+        two_servers(&state.db).await;
+        let alice = mem_user("alice", false);
+        for text in [Some("ab"), Some("needle"), None] {
+            let mut sq = query(text);
+            if text.is_none() {
+                sq.from = Some("bob".to_string());
+            }
+            let everywhere = all_hits(state, &alice, sq.clone()).await;
+            assert!(everywhere.len() >= 60, "{text:?}: {}", everywhere.len());
+            for server in ["rchat", "club"] {
+                let mut scoped = sq.clone();
+                scoped.server = Some(server.to_string());
+                let found = all_hits(state, &alice, scoped).await;
+                let filtered: Vec<(i64, String)> = everywhere
+                    .iter()
+                    .filter(|(_, s)| s == server)
+                    .cloned()
+                    .collect();
+                assert_eq!(found, filtered, "{text:?} in {server}");
+                assert_eq!(found.len(), 30, "{text:?} in {server}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn scoped_search_hides_unviewable_channels() {
+        let (state, path) = temp_state("search_scoped_hidden").await;
+        let (hidden, _) = two_servers(&state.db).await;
+        let alice = mem_user("alice", false);
+        let mut sq = query(Some("needle"));
+        sq.server = Some("RChat".to_string());
+        let found = all_hits(&state, &alice, sq.clone()).await;
+        let in_hidden: Vec<i64> = sqlx::query("SELECT id FROM messages WHERE channel_id = $1")
+            .bind(hidden)
+            .fetch_all(&state.db)
+            .await
+            .expect("hidden")
+            .iter()
+            .map(|r| r.try_get(0).expect("id"))
+            .collect();
+        assert_eq!(found.len(), 30);
+        assert!(found.iter().all(|(id, _)| !in_hidden.contains(id)));
+        let bob = mem_user("bob", false);
+        add_member(&state.db, "rchat", "bob", 0, 0, 0).await;
+        assert_eq!(
+            all_hits(&state, &bob, sq.clone()).await.len(),
+            60,
+            "bob may view the hidden channel"
+        );
+        sq.server = Some("club".to_string());
+        assert!(
+            all_hits(&state, &bob, sq.clone()).await.is_empty(),
+            "a server bob is not in reads nothing"
+        );
+        sq.server = Some("nowhere".to_string());
+        assert!(all_hits(&state, &alice, sq).await.is_empty());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn scoped_search_uses_the_channel_index() {
+        let (state, path) = temp_state("search_scoped_plan").await;
+        let db = &state.db;
+        two_servers(db).await;
+        let alice = mem_user("alice", false);
+        let scope = member_scope(db, &alice).await;
+        let scope = on_server(db, scope, "club")
+            .await
+            .expect("channels")
+            .expect("club channels");
+        let mut sq = query(Some("ab"));
+        sq.server = Some("club".to_string());
+        let (sql, binds) = search_sql(db, &scope, sq.clone(), Scan::All, SEARCH_PAGE);
+        let plan = explain(db, &sql, &scope.binds, &binds).await;
+        assert!(
+            plan.contains("USING INDEX idx_messages_channel_id (channel_id=?)")
+                || plan.contains("USING COVERING INDEX idx_messages_channel_id (channel_id=?)"),
+            "{plan}"
+        );
+        let (sql, binds) = search_sql(db, &scope, sq.clone(), Scan::Window(10, 80), SEARCH_PAGE);
+        let plan = explain(db, &sql, &scope.binds, &binds).await;
+        assert!(
+            plan.contains("idx_messages_channel_id (channel_id=? AND id>? AND id<?)"),
+            "{plan}"
+        );
+        done(state, path).await;
+        let Some((state, temp)) = crate::api::test_util::pg_state("search_scoped_plan").await
+        else {
+            return;
+        };
+        let db = &state.db;
+        two_servers(db).await;
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000) INSERT INTO messages(channel_id, author, content, created_at) SELECT (SELECT id FROM channels WHERE name = 'general'), 'bob', 'hay ' || i, i FROM n")
+            .execute(db)
+            .await
+            .expect("hay");
+        sqlx::query("ANALYZE").execute(db).await.expect("analyze");
+        let scope = member_scope(db, &alice).await;
+        let scope = on_server(db, scope, "club")
+            .await
+            .expect("channels")
+            .expect("club channels");
+        let (sql, binds) = search_sql(db, &scope, sq, Scan::All, SEARCH_PAGE);
+        let plan = bind_all(
+            bind_all(
+                sqlx::query(sqlx::AssertSqlSafe(format!("EXPLAIN {sql}"))),
+                &scope.binds,
+            ),
+            &binds,
+        )
+        .fetch_all(db)
+        .await
+        .expect("explain")
+        .iter()
+        .map(|r| r.try_get::<String, _>(0).expect("line"))
+        .collect::<Vec<_>>()
+        .join("\n");
+        assert!(plan.contains("idx_messages_channel"), "{plan}");
+        assert!(
+            !plan.contains("Index Scan Backward using messages_pkey"),
+            "{plan}"
+        );
+        crate::api::test_util::pg_done(state, temp).await;
     }
 
     #[tokio::test]
