@@ -25,6 +25,7 @@ pub mod lookup;
 pub mod media;
 pub mod messages;
 pub mod names;
+pub mod network_caps;
 pub mod openapi;
 pub mod p2p_backup;
 pub mod p2p_identity;

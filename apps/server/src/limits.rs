@@ -19,7 +19,7 @@ const MIB: usize = 1024 * 1024;
 pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 113] = [
+const RANGES: [(&str, i64, i64); 117] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
@@ -133,6 +133,10 @@ const RANGES: [(&str, i64, i64); 113] = [
     ("RECONNECT_FLOOR_MS", 0, 60_000),
     ("RESYNC_JITTER_MS", 0, 600_000),
     ("CATCH_UP_DELAY_MS", 0, 600_000),
+    ("SERVERS_PER_ACCOUNT", 0, 1_000_000),
+    ("SERVER_MEMBERS_MAX", 0, 100_000_000),
+    ("SIGNUPS_PER_NETWORK_PER_DAY", 0, 1_000_000),
+    ("SERVERS_PER_NETWORK_PER_DAY", 0, 1_000_000),
 ];
 
 /// The P2P limits registry, generated from the web app's `p2p/limits.ts`: each device-local name
@@ -354,6 +358,10 @@ pub struct Limits {
     pub reconnect_floor_ms: u64,
     pub resync_jitter_ms: u64,
     pub catch_up_delay_ms: u64,
+    pub servers_per_account: i64,
+    pub server_members_max: i64,
+    pub signups_per_network_per_day: u32,
+    pub servers_per_network_per_day: u32,
     /// `P2P_LIMITS`: the names given that the P2P registry has, with their values.
     pub p2p: BTreeMap<String, f64>,
     /// Names in `P2P_LIMITS` the registry doesn't have, left out of `p2p`.
@@ -478,6 +486,10 @@ impl Default for Limits {
             reconnect_floor_ms: 250,
             resync_jitter_ms: 10000,
             catch_up_delay_ms: 5000,
+            servers_per_account: 1000,
+            server_members_max: 0,
+            signups_per_network_per_day: 0,
+            servers_per_network_per_day: 0,
             p2p: BTreeMap::new(),
             p2p_unknown: Vec::new(),
         }
@@ -769,6 +781,12 @@ impl Limits {
             reconnect_floor_ms: e.num("RECONNECT_FLOOR_MS", d.reconnect_floor_ms)?,
             resync_jitter_ms: e.num("RESYNC_JITTER_MS", d.resync_jitter_ms)?,
             catch_up_delay_ms: e.num("CATCH_UP_DELAY_MS", d.catch_up_delay_ms)?,
+            servers_per_account: e.num("SERVERS_PER_ACCOUNT", d.servers_per_account)?,
+            server_members_max: e.num("SERVER_MEMBERS_MAX", d.server_members_max)?,
+            signups_per_network_per_day: e
+                .num("SIGNUPS_PER_NETWORK_PER_DAY", d.signups_per_network_per_day)?,
+            servers_per_network_per_day: e
+                .num("SERVERS_PER_NETWORK_PER_DAY", d.servers_per_network_per_day)?,
             p2p,
             p2p_unknown,
         };
@@ -895,6 +913,10 @@ impl Limits {
             reconnect_floor_ms,
             resync_jitter_ms,
             catch_up_delay_ms,
+            servers_per_account,
+            server_members_max,
+            signups_per_network_per_day,
+            servers_per_network_per_day,
             p2p: _,
             p2p_unknown: _,
         } = *self;
@@ -1054,6 +1076,16 @@ impl Limits {
             ("RECONNECT_FLOOR_MS", set(reconnect_floor_ms)),
             ("RESYNC_JITTER_MS", set(resync_jitter_ms)),
             ("CATCH_UP_DELAY_MS", set(catch_up_delay_ms)),
+            ("SERVERS_PER_ACCOUNT", set(servers_per_account)),
+            ("SERVER_MEMBERS_MAX", set(server_members_max)),
+            (
+                "SIGNUPS_PER_NETWORK_PER_DAY",
+                set(signups_per_network_per_day),
+            ),
+            (
+                "SERVERS_PER_NETWORK_PER_DAY",
+                set(servers_per_network_per_day),
+            ),
         ]
     }
 

@@ -520,6 +520,10 @@ pub struct Limits {
     /// reconnect: by default 5000 (`CATCH_UP_DELAY_MS`).
     #[schema(example = 5000)]
     pub catch_up_delay_ms: u64,
+    /// Most servers one account can be in, creating included: by default 1000
+    /// (`SERVERS_PER_ACCOUNT`); 0 for no cap.
+    #[schema(example = 1000)]
+    pub servers_per_account: i64,
 }
 
 impl Limits {
@@ -541,6 +545,7 @@ impl Limits {
             reconnect_floor_ms: limits.reconnect_floor_ms,
             resync_jitter_ms: limits.resync_jitter_ms,
             catch_up_delay_ms: limits.catch_up_delay_ms,
+            servers_per_account: limits.servers_per_account,
         }
     }
 }

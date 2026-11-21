@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{AnyConnection, Row};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::access::perms::{
@@ -45,6 +45,7 @@ use crate::api::{
     user_ref, user_refs, valid_color,
 };
 use crate::db::{ChannelKind, Db, NO_PERMANENT_HASH, User, lock_server, now, shift_member_count};
+use crate::limits::Limits;
 use crate::state::AppState;
 use crate::ws::{Hub, WsEvent, evict_unviewable};
 
@@ -1797,13 +1798,13 @@ async fn interacted_page(
     request_body = CreateServerReq,
     responses(
         (status = 200, description = "The created server, with the caller as admin, its channels and, for an `invite` server, its invite link", body = CreatedServer),
-        (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken (for `name` and `password` servers), or a password shorter than 8 characters. With reason `invalid` and its `field`: `Pick one way to join` (a `password` for another mode than `password`), `A password needs 8 characters` (`join: password` without one), `Listed is only for servers people join by name` (`listed: true` for an `invite` or `closed` server), or an invalid `upload_expiry`. `This instance needs invites to join. Pick invite or password.` with reason `off_site` and control `server_joining`: `join: name` while the instance's `server_joining` is `invites`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken (for `name` and `password` servers), or a password shorter than 8 characters. With reason `invalid` and its `field`: `Pick one way to join` (a `password` for another mode than `password`), `A password needs 8 characters` (`join: password` without one), `Listed is only for servers people join by name` (`listed: true` for an `invite` or `closed` server), or an invalid `upload_expiry`. `This instance needs invites to join. Pick invite or password.` with reason `off_site` and control `server_joining`: `join: name` while the instance's `server_joining` is `invites`. `An account can be in at most 1000 servers` with the configured number (`SERVERS_PER_ACCOUNT`, reason `limit`): creating a server counts as joining it. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`Public reading is turned off on this site` with reason `off_site` and control `public_reading`: `public_read: true` while the instance has public reading off", body = ApiErrorBody),
         (status = 404, description = "`Not found`: the instance does not let this account create servers", body = ApiErrorBody),
         (status = 409, description = "That name belonged to a deleted server that is still being purged; try again later", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
-        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket", body = ApiErrorBody)
+        (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. `Too many new servers from your network. Try again later.` (JSON, reason `rate`, with `Retry-After`): past `SERVERS_PER_NETWORK_PER_DAY` for your network (an IPv4 address or an IPv6 /48). Too many requests in the strict or the general bucket", body = ApiErrorBody)
     ),
     security(("bearer" = []))
 )]
@@ -1828,6 +1829,7 @@ pub(crate) async fn create_server(
         options,
     } = req;
     let held = rare::hold(&state, Rare::NewServer, Some(&user))?;
+    crate::api::network_caps::take(&state, crate::api::network_caps::Kind::Server).await?;
     let founder = Founder::Creator(&user.username);
     let founded = async {
         let new = check_new_server(&state, &user, &name, password.as_deref(), options).await?;
@@ -2021,6 +2023,8 @@ async fn found_server(
     };
     let t = now();
     let mut tx = state.db.begin().await?;
+    lock_account(&mut tx, member).await?;
+    room_for_account(&mut tx, &state.limits, member).await?;
     sqlx::query(
         "INSERT INTO servers(name, display_name, creator, password_hash, member_count, created_at, join_mode, listed, public_read, join_messages, leave_messages, upload_expiry, upload_expiry_by) VALUES($1, $2, $3, $4, 1, $5, $6, $7, $8, $9, $9, $10, $11)",
     )
@@ -2719,6 +2723,95 @@ async fn card_of(
     })
 }
 
+/// Locks the row of the account `username` until the transaction ends (on Postgres; SQLite has
+/// one writer). A transaction that adds a membership takes it before `lock_server`, so the
+/// account's servers are counted once at a time.
+pub(crate) async fn lock_account(conn: &mut AnyConnection, username: &str) -> sqlx::Result<()> {
+    if conn.backend_name() == "PostgreSQL" {
+        sqlx::query("SELECT 1 FROM users WHERE username = $1 FOR NO KEY UPDATE")
+            .bind(username)
+            .fetch_optional(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
+/// The refusal past `SERVERS_PER_ACCOUNT`.
+fn account_full(most: i64) -> ApiError {
+    ApiError::limit(
+        StatusCode::BAD_REQUEST,
+        format!("An account can be in at most {most} servers"),
+        "servers_per_account",
+    )
+}
+
+/// Whether `username` may be in one server more (`SERVERS_PER_ACCOUNT`, 0 for no cap), counted
+/// after `lock_account`.
+pub(crate) async fn account_has_room(
+    conn: &mut AnyConnection,
+    limits: &Limits,
+    username: &str,
+) -> sqlx::Result<bool> {
+    let most = limits.servers_per_account;
+    if most == 0 {
+        return Ok(true);
+    }
+    let count: i64 = sqlx::query("SELECT COUNT(*) FROM members WHERE username = $1")
+        .bind(username)
+        .fetch_one(&mut *conn)
+        .await?
+        .try_get(0)?;
+    Ok(count < most)
+}
+
+async fn room_for_account(
+    conn: &mut AnyConnection,
+    limits: &Limits,
+    username: &str,
+) -> Result<(), ApiError> {
+    match account_has_room(conn, limits, username).await? {
+        true => Ok(()),
+        false => Err(account_full(limits.servers_per_account)),
+    }
+}
+
+/// Whether `server` takes one member more (`SERVER_MEMBERS_MAX`, 0 for no cap), counted after
+/// `lock_server`.
+pub(crate) async fn server_has_room(
+    conn: &mut AnyConnection,
+    limits: &Limits,
+    server: &str,
+) -> sqlx::Result<bool> {
+    let most = limits.server_members_max;
+    if most == 0 {
+        return Ok(true);
+    }
+    let count: i64 = sqlx::query("SELECT member_count FROM servers WHERE name = $1")
+        .bind(server)
+        .fetch_optional(&mut *conn)
+        .await?
+        .map(|r| r.try_get(0))
+        .transpose()?
+        .unwrap_or(0);
+    Ok(count < most)
+}
+
+async fn room_in_server(
+    conn: &mut AnyConnection,
+    limits: &Limits,
+    server: &str,
+) -> Result<(), ApiError> {
+    match server_has_room(conn, limits, server).await? {
+        true => Ok(()),
+        false => Err(ApiError::capacity(
+            StatusCode::BAD_REQUEST,
+            "This server is full",
+            "server_members_max",
+            None,
+        )),
+    }
+}
+
 /// A membership `insert_member` created, with its join message when one was posted.
 struct NewMember {
     notice: Option<i64>,
@@ -2726,12 +2819,29 @@ struct NewMember {
 
 async fn insert_member(
     db: &Db,
+    limits: &Limits,
     access: &ServerAccess,
     username: &str,
 ) -> Result<Option<NewMember>, ApiError> {
     let server = access.name();
     let mut tx = db.begin().await?;
+    lock_account(&mut tx, username).await?;
     lock_server(&mut tx, server).await?;
+    if is_member(&mut *tx, server, username).await? {
+        tx.commit().await?;
+        return Ok(None);
+    }
+    let banned = sqlx::query("SELECT 1 FROM server_bans WHERE server = $1 AND username = $2")
+        .bind(server)
+        .bind(username)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_some();
+    if banned {
+        return Err(forbidden(BANNED));
+    }
+    room_in_server(&mut tx, limits, server).await?;
+    room_for_account(&mut tx, limits, username).await?;
     let inserted = sqlx::query(
         "INSERT INTO members(server, username, is_admin, joined_at, joined_via) SELECT $1, $2, 0, $3, $4 WHERE NOT EXISTS(SELECT 1 FROM server_bans WHERE server = $1 AND username = $2) ON CONFLICT(server, username) DO NOTHING",
     )
@@ -2787,7 +2897,10 @@ async fn insert_member(
 /// joining (`server_joining` in `GET /api/v1/settings`): under `invites` a server without a
 /// password answers like a password-protected one unless you are a member, so a name alone
 /// gets `401 Password required` and only a password or ticket joins; under `nobody` every call
-/// gets `404 Server not found or wrong password`. Join and general rate-limit buckets.
+/// gets `404 Server not found or wrong password`. After access is proven, an account in
+/// `SERVERS_PER_ACCOUNT` servers (by default 1000) or a server with `SERVER_MEMBERS_MAX` members
+/// (by default no cap) refuses a new membership; lowering either removes nobody. Join and general
+/// rate-limit buckets.
 #[utoipa::path(
     post,
     path = "/api/v1/servers/{name}/join",
@@ -2796,7 +2909,7 @@ async fn insert_member(
     request_body(content = Option<JoinReq>, description = "Optional; `password` is only read for password-protected servers you are not a member of"),
     responses(
         (status = 200, description = "Joined, or already a member; returns the server details", body = ServerDetail),
-        (status = 400, description = "Malformed JSON body (plain-text framework error)", content_type = "text/plain", body = String),
+        (status = 400, description = "`An account can be in at most 1000 servers` with the configured number (`SERVERS_PER_ACCOUNT`, reason `limit`), or `This server is full` (`SERVER_MEMBERS_MAX`, reason `capacity`), only after access was proven. Malformed JSON body (plain-text framework error)", body = ApiErrorBody),
         (status = 401, description = "`Password required`: no `password` and the name is not a server without a password (identical for password-protected and nonexistent names). Also `Unauthorized` for a missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "`You are banned from this server`, only after access was proven", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: identical for a wrong password and for a name that does not exist", body = ApiErrorBody),
@@ -2817,7 +2930,7 @@ pub(crate) async fn join_server(
         .server_joining();
     let access = resolve_join(&state.db, &name, Some(&user), given, joining).await?;
     let key = access.name().to_string();
-    let inserted = insert_member(&state.db, &access, &user.username).await?;
+    let inserted = insert_member(&state.db, &state.limits, &access, &user.username).await?;
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     let detail = server_detail(&state.db, &state.hub, &access).await?;
     let member = build_member(
@@ -2966,7 +3079,7 @@ pub(crate) async fn leave_server(
     request_body = ServerPatch,
     responses(
         (status = 200, description = "The updated server, with `removed`, the number of members removed, and `kept`, the number of other members who stayed", body = ServerUpdated),
-        (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, a new password shorter than 8 characters, or a new password that is already a live extra password of the server. With reason `invalid` and its `field`: `Use join or protected, not both`, `Pick one way to join` (a `password` with `join` other than `password`), `A password needs 8 characters` (`join: password` on a server without a permanent password), `Listed is only for servers people join by name`, or `That name is taken. Pick another to let people join by name.` (the server would take its lowercase name as its key, and another server has it). `This instance needs invites to join. Pick invite or password.` with reason `off_site` and control `server_joining`: `join: name` while the instance's `server_joining` is `invites`. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid server name (blank, longer than 100 characters, `.` or `..`, or blocked by the profanity filter), the name is taken, or an invalid banner or name color, a new password shorter than 8 characters, or a new password that is already a live extra password of the server. With reason `invalid` and its `field`: `Use join or protected, not both`, `Pick one way to join` (a `password` with `join` other than `password`), `A password needs 8 characters` (`join: password` on a server without a permanent password), `Listed is only for servers people join by name`, or `That name is taken. Pick another to let people join by name.` (the server would take its lowercase name as its key, and another server has it). `This instance needs invites to join. Pick invite or password.` with reason `off_site` and control `server_joining`: `join: name` while the instance's `server_joining` is `invites`. `An account can be in at most 1000 servers` with the configured number (`SERVERS_PER_ACCOUNT`, reason `limit`): creating a server counts as joining it. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Delete server permission, missing Kick for `members: remove`, a password or `join` change on the protected rchat server, enabling guest text or voice while its site switch is off, or `public_read: true` while the instance has public reading off (`Public reading is turned off on this site`, with reason `off_site` and control `public_reading`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
@@ -6229,6 +6342,202 @@ mod tests {
         done(state, path).await;
     }
 
+    /// Servers `names`, each with alice as its only member, made directly.
+    async fn open_servers(db: &Db, names: &[&str]) {
+        for name in names {
+            sqlx::query("INSERT INTO servers(name, display_name, creator, member_count, created_at) VALUES($1, $1, 'alice', 1, 1)")
+                .bind(name)
+                .execute(db)
+                .await
+                .expect("server");
+            sqlx::query("INSERT INTO members(server, username, is_admin, joined_at) VALUES($1, 'alice', 1, 1)")
+                .bind(name)
+                .execute(db)
+                .await
+                .expect("owner");
+        }
+    }
+
+    async fn servers_of(db: &Db, who: &str) -> i64 {
+        sqlx::query("SELECT COUNT(*) FROM members WHERE username = $1")
+            .bind(who)
+            .fetch_one(db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("n")
+    }
+
+    #[tokio::test]
+    async fn joining_past_the_account_cap_is_refused() {
+        let (state, path) = temp_state("account_cap_join").await;
+        let db = &state.db;
+        for name in ["alice", "bob"] {
+            add_user(db, name, name).await;
+        }
+        open_servers(db, &["one", "two", "three"]).await;
+        let state = capped(state, |l| l.servers_per_account = 2);
+        add_member(&state.db, "rchat", "bob", 0, 0, 1).await;
+        join(&state, "bob", "one").await.expect("second server");
+        assert_eq!(
+            limit_of(join(&state, "bob", "two").await),
+            (
+                StatusCode::BAD_REQUEST,
+                "An account can be in at most 2 servers".to_string(),
+                Some("servers_per_account".to_string())
+            )
+        );
+        join(&state, "bob", "one")
+            .await
+            .expect("joining a server again is no new membership");
+        assert_eq!(servers_of(&state.db, "bob").await, 2);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn creating_past_the_account_cap_is_refused() {
+        let (state, path) = temp_state("account_cap_create").await;
+        let db = &state.db;
+        add_user(db, "alice", "alice").await;
+        add_user(db, "root", "root").await;
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        let state = capped(state, |l| l.servers_per_account = 2);
+        let _ = make_server(&state, "first")
+            .await
+            .expect("counts as joining it");
+        assert_eq!(
+            limit_of(make_server(&state, "second").await),
+            (
+                StatusCode::BAD_REQUEST,
+                "An account can be in at most 2 servers".to_string(),
+                Some("servers_per_account".to_string())
+            )
+        );
+        let req: crate::api::admin::AdminServerReq =
+            serde_json::from_value(serde_json::json!({ "name": "Gift", "owner": "alice" }))
+                .expect("req");
+        let by_admin = crate::api::admin::create_server_for(
+            State(state.clone()),
+            Authed(mem_user("root", true)),
+            Json(req),
+        )
+        .await;
+        assert_eq!(
+            limit_of(by_admin).2.as_deref(),
+            Some("servers_per_account"),
+            "a server the site admin makes for an account counts too"
+        );
+        assert_eq!(servers_of(&state.db, "alice").await, 2);
+        let none = sqlx::query("SELECT 1 FROM servers WHERE name IN ('second', 'gift')")
+            .fetch_optional(&state.db)
+            .await
+            .expect("servers");
+        assert!(none.is_none(), "a refused server is not made");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn a_full_server_refuses_joins_and_lowering_a_cap_removes_nobody() {
+        let (state, path) = temp_state("server_members_cap").await;
+        let db = &state.db;
+        for name in ["alice", "bob", "carol", "dave"] {
+            add_user(db, name, name).await;
+        }
+        open_servers(db, &["club"]).await;
+        let three = capped(state.clone(), |l| l.server_members_max = 3);
+        join(&three, "bob", "club").await.expect("second member");
+        join(&three, "carol", "club").await.expect("third member");
+        let full = join(&three, "dave", "club").await.expect_err("full");
+        assert_eq!(
+            (full.0, full.1.as_str()),
+            (StatusCode::BAD_REQUEST, "This server is full")
+        );
+        let reason = full.2.expect("reason");
+        assert_eq!(
+            (reason.kind, reason.control.as_deref()),
+            (ReasonKind::Capacity, Some("server_members_max"))
+        );
+        let one = capped(state.clone(), |l| {
+            l.server_members_max = 1;
+            l.servers_per_account = 1;
+        });
+        join(&one, "bob", "club")
+            .await
+            .expect("a member stays a member under a lower cap");
+        let members: i64 = sqlx::query("SELECT COUNT(*) FROM members WHERE server = 'club'")
+            .fetch_one(&one.db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("n");
+        assert_eq!(members, 3, "lowering a cap removes nobody");
+        assert_eq!(servers_of(&one.db, "alice").await, 1);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn caps_hold_under_concurrent_joins() {
+        for (state, temp) in crate::api::test_util::each_db("caps_race").await {
+            let db = &state.db;
+            add_user(db, "alice", "alice").await;
+            for n in 0..50 {
+                add_user(db, &format!("u{n}"), "u").await;
+            }
+            let mut names: Vec<String> = (0..20).map(|n| format!("s{n}")).collect();
+            names.push("club".to_string());
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            open_servers(db, &refs).await;
+            let state = capped(state, |l| {
+                l.server_members_max = 10;
+                l.servers_per_account = 5;
+            });
+            let into_club = (0..50).map(|n| {
+                let state = state.clone();
+                tokio::spawn(async move { join(&state, &format!("u{n}"), "club").await })
+            });
+            let codes: Vec<Option<StatusCode>> = futures_util::future::join_all(into_club)
+                .await
+                .into_iter()
+                .map(|r| r.expect("task").err().map(|e| e.0))
+                .collect();
+            assert_eq!(
+                codes.iter().filter(|c| c.is_none()).count(),
+                9,
+                "alice and 9 more"
+            );
+            assert!(
+                codes
+                    .iter()
+                    .all(|c| matches!(c, None | Some(StatusCode::BAD_REQUEST))),
+                "{codes:?}"
+            );
+            let in_club: i64 = sqlx::query("SELECT COUNT(*) FROM members WHERE server = 'club'")
+                .fetch_one(&state.db)
+                .await
+                .expect("count")
+                .try_get(0)
+                .expect("n");
+            assert_eq!(in_club, 10);
+            let by_one = (0..20).map(|n| {
+                let state = state.clone();
+                tokio::spawn(async move { join(&state, "u49", &format!("s{n}")).await })
+            });
+            let codes: Vec<Option<StatusCode>> = futures_util::future::join_all(by_one)
+                .await
+                .into_iter()
+                .map(|r| r.expect("task").err().map(|e| e.0))
+                .collect();
+            assert!(
+                codes
+                    .iter()
+                    .all(|c| matches!(c, None | Some(StatusCode::BAD_REQUEST))),
+                "{codes:?}"
+            );
+            assert_eq!(servers_of(&state.db, "u49").await, 5);
+            temp.done(state).await;
+        }
+    }
+
     #[tokio::test]
     async fn the_role_cap_holds_under_concurrent_creates() {
         for (state, temp) in crate::api::test_util::each_db("role_cap_race").await {
@@ -7217,7 +7526,7 @@ mod tests {
         let club = resolve_server(db, "club", Some(&mem_user("alice", false)), &Proof::none())
             .await
             .expect("club");
-        match insert_member(db, &club, "bob").await {
+        match insert_member(db, &state.limits, &club, "bob").await {
             Err(ApiError(StatusCode::FORBIDDEN, msg, _)) => {
                 assert_eq!(msg, "You are banned from this server")
             }
@@ -7232,19 +7541,19 @@ mod tests {
             0
         );
         assert!(
-            insert_member(db, &club, "alice")
+            insert_member(db, &state.limits, &club, "alice")
                 .await
                 .expect("already a member")
                 .is_none()
         );
         assert!(
-            insert_member(db, &club, "carol")
+            insert_member(db, &state.limits, &club, "carol")
                 .await
                 .expect("new member")
                 .is_some()
         );
         assert!(
-            insert_member(db, &club, "carol")
+            insert_member(db, &state.limits, &club, "carol")
                 .await
                 .expect("repeat join")
                 .is_none()

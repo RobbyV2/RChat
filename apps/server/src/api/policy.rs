@@ -896,6 +896,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sign_up_skips_full_default_servers_and_stops_at_the_account_cap() {
+        let (state, path) = temp_state("default_join_caps").await;
+        let db = &state.db;
+        lobby_and_vault(&state).await;
+        set(
+            &state,
+            json!({"default_servers": ["Vault", "Lobby", "rchat"]}),
+        )
+        .await
+        .expect("patch");
+        let member_of = |name: &'static str| async move {
+            texts(
+                db,
+                &format!("SELECT server FROM members WHERE username = '{name}' ORDER BY server"),
+            )
+            .await
+        };
+        let full = state
+            .clone()
+            .with_limits(std::sync::Arc::new(crate::limits::Limits {
+                server_members_max: 1,
+                ..crate::limits::Limits::default()
+            }));
+        sign_up(&full, "Gus").await;
+        assert_eq!(
+            member_of("gus").await,
+            ["rchat"],
+            "vault and lobby are full with their creator"
+        );
+        let two = state
+            .clone()
+            .with_limits(std::sync::Arc::new(crate::limits::Limits {
+                servers_per_account: 2,
+                ..crate::limits::Limits::default()
+            }));
+        sign_up(&two, "Hal").await;
+        assert_eq!(member_of("hal").await, ["lobby", "vault"]);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn new_accounts_join_the_default_servers_in_order() {
         use crate::ws::WsEvent;
         let (state, path) = temp_state("default_join").await;

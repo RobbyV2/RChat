@@ -558,13 +558,16 @@ fn lock_order(defaults: &[String]) -> Vec<&str> {
 /// and returns a session token. The new user joins the instance's default servers in their
 /// order (`rchat` unless the instance changed the list; each emits `member_joined` to its
 /// members and to the user, plus its join message as `message` when join messages are on) and
-/// gets their self DM. A default server that is missing, or that bans the username, is skipped. Answers 404 unless `registration` is `open` and
-/// `password_login` is on in `GET /api/v1/settings`. No authentication.
-/// Strict and general rate-limit buckets.
+/// gets their self DM. A default server that is missing, bans the username or is full
+/// (`SERVER_MEMBERS_MAX`) is skipped, and so are the ones past `SERVERS_PER_ACCOUNT`. Answers 404
+/// unless `registration` is `open` and `password_login` is on in `GET /api/v1/settings`. No
+/// authentication. Strict and general rate-limit buckets.
 /// Sign-ups are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
 /// `RARE_REQUESTS_PER_DAY` (100) a day per client address (an IPv6 /64 counts as one) by default,
-/// whatever the username.
-#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank (also a name of only marks or variation selectors), too long (over 100 characters, also in lower case), NUL-containing, `@`-containing or profanity-filtered username; a username that holds control, format or invisible characters (`Username has invalid characters`); one that holds a variation selector or a space other than U+0020, starts or ends with a space, or is or passes for another account's username in another case or in look-alike characters, or mixes letters so that it would pass for more names than an account stores (a capital that passes for l next to a Cherokee letter, for example) (`Username is taken`); one that is or passes for a banned username (`Username is banned`); empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; a missing or invalid avatar color for `color` avatars; or an invalid background color for `identicon` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict bucket", body = ApiErrorBody)), security(()))]
+/// whatever the username. With `SIGNUPS_PER_NETWORK_PER_DAY` set, one network (an IPv4 address
+/// or an IPv6 /48) signs up at most that many a day, counted across copies when `REDIS_URL` is
+/// set.
+#[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth", request_body = RegisterReq, responses((status = 200, description = "Account created; returns a session token and the new user's profile", body = AuthResp), (status = 400, description = "Blank (also a name of only marks or variation selectors), too long (over 100 characters, also in lower case), NUL-containing, `@`-containing or profanity-filtered username; a username that holds control, format or invisible characters (`Username has invalid characters`); one that holds a variation selector or a space other than U+0020, starts or ends with a space, or is or passes for another account's username in another case or in look-alike characters, or mixes letters so that it would pass for more names than an account stores (a capital that passes for l next to a Cherokee letter, for example) (`Username is taken`); one that is or passes for a banned username (`Username is banned`); empty password; not exactly one of `password` and `words`; words that are not 7 words from the word set; a missing or invalid avatar color for `color` avatars; or an invalid background color for `identicon` avatars. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 404, description = "`Not found`: password sign-up is off (`registration` is not `open`, or `password_login` is off)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. `Too many new accounts from your network. Try again later.` (JSON, reason `rate`, with `Retry-After`): past `SIGNUPS_PER_NETWORK_PER_DAY`. Too many requests in the strict bucket", body = ApiErrorBody)), security(()))]
 pub(crate) async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterReq>,
@@ -606,6 +609,7 @@ pub(crate) async fn register(
         .await
         .default_servers
         .clone();
+    crate::api::network_caps::take(&state, crate::api::network_caps::Kind::SignUp).await?;
     let mut tx = state.db.begin().await?;
     for server in lock_order(&defaults) {
         lock_server(&mut tx, server).await?;
@@ -631,6 +635,11 @@ pub(crate) async fn register(
     .await?;
     let mut joined = Vec::new();
     for server in &defaults {
+        let room = crate::api::servers::account_has_room(&mut tx, &state.limits, &key).await?
+            && crate::api::servers::server_has_room(&mut tx, &state.limits, server).await?;
+        if !room {
+            continue;
+        }
         let inserted = sqlx::query(
             "INSERT INTO members(server, username, is_admin, joined_at) SELECT s.name, $2, 0, $3 FROM servers s WHERE s.name = $1 AND COALESCE(s.password_hash, '') <> '!purging' AND NOT EXISTS(SELECT 1 FROM server_bans b WHERE b.server = s.name AND b.username = $2)",
         )
