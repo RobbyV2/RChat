@@ -19,7 +19,7 @@ const MIB: usize = 1024 * 1024;
 pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 117] = [
+const RANGES: [(&str, i64, i64); 118] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
@@ -137,6 +137,7 @@ const RANGES: [(&str, i64, i64); 117] = [
     ("SERVER_MEMBERS_MAX", 0, 100_000_000),
     ("SIGNUPS_PER_NETWORK_PER_DAY", 0, 1_000_000),
     ("SERVERS_PER_NETWORK_PER_DAY", 0, 1_000_000),
+    ("WS_SOCKETS_MAX", 0, 10_000_000),
 ];
 
 /// The P2P limits registry, generated from the web app's `p2p/limits.ts`: each device-local name
@@ -362,6 +363,7 @@ pub struct Limits {
     pub server_members_max: i64,
     pub signups_per_network_per_day: u32,
     pub servers_per_network_per_day: u32,
+    pub ws_sockets_max: usize,
     /// `P2P_LIMITS`: the names given that the P2P registry has, with their values.
     pub p2p: BTreeMap<String, f64>,
     /// Names in `P2P_LIMITS` the registry doesn't have, left out of `p2p`.
@@ -490,6 +492,7 @@ impl Default for Limits {
             server_members_max: 0,
             signups_per_network_per_day: 0,
             servers_per_network_per_day: 0,
+            ws_sockets_max: 0,
             p2p: BTreeMap::new(),
             p2p_unknown: Vec::new(),
         }
@@ -787,6 +790,7 @@ impl Limits {
                 .num("SIGNUPS_PER_NETWORK_PER_DAY", d.signups_per_network_per_day)?,
             servers_per_network_per_day: e
                 .num("SERVERS_PER_NETWORK_PER_DAY", d.servers_per_network_per_day)?,
+            ws_sockets_max: e.num("WS_SOCKETS_MAX", d.ws_sockets_max)?,
             p2p,
             p2p_unknown,
         };
@@ -917,6 +921,7 @@ impl Limits {
             server_members_max,
             signups_per_network_per_day,
             servers_per_network_per_day,
+            ws_sockets_max,
             p2p: _,
             p2p_unknown: _,
         } = *self;
@@ -1086,6 +1091,7 @@ impl Limits {
                 "SERVERS_PER_NETWORK_PER_DAY",
                 set(servers_per_network_per_day),
             ),
+            ("WS_SOCKETS_MAX", set(ws_sockets_max)),
         ]
     }
 
@@ -1202,6 +1208,7 @@ impl Limits {
             paced_users_max: self.ws_paced_users_max,
             aftermath_max: self.hub_aftermath_max,
             shown_max: self.hub_shown_max,
+            sockets_max: self.ws_sockets_max,
         }
     }
 

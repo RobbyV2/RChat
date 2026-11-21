@@ -27,6 +27,15 @@ pub use limits::{
     Limits, PACED_USERS_MAX, SIGNAL_BURST, SIGNAL_BYTES_PER_SEC, SOCKETS_PER_IP, TYPING_USER_BURST,
     TYPING_USER_EVERY, VOICE_BURST, VOICE_EVERY,
 };
+/// Why a realtime socket was not counted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotRefused {
+    /// This instance holds `sockets_max` sockets.
+    Instance,
+    /// The address holds `sockets_per_ip` sockets on this instance.
+    Address,
+}
+
 pub use replica::{
     Aftermath, Applied, CallEnd, Envelope, Op, Outcome, P2pDrop, Purge, Replica, Scope,
 };
@@ -121,6 +130,7 @@ struct Inner {
     pacing: Pacing,
     addrs: Mutex<HashMap<IpAddr, (usize, usize)>>,
     guests: AtomicUsize,
+    sockets: AtomicUsize,
     limits: Mutex<Limits>,
     auth_wait: Mutex<Duration>,
     reannounced: Mutex<(Option<Instant>, bool)>,
@@ -176,6 +186,7 @@ impl Hub {
                 pacing: Pacing::default(),
                 addrs: Mutex::new(HashMap::new()),
                 guests: AtomicUsize::new(0),
+                sockets: AtomicUsize::new(0),
                 limits: Mutex::new(Limits::default()),
                 auth_wait: Mutex::new(AUTH_WAIT),
                 reannounced: Mutex::new((None, false)),
@@ -1126,6 +1137,7 @@ impl Hub {
             paced_users_max: _,
             aftermath_max: _,
             shown_max: _,
+            sockets_max: _,
         } = self.limits();
         let every = connect_every.as_millis() as i64;
         let (opened, clock) =
@@ -1140,23 +1152,39 @@ impl Hub {
         *self.inner.limits.lock().unwrap()
     }
 
-    /// Counts a new realtime socket from `addr` (an IPv6 /64 counts as one address), or `None`
-    /// when the address already has `sockets_per_ip` open on this instance.
-    pub fn addr_slot(&self, addr: IpAddr) -> Option<AddrSlot> {
+    /// Counts a new realtime socket from `addr` (an IPv6 /64 counts as one address). Refused
+    /// when this instance holds `sockets_max` sockets, or the address `sockets_per_ip`.
+    pub fn addr_slot(&self, addr: IpAddr) -> Result<AddrSlot, SlotRefused> {
         let addr = crate::api::budget::group(addr);
-        let cap = self.limits().sockets_per_ip;
+        let limits = self.limits();
         let mut addrs = self.inner.addrs.lock().unwrap();
+        if self.full_with(limits) {
+            return Err(SlotRefused::Instance);
+        }
         let entry = addrs.entry(addr).or_insert((0, 0));
-        if entry.0 >= cap {
-            return None;
+        if entry.0 >= limits.sockets_per_ip {
+            if entry.0 == 0 {
+                addrs.remove(&addr);
+            }
+            return Err(SlotRefused::Address);
         }
         entry.0 += 1;
+        self.inner.sockets.fetch_add(1, Ordering::Relaxed);
         drop(addrs);
-        Some(AddrSlot {
+        Ok(AddrSlot {
             hub: self.clone(),
             addr,
             guest: false,
         })
+    }
+
+    fn full_with(&self, limits: Limits) -> bool {
+        limits.sockets_max > 0 && self.inner.sockets.load(Ordering::Relaxed) >= limits.sockets_max
+    }
+
+    /// Whether this instance holds as many realtime sockets as `WS_SOCKETS_MAX` allows.
+    pub fn sockets_full(&self) -> bool {
+        self.full_with(self.limits())
     }
 
     /// Whether this instance holds as many guest sockets as `guests_max` allows.

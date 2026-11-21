@@ -18,13 +18,15 @@ pub struct Health {
 /// Readiness result.
 #[derive(Serialize, ToSchema)]
 pub struct Readiness {
-    /// `db` and `bus` are both `true`.
+    /// `db`, `bus` and `sockets` are all `true`.
     pub ok: bool,
     /// The database answered a trivial query, or every connection of this copy is in use.
     pub db: bool,
     /// The realtime bus is healthy: always `true` without `REDIS_URL`; with it, this
     /// instance is publishing to and following the Redis stream and has caught up.
     pub bus: bool,
+    /// This copy takes new realtime connections: `false` while it holds `WS_SOCKETS_MAX`.
+    pub sockets: bool,
 }
 
 /// Check that the process is up
@@ -39,19 +41,28 @@ pub(crate) async fn health() -> Json<Health> {
 /// Check that the instance can take traffic
 ///
 /// Readiness probe for load balancers: 200 when the database answers (or every database
-/// connection of this copy is in use) and, when `REDIS_URL` is set, the realtime bus is
-/// publishing, following and caught up; 503 otherwise, with the same body showing which part
-/// failed. Served by every role, needs no authentication and is not rate limited.
+/// connection of this copy is in use), the copy holds fewer than `WS_SOCKETS_MAX` realtime
+/// connections (when set) and, when `REDIS_URL` is set, the realtime bus is publishing,
+/// following and caught up; 503 otherwise, with the same body showing which part failed. Served by every role, needs no authentication and is not rate limited.
 #[utoipa::path(get, path = "/api/v1/ready", tag = "Health", responses((status = 200, description = "Database reachable and, when REDIS_URL is set, this instance can write to and read from the realtime bus and has caught up", body = Readiness), (status = 503, description = "Not ready to take traffic", body = Readiness)), security(()))]
 pub(crate) async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
     let db = db_ready(&state.db).await;
     let bus = state.hub.ready();
-    let ok = db && bus;
+    let sockets = !state.hub.sockets_full();
+    let ok = db && bus && sockets;
     let status = match ok {
         true => StatusCode::OK,
         false => StatusCode::SERVICE_UNAVAILABLE,
     };
-    (status, Json(Readiness { ok, db, bus }))
+    (
+        status,
+        Json(Readiness {
+            ok,
+            db,
+            bus,
+            sockets,
+        }),
+    )
 }
 
 /// Whether the database answers. A pool whose every connection is in use counts: the database

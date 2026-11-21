@@ -22,9 +22,9 @@ fn sockets_are_counted_per_address() {
         "203.0.113.1".parse().unwrap(),
         "203.0.113.2".parse().unwrap(),
     );
-    let mut slots: Vec<AddrSlot> = (0..3).filter_map(|_| hub.addr_slot(a)).collect();
+    let mut slots: Vec<AddrSlot> = (0..3).filter_map(|_| hub.addr_slot(a).ok()).collect();
     assert_eq!(slots.len(), 3);
-    assert!(hub.addr_slot(a).is_none() && hub.addr_slot(b).is_some());
+    assert!(hub.addr_slot(a).is_err() && hub.addr_slot(b).is_ok());
     assert!(slots[0].guest() && slots[0].guest());
     assert!(!slots[1].guest(), "past the guests' share");
     slots.remove(0);
@@ -35,13 +35,13 @@ fn sockets_are_counted_per_address() {
         "2001:db8:1:2::1".parse().unwrap(),
         "2001:db8:1:2:ffff::9".parse().unwrap(),
     );
-    let held: Vec<AddrSlot> = (0..3).filter_map(|_| hub.addr_slot(v6a)).collect();
+    let held: Vec<AddrSlot> = (0..3).filter_map(|_| hub.addr_slot(v6a).ok()).collect();
     assert_eq!(held.len(), 3);
     assert!(
-        hub.addr_slot(v6b).is_none(),
+        hub.addr_slot(v6b).is_err(),
         "an IPv6 /64 counts as one address"
     );
-    assert!(hub.addr_slot("2001:db8:1:3::1".parse().unwrap()).is_some());
+    assert!(hub.addr_slot("2001:db8:1:3::1".parse().unwrap()).is_ok());
 }
 
 #[test]
@@ -53,7 +53,9 @@ fn guest_sockets_are_capped_for_the_whole_instance() {
         ..Limits::default()
     });
     let addr = |n: u8| -> IpAddr { format!("203.0.113.{n}").parse().unwrap() };
-    let mut slots: Vec<AddrSlot> = (1..=3).filter_map(|n| hub.addr_slot(addr(n))).collect();
+    let mut slots: Vec<AddrSlot> = (1..=3)
+        .filter_map(|n| hub.addr_slot(addr(n)).ok())
+        .collect();
     assert!(slots[0].guest() && slots[1].guest());
     assert!(
         !slots[2].guest(),
@@ -256,4 +258,24 @@ fn inbox_and_pacing_sizes_follow_the_limits() {
         hub.voice_ok_at(&format!("u{n}"), now);
     }
     assert!(hub.inner.pacing.voice.len() <= 100);
+}
+
+#[test]
+fn pacing_past_the_cap_stays_linear() {
+    let hub = Hub::new();
+    hub.set_limits(Limits {
+        paced_users_max: 1000,
+        ..Limits::default()
+    });
+    let start = Instant::now();
+    for n in 0..50_000u64 {
+        hub.voice_ok_at(&format!("u{n}"), start + Duration::from_millis(n));
+    }
+    let voice = &hub.inner.pacing.voice;
+    assert!(voice.len() <= 1000);
+    assert!(
+        voice.scanned() <= 2 * 50_000,
+        "{} entries looked at for 50000 users",
+        voice.scanned()
+    );
 }

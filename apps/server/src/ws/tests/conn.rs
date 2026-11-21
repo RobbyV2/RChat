@@ -926,3 +926,89 @@ async fn live_replies_reach_only_members_who_may_read_their_root() {
     );
     crate::api::test_util::done(state, path).await;
 }
+
+#[tokio::test]
+async fn sockets_past_the_copy_cap_are_refused_and_others_stay() {
+    let (state, path, addr) = live("ws_copy_cap").await;
+    add_user_row(&state.db, "alice").await;
+    sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, 'alice', $2)")
+        .bind(crate::db::secret_key("alice-token"))
+        .bind(crate::db::now())
+        .execute(&state.db)
+        .await
+        .expect("token");
+    state.hub.set_auth_wait(Duration::from_secs(3600));
+    state.hub.set_limits(crate::hub::Limits {
+        sockets_max: 3,
+        ..crate::hub::Limits::default()
+    });
+    let ready = || async {
+        let (code, axum::Json(body)) =
+            crate::api::health::ready(axum::extract::State(state.clone())).await;
+        (code, body.sockets)
+    };
+    assert_eq!(ready().await, (StatusCode::OK, true));
+    let mut tabs = Vec::new();
+    for n in 0..3 {
+        let mut tab = dial(addr, &format!("203.0.113.{}", 10 + n))
+            .await
+            .expect("tab");
+        send_auth(&mut tab, Some("alice-token")).await;
+        tabs.push(tab);
+    }
+    until(|| state.hub.sockets_full()).await;
+    match dial(addr, "203.0.113.20").await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(res)) => {
+            assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let retry = res
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok());
+            assert_eq!(retry, Some("5"));
+            let body: serde_json::Value =
+                serde_json::from_slice(res.body().as_deref().unwrap_or_default()).expect("json");
+            assert_eq!(body["error"], "Realtime is busy, try again in a moment");
+            assert_eq!(body["reason"]["kind"], "capacity");
+            assert_eq!(body["reason"]["control"], "ws_sockets_max");
+        }
+        Err(e) => panic!("unexpected error {e}"),
+        Ok(_) => panic!("a fourth socket on a full copy was accepted"),
+    }
+    assert_eq!(
+        ready().await,
+        (StatusCode::SERVICE_UNAVAILABLE, false),
+        "a full copy is not ready for new sockets"
+    );
+    until(|| state.hub.connections() >= 3).await;
+    state.hub.broadcast(WsEvent::UserUnblocked {
+        username: "alice".to_string(),
+        blocked: "bob".to_string(),
+    });
+    for tab in &mut tabs {
+        let heard = async {
+            while let Some(Ok(frame)) = tab.next().await {
+                if let tokio_tungstenite::tungstenite::Message::Text(text) = frame
+                    && text.contains("user_unblocked")
+                {
+                    return true;
+                }
+            }
+            false
+        };
+        assert!(
+            tokio::time::timeout(Duration::from_secs(30), heard)
+                .await
+                .unwrap_or(false),
+            "the open sockets still get events"
+        );
+    }
+    let mut first = tabs.remove(0);
+    first.close(None).await.expect("close");
+    until(|| !state.hub.sockets_full()).await;
+    assert_eq!(ready().await, (StatusCode::OK, true));
+    assert!(
+        dial(addr, "203.0.113.20").await.is_ok(),
+        "a closed socket frees its place"
+    );
+    crate::api::test_util::done(state, path).await;
+}

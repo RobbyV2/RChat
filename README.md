@@ -73,7 +73,7 @@ Never run an older release on a database that a newer release upgraded.
 
 ### Scaling
 
-For more load, run many copies of the same image on one Postgres database and one Redis server, and give each copy its roles with `RCHAT_ROLES`. Set `REDIS_URL` on every copy and `PEERJS_BUILTIN=false`, and send `/peerjs` to one separate PeerJS server (`deploy/peer`). Both examples above do this. Upgrade all copies together.
+For more load, run many copies of the same image on one Postgres database and one Redis server, and give each copy its roles with `RCHAT_ROLES`. Set `REDIS_URL` on every copy and `PEERJS_BUILTIN=false`, and send `/peerjs` to one separate PeerJS server (`deploy/peer`). Both examples above do this. Upgrade all copies together. With `WS_SOCKETS_MAX` set, run the `gateway` role on copies of its own: a full copy answers `/api/ready` with 503.
 
 ## Configuration
 

@@ -818,6 +818,7 @@ mod tests {
                 paced_users_max: 300,
                 aftermath_max: 8,
                 shown_max: 9,
+                sockets_max: 0,
             }
         );
         assert!(

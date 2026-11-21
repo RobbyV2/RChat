@@ -103,6 +103,9 @@ pub(crate) struct Table<K, V> {
     hasher: RandomState,
     map: HashTable<(K, Instant, V)>,
     order: VecDeque<(Instant, K)>,
+    /// Entries looked at to make room or to rebuild the order.
+    #[cfg(test)]
+    scanned: usize,
 }
 
 impl<K: Hash + Eq + Clone, V> Table<K, V> {
@@ -116,6 +119,8 @@ impl<K: Hash + Eq + Clone, V> Table<K, V> {
             hasher,
             map: HashTable::new(),
             order: VecDeque::new(),
+            #[cfg(test)]
+            scanned: 0,
         }
     }
 
@@ -198,6 +203,10 @@ impl<K: Hash + Eq + Clone, V> Table<K, V> {
                     let Some((stamp, old)) = self.order.pop_front() else {
                         break;
                     };
+                    #[cfg(test)]
+                    {
+                        self.scanned += 1;
+                    }
                     let old_hash = self.hash(&old);
                     if let Ok(entry) = self.map.find_entry(old_hash, |(k, _, _)| *k == old)
                         && entry.get().1 == stamp
@@ -246,6 +255,10 @@ impl<K: Hash + Eq + Clone, V> Table<K, V> {
 
     fn compact(&mut self) {
         if self.order.len() > 2 * self.map.len() + 16 {
+            #[cfg(test)]
+            {
+                self.scanned += self.map.len();
+            }
             let mut order: Vec<(Instant, K)> =
                 self.map.iter().map(|(k, at, _)| (*at, k.clone())).collect();
             order.sort_by_key(|(at, _)| *at);
@@ -499,6 +512,12 @@ impl<K: Hash + Eq + Clone> Keyed<K> {
     #[cfg(test)]
     fn shard_count(&self) -> usize {
         self.shards.len()
+    }
+
+    /// Entries looked at, over all shards, to make room or to rebuild an order.
+    #[cfg(test)]
+    pub(crate) fn scanned(&self) -> usize {
+        self.each().map(|shard| shard.1.scanned).sum()
     }
 }
 

@@ -13,7 +13,8 @@ use crate::limits::bucket::{Keyed, Policy};
 /// At most `voice_room_max` people in one voice channel (0 for no limit). Each connection's
 /// inbox holds `inbox_frames`; the hub keeps `channel_slots` channel policies and the paces of
 /// `paced_users_max` accounts per kind; `aftermath_max` and `shown_max` bound its two follow-up
-/// queues (0 for no bound).
+/// queues (0 for no bound). At most `sockets_max` realtime sockets are open on this instance (0
+/// for no limit).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Limits {
     pub conns_per_user: usize,
@@ -28,6 +29,7 @@ pub struct Limits {
     pub paced_users_max: usize,
     pub aftermath_max: usize,
     pub shown_max: usize,
+    pub sockets_max: usize,
 }
 
 pub const CONNS_PER_USER: usize = 20;
@@ -56,6 +58,7 @@ impl Default for Limits {
             paced_users_max: PACED_USERS_MAX,
             aftermath_max: 0,
             shown_max: 0,
+            sockets_max: 0,
         }
     }
 }
@@ -179,6 +182,11 @@ impl AddrSlot {
 
 impl Drop for AddrSlot {
     fn drop(&mut self) {
+        let _ = self
+            .hub
+            .inner
+            .sockets
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
         let mut addrs = self.hub.inner.addrs.lock().unwrap();
         if let Some((all, guests)) = addrs.get_mut(&self.addr) {
             *all = all.saturating_sub(1);

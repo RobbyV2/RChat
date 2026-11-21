@@ -119,6 +119,10 @@ pub(super) static ADDR_FULL: LogGate = LogGate::new(LOG_EVERY, |n| {
         LOG_EVERY.as_secs()
     )
 });
+
+pub(super) static COPY_FULL: LogGate = LogGate::new(LOG_EVERY, |n| {
+    warn!("refused {n} more realtime connections: this copy holds WS_SOCKETS_MAX connections")
+});
 pub(super) static AUTH_FAILED: LogGate = LogGate::new(LOG_EVERY, |n| {
     warn!(
         "refused {n} more realtime connection(s) in the last {}s because their account could not be loaded",

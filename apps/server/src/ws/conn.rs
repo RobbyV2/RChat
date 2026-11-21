@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tracing::{debug, warn};
 
-use super::access::{ADDR_FULL, Access, Pace, catch_up, grant_deadlines, reauthorize};
+use super::access::{ADDR_FULL, Access, COPY_FULL, Pace, catch_up, grant_deadlines, reauthorize};
 use super::calls::{VoiceWait, finalize_call_log, send_voice_snapshot, voice_cmd};
 use super::event::WsEvent;
 use super::filter::on_event;
@@ -35,7 +35,7 @@ use crate::api::access::{is_member, presence_mode, ws_banned, ws_live_hosted, ws
 use crate::api::{Settings, token_row};
 use crate::db::{now, setting_on};
 use crate::fanout::Topic;
-use crate::hub::{AddrSlot, Hub};
+use crate::hub::{AddrSlot, Hub, SlotRefused};
 use crate::limits::bucket::{Policy, Single};
 use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
@@ -83,7 +83,7 @@ use crate::state::AppState;
 /// attachments, and the key it checks download tokens with), `p2p_peer`, `error` (`{message}`, plus the `reason` object of REST errors when the error has one) and `resync` (fetch state again after missed events). Frames
 /// are at most 64 KiB. The token goes in the `auth` frame, not in the bearer security scheme.
 /// General rate-limit bucket for the upgrade request.
-#[utoipa::path(get, path = "/api/v1/ws", tag = "Realtime", responses((status = 101, description = "WebSocket upgrade"), (status = 429, description = "Too many requests in the general bucket, or too many open connections from this address", content((crate::api::ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "Realtime bus not ready", content_type = "text/plain", body = String)), security(()))]
+#[utoipa::path(get, path = "/api/v1/ws", tag = "Realtime", responses((status = 101, description = "WebSocket upgrade"), (status = 429, description = "Too many requests in the general bucket, or too many open connections from this address", content((crate::api::ApiErrorBody = "application/json"), (String = "text/plain"))), (status = 503, description = "`Realtime is busy, try again in a moment` (JSON, reason `capacity`, control `ws_sockets_max`, `Retry-After: 5`): this copy holds `WS_SOCKETS_MAX` connections. Or `Realtime bus not ready` (plain text)", content((crate::api::ApiErrorBody = "application/json"), (String = "text/plain")))), security(()))]
 pub async fn handler(
     axum::extract::Query(query): axum::extract::Query<SocketQuery>,
     State(state): State<AppState>,
@@ -100,8 +100,20 @@ pub async fn handler(
         .of(&extensions, &headers)
         .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
     let slot = match state.hub.addr_slot(addr) {
-        Some(slot) => slot,
-        None => {
+        Ok(slot) => slot,
+        Err(SlotRefused::Instance) => {
+            if COPY_FULL.admit(Instant::now()) {
+                warn!("refused a realtime connection: this copy holds WS_SOCKETS_MAX connections");
+            }
+            return crate::api::ApiError::capacity(
+                StatusCode::SERVICE_UNAVAILABLE,
+                REALTIME_BUSY,
+                "ws_sockets_max",
+                Some(BUSY_RETRY_SECS),
+            )
+            .into_response();
+        }
+        Err(SlotRefused::Address) => {
             match ADDR_FULL.admit(Instant::now()) {
                 true => warn!(
                     "refused a realtime connection from an address with WS_SOCKETS_PER_IP connections open; raise it if many people share one address (carrier NAT, offices)"
@@ -204,6 +216,10 @@ pub(super) fn frame_bucket(now: Instant) -> Single {
     };
     Single::new(policy, now.into_std())
 }
+
+/// The answer to an upgrade past `WS_SOCKETS_MAX`, with its `Retry-After`.
+pub const REALTIME_BUSY: &str = "Realtime is busy, try again in a moment";
+const BUSY_RETRY_SECS: u64 = 5;
 
 // Whether a client frame is read, dropped (`Some(false)`), or ends a connection that kept
 // sending past a second burst (`None`).
