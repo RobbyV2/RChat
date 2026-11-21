@@ -12,7 +12,7 @@ jose = ["dep:aws-lc-rs", "dep:serde", "dep:serde_json"]
 aws-lc-rs = { version = "1.18.2", default-features = false, features = [
   "aws-lc-sys",
 ], optional = true }
-base64 = "0.22"
+base64 = "0.23"
 hmac = "0.13"
 rand = "0.10"
 serde = { version = "1", features = ["derive"], optional = true }
