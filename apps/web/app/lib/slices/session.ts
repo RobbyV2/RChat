@@ -25,6 +25,7 @@ import {
 } from '../config_transfer'
 import { NO_DM_EDGE, dmListPrefs, dmQuery, queryKey } from '../dm_list'
 import { EMPTY_PREFS } from '../emoji'
+import { brandOf } from '../brand'
 import { accountPrompt, createP2pGate, siteSettings } from '../features'
 import { forwardKey } from '../forward'
 import { type FriendsDeps, friendsInitial, type friendsSlice } from '../friends_store'
@@ -1330,6 +1331,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'loadInstance'
     | 'switchInstance'
     | 'loadSettings'
+    | 'loadBrand'
+    | 'setBrand'
     | 'setTheme'
     | 'setStreamer'
     | 'setIceHelpers'
@@ -1410,7 +1413,21 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       } catch (e) {
         fail(e)
       }
+      void get().loadBrand()
     },
+
+    // An instance that sends no brand, or can't be reached, leaves the one the app has.
+    loadBrand: async () => {
+      const at = sessionMark()
+      try {
+        const raw = await api.brand()
+        if (at === sessionMark()) get().setBrand(raw)
+      } catch {
+        return
+      }
+    },
+
+    setBrand: raw => set({ brand: brandOf(raw) }),
 
     setTheme: theme => {
       writeLocal(LS.theme, theme)

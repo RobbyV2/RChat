@@ -1116,6 +1116,7 @@ export type WsEvent =
   | { type: 'privacy_changed'; username: string; privacy: unknown }
   | { type: 'banned'; username: string }
   | { type: 'settings_changed'; settings: SiteSettings }
+  | { type: 'brand_changed'; brand: unknown }
   | {
       type: 'p2p_hosted'
       live: string[]

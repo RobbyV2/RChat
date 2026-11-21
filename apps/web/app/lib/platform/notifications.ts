@@ -28,6 +28,9 @@ export interface Notifier {
   onPermissionChange: (cb: (p: Permission) => void) => () => void
   // Unseen notification count on the tab title / app icon; 0 clears it.
   setBadge: (count: number) => void
+  // The app's name on the tab title, behind the unseen count. The desktop and mobile shells
+  // keep the name they were built with.
+  setTitle: (title: string) => void
 }
 
 export const permissionOf = (raw: unknown): Permission =>

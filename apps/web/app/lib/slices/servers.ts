@@ -1465,6 +1465,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
             : s.adminUsers,
       }))
     },
+    brand_changed: ev => get().setBrand(ev.brand),
     settings_changed: ev => {
       const settings = siteSettings(ev.settings)
       const p2pFlip = settings.p2p_attachments !== get().settings.p2p_attachments

@@ -126,6 +126,11 @@ export default function AppShell() {
     notifications().setBadge(pings)
   }, [pings])
 
+  const appName = useStore(s => s.brand?.app_name ?? null)
+  useEffect(() => {
+    if (appName !== null) notifications().setTitle(appName)
+  }, [appName])
+
   const guestBlocked = useStore(s => s.guest && !s.settings.guests_enabled)
   useEffect(() => {
     if (!guestBlocked) return

@@ -3,6 +3,7 @@
 import { useMemo } from 'react'
 import {
   LayoutDashboard,
+  Palette,
   ScrollText,
   Server,
   SlidersHorizontal,
@@ -11,12 +12,14 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react'
+import { BRAND_ROWS } from '../../lib/admin_brand'
 import { adminRow, featureSearchRows } from '../../lib/admin_rows'
 import { useStore } from '../../lib/store'
 import type { AdminSection } from '../../lib/view'
 import { SettingsPage, type PageSection } from '../settings_page'
 import AdminDialogs from './dialogs'
 import { AuditSection } from './audit'
+import { BRAND_IMAGE_ROWS, BrandingSection } from './branding'
 import { ConfigSection, controlLabel } from './config'
 import { useConfigStore, useConfigSync } from './config_state'
 import { DangerSection } from './danger'
@@ -28,6 +31,7 @@ import { UserPage, UsersSection } from './users'
 const SECTIONS: Record<AdminSection, { label: string; icon: LucideIcon }> = {
   overview: { label: 'Overview', icon: LayoutDashboard },
   features: { label: 'Features', icon: ToggleRight },
+  branding: { label: 'Branding', icon: Palette },
   users: { label: 'Users', icon: Users },
   servers: { label: 'Servers', icon: Server },
   audit: { label: 'Audit log', icon: ScrollText },
@@ -49,6 +53,7 @@ function Page() {
     const body: Record<AdminSection, PageSection['render']> = {
       overview: () => <OverviewSection />,
       features: () => <FeaturesSection />,
+      branding: () => <BrandingSection />,
       users: () => (item === null ? <UsersSection /> : <UserPage key={item} username={item} />),
       servers: () => (item === null ? <ServersSection /> : <ServerPage key={item} name={item} />),
       audit: () => <AuditSection />,
@@ -70,51 +75,63 @@ function Page() {
                 line: 'Peer-to-peer, P2P attachments and P2P backups in one change.',
               },
             ]
-          : id === 'servers'
+          : id === 'branding'
             ? [
-                ...featureSearchRows().filter(r => r.section === 'servers'),
-                {
-                  section: 'servers',
-                  id: 'create_server',
-                  label: 'Create a server',
-                  line: 'Makes a server for an account, with an owner you pick.',
-                },
-                {
-                  section: 'servers',
-                  id: 'builtin_server',
-                  label: 'Built-in server',
-                  line: 'Rename or delete the server every instance starts with.',
-                },
+                ...BRAND_ROWS.map(r => ({
+                  section: 'branding',
+                  id: r.key,
+                  label: r.label,
+                  line: r.line,
+                  keywords: r.keywords,
+                  env: r.env,
+                })),
+                ...BRAND_IMAGE_ROWS.map(r => ({ section: 'branding', ...r })),
               ]
-            : id === 'config'
+            : id === 'servers'
               ? [
-                  ...(config?.controls ?? [])
-                    .filter(c => !adminRow(c.key))
-                    .map(c => ({
-                      section: 'config',
-                      group: 'Settings',
-                      id: `config-${c.key}`,
-                      label: controlLabel(c),
-                      env: c.env,
-                    })),
-                  ...(config?.limits ?? []).map(l => ({
-                    section: 'config',
-                    group: 'Limits',
-                    id: `limit-${l.env}`,
-                    label: l.env,
-                    env: l.env,
-                  })),
+                  ...featureSearchRows().filter(r => r.section === 'servers'),
+                  {
+                    section: 'servers',
+                    id: 'create_server',
+                    label: 'Create a server',
+                    line: 'Makes a server for an account, with an owner you pick.',
+                  },
+                  {
+                    section: 'servers',
+                    id: 'builtin_server',
+                    label: 'Built-in server',
+                    line: 'Rename or delete the server every instance starts with.',
+                  },
                 ]
-              : id === 'danger'
+              : id === 'config'
                 ? [
-                    {
-                      section: 'danger',
-                      id: 'delete_message',
-                      label: 'Delete a message',
-                      line: 'Removes one message for everyone, by its id.',
-                    },
+                    ...(config?.controls ?? [])
+                      .filter(c => !adminRow(c.key))
+                      .map(c => ({
+                        section: 'config',
+                        group: 'Settings',
+                        id: `config-${c.key}`,
+                        label: controlLabel(c),
+                        env: c.env,
+                      })),
+                    ...(config?.limits ?? []).map(l => ({
+                      section: 'config',
+                      group: 'Limits',
+                      id: `limit-${l.env}`,
+                      label: l.env,
+                      env: l.env,
+                    })),
                   ]
-                : undefined,
+                : id === 'danger'
+                  ? [
+                      {
+                        section: 'danger',
+                        id: 'delete_message',
+                        label: 'Delete a message',
+                        line: 'Removes one message for everyone, by its id.',
+                      },
+                    ]
+                  : undefined,
       render: body[id],
     }))
   }, [item, config])

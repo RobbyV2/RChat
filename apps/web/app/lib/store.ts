@@ -463,6 +463,7 @@ export const useStore = create<RChatState>()((set, get) => {
     error: null,
     adminOverview: null,
     adminPage: null,
+    brand: null,
     settings: {
       profanity_filter: false,
       profanity_targets: {

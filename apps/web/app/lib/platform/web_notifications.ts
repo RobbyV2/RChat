@@ -16,6 +16,8 @@ const ask = (N: typeof Notification) =>
   })
 
 let baseTitle: string | null = null
+// The unseen count the title shows.
+let shown = 0
 
 // The Notification API without a service worker. Browsers that only allow notifications from a
 // service worker (some mobile ones) throw on `new Notification`; those get no notice.
@@ -75,6 +77,7 @@ export const webNotifier: Notifier = {
   },
   setBadge: count => {
     baseTitle ??= document.title.replace(/^\(\d+\+?\) /, '')
+    shown = count
     document.title = pingTitle(baseTitle, count)
     const nav = navigator as Navigator & {
       setAppBadge?: (n?: number) => Promise<void>
@@ -82,5 +85,9 @@ export const webNotifier: Notifier = {
     }
     const done = count > 0 ? nav.setAppBadge?.(count) : nav.clearAppBadge?.()
     void done?.catch(() => {})
+  },
+  setTitle: title => {
+    baseTitle = title
+    document.title = pingTitle(title, shown)
   },
 }

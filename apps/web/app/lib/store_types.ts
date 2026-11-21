@@ -33,15 +33,16 @@ import type {
   AdminOverview,
   AvatarKind,
   BlockedUser,
+  Brand,
   BulkJob,
-  Friend,
-  FriendRequest,
   CallKind,
   CallRelays,
   ChannelKind,
   ChannelPerm,
   ConfirmChoice,
   DmSummary,
+  Friend,
+  FriendRequest,
   InstanceInfo,
   Me,
   Member,
@@ -364,6 +365,9 @@ export interface RChatState {
   // admin's session ever sets it.
   adminPage: AdminPlace | null
   settings: SiteSettings
+  // The brand the account's instance sets; null until it is read, and on an instance without
+  // one.
+  brand: Brand | null
   instance: InstanceInfo | null
   instanceHost: string
   loadInstance: () => Promise<boolean>
@@ -371,6 +375,8 @@ export interface RChatState {
   bootstrap: () => Promise<void>
   // `background`: the app polls on its own (see `BACKGROUND` in api.ts).
   loadSettings: (background?: boolean) => Promise<void>
+  loadBrand: () => Promise<void>
+  setBrand: (raw: unknown) => void
   setTheme: (theme: Theme) => void
   setStreamer: (streamer: boolean) => void
   setIceHelpers: (on: boolean) => void

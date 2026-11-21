@@ -41,5 +41,6 @@ export const desktopNotifier = (call: Invoke): Notifier => {
       }
       void call('set_badge', { count: n }).catch(() => {})
     },
+    setTitle: () => {},
   }
 }

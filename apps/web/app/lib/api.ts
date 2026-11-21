@@ -8,6 +8,7 @@ import type {
   AdminAccount,
   AdminConfig,
   AdminOverview,
+  BrandAsset,
   CreatedAccount,
   IssuedPassword,
   InstanceAuditEntry,
@@ -214,6 +215,9 @@ export class ApiClient {
     )
     if (stops.length) init.signal = stops.length === 1 ? stops[0] : AbortSignal.any(stops)
     if (body instanceof FormData) {
+      init.body = body
+    } else if (body instanceof Blob) {
+      headers['Content-Type'] = body.type || 'application/octet-stream'
       init.body = body
     } else if (body !== undefined) {
       headers['Content-Type'] = 'application/json'
@@ -836,6 +840,11 @@ export const endpoints = (c: ApiClient) => ({
   getSettings: (background = false) =>
     c.req<SiteSettings>('GET', '/settings', undefined, background ? BACKGROUND : {}),
   patchSettings: (body: SiteSettingsPatch) => c.req<SiteSettings>('PATCH', '/admin/settings', body),
+  brand: () => c.req<unknown>('GET', '/brand'),
+  adminPutBrandAsset: (kind: BrandAsset, image: Blob) =>
+    c.req<unknown>('PUT', `/admin/brand/${seg(kind)}`, image),
+  adminDeleteBrandAsset: (kind: BrandAsset) =>
+    c.req<unknown>('DELETE', `/admin/brand/${seg(kind)}`),
   adminOverview: () => c.req<AdminOverview>('GET', '/admin/overview'),
   adminConfig: () => c.req<AdminConfig>('GET', '/admin/config'),
   adminUsers: (cursor: string | null, q: string, filter: AccountFilter = 'all') =>

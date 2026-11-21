@@ -14,6 +14,7 @@ export interface MessageTarget {
 export const ADMIN_SECTIONS = [
   'overview',
   'features',
+  'branding',
   'users',
   'servers',
   'audit',
