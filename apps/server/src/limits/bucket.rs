@@ -1,8 +1,10 @@
 use std::borrow::Borrow;
-use std::collections::{HashMap, VecDeque};
-use std::hash::Hash;
+use std::collections::VecDeque;
+use std::hash::{BuildHasher, Hash, RandomState};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+
+use hashbrown::HashTable;
 
 /// How a bucket fills: `burst` at once, then `per_sec` more each second; or at most `limit`
 /// in a fixed `window` that starts at its first use.
@@ -34,6 +36,7 @@ impl Policy {
     }
 
     /// What a bucket holds when nothing of it is used.
+    #[inline(always)]
     pub fn full(self) -> f64 {
         match self {
             Policy::Tokens { burst, per_sec: _ } => burst,
@@ -43,6 +46,7 @@ impl Policy {
 
     // The bucket stamped `at` with `used` taken, as it is at `now`: tokens refill from the stamp
     // (a stamp after `now` stays), and a window that is over or unused starts again at `now`.
+    #[inline(always)]
     fn level(self, (at, used): Level, now: Instant) -> Level {
         let since = now.saturating_duration_since(at);
         match self {
@@ -56,6 +60,7 @@ impl Policy {
         }
     }
 
+    #[inline(always)]
     fn take(self, level: Level, cost: f64, now: Instant) -> (Level, bool) {
         let (at, used) = self.level(level, now);
         match used + cost <= self.full() {
@@ -66,6 +71,7 @@ impl Policy {
 
     // Takes `cost` without a check and returns what is left. A debt is kept down to one full
     // bucket.
+    #[inline(always)]
     fn spend(self, level: Level, cost: f64, now: Instant) -> (Level, f64) {
         let (at, used) = self.level(level, now);
         let full = self.full();
@@ -94,25 +100,59 @@ impl Policy {
 /// with the oldest stamp, one entry at a time.
 pub(crate) struct Table<K, V> {
     max: usize,
-    map: HashMap<K, (Instant, V)>,
+    hasher: RandomState,
+    map: HashTable<(K, Instant, V)>,
     order: VecDeque<(Instant, K)>,
 }
 
 impl<K: Hash + Eq + Clone, V> Table<K, V> {
     pub(crate) fn new(max: usize) -> Table<K, V> {
+        Table::with_hasher(max, RandomState::new())
+    }
+
+    fn with_hasher(max: usize, hasher: RandomState) -> Table<K, V> {
         Table {
             max: max.max(1),
-            map: HashMap::new(),
+            hasher,
+            map: HashTable::new(),
             order: VecDeque::new(),
         }
     }
 
-    pub(crate) fn get<Q>(&self, key: &Q) -> Option<&(Instant, V)>
+    fn hash<Q: Hash + ?Sized>(&self, key: &Q) -> u64 {
+        self.hasher.hash_one(key)
+    }
+
+    fn find<Q>(&self, hash: u64, key: &Q) -> Option<&(K, Instant, V)>
+    where
+        K: Borrow<Q>,
+        Q: Eq + ?Sized,
+    {
+        self.map.find(hash, |(k, _, _)| k.borrow() == key)
+    }
+
+    fn find_mut<Q>(&mut self, hash: u64, key: &Q) -> Option<&mut (K, Instant, V)>
+    where
+        K: Borrow<Q>,
+        Q: Eq + ?Sized,
+    {
+        self.map.find_mut(hash, |(k, _, _)| k.borrow() == key)
+    }
+
+    pub(crate) fn get<Q>(&self, key: &Q) -> Option<(Instant, &V)>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.map.get(key)
+        self.get_hashed(self.hash(key), key)
+    }
+
+    fn get_hashed<Q>(&self, hash: u64, key: &Q) -> Option<(Instant, &V)>
+    where
+        K: Borrow<Q>,
+        Q: Eq + ?Sized,
+    {
+        self.find(hash, key).map(|(_, at, v)| (*at, v))
     }
 
     /// The value of `key`, to change without a new stamp.
@@ -121,7 +161,8 @@ impl<K: Hash + Eq + Clone, V> Table<K, V> {
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.map.get_mut(key).map(|(_, v)| v)
+        let hash = self.hash(key);
+        self.find_mut(hash, key).map(|(_, _, v)| v)
     }
 
     /// Sets `key` to `value`, stamped `at`.
@@ -130,10 +171,19 @@ impl<K: Hash + Eq + Clone, V> Table<K, V> {
         K: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = K> + ?Sized,
     {
-        match self.map.get_mut(key) {
+        let hash = self.hash(key);
+        self.put_hashed(hash, key, at, value);
+    }
+
+    fn put_hashed<Q>(&mut self, hash: u64, key: &Q, at: Instant, value: V)
+    where
+        K: Borrow<Q>,
+        Q: Eq + ToOwned<Owned = K> + ?Sized,
+    {
+        match self.find_mut(hash, key) {
             Some(entry) => {
-                let moved = entry.0 != at;
-                *entry = (at, value);
+                let moved = entry.1 != at;
+                (entry.1, entry.2) = (at, value);
                 if moved {
                     self.order.push_back((at, key.to_owned()));
                 }
@@ -143,27 +193,63 @@ impl<K: Hash + Eq + Clone, V> Table<K, V> {
                     let Some((stamp, old)) = self.order.pop_front() else {
                         break;
                     };
-                    if self.map.get::<K>(&old).is_some_and(|(at, _)| *at == stamp) {
-                        self.map.remove::<K>(&old);
+                    let old_hash = self.hash(&old);
+                    if let Ok(entry) = self.map.find_entry(old_hash, |(k, _, _)| *k == old)
+                        && entry.get().1 == stamp
+                    {
+                        entry.remove();
                     }
                 }
                 self.order.push_back((at, key.to_owned()));
-                self.map.insert(key.to_owned(), (at, value));
+                let hasher = &self.hasher;
+                self.map
+                    .insert_unique(hash, (key.to_owned(), at, value), |(k, _, _)| {
+                        hasher.hash_one(k)
+                    });
             }
         }
+        self.compact();
+    }
+
+    /// Sets the entry of `key`, whose hash is `hash`, to what `f` makes of it (`None` for a new
+    /// key), with one lookup.
+    fn update<Q, T>(
+        &mut self,
+        hash: u64,
+        key: &Q,
+        f: impl FnOnce(Option<(Instant, V)>) -> ((Instant, V), T),
+    ) -> T
+    where
+        K: Borrow<Q>,
+        Q: Eq + ToOwned<Owned = K> + ?Sized,
+        V: Copy,
+    {
+        let Some(entry) = self.find_mut(hash, key) else {
+            let ((at, value), out) = f(None);
+            self.put_hashed(hash, key, at, value);
+            return out;
+        };
+        let ((at, value), out) = f(Some((entry.1, entry.2)));
+        let moved = entry.1 != at;
+        (entry.1, entry.2) = (at, value);
+        if moved {
+            self.order.push_back((at, key.to_owned()));
+        }
+        self.compact();
+        out
+    }
+
+    fn compact(&mut self) {
         if self.order.len() > 2 * self.map.len() + 16 {
-            let mut order: Vec<(Instant, K)> = self
-                .map
-                .iter()
-                .map(|(k, (at, _))| (*at, k.clone()))
-                .collect();
+            let mut order: Vec<(Instant, K)> =
+                self.map.iter().map(|(k, at, _)| (*at, k.clone())).collect();
             order.sort_by_key(|(at, _)| *at);
             self.order = order.into();
         }
     }
 
-    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K, &(Instant, V)) -> bool) {
-        self.map.retain(|k, v| keep(k, v));
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&K, (Instant, &V)) -> bool) {
+        self.map.retain(|(k, at, v)| keep(k, (*at, v)));
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -176,11 +262,29 @@ impl<K: Hash + Eq + Clone, V> Table<K, V> {
     }
 }
 
-/// One bucket per key, at most `max_keys` of them: past that, a new key takes the place of
-/// the one used longest ago (for a window, the one whose window started first).
+/// Keys a map holds per shard: one with room for fewer stays a single shard.
+const SHARD_KEYS: usize = 1024;
+/// The most shards a map is split into.
+const SHARDS_MAX: usize = 64;
+
+/// One bucket per key, at most `max_keys` of them. A map with room for many keys is split by
+/// key hash into shards with a lock each, so uses of different keys rarely wait on each other;
+/// each shard holds its share of `max_keys`. Past that, a new key takes the place of the one in
+/// its shard used longest ago (for a window, the one whose window started first). A map with
+/// room for fewer than `2 * SHARD_KEYS` keys is one shard, and that is the one key used longest
+/// ago of all.
 pub struct Keyed<K: Hash + Eq + Clone = String> {
-    inner: Mutex<(Policy, Table<K, f64>)>,
+    hasher: RandomState,
+    shards: Box<[Shard<K>]>,
 }
+
+// Aligned so that two shards never share a cache line.
+#[repr(align(128))]
+struct Shard<K> {
+    inner: Mutex<Buckets<K>>,
+}
+
+type Buckets<K> = (Policy, Table<K, f64>);
 
 /// The buckets of a `Keyed` read under another policy than its own, for limits that come with
 /// each request (`None`: the stored policy, read under the same lock as the buckets).
@@ -222,13 +326,33 @@ impl<K: Hash + Eq + Clone> Drop for Token<'_, K> {
 
 impl<K: Hash + Eq + Clone> Keyed<K> {
     pub fn new(policy: Policy, max_keys: usize) -> Self {
-        Keyed {
-            inner: Mutex::new((policy, Table::new(max_keys))),
-        }
+        let count = (max_keys / SHARD_KEYS).clamp(1, SHARDS_MAX);
+        let count = 1 << count.ilog2();
+        let hasher = RandomState::new();
+        let shards = (0..count)
+            .map(|n| {
+                let room = max_keys / count + usize::from(n < max_keys % count);
+                Shard {
+                    inner: Mutex::new((policy, Table::with_hasher(room, hasher.clone()))),
+                }
+            })
+            .collect();
+        Keyed { hasher, shards }
     }
 
-    fn lock(&self) -> MutexGuard<'_, (Policy, Table<K, f64>)> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    // The shard of `key`, locked, and the key's hash. The shard is picked by bits of the hash
+    // that its table leaves unused (it uses the low bits and the top seven).
+    fn shard<Q>(&self, key: &Q) -> (MutexGuard<'_, Buckets<K>>, u64)
+    where
+        Q: Hash + ?Sized,
+    {
+        let hash = self.hasher.hash_one(key);
+        let at = (hash >> 32) as usize & (self.shards.len() - 1);
+        (locked(&self.shards[at].inner), hash)
+    }
+
+    fn each(&self) -> impl Iterator<Item = MutexGuard<'_, Buckets<K>>> {
+        self.shards.iter().map(|shard| locked(&shard.inner))
     }
 
     /// The same buckets under `policy` in place of the stored one.
@@ -312,24 +436,27 @@ impl<K: Hash + Eq + Clone> Keyed<K> {
 
     /// The stored policy.
     pub fn policy(&self) -> Policy {
-        self.lock().0
+        locked(&self.shards[0].inner).0
     }
 
     /// Applies to every key from its next use.
     pub fn set_policy(&self, policy: Policy) {
-        self.lock().0 = policy;
+        for mut shard in self.each() {
+            shard.0 = policy;
+        }
     }
 
     /// Drops the keys whose buckets are full again.
     pub fn prune(&self, now: Instant) {
-        let mut inner = self.lock();
-        let (policy, table) = &mut *inner;
-        let policy = *policy;
-        table.retain(|_, &level| policy.level(level, now).1 > 0.0);
+        for mut shard in self.each() {
+            let (policy, table) = &mut *shard;
+            let policy = *policy;
+            table.retain(|_, (at, &used)| policy.level((at, used), now).1 > 0.0);
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.lock().1.len()
+        self.each().map(|shard| shard.1.len()).sum()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -342,20 +469,35 @@ impl<K: Hash + Eq + Clone> Keyed<K> {
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        self.lock().1.get(key).map(|(_, used)| *used)
+        let (shard, hash) = self.shard(key);
+        shard.1.get_hashed(hash, key).map(|(_, used)| *used)
+    }
+
+    /// Entries queued and keys held, per shard.
+    #[cfg(test)]
+    fn queued(&self) -> Vec<(usize, usize)> {
+        self.each()
+            .map(|shard| (shard.1.queued(), shard.1.len()))
+            .collect()
     }
 
     #[cfg(test)]
-    fn queued(&self) -> usize {
-        self.lock().1.queued()
+    fn shard_count(&self) -> usize {
+        self.shards.len()
     }
 }
 
 #[cfg(test)]
 impl Keyed<String> {
     pub fn forget_prefix(&self, prefix: &str) {
-        self.lock().1.retain(|k, _| !k.starts_with(prefix));
+        for mut shard in self.each() {
+            shard.1.retain(|k, _| !k.starts_with(prefix));
+        }
     }
+}
+
+fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 impl<'a, K: Hash + Eq + Clone> Under<'a, K> {
@@ -375,12 +517,10 @@ impl<'a, K: Hash + Eq + Clone> Under<'a, K> {
         K: Borrow<Q>,
         Q: Hash + Eq + ToOwned<Owned = K> + ?Sized,
     {
-        let mut inner = self.keyed.lock();
+        let (mut inner, hash) = self.keyed.shard(key);
         let (stored, table) = &mut *inner;
-        let level = table.get(key).copied().unwrap_or((now, 0.0));
-        let ((at, used), out) = f(self.policy.unwrap_or(*stored), level);
-        table.put(key, at, used);
-        out
+        let policy = self.policy.unwrap_or(*stored);
+        table.update(hash, key, |level| f(policy, level.unwrap_or((now, 0.0))))
     }
 
     pub fn take<Q>(&self, key: &Q, cost: f64, now: Instant) -> bool
@@ -419,21 +559,23 @@ impl<'a, K: Hash + Eq + Clone> Under<'a, K> {
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let mut inner = self.keyed.lock();
+        let (mut inner, hash) = self.keyed.shard(key);
         let (stored, table) = &mut *inner;
         let policy = self.policy.unwrap_or(*stored);
-        let current = table.get(key).is_some_and(|(stamp, _)| match policy {
-            Policy::Tokens {
-                burst: _,
-                per_sec: _,
-            } => true,
-            Policy::Window {
-                limit: _,
-                window: _,
-            } => *stamp == at,
-        });
-        if current && let Some(used) = table.get_mut(key) {
-            *used = (*used - cost).max(0.0);
+        if let Some((_, stamp, used)) = table.find_mut(hash, key) {
+            let current = match policy {
+                Policy::Tokens {
+                    burst: _,
+                    per_sec: _,
+                } => true,
+                Policy::Window {
+                    limit: _,
+                    window: _,
+                } => *stamp == at,
+            };
+            if current {
+                *used = (*used - cost).max(0.0);
+            }
         }
     }
 
@@ -450,12 +592,12 @@ impl<'a, K: Hash + Eq + Clone> Under<'a, K> {
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let inner = self.keyed.lock();
+        let (inner, hash) = self.keyed.shard(key);
         let (stored, table) = &*inner;
         let policy = self.policy.unwrap_or(*stored);
         let used = table
-            .get(key)
-            .map_or(0.0, |&level| policy.level(level, now).1);
+            .get_hashed(hash, key)
+            .map_or(0.0, |(at, &used)| policy.level((at, used), now).1);
         policy.full() - used
     }
 
@@ -464,9 +606,11 @@ impl<'a, K: Hash + Eq + Clone> Under<'a, K> {
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        let inner = self.keyed.lock();
+        let (inner, hash) = self.keyed.shard(key);
         let (stored, table) = &*inner;
-        let level = table.get(key).copied().unwrap_or((now, 0.0));
+        let level = table
+            .get_hashed(hash, key)
+            .map_or((now, 0.0), |(at, &used)| (at, used));
         self.policy
             .unwrap_or(*stored)
             .wait(level, cost, now)
@@ -490,6 +634,7 @@ impl Single {
     }
 
     /// Takes `cost`. False, and nothing taken, when the bucket holds less.
+    #[inline(always)]
     pub fn take(&mut self, cost: f64, now: Instant) -> bool {
         let taken;
         (self.level, taken) = self.policy.take(self.level, cost, now);
@@ -497,6 +642,7 @@ impl Single {
     }
 
     /// Takes `cost` without a check and returns what is left, below zero when it owes.
+    #[inline(always)]
     pub fn spend(&mut self, cost: f64, now: Instant) -> f64 {
         let left;
         (self.level, left) = self.policy.spend(self.level, cost, now);

@@ -52,7 +52,7 @@ impl Backoff {
     pub fn reserve(&self, key: &str, hot: bool) -> bool {
         let now = Instant::now();
         let mut table = locked(&self.table);
-        let (last, fails) = table.get(key).copied().unwrap_or((now, 0));
+        let (last, fails) = table.get(key).map_or((now, 0), |(at, &fails)| (at, fails));
         let fails = match now.duration_since(last) >= self.cap {
             true => 0,
             false => fails,
@@ -67,7 +67,7 @@ impl Backoff {
     /// Marks a reserved attempt as failed now, so the wait counts from the end of the check.
     pub fn failed(&self, key: &str) {
         let mut table = locked(&self.table);
-        if let Some(&(_, fails)) = table.get(key) {
+        if let Some((_, &fails)) = table.get(key) {
             table.put(key, Instant::now(), fails);
         }
     }

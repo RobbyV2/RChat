@@ -1,12 +1,14 @@
+use std::convert::Infallible;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use axum::extract::{Request, State};
+use axum::extract::Request;
 use axum::http::HeaderValue;
-use axum::middleware::{FromFnLayer, Next, from_fn_with_state};
 use axum::response::{IntoResponse, Response};
-use futures_util::future::BoxFuture;
+use futures_util::future::{BoxFuture, Either, Ready, ready};
+use tower_service::Service;
 
 use crate::api::ApiError;
 use crate::limits::bucket::{Keyed, Policy};
@@ -24,10 +26,18 @@ pub struct Limit {
     shared: Option<(Shared, &'static str)>,
 }
 
-type Check = fn(State<Limit>, Request, Next) -> BoxFuture<'static, Response>;
-
 /// The layer that refuses a request when its client's bucket is empty.
-pub type Layer = FromFnLayer<Check, Limit, (State<Limit>, Request)>;
+#[derive(Clone)]
+pub struct Layer {
+    limit: Limit,
+}
+
+/// A service behind its layer.
+#[derive(Clone)]
+pub struct Limited<S> {
+    inner: S,
+    limit: Limit,
+}
 
 /// A bucket of `burst` requests at once, then `per_sec` more each second, per client address.
 pub fn bucket(burst: u32, per_sec: u64) -> Arc<Keyed<IpAddr>> {
@@ -45,7 +55,7 @@ pub fn layer(bucket: Arc<Keyed<IpAddr>>, key: ClientIp) -> Layer {
         key,
         shared: None,
     };
-    from_fn_with_state(limit, check as Check)
+    Layer { limit }
 }
 
 /// The bucket counts in Redis as `name`, together with every copy on the same Redis and
@@ -61,28 +71,62 @@ pub fn shared_layer(
         key,
         shared: shared.map(|shared| (shared, name)),
     };
-    from_fn_with_state(limit, check as Check)
+    Layer { limit }
 }
 
-fn check(State(limit): State<Limit>, req: Request, next: Next) -> BoxFuture<'static, Response> {
-    Box::pin(async move {
-        let Some(ip) = limit.key.extract(&req) else {
-            return ApiError::internal("no client address for the rate limiter").into_response();
-        };
-        let counted = match &limit.shared {
-            Some((shared, name)) => {
-                let key = format!("http:{name}:{ip}");
-                shared.try_take(&key, limit.bucket.policy(), 1.0).await
-            }
-            None => None,
-        };
-        let answer =
-            counted.unwrap_or_else(|| limit.bucket.try_take(&ip, 1.0, Instant::now()).map(|_| ()));
-        match answer {
-            Ok(()) => next.run(req).await,
-            Err(wait) => refused(wait),
+impl<S> tower_layer::Layer<S> for Layer {
+    type Service = Limited<S>;
+
+    fn layer(&self, inner: S) -> Limited<S> {
+        Limited {
+            inner,
+            limit: self.limit.clone(),
         }
-    })
+    }
+}
+
+type Answer = Result<Response, Infallible>;
+
+impl<S> Service<Request> for Limited<S>
+where
+    S: Service<Request, Response = Response, Error = Infallible> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = Response;
+    type Error = Infallible;
+    type Future = Either<Either<S::Future, Ready<Answer>>, BoxFuture<'static, Answer>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Infallible>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request) -> Self::Future {
+        let now = |answer: Response| Either::Left(Either::Right(ready(Ok(answer))));
+        let Some(ip) = self.limit.key.extract(&req) else {
+            return now(
+                ApiError::internal("no client address for the rate limiter").into_response()
+            );
+        };
+        let Some((shared, name)) = self.limit.shared.clone() else {
+            return match self.limit.bucket.try_take(&ip, 1.0, Instant::now()) {
+                Ok(_) => Either::Left(Either::Left(self.inner.call(req))),
+                Err(wait) => now(refused(wait)),
+            };
+        };
+        let bucket = self.limit.bucket.clone();
+        let ready_inner = self.inner.clone();
+        let mut inner = std::mem::replace(&mut self.inner, ready_inner);
+        Either::Right(Box::pin(async move {
+            let key = format!("http:{name}:{ip}");
+            let counted = shared.try_take(&key, bucket.policy(), 1.0).await;
+            let answer =
+                counted.unwrap_or_else(|| bucket.try_take(&ip, 1.0, Instant::now()).map(|_| ()));
+            match answer {
+                Ok(()) => inner.call(req).await,
+                Err(wait) => Ok(refused(wait)),
+            }
+        }))
+    }
 }
 
 /// The 429 past a bucket: the wait in whole seconds, rounded up and at least one, in the text,

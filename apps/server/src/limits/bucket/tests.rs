@@ -156,8 +156,8 @@ fn max_keys_evicts_the_oldest_key() {
         window.spend(&format!("x{n}"), 1.0, start + 5 * SEC);
         tokens.take("a", 1.0, start + 5 * SEC + n * SEC);
     }
-    assert!(window.queued() <= 2 * 3 + 16 + 1);
-    assert!(tokens.queued() <= 2 * 2 + 16 + 1);
+    assert!(queued(&window) <= 2 * 3 + 16 + 1);
+    assert!(queued(&tokens) <= 2 * 2 + 16 + 1);
     let lru: Keyed = Keyed::new(
         Policy::Tokens {
             burst: 1.0,
@@ -184,12 +184,109 @@ fn a_queue_stays_near_its_live_keys() {
     for n in 0..20_000u64 {
         let key = format!("k{}", n % 5);
         b.take(&key, 1.0, start + Duration::from_millis(n));
-        let (queued, live) = (b.queued(), b.len());
-        assert!(
-            queued <= 2 * live + 16,
-            "{queued} queued for {live} keys at take {n}"
-        );
+        for (queued, live) in b.queued() {
+            assert!(
+                queued <= 2 * live + 16,
+                "{queued} queued for {live} keys at take {n}"
+            );
+        }
     }
+}
+
+fn queued<K: Hash + Eq + Clone>(keyed: &Keyed<K>) -> usize {
+    keyed.queued().iter().map(|(queued, _)| queued).sum()
+}
+
+#[test]
+fn maps_with_room_for_many_keys_are_sharded_and_keep_max_keys_a_bound() {
+    let policy = Policy::per_minute(1, 1);
+    for (max_keys, shards) in [
+        (1, 1),
+        (10, 1),
+        (2047, 1),
+        (2048, 2),
+        (10_000, 8),
+        (100_000, 64),
+        (1_000_000, 64),
+    ] {
+        let keyed: Keyed<u32> = Keyed::new(policy, max_keys);
+        assert_eq!(keyed.shard_count(), shards, "{max_keys}");
+    }
+    let start = Instant::now();
+    let keyed: Keyed<u32> = Keyed::new(policy, 10_000);
+    for n in 0..50_000u32 {
+        assert!(keyed.take(&n, 1.0, start + Duration::from_millis(u64::from(n))));
+        assert!(keyed.len() <= 10_000);
+    }
+    assert_eq!(keyed.len(), 10_000, "every shard fills its share");
+    let at = start + 50 * SEC;
+    let kept = (40_000..50_000u32)
+        .filter(|n| keyed.remaining(n, at) < 1.0)
+        .count();
+    assert!(
+        kept > 9_500,
+        "the keys used last are kept, {kept} of the last 10000"
+    );
+    assert!(
+        (0..10_000u32).all(|n| keyed.remaining(&n, at) == 1.0),
+        "the first keys made room"
+    );
+}
+
+#[test]
+fn a_sharded_map_changes_and_prunes_every_shard() {
+    let start = Instant::now();
+    let keyed: Keyed<u32> = Keyed::new(
+        Policy::Tokens {
+            burst: 2.0,
+            per_sec: 1.0,
+        },
+        100_000,
+    );
+    for n in 0..1000 {
+        assert!(keyed.take(&n, 2.0, start));
+    }
+    keyed.set_policy(Policy::Tokens {
+        burst: 8.0,
+        per_sec: 1.0,
+    });
+    assert_eq!(
+        keyed.policy(),
+        Policy::Tokens {
+            burst: 8.0,
+            per_sec: 1.0
+        }
+    );
+    assert!(
+        (0..1000).all(|n| keyed.remaining(&n, start) == 6.0),
+        "every key is under the new policy"
+    );
+    keyed.prune(start + 60 * SEC);
+    assert!(keyed.is_empty(), "every shard is pruned");
+}
+
+#[test]
+fn uses_of_a_sharded_map_are_atomic_under_contention() {
+    let start = Instant::now();
+    let keyed: Arc<Keyed<u32>> = Arc::new(Keyed::new(
+        Policy::Window {
+            limit: 5,
+            window: 60 * SEC,
+        },
+        100_000,
+    ));
+    let threads: Vec<_> = (0..16)
+        .map(|_| {
+            let keyed = keyed.clone();
+            std::thread::spawn(move || {
+                (0..20_000u32)
+                    .filter(|n| keyed.take(&(n % 1000), 1.0, start))
+                    .count()
+            })
+        })
+        .collect();
+    let won: usize = threads.into_iter().map(|t| t.join().expect("thread")).sum();
+    assert_eq!(won, 5 * 1000, "each key gives exactly its limit");
 }
 
 #[test]

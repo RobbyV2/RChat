@@ -1,7 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use redis::aio::ConnectionManager;
+use sha1::{Digest, Sha1};
 
 use crate::db::pool_key;
 use crate::limits::bucket::{Keyed, Policy};
@@ -43,6 +44,9 @@ redis.call('PEXPIREAT', KEYS[1], at + pace + 1000)
 return 0
 ";
 
+/// The SHA1 of `TAKE`, by which Redis runs the script it already has.
+static TAKE_SHA: LazyLock<String> = LazyLock::new(|| hex::encode(Sha1::digest(TAKE.as_bytes())));
+
 /// How long limits count in this process after Redis did not answer, before Redis is asked
 /// again.
 const SKIP_AFTER_MISS: Duration = Duration::from_secs(5);
@@ -81,16 +85,23 @@ impl Shared {
             Policy::Window { limit, window } => ("w", f64::from(limit), window.as_millis() as f64),
         };
         let mut conn = self.conn.clone();
-        let wait: i64 = redis::cmd("EVAL")
-            .arg(TAKE)
-            .arg(1)
-            .arg(format!("{}:rate:{key}", self.prefix))
-            .arg(kind)
-            .arg(full)
-            .arg(pace)
-            .arg(cost)
-            .query_async(&mut conn)
-            .await?;
+        let call = |command: &str, script: &str| {
+            let mut cmd = redis::cmd(command);
+            cmd.arg(script)
+                .arg(1)
+                .arg(format!("{}:rate:{key}", self.prefix))
+                .arg(kind)
+                .arg(full)
+                .arg(pace)
+                .arg(cost);
+            cmd
+        };
+        let wait: i64 = match call("EVALSHA", &TAKE_SHA).query_async(&mut conn).await {
+            Err(e) if e.kind() == redis::ErrorKind::Server(redis::ServerErrorKind::NoScript) => {
+                call("EVAL", TAKE).query_async(&mut conn).await?
+            }
+            answer => answer?,
+        };
         Ok(match wait {
             ..=0 => Ok(()),
             ms => Err(Duration::from_millis(ms as u64)),
@@ -203,6 +214,16 @@ mod tests {
             .expect("manager")
     }
 
+    #[test]
+    fn the_script_is_named_by_its_sha1() {
+        assert_eq!(TAKE_SHA.len(), 40);
+        assert_eq!(
+            hex::encode(Sha1::digest(b"return 1")),
+            "e0e1f9fabfc9d4800c877a703b823ac0578ff8db"
+        );
+        assert_eq!(*TAKE_SHA, hex::encode(Sha1::digest(TAKE.as_bytes())));
+    }
+
     #[tokio::test]
     async fn redis_down_falls_back_to_local() {
         let down = Shared::new(manager("redis://127.0.0.1:1").await, "rchat-test");
@@ -313,6 +334,51 @@ mod tests {
             .expect("redis")
             .expect_err("full");
         assert!(wait > Duration::from_secs(58), "{wait:?}");
+        let mut admin = manager(&url).await;
+        let () = redis::cmd("SCRIPT")
+            .arg("FLUSH")
+            .query_async(&mut admin)
+            .await
+            .expect("flush");
+        let flushed = Policy::Window {
+            limit: 1,
+            window: Duration::from_secs(60),
+        };
+        assert_eq!(
+            a.take("f", flushed, 1.0).await.expect("redis"),
+            Ok(()),
+            "a script Redis lost is sent again"
+        );
+        let known: Vec<bool> = redis::cmd("SCRIPT")
+            .arg("EXISTS")
+            .arg(TAKE_SHA.as_str())
+            .query_async(&mut admin)
+            .await
+            .expect("exists");
+        assert_eq!(known, [true], "Redis has the script again");
+        let name = format!("{prefix}-b");
+        let () = redis::cmd("CLIENT")
+            .arg("SETNAME")
+            .arg(&name)
+            .query_async(&mut b.conn.clone())
+            .await
+            .expect("name");
+        assert!(b.take("f", flushed, 1.0).await.expect("redis").is_err());
+        let clients: String = redis::cmd("CLIENT")
+            .arg("LIST")
+            .query_async(&mut admin)
+            .await
+            .expect("clients");
+        let last = clients
+            .lines()
+            .find(|l| l.split(' ').any(|f| f == format!("name={name}")))
+            .and_then(|l| l.split(' ').find_map(|f| f.strip_prefix("cmd=")))
+            .map(str::to_string);
+        assert_eq!(
+            last.as_deref(),
+            Some("evalsha"),
+            "a known script is run by its SHA1 alone"
+        );
         let rate = Rate::new("test", 10);
         let pool_a = rate.take_in("pool-a", Some(&a), "carol", burst, 1.0);
         assert_eq!(pool_a.await, Ok(()));

@@ -12,8 +12,13 @@ path = "src/lib.rs"
 axum = { version = "0.8", features = ["multipart", "ws"] }
 multer = "3.1"
 memchr = "2.8"
+hashbrown = { version = "0.16", default-features = false, features = [
+  "inline-more",
+] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.7", features = ["fs", "trace", "cors"] }
+tower-layer = "0.3"
+tower-service = "0.3"
 hyper = { version = "1", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "tokio"] }
 serde = { version = "1", features = ["derive", "rc"] }
