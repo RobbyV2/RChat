@@ -2,6 +2,8 @@
 
 import { useStore } from '../../lib/store'
 import { Dialog, filledDangerBtn, textBtn } from '../ui'
+import { useAccountChanges } from './account_state'
+import { AddToServerDialog, CreateAccountDialog, TempPasswordDialog } from './accounts'
 
 // The confirm dialogs of the site admin's account actions. They open over the admin page and
 // from the member and message menus.
@@ -16,6 +18,14 @@ export default function AdminDialogs() {
       return <DeleteUserConfirm username={dialog.username} />
     case 'remove_phrase_confirm':
       return <RemovePhraseConfirm username={dialog.username} />
+    case 'admin_create_account':
+      return <CreateAccountDialog />
+    case 'new_password_confirm':
+      return <TempPasswordDialog username={dialog.username} />
+    case 'sign_out_confirm':
+      return <SignOutConfirm username={dialog.username} />
+    case 'admin_add_to_server':
+      return <AddToServerDialog username={dialog.username} />
     default:
       return null
   }
@@ -69,6 +79,21 @@ function RemovePhraseConfirm({ username }: { username: string }) {
     >
       Remove the backup phrase of <span className="streamer">{username}</span>? They stay signed in
       and keep their password. This only removes a way back in, and they can set a new phrase.
+    </UserConfirm>
+  )
+}
+
+function SignOutConfirm({ username }: { username: string }) {
+  const adminSignOut = useStore(s => s.adminSignOut)
+  const changed = useAccountChanges(s => s.changed)
+  return (
+    <UserConfirm
+      title="Sign Out Everywhere"
+      confirm="Sign out"
+      run={() => adminSignOut(username).then(changed)}
+    >
+      Sign <span className="streamer">{username}</span> out on every device? They keep their
+      password and can sign in again.
     </UserConfirm>
   )
 }

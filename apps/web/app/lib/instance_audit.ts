@@ -9,6 +9,9 @@ export interface AuditPart {
 // Known actions read as a sentence; `target` says they act on an account.
 const ACTIONS: Record<string, { verb: string; target: boolean }> = {
   'user.remove_phrase': { verb: 'removed the backup phrase of', target: true },
+  'user.create': { verb: 'created the account of', target: true },
+  'user.temp_password': { verb: 'gave a new temporary password to', target: true },
+  'user.sign_out': { verb: 'signed out', target: true },
   'report_forms.change': { verb: 'changed the report forms', target: false },
 }
 
@@ -61,11 +64,51 @@ const serverLine = (e: InstanceAuditEntry): AuditPart[] => {
   return owner === null ? [...made, { text: ' for a deleted user' }] : made
 }
 
+// An account added to a server, either of which may have been deleted since.
+const addedLine = (e: InstanceAuditEntry): AuditPart[] => {
+  const { server } = detailOf(e)
+  const who: AuditPart =
+    e.target === null ? { text: 'a deleted user' } : { text: e.target, name: true }
+  return typeof server === 'string'
+    ? [{ text: ' added ' }, who, { text: ' to ' }, { text: server, name: true }]
+    : [{ text: ' added ' }, who, { text: ' to a server' }]
+}
+
+// An account that replaced its temporary password: the actor is the account itself.
+const passwordSetLine = (): AuditPart[] => [{ text: ' chose their own password' }]
+
+// The names of the brand's controls and images.
+const BRAND_PARTS: Record<string, string> = {
+  instance_name: 'the instance name',
+  app_name: 'the app name',
+  app_short_name: 'the short name',
+  brand_about: 'the about text',
+  brand_links: 'the links',
+  login_note: 'the sign-in note',
+  instance_suggestions: 'the suggested instances',
+  logo: 'the logo',
+}
+
+// A change to the brand: which part, never its text.
+const brandLine = (e: InstanceAuditEntry): AuditPart[] => {
+  const { key } = detailOf(e)
+  const part = typeof key === 'string' ? key : (e.target ?? '')
+  const named = Object.hasOwn(BRAND_PARTS, part)
+    ? BRAND_PARTS[part]
+    : part.startsWith('mark-')
+      ? 'the mark'
+      : 'the brand'
+  return [{ text: ` changed ${named}` }]
+}
+
 // Actions with a line of their own: what follows the actor.
 const LINES: Record<string, (e: InstanceAuditEntry) => AuditPart[]> = {
   'settings.change': settingLine,
   'settings.config': settingLine,
   'server.create': serverLine,
+  'server.add_member': addedLine,
+  'user.password_set': passwordSetLine,
+  'branding.change': brandLine,
 }
 
 // One line of the instance audit log: who did what to whom. Unknown actions show their code.
@@ -95,6 +138,7 @@ export type AuditKind = (typeof AUDIT_KINDS)[number]['value']
 
 const KIND_PREFIXES: [string, Exclude<AuditKind, 'all'>][] = [
   ['settings.', 'settings'],
+  ['branding.', 'settings'],
   ['report_forms.', 'settings'],
   ['user.', 'accounts'],
   ['server.', 'servers'],

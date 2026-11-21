@@ -84,6 +84,7 @@ describe('realtime reconnects', () => {
 describe('realtime close codes', () => {
   test('only a connection closed for too many open ones waits to be used again', () => {
     expect(reconnectsAfter(CLOSE_TOO_MANY)).toBe(false)
+    expect(reconnectsAfter(4403)).toBe(false)
     expect(reconnectsAfter(4029)).toBe(true)
     expect(reconnectsAfter(1006)).toBe(true)
   })
@@ -96,6 +97,22 @@ describe('realtime close codes', () => {
     expect(sockets.length).toBe(1)
     expect((client as unknown as { reconnectTimer: unknown }).reconnectTimer).toBeNull()
     client.ensureConnected()
+    expect(sockets.length).toBe(2)
+    client.stop()
+  })
+
+  test('a restricted account waits for a new session start', () => {
+    const { client, ws } = openClient()
+    let prompted = false
+    client.onPasswordChangeRequired = () => {
+      prompted = true
+    }
+    ws.readyState = 3
+    ws.onclose?.({ code: 4403 })
+    expect(prompted).toBe(true)
+    client.ensureConnected()
+    expect(sockets.length).toBe(1)
+    client.start('token')
     expect(sockets.length).toBe(2)
     client.stop()
   })

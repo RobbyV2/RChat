@@ -2,13 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
+import { ACCOUNT_FILTERS, signInLine } from '../../lib/admin_accounts'
+import { ApiError } from '../../lib/api'
 import { api } from '../../lib/instances'
 import { errorText, inSession, useStore } from '../../lib/store'
-import type { ServerSummaryLite, UserRef } from '../../lib/types'
+import type { AccountFilter, AdminAccount, ServerSummaryLite, UserRef } from '../../lib/types'
+import { openActionMenu } from '../../lib/actions/menu'
+import { longPress } from '../context_menu'
 import { UserAvatar } from '../user_avatar'
 import { PageGroup } from '../settings_page'
-import { Sentinel } from '../ui'
-import { dangerBtn, fieldCls, textBtn } from './touch'
+import { Chips, Sentinel } from '../ui'
+import { useAccountChanges } from './account_state'
+import { dangerBtn, fieldCls, filledBtn, textBtn } from './touch'
 
 export const rowBtnCls =
   'flex min-h-11 w-full min-w-0 items-center gap-3 rounded-xl bg-surface-container px-3 py-2 text-left hover:bg-surface-container-high'
@@ -76,40 +81,80 @@ function UserServers({ username }: { username: string }) {
   )
 }
 
-// One account: the servers it created and the account actions.
+const factCls = 'flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm'
+
+// How the account signs in, its sessions, its phrase and its servers.
+function AccountFacts({ account }: { account: AdminAccount }) {
+  const facts: [string, string][] = [
+    ['Created', new Date(account.created_at * 1000).toLocaleDateString()],
+    ['Sign-in', signInLine(account, Math.floor(Date.now() / 1000))],
+    ['Sessions', account.sessions.toLocaleString()],
+    ['Backup phrase', account.phrase ? 'Set' : 'None'],
+    ['Servers', account.servers.toLocaleString()],
+  ]
+  return (
+    <dl className="mb-4 grid grid-cols-1 gap-x-6 gap-y-1 rounded-xl bg-surface-container px-4 py-3 sm:grid-cols-2">
+      {facts.map(([label, value]) => (
+        <div key={label} className={factCls}>
+          <dt className="shrink-0 text-on-surface-variant">{label}</dt>
+          <dd className="min-w-0 break-words">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+// One account: how it signs in, the account actions and the servers it created.
 export function UserPage({ username }: { username: string }) {
   const openDialog = useStore(s => s.openDialog)
   const openAdmin = useStore(s => s.openAdmin)
   const setError = useStore(s => s.setError)
   const mine = useStore(s => s.me?.username === username)
   const listed = useStore(s => s.adminUsers.list.find(u => u.username === username))
-  const [found, setFound] = useState<UserRef | null | undefined>(undefined)
+  const rev = useAccountChanges(s => s.rev)
+  const [account, setAccount] = useState<AdminAccount | null | undefined>(undefined)
   useEffect(() => {
-    if (listed) return
     let live = true
-    api
-      .adminUsers(null, username)
-      .then(page => {
-        if (live) setFound(page.items.find(u => u.username === username) ?? null)
-      })
-      .catch(inSession((e: unknown) => setError(errorText(e))))
+    const load = () =>
+      api
+        .adminAccount(username)
+        .then(found => {
+          if (live) setAccount(found)
+        })
+        .catch(
+          inSession((e: unknown) => {
+            if (!live) return
+            if (e instanceof ApiError && e.status === 404) return setAccount(null)
+            setError(errorText(e))
+          })
+        )
+    void load()
+    const again = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    window.addEventListener('focus', again)
+    document.addEventListener('visibilitychange', again)
     return () => {
       live = false
+      window.removeEventListener('focus', again)
+      document.removeEventListener('visibilitychange', again)
     }
-  }, [listed, username, setError])
-  const user = listed ?? found
+  }, [username, rev, setError])
+  const user = account?.user ?? listed
   return (
     <div>
       <button
         onClick={() => openAdmin('users')}
-        className={`${textBtn} mb-3 -ml-3 hidden md:block`}
+        className={`${textBtn} mb-3 -ml-3 hidden cursor-pointer md:block`}
       >
         Back to users
       </button>
-      {user === null && <p className="text-sm text-on-surface-variant">No such account.</p>}
+      {account === null && !listed && (
+        <p className="text-sm text-on-surface-variant">No such account.</p>
+      )}
       {user && (
         <>
-          <div className="flex min-w-0 items-center gap-3 pb-5">
+          <div className="flex min-w-0 items-center gap-3 pb-4">
             <UserAvatar
               username={user.username}
               avatarKind={user.avatar_kind}
@@ -120,6 +165,33 @@ export function UserPage({ username }: { username: string }) {
               <span className="truncate font-medium">{user.display_name}</span>
               <span className="truncate text-sm text-on-surface-variant">{user.username}</span>
             </span>
+          </div>
+          {account && <AccountFacts account={account} />}
+          <div className="flex flex-wrap gap-2 pb-5">
+            {!mine && (
+              <>
+                <button
+                  onClick={() =>
+                    openDialog({ kind: 'new_password_confirm', username: user.username })
+                  }
+                  className={`${textBtn} cursor-pointer`}
+                >
+                  New temporary password
+                </button>
+                <button
+                  onClick={() => openDialog({ kind: 'sign_out_confirm', username: user.username })}
+                  className={`${textBtn} cursor-pointer`}
+                >
+                  Sign out everywhere
+                </button>
+              </>
+            )}
+            <button
+              onClick={() => openDialog({ kind: 'admin_add_to_server', username: user.username })}
+              className={`${textBtn} cursor-pointer`}
+            >
+              Add to server
+            </button>
           </div>
           <PageGroup label="Servers they created">
             <UserServers username={user.username} />
@@ -158,13 +230,56 @@ export function UserPage({ username }: { username: string }) {
   )
 }
 
+// The accounts whose password is temporary or expired, a page at a time. The whole list of
+// accounts is the store's.
+const useFiltered = (q: string, filter: AccountFilter, rev: number) => {
+  const setError = useStore(s => s.setError)
+  const [page, setPage] = useState<{ list: UserRef[]; next: string | null }>({
+    list: [],
+    next: null,
+  })
+  const busy = useRef(false)
+  const fetchFrom = useCallback(
+    (cursor: string | null) => {
+      if (filter === 'all' || (busy.current && cursor !== null)) return
+      busy.current = true
+      api
+        .adminUsers(cursor, q, filter)
+        .then(found =>
+          setPage(cur => {
+            const base = cursor === null ? [] : cur.list
+            const seen = new Set(base.map(u => u.username))
+            return {
+              list: [...base, ...found.items.filter(u => !seen.has(u.username))],
+              next: found.next,
+            }
+          })
+        )
+        .catch(inSession((e: unknown) => setError(errorText(e))))
+        .finally(() => {
+          busy.current = false
+        })
+    },
+    [q, filter, setError]
+  )
+  useEffect(() => {
+    const t = setTimeout(() => fetchFrom(null), 300)
+    return () => clearTimeout(t)
+  }, [fetchFrom, rev])
+  return { ...page, more: () => fetchFrom(page.next) }
+}
+
 export function UsersSection() {
   const overview = useStore(s => s.adminOverview)
   const adminUsers = useStore(s => s.adminUsers)
   const loadAdminUsers = useStore(s => s.loadAdminUsers)
   const loadAdminOverview = useStore(s => s.loadAdminOverview)
   const openAdmin = useStore(s => s.openAdmin)
+  const openDialog = useStore(s => s.openDialog)
+  const rev = useAccountChanges(s => s.rev)
   const [q, setQ] = useState('')
+  const [filter, setFilter] = useState<AccountFilter>('all')
+  const filtered = useFiltered(q, filter, rev)
   useEffect(() => {
     void loadAdminOverview()
   }, [loadAdminOverview])
@@ -173,14 +288,25 @@ export function UsersSection() {
     return () => clearTimeout(t)
   }, [q, loadAdminUsers])
   const more = useCallback(() => void loadAdminUsers(q), [q, loadAdminUsers])
+  const all = filter === 'all'
+  const list = all ? adminUsers.list : filtered.list
+  const hasMore = all ? adminUsers.hasMore : filtered.next !== null
   return (
-    <div className="space-y-2">
-      {overview && (
-        <p className="text-sm text-on-surface-variant">
-          {overview.user_count.toLocaleString()}{' '}
-          {overview.user_count === 1 ? 'account' : 'accounts'}
-        </p>
-      )}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {overview && (
+          <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
+            {overview.user_count.toLocaleString()}{' '}
+            {overview.user_count === 1 ? 'account' : 'accounts'}
+          </p>
+        )}
+        <button
+          onClick={() => openDialog({ kind: 'admin_create_account' })}
+          className={`${filledBtn} shrink-0 cursor-pointer`}
+        >
+          Create account
+        </button>
+      </div>
       <div className="flex">
         <input
           value={q}
@@ -190,12 +316,29 @@ export function UsersSection() {
           className={`${fieldCls} streamer`}
         />
       </div>
+      <Chips
+        label="Show accounts"
+        value={filter}
+        options={ACCOUNT_FILTERS}
+        onChange={setFilter}
+        touch
+      />
       <div className="space-y-1">
-        {adminUsers.list.map(u => (
+        {list.length === 0 && !hasMore && !all && (
+          <p className="text-sm text-on-surface-variant">
+            {filter === 'expired'
+              ? 'No account has an expired temporary password.'
+              : 'No account has a temporary password.'}
+          </p>
+        )}
+        {list.map(u => (
           <button
             key={u.username}
             onClick={() => openAdmin('users', u.username)}
-            className={rowBtnCls}
+            {...longPress((x, y) =>
+              openActionMenu(x, y, { kind: 'member', user: u, server: null, where: 'admin' })
+            )}
+            className={`${rowBtnCls} cursor-pointer`}
           >
             <UserAvatar
               username={u.username}
@@ -209,7 +352,9 @@ export function UsersSection() {
             <ChevronRight size={18} className="shrink-0 text-on-surface-variant" />
           </button>
         ))}
-        {adminUsers.hasMore && <Sentinel key={adminUsers.list.length} onVisible={more} />}
+        {hasMore && (
+          <Sentinel key={`${filter}:${list.length}`} onVisible={all ? more : filtered.more} />
+        )}
       </div>
     </div>
   )

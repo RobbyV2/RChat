@@ -125,6 +125,21 @@ export function OverviewSection() {
             <p className="text-sm text-on-surface-variant">Loading</p>
           )}
         </div>
+        {overview && overview.temporary_count !== undefined && (
+          <div className={cardCls}>
+            <p className={cardTitleCls}>Temporary passwords</p>
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 flex-1 text-sm break-words">
+                {overview.temporary_count === 0
+                  ? 'None waiting'
+                  : `${overview.temporary_count.toLocaleString()} not changed yet`}
+              </span>
+              <button onClick={() => openAdmin('users')} className={`${textBtn} shrink-0`}>
+                Users
+              </button>
+            </div>
+          </div>
+        )}
         {config && (
           <div className={cardCls}>
             <p className={cardTitleCls}>Server config</p>

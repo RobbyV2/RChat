@@ -132,6 +132,10 @@ export type ActiveDialog =
   | { kind: 'ban_confirm'; username: string }
   | { kind: 'delete_user_confirm'; username: string }
   | { kind: 'remove_phrase_confirm'; username: string }
+  | { kind: 'admin_create_account' }
+  | { kind: 'new_password_confirm'; username: string }
+  | { kind: 'sign_out_confirm'; username: string }
+  | { kind: 'admin_add_to_server'; username: string }
   | {
       kind: 'settings'
       focus?: SettingsFocus
@@ -626,6 +630,7 @@ export interface RChatState {
   clearChannelPerm: (id: number, subject: string) => Promise<void>
   adminDeleteUser: (username: string) => Promise<void>
   adminRemovePhrase: (username: string) => Promise<void>
+  adminSignOut: (username: string) => Promise<void>
   adminDeleteMessage: (id: number) => Promise<void>
   loadMembers: (server: string, reset?: boolean) => Promise<void>
   loadInteracted: (server: string, reset?: boolean) => Promise<void>

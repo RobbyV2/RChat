@@ -86,6 +86,7 @@ test('the actions marked as danger', () => {
     'friend_remove',
     'member_block',
     'admin_ban_site_wide',
+    'admin_delete_account',
     'admin_remove_phrase',
     'message_pause_guest',
     'message_delete',

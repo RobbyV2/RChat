@@ -691,7 +691,10 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     return api
       .me(background)
       .then(me => {
-        if (at === sessionMark()) applyMe(me, true)
+        if (at !== sessionMark()) return
+        const wasRestricted = get().me?.password_temporary?.change === 'required'
+        applyMe(me, true)
+        if (wasRestricted && me.password_temporary?.change !== 'required') startWs()
       })
       .catch(e => {
         if (at !== sessionMark()) return
@@ -924,6 +927,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       get().applyWsEvent(ev)
       for (const tap of wsTaps) tap(ev)
     }
+    if (get().me?.password_temporary?.change === 'required') {
+      home.ws.stop()
+      return
+    }
+    home.ws.onPasswordChangeRequired = () => refreshMe(true)
     home.ws.onEvent = ev => {
       const room = eventRoom(ev)
       if (room) {
@@ -1492,7 +1500,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       const at = sessionMark()
       try {
         await api.changePassword(current, next)
-        if (at === sessionMark()) set(s => (s.me ? { me: { ...s.me, password_kind: kind } } : {}))
+        if (at !== sessionMark()) return null
+        const temporary = get().me?.password_temporary ?? null
+        set(s => (s.me ? { me: { ...s.me, password_kind: kind, password_temporary: null } } : {}))
+        // What the session could not load while it was held to the change loads now.
+        if (temporary !== null && typeof window !== 'undefined') window.location.reload()
         return null
       } catch (e) {
         if (at !== sessionMark()) return errorText(e)

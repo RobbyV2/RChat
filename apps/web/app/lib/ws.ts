@@ -38,7 +38,11 @@ export const wsText = (msg: unknown): string | null => {
 
 export const CLOSE_TOO_OFTEN = 4029
 
-export const reconnectsAfter = (code: number): boolean => code !== CLOSE_TOO_MANY
+// The session must change its temporary password before it gets a connection.
+export const CLOSE_PASSWORD_CHANGE = 4403
+
+export const reconnectsAfter = (code: number): boolean =>
+  code !== CLOSE_TOO_MANY && code !== CLOSE_PASSWORD_CHANGE
 
 const EARLY_AFTER = 5_000
 const LIMITED_ATTEMPT = 3
@@ -70,6 +74,7 @@ export class WsClient {
   onEvent: (ev: WsEvent) => void = () => {}
   onStatus: (status: WsStatus) => void = () => {}
   onPoll: () => void = () => {}
+  onPasswordChangeRequired: () => void = () => {}
 
   constructor(private endpoints: WsEndpoints) {}
 
@@ -188,6 +193,10 @@ export class WsClient {
         return
       }
       this.openedAt = null
+      if (e.code === CLOSE_PASSWORD_CHANGE) {
+        this.stopped = true
+        this.onPasswordChangeRequired()
+      }
       this.onStatus('red')
     }
     ws.onerror = () => ws.close()

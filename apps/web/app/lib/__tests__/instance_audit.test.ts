@@ -61,14 +61,43 @@ test('an entry the command line made is shown as made by it', () => {
   expect(names(made)).toEqual(['bob'])
 })
 
+test('account and brand actions read as sentences that hold no secret', () => {
+  const line = (action: string, target: string | null, detail: unknown = {}, actor = 'root') =>
+    text(entry({ action, target, detail, actor }))
+  expect(line('user.create', 'dana', { display_name: 'Dana R.', servers: ['club'] })).toBe(
+    'root created the account of dana'
+  )
+  expect(line('user.create', null)).toBe('root created the account of a deleted user')
+  expect(line('user.temp_password', 'dana', { expires_at: 5 })).toBe(
+    'root gave a new temporary password to dana'
+  )
+  expect(line('user.sign_out', 'dana', { sessions: 2 })).toBe('root signed out dana')
+  expect(line('user.password_set', 'dana', {}, 'dana')).toBe('dana chose their own password')
+  expect(line('server.add_member', 'dana', { server: 'club', roles: [3] })).toBe(
+    'root added dana to club'
+  )
+  expect(line('server.add_member', null, { server: 'club', roles: [] })).toBe(
+    'root added a deleted user to club'
+  )
+  expect(
+    names(entry({ action: 'server.add_member', target: 'dana', detail: { server: 'club' } }))
+  ).toEqual(['root', 'dana', 'club'])
+  expect(line('branding.change', 'instance_name', { key: 'instance_name' })).toBe(
+    'root changed the instance name'
+  )
+  expect(line('branding.change', 'mark-192', { key: 'mark-192' })).toBe('root changed the mark')
+  expect(line('branding.change', 'logo', { key: 'logo' })).toBe('root changed the logo')
+  expect(line('branding.change', 'other', {})).toBe('root changed the brand')
+})
+
 test('the config mark is read on any action', () => {
   const later = entry({
     actor: null,
-    action: 'user.create',
+    action: 'user.rename',
     target: 'dana',
     detail: { by: 'config' },
   })
-  expect(text(later)).toBe('Server config user.create dana')
+  expect(text(later)).toBe('Server config user.rename dana')
   expect(names(later)).toEqual(['dana'])
 })
 

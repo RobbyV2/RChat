@@ -797,6 +797,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'clearChannelPerm'
     | 'adminDeleteUser'
     | 'adminRemovePhrase'
+    | 'adminSignOut'
     | 'adminDeleteMessage'
     | 'loadMembers'
     | 'loadInteracted'
@@ -1003,6 +1004,11 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       act(async () => {
         const { removed } = await live(api.adminRemovePhrase(username))
         get().showToast(removed ? 'Backup phrase removed' : 'No backup phrase was set')
+      }),
+    adminSignOut: username =>
+      act(async () => {
+        await live(api.adminSignOut(username))
+        get().showToast('Signed out everywhere')
       }),
     adminDeleteMessage: id => act(async () => void (await api.adminDeleteMessage(id))),
 

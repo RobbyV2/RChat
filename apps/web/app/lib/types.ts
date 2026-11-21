@@ -759,7 +759,47 @@ export interface AdminConfig {
 export interface AdminOverview {
   server_count: number
   user_count: number
+  // Accounts whose password is still a temporary one. Absent on older servers.
+  temporary_count?: number
   relay?: RelayStatus
+}
+
+// A temporary password as the server returns it once.
+export interface IssuedPassword {
+  temp_password: string
+  // Unix seconds; null for never.
+  expires_at: number | null
+}
+
+// What became of one server an account was to join.
+export interface AddedServer {
+  server: string
+  ok: boolean
+  error?: string
+}
+
+export interface CreatedAccount extends IssuedPassword {
+  user: UserRef
+  servers: AddedServer[]
+}
+
+// One account as the site administration page shows it.
+export interface AdminAccount {
+  user: UserRef
+  created_at: number
+  sign_in: 'text' | 'words'
+  temporary: { issued_at: number; expires_at: number | null; expired: boolean } | null
+  phrase: boolean
+  sessions: number
+  servers: number
+}
+
+export type AccountFilter = 'all' | 'temporary' | 'expired'
+
+// A server a new account joins, with the roles it gets there.
+export interface AccountServer {
+  server: string
+  roles: number[]
 }
 
 export interface ThreadPings {

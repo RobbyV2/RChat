@@ -25,8 +25,9 @@ export type Via = 'menu' | 'palette' | 'key' | 'bar'
 
 export type Args = Record<string, string>
 
+// `admin`: a row of the site administration page's list of accounts.
 export type MemberWhere =
-  'list' | 'author' | 'friend' | 'request' | 'interacted' | 'dm' | 'profile' | 'palette'
+  'list' | 'author' | 'friend' | 'request' | 'interacted' | 'dm' | 'profile' | 'palette' | 'admin'
 
 // What a P2P message list knows about its rows: where replies and edits go, who may do what, the
 // contact a forward skips, whether rows start threads, and a sender's own profile name.

@@ -3,8 +3,13 @@ import { localUntil, type TimeoutWire } from './timeouts'
 import { DEFAULT_DM_QUERY, queryParams, type DmQuery } from './dm_list'
 import { ALL_PERMS } from './types'
 import type {
+  AccountFilter,
+  AccountServer,
+  AdminAccount,
   AdminConfig,
   AdminOverview,
+  CreatedAccount,
+  IssuedPassword,
   InstanceAuditEntry,
   AuditEntry,
   AuthResponse,
@@ -833,8 +838,22 @@ export const endpoints = (c: ApiClient) => ({
   patchSettings: (body: SiteSettingsPatch) => c.req<SiteSettings>('PATCH', '/admin/settings', body),
   adminOverview: () => c.req<AdminOverview>('GET', '/admin/overview'),
   adminConfig: () => c.req<AdminConfig>('GET', '/admin/config'),
-  adminUsers: (cursor: string | null, q: string) =>
-    c.page<UserRef>(withCursor(`/admin/users?limit=50&q=${seg(q)}`, cursor)),
+  adminUsers: (cursor: string | null, q: string, filter: AccountFilter = 'all') =>
+    c.page<UserRef>(
+      withCursor(
+        `/admin/users?limit=50&q=${seg(q)}${filter === 'all' ? '' : `&filter=${filter}`}`,
+        cursor
+      )
+    ),
+  adminAccount: (username: string) => c.req<AdminAccount>('GET', `/admin/users/${seg(username)}`),
+  adminCreateUser: (body: { username: string; display_name?: string; servers: AccountServer[] }) =>
+    c.req<CreatedAccount>('POST', '/admin/users', body),
+  adminResetPassword: (username: string) =>
+    c.req<IssuedPassword>('POST', `/admin/users/${seg(username)}/temp_password`),
+  adminSignOut: (username: string) =>
+    c.req<unknown>('POST', `/admin/users/${seg(username)}/sign_out`),
+  adminAddToServer: (username: string, body: AccountServer) =>
+    c.req<unknown>('POST', `/admin/users/${seg(username)}/servers`, body),
   adminServers: (cursor: string | null, q: string) =>
     c.page<ServerSummaryLite>(withCursor(`/admin/servers?limit=50&q=${seg(q)}`, cursor)),
   adminDeleteServer: (name: string) => c.req<unknown>('DELETE', `/admin/servers/${seg(name)}`),
