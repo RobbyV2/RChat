@@ -2706,7 +2706,12 @@ async fn search_screened(
         } else {
             Scan::All
         };
-        let results = search_once(db, scope, sq, scan, SEARCH_PAGE).await?;
+        let results = match scan {
+            Scan::All if !is_sqlite(db) && !text.is_empty() && unscoped && first_page => {
+                newest_first(db, scope, sq).await?
+            }
+            scan => search_once(db, scope, sq, scan, SEARCH_PAGE).await?,
+        };
         let next = match results.len() as i64 == SEARCH_PAGE {
             true => results.last().map(|r| r.message.id),
             false => None,
@@ -2739,6 +2744,43 @@ async fn search_screened(
         (false, false) => None,
     };
     Ok((results, next.map(SearchCursor::before)))
+}
+
+/// A page of a text search on Postgres, the same as one query over every id: first the newest
+/// `SEARCH_WINDOW` ids below `before` (a common text fills the page there), then, when that
+/// gave less than a page, one query below the window.
+async fn newest_first(
+    db: &Db,
+    scope: &Scope,
+    sq: SearchQuery,
+) -> Result<Vec<SearchResult>, ApiError> {
+    let floor = sq.after.unwrap_or(0).max(0);
+    let hi = match sq.before {
+        Some(before) => before,
+        None => newest_id(db).await?.saturating_add(1),
+    };
+    let lo = hi
+        .saturating_sub(SEARCH_WINDOW)
+        .max(floor.saturating_add(1));
+    let mut results = search_once(db, scope, sq.clone(), Scan::Window(lo, hi), SEARCH_PAGE).await?;
+    let left = SEARCH_PAGE - results.len() as i64;
+    if left > 0 && lo > floor.saturating_add(1) {
+        let below = SearchQuery {
+            before: Some(lo),
+            ..sq
+        };
+        results.extend(search_once(db, scope, below, Scan::All, left).await?);
+    }
+    Ok(results)
+}
+
+/// The id of the newest message, 0 without one.
+async fn newest_id(db: &Db) -> Result<i64, ApiError> {
+    Ok(sqlx::query("SELECT MAX(id) FROM messages")
+        .fetch_one(db)
+        .await?
+        .try_get::<Option<i64>, _>(0)?
+        .unwrap_or(0))
 }
 
 /// An id at or above every message the caller may find, 0 when none of their channels has a
@@ -3290,6 +3332,19 @@ async fn channel_paged(
     Ok((search_results(db, &rows).await?, next, heads))
 }
 
+/// Searches run against `messages`, per database, for tests that count them.
+#[cfg(test)]
+static SEARCHES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, usize>>> =
+    std::sync::LazyLock::new(Default::default);
+
+#[cfg(test)]
+fn searches_run(db: &Db) -> usize {
+    SEARCHES
+        .lock()
+        .map(|counts| counts.get(&crate::db::pool_key(db)).copied().unwrap_or(0))
+        .unwrap_or(0)
+}
+
 async fn search_once(
     db: &Db,
     scope: &Scope,
@@ -3297,6 +3352,10 @@ async fn search_once(
     scan: Scan,
     limit: i64,
 ) -> Result<Vec<SearchResult>, ApiError> {
+    #[cfg(test)]
+    if let Ok(mut counts) = SEARCHES.lock() {
+        *counts.entry(crate::db::pool_key(db)).or_default() += 1;
+    }
     let scoped = matches!(scan, Scan::ChannelText);
     let (sql, binds) = search_sql(db, scope, sq, scan, limit);
     let query = bind_all(
@@ -5906,6 +5965,85 @@ mod tests {
             !plan.contains("Index Scan Backward using messages_pkey"),
             "{plan}"
         );
+        crate::api::test_util::pg_done(state, temp).await;
+    }
+
+    /// A Postgres state with `rchat` holding 12,000 messages of a small vocabulary, `rare` in
+    /// a few of the oldest, and without the channel text index, so text searches read the
+    /// message table.
+    async fn pg_haystack(tag: &str) -> Option<(AppState, crate::api::test_util::PgTemp)> {
+        let (state, temp) = crate::api::test_util::pg_state(tag).await?;
+        let db = &state.db;
+        add_member(db, "rchat", "alice", 0, 0, 0).await;
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 12000) INSERT INTO messages(channel_id, author, content, created_at) SELECT (SELECT id FROM channels WHERE server = 'rchat' LIMIT 1), 'bob', CASE WHEN i % 997 = 3 AND i < 6000 THEN 'a rare word ' || i WHEN (i * 7919) % 13 < 4 THEN 'common words ' || i ELSE 'hay ' || i END, i FROM n")
+            .execute(db)
+            .await
+            .expect("haystack");
+        sqlx::query("DROP INDEX idx_messages_channel_text")
+            .execute(db)
+            .await
+            .expect("no channel text index");
+        Some((state, temp))
+    }
+
+    #[tokio::test]
+    async fn postgres_windowed_search_equals_unwindowed() {
+        let Some((state, temp)) = pg_haystack("search_window").await else {
+            return;
+        };
+        let db = &state.db;
+        assert!(!has_channel_index(db).await.expect("index"));
+        let alice = mem_user("alice", false);
+        let scope = member_scope(db, &alice).await;
+        for (text, before) in [
+            ("common", None),
+            ("rare", None),
+            ("rare", Some(4000)),
+            ("absent", None),
+            ("wo", None),
+            ("common", Some(9000)),
+        ] {
+            let mut sq = query(Some(text));
+            sq.before = before;
+            let (windowed, next) =
+                search_paged(&state, Some(&alice), &HeaderMap::new(), sq.clone())
+                    .await
+                    .expect("search");
+            let whole = search_once(db, &scope, sq, Scan::All, SEARCH_PAGE)
+                .await
+                .expect("one query");
+            let ids = |rows: &[SearchResult]| rows.iter().map(|r| r.message.id).collect::<Vec<_>>();
+            assert_eq!(ids(&windowed), ids(&whole), "{text} before {before:?}");
+            let full = whole.len() as i64 == SEARCH_PAGE;
+            assert_eq!(
+                next,
+                full.then(|| whole.last().map(|r| r.message.id)).flatten(),
+                "{text} before {before:?}"
+            );
+        }
+        crate::api::test_util::pg_done(state, temp).await;
+    }
+
+    #[tokio::test]
+    async fn postgres_search_runs_at_most_two_queries() {
+        let Some((state, temp)) = pg_haystack("search_two").await else {
+            return;
+        };
+        let db = &state.db;
+        let alice = mem_user("alice", false);
+        for (text, most) in [("common", 1), ("rare", 2), ("absent", 2)] {
+            let before = searches_run(db);
+            let (rows, _) =
+                search_paged(&state, Some(&alice), &HeaderMap::new(), query(Some(text)))
+                    .await
+                    .expect("search");
+            assert_eq!(
+                searches_run(db) - before,
+                most,
+                "{text}: {} hits",
+                rows.len()
+            );
+        }
         crate::api::test_util::pg_done(state, temp).await;
     }
 
