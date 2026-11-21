@@ -48,6 +48,8 @@ const SETTINGS: Record<keyof SiteSettings, true> = {
   public_reading: true,
   profile_visibility: true,
   profile_choices: true,
+  password_change: true,
+  temp_password_hours: true,
   server_creation: true,
   server_search: true,
   dm_creation: true,

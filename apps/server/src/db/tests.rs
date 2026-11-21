@@ -8059,3 +8059,114 @@ async fn existing_tokens_get_a_last_used_at() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn temporary_passwords_are_added_to_an_old_database() {
+    const { assert!(SCHEMA_VERSION >= 39) };
+    on_each_database("temp_passwords_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        for stmt in [
+            "DROP TABLE temp_passwords",
+            "UPDATE settings SET value = '38' WHERE key = 'schema_version'",
+            "DELETE FROM settings WHERE key IN ('password_change', 'temp_password_hours')",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at, is_site_admin) VALUES('alice', 'Alice', 'hash-a', 'text', 'identicon', 5, 1), ('wendy', 'Wendy', 'hash-w', 'words', 'identicon', 6, 0)",
+            "INSERT INTO tokens(token, username, created_at, last_used_at) VALUES('tok-a', 'alice', 100, 150), ('tok-w', 'wendy', 200, 250)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        let accounts = |db: Db| async move {
+            let users: Vec<(String, String, String, i64, i64)> = sqlx::query(
+                "SELECT username, password_hash, password_kind, created_at, is_site_admin FROM users ORDER BY username",
+            )
+            .fetch_all(&db)
+            .await
+            .expect("users")
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get(0).expect("username"),
+                    r.try_get(1).expect("hash"),
+                    r.try_get(2).expect("kind"),
+                    r.try_get(3).expect("created"),
+                    r.try_get(4).expect("admin"),
+                )
+            })
+            .collect();
+            let tokens: Vec<(String, String, i64, i64)> = sqlx::query(
+                "SELECT token, username, created_at, last_used_at FROM tokens ORDER BY created_at",
+            )
+            .fetch_all(&db)
+            .await
+            .expect("tokens")
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get(0).expect("token"),
+                    r.try_get(1).expect("username"),
+                    r.try_get(2).expect("created"),
+                    r.try_get(3).expect("used"),
+                )
+            })
+            .collect();
+            (users, tokens)
+        };
+        close(&db).await;
+        let db = open_started(Some(&url)).await.expect("the stored tokens are hashed");
+        let before = accounts(db.clone()).await;
+        assert_eq!((before.0.len(), before.1.len()), (2, 2));
+        sqlx::query("DROP TABLE temp_passwords")
+            .execute(&db)
+            .await
+            .expect("drop");
+        sqlx::query("UPDATE settings SET value = '38' WHERE key = 'schema_version'")
+            .execute(&db)
+            .await
+            .expect("version");
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM temp_passwords").await,
+                0,
+                "start {round}: no old account has a temporary password"
+            );
+            assert_eq!(accounts(db.clone()).await, before, "start {round}");
+            let settings = crate::api::Settings::load(&db).await;
+            assert_eq!(
+                (settings.password_change.as_str(), settings.temp_password_hours),
+                ("required", 72),
+                "start {round}"
+            );
+            close(&db).await;
+        }
+        let db = open_started(Some(&url)).await.expect("open");
+        sqlx::query("INSERT INTO temp_passwords(username, issued_at, expires_at, issued_by) VALUES('wendy', 300, NULL, NULL), ('alice', 300, 900, 'wendy')")
+            .execute(&db)
+            .await
+            .expect("marks");
+        assert_eq!(
+            crate::db::temp_password(&db, "wendy").await.expect("wendy"),
+            Some(crate::db::TempPassword {
+                issued_at: 300,
+                expires_at: None
+            })
+        );
+        assert_eq!(
+            crate::db::temp_password(&db, "alice").await.expect("alice"),
+            Some(crate::db::TempPassword {
+                issued_at: 300,
+                expires_at: Some(900)
+            })
+        );
+        assert!(
+            sqlx::query("INSERT INTO temp_passwords(username, issued_at) VALUES('wendy', 400)")
+                .execute(&db)
+                .await
+                .is_err(),
+            "one mark per account"
+        );
+        close(&db).await;
+    })
+    .await;
+}

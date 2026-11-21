@@ -410,7 +410,7 @@ pub(crate) mod tests {
         ),
     ];
 
-    const ADMIN_ROUTES: [(&str, &str); 23] = [
+    const ADMIN_ROUTES: [(&str, &str); 26] = [
         ("patch", "/api/v1/admin/settings"),
         ("get", "/api/v1/admin/report_forms"),
         ("put", "/api/v1/admin/report_forms"),
@@ -428,7 +428,10 @@ pub(crate) mod tests {
         ("get", "/api/v1/admin/servers"),
         ("post", "/api/v1/admin/servers"),
         ("delete", "/api/v1/admin/servers/{name}"),
+        ("get", "/api/v1/admin/users/{username}"),
         ("delete", "/api/v1/admin/users/{username}"),
+        ("post", "/api/v1/admin/users/{username}/temp_password"),
+        ("post", "/api/v1/admin/users/{username}/sign_out"),
         ("delete", "/api/v1/admin/users/{username}/recovery"),
         ("get", "/api/v1/admin/audit"),
         ("get", "/api/v1/admin/users/{username}/servers"),
@@ -889,6 +892,7 @@ pub(crate) mod tests {
             dms_more: false,
             dms_cursor: None,
             can_create_servers: true,
+            password_temporary: None,
         };
         let value = serde_json::to_value(me).expect("me");
         assert_eq!(value["is_site_admin"], Value::Bool(true));

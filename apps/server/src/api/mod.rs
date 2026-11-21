@@ -1,5 +1,6 @@
 pub mod access;
 pub mod admin;
+pub mod admin_users;
 pub mod audit;
 pub mod auth;
 pub mod blocks;
@@ -44,6 +45,7 @@ pub mod sealed;
 pub mod search_limits;
 pub mod servers;
 pub mod system_messages;
+pub mod temp_passwords;
 pub mod timeouts;
 pub mod upload_expiry;
 pub mod users;
@@ -75,7 +77,7 @@ pub use crate::api::error::{
     ApiError, ApiErrorBody, Reason, ReasonKind, SERVER_BUSY, SERVER_ERROR,
 };
 use crate::api::features::{Feature, Registration};
-use crate::api::policy::{Builtin, DmCreation, ServerCreation, ServerJoining};
+use crate::api::policy::{Builtin, DmCreation, ServerCreation, ServerJoining, TempChange};
 use crate::config::Roles;
 use crate::db::{AvatarKind, ChannelKind, Db, MediaKind, User, get_user, pool_key};
 use crate::limits::http;
@@ -1411,6 +1413,18 @@ pub struct Settings {
     /// default (`PROFILE_CHOICES`).
     #[serde(default = "narrower")]
     pub profile_choices: ProfileChoices,
+    /// What an account that signed in with a temporary password must do: `required` (its
+    /// sessions can only change the password, read the account and sign out; everything else
+    /// answers 403 `Change your password first`) or `encouraged` (it works as usual until the
+    /// temporary password expires, then as under `required`). `required` by default
+    /// (`TEMP_PASSWORD_CHANGE`).
+    #[serde(default)]
+    pub password_change: TempChange,
+    /// How many hours a new temporary password signs in for: 1 to 720, or 0 for no expiry. 72
+    /// by default (`TEMP_PASSWORD_HOURS`). A temporary password keeps the expiry it was issued
+    /// with.
+    #[serde(default = "three_days")]
+    pub temp_password_hours: i64,
 }
 
 /// The public settings as `GET /api/v1/settings` and the `settings_changed` WebSocket event
@@ -1468,6 +1482,11 @@ fn narrower() -> ProfileChoices {
     ProfileChoices::Narrower
 }
 
+/// How long a temporary password of an instance from before `temp_password_hours` lasts.
+fn three_days() -> i64 {
+    72
+}
+
 pub(crate) const SETTINGS_TTL: Duration = Duration::from_secs(5);
 
 static SETTINGS_CACHE: LazyLock<Mutex<HashMap<String, (Instant, Settings)>>> =
@@ -1514,6 +1533,8 @@ impl Settings {
         incoming_webhooks: false,
         profile_visibility: Level::Shared,
         profile_choices: ProfileChoices::Narrower,
+        password_change: TempChange::Required,
+        temp_password_hours: 1,
     };
 
     pub async fn load(db: &Db) -> Settings {
@@ -1603,6 +1624,13 @@ impl Settings {
             profile_visibility: Level::parse(&stored(Level::KEY)).unwrap_or(Level::Shared),
             profile_choices: ProfileChoices::parse(&stored(ProfileChoices::KEY))
                 .unwrap_or(ProfileChoices::Narrower),
+            password_change: TempChange::parse(&stored(TempChange::KEY))
+                .unwrap_or(TempChange::Required),
+            temp_password_hours: controls::number(
+                policy::TEMP_PASSWORD_HOURS,
+                value(policy::TEMP_PASSWORD_HOURS).as_deref(),
+            )
+            .unwrap_or(1),
         };
         if let Ok(mut cache) = SETTINGS_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), settings));
@@ -1670,6 +1698,8 @@ impl Settings {
             incoming_webhooks: _,
             profile_visibility: _,
             profile_choices: _,
+            password_change: _,
+            temp_password_hours: _,
         } = *self;
         match feature {
             Feature::ServerReports => server_reports,
@@ -1864,7 +1894,7 @@ pub(crate) async fn token_row(
 ) -> sqlx::Result<Option<AnyRow>> {
     let (born_after, used_after) = limits.session_cutoffs(crate::db::now());
     sqlx::query(
-        "SELECT u.*, t.created_at AS session_created_at FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging' AND t.created_at >= $2 AND (t.last_used_at >= $3 OR t.created_at >= $3)",
+        "SELECT u.*, t.created_at AS session_created_at, tp.issued_at AS temp_issued_at, tp.expires_at AS temp_expires_at FROM tokens t JOIN users u ON u.username = t.username LEFT JOIN temp_passwords tp ON tp.username = u.username WHERE t.token = $1 AND u.password_hash <> '!purging' AND t.created_at >= $2 AND (t.last_used_at >= $3 OR t.created_at >= $3)",
     )
     .bind(crate::db::secret_key(token))
     .bind(born_after)
@@ -1873,9 +1903,31 @@ pub(crate) async fn token_row(
     .await
 }
 
+/// The answer to every request, outside `RESTRICTED_MAY`, of a session that must change its
+/// temporary password first.
+pub const CHANGE_FIRST: &str = "Change your password first";
+
+pub(crate) fn change_first() -> ApiError {
+    ApiError::off_account(StatusCode::FORBIDDEN, CHANGE_FIRST, TempChange::KEY)
+}
+
+/// Whether the sessions of `user` may only change the password, read the account and sign
+/// out: the account still has a temporary password, and the instance requires the change or
+/// the temporary password has expired. Settings that can't be read count as `required`.
+pub(crate) async fn restricted(db: &Db, user: &User) -> bool {
+    match user.temp {
+        Some(temp) => {
+            temp.expired(crate::db::now())
+                || Settings::cached(db).await.password_change == TempChange::Required
+        }
+        None => false,
+    }
+}
+
 /// The account of a session token. `Ok(None)` only when no live account has that token; any
 /// other failure (pool closed or starved, query or row errors) is a 503, so clients keep the
-/// token and retry.
+/// token and retry. A session that must change its temporary password first is refused with
+/// 403 `Change your password first`.
 pub(crate) async fn user_for_token(
     state: &AppState,
     token: &str,
@@ -1889,12 +1941,41 @@ pub(crate) async fn session_for_token(
     state: &AppState,
     token: &str,
 ) -> Result<Option<(User, i64)>, ApiError> {
+    match any_session(state, token).await? {
+        Some((user, _)) if restricted(&state.read(), &user).await => Err(change_first()),
+        session => Ok(session),
+    }
+}
+
+/// `session_for_token` without the refusal of a session that must change its temporary
+/// password. Only the request extractors call it, and they refuse such a session everywhere
+/// outside `RESTRICTED_MAY`.
+async fn any_session(state: &AppState, token: &str) -> Result<Option<(User, i64)>, ApiError> {
     let row = token_row(&state.read(), &state.limits, token)
         .await
         .map_err(auth_unavailable)?;
     row.map(|row| Ok((User::from_row(&row)?, row.try_get("session_created_at")?)))
         .transpose()
         .map_err(auth_unavailable)
+}
+
+/// What a session that must change its temporary password may still ask for, as a method and
+/// a path under `/api/v1`: its own account, the password change and signing out. Endpoints
+/// that take no session (the settings, the instance document, the word sets) are open to it
+/// like to anyone.
+pub(crate) const RESTRICTED_MAY: [(&str, &str); 3] = [
+    ("GET", "/me"),
+    ("POST", "/me/password"),
+    ("POST", "/auth/logout"),
+];
+
+/// Whether `parts` is a request of `RESTRICTED_MAY`. The path is the one the API router
+/// matched, without the prefix it is mounted under.
+fn restricted_may(parts: &Parts) -> bool {
+    let path = parts.uri.path();
+    RESTRICTED_MAY
+        .iter()
+        .any(|(method, allowed)| parts.method.as_str() == *method && path == *allowed)
 }
 
 /// The token of an `Authorization: Bearer <token>` header.
@@ -1916,7 +1997,13 @@ async fn bearer_user(parts: &Parts, state: &AppState) -> Result<Option<User>, Ap
     let Some(token) = bearer_token(&parts.headers) else {
         return Ok(None);
     };
-    let user = user_for_token(state, token).await?;
+    let user = any_session(state, token).await?.map(|(user, _)| user);
+    if let Some(user) = &user
+        && !restricted_may(parts)
+        && restricted(&state.read(), user).await
+    {
+        return Err(change_first());
+    }
     if user.is_some() && !parts.headers.contains_key(BACKGROUND) {
         crate::db::queue_token_touch(&state.db, &crate::db::secret_key(token));
     }
@@ -2044,6 +2131,10 @@ pub fn routes(
             .route("/widgets/{id}/guest-access", post(widgets::guest_access))
             .route("/servers", post(servers::create_server))
             .route("/admin/servers", post(admin::create_server_for))
+            .route(
+                "/admin/users/{username}/temp_password",
+                post(admin_users::reset_password),
+            )
             .route("/servers/{name}", patch(servers::update_server))
             .route(
                 "/servers/{name}/passwords",
@@ -2417,7 +2508,14 @@ fn api_routes(
         .route("/admin/users", get(admin::list_users))
         .route("/admin/servers", get(admin::list_servers))
         .route("/admin/servers/{name}", delete(admin::delete_server))
-        .route("/admin/users/{username}", delete(admin::delete_user))
+        .route(
+            "/admin/users/{username}",
+            get(admin_users::get_account).delete(admin::delete_user),
+        )
+        .route(
+            "/admin/users/{username}/sign_out",
+            post(admin_users::sign_out),
+        )
         .route(
             "/admin/users/{username}/recovery",
             delete(admin::remove_phrase),
@@ -2673,6 +2771,7 @@ pub(crate) mod test_util {
             created_at: now(),
             recovery_pub: None,
             recovery_set_at: None,
+            temp: None,
         }
     }
 

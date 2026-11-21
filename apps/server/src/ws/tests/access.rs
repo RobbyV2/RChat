@@ -8,9 +8,7 @@ use crate::api::access::servers_with_expired_passwords;
 use crate::db::now;
 use crate::fanout::Topic;
 use crate::hub::Epoch;
-use crate::ws::access::{
-    Access, Pace, SUB_FRAME_COST, SubPace, channel_gate, reauthorize, token_live,
-};
+use crate::ws::access::{Access, Pace, SUB_FRAME_COST, SubPace, channel_gate, reauthorize};
 use crate::ws::conn::{look, subscribe};
 use crate::ws::filter::{on_event, wants};
 use crate::ws::rewrite::presence_snapshot;
@@ -530,33 +528,20 @@ async fn token_live_follows_the_tokens_table() {
         "INSERT INTO tokens(token, username, created_at) VALUES('h:628b49d96dcde97a430dd4f597705899e09a968f793491e4b704cae33a40dc02', 'tia', 0)",
     )
     .await;
-    assert!(
-        token_live(db, &crate::limits::Limits::default(), Some("t1"))
-            .await
-            .unwrap()
-    );
-    assert!(
-        !token_live(db, &crate::limits::Limits::default(), Some("t2"))
-            .await
-            .unwrap()
-    );
-    assert!(
-        !token_live(db, &crate::limits::Limits::default(), None)
-            .await
-            .unwrap()
-    );
+    let mut access = Access::new(Some(s("tia")), false, Default::default());
+    let limits = crate::limits::Limits::default();
+    access.token = Some(s("t1"));
+    assert!(access.token_live(db, &limits).await.unwrap());
+    access.token = Some(s("t2"));
+    assert!(!access.token_live(db, &limits).await.unwrap());
+    access.token = None;
+    assert!(!access.token_live(db, &limits).await.unwrap());
     exec(db, "DELETE FROM tokens WHERE token = 'h:628b49d96dcde97a430dd4f597705899e09a968f793491e4b704cae33a40dc02'").await;
-    assert!(
-        !token_live(db, &crate::limits::Limits::default(), Some("t1"))
-            .await
-            .unwrap()
-    );
+    access.token = Some(s("t1"));
+    assert!(!access.token_live(db, &limits).await.unwrap());
     crate::db::close(&state.db).await;
-    assert!(
-        token_live(db, &crate::limits::Limits::default(), Some("t1"))
-            .await
-            .is_err()
-    );
+    access.token = Some(s("t1"));
+    assert!(access.token_live(db, &limits).await.is_err());
     crate::api::test_util::done(state, path).await;
 }
 

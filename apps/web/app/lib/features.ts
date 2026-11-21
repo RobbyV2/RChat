@@ -108,6 +108,11 @@ export const siteSettings = (s: SiteSettings): SiteSettings => {
       Number.isInteger(sent.upload_expiry_max_days) && (sent.upload_expiry_max_days as number) >= 0
         ? (sent.upload_expiry_max_days as number)
         : 0,
+    password_change: sent.password_change === 'encouraged' ? 'encouraged' : 'required',
+    temp_password_hours:
+      Number.isInteger(sent.temp_password_hours) && (sent.temp_password_hours as number) >= 0
+        ? (sent.temp_password_hours as number)
+        : 72,
   }
 }
 

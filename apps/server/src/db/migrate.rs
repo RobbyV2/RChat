@@ -236,7 +236,9 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 37: join modes (`servers.join_mode`, `servers.listed`) and invite codes
 /// (`server_passwords.code`, `server_passwords.code_lookup` with its unique index).
 /// 38: `tokens.last_used_at`, when a session was last used, for the idle timeout.
-pub const SCHEMA_VERSION: i64 = 38;
+/// 39: temporary passwords (`temp_passwords`), the mark of an account whose password was issued
+/// for it and that its owner has not replaced.
+pub const SCHEMA_VERSION: i64 = 39;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 17] {

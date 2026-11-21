@@ -116,6 +116,43 @@ impl DmCreation {
     }
 }
 
+/// What an account that signed in with a temporary password must do: `required` (its sessions
+/// can only change the password, read the account and sign out) or `encouraged` (it works as
+/// usual until the temporary password expires, then as under `required`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TempChange {
+    #[default]
+    Required,
+    Encouraged,
+}
+
+impl TempChange {
+    pub const KEY: &str = "password_change";
+    pub const ENV: &str = "TEMP_PASSWORD_CHANGE";
+    pub const WORDS: [&str; 2] = ["required", "encouraged"];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TempChange::Required => "required",
+            TempChange::Encouraged => "encouraged",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<TempChange> {
+        match value {
+            "required" => Some(TempChange::Required),
+            "encouraged" => Some(TempChange::Encouraged),
+            _ => None,
+        }
+    }
+}
+
+/// The control that says how many hours a temporary password signs in for; 0 is forever.
+pub const TEMP_PASSWORD_HOURS: &str = "temp_password_hours";
+/// The longest a temporary password signs in for, in hours.
+pub const TEMP_PASSWORD_HOURS_MAX: i64 = 720;
+
 /// Whether the instance still has the built-in server it started with.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]

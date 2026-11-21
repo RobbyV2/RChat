@@ -60,7 +60,7 @@ pub(crate) async fn challenge(
     challenge_at(&state, req, now()).await
 }
 
-async fn challenge_at(
+pub(crate) async fn challenge_at(
     state: &AppState,
     req: ChallengeReq,
     t: i64,
@@ -189,6 +189,7 @@ pub(crate) async fn recover_at(
         .bind(&user.username)
         .execute(&mut *tx)
         .await?;
+    crate::api::temp_passwords::clear(&mut tx, &user.username).await?;
     sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, $3)")
         .bind(secret_key(&token))
         .bind(&user.username)

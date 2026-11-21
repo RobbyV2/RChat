@@ -151,6 +151,9 @@ pub const CLOSE_TOO_MANY_GUESTS: (u16, &str) = (
     "Too many guest connections right now, try again later",
 );
 pub const CLOSE_NO_AUTH: (u16, &str) = (4001, "No auth frame in time");
+/// Close code of a realtime connection whose session must change its temporary password
+/// first.
+pub const CLOSE_PASSWORD_CHANGE: (u16, &str) = (4403, "password_change");
 
 pub(super) fn close_frame((code, reason): (u16, &str)) -> Frame {
     Frame::Close(Some(CloseFrame {

@@ -33,7 +33,7 @@ pub(crate) async fn record_in(
     detail: Value,
     t: i64,
 ) -> Result<(), ApiError> {
-    Ok(insert(conn, Some(actor), action, target, detail, t).await?)
+    Ok(insert(conn, By::Account(actor), action, target, detail, t).await?)
 }
 
 /// Notes a change the server config made at a start. Such an entry has no actor, like one
@@ -46,15 +46,34 @@ pub(crate) async fn record_config(
     detail: Value,
     t: i64,
 ) -> sqlx::Result<()> {
-    insert(conn, None, action, target, detail, t).await
+    insert(conn, By::Config, action, target, detail, t).await
 }
 
-/// The detail key that marks an entry the server config made.
+/// Notes an action the server's command line made. Such an entry has no actor; `by: "cli"`
+/// in its detail says who it was, and only this function writes that mark.
+pub(crate) async fn record_cli(
+    conn: &mut sqlx::AnyConnection,
+    action: &str,
+    target: Option<&str>,
+    detail: Value,
+    t: i64,
+) -> sqlx::Result<()> {
+    insert(conn, By::Cli, action, target, detail, t).await
+}
+
+/// The detail key that marks an entry no account made.
 const BY: &str = "by";
+
+/// Who made an entry: an account, the server config at a start, or the command line.
+enum By<'a> {
+    Account(&'a str),
+    Config,
+    Cli,
+}
 
 async fn insert(
     conn: &mut sqlx::AnyConnection,
-    actor: Option<&str>,
+    by: By<'_>,
     action: &str,
     target: Option<&str>,
     detail: Value,
@@ -64,9 +83,19 @@ async fn insert(
         Value::Object(fields) => fields,
         _ => serde_json::Map::new(),
     };
-    match actor {
-        Some(_) => fields.remove(BY),
-        None => fields.insert(BY.to_string(), Value::from("config")),
+    let actor = match by {
+        By::Account(actor) => {
+            fields.remove(BY);
+            Some(actor)
+        }
+        By::Config => {
+            fields.insert(BY.to_string(), Value::from("config"));
+            None
+        }
+        By::Cli => {
+            fields.insert(BY.to_string(), Value::from("cli"));
+            None
+        }
     };
     let detail = Value::Object(fields);
     sqlx::query(

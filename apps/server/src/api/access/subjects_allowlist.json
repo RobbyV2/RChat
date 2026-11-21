@@ -114,5 +114,17 @@
   {
     "route": "get /api/v1/openapi.json",
     "reason": "serves the API document itself"
+  },
+  {
+    "route": "get /api/v1/admin/users/{username}",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "post /api/v1/admin/users/{username}/temp_password",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "post /api/v1/admin/users/{username}/sign_out",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
   }
 ]

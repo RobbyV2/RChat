@@ -97,6 +97,8 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
         incoming_webhooks: _,
         profile_visibility: _,
         profile_choices: _,
+        password_change: _,
+        temp_password_hours: _,
     } = Settings::cached(&state.read()).await;
     let mut info = state.instance.discovery(
         &state.instance.origin(peer, headers),

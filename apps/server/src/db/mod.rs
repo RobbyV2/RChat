@@ -152,6 +152,56 @@ pub struct User {
     pub created_at: i64,
     pub recovery_pub: Option<String>,
     pub recovery_set_at: Option<i64>,
+    /// The temporary password the account still signs in with. Read with a session
+    /// (`api::token_row`) and by `temp_password`; an account read any other way has `None`.
+    pub temp: Option<TempPassword>,
+}
+
+/// The mark of an account whose password was issued for it and not yet replaced by its owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TempPassword {
+    pub issued_at: i64,
+    /// When it stops signing in (unix seconds); `None` for never.
+    pub expires_at: Option<i64>,
+}
+
+impl TempPassword {
+    /// Whether it has expired at `t`: it does not sign in from then on.
+    pub fn expired(&self, t: i64) -> bool {
+        self.expires_at.is_some_and(|at| at <= t)
+    }
+
+    /// The mark in a row that selected `temp_passwords.issued_at AS temp_issued_at` and
+    /// `temp_passwords.expires_at AS temp_expires_at`; `None` without those columns or without
+    /// a mark.
+    fn from_row(row: &AnyRow) -> Option<TempPassword> {
+        let issued_at = row.try_get::<Option<i64>, _>("temp_issued_at").ok()??;
+        Some(TempPassword {
+            issued_at,
+            expires_at: row
+                .try_get::<Option<i64>, _>("temp_expires_at")
+                .ok()
+                .flatten(),
+        })
+    }
+}
+
+/// The temporary password mark of `username`, if its password is a temporary one.
+pub async fn temp_password<'e, E>(ex: E, username: &str) -> sqlx::Result<Option<TempPassword>>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Any>,
+{
+    sqlx::query("SELECT issued_at, expires_at FROM temp_passwords WHERE username = $1")
+        .bind(username)
+        .fetch_optional(ex)
+        .await?
+        .map(|row| {
+            Ok(TempPassword {
+                issued_at: row.try_get(0)?,
+                expires_at: row.try_get(1)?,
+            })
+        })
+        .transpose()
 }
 
 impl User {
@@ -170,6 +220,7 @@ impl User {
             created_at: row.try_get("created_at")?,
             recovery_pub: row.try_get("recovery_pub")?,
             recovery_set_at: row.try_get("recovery_set_at")?,
+            temp: TempPassword::from_row(row),
         })
     }
 }

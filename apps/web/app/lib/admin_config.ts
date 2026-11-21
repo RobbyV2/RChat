@@ -20,7 +20,7 @@ export const controlOf = (config: AdminConfig | null, key: string) =>
 
 // The controls whose values are lists, by how the settings take them.
 const LISTS = new Set(['server_creators', 'default_servers'])
-const NUMBERS = new Set(['upload_expiry_max_days'])
+const NUMBERS = new Set(['upload_expiry_max_days', 'temp_password_hours'])
 // The report forms are a document: only the config or their own editor replaces them.
 const DOCUMENTS = new Set(['report_forms'])
 

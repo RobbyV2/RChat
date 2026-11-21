@@ -116,6 +116,23 @@ describe('feature switches', () => {
     expect(odd.public_reading).toBe(true)
   })
 
+  test('temporary password settings read strictly when missing or unknown', () => {
+    const before = siteSettings(older)
+    expect([before.password_change, before.temp_password_hours]).toEqual(['required', 72])
+    const sent = siteSettings({
+      ...older,
+      password_change: 'encouraged',
+      temp_password_hours: 0,
+    } as SiteSettings)
+    expect([sent.password_change, sent.temp_password_hours]).toEqual(['encouraged', 0])
+    const odd = siteSettings({
+      ...older,
+      password_change: 'optional',
+      temp_password_hours: -4,
+    } as unknown as SiteSettings)
+    expect([odd.password_change, odd.temp_password_hours]).toEqual(['required', 72])
+  })
+
   test('an older instance has every newer control at its open value', () => {
     const s = siteSettings(older)
     expect([s.server_creation, s.dm_creation]).toEqual(['everyone', 'everyone'])

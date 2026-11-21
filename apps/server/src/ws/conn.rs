@@ -7,12 +7,14 @@ use axum::http::{Extensions, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
-use sqlx::Row;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tracing::{debug, warn};
 
-use super::access::{ADDR_FULL, Access, COPY_FULL, Pace, catch_up, grant_deadlines, reauthorize};
+use super::access::{
+    ADDR_FULL, Access, COPY_FULL, Pace, SocketAccount, catch_up, grant_deadlines, reauthorize,
+    socket_account,
+};
 use super::calls::{VoiceWait, finalize_call_log, send_voice_snapshot, voice_cmd};
 use super::event::WsEvent;
 use super::filter::on_event;
@@ -21,8 +23,8 @@ use super::p2p::{
     RECONNECTING, announce_drop, answer_who, hosting_ids, hosting_relays, p2p_refused, p2p_release,
 };
 use super::protocol::{
-    CLOSE_NO_AUTH, CLOSE_TOO_MANY, CLOSE_TOO_MANY_ADDR, CLOSE_TOO_MANY_GUESTS, CLOSE_TOO_OFTEN,
-    ClientMsg, close_frame, first_frame, refuse,
+    CLOSE_NO_AUTH, CLOSE_PASSWORD_CHANGE, CLOSE_TOO_MANY, CLOSE_TOO_MANY_ADDR,
+    CLOSE_TOO_MANY_GUESTS, CLOSE_TOO_OFTEN, ClientMsg, close_frame, first_frame, refuse,
 };
 use super::rewrite::{channel_for, event_frame, layout_for, own_timeout, presence_snapshot};
 use super::typing::{Typer, type_in};
@@ -31,8 +33,8 @@ use super::{
     guest_sub_ok,
 };
 
+use crate::api::Settings;
 use crate::api::access::{is_member, presence_mode, ws_banned, ws_live_hosted, ws_member_servers};
-use crate::api::{Settings, token_row};
 use crate::db::{now, setting_on};
 use crate::fanout::Topic;
 use crate::hub::{AddrSlot, Hub, SlotRefused};
@@ -260,19 +262,26 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
     };
     let mut epoch = state.hub.epoch();
     let mut lossy = epoch.borrow_and_update().lossy;
-    let (username, is_site_admin, since): (Option<String>, bool, Option<i64>) = match &token {
-        Some(token) => match token_row(&state.read(), &state.limits, token).await {
-            Ok(Some(r)) => (
-                r.try_get("username").ok(),
-                r.try_get::<i64, _>("is_site_admin")
-                    .map(|v| v != 0)
-                    .unwrap_or(false),
-                r.try_get("created_at").ok(),
-            ),
-            Ok(None) => (None, false, None),
+    let settings = Settings::cached(&state.read()).await;
+    let account = match &token {
+        Some(token) => match socket_account(&state.read(), &state.limits, token).await {
+            Ok(account) => account,
             Err(e) => return refuse(e),
         },
-        None => (None, false, None),
+        None => SocketAccount::Missing,
+    };
+    let (username, is_site_admin, since, password_expires) = match account {
+        SocketAccount::Open {
+            username,
+            is_site_admin,
+            since,
+            password_expires,
+        } => (Some(username), is_site_admin, Some(since), password_expires),
+        SocketAccount::Missing => (None, false, None, None),
+        SocketAccount::Restricted => {
+            let _ = socket.send(close_frame(CLOSE_PASSWORD_CHANGE)).await;
+            return;
+        }
     };
     let mut mode = None;
     if let Some(user) = &username {
@@ -321,8 +330,9 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
         access.take_mode(mode);
     }
     access.since = since;
-    let settings = Settings::cached(&state.read()).await;
+    access.password_expires = password_expires;
     access.reading = Some((settings.server_joining, settings.public_reading));
+    access.password_change = Some(settings.password_change);
     access.token = token.filter(|_| access.user.is_some());
     state.hub.reconcile(conn, &access.topics(), 0);
     let (sink, mut stream) = socket.split();
@@ -348,7 +358,20 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
     }
     access.sync(&state.hub, conn);
     loop {
+        let until_expiry = access.password_expires.map(|at| {
+            let epoch = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            std::time::Duration::from_secs(at.max(0) as u64).saturating_sub(epoch)
+        });
+        if until_expiry == Some(std::time::Duration::ZERO) {
+            match access.token_live(&state.db, &state.limits).await {
+                Ok(true) => continue,
+                Ok(false) | Err(_) => break,
+            }
+        }
         tokio::select! {
+            _ = tokio::time::sleep(until_expiry.unwrap_or_default()), if until_expiry.is_some() => continue,
             got = inbox.rx.recv() => {
                 let Some(fanned) = got else {
                     break;
@@ -566,7 +589,9 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
             }
         }
     }
-    if inbox.evicted() {
+    if access.restricted {
+        out.push(close_frame(CLOSE_PASSWORD_CHANGE));
+    } else if inbox.evicted() {
         out.push(close_frame(CLOSE_TOO_MANY));
     }
     drop(inbox);

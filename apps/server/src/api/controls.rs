@@ -8,6 +8,7 @@ use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
     CALLS, Creator, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, INCOMING_WEBHOOKS,
     PUBLIC_READING, SERVER_CREATORS, SERVER_SEARCH, ServerCreation, ServerJoining,
+    TEMP_PASSWORD_HOURS, TEMP_PASSWORD_HOURS_MAX, TempChange,
 };
 use crate::api::reports::forms::{self, ReportForms};
 use crate::api::{
@@ -160,6 +161,23 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
         env: ProfileChoices::ENV,
         kind: Kind::Choice(&ProfileChoices::WORDS),
         default: "any",
+        public: true,
+    });
+    all.push(Control {
+        key: TempChange::KEY,
+        env: TempChange::ENV,
+        kind: Kind::Choice(&TempChange::WORDS),
+        default: "required",
+        public: true,
+    });
+    all.push(Control {
+        key: TEMP_PASSWORD_HOURS,
+        env: "TEMP_PASSWORD_HOURS",
+        kind: Kind::Number {
+            min: 0,
+            max: TEMP_PASSWORD_HOURS_MAX,
+        },
+        default: "72",
         public: true,
     });
     all.push(Control {
@@ -669,7 +687,7 @@ mod tests {
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
         assert_eq!(
-            table[table.len() - 14..table.len() - 1],
+            table[table.len() - 16..table.len() - 1],
             [
                 ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
                 ("server_creation", "SERVER_CREATION", "everyone"),
@@ -684,8 +702,19 @@ mod tests {
                 ("incoming_webhooks", "FEATURE_INCOMING_WEBHOOKS", "1"),
                 ("profile_visibility", "PROFILE_VISIBILITY", "shared"),
                 ("profile_choices", "PROFILE_CHOICES", "any"),
+                ("password_change", "TEMP_PASSWORD_CHANGE", "required"),
+                ("temp_password_hours", "TEMP_PASSWORD_HOURS", "72"),
             ]
         );
+        assert_eq!(
+            control("password_change").kind,
+            Kind::Choice(&["required", "encouraged"])
+        );
+        assert_eq!(
+            control("temp_password_hours").kind,
+            Kind::Number { min: 0, max: 720 }
+        );
+        assert!(control("temp_password_hours").parse("721").is_err());
         assert_eq!(control("public_reading").kind, Kind::Switch);
         assert_eq!(control("default_servers").kind, Kind::Servers);
         assert!(!control("default_servers").public);
@@ -904,6 +933,7 @@ mod tests {
                         "expected everyone, public_servers or shared".to_string()
                     }
                     ["any", "narrower", "site"] => "expected any, narrower or site".to_string(),
+                    ["required", "encouraged"] => "expected required or encouraged".to_string(),
                     other => panic!("{other:?} has no expected text"),
                 },
                 Kind::Targets => format!(

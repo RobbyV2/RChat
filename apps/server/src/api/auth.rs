@@ -20,6 +20,7 @@ use crate::api::names::Refusal;
 use crate::api::rare::{self, Rare};
 use crate::api::servers::{Page, my_servers_page};
 use crate::api::system_messages::{SystemKind, announce_system, post_system};
+use crate::api::temp_passwords::TempView;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, DmSummary, LIST_PAGE, Member, NAME_MAX, OkResp,
     ProfanityTarget, ServerSummary, Settings, UserRef, bad, check_len, check_profanity, names, ok,
@@ -74,6 +75,10 @@ pub struct Me {
     /// Whether this account may create servers (`server_creation` in `GET /api/v1/settings`
     /// applied to it).
     pub can_create_servers: bool,
+    /// Set while the account's password is a temporary one issued for it: when it stops
+    /// signing in, and whether this session must change it first. Null for every other
+    /// account.
+    pub password_temporary: Option<TempView>,
 }
 
 fn password_kind_schema() -> utoipa::openapi::Object {
@@ -576,6 +581,10 @@ pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
             .await
             .can_create_servers()
             .await?,
+        password_temporary: match user.temp {
+            Some(temp) => Some(TempView::of(temp, crate::api::restricted(db, user).await)),
+            None => None,
+        },
     })
 }
 
@@ -862,6 +871,9 @@ async fn issue_token(db: &Db, user: &User, t: i64) -> Result<String, ApiError> {
     Ok(token)
 }
 
+/// The answer to a password change that keeps a temporary password as the account's own.
+pub(crate) const SAME_AS_TEMPORARY: &str = "Choose a password different from the temporary one";
+
 fn wrong_password() -> ApiError {
     ApiError(StatusCode::UNAUTHORIZED, "Wrong password".to_string(), None)
 }
@@ -877,7 +889,7 @@ fn wrong_password() -> ApiError {
 /// look-alike key of the name given is paced and counted the same way, and an attempt is admitted
 /// only when the account and every key admit it. Names over 100 characters answer 401 at once.
 /// Throttled attempts are not checked. No authentication. Strict and general rate-limit buckets.
-#[utoipa::path(post, path = "/api/v1/auth/login", tag = "Auth", request_body = LoginReq, responses((status = 200, description = "Credentials accepted; returns a new session token and the user's profile", body = AuthResp), (status = 400, description = "Not exactly one of `password` and `words`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Unknown username, a name that passes for several accounts, a name over 100 characters, or wrong password (`Invalid credentials`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login and recovery attempts today (UTC) for this account or a look-alike key of the name given; locked until the next day", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since the last login or recovery attempt for this account or a look-alike key of the name given (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket", body = ApiErrorBody)), security(()))]
+#[utoipa::path(post, path = "/api/v1/auth/login", tag = "Auth", request_body = LoginReq, responses((status = 200, description = "Credentials accepted; returns a new session token and the user's profile", body = AuthResp), (status = 400, description = "Not exactly one of `password` and `words`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Unknown username, a name that passes for several accounts, a name over 100 characters, or wrong password, or a temporary password that has expired (`Invalid credentials`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Over 1000 login and recovery attempts today (UTC) for this account or a look-alike key of the name given; locked until the next day", body = ApiErrorBody), (status = 429, description = "Less than 3 seconds since the last login or recovery attempt for this account or a look-alike key of the name given (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket", body = ApiErrorBody)), security(()))]
 pub(crate) async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginReq>,
@@ -910,6 +922,11 @@ pub(crate) async fn login_at(
         (true, Some(user)) => user,
         (_, _) => return Err(invalid_credentials()),
     };
+    let temp = crate::db::temp_password(db, &user.username).await?;
+    if temp.is_some_and(|temp| temp.expired(t)) {
+        return Err(invalid_credentials());
+    }
+    let user = User { temp, ..user };
     let token = issue_token(db, &user, t).await?;
     let me = me_payload(db, &user).await?;
     Ok(Json(AuthResp { token, user: me }))
@@ -938,7 +955,14 @@ pub(crate) async fn me(
 /// Password changes are rare requests: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and
 /// `RARE_REQUESTS_PER_DAY` (100) a day per account by default. Only changes confirmed with the
 /// current password count; past the limit every try is refused.
-#[utoipa::path(post, path = "/api/v1/me/password", tag = "Account", request_body(content = PasswordChange, description = "`current` and `new` each take exactly one of `password` (any non-empty text) or `words` (7 words, in order, from the account's word set). Switching between text and words is allowed"), responses((status = 200, description = "Password changed. Every other login token of the account is revoked and their live connections close; the token used for this request stays valid. With `keep_recovery: false` the backup phrase is removed too", body = OkResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, or not exactly one of `password` and `words` in `current` or `new`. Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token (`Unauthorized`), or wrong current password (`Wrong password`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Password changes from this session locked for the day (UTC) after 50 wrong current passwords (separate from the login lockout; other sessions are unaffected)", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Less than 3 seconds since this session's last attempt (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+/// An account that signed in with a temporary password (`password_temporary` in
+/// `GET /api/v1/me`) gives it as `current`, also after it expired, and must choose a different
+/// one. Until it does, and while `password_change` in `GET /api/v1/settings` is `required` or
+/// the temporary password has expired, every other request of its sessions except
+/// `GET /api/v1/me` and `POST /api/v1/auth/logout` answers 403 `Change your password first`
+/// (reason `off_account`, control `password_change`), and its WebSocket connections close with
+/// code 4403.
+#[utoipa::path(post, path = "/api/v1/me/password", tag = "Account", request_body(content = PasswordChange, description = "`current` and `new` each take exactly one of `password` (any non-empty text) or `words` (7 words, in order, from the account's word set). Switching between text and words is allowed"), responses((status = 200, description = "Password changed. Every other login token of the account is revoked and their live connections close; the token used for this request stays valid. With `keep_recovery: false` the backup phrase is removed too", body = OkResp), (status = 400, description = "Empty new password, new words that are not 7 words from the word set, not exactly one of `password` and `words` in `current` or `new`, or a new password equal to the temporary one the account signed in with (`Choose a password different from the temporary one`, reason `invalid`, field `new`). Malformed JSON or a missing `Content-Type` give a plain-text 400/415 instead", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token (`Unauthorized`), or wrong current password (`Wrong password`)", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 423, description = "Password changes from this session locked for the day (UTC) after 50 wrong current passwords (separate from the login lockout; other sessions are unaffected)", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Less than 3 seconds since this session's last attempt (JSON `Wait 3 seconds between attempts`), or too many requests in the strict or general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn change_password(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -978,6 +1002,9 @@ async fn change_password_at(
         note_change_failure(&state.db, &session).await?;
         return Err(wrong_password());
     }
+    if user.temp.is_some() && new_secret == secret {
+        return Err(ApiError::invalid(SAME_AS_TEMPORARY, "new"));
+    }
     rare::take(state, Rare::Password, Some(&user))?;
     let hash = hash_password(&new_secret).await?;
     let mut tx = state.db.begin().await?;
@@ -1007,6 +1034,17 @@ async fn change_password_at(
         .bind(secret_key(&token))
         .execute(&mut *tx)
         .await?;
+    if crate::api::temp_passwords::clear(&mut tx, &user.username).await? {
+        crate::api::instance_audit::record_in(
+            &mut tx,
+            &user.username,
+            "user.password_set",
+            Some(&user.username),
+            serde_json::json!({}),
+            t,
+        )
+        .await?;
+    }
     tx.commit().await?;
     state.hub.broadcast(WsEvent::TokensRevoked {
         username: user.username.clone(),

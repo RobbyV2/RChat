@@ -561,6 +561,9 @@ export interface Me extends UserRef {
   dms: DmSummary[]
   dms_more: boolean
   dms_cursor: string | null
+  // Set while the password is a temporary one: when it stops signing in (unix seconds, null
+  // for never), and what this session must do. Absent on older servers.
+  password_temporary?: { expires_at: number | null; change: PasswordChangeMode } | null
 }
 
 export interface AuthResponse {
@@ -642,7 +645,15 @@ export interface SiteSettings {
   // What accounts may choose for their own profile; siteSettings fills it in once the level
   // is there.
   profile_choices?: ProfileChoices
+  // What an account that signed in with a temporary password must do. Absent on older
+  // servers, which issue none.
+  password_change?: PasswordChangeMode
+  // Hours a new temporary password signs in for; 0: no expiry.
+  temp_password_hours?: number
 }
+
+// required: the session can only choose a password. encouraged: it is asked to.
+export type PasswordChangeMode = 'required' | 'encouraged'
 
 export type Registration = 'open' | 'sso' | 'closed'
 

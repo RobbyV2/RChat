@@ -14,6 +14,7 @@ use crate::api::features::{Feature, Registration};
 use crate::api::policy::{
     Builtin, CALLS, DEFAULT_SERVERS, DmCreation, FRIEND_REQUESTS, INCOMING_WEBHOOKS,
     PUBLIC_READING, Policy, SERVER_CREATORS, SERVER_SEARCH, ServerCreation, ServerJoining,
+    TEMP_PASSWORD_HOURS, TEMP_PASSWORD_HOURS_MAX, TempChange,
 };
 use crate::api::reports::forms::{self, Form, ReportForms};
 use crate::api::{
@@ -28,6 +29,8 @@ use crate::ws::WsEvent;
 pub struct Overview {
     pub server_count: i64,
     pub user_count: i64,
+    /// Accounts whose password is still a temporary one.
+    pub temporary_count: i64,
     pub relay: RelayStatus,
 }
 
@@ -56,6 +59,9 @@ pub struct AdminQuery {
     limit: Option<i64>,
     q: Option<String>,
     cursor: Option<String>,
+    /// For the list of accounts: `temporary` (the password is a temporary one) or `expired`
+    /// (a temporary one that has expired).
+    filter: Option<String>,
 }
 
 struct AdminPage {
@@ -72,6 +78,7 @@ impl AdminQuery {
             limit,
             q,
             cursor,
+            filter: _,
         } = self;
         let after = match cursor.as_deref().filter(|c| !c.trim().is_empty()) {
             Some(raw) => Some(decode_cursor(raw, 1)?.remove(0)),
@@ -266,6 +273,8 @@ pub struct SettingsPatch {
     incoming_webhooks: Option<bool>,
     profile_visibility: Option<Level>,
     profile_choices: Option<ProfileChoices>,
+    password_change: Option<TempChange>,
+    temp_password_hours: Option<i64>,
 }
 
 /// The stored form of `word` for the choice control `key`. A word the control does not take is
@@ -352,7 +361,15 @@ pub(crate) async fn patch_settings(
         incoming_webhooks,
         profile_visibility,
         profile_choices,
+        password_change,
+        temp_password_hours,
     } = req;
+    if temp_password_hours.is_some_and(|h| !(0..=TEMP_PASSWORD_HOURS_MAX).contains(&h)) {
+        return Err(ApiError::invalid(
+            "Temporary passwords last 0 to 720 hours",
+            TEMP_PASSWORD_HOURS,
+        ));
+    }
     if upload_expiry_max_days.is_some_and(|d| !(0..=upload_expiry::CAP_DAYS_MAX).contains(&d)) {
         return Err(bad("The longest file expiry must be 0 to 365 days"));
     }
@@ -450,6 +467,8 @@ pub(crate) async fn patch_settings(
         .chain(dm_creation.map(|d| (DmCreation::KEY, d.as_str().to_string())))
         .chain(visibility.map(|level| (Level::KEY, level)))
         .chain(choices.map(|choices| (ProfileChoices::KEY, choices)))
+        .chain(password_change.map(|c| (TempChange::KEY, c.as_str().to_string())))
+        .chain(temp_password_hours.map(|h| (TEMP_PASSWORD_HOURS, h.to_string())))
         .collect();
     let records = ConfigRecords::load(&state.db).await?;
     let touched: Vec<&Control> = Control::all()
@@ -845,9 +864,14 @@ pub(crate) async fn overview(
             .fetch_one(&state.db)
             .await?
             .try_get(0)?;
+    let temporary_count: i64 = sqlx::query("SELECT COUNT(*) FROM temp_passwords tp JOIN users u ON u.username = tp.username WHERE u.password_hash <> '!purging'")
+        .fetch_one(&state.db)
+        .await?
+        .try_get(0)?;
     Ok(Json(Overview {
         server_count,
         user_count,
+        temporary_count,
         relay: relay_status(&state),
     }))
 }
@@ -861,9 +885,28 @@ pub(crate) async fn list_users(
     let page = query.page()?;
     let q = page.q.clone();
     let fuzzy = is_fuzzy(&q);
+    let marked = match query.filter.as_deref().map(str::trim) {
+        None | Some("") => String::new(),
+        Some("temporary") => {
+            " AND EXISTS(SELECT 1 FROM temp_passwords tp WHERE tp.username = users.username)"
+                .to_string()
+        }
+        Some("expired") => format!(
+            " AND EXISTS(SELECT 1 FROM temp_passwords tp WHERE tp.username = users.username AND tp.expires_at IS NOT NULL AND tp.expires_at <= {})",
+            now()
+        ),
+        Some(_) => {
+            return Err(ApiError::invalid(
+                "filter: expected temporary or expired",
+                "filter",
+            ));
+        }
+    };
     let (rows, next) = name_page(
         &state.read(),
-        "SELECT username, display_name, avatar_kind, avatar_color FROM users WHERE (lower(username) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND password_hash <> '!purging'",
+        &format!(
+            "SELECT username, display_name, avatar_kind, avatar_color FROM users WHERE (lower(username) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND password_hash <> '!purging'{marked}"
+        ),
         "username",
         &page,
     )
@@ -1520,6 +1563,8 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "DELETE FROM p2p_backups WHERE username = $1",
         "DELETE FROM p2p_backup_seq WHERE username = $1",
         "DELETE FROM p2p_identities WHERE username = $1",
+        "DELETE FROM temp_passwords WHERE username = $1",
+        "UPDATE temp_passwords SET issued_by = NULL WHERE issued_by = $1",
         "DELETE FROM users WHERE username = $1",
     ] {
         sqlx::query(sql).bind(key).execute(&mut **tx).await?;
@@ -2575,6 +2620,7 @@ mod tests {
                 limit: None,
                 q: None,
                 cursor: None,
+                filter: None,
             }),
         )
         .await
@@ -4209,6 +4255,7 @@ mod tests {
             limit: None,
             q: Some(q.to_string()),
             cursor,
+            filter: None,
         };
         let mut seen = Vec::new();
         let mut cursor = None;
@@ -4341,6 +4388,7 @@ mod tests {
                 created_at,
                 recovery_pub: _,
                 recovery_set_at: _,
+                temp: _,
             } = u.clone();
             (
                 (username, display_name, password_hash, password_kind),

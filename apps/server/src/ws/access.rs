@@ -21,9 +21,9 @@ use crate::api::access::{
     ws_channel_view, ws_closed_servers, ws_grant_deadline, ws_member_servers,
     ws_server_password_hash, ws_thread_start, ws_view_under,
 };
-use crate::api::policy::ServerJoining;
-use crate::api::{Settings, token_row};
-use crate::db::{Db, now, setting_on};
+use crate::api::policy::{ServerJoining, TempChange};
+use crate::api::{Settings, restricted, token_row};
+use crate::db::{Db, User, now, setting_on};
 use crate::fanout::Topic;
 use crate::hub::{Epoch, Hub, PRESENCE_SERVERS_MAX, Scope};
 use crate::limits::Limits;
@@ -368,6 +368,11 @@ pub(super) struct Access {
     /// How the instance opens servers to people who aren't members (its joining rule and
     /// whether it allows public reading), as this connection last saw it.
     pub(super) reading: Option<(ServerJoining, bool)>,
+    /// What the instance asks of accounts with a temporary password, as this connection last
+    /// saw it.
+    pub(super) password_change: Option<TempChange>,
+    pub(super) password_expires: Option<i64>,
+    pub(super) restricted: bool,
 }
 
 impl Access {
@@ -411,6 +416,9 @@ impl Access {
             retry: Retry::new(),
             topics_dirty: false,
             reading: None,
+            password_change: None,
+            password_expires: None,
+            restricted: false,
         }
     }
 
@@ -426,6 +434,16 @@ impl Access {
     ) -> bool {
         if self.user.is_none() && !settings.guests_enabled {
             return false;
+        }
+        let before = self.password_change.replace(settings.password_change);
+        if before == Some(TempChange::Encouraged)
+            && settings.password_change == TempChange::Required
+            && self.token.is_some()
+        {
+            Settings::keep(&state.db, *settings);
+            if !self.check_token(&state.read(), &state.limits).await {
+                return false;
+            }
         }
         let reading = Some((settings.server_joining, settings.public_reading));
         if std::mem::replace(&mut self.reading, reading) == reading {
@@ -815,9 +833,28 @@ impl Access {
         self.retry.fail(e, started)
     }
 
+    pub(super) async fn token_live(&mut self, db: &Db, limits: &Limits) -> sqlx::Result<bool> {
+        let Some(token) = self.token.as_deref() else {
+            return Ok(false);
+        };
+        match socket_account(db, limits, token).await? {
+            SocketAccount::Open {
+                password_expires, ..
+            } => {
+                self.password_expires = password_expires;
+                Ok(true)
+            }
+            SocketAccount::Restricted => {
+                self.restricted = true;
+                Ok(false)
+            }
+            SocketAccount::Missing => Ok(false),
+        }
+    }
+
     pub(super) async fn check_token(&mut self, db: &Db, limits: &Limits) -> bool {
         let started = Instant::now();
-        match token_live(db, limits, self.token.as_deref()).await {
+        match self.token_live(db, limits).await {
             Ok(live) => live,
             Err(e) => self.hold(e, started),
         }
@@ -883,14 +920,35 @@ impl Access {
     }
 }
 
-pub(super) async fn token_live(
+pub(super) enum SocketAccount {
+    Open {
+        username: String,
+        is_site_admin: bool,
+        since: i64,
+        password_expires: Option<i64>,
+    },
+    Restricted,
+    Missing,
+}
+
+pub(super) async fn socket_account(
     db: &Db,
     limits: &Limits,
-    token: Option<&str>,
-) -> sqlx::Result<bool> {
-    match token {
-        Some(token) => Ok(token_row(db, limits, token).await?.is_some()),
-        None => Ok(false),
+    token: &str,
+) -> sqlx::Result<SocketAccount> {
+    let Some(row) = token_row(db, limits, token).await? else {
+        return Ok(SocketAccount::Missing);
+    };
+    let user = User::from_row(&row)?;
+    if restricted(db, &user).await {
+        Ok(SocketAccount::Restricted)
+    } else {
+        Ok(SocketAccount::Open {
+            username: user.username,
+            is_site_admin: user.is_site_admin,
+            since: user.created_at,
+            password_expires: user.temp.and_then(|temp| temp.expires_at),
+        })
     }
 }
 
@@ -898,13 +956,14 @@ pub(super) async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::
     let db = &state.read();
     // The appear-offline setting comes from the primary: a replica behind it would announce a
     // stale value, and only a newer one replaces what the presence replica holds.
+    if access.user.is_some()
+        && access.token.is_some()
+        && !access.token_live(db, &state.limits).await?
+    {
+        return Ok(false);
+    }
     let (servers, mode) = match &access.user {
         Some(user) => {
-            if let Some(token) = &access.token
-                && token_row(db, &state.limits, token).await?.is_none()
-            {
-                return Ok(false);
-            }
             let Some(mode) = presence_mode(&state.db, user).await? else {
                 return Ok(false);
             };

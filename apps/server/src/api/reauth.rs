@@ -163,6 +163,10 @@ impl Purpose {
     }
 }
 
+/// The answer to a confirmation with a temporary password, or with a session it opened: the
+/// person who issued it knows it too.
+pub(crate) const CHANGE_TEMPORARY: &str = "Change your temporary password first";
+
 fn refused(msg: &str) -> ApiError {
     ApiError(StatusCode::UNAUTHORIZED, msg.to_string(), None)
 }
@@ -193,6 +197,17 @@ pub(crate) async fn check_at(
         token,
         created_at,
     } = session;
+    let known_to_others = match reauth {
+        ReAuth::Password(_) | ReAuth::FreshSession => user.temp.is_some(),
+        ReAuth::Phrase { nonce: _, sig: _ }
+        | ReAuth::FreshIdp {
+            provider: _,
+            code: _,
+        } => false,
+    };
+    if known_to_others {
+        return Err(refused(CHANGE_TEMPORARY));
+    }
     match reauth {
         ReAuth::Password(secret) => {
             let pace = session_key(token);
