@@ -2591,6 +2591,31 @@ pub(crate) mod test_util {
         drop(temp);
     }
 
+    /// The database behind a state of `each_db`, removed by `done`.
+    pub(crate) enum TempDb {
+        Sqlite(PathBuf),
+        Postgres(PgTemp),
+    }
+
+    impl TempDb {
+        pub(crate) async fn done(self, state: AppState) {
+            match self {
+                TempDb::Sqlite(path) => done(state, path).await,
+                TempDb::Postgres(temp) => pg_done(state, temp).await,
+            }
+        }
+    }
+
+    /// A `temp_state` on SQLite and, when `TEST_POSTGRES_URL` is set, one on Postgres.
+    pub(crate) async fn each_db(tag: &str) -> Vec<(AppState, TempDb)> {
+        let (state, path) = temp_state(tag).await;
+        let mut out = vec![(state, TempDb::Sqlite(path))];
+        if let Some((state, temp)) = pg_state(tag).await {
+            out.push((state, TempDb::Postgres(temp)));
+        }
+        out
+    }
+
     /// The account key of the backup phrase `abandon` x11 `about`.
     pub(crate) const PHRASE_KEY: &str = "IOGfm4VeaU9qsds79702OGowi43niF7E3YP1w8Qi4qM";
 

@@ -727,13 +727,7 @@ async fn filtered_members(
     Ok((rows, next))
 }
 
-pub const CHANNEL_MAX: i64 = 500;
-pub const ROLE_MAX: i64 = 250;
 pub const CHANNEL_PERM_MAX: i64 = 500;
-
-async fn count_rows(db: &Db, sql: &'static str, key: &str) -> Result<i64, ApiError> {
-    Ok(sqlx::query(sql).bind(key).fetch_one(db).await?.try_get(0)?)
-}
 
 fn not_found(msg: &str) -> ApiError {
     ApiError(StatusCode::NOT_FOUND, msg.to_string(), None)
@@ -3613,8 +3607,8 @@ pub(crate) async fn delete_server(
 /// Create a channel
 ///
 /// Adds a text or voice channel to the server, with slow mode off, at the end of its category
-/// (or of the channels without one). A server can have at most 500 channels. Requires the Manage
-/// channels permission. Raises the layout version, then emits `channel_created` and
+/// (or of the channels without one). A server can have at most 500 channels by default
+/// (`SERVER_CHANNELS_MAX`). Requires the Manage channels permission. Raises the layout version, then emits `channel_created` and
 /// `layout_changed` to the server; only connections that can view the new channel get either.
 /// General rate-limit bucket.
 #[utoipa::path(
@@ -3625,7 +3619,7 @@ pub(crate) async fn delete_server(
     request_body = CreateChannelReq,
     responses(
         (status = 200, description = "The created channel", body = Channel),
-        (status = 400, description = "Invalid channel name (blank, longer than 100 characters or blocked by the profanity filter), the name is taken in this server, or the server already has 500 channels. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid channel name (blank, longer than 100 characters or blocked by the profanity filter), the name is taken in this server, or `A server can have at most 500 channels` with the configured number (`SERVER_CHANNELS_MAX`, reason `limit`). Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses). `Category not found`: `category_id` is not a category of this server", body = ApiErrorBody),
@@ -3670,10 +3664,13 @@ pub(crate) async fn create_channel(
         .fetch_one(&mut *tx)
         .await?
         .try_get(0)?;
-    if count >= CHANNEL_MAX {
-        return Err(bad(&format!(
-            "A server can have at most {CHANNEL_MAX} channels"
-        )));
+    let most = state.limits.server_channels_max;
+    if count >= most {
+        return Err(ApiError::limit(
+            StatusCode::BAD_REQUEST,
+            format!("A server can have at most {most} channels"),
+            "server_channels_max",
+        ));
     }
     let sql = match req.category_id {
         Some(_) => {
@@ -4922,8 +4919,8 @@ fn check_color(color: &str) -> Result<(), ApiError> {
 
 /// Create a role
 ///
-/// Adds a role to the server. A server can have at most 250 roles. The role's permissions must be
-/// a subset of yours (equal is fine). Requires the Manage admins server permission. Emits
+/// Adds a role to the server. A server can have at most 250 roles by default (`SERVER_ROLES_MAX`).
+/// The role's permissions must be a subset of yours (equal is fine). Requires the Manage admins server permission. Emits
 /// `roles_changed` to the server. General rate-limit bucket.
 #[utoipa::path(
     post,
@@ -4933,7 +4930,7 @@ fn check_color(color: &str) -> Result<(), ApiError> {
     request_body = RoleReq,
     responses(
         (status = 200, description = "The created role", body = Role),
-        (status = 400, description = "Invalid role name (blank, longer than 100 characters or blocked by the profanity filter), an invalid color, or the server already has 250 roles. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid role name (blank, longer than 100 characters or blocked by the profanity filter), an invalid color, or `A server can have at most 250 roles` with the configured number (`SERVER_ROLES_MAX`, reason `limit`). Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage admins permission, or the role's permissions include some you don't have (`You can't grant permissions you don't have`)", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
@@ -4962,16 +4959,6 @@ pub(crate) async fn create_role(
     let perms = req.perms & ALL_PERMS;
     access.require_grant(&state.db, perms).await?;
     require_mentionable(&state.db, &access, req.mentionable).await?;
-    if count_rows(
-        &state.db,
-        "SELECT COUNT(*) FROM roles WHERE server = $1",
-        &key,
-    )
-    .await?
-        >= ROLE_MAX
-    {
-        return Err(bad(&format!("A server can have at most {ROLE_MAX} roles")));
-    }
     let (db, on) = (&state.db, req.mentionable);
     let bypassed = access
         .bypassed(|m| async move {
@@ -4984,16 +4971,26 @@ pub(crate) async fn create_role(
         .await?
         .staff_if(bypassed);
     let mut tx = state.db.begin().await?;
+    crate::db::lock_server(&mut tx, &key).await?;
+    let most = state.limits.server_roles_max;
     let id: i64 = sqlx::query(
-        "INSERT INTO roles(server, name, color, perms, mentionable) VALUES($1, $2, $3, $4, $5) RETURNING id",
+        "INSERT INTO roles(server, name, color, perms, mentionable) SELECT $1, $2, $3, $4, $5 WHERE (SELECT COUNT(*) FROM roles WHERE server = $1) < $6 RETURNING id",
     )
     .bind(&key)
     .bind(&role_name)
     .bind(&req.color)
     .bind(perms)
     .bind(i64::from(req.mentionable))
-    .fetch_one(&mut *tx)
+    .bind(most)
+    .fetch_optional(&mut *tx)
     .await?
+    .ok_or_else(|| {
+        ApiError::limit(
+            StatusCode::BAD_REQUEST,
+            format!("A server can have at most {most} roles"),
+            "server_roles_max",
+        )
+    })?
     .try_get(0)?;
     audit::record(
         &mut tx,
@@ -6123,6 +6120,165 @@ mod tests {
 
     fn rejected<T>(res: Result<T, ApiError>) -> bool {
         matches!(res, Err(ApiError(StatusCode::BAD_REQUEST, _, _)))
+    }
+
+    fn capped(state: AppState, set: impl FnOnce(&mut crate::limits::Limits)) -> AppState {
+        let mut limits = crate::limits::Limits::default();
+        set(&mut limits);
+        state.with_limits(std::sync::Arc::new(limits))
+    }
+
+    fn limit_of<T>(res: Result<T, ApiError>) -> (StatusCode, String, Option<String>) {
+        match res {
+            Err(ApiError(code, msg, reason)) => {
+                assert_eq!(reason.as_ref().map(|r| r.kind), Some(ReasonKind::Limit));
+                (code, msg, reason.and_then(|r| r.control))
+            }
+            Ok(_) => panic!("expected a refusal"),
+        }
+    }
+
+    async fn new_channel(state: &AppState, server: &str, name: &str) -> Result<(), ApiError> {
+        create_channel(
+            State(state.clone()),
+            Authed(mem_user("alice", false)),
+            Path(server.to_string()),
+            Json(CreateChannelReq {
+                name: name.to_string(),
+                kind: None,
+                restrict_view: false,
+                category_id: None,
+            }),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    #[tokio::test]
+    async fn channel_cap_is_configurable() {
+        let (state, path) = temp_state("server_channel_cap").await;
+        let _ = make_server(&state, "cap").await.expect("server");
+        let have: i64 = sqlx::query("SELECT COUNT(*) FROM channels WHERE server = 'cap'")
+            .fetch_one(&state.db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("n");
+        let two = capped(state.clone(), |l| l.server_channels_max = have + 1);
+        new_channel(&two, "cap", "second")
+            .await
+            .expect("under the cap");
+        let most = have + 1;
+        assert_eq!(
+            limit_of(new_channel(&two, "cap", "third").await),
+            (
+                StatusCode::BAD_REQUEST,
+                format!("A server can have at most {most} channels"),
+                Some("server_channels_max".to_string())
+            )
+        );
+        let lower = capped(state.clone(), |l| l.server_channels_max = 1);
+        assert!(new_channel(&lower, "cap", "third").await.is_err());
+        let kept: i64 = sqlx::query("SELECT COUNT(*) FROM channels WHERE server = 'cap'")
+            .fetch_one(&state.db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("n");
+        assert_eq!(kept, most, "lowering the cap removes no channel");
+        let raised = capped(state.clone(), |l| l.server_channels_max = most + 1);
+        new_channel(&raised, "cap", "third").await.expect("raised");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_role_cap_is_configurable() {
+        let (state, path) = temp_state("server_role_cap").await;
+        let _ = make_server(&state, "cap").await.expect("server");
+        let state = capped(state, |l| l.server_roles_max = 2);
+        let role = |name: &str| {
+            create_role(
+                State(state.clone()),
+                Authed(mem_user("alice", false)),
+                Path("cap".to_string()),
+                Json(RoleReq {
+                    name: name.to_string(),
+                    color: "#ffffff".to_string(),
+                    perms: 0,
+                    mentionable: false,
+                }),
+            )
+        };
+        let have: i64 = sqlx::query("SELECT COUNT(*) FROM roles WHERE server = 'cap'")
+            .fetch_one(&state.db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("n");
+        for n in have..2 {
+            let _ = role(&format!("r{n}")).await.expect("under the cap");
+        }
+        assert_eq!(
+            limit_of(role("over").await),
+            (
+                StatusCode::BAD_REQUEST,
+                "A server can have at most 2 roles".to_string(),
+                Some("server_roles_max".to_string())
+            )
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_role_cap_holds_under_concurrent_creates() {
+        for (state, temp) in crate::api::test_util::each_db("role_cap_race").await {
+            let _ = make_server(&state, "cap").await.expect("server");
+            let have: i64 = sqlx::query("SELECT COUNT(*) FROM roles WHERE server = 'cap'")
+                .fetch_one(&state.db)
+                .await
+                .expect("count")
+                .try_get(0)
+                .expect("n");
+            let state = capped(state, |l| l.server_roles_max = have + 5);
+            let tries = (0..20).map(|n| {
+                let state = state.clone();
+                tokio::spawn(async move {
+                    create_role(
+                        State(state),
+                        Authed(mem_user("alice", false)),
+                        Path("cap".to_string()),
+                        Json(RoleReq {
+                            name: format!("r{n}"),
+                            color: "#ffffff".to_string(),
+                            perms: 0,
+                            mentionable: false,
+                        }),
+                    )
+                    .await
+                    .map(|_| ())
+                    .map_err(|ApiError(code, _, _)| code)
+                })
+            });
+            let answers: Vec<Result<(), StatusCode>> = futures_util::future::join_all(tries)
+                .await
+                .into_iter()
+                .map(|r| r.expect("task"))
+                .collect();
+            assert_eq!(answers.iter().filter(|a| a.is_ok()).count(), 5);
+            assert!(
+                answers
+                    .iter()
+                    .all(|a| matches!(a, Ok(()) | Err(StatusCode::BAD_REQUEST)))
+            );
+            let after: i64 = sqlx::query("SELECT COUNT(*) FROM roles WHERE server = 'cap'")
+                .fetch_one(&state.db)
+                .await
+                .expect("count")
+                .try_get(0)
+                .expect("n");
+            assert_eq!(after, have + 5);
+            temp.done(state).await;
+        }
     }
 
     async fn make_server(state: &AppState, name: &str) -> Result<Json<ServerDetail>, ApiError> {
@@ -9752,7 +9908,7 @@ mod tests {
         let db = &state.db;
         let _ = make_server(&state, "cap").await.expect("server");
         sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < $1) INSERT INTO channels(server, name, created_at) SELECT 'cap', 'c' || i, 0 FROM n")
-            .bind(CHANNEL_MAX - 1)
+            .bind(crate::limits::Limits::default().server_channels_max - 1)
             .execute(db)
             .await
             .expect("fill channels");
@@ -9770,7 +9926,7 @@ mod tests {
         .await;
         assert!(rejected(made));
         sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < $1) INSERT INTO roles(server, name, color, perms) SELECT 'cap', 'r' || i, '#ffffff', 0 FROM n")
-            .bind(ROLE_MAX)
+            .bind(crate::limits::Limits::default().server_roles_max)
             .execute(db)
             .await
             .expect("fill roles");

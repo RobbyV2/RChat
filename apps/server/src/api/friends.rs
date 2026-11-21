@@ -15,17 +15,24 @@ use crate::api::{
     encode_cursor, ok,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now};
+use crate::limits::Limits;
 use crate::limits::bucket::{Keyed, Policy};
 use crate::limits::shared::Rate;
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
-/// Most friends one account can have.
-pub const FRIENDS_MAX: i64 = 1000;
 /// Most pending friend requests one account can have sent.
 pub const OUTGOING_MAX: i64 = 100;
-/// Most pending friend requests one account can receive; past it new ones are refused.
-pub const INCOMING_MAX: i64 = 1000;
+/// Most friends and most pending friend requests received an account can hold under any
+/// setting: the bound of reads that list them, so rows kept from before a cap was lowered still
+/// count.
+fn friends_listed() -> i64 {
+    Limits::most("FRIENDS_MAX")
+}
+
+fn incoming_listed() -> i64 {
+    Limits::most("FRIEND_REQUESTS_IN_MAX")
+}
 /// Friend requests one account may send per window.
 pub const REQUESTS_PER_WINDOW: u32 = 20;
 const REQUEST_WINDOW: Duration = Duration::from_secs(600);
@@ -411,7 +418,7 @@ pub async fn tell_friends(state: &AppState, user: &str, online: bool) {
             "SELECT f.friend FROM friends f WHERE f.username = $1 AND NOT EXISTS(SELECT 1 FROM blocks b WHERE (b.blocker = f.username AND b.blocked = f.friend) OR (b.blocker = f.friend AND b.blocked = f.username)) LIMIT $2",
         )
         .bind(user)
-        .bind(FRIENDS_MAX)
+        .bind(friends_listed())
         .fetch_all(&state.db)
         .await?;
         for r in &rows {
@@ -611,17 +618,21 @@ async fn befriend(state: &AppState, me: &User, other: &User) -> Result<Friend, A
             None,
         ));
     }
+    let most = state.limits.friends_max;
     for (user, msg) in [
-        (&me.username, "You can have at most 1000 friends"),
-        (&other.username, "That user has too many friends"),
+        (&me.username, format!("You can have at most {most} friends")),
+        (
+            &other.username,
+            "That user has too many friends".to_string(),
+        ),
     ] {
         let n: i64 = sqlx::query("SELECT COUNT(*) FROM friends WHERE username = $1")
             .bind(user)
             .fetch_one(&mut *tx)
             .await?
             .try_get(0)?;
-        if n >= FRIENDS_MAX {
-            return Err(bad(msg));
+        if n >= most {
+            return Err(ApiError::limit(StatusCode::BAD_REQUEST, msg, "friends_max"));
         }
     }
     sqlx::query("DELETE FROM friend_requests WHERE sender = $1 AND recipient = $2")
@@ -749,7 +760,7 @@ pub(crate) async fn gone_of(
     };
     let friends = names(
         "SELECT friend FROM friends WHERE username = $1 LIMIT $2",
-        FRIENDS_MAX,
+        friends_listed(),
     )
     .await?;
     let mut requests = names(
@@ -760,13 +771,13 @@ pub(crate) async fn gone_of(
     requests.extend(
         names(
             "SELECT sender FROM friend_requests WHERE recipient = $1 LIMIT $2",
-            INCOMING_MAX,
+            incoming_listed(),
         )
         .await?,
     );
     let pinged = names(
         "SELECT DISTINCT username FROM friend_pings WHERE actor = $1 AND seen = 0 LIMIT $2",
-        FRIENDS_MAX + INCOMING_MAX,
+        friends_listed() + incoming_listed(),
     )
     .await?;
     Ok(Gone {
@@ -819,12 +830,12 @@ fn unfriend_events(state: &AppState, a: &str, b: &str) {
 /// nothing (`friends`); sending a pending request again changes nothing (`sent`). A new request
 /// emits `friend_request_added` to both users and a `ping` of kind `friend_request` (scope
 /// `friends`) to the recipient. A user who does not exist, does not take requests from you (their
-/// "Who can send you friend requests" setting), has 1000 pending requests, or blocked you, all
+/// "Who can send you friend requests" setting), has 1000 pending requests (`FRIEND_REQUESTS_IN_MAX`), or blocked you, all
 /// give the same `404`. So does every new request while the instance has friend requests off
 /// (`friend_requests` in `GET /api/v1/settings`); answering a request they sent you still
 /// works. At most 100 pending sent requests and 20 requests per 10 minutes.
 /// Requires a bearer token. General rate-limit bucket.
-#[utoipa::path(post, path = "/api/v1/friends/requests", tag = "Friends", request_body = FriendReq, responses((status = 200, description = "Sent, accepted (they had asked you) or already friends", body = RequestOutcome), (status = 400, description = "`You cannot add yourself as a friend`, `You have too many pending friend requests`, `You can have at most 1000 friends` or `That user has too many friends`. Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "You blocked this user", body = ApiErrorBody), (status = 404, description = "`Could not send a friend request to that user.`: no such user, they do not take requests from you, or friend requests are off on this instance", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many friend requests. Try again later.` (JSON, with `Retry-After`): more than 20 in 10 minutes, counted across copies when `REDIS_URL` is set. `Too many actions on other accounts. Try again later.` with a `Retry-After` header (JSON): more than 30 new DMs and friend requests in 10 minutes. Or too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/friends/requests", tag = "Friends", request_body = FriendReq, responses((status = 200, description = "Sent, accepted (they had asked you) or already friends", body = RequestOutcome), (status = 400, description = "`You cannot add yourself as a friend`, `You have too many pending friend requests`, `You can have at most 1000 friends` (the configured `FRIENDS_MAX`, reason `limit`) or `That user has too many friends` (reason `limit`). Malformed JSON or a missing `Content-Type` give plain-text 400/415 framework errors", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "You blocked this user", body = ApiErrorBody), (status = 404, description = "`Could not send a friend request to that user.`: no such user, they do not take requests from you, or friend requests are off on this instance", body = ApiErrorBody), (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String), (status = 429, description = "`Too many friend requests. Try again later.` (JSON, with `Retry-After`): more than 20 in 10 minutes, counted across copies when `REDIS_URL` is set. `Too many actions on other accounts. Try again later.` with a `Retry-After` header (JSON): more than 30 new DMs and friend requests in 10 minutes. Or too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn send_request(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -894,7 +905,7 @@ pub(crate) async fn send_request(
     .bind(&other.username)
     .bind(t)
     .bind(OUTGOING_MAX)
-    .bind(INCOMING_MAX)
+    .bind(state.limits.friend_requests_in_max)
     .execute(&mut *tx)
     .await?
     .rows_affected()
@@ -954,7 +965,7 @@ pub(crate) async fn send_request(
 /// `friend_request_removed` and `friend_added` to both users and a `ping` of kind
 /// `friend_accept` (scope `friends`) to `username`. Requires a bearer token. General rate-limit
 /// bucket.
-#[utoipa::path(post, path = "/api/v1/friends/requests/{username}/accept", tag = "Friends", params(("username" = String, Path, description = "The sender, case-insensitive")), responses((status = 200, description = "The new friend", body = Friend), (status = 400, description = "`You can have at most 1000 friends` or `That user has too many friends`", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "No friend request from this user", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/friends/requests/{username}/accept", tag = "Friends", params(("username" = String, Path, description = "The sender, case-insensitive")), responses((status = 200, description = "The new friend", body = Friend), (status = 400, description = "`You can have at most 1000 friends` (the configured `FRIENDS_MAX`, reason `limit`) or `That user has too many friends` (reason `limit`)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "No friend request from this user", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn accept_request(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -1104,7 +1115,7 @@ pub(crate) async fn friend_page(
     let order = "ORDER BY lower(u.display_name), f.friend";
     let pattern = prefix_pattern(&q.trim().to_lowercase());
     let take = match online_only {
-        true => FRIENDS_MAX + 1,
+        true => friends_listed() + 1,
         false => limit + 1,
     };
     let rows = match cursor {
@@ -2161,6 +2172,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn friend_caps_are_configurable() {
+        let (state, path) = temp_state("friends_caps").await;
+        for name in ["alice", "bob", "carol", "dave", "erin"] {
+            add_user(&state.db, name, name).await;
+        }
+        let state = state.with_limits(std::sync::Arc::new(Limits {
+            friends_max: 1,
+            friend_requests_in_max: 1,
+            ..Limits::default()
+        }));
+        befriend(&state, "alice", "bob").await;
+        send(&state, "carol", "alice").await.expect("asked");
+        let Err(ApiError(status, msg, reason)) =
+            accept_request(State(state.clone()), me("alice"), Path("carol".to_string())).await
+        else {
+            panic!("a second friend past the cap");
+        };
+        assert_eq!(
+            (status, msg.as_str()),
+            (StatusCode::BAD_REQUEST, "You can have at most 1 friends")
+        );
+        assert_eq!(
+            reason.and_then(|r| r.control).as_deref(),
+            Some("friends_max")
+        );
+        send(&state, "dave", "erin")
+            .await
+            .expect("erin's first request");
+        assert_eq!(
+            code(send(&state, "carol", "erin").await),
+            Some((StatusCode::NOT_FOUND, REFUSED.to_string())),
+            "a full inbox refuses like any other refusal"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn the_dm_switch_stops_new_conversations_and_keeps_the_old_ones() {
         let (state, path) = temp_state("dm_creation").await;
         for name in ["alice", "bob", "carol", "dave", "root"] {
@@ -2653,7 +2701,11 @@ mod tests {
     async fn the_sweep_ages_out_friend_pings() {
         let (state, path) = temp_state("friends_sweep").await;
         let t = now();
-        for (id, created_at, seen) in [(1, t, 0), (2, t, 1), (3, t - crate::db::PING_KEEP - 1, 0)] {
+        for (id, created_at, seen) in [
+            (1, t, 0),
+            (2, t, 1),
+            (3, t - state.limits.ping_keep_secs() - 1, 0),
+        ] {
             sqlx::query("INSERT INTO friend_pings(id, username, kind, actor, created_at, seen) VALUES($1, 'alice', 'friend_request', 'bob', $2, $3)")
                 .bind(id)
                 .bind(created_at)

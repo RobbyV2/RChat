@@ -82,11 +82,6 @@ pub(crate) async fn delete_batched(db: &Db, sql: &'static str, cutoff: i64) -> s
 
 pub const SERVER_PASSWORD_KEEP: i64 = 30 * 86400;
 
-pub const PING_KEEP: i64 = 30 * 86400;
-
-/// How long audit log entries are kept.
-pub const AUDIT_KEEP: i64 = 90 * 86400;
-
 /// How long an ended timeout row is kept before the sweep deletes it (the checks ignore it).
 pub const TIMEOUT_KEEP: i64 = 3600;
 
@@ -148,32 +143,32 @@ pub(crate) async fn sweep_stale_at(db: &Db, limits: &Limits, t: i64) -> sqlx::Re
             + delete_batched(
                 db,
                 "DELETE FROM preview_images WHERE key IN (SELECT key FROM preview_images WHERE fetched_at < $1 LIMIT $2)",
-                t - 7 * 86400,
+                t - limits.preview_cache_secs(),
             )
             .await?,
         pings: delete_batched(
             db,
             "DELETE FROM pings WHERE id IN (SELECT id FROM pings WHERE created_at < $1 LIMIT $2)",
-            t - PING_KEEP,
+            t - limits.ping_keep_secs(),
         )
         .await?
             + trim_kept_pings(db).await?
             + delete_batched(
                 db,
                 "DELETE FROM group_pings WHERE id IN (SELECT id FROM group_pings WHERE created_at < $1 LIMIT $2)",
-                t - PING_KEEP,
+                t - limits.ping_keep_secs(),
             )
             .await?
             + delete_batched(
                 db,
                 "DELETE FROM group_pings_read WHERE (username, message_id) IN (SELECT username, message_id FROM group_pings_read WHERE created_at < $1 LIMIT $2)",
-                t - PING_KEEP,
+                t - limits.ping_keep_secs(),
             )
             .await?
             + delete_batched(
                 db,
                 "DELETE FROM friend_pings WHERE id IN (SELECT id FROM friend_pings WHERE created_at < $1 LIMIT $2)",
-                t - PING_KEEP,
+                t - limits.ping_keep_secs(),
             )
             .await?,
         config_shares: delete_batched(
@@ -185,7 +180,7 @@ pub(crate) async fn sweep_stale_at(db: &Db, limits: &Limits, t: i64) -> sqlx::Re
         audit_log: delete_batched(
             db,
             "DELETE FROM audit_log WHERE id IN (SELECT id FROM audit_log WHERE created_at < $1 LIMIT $2)",
-            t - AUDIT_KEEP,
+            t - limits.audit_keep_secs(),
         )
         .await?,
         member_timeouts: delete_batched(
@@ -203,7 +198,7 @@ pub(crate) async fn sweep_stale_at(db: &Db, limits: &Limits, t: i64) -> sqlx::Re
         webhook_deliveries: delete_batched(
             db,
             "DELETE FROM webhook_deliveries WHERE id IN (SELECT id FROM webhook_deliveries WHERE created_at < $1 LIMIT $2)",
-            t - crate::api::webhooks::DELIVERY_KEEP,
+            t - limits.webhook_log_secs(),
         )
         .await?,
         recovery_challenges: delete_batched(

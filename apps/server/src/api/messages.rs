@@ -1694,7 +1694,8 @@ async fn deliver(
             let quote = quoted(db, user, place, req.reply_to, req.mention_reply).await?;
             let groups = match (&scope, place) {
                 (PingScope::Channel(channel), Place::Channel(_)) => {
-                    group_mentions(db, channel, &req.content).await?
+                    let roles_max = state.limits.message_role_mentions_max;
+                    group_mentions(db, channel, &req.content, roles_max).await?
                 }
                 (_, _) => Vec::new(),
             };
@@ -11517,6 +11518,51 @@ mod tests {
             .expect("count")
             .try_get(0)
             .expect("n")
+    }
+
+    #[tokio::test]
+    async fn mention_caps_are_configurable() {
+        use crate::api::pings::GroupKind::Role;
+        let (state, path) = temp_state("mention_caps").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        for name in ["alice", "bob", "carol", "dave"] {
+            add_user(db, name, name).await;
+            add_member(db, "rchat", name, 0, 0, 1).await;
+        }
+        let roles = [
+            new_role(db, "owls", 0, true).await,
+            new_role(db, "larks", 0, true).await,
+            new_role(db, "bats", 0, true).await,
+        ];
+        let state = state.with_limits(std::sync::Arc::new(crate::limits::Limits {
+            message_user_mentions_max: 2,
+            message_role_mentions_max: 2,
+            ..crate::limits::Limits::default()
+        }));
+        let mut rx = state.hub.subscribe();
+        let m = say(
+            &state,
+            (Some(cid), None, None),
+            "alice",
+            "@bob @carol @dave @owls @larks @bats",
+        )
+        .await;
+        let c = format!("c{cid}");
+        assert_eq!(
+            pings_sent(&mut rx),
+            vec![
+                ("bob".to_string(), c.clone(), m.id),
+                ("carol".to_string(), c.clone(), m.id)
+            ],
+            "two names are pinged"
+        );
+        assert_eq!(
+            kinds(&m.group_mentions),
+            vec![(Role, Some(roles[0])), (Role, Some(roles[1]))],
+            "two roles are pinged"
+        );
+        done(state, path).await;
     }
 
     #[tokio::test]

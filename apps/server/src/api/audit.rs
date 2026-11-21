@@ -822,8 +822,8 @@ struct Raw {
 /// Returns what members with moderation and management permissions did in the server, newest
 /// first, as pages of `limit` (default and max 50). Page with `cursor` from the
 /// `X-Next-Cursor` response header. Filter by action group or action, actor, target name and
-/// time range. Entries are kept for 90 days. Actions by the instance staff show `staff: true`
-/// and no actor. Entries about channels you can't see come with `hidden: true` and without
+/// time range. Entries are kept for 90 days by default (`AUDIT_KEEP_DAYS`). Actions by the
+/// instance staff show `staff: true` and no actor. Entries about channels you can't see come with `hidden: true` and without
 /// their names and details. Requires being a member with the View audit log permission. General
 /// rate-limit bucket.
 #[utoipa::path(

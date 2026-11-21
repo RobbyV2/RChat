@@ -14,7 +14,6 @@ use crate::limits::bucket::{Keyed, Policy};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
-pub const MENTION_MAX: usize = 20;
 pub const PINGS_MAX: i64 = 1000;
 /// `pings.seen` of a reaction ping whose reaction was taken back: never counted or shown, kept
 /// until it ages out so adding the reaction again does not ping again.
@@ -217,12 +216,13 @@ pub fn mention_candidates(content: &str) -> Vec<String> {
     out
 }
 
-/// Existing, live accounts among `candidates`, in the same order, at most `MENTION_MAX`,
-/// without `author`.
+/// Existing, live accounts among `candidates`, in the same order, at most `most`
+/// (`MESSAGE_USER_MENTIONS_MAX`), without `author`.
 pub async fn mentioned_users(
     db: &Db,
     candidates: &[String],
     author: &str,
+    most: usize,
 ) -> Result<Vec<String>, ApiError> {
     let wanted: Vec<&String> = candidates.iter().filter(|c| c.as_str() != author).collect();
     let mut found = HashSet::new();
@@ -242,7 +242,7 @@ pub async fn mentioned_users(
     Ok(wanted
         .into_iter()
         .filter(|n| found.contains(n.as_str()))
-        .take(MENTION_MAX)
+        .take(most)
         .cloned()
         .collect())
 }
@@ -540,7 +540,8 @@ pub async fn ping_message_for(
         if candidates.is_empty() {
             return Ok(());
         }
-        let named: Vec<String> = mentioned_users(&state.db, &candidates, &actor.username)
+        let most = state.limits.message_user_mentions_max;
+        let named: Vec<String> = mentioned_users(&state.db, &candidates, &actor.username, most)
             .await?
             .into_iter()
             .filter(|name| !replied.contains(name))
@@ -569,12 +570,6 @@ pub async fn ping_message_for(
     }
 }
 
-/// Most `@here` recipients stored per message (online viewers at send time).
-pub const HERE_MAX: usize = 500;
-/// Most role mentions per message.
-pub const ROLE_MENTION_MAX: usize = 20;
-/// Most online users looked at for one `@here`.
-const HERE_SCAN: usize = 4 * HERE_MAX;
 /// Most group-mentioned messages counted per user (like `PINGS_MAX`).
 pub const GROUP_PINGS_MAX: i64 = PINGS_MAX;
 
@@ -660,6 +655,7 @@ pub async fn group_mentions(
     db: &Db,
     channel: &ResolvedChannel,
     content: &str,
+    roles_max: usize,
 ) -> Result<Vec<GroupMention>, ApiError> {
     if mention_candidates(content).is_empty() {
         return Ok(Vec::new());
@@ -676,6 +672,7 @@ pub async fn group_mentions(
             any_role: allowed,
             roles: RoleRights::Mentionable,
         },
+        roles_max,
     )
     .await
 }
@@ -699,12 +696,14 @@ pub struct GroupRights {
     pub roles: RoleRights,
 }
 
-/// The group mentions in `content` that a sender with `rights` may use in `server`.
+/// The group mentions in `content` that a sender with `rights` may use in `server`, with at most
+/// `roles_max` roles (`MESSAGE_ROLE_MENTIONS_MAX`).
 pub async fn group_mentions_as(
     db: &Db,
     server: &str,
     content: &str,
     rights: GroupRights,
+    roles_max: usize,
 ) -> Result<Vec<GroupMention>, ApiError> {
     let candidates = mention_candidates(content);
     if candidates.is_empty() {
@@ -748,7 +747,7 @@ pub async fn group_mentions_as(
                 role_id: Some(id),
             });
             roles += 1;
-            if roles == ROLE_MENTION_MAX {
+            if roles >= roles_max {
                 break;
             }
         }
@@ -757,19 +756,20 @@ pub async fn group_mentions_as(
 }
 
 /// The members of the channel's server who are online anywhere on the site and can view the
-/// channel, without the author: at most `HERE_MAX`, looking at no more than `HERE_SCAN` of the
-/// server's online members.
+/// channel, without the author: at most `HERE_RECIPIENTS_MAX`, looking at no more than four
+/// times that many of the server's online members.
 async fn here_recipients(
     state: &AppState,
     channel: &ResolvedChannel,
     author: &str,
 ) -> Result<Vec<String>, ApiError> {
     let server = channel.server().name();
+    let most = state.limits.here_recipients_max;
     let mut out = Vec::new();
     let mut after: Option<String> = None;
     let mut scanned = 0;
-    while out.len() < HERE_MAX && scanned < HERE_SCAN {
-        let page = state.hub.online_after(server, after.as_deref(), HERE_MAX);
+    while out.len() < most && scanned < 4 * most {
+        let page = state.hub.online_after(server, after.as_deref(), most);
         let Some(last) = page.last().cloned() else {
             break;
         };
@@ -778,12 +778,12 @@ async fn here_recipients(
         out.extend(channel.viewers_among(&state.db, &names, None).await?);
         after = Some(last);
     }
-    out.truncate(HERE_MAX);
+    out.truncate(most);
     Ok(out)
 }
 
 /// Stores the group mentions of a new top-level channel message: one `group_pings` row per
-/// mention, and for `@here` the online viewers (at most `HERE_MAX`). Nothing is stored per
+/// mention, and for `@here` the online viewers (at most `HERE_RECIPIENTS_MAX`). Nothing is stored per
 /// member otherwise: unseen counts are worked out when they are read (`group_unseen`). Never
 /// fails the send: errors are logged.
 pub async fn store_group_pings(state: &AppState, channel: &ResolvedChannel, message: &Message) {

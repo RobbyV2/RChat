@@ -2993,6 +2993,7 @@ mod tests {
             &state.db,
             &["ally".to_string(), "alice".to_string()],
             "bob",
+            20,
         )
         .await
         .expect("mentions");

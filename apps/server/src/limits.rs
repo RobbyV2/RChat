@@ -19,7 +19,7 @@ const MIB: usize = 1024 * 1024;
 pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 74] = [
+const RANGES: [(&str, i64, i64); 98] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
@@ -94,6 +94,30 @@ const RANGES: [(&str, i64, i64); 74] = [
     ("MESSAGE_SEARCH_CONCURRENT_LIMIT", 1, 1_000),
     ("RARE_REQUESTS_PER_HOUR", 0, 10_000),
     ("RARE_REQUESTS_PER_DAY", 0, 100_000),
+    ("SERVER_CHANNELS_MAX", 1, 10_000),
+    ("SERVER_CATEGORIES_MAX", 1, 1_000),
+    ("SERVER_ROLES_MAX", 1, 10_000),
+    ("CHANNEL_PINS_MAX", 1, 1_000),
+    ("MESSAGE_USER_MENTIONS_MAX", 1, 400),
+    ("MESSAGE_ROLE_MENTIONS_MAX", 1, 1_000),
+    ("HERE_RECIPIENTS_MAX", 1, 10_000),
+    ("FRIENDS_MAX", 1, 10_000),
+    ("FRIEND_REQUESTS_IN_MAX", 1, 10_000),
+    ("CHANNEL_WEBHOOKS_MAX", 1, 1_000),
+    ("SERVER_WEBHOOKS_MAX", 1, 10_000),
+    ("SERVER_OUTGOING_WEBHOOKS_MAX", 1, 1_000),
+    ("WEBHOOK_QUEUE_MAX", 1, 1_000_000),
+    ("WEBHOOK_WORKERS", 1, 1_024),
+    ("WEBHOOK_ATTEMPTS", 1, 100),
+    ("WEBHOOK_LOG_DAYS", 1, 3_650),
+    ("WEBHOOK_LOG_KEPT", 1, 100_000),
+    ("AUDIT_KEEP_DAYS", 1, 36_500),
+    ("PING_KEEP_DAYS", 1, 3_650),
+    ("PREVIEW_CACHE_MIB", 1, 1_048_576),
+    ("PREVIEW_CACHE_ROWS", 1, 10_000_000),
+    ("PREVIEW_CACHE_DAYS", 1, 3_650),
+    ("EMBED_FETCHES", 1, 1_024),
+    ("EMBED_QUEUE", 1, 100_000),
 ];
 
 /// The P2P limits registry, generated from the web app's `p2p/limits.ts`: each device-local name
@@ -276,6 +300,30 @@ pub struct Limits {
     pub message_search_concurrent_limit: Option<u32>,
     pub rare_requests_per_hour: u32,
     pub rare_requests_per_day: u32,
+    pub server_channels_max: i64,
+    pub server_categories_max: i64,
+    pub server_roles_max: i64,
+    pub channel_pins_max: i64,
+    pub message_user_mentions_max: usize,
+    pub message_role_mentions_max: usize,
+    pub here_recipients_max: usize,
+    pub friends_max: i64,
+    pub friend_requests_in_max: i64,
+    pub channel_webhooks_max: i64,
+    pub server_webhooks_max: i64,
+    pub server_outgoing_webhooks_max: i64,
+    pub webhook_queue_max: i64,
+    pub webhook_workers: usize,
+    pub webhook_attempts: i64,
+    pub webhook_log_days: i64,
+    pub webhook_log_kept: i64,
+    pub audit_keep_days: i64,
+    pub ping_keep_days: i64,
+    pub preview_cache_mib: i64,
+    pub preview_cache_rows: i64,
+    pub preview_cache_days: i64,
+    pub embed_fetches: usize,
+    pub embed_queue: usize,
     /// `P2P_LIMITS`: the names given that the P2P registry has, with their values.
     pub p2p: BTreeMap<String, f64>,
     /// Names in `P2P_LIMITS` the registry doesn't have, left out of `p2p`.
@@ -361,6 +409,30 @@ impl Default for Limits {
             message_search_concurrent_limit: None,
             rare_requests_per_hour: 20,
             rare_requests_per_day: 100,
+            server_channels_max: 500,
+            server_categories_max: 100,
+            server_roles_max: 250,
+            channel_pins_max: 100,
+            message_user_mentions_max: 20,
+            message_role_mentions_max: 20,
+            here_recipients_max: 500,
+            friends_max: 1000,
+            friend_requests_in_max: 1000,
+            channel_webhooks_max: 15,
+            server_webhooks_max: 100,
+            server_outgoing_webhooks_max: 10,
+            webhook_queue_max: 1000,
+            webhook_workers: 16,
+            webhook_attempts: 6,
+            webhook_log_days: 7,
+            webhook_log_kept: 100,
+            audit_keep_days: 90,
+            ping_keep_days: 30,
+            preview_cache_mib: 128,
+            preview_cache_rows: 20000,
+            preview_cache_days: 7,
+            embed_fetches: 16,
+            embed_queue: 256,
             p2p: BTreeMap::new(),
             p2p_unknown: Vec::new(),
         }
@@ -608,6 +680,35 @@ impl Limits {
             message_search_concurrent_limit: e.opt("MESSAGE_SEARCH_CONCURRENT_LIMIT")?,
             rare_requests_per_hour: e.num("RARE_REQUESTS_PER_HOUR", d.rare_requests_per_hour)?,
             rare_requests_per_day: e.num("RARE_REQUESTS_PER_DAY", d.rare_requests_per_day)?,
+            server_channels_max: e.num("SERVER_CHANNELS_MAX", d.server_channels_max)?,
+            server_categories_max: e.num("SERVER_CATEGORIES_MAX", d.server_categories_max)?,
+            server_roles_max: e.num("SERVER_ROLES_MAX", d.server_roles_max)?,
+            channel_pins_max: e.num("CHANNEL_PINS_MAX", d.channel_pins_max)?,
+            message_user_mentions_max: e
+                .num("MESSAGE_USER_MENTIONS_MAX", d.message_user_mentions_max)?,
+            message_role_mentions_max: e
+                .num("MESSAGE_ROLE_MENTIONS_MAX", d.message_role_mentions_max)?,
+            here_recipients_max: e.num("HERE_RECIPIENTS_MAX", d.here_recipients_max)?,
+            friends_max: e.num("FRIENDS_MAX", d.friends_max)?,
+            friend_requests_in_max: e.num("FRIEND_REQUESTS_IN_MAX", d.friend_requests_in_max)?,
+            channel_webhooks_max: e.num("CHANNEL_WEBHOOKS_MAX", d.channel_webhooks_max)?,
+            server_webhooks_max: e.num("SERVER_WEBHOOKS_MAX", d.server_webhooks_max)?,
+            server_outgoing_webhooks_max: e.num(
+                "SERVER_OUTGOING_WEBHOOKS_MAX",
+                d.server_outgoing_webhooks_max,
+            )?,
+            webhook_queue_max: e.num("WEBHOOK_QUEUE_MAX", d.webhook_queue_max)?,
+            webhook_workers: e.num("WEBHOOK_WORKERS", d.webhook_workers)?,
+            webhook_attempts: e.num("WEBHOOK_ATTEMPTS", d.webhook_attempts)?,
+            webhook_log_days: e.num("WEBHOOK_LOG_DAYS", d.webhook_log_days)?,
+            webhook_log_kept: e.num("WEBHOOK_LOG_KEPT", d.webhook_log_kept)?,
+            audit_keep_days: e.num("AUDIT_KEEP_DAYS", d.audit_keep_days)?,
+            ping_keep_days: e.num("PING_KEEP_DAYS", d.ping_keep_days)?,
+            preview_cache_mib: e.num("PREVIEW_CACHE_MIB", d.preview_cache_mib)?,
+            preview_cache_rows: e.num("PREVIEW_CACHE_ROWS", d.preview_cache_rows)?,
+            preview_cache_days: e.num("PREVIEW_CACHE_DAYS", d.preview_cache_days)?,
+            embed_fetches: e.num("EMBED_FETCHES", d.embed_fetches)?,
+            embed_queue: e.num("EMBED_QUEUE", d.embed_queue)?,
             p2p,
             p2p_unknown,
         };
@@ -695,6 +796,30 @@ impl Limits {
             message_search_concurrent_limit,
             rare_requests_per_hour,
             rare_requests_per_day,
+            server_channels_max,
+            server_categories_max,
+            server_roles_max,
+            channel_pins_max,
+            message_user_mentions_max,
+            message_role_mentions_max,
+            here_recipients_max,
+            friends_max,
+            friend_requests_in_max,
+            channel_webhooks_max,
+            server_webhooks_max,
+            server_outgoing_webhooks_max,
+            webhook_queue_max,
+            webhook_workers,
+            webhook_attempts,
+            webhook_log_days,
+            webhook_log_kept,
+            audit_keep_days,
+            ping_keep_days,
+            preview_cache_mib,
+            preview_cache_rows,
+            preview_cache_days,
+            embed_fetches,
+            embed_queue,
             p2p: _,
             p2p_unknown: _,
         } = *self;
@@ -812,6 +937,33 @@ impl Limits {
             ),
             ("RARE_REQUESTS_PER_HOUR", set(rare_requests_per_hour)),
             ("RARE_REQUESTS_PER_DAY", set(rare_requests_per_day)),
+            ("SERVER_CHANNELS_MAX", set(server_channels_max)),
+            ("SERVER_CATEGORIES_MAX", set(server_categories_max)),
+            ("SERVER_ROLES_MAX", set(server_roles_max)),
+            ("CHANNEL_PINS_MAX", set(channel_pins_max)),
+            ("MESSAGE_USER_MENTIONS_MAX", set(message_user_mentions_max)),
+            ("MESSAGE_ROLE_MENTIONS_MAX", set(message_role_mentions_max)),
+            ("HERE_RECIPIENTS_MAX", set(here_recipients_max)),
+            ("FRIENDS_MAX", set(friends_max)),
+            ("FRIEND_REQUESTS_IN_MAX", set(friend_requests_in_max)),
+            ("CHANNEL_WEBHOOKS_MAX", set(channel_webhooks_max)),
+            ("SERVER_WEBHOOKS_MAX", set(server_webhooks_max)),
+            (
+                "SERVER_OUTGOING_WEBHOOKS_MAX",
+                set(server_outgoing_webhooks_max),
+            ),
+            ("WEBHOOK_QUEUE_MAX", set(webhook_queue_max)),
+            ("WEBHOOK_WORKERS", set(webhook_workers)),
+            ("WEBHOOK_ATTEMPTS", set(webhook_attempts)),
+            ("WEBHOOK_LOG_DAYS", set(webhook_log_days)),
+            ("WEBHOOK_LOG_KEPT", set(webhook_log_kept)),
+            ("AUDIT_KEEP_DAYS", set(audit_keep_days)),
+            ("PING_KEEP_DAYS", set(ping_keep_days)),
+            ("PREVIEW_CACHE_MIB", set(preview_cache_mib)),
+            ("PREVIEW_CACHE_ROWS", set(preview_cache_rows)),
+            ("PREVIEW_CACHE_DAYS", set(preview_cache_days)),
+            ("EMBED_FETCHES", set(embed_fetches)),
+            ("EMBED_QUEUE", set(embed_queue)),
         ]
     }
 
@@ -821,6 +973,12 @@ impl Limits {
             .iter()
             .find(|(name, _, _)| *name == env)
             .map(|(_, lo, hi)| (*lo, *hi))
+    }
+
+    /// The largest value the numeric limit `env` takes, the bound for reads of what it caps, so
+    /// rows kept from before a cap was lowered still count. `i64::MAX` for a name without a range.
+    pub fn most(env: &str) -> i64 {
+        Limits::range(env).map_or(i64::MAX, |(_, hi)| hi)
     }
 
     /// The checks between limits.
@@ -951,6 +1109,31 @@ impl Limits {
     /// Seconds an unreferenced link preview is cached (`EMBED_CACHE_DAYS`, at least one day).
     pub fn embed_cache_ttl(&self) -> i64 {
         self.embed_cache_days.max(1) * 86400
+    }
+
+    /// Seconds an audit log entry is kept (`AUDIT_KEEP_DAYS`).
+    pub fn audit_keep_secs(&self) -> i64 {
+        self.audit_keep_days.max(1) * 86400
+    }
+
+    /// Seconds a ping is kept (`PING_KEEP_DAYS`).
+    pub fn ping_keep_secs(&self) -> i64 {
+        self.ping_keep_days.max(1) * 86400
+    }
+
+    /// Seconds a webhook delivery stays in the log (`WEBHOOK_LOG_DAYS`).
+    pub fn webhook_log_secs(&self) -> i64 {
+        self.webhook_log_days.max(1) * 86400
+    }
+
+    /// Seconds a preview image stays cached (`PREVIEW_CACHE_DAYS`).
+    pub fn preview_cache_secs(&self) -> i64 {
+        self.preview_cache_days.max(1) * 86400
+    }
+
+    /// Bytes of preview images the cache keeps (`PREVIEW_CACHE_MIB`).
+    pub fn preview_cache_bytes(&self) -> i64 {
+        self.preview_cache_mib.saturating_mul(MIB as i64)
     }
 }
 
@@ -1300,6 +1483,74 @@ mod tests {
         ])
         .expect("set");
         assert_eq!((set.argon2_permits, set.rate_limit_strict_burst), (4, 5));
+    }
+
+    #[test]
+    fn product_and_retention_limits_have_their_defaults() {
+        let d = load(&[]).expect("defaults");
+        assert_eq!(
+            (
+                d.server_channels_max,
+                d.server_categories_max,
+                d.server_roles_max,
+                d.channel_pins_max,
+                d.friends_max,
+                d.friend_requests_in_max,
+            ),
+            (500, 100, 250, 100, 1000, 1000)
+        );
+        assert_eq!(
+            (
+                d.message_user_mentions_max,
+                d.message_role_mentions_max,
+                d.here_recipients_max,
+                d.webhook_workers,
+                d.embed_fetches,
+                d.embed_queue,
+            ),
+            (20, 20, 500, 16, 16, 256)
+        );
+        assert_eq!(
+            (
+                d.channel_webhooks_max,
+                d.server_webhooks_max,
+                d.server_outgoing_webhooks_max,
+                d.webhook_queue_max,
+                d.webhook_attempts,
+                d.webhook_log_kept,
+            ),
+            (15, 100, 10, 1000, 6, 100)
+        );
+        assert_eq!(
+            (
+                d.audit_keep_secs(),
+                d.ping_keep_secs(),
+                d.webhook_log_secs(),
+                d.preview_cache_secs(),
+                d.preview_cache_bytes(),
+                d.preview_cache_rows,
+            ),
+            (
+                90 * 86400,
+                30 * 86400,
+                7 * 86400,
+                7 * 86400,
+                128 * 1024 * 1024,
+                20_000
+            )
+        );
+        let set = load(&[
+            ("SERVER_CHANNELS_MAX", "2".to_string()),
+            ("AUDIT_KEEP_DAYS", "1".to_string()),
+        ])
+        .expect("set");
+        assert_eq!((set.server_channels_max, set.audit_keep_secs()), (2, 86400));
+        let err = load(&[("SERVER_CHANNELS_MAX", "0".to_string())]).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "SERVER_CHANNELS_MAX: expected 1 to 10000, got 0"
+        );
+        assert_eq!(Limits::most("CHANNEL_PINS_MAX"), 1000);
     }
 
     #[test]

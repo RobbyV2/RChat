@@ -18,6 +18,7 @@ use crate::api::{
     ApiError, ApiErrorBody, Settings, request_token, require_guest_ok, user_for_token,
 };
 use crate::db::{Db, now};
+use crate::limits::Limits;
 use crate::limits::bucket::{self, Keyed};
 use crate::net_guard::Policy;
 use crate::state::AppState;
@@ -28,14 +29,8 @@ pub(crate) const IMAGE_MAX: usize = 5 * 1024 * 1024;
 const SIDE_MAX: u32 = 8192;
 /// Most pixels of a preview image, so viewers' browsers never decode a huge canvas.
 const PIXELS_MAX: u64 = 24_000_000;
-/// How long a fetched image is served before it is fetched again.
-const KEEP_SECS: i64 = 7 * 86400;
 /// How long a failed fetch is remembered, so viewers can't make the server fetch it again.
 const FAILED_SECS: i64 = 3600;
-/// Most bytes all cached images take together; the oldest go first.
-const CACHE_BYTES: i64 = 128 * 1024 * 1024;
-/// Most cached entries, failures included.
-const CACHE_ROWS: i64 = 20_000;
 /// Most preview images fetched at once by this process, for all viewers together.
 const FETCHES_MAX: usize = 8;
 /// How long a fetch waits for one of `FETCHES_MAX` before the image is answered as not found
@@ -272,14 +267,19 @@ fn cache_key(source: &str) -> String {
     hex::encode(sha2::Sha256::digest(source.as_bytes()))
 }
 
-/// A cached copy: the image's type and size, or `None` for a fetch that failed lately.
-async fn cached(db: &Db, key: &str) -> sqlx::Result<Option<Option<(String, i64)>>> {
+/// A cached copy: the image's type and size, or `None` for a fetch that failed lately. A fetched
+/// image is served for `PREVIEW_CACHE_DAYS` before it is fetched again.
+async fn cached(
+    db: &Db,
+    limits: &Limits,
+    key: &str,
+) -> sqlx::Result<Option<Option<(String, i64)>>> {
     let t = now();
     let row = sqlx::query(
         "SELECT mime, size FROM preview_images WHERE key = $1 AND ((mime <> '' AND fetched_at > $2) OR (mime = '' AND fetched_at > $3))",
     )
     .bind(key)
-    .bind(t - KEEP_SECS)
+    .bind(t - limits.preview_cache_secs())
     .bind(t - FAILED_SECS)
     .fetch_optional(db)
     .await?;
@@ -303,7 +303,12 @@ async fn blob(db: &Db, key: &str) -> sqlx::Result<Option<Vec<u8>>> {
         .transpose()
 }
 
-async fn remember(db: &Db, key: &str, found: Option<(&str, &[u8])>) -> sqlx::Result<()> {
+async fn remember(
+    db: &Db,
+    limits: &Limits,
+    key: &str,
+    found: Option<(&str, &[u8])>,
+) -> sqlx::Result<()> {
     let (mime, data) = found.unwrap_or(("", &[]));
     sqlx::query(
         "INSERT INTO preview_images(key, mime, data, size, fetched_at) VALUES($1, $2, $3, $4, $5) ON CONFLICT(key) DO UPDATE SET mime = excluded.mime, data = excluded.data, size = excluded.size, fetched_at = excluded.fetched_at",
@@ -315,12 +320,13 @@ async fn remember(db: &Db, key: &str, found: Option<(&str, &[u8])>) -> sqlx::Res
     .bind(now())
     .execute(db)
     .await?;
-    trim(db).await
+    trim(db, limits).await
 }
 
-/// Drops the oldest cached images until the cache fits `CACHE_BYTES` and `CACHE_ROWS`.
-pub(crate) async fn trim(db: &Db) -> sqlx::Result<()> {
-    trim_to(db, CACHE_BYTES, CACHE_ROWS).await
+/// Drops the oldest cached images until the cache fits `PREVIEW_CACHE_MIB` and
+/// `PREVIEW_CACHE_ROWS` (failures count as rows).
+pub(crate) async fn trim(db: &Db, limits: &Limits) -> sqlx::Result<()> {
+    trim_to(db, limits.preview_cache_bytes(), limits.preview_cache_rows).await
 }
 
 async fn trim_to(db: &Db, bytes: i64, rows: i64) -> sqlx::Result<()> {
@@ -352,11 +358,12 @@ async fn trim_to(db: &Db, bytes: i64, rows: i64) -> sqlx::Result<()> {
 /// once). `None` when it can't be shown.
 pub(crate) async fn image(
     db: &Db,
+    limits: &Limits,
     source: &str,
     policy: &Policy,
 ) -> sqlx::Result<Option<(String, i64)>> {
     let key = cache_key(source);
-    if let Some(hit) = cached(db, &key).await? {
+    if let Some(hit) = cached(db, limits, &key).await? {
         return Ok(hit);
     }
     let lock = match IN_FLIGHT.lock() {
@@ -364,7 +371,7 @@ pub(crate) async fn image(
         Err(_) => Arc::default(),
     };
     let held = lock.lock().await;
-    let out = match cached(db, &key).await? {
+    let out = match cached(db, limits, &key).await? {
         Some(hit) => Ok(hit),
         None => match tokio::time::timeout(FETCH_WAIT, FETCHES.clone().acquire_owned()).await {
             Ok(Ok(permit)) => {
@@ -376,7 +383,7 @@ pub(crate) async fn image(
                     Err(e) => Ok(Err(e.into())),
                 };
                 drop(permit);
-                remembered(db, &key, fetched).await
+                remembered(db, limits, &key, fetched).await
             }
             // Too busy: not remembered, so a later view tries again.
             Ok(Err(_)) | Err(_) => Ok(None),
@@ -396,21 +403,22 @@ pub(crate) async fn image(
 /// Stores the outcome of a fetch and returns what `image` answers.
 async fn remembered(
     db: &Db,
+    limits: &Limits,
     key: &str,
     fetched: Result<anyhow::Result<(&'static str, Vec<u8>)>, tokio::time::error::Elapsed>,
 ) -> sqlx::Result<Option<(String, i64)>> {
     match fetched {
         Ok(Ok((mime, data))) => {
-            remember(db, key, Some((mime, &data))).await?;
+            remember(db, limits, key, Some((mime, &data))).await?;
             Ok(Some((mime.to_string(), data.len() as i64)))
         }
         Ok(Err(e)) => {
             tracing::debug!("preview image skipped: {e}");
-            remember(db, key, None).await?;
+            remember(db, limits, key, None).await?;
             Ok(None)
         }
         Err(_) => {
-            remember(db, key, None).await?;
+            remember(db, limits, key, None).await?;
             Ok(None)
         }
     }
@@ -473,7 +481,9 @@ pub(crate) async fn serve(
     let source = source_of(db, message_id, ord)
         .await?
         .ok_or_else(not_found)?;
-    let (mime, size) = image(db, &source, policy).await?.ok_or_else(not_found)?;
+    let (mime, size) = image(db, &state.limits, &source, policy)
+        .await?
+        .ok_or_else(not_found)?;
     let etag = format!("\"{}\"", &cache_key(&source)[..32]);
     let cache = "private, max-age=86400";
     let fresh = headers
@@ -745,9 +755,15 @@ mod tests {
         let views = (0..50).map(|n| {
             let (db, policy) = (state.db.clone(), policy.clone());
             tokio::spawn(async move {
-                image(&db, &format!("http://127.0.0.1:{port}/{n}.png"), &policy)
-                    .await
-                    .expect("image")
+                let limits = Limits::default();
+                image(
+                    &db,
+                    &limits,
+                    &format!("http://127.0.0.1:{port}/{n}.png"),
+                    &policy,
+                )
+                .await
+                .expect("image")
             })
         });
         let shown = futures_util::future::join_all(views).await;

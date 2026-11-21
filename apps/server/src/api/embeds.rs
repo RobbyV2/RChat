@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use axum::Json;
@@ -16,6 +16,7 @@ use crate::api::access::{Proof, resolve_message};
 use crate::api::{ApiError, ApiErrorBody, Authed, Embed, OkResp, Settings, ok};
 use crate::db::{Db, now};
 use crate::instance::Instance;
+use crate::limits::Limits;
 use crate::net_guard::Policy;
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
@@ -346,12 +347,41 @@ pub(crate) fn spoilered_urls(content: &str) -> Vec<String> {
     out
 }
 
-const FETCH_CONCURRENCY: usize = 16;
-const QUEUE_MAX: usize = 256;
+/// Link preview jobs waiting (`EMBED_QUEUE`) and pages fetched at once (`EMBED_FETCHES`) by
+/// this process.
+struct Fetches {
+    queued: Arc<Semaphore>,
+    fetching: Arc<Semaphore>,
+}
 
-static QUEUED: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(QUEUE_MAX)));
+impl Fetches {
+    fn new(limits: &Limits) -> Fetches {
+        Fetches {
+            queued: Arc::new(Semaphore::new(limits.embed_queue)),
+            fetching: Arc::new(Semaphore::new(limits.embed_fetches)),
+        }
+    }
+}
 
-static FETCHING: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(FETCH_CONCURRENCY));
+static FETCHES: LazyLock<RwLock<Arc<Fetches>>> =
+    LazyLock::new(|| RwLock::new(Arc::new(Fetches::new(&Limits::default()))));
+
+/// Sets the preview queue and fetches at once from `limits` at start. A later start in the same
+/// process replaces them.
+pub fn configure(limits: &Limits) {
+    let fetches = Arc::new(Fetches::new(limits));
+    match FETCHES.write() {
+        Ok(mut held) => *held = fetches,
+        Err(poisoned) => *poisoned.into_inner() = fetches,
+    }
+}
+
+fn fetches() -> Arc<Fetches> {
+    match FETCHES.read() {
+        Ok(held) => Arc::clone(&held),
+        Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+    }
+}
 static IN_FLIGHT: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
     LazyLock::new(Default::default);
 
@@ -433,7 +463,8 @@ async fn resolve_once(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Opt
         )));
     }
     let parsed = Url::parse(url)?;
-    let _permit = FETCHING.acquire().await?;
+    let fetching = fetches().fetching.clone();
+    let _permit = fetching.acquire().await?;
     let (final_url, html) =
         tokio::time::timeout(Duration::from_secs(5), fetch_html(&parsed, policy)).await??;
     let meta = parse_meta(&html, &final_url);
@@ -554,7 +585,7 @@ pub(crate) fn spawn_unfurl(
         message_id,
         urls,
     };
-    let Ok(permit) = QUEUED.clone().try_acquire_owned() else {
+    let Ok(permit) = fetches().queued.clone().try_acquire_owned() else {
         tracing::debug!("embed queue full, no previews for message {message_id}");
         return;
     };

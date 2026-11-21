@@ -12,11 +12,15 @@ use crate::api::{
     ApiError, ApiErrorBody, Authed, MaybeAuthed, Message, OkResp, bad, now_ms, ok, require_guest_ok,
 };
 use crate::db::{Db, User, is_sqlite, now};
+use crate::limits::Limits;
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
-/// Pinned messages one channel or DM can hold.
-pub const PINS_MAX: i64 = 100;
+/// The most pins a list returns: every pin, also those kept from before `CHANNEL_PINS_MAX` was
+/// lowered.
+fn pins_listed() -> i64 {
+    Limits::most("CHANNEL_PINS_MAX")
+}
 
 /// A message pinned again within this many seconds of its last pin notice gets no new notice.
 pub const PIN_NOTICE_SECS: i64 = 600;
@@ -75,7 +79,8 @@ fn cannot_pin() -> ApiError {
 /// Needs read access to the message. In server channels, also needs membership, the Manage
 /// messages permission (bit 2, which also lets you delete messages of others) and the right to
 /// send in the channel. In DMs, needs to be a participant. Only normal messages can be pinned
-/// (not thread replies, call logs or pin notices). A channel or DM has at most 100 pins. Pinning
+/// (not thread replies, call logs or pin notices). A channel or DM has at most 100 pins by default
+/// (`CHANNEL_PINS_MAX`). Pinning
 /// a pinned message changes nothing. A new pin adds a `pin` message ("alice pinned a message";
 /// empty `content`, `pin_message_id` is the pinned message) and emits `message` with it, unless
 /// the same message got a pin notice in the last 10 minutes. In a channel with read-history
@@ -83,7 +88,7 @@ fn cannot_pin() -> ApiError {
 /// `message_pinned` (`{server, channel_id, dm_id, dm_users, message_id, pinned_at, pinned_by}`,
 /// ids only) to clients that can see the channel, or to both DM participants. General rate-limit
 /// bucket.
-#[utoipa::path(put, path = "/api/v1/messages/{id}/pin", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Pinned (or already pinned); body `{\"ok\": true}`", body = OkResp), (status = 400, description = "`Cannot pin this message`: a thread reply, a call log or a pin notice. A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no Manage messages permission, or no permission to send in the channel, or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 409, description = "`This channel has reached the pin limit` or `This conversation has reached the pin limit` (100 pinned messages)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket, or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(put, path = "/api/v1/messages/{id}/pin", tag = "Messages", params(("id" = i64, Path, description = "Message id")), responses((status = 200, description = "Pinned (or already pinned); body `{\"ok\": true}`", body = OkResp), (status = 400, description = "`Cannot pin this message`: a thread reply, a call log or a pin notice. A non-numeric id gives a plain-text 400", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "Not a member of the channel's server, no Manage messages permission, or no permission to send in the channel, or a block between the DM participants (`This user is not accepting messages from you.` for the blocked side, `You blocked this user. Unblock them to send messages.` for the blocker)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such message, its author's account is being deleted, or you cannot read it (hidden channel, before your join without read history, a server you have no access to, or a DM you are not in); identical responses", body = ApiErrorBody), (status = 409, description = "`This channel has reached the pin limit` or `This conversation has reached the pin limit`: 100 pinned messages by default (`CHANNEL_PINS_MAX`, reason `limit`)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket, or `Too many attempts. Try again later` (JSON) after more than 30 reactions, pins and edits in 10 seconds", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn pin_message(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -117,7 +122,7 @@ pub(crate) async fn pin_message(
         .bind(at)
         .bind(&user.username)
         .bind(key)
-        .bind(PINS_MAX)
+        .bind(state.limits.channel_pins_max)
         .execute(&mut *tx)
         .await?
         .rows_affected()
@@ -131,7 +136,11 @@ pub(crate) async fn pin_message(
         tx.rollback().await?;
         return match already {
             true => Ok(ok()),
-            false => Err(ApiError(StatusCode::CONFLICT, full.to_string(), None)),
+            false => Err(ApiError::limit(
+                StatusCode::CONFLICT,
+                full,
+                "channel_pins_max",
+            )),
         };
     }
     let t = now();
@@ -283,7 +292,7 @@ pub(crate) async fn unpin_message(
 /// access is on, password-protected servers, bans, channel view permission). Without
 /// read-history access only messages sent since you joined are listed, so older pins stay
 /// hidden. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/channels/{id}/pins", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), responses((status = 200, description = "Up to 100 pinned top-level messages, most recently pinned first", body = Vec<Message>), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security((), ("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/channels/{id}/pins", tag = "Messages", params(("id" = i64, Path, description = "Channel id")), responses((status = 200, description = "Every pinned top-level message (a channel holds 100 by default, `CHANNEL_PINS_MAX`), most recently pinned first", body = Vec<Message>), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "No valid token and guest access is disabled (`Guest access is disabled`)", body = ApiErrorBody), (status = 404, description = "`Not found`: no such channel, a channel you cannot see, or one in a server you have no access to (password-protected without access, or banned); identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security((), ("bearer" = [])))]
 pub(crate) async fn channel_pins(
     State(state): State<AppState>,
     MaybeAuthed(user): MaybeAuthed,
@@ -301,7 +310,7 @@ pub(crate) async fn channel_pins(
     .await?;
     let floor = channel.read_since(db).await?;
     Ok(Json(
-        pinned_messages(db, Some(id), None, floor, PINS_MAX).await?,
+        pinned_messages(db, Some(id), None, floor, pins_listed()).await?,
     ))
 }
 
@@ -310,7 +319,7 @@ pub(crate) async fn channel_pins(
 /// Returns the pinned messages of a direct-message conversation, most recently pinned first,
 /// with link previews and `pinned_at`. Requires a bearer token and being one of the two
 /// participants. General rate-limit bucket.
-#[utoipa::path(get, path = "/api/v1/dms/{id}/pins", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), responses((status = 200, description = "Up to 100 pinned messages, most recently pinned first", body = Vec<Message>), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(get, path = "/api/v1/dms/{id}/pins", tag = "Direct messages", params(("id" = i64, Path, description = "DM conversation id")), responses((status = 200, description = "Every pinned message (a conversation holds 100 by default, `CHANNEL_PINS_MAX`), most recently pinned first", body = Vec<Message>), (status = 400, description = "Non-numeric id (plain-text framework error)", content_type = "text/plain", body = String), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 404, description = "`Not found`: no such DM, you are not a participant, or a participant's account is being deleted; identical responses", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn dm_pins(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -319,7 +328,7 @@ pub(crate) async fn dm_pins(
     let db = &state.read();
     resolve_dm(db, id, &user).await?;
     Ok(Json(
-        pinned_messages(db, None, Some(id), None, PINS_MAX).await?,
+        pinned_messages(db, None, Some(id), None, pins_listed()).await?,
     ))
 }
 
@@ -629,7 +638,8 @@ mod tests {
     async fn pins_are_capped_per_channel_and_dm() {
         let (state, path, cid) = world("pins_cap").await;
         let db = &state.db;
-        for n in 0..PINS_MAX - 1 {
+        let max = Limits::default().channel_pins_max;
+        for n in 0..max - 1 {
             let id = post(db, Some(cid), None, "bob", 10 + n).await;
             exec(
                 db,
@@ -655,7 +665,7 @@ mod tests {
             .expect("re-pinning at the cap is fine");
         assert_eq!(
             pins_of(&state, Some("bob"), cid).await.expect("list").len() as i64,
-            PINS_MAX
+            max
         );
         unpin(&state, "alice", last).await.expect("unpin");
         pin(&state, "alice", over).await.expect("room again");
@@ -665,7 +675,7 @@ mod tests {
             "INSERT INTO dms(user_a, user_b) VALUES('alice', 'bob') RETURNING id",
         )
         .await;
-        for n in 0..PINS_MAX {
+        for n in 0..max {
             let id = post(db, None, Some(dm), "alice", 10 + n).await;
             exec(
                 db,
@@ -684,6 +694,40 @@ mod tests {
                 "This conversation has reached the pin limit".to_string()
             ))
         );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_pin_cap_is_configurable_and_lowering_it_unpins_nothing() {
+        let (state, path, cid) = world("pins_cap_set").await;
+        let with = |most: i64| {
+            state.clone().with_limits(std::sync::Arc::new(Limits {
+                channel_pins_max: most,
+                ..Limits::default()
+            }))
+        };
+        let two = with(2);
+        let ids = [
+            post(&state.db, Some(cid), None, "bob", 10).await,
+            post(&state.db, Some(cid), None, "bob", 11).await,
+            post(&state.db, Some(cid), None, "bob", 12).await,
+        ];
+        pin(&two, "alice", ids[0]).await.expect("first");
+        pin(&two, "alice", ids[1]).await.expect("second");
+        let over = pin(&two, "alice", ids[2]).await.expect_err("third");
+        assert_eq!(over.0, StatusCode::CONFLICT);
+        assert_eq!(
+            over.2.and_then(|r| r.control).as_deref(),
+            Some("channel_pins_max")
+        );
+        let one = with(1);
+        assert_eq!(
+            pins_of(&one, Some("bob"), cid).await.expect("list").len(),
+            2,
+            "pins from before the cap was lowered stay listed"
+        );
+        assert!(pin(&one, "alice", ids[2]).await.is_err());
+        pin(&with(3), "alice", ids[2]).await.expect("a raised cap");
         done(state, path).await;
     }
 

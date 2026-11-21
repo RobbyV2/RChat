@@ -3067,11 +3067,11 @@ async fn stale_rows_are_swept() {
         ),
         (
             "INSERT INTO audit_log(server, actor, action, created_at) VALUES('rchat', 'a', 'member.ban', $1)",
-            t - AUDIT_KEEP - 1,
+            t - Limits::default().audit_keep_secs() - 1,
         ),
         (
             "INSERT INTO audit_log(server, actor, action, created_at) VALUES('rchat', 'a', 'member.kick', $1)",
-            t - AUDIT_KEEP + 60,
+            t - Limits::default().audit_keep_secs() + 60,
         ),
         (
             "INSERT INTO member_timeouts(server, username, until, created_at) VALUES('rchat', 'gone', $1, 0)",
@@ -7942,4 +7942,67 @@ async fn join_modes_are_added_to_an_old_database() {
         close(&db).await;
     })
     .await;
+}
+
+#[tokio::test]
+async fn retention_follows_limits() {
+    let (state, path) = temp_state("retention_limits").await;
+    let db = &state.db;
+    let t = now();
+    let day = 86_400;
+    for (action, at) in [("member.ban", t - 2 * day), ("member.kick", t - day / 2)] {
+        sqlx::query(
+            "INSERT INTO audit_log(server, actor, action, created_at) VALUES('rchat', 'a', $1, $2)",
+        )
+        .bind(action)
+        .bind(at)
+        .execute(db)
+        .await
+        .expect("audit");
+    }
+    for (key, at) in [("old", t - 2 * day), ("new", t - day / 2)] {
+        sqlx::query("INSERT INTO preview_images(key, mime, data, size, fetched_at) VALUES($1, 'image/png', $2, 1, $3)")
+            .bind(key)
+            .bind(vec![0u8])
+            .bind(at)
+            .execute(db)
+            .await
+            .expect("image");
+    }
+    let limits = Limits {
+        audit_keep_days: 1,
+        preview_cache_days: 1,
+        ..Limits::default()
+    };
+    sweep_stale_at(db, &Limits::default(), t)
+        .await
+        .expect("sweep");
+    let count = async |sql: &str| -> i64 {
+        sqlx::query(sqlx::AssertSqlSafe(sql.to_string()))
+            .fetch_one(db)
+            .await
+            .expect("count")
+            .try_get(0)
+            .expect("n")
+    };
+    assert_eq!(count("SELECT COUNT(*) FROM audit_log").await, 2);
+    assert_eq!(count("SELECT COUNT(*) FROM preview_images").await, 2);
+    sweep_stale_at(db, &limits, t).await.expect("sweep");
+    let kept: Vec<String> = sqlx::query("SELECT action FROM audit_log")
+        .fetch_all(db)
+        .await
+        .expect("audit")
+        .iter()
+        .map(|r| r.try_get(0).expect("action"))
+        .collect();
+    assert_eq!(kept, ["member.kick"], "the 2-day-old entry goes");
+    let images: Vec<String> = sqlx::query("SELECT key FROM preview_images")
+        .fetch_all(db)
+        .await
+        .expect("images")
+        .iter()
+        .map(|r| r.try_get(0).expect("key"))
+        .collect();
+    assert_eq!(images, ["new"]);
+    done(state, path).await;
 }

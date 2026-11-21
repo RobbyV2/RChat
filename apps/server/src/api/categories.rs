@@ -11,16 +11,15 @@ use utoipa::ToSchema;
 use crate::api::access::perms::Perm;
 use crate::api::access::{Proof, resolve_category, resolve_server};
 use crate::api::audit::{self, Action, Actor, Details, Entry, Target, TargetKind};
-use crate::api::servers::{CHANNEL_MAX, check_name};
+use crate::api::servers::check_name;
 use crate::api::{
     ApiError, ApiErrorBody, Authed, Category, ChannelLayout, LayoutCategory, OkResp,
     ProfanityTarget, bad, ok,
 };
 use crate::db::{Db, now};
+use crate::limits::Limits;
 use crate::state::AppState;
 use crate::ws::WsEvent;
-
-pub const CATEGORY_MAX: i64 = 100;
 
 const STALE: &str = "The channel list changed. Reload it and try again";
 
@@ -314,7 +313,7 @@ async fn clean_name(db: &Db, raw: &str) -> Result<String, ApiError> {
 /// Create a category
 ///
 /// Adds a channel category at the bottom of the server's channel list. A server can have at
-/// most 100 categories. Requires the Manage channels permission. Raises the layout version and
+/// most 100 categories by default (`SERVER_CATEGORIES_MAX`). Requires the Manage channels permission. Raises the layout version and
 /// emits `layout_changed` to the server. General rate-limit bucket.
 #[utoipa::path(
     post,
@@ -324,7 +323,7 @@ async fn clean_name(db: &Db, raw: &str) -> Result<String, ApiError> {
     request_body = CategoryReq,
     responses(
         (status = 200, description = "The created category", body = Category),
-        (status = 400, description = "Invalid category name (blank, longer than 100 characters or blocked by the profanity filter) or the server already has 100 categories. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
+        (status = 400, description = "Invalid category name (blank, longer than 100 characters or blocked by the profanity filter) or `A server can have at most 100 categories` with the configured number (`SERVER_CATEGORIES_MAX`, reason `limit`). Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
         (status = 403, description = "Missing the Manage channels permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
@@ -353,10 +352,13 @@ pub(crate) async fn create_category(
         .fetch_one(&mut *tx)
         .await?
         .try_get(0)?;
-    if count >= CATEGORY_MAX {
-        return Err(bad(&format!(
-            "A server can have at most {CATEGORY_MAX} categories"
-        )));
+    let most = state.limits.server_categories_max;
+    if count >= most {
+        return Err(ApiError::limit(
+            StatusCode::BAD_REQUEST,
+            format!("A server can have at most {most} categories"),
+            "server_categories_max",
+        ));
     }
     let row = sqlx::query(
         "INSERT INTO channel_categories(server, name, position, created_at) SELECT $1, $2, COALESCE(MAX(position) + 1, 0), $3 FROM channel_categories WHERE server = $1 RETURNING id, position",
@@ -607,7 +609,9 @@ pub(crate) async fn reorder_layout(
             .iter()
             .map(|c| c.channels.len())
             .sum::<usize>();
-    if listed as i64 > CHANNEL_MAX || req.categories.len() as i64 > CATEGORY_MAX {
+    if listed as i64 > Limits::most("SERVER_CHANNELS_MAX")
+        || req.categories.len() as i64 > Limits::most("SERVER_CATEGORIES_MAX")
+    {
         return Err(bad(
             "The order must list every channel and category exactly once",
         ));
@@ -657,6 +661,43 @@ pub(crate) async fn reorder_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_category_cap_is_configurable() {
+        use crate::api::test_util::{add_member, done, mem_user, temp_state};
+        let (state, path) = temp_state("category_cap").await;
+        add_member(&state.db, "rchat", "alice", 1, 0, 0).await;
+        let state = state.with_limits(std::sync::Arc::new(Limits {
+            server_categories_max: 1,
+            ..Limits::default()
+        }));
+        let category = |name: &str| {
+            create_category(
+                State(state.clone()),
+                Authed(mem_user("alice", false)),
+                Path("rchat".to_string()),
+                Json(CategoryReq {
+                    name: name.to_string(),
+                }),
+            )
+        };
+        let _ = category("one").await.expect("first category");
+        let Err(ApiError(code, msg, reason)) = category("two").await else {
+            panic!("a second category past the cap");
+        };
+        assert_eq!(
+            (code, msg.as_str()),
+            (
+                StatusCode::BAD_REQUEST,
+                "A server can have at most 1 categories"
+            )
+        );
+        assert_eq!(
+            reason.and_then(|r| r.control).as_deref(),
+            Some("server_categories_max")
+        );
+        done(state, path).await;
+    }
 
     fn layout(
         version: i64,

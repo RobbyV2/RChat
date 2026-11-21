@@ -47,25 +47,27 @@ use crate::net_guard::{self, AllowedHost, Http, Policy};
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 
-/// Most incoming webhooks per channel.
-pub const CHANNEL_MAX: i64 = 15;
-/// Most incoming webhooks per server.
-pub const SERVER_MAX: i64 = 100;
-/// Most outgoing webhooks per server.
-pub const OUTGOING_MAX: i64 = 10;
 /// Longest webhook name.
 pub const NAME_MAX: usize = 80;
 /// Longest outgoing webhook URL.
 pub const URL_MAX: usize = 2048;
-/// How long delivery log rows are kept.
-pub const DELIVERY_KEEP: i64 = 7 * 86400;
-/// Delivery log rows kept per outgoing webhook.
-pub const LOG_KEEP: i64 = 100;
-/// Deliveries waiting per outgoing webhook; newer events are dropped past this.
-pub const QUEUE_MAX: i64 = 1000;
-/// Tries per delivery before it counts as failed.
-pub const ATTEMPTS: i64 = 6;
-/// Seconds to wait before each retry.
+/// The refusal past `CHANNEL_WEBHOOKS_MAX` (`channel_full`) or `SERVER_WEBHOOKS_MAX`.
+fn hooks_full(limits: &crate::limits::Limits, channel_full: bool) -> ApiError {
+    let control = match channel_full {
+        true => "channel_webhooks_max",
+        false => "server_webhooks_max",
+    };
+    ApiError::limit(
+        StatusCode::BAD_REQUEST,
+        format!(
+            "A channel can have at most {} webhooks and a server {}",
+            limits.channel_webhooks_max, limits.server_webhooks_max
+        ),
+        control,
+    )
+}
+
+/// Seconds to wait before each retry; tries past the last step wait as long as the last.
 pub const BACKOFF: [i64; 5] = [10, 30, 120, 600, 1800];
 /// Failed deliveries in a row that turn an outgoing webhook off.
 pub const DISABLE_AFTER: i64 = 10;
@@ -665,7 +667,8 @@ pub struct NewWebhook {
 /// Changes to an incoming webhook; omitted fields stay.
 #[derive(Deserialize, ToSchema)]
 pub struct WebhookPatch {
-    /// Move it to this text channel (at most 15 webhooks per channel).
+    /// Move it to this text channel (at most 15 webhooks per channel by default,
+    /// `CHANNEL_WEBHOOKS_MAX`).
     #[serde(default)]
     pub channel_id: Option<i64>,
     /// 1 to 80 characters, checked like a new name.
@@ -711,7 +714,8 @@ pub(crate) async fn list_webhooks(
 ///
 /// Creates a webhook that posts into one text channel of the server, and returns its token
 /// once. Anyone with the URL `/api/v1/webhooks/{id}/{token}` can post there as the webhook, so
-/// treat it like a password. At most 15 per channel and 100 per server. Requires membership
+/// treat it like a password. At most 15 per channel and 100 per server by default
+/// (`CHANNEL_WEBHOOKS_MAX`, `SERVER_WEBHOOKS_MAX`). Requires membership
 /// with the Manage webhooks or Manage channels permission. Whether the webhook may use group
 /// mentions is fixed now from your Mention everyone permission (and checked again on every
 /// message). Logged in the audit log. Answers 404 for everyone while the instance has
@@ -719,7 +723,7 @@ pub(crate) async fn list_webhooks(
 /// New webhooks, new webhook tokens and secrets, and test events are rare requests of one kind: at
 /// most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per account
 /// by default.
-#[utoipa::path(post, path = "/api/v1/servers/{name}/webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), request_body = NewWebhook, responses((status = 200, description = "The webhook with its token", body = WebhookSecret), (status = 400, description = "Unknown or voice channel, an invalid or taken name (`That name belongs to someone in this server. Pick another name`), an invalid avatar color, the profanity filter, or the channel or server limit", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password` (identical for servers you cannot open or are not a member of). `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/servers/{name}/webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), request_body = NewWebhook, responses((status = 200, description = "The webhook with its token", body = WebhookSecret), (status = 400, description = "Unknown or voice channel, an invalid or taken name (`That name belongs to someone in this server. Pick another name`), an invalid avatar color, the profanity filter, or `A channel can have at most 15 webhooks and a server 100` with the configured numbers (reason `limit`)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password` (identical for servers you cannot open or are not a member of). `Not found` with reason `off_site` and control `incoming_webhooks`: the instance has incoming webhooks off", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn create_webhook(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -767,11 +771,21 @@ pub(crate) async fn create_webhook(
         .bind(&user.username)
         .bind(mentions as i64)
         .bind(t)
-        .bind(CHANNEL_MAX)
-        .bind(SERVER_MAX)
+        .bind(state.limits.channel_webhooks_max)
+        .bind(state.limits.server_webhooks_max)
         .fetch_optional(&mut *tx)
-        .await?
-        .ok_or_else(|| bad("A channel can have at most 15 webhooks and a server 100"))?;
+        .await?;
+    let Some(row) = row else {
+        let in_channel: i64 = sqlx::query("SELECT COUNT(*) FROM webhooks WHERE channel_id = $1")
+            .bind(channel.id())
+            .fetch_one(&mut *tx)
+            .await?
+            .try_get(0)?;
+        return Err(hooks_full(
+            &state.limits,
+            in_channel >= state.limits.channel_webhooks_max,
+        ));
+    };
     let id: i64 = row.try_get(0)?;
     audit::record(
         &mut tx,
@@ -815,7 +829,7 @@ async fn managed_hook(
 /// is then taken from your Mention everyone permission (this needs Manage webhooks or Manage
 /// channels as a member). Requires the Manage webhooks or Manage channels permission. Logged in
 /// the audit log. General rate-limit bucket.
-#[utoipa::path(patch, path = "/api/v1/servers/{name}/webhooks/{id}", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Webhook id")), request_body = WebhookPatch, responses((status = 200, description = "The webhook", body = Webhook), (status = 400, description = "Invalid name, avatar or channel, or the channel's limit", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook` (also for webhooks in channels you cannot see)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(patch, path = "/api/v1/servers/{name}/webhooks/{id}", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Webhook id")), request_body = WebhookPatch, responses((status = 200, description = "The webhook", body = Webhook), (status = 400, description = "Invalid name, avatar or channel, or `A channel can have at most 15 webhooks` with the configured number (`CHANNEL_WEBHOOKS_MAX`, reason `limit`)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook` (also for webhooks in channels you cannot see)", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn update_webhook(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -873,13 +887,14 @@ pub(crate) async fn update_webhook(
     }
     let actor = manager_actor(db, &access, &user).await?;
     let mut tx = db.begin().await?;
+    lock_server(&mut tx, access.name()).await?;
     let moved = sqlx::query("UPDATE webhooks SET name = $1, avatar_kind = $2, avatar_color = $3, channel_id = $4, creator = CASE WHEN $7 <> 0 THEN $8 ELSE creator END, creator_mentions = CASE WHEN $7 <> 0 THEN $9 ELSE creator_mentions END WHERE id = $5 AND (channel_id = $4 OR (SELECT COUNT(*) FROM webhooks WHERE channel_id = $4) < $6)")
         .bind(&new_name)
         .bind(kind.as_str())
         .bind(&color)
         .bind(channel.unwrap_or(hook.channel_id))
         .bind(id)
-        .bind(CHANNEL_MAX)
+        .bind(state.limits.channel_webhooks_max)
         .bind(owner.is_some() as i64)
         .bind(&user.username)
         .bind(owner.is_some_and(|p| p & Perm::MentionEveryone as i64 != 0) as i64)
@@ -887,7 +902,14 @@ pub(crate) async fn update_webhook(
         .await?
         .rows_affected();
     if moved == 0 {
-        return Err(bad("A channel can have at most 15 webhooks"));
+        return Err(ApiError::limit(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "A channel can have at most {} webhooks",
+                state.limits.channel_webhooks_max
+            ),
+            "channel_webhooks_max",
+        ));
     }
     if details.has_changes() {
         audit::record(
@@ -1378,6 +1400,7 @@ async fn post(
                     any_role,
                     roles,
                 },
+                state.limits.message_role_mentions_max,
             )
             .await?;
             if may && !m.roles.is_empty() && !any_role {
@@ -1390,6 +1413,7 @@ async fn post(
                         any_role: true,
                         roles: RoleRights::Nothing,
                     },
+                    state.limits.message_role_mentions_max,
                 )
                 .await?;
                 for g in extra {
@@ -2090,15 +2114,15 @@ pub(crate) async fn list_outgoing(
 /// (`X-Webhook-Signature`, `X-Webhook-Timestamp`, `X-Webhook-Event`, `X-Webhook-Delivery`,
 /// User-Agent `rchat-webhooks/1.0`). You are its owner: payloads include only channels you can
 /// view, under your read-history rules, checked when each event happens and again at every
-/// try; it turns off if you leave the server. Failed deliveries are retried 5 times
-/// with backoff (10 s to 30 min); redirects are not followed; after 10 failed deliveries in a
-/// row the webhook turns off. Only while the instance allows outgoing webhooks. At most 10
-/// per server. Returns the signing secret once. Logged in the audit log (host only). Strict
-/// rate-limit bucket.
+/// try; it turns off if you leave the server. A delivery is tried 6 times by default
+/// (`WEBHOOK_ATTEMPTS`) with backoff (10 s to 30 min); redirects are not followed; after 10
+/// failed deliveries in a row the webhook turns off. Only while the instance allows outgoing
+/// webhooks. At most 10 per server by default (`SERVER_OUTGOING_WEBHOOKS_MAX`). Returns the
+/// signing secret once. Logged in the audit log (host only). Strict rate-limit bucket.
 /// New webhooks, new webhook tokens and secrets, and test events are rare requests of one kind: at
 /// most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per account
 /// by default.
-#[utoipa::path(post, path = "/api/v1/servers/{name}/outgoing_webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), request_body = NewOutgoing, responses((status = 200, description = "The webhook with its secret", body = OutgoingSecret), (status = 400, description = "Invalid name, events or URL (`URL must use https`, `Address not allowed` (also for hosts that do not resolve), `Port not allowed`), or 10 already", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, or `Outgoing webhooks are turned off on this instance`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests", body = ApiErrorBody)), security(("bearer" = [])))]
+#[utoipa::path(post, path = "/api/v1/servers/{name}/outgoing_webhooks", tag = "Webhooks", params(("name" = String, Path, description = "Server name")), request_body = NewOutgoing, responses((status = 200, description = "The webhook with its secret", body = OutgoingSecret), (status = 400, description = "Invalid name, events or URL (`URL must use https`, `Address not allowed` (also for hosts that do not resolve), `Port not allowed`), or `A server can have at most 10 outgoing webhooks` with the configured number (`SERVER_OUTGOING_WEBHOOKS_MAX`, reason `limit`)", body = ApiErrorBody), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, `You are timed out in this server`, or `Outgoing webhooks are turned off on this instance`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`", body = ApiErrorBody), (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn create_outgoing(
     State(state): State<AppState>,
     Authed(user): Authed,
@@ -2144,10 +2168,19 @@ pub(crate) async fn create_outgoing(
         .bind(&secret)
         .bind(&user.username)
         .bind(now())
-        .bind(OUTGOING_MAX)
+        .bind(state.limits.server_outgoing_webhooks_max)
         .fetch_optional(&mut *tx)
         .await?
-        .ok_or_else(|| bad("A server can have at most 10 outgoing webhooks"))?;
+        .ok_or_else(|| {
+            ApiError::limit(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "A server can have at most {} outgoing webhooks",
+                    state.limits.server_outgoing_webhooks_max
+                ),
+                "server_outgoing_webhooks_max",
+            )
+        })?;
     let id: i64 = row.try_get(0)?;
     audit::record(
         &mut tx,
@@ -2517,7 +2550,8 @@ pub(crate) async fn delete_outgoing(
 /// Recent deliveries of an outgoing webhook
 ///
 /// The newest 50 deliveries with their status codes, timings and errors (never response
-/// bodies). Kept for 7 days, at most 100 per webhook. Requires the Manage webhooks or Manage
+/// bodies). Kept for 7 days and at most 100 per webhook by default (`WEBHOOK_LOG_DAYS`,
+/// `WEBHOOK_LOG_KEPT`). Requires the Manage webhooks or Manage
 /// channels permission. General rate-limit bucket.
 #[utoipa::path(get, path = "/api/v1/servers/{name}/outgoing_webhooks/{id}/deliveries", tag = "Webhooks", params(("name" = String, Path, description = "Server name"), ("id" = i64, Path, description = "Outgoing webhook id")), responses((status = 200, description = "Newest first", body = Vec<Delivery>), (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody), (status = 403, description = "`Missing permission`, or `You are timed out in this server`", body = ApiErrorBody), (status = 404, description = "`Server not found or wrong password`, or `Unknown webhook`", body = ApiErrorBody), (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)), security(("bearer" = [])))]
 pub(crate) async fn list_deliveries(
@@ -2583,7 +2617,7 @@ pub(crate) async fn test_outgoing(
     }
     rare::take(&state, Rare::Webhook, Some(&user))?;
     queue(
-        db,
+        &state,
         id,
         &Fact::Ping {
             server: access.name().to_string(),
@@ -2650,7 +2684,7 @@ pub fn spawn(state: &AppState, deliver: bool) -> Vec<tokio::task::JoinHandle<()>
     })];
     if deliver {
         let worker = state.clone();
-        let pool = Pool::new(CONCURRENCY);
+        let pool = Pool::new(state.limits.webhook_workers);
         tasks.push(tokio::spawn(async move {
             loop {
                 let _ = tokio::time::timeout(Duration::from_secs(2), WAKE.notified()).await;
@@ -3082,7 +3116,8 @@ async fn payload(
 }
 
 /// Queues `fact` for `hook`. Only the fact is stored (ids, never content).
-async fn queue(db: &Db, hook: i64, fact: &Fact) -> Result<(), ApiError> {
+async fn queue(state: &AppState, hook: i64, fact: &Fact) -> Result<(), ApiError> {
+    let db = &state.db;
     let text = serde_json::to_string(fact).map_err(|e| bad(&e.to_string()))?;
     let t = now();
     let (status, payload, error, finished) = match text.len() > PAYLOAD_MAX {
@@ -3097,7 +3132,7 @@ async fn queue(db: &Db, hook: i64, fact: &Fact) -> Result<(), ApiError> {
         .bind(t)
         .bind(error)
         .bind(finished)
-        .bind(QUEUE_MAX)
+        .bind(state.limits.webhook_queue_max)
         .execute(db)
         .await?;
     Ok(())
@@ -3164,7 +3199,7 @@ async fn enqueue(state: &AppState, ev: WsEvent) -> Result<(), ApiError> {
             continue;
         };
         if payload(db, &user, &fact).await?.is_some() {
-            queue(db, hook, &fact).await?;
+            queue(state, hook, &fact).await?;
             queued = true;
         }
     }
@@ -3292,9 +3327,6 @@ pub fn envelope(
     .to_string()
 }
 
-/// Most deliveries in flight at once across all servers.
-pub const CONCURRENCY: usize = 16;
-
 /// The worker's slots: a global limit, and the hooks with a request in flight (one each).
 pub struct Pool {
     permits: Arc<Semaphore>,
@@ -3404,11 +3436,11 @@ async fn dispatch(
     Ok(started)
 }
 
-/// Sends every delivery due at `at` and waits for them, at most `CONCURRENCY` at once and
+/// Sends every delivery due at `at` and waits for them, at most `WEBHOOK_WORKERS` at once and
 /// one per hook at a time. Returns how many requests were sent.
 #[cfg(test)]
 pub async fn run_due(state: &AppState, policy: &Policy, at: i64) -> Result<usize, ApiError> {
-    let pool = Pool::new(CONCURRENCY);
+    let pool = Pool::new(state.limits.webhook_workers);
     let mut done = 0;
     loop {
         let started = dispatch(state, policy, at, &pool).await?;
@@ -3450,7 +3482,7 @@ async fn deliver(state: &AppState, policy: &Policy, id: i64, at: i64) -> Result<
     let off = !Settings::cached(db).await.outgoing_webhooks;
     let give_up = async |why: &str| {
         finish(
-            db,
+            state,
             id,
             hook,
             "failed",
@@ -3508,10 +3540,10 @@ async fn deliver(state: &AppState, policy: &Policy, id: i64, at: i64) -> Result<
     let tries = attempts + 1;
     let code = attempt.code.map(i64::from);
     let err = attempt.error.as_deref();
-    match (attempt.delivered(), tries >= ATTEMPTS) {
+    match (attempt.delivered(), tries >= state.limits.webhook_attempts) {
         (true, _) => {
             finish(
-                db,
+                state,
                 id,
                 hook,
                 "delivered",
@@ -3526,7 +3558,7 @@ async fn deliver(state: &AppState, policy: &Policy, id: i64, at: i64) -> Result<
         }
         (false, true) => {
             finish(
-                db,
+                state,
                 id,
                 hook,
                 "failed",
@@ -3557,7 +3589,7 @@ async fn deliver(state: &AppState, policy: &Policy, id: i64, at: i64) -> Result<
 
 #[allow(clippy::too_many_arguments)]
 async fn finish(
-    db: &Db,
+    state: &AppState,
     id: i64,
     hook: i64,
     status: &str,
@@ -3568,6 +3600,7 @@ async fn finish(
     at: i64,
     counts: bool,
 ) -> Result<(), ApiError> {
+    let db = &state.db;
     sqlx::query("UPDATE webhook_deliveries SET status = $1, attempts = $2, last_code = COALESCE($3, last_code), last_ms = COALESCE($4, last_ms), last_error = $5, payload = NULL, finished_at = $6 WHERE id = $7")
         .bind(status)
         .bind(attempts)
@@ -3603,7 +3636,7 @@ async fn finish(
     }
     sqlx::query("DELETE FROM webhook_deliveries WHERE hook_id = $1 AND status <> 'pending' AND id NOT IN (SELECT id FROM webhook_deliveries WHERE hook_id = $1 ORDER BY id DESC LIMIT $2)")
         .bind(hook)
-        .bind(LOG_KEEP)
+        .bind(state.limits.webhook_log_kept)
         .execute(db)
         .await?;
     Ok(())
@@ -3830,7 +3863,7 @@ mod tests {
                 .1
                 .contains("belongs to someone")
         );
-        for i in 1..CHANNEL_MAX {
+        for i in 1..crate::limits::Limits::default().channel_webhooks_max {
             create(&state, "owner", cid, &format!("Hook {i}"))
                 .await
                 .expect("fill");
@@ -4939,6 +4972,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn webhook_caps_are_configurable() {
+        let (state, path, cid) = setup("wh_caps").await;
+        switch_on(&state.db).await;
+        let state = state.with_limits(Arc::new(crate::limits::Limits {
+            channel_webhooks_max: 1,
+            server_webhooks_max: 2,
+            webhook_queue_max: 2,
+            webhook_attempts: 2,
+            webhook_log_kept: 1,
+            ..Default::default()
+        }));
+        let db = &state.db;
+        let refused = |res: Result<WebhookSecret, ApiError>| match res {
+            Err(ApiError(code, msg, reason)) => (code, msg, reason.and_then(|r| r.control)),
+            Ok(_) => panic!("expected a refusal"),
+        };
+        create(&state, "owner", cid, "One").await.expect("first");
+        assert_eq!(
+            refused(create(&state, "owner", cid, "Two").await),
+            (
+                StatusCode::BAD_REQUEST,
+                "A channel can have at most 1 webhooks and a server 2".to_string(),
+                Some("channel_webhooks_max".to_string())
+            )
+        );
+        let other = int(db, "INSERT INTO channels(server, name, created_at) VALUES('rchat', 'other', 1) RETURNING id").await;
+        let third = int(db, "INSERT INTO channels(server, name, created_at) VALUES('rchat', 'third', 1) RETURNING id").await;
+        create(&state, "owner", other, "Other")
+            .await
+            .expect("second");
+        assert_eq!(
+            refused(create(&state, "owner", third, "Third").await),
+            (
+                StatusCode::BAD_REQUEST,
+                "A channel can have at most 1 webhooks and a server 2".to_string(),
+                Some("server_webhooks_max".to_string())
+            ),
+            "the server holds two"
+        );
+        let (port, _seen) = receiver(vec![500, 500, 500, 500]).await;
+        let hook = outgoing_hook(
+            db,
+            &format!("http://127.0.0.1:{port}/in"),
+            "message.created",
+            "owner",
+        )
+        .await;
+        for _ in 0..3 {
+            queue(&state, hook, &ping(hook)).await.expect("queue");
+        }
+        assert_eq!(
+            int(
+                db,
+                "SELECT COUNT(*) FROM webhook_deliveries WHERE status = 'pending'"
+            )
+            .await,
+            2,
+            "the queue holds two"
+        );
+        let policy = local_policy();
+        let mut at = now();
+        for _ in 0..4 {
+            run_due(&state, &policy, at).await.expect("try");
+            at += 3600;
+        }
+        assert_eq!(
+            int(
+                db,
+                "SELECT COUNT(*) FROM webhook_deliveries WHERE status = 'pending'"
+            )
+            .await,
+            0,
+            "two tries each, then failed"
+        );
+        assert_eq!(
+            int(db, "SELECT MAX(attempts) FROM webhook_deliveries").await,
+            2
+        );
+        assert_eq!(
+            int(db, "SELECT COUNT(*) FROM webhook_deliveries").await,
+            1,
+            "the log keeps one finished delivery"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn deliveries_are_signed_retried_and_turn_off_after_failures() {
         let (state, path, _) = setup("wh_deliver").await;
         let db = &state.db;
@@ -4956,7 +5076,7 @@ mod tests {
             "owner",
         )
         .await;
-        queue(db, hook, &ping(hook)).await.expect("queue");
+        queue(&state, hook, &ping(hook)).await.expect("queue");
         let policy = local_policy();
         let t = now();
         assert_eq!(run_due(&state, &policy, t).await.expect("first"), 1);
@@ -5028,10 +5148,10 @@ mod tests {
             ),
         )
         .await;
-        queue(db, hook, &ping(hook)).await.expect("queue");
+        queue(&state, hook, &ping(hook)).await.expect("queue");
         let strict = Outbound::default().policy();
         let mut at = now();
-        for _ in 0..ATTEMPTS {
+        for _ in 0..crate::limits::Limits::default().webhook_attempts {
             run_due(&state, &strict, at).await.expect("try");
             at += 3600;
         }
@@ -5953,9 +6073,9 @@ mod tests {
             "owner",
         )
         .await;
-        queue(db, slow, &ping(slow)).await.expect("slow");
-        queue(db, slow, &ping(slow)).await.expect("slow again");
-        queue(db, fast, &ping(fast)).await.expect("fast");
+        queue(&state, slow, &ping(slow)).await.expect("slow");
+        queue(&state, slow, &ping(slow)).await.expect("slow again");
+        queue(&state, fast, &ping(fast)).await.expect("fast");
         let runner = {
             let state = state.clone();
             tokio::spawn(async move { run_due(&state, &local_policy(), now()).await })

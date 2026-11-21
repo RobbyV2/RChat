@@ -927,7 +927,8 @@ async fn inbox_page(
 
 /// List the inbox
 ///
-/// The signed-in user's notifications of the last 30 days, newest first, in pages of up to 50:
+/// The signed-in user's notifications of the last 30 days by default (`PING_KEEP_DAYS`), newest
+/// first, in pages of up to 50:
 /// mention, reply and reaction pings, `@everyone`, `@here` and role mentions (worked out when
 /// read, like the unread counts), and friend requests and accepted requests. Every item is
 /// checked when it is read: the server membership is current, the channel can still be viewed,
