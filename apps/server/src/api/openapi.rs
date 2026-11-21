@@ -410,7 +410,7 @@ pub(crate) mod tests {
         ),
     ];
 
-    const ADMIN_ROUTES: [(&str, &str); 26] = [
+    const ADMIN_ROUTES: [(&str, &str); 28] = [
         ("patch", "/api/v1/admin/settings"),
         ("get", "/api/v1/admin/report_forms"),
         ("put", "/api/v1/admin/report_forms"),
@@ -425,6 +425,7 @@ pub(crate) mod tests {
         ("get", "/api/v1/admin/config"),
         ("get", "/api/v1/admin/overview"),
         ("get", "/api/v1/admin/users"),
+        ("post", "/api/v1/admin/users"),
         ("get", "/api/v1/admin/servers"),
         ("post", "/api/v1/admin/servers"),
         ("delete", "/api/v1/admin/servers/{name}"),
@@ -435,6 +436,7 @@ pub(crate) mod tests {
         ("delete", "/api/v1/admin/users/{username}/recovery"),
         ("get", "/api/v1/admin/audit"),
         ("get", "/api/v1/admin/users/{username}/servers"),
+        ("post", "/api/v1/admin/users/{username}/servers"),
         ("delete", "/api/v1/admin/messages/{id}"),
         ("post", "/api/v1/admin/ban"),
     ];

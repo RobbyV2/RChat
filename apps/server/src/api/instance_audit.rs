@@ -111,9 +111,10 @@ async fn insert(
     Ok(())
 }
 
-/// Drops a deleted account's name from the log (as actor, as the target of `user.*` actions,
-/// as the owner a server was made for, and from recorded lists of server creators), so a new
-/// account with the same username never inherits its history.
+/// Drops a deleted account's name from the log (as actor, as the target of `user.*` actions
+/// and of `server.add_member`, as the owner a server was made for, and from recorded lists of
+/// server creators) and the display name it was created with, so a new account with the same
+/// username never inherits its history.
 pub(crate) async fn forget_user(
     conn: &mut sqlx::AnyConnection,
     username: &str,
@@ -159,12 +160,18 @@ pub(crate) async fn forget_user(
                 .await?;
         }
     }
+    sqlx::query(
+        "UPDATE instance_audit SET detail = '{}' WHERE target = $1 AND action = 'user.create'",
+    )
+    .bind(username)
+    .execute(&mut *conn)
+    .await?;
     sqlx::query("UPDATE instance_audit SET actor = NULL WHERE actor = $1")
         .bind(username)
         .execute(&mut *conn)
         .await?;
     sqlx::query(
-        "UPDATE instance_audit SET target = NULL WHERE target = $1 AND action LIKE 'user.%'",
+        "UPDATE instance_audit SET target = NULL WHERE target = $1 AND (action LIKE 'user.%' OR action = 'server.add_member')",
     )
     .bind(username)
     .execute(&mut *conn)

@@ -641,21 +641,7 @@ pub(crate) async fn register(
         return Err(not_found());
     }
     rare::take(&state, Rare::SignUp, None)?;
-    if username.trim().is_empty() || username.contains('\0') {
-        return Err(bad("Username required"));
-    }
-    check_len(&username, NAME_MAX, "Username")?;
-    let key = username.to_lowercase();
-    check_len(&key, NAME_MAX, "Username")?;
-    if username.contains('@') {
-        return Err(bad("Usernames can't contain @"));
-    }
-    if username.chars().any(names::hidden_char) {
-        return Err(bad("Username has invalid characters"));
-    }
-    if names::name_keys(&username).iter().any(String::is_empty) {
-        return Err(bad("Username required"));
-    }
+    let key = username_key(&username)?;
     if password.as_deref() == Some("") {
         return Err(bad("Password required"));
     }
@@ -669,56 +655,23 @@ pub(crate) async fn register(
         .clone();
     crate::api::network_caps::take(&state, crate::api::network_caps::Kind::SignUp).await?;
     let mut tx = state.db.begin().await?;
-    for server in lock_order(&defaults) {
-        lock_server(&mut tx, server).await?;
-    }
-    let user_count: i64 = sqlx::query("SELECT COUNT(*) FROM (SELECT 1 FROM users LIMIT 1) t")
-        .fetch_one(&mut *tx)
-        .await?
-        .try_get(0)?;
     let t = now();
-    crate::db::insert_user(
+    let joined = add_account(
         &mut tx,
-        crate::db::NewUser {
+        &state,
+        &defaults,
+        NewAccount {
             username: &key,
             display_name: &username,
             password_hash: &password_hash,
             password_kind,
-            avatar_kind: avatar_kind.as_str(),
+            avatar_kind,
             avatar_color: avatar_color.as_deref(),
-            is_site_admin: user_count == 0,
-            created_at: t,
+            first_is_admin: true,
         },
+        t,
     )
     .await?;
-    let mut joined = Vec::new();
-    for server in &defaults {
-        let room = crate::api::servers::account_has_room(&mut tx, &state.limits, &key).await?
-            && crate::api::servers::server_has_room(&mut tx, &state.limits, server).await?;
-        if !room {
-            continue;
-        }
-        let inserted = sqlx::query(
-            "INSERT INTO members(server, username, is_admin, joined_at) SELECT s.name, $2, 0, $3 FROM servers s WHERE s.name = $1 AND COALESCE(s.password_hash, '') <> '!purging' AND NOT EXISTS(SELECT 1 FROM server_bans b WHERE b.server = s.name AND b.username = $2)",
-        )
-        .bind(server)
-        .bind(&key)
-        .bind(t)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        if inserted == 0 {
-            continue;
-        }
-        shift_member_count(&mut tx, server, 1).await?;
-        let notice = post_system(&mut tx, server, &key, SystemKind::Join).await?;
-        joined.push((server.clone(), notice));
-    }
-    sqlx::query("INSERT INTO dms(user_a, user_b) VALUES($1, $2)")
-        .bind(&key)
-        .bind(&key)
-        .execute(&mut *tx)
-        .await?;
     let token = new_token();
     sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, $2, $3)")
         .bind(secret_key(&token))
@@ -732,11 +685,126 @@ pub(crate) async fn register(
         None => return Err(anyhow::anyhow!("user missing after insert").into()),
     };
     let me = me_payload(&state.db, &user).await?;
+    announce_account(&state, &user, joined).await;
+    Ok(Json(AuthResp { token, user: me }))
+}
+
+/// The key of a new account's username (its lowercase form), or why the name can't be one:
+/// blank, over 100 characters, with an `@`, a NUL or a hidden character.
+pub(crate) fn username_key(username: &str) -> Result<String, ApiError> {
+    if username.trim().is_empty() || username.contains('\0') {
+        return Err(bad("Username required"));
+    }
+    check_len(username, NAME_MAX, "Username")?;
+    let key = username.to_lowercase();
+    check_len(&key, NAME_MAX, "Username")?;
+    if username.contains('@') {
+        return Err(bad("Usernames can't contain @"));
+    }
+    if username.chars().any(names::hidden_char) {
+        return Err(bad("Username has invalid characters"));
+    }
+    if names::name_keys(username).iter().any(String::is_empty) {
+        return Err(bad("Username required"));
+    }
+    Ok(key)
+}
+
+/// A new account, however it is made.
+pub(crate) struct NewAccount<'a> {
+    /// The lowercase username.
+    pub username: &'a str,
+    pub display_name: &'a str,
+    pub password_hash: &'a str,
+    pub password_kind: &'a str,
+    pub avatar_kind: AvatarKind,
+    pub avatar_color: Option<&'a str>,
+    /// Whether the account becomes the site admin when no account exists yet.
+    pub first_is_admin: bool,
+}
+
+/// The default servers a new account joined, each with its join message when one was posted.
+pub(crate) type Joined = Vec<(String, Option<i64>)>;
+
+/// Adds an account in `tx`: its row, its memberships of the default servers `defaults` (in
+/// order; one that is missing, bans the username or is full is skipped) and its self DM. The
+/// caller commits and then calls `announce_account`.
+pub(crate) async fn add_account(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    state: &AppState,
+    defaults: &[String],
+    account: NewAccount<'_>,
+    t: i64,
+) -> Result<Joined, ApiError> {
+    let NewAccount {
+        username: key,
+        display_name,
+        password_hash,
+        password_kind,
+        avatar_kind,
+        avatar_color,
+        first_is_admin,
+    } = account;
+    for server in lock_order(defaults) {
+        lock_server(tx, server).await?;
+    }
+    let user_count: i64 = sqlx::query("SELECT COUNT(*) FROM (SELECT 1 FROM users LIMIT 1) t")
+        .fetch_one(&mut **tx)
+        .await?
+        .try_get(0)?;
+    crate::db::insert_user(
+        tx,
+        crate::db::NewUser {
+            username: key,
+            display_name,
+            password_hash,
+            password_kind,
+            avatar_kind: avatar_kind.as_str(),
+            avatar_color,
+            is_site_admin: first_is_admin && user_count == 0,
+            created_at: t,
+        },
+    )
+    .await?;
+    let mut joined = Vec::new();
+    for server in defaults {
+        let room = crate::api::servers::account_has_room(tx, &state.limits, key).await?
+            && crate::api::servers::server_has_room(tx, &state.limits, server).await?;
+        if !room {
+            continue;
+        }
+        let inserted = sqlx::query(
+            "INSERT INTO members(server, username, is_admin, joined_at) SELECT s.name, $2, 0, $3 FROM servers s WHERE s.name = $1 AND COALESCE(s.password_hash, '') <> '!purging' AND NOT EXISTS(SELECT 1 FROM server_bans b WHERE b.server = s.name AND b.username = $2)",
+        )
+        .bind(server)
+        .bind(key)
+        .bind(t)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected();
+        if inserted == 0 {
+            continue;
+        }
+        shift_member_count(tx, server, 1).await?;
+        let notice = post_system(tx, server, key, SystemKind::Join).await?;
+        joined.push((server.clone(), notice));
+    }
+    sqlx::query("INSERT INTO dms(user_a, user_b) VALUES($1, $2)")
+        .bind(key)
+        .bind(key)
+        .execute(&mut **tx)
+        .await?;
+    Ok(joined)
+}
+
+/// Tells the instance about the new account `user`: its memberships in `joined` with their
+/// join messages, and the account itself.
+pub(crate) async fn announce_account(state: &AppState, user: &User, joined: Joined) {
     for (server, notice) in joined {
         state.hub.broadcast(WsEvent::MemberJoined {
             server: server.clone(),
             member: Member {
-                user: UserRef::from_user(&user),
+                user: UserRef::from_user(user),
                 is_admin: false,
                 is_creator: false,
                 online: false,
@@ -746,12 +814,11 @@ pub(crate) async fn register(
                 timeout: None,
             },
         });
-        announce_system(&state, &server, notice).await;
+        announce_system(state, &server, notice).await;
     }
     state.hub.broadcast(WsEvent::UserRegistered {
-        user: UserRef::from_user(&user),
+        user: UserRef::from_user(user),
     });
-    Ok(Json(AuthResp { token, user: me }))
 }
 
 /// Paces and counts one login or recovery attempt under each of `rows`, in that order, in one
@@ -1147,6 +1214,25 @@ impl From<NotAdded> for ApiError {
     }
 }
 
+/// `raw` as a display name is stored: trimmed, 1 to `DISPLAY_NAME_MAX` characters, no control,
+/// format or invisible characters, not passing for the instance staff, through the name
+/// profanity filter. Whether it passes for another account is the caller's to check.
+pub(crate) async fn shaped_display_name(db: &Db, raw: &str) -> Result<String, ApiError> {
+    let name = raw.trim().to_string();
+    check_len(&name, DISPLAY_NAME_MAX, "Display name")?;
+    if names::name_keys(&name).iter().any(String::is_empty) {
+        return Err(bad("Display name required"));
+    }
+    if name.chars().any(names::hidden_char) {
+        return Err(bad("Display name has invalid characters"));
+    }
+    if names::passes_for_staff(&name) {
+        return Err(bad("That name is reserved"));
+    }
+    check_profanity(db, ProfanityTarget::Usernames, &name).await?;
+    Ok(name)
+}
+
 /// A display name as stored: trimmed, 1 to `DISPLAY_NAME_MAX` characters, no control, format or
 /// invisible characters, not passing for the instance staff, through the name profanity filter.
 /// A new name can not pass for another account's username (`names::name_keys`); the user's own
@@ -1160,18 +1246,7 @@ pub(crate) async fn clean_display_name(
     raw: &str,
 ) -> Result<String, ApiError> {
     let db = &state.db;
-    let name = raw.trim().to_string();
-    check_len(&name, DISPLAY_NAME_MAX, "Display name")?;
-    if names::name_keys(&name).iter().any(String::is_empty) {
-        return Err(bad("Display name required"));
-    }
-    if name.chars().any(names::hidden_char) {
-        return Err(bad("Display name has invalid characters"));
-    }
-    if names::passes_for_staff(&name) {
-        return Err(bad("That name is reserved"));
-    }
-    check_profanity(db, ProfanityTarget::Usernames, &name).await?;
+    let name = shaped_display_name(db, raw).await?;
     let refused = match (
         name == user.display_name,
         name.to_lowercase() == user.username,

@@ -1,15 +1,21 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::api::access::not_found;
 use crate::api::admin::require_site_admin;
+use crate::api::auth::{
+    NewAccount, add_account, announce_account, shaped_display_name, username_key,
+};
 use crate::api::features::Feature;
+use crate::api::policy::Policy;
 use crate::api::temp_passwords::{self, Issued, Issuer};
-use crate::api::{ApiError, Authed, OkResp, Settings, UserRef, ok};
-use crate::db::{get_user, now, temp_password};
+use crate::api::{
+    ApiError, Authed, OkResp, ProfanityTarget, SERVER_ERROR, Settings, UserRef, check_profanity, ok,
+};
+use crate::db::{AvatarKind, get_user, now, temp_password};
 use crate::state::AppState;
 use crate::ws::WsEvent;
 
@@ -167,3 +173,213 @@ pub(crate) async fn get_account(
         servers,
     }))
 }
+
+/// The most servers one request adds an account to.
+pub(crate) const SERVERS_MAX: usize = 20;
+/// The most roles one request gives an account in one server.
+pub(crate) const ROLES_MAX: usize = 20;
+
+/// A server to add an account to, with the roles it gets there.
+#[derive(Deserialize)]
+pub struct ServerEntry {
+    /// The server's key or name.
+    server: String,
+    /// Ids of roles of that server.
+    #[serde(default)]
+    roles: Vec<i64>,
+}
+
+/// Request body of `POST /api/v1/admin/users`.
+#[derive(Deserialize)]
+pub struct NewAccountReq {
+    /// The rules of `POST /api/v1/auth/register`.
+    username: String,
+    /// 1 to 32 characters; the username as written when left out or blank.
+    #[serde(default)]
+    display_name: Option<String>,
+    /// Up to 20 servers to join besides the default servers.
+    #[serde(default)]
+    servers: Vec<ServerEntry>,
+}
+
+/// What became of one server of the request.
+#[derive(Serialize)]
+pub struct ServerResult {
+    pub server: String,
+    pub ok: bool,
+    /// Why the account was not added.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// A new account with its temporary password, which is in this answer only.
+#[derive(Serialize)]
+pub struct CreatedAccount {
+    pub user: UserRef,
+    pub temp_password: String,
+    pub expires_at: Option<i64>,
+    pub servers: Vec<ServerResult>,
+}
+
+fn entries_fit(servers: &[ServerEntry]) -> Result<(), ApiError> {
+    if servers.len() > SERVERS_MAX {
+        return Err(ApiError::invalid("At most 20 servers", "servers"));
+    }
+    if servers.iter().any(|entry| entry.roles.len() > ROLES_MAX) {
+        return Err(ApiError::invalid("At most 20 roles in a server", "servers"));
+    }
+    Ok(())
+}
+
+/// Adds `username` to each of `servers`, one after the other. A server that fails is told in
+/// its result and stops none of the others.
+async fn add_to_servers(
+    state: &AppState,
+    admin: &crate::db::User,
+    username: &str,
+    servers: Vec<ServerEntry>,
+) -> Vec<ServerResult> {
+    let mut results = Vec::with_capacity(servers.len());
+    for ServerEntry { server, roles } in servers {
+        let added = crate::api::servers::add_for(state, admin, &server, username, &roles).await;
+        results.push(match added {
+            Ok(key) => ServerResult {
+                server: key,
+                ok: true,
+                error: None,
+            },
+            Err(e) => {
+                let failed = e.failed();
+                let ApiError(_, error, _) = e;
+                ServerResult {
+                    server,
+                    ok: false,
+                    error: Some(match failed {
+                        true => SERVER_ERROR.to_string(),
+                        false => error,
+                    }),
+                }
+            }
+        });
+    }
+    results
+}
+
+/// Create an account
+///
+/// Makes an account with a generated temporary password, which is in this answer only. The
+/// account joins the default servers, then each server of `servers` with the roles given for
+/// it; `servers` in the answer says which of those worked, and one that failed leaves the
+/// account and the others in place. The account is never a site administrator, and works in
+/// every `registration` mode. Refused while `password_login` is off (400, reason `off_site`).
+/// The username and display name follow the rules of sign-up. Strict rate-limit bucket.
+pub(crate) async fn create_account(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Json(req): Json<NewAccountReq>,
+) -> Result<Json<CreatedAccount>, ApiError> {
+    require_site_admin(&user)?;
+    let NewAccountReq {
+        username,
+        display_name,
+        servers,
+    } = req;
+    let settings = passwords_on(&state).await?;
+    let key = username_key(&username)?;
+    entries_fit(&servers)?;
+    let display_name = match display_name.as_deref().map(str::trim) {
+        Some(name) if !name.is_empty() => shaped_display_name(&state.db, name).await?,
+        Some(_) | None => username.clone(),
+    };
+    check_profanity(&state.db, ProfanityTarget::Usernames, &username).await?;
+    let temp_password = temp_passwords::generate();
+    let password_hash = crate::api::auth::hash_password(&temp_password).await?;
+    let defaults = Policy::cached(&state.db).await.default_servers.clone();
+    let t = now();
+    let expires_at = temp_passwords::expiry(settings.temp_password_hours, t);
+    let mut tx = state.db.begin().await?;
+    let joined = add_account(
+        &mut tx,
+        &state,
+        &defaults,
+        NewAccount {
+            username: &key,
+            display_name: &display_name,
+            password_hash: &password_hash,
+            password_kind: "text",
+            avatar_kind: AvatarKind::Identicon,
+            avatar_color: None,
+            first_is_admin: false,
+        },
+        t,
+    )
+    .await?;
+    temp_passwords::mark(&mut tx, &key, Some(&user.username), expires_at, t).await?;
+    let asked: Vec<&str> = servers.iter().map(|entry| entry.server.as_str()).collect();
+    crate::api::instance_audit::record_in(
+        &mut tx,
+        &user.username,
+        "user.create",
+        Some(&key),
+        serde_json::json!({ "display_name": display_name, "servers": asked }),
+        t,
+    )
+    .await?;
+    tx.commit().await?;
+    let Some(created) = get_user(&state.db, &key).await? else {
+        return Err(ApiError::internal("the new account is missing"));
+    };
+    announce_account(&state, &created, joined).await;
+    let servers = add_to_servers(&state, &user, &key, servers).await;
+    Ok(Json(CreatedAccount {
+        user: UserRef::from_user(&created),
+        temp_password,
+        expires_at,
+        servers,
+    }))
+}
+
+/// Request body of `POST /api/v1/admin/users/{username}/servers`.
+#[derive(Deserialize)]
+pub struct AddToServerReq {
+    /// The server's key or name.
+    server: String,
+    /// Ids of roles of that server.
+    #[serde(default)]
+    roles: Vec<i64>,
+}
+
+/// Add an account to a server
+///
+/// Makes the account a member of the server, whatever `server_joining` says, and gives it the
+/// roles. An account that is a member already only gets the roles. A missing server or account
+/// answers 404, a role of another server 404 `Role not found`, a banned account 403.
+pub(crate) async fn add_to_server(
+    State(state): State<AppState>,
+    Authed(user): Authed,
+    Path(username): Path<String>,
+    Json(req): Json<AddToServerReq>,
+) -> Result<Json<OkResp>, ApiError> {
+    require_site_admin(&user)?;
+    let AddToServerReq { server, roles } = req;
+    if roles.len() > ROLES_MAX {
+        return Err(ApiError::invalid("At most 20 roles in a server", "roles"));
+    }
+    let Some(target) = get_user(&state.db, &username).await? else {
+        return Err(not_found());
+    };
+    let key =
+        crate::api::servers::add_for(&state, &user, &server, &target.username, &roles).await?;
+    crate::api::instance_audit::record(
+        &state.db,
+        &user.username,
+        "server.add_member",
+        Some(&target.username),
+        serde_json::json!({ "server": key, "roles": roles }),
+    )
+    .await?;
+    Ok(ok())
+}
+
+#[cfg(test)]
+mod tests;

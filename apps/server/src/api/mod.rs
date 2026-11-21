@@ -2131,6 +2131,7 @@ pub fn routes(
             .route("/widgets/{id}/guest-access", post(widgets::guest_access))
             .route("/servers", post(servers::create_server))
             .route("/admin/servers", post(admin::create_server_for))
+            .route("/admin/users", post(admin_users::create_account))
             .route(
                 "/admin/users/{username}/temp_password",
                 post(admin_users::reset_password),
@@ -2513,6 +2514,10 @@ fn api_routes(
             get(admin_users::get_account).delete(admin::delete_user),
         )
         .route(
+            "/admin/users/{username}/servers",
+            get(admin::user_servers).post(admin_users::add_to_server),
+        )
+        .route(
             "/admin/users/{username}/sign_out",
             post(admin_users::sign_out),
         )
@@ -2521,7 +2526,6 @@ fn api_routes(
             delete(admin::remove_phrase),
         )
         .route("/admin/audit", get(instance_audit::list))
-        .route("/admin/users/{username}/servers", get(admin::user_servers))
         .route("/admin/messages/{id}", delete(admin::delete_message))
         .route("/admin/ban", post(admin::ban_user))
         .merge(strict_routes)

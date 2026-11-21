@@ -2882,6 +2882,55 @@ async fn insert_member(
     }
 }
 
+/// Adds the account `username` to `server` on behalf of the site admin `admin`, whatever the
+/// instance lets people join by themselves, and gives it the roles `roles` of that server.
+/// The server is the one the admin's own access resolves, so a missing one answers the uniform
+/// 404; a role of another server is refused before anything changes. The membership has no
+/// `joined_via` and gets the server's join message. Answers the server's key.
+pub(crate) async fn add_for(
+    state: &AppState,
+    admin: &User,
+    server: &str,
+    username: &str,
+    roles: &[i64],
+) -> Result<String, ApiError> {
+    let access = resolve_server(&state.db, server, Some(admin), &Proof::none()).await?;
+    let key = access.name().to_string();
+    for id in roles {
+        require_role(&state.db, &key, *id).await?;
+    }
+    let inserted = insert_member(&state.db, &state.limits, &access, username).await?;
+    if let Some(NewMember { notice }) = inserted {
+        let member = build_member(
+            &state.db,
+            &state.hub,
+            &key,
+            access.lite().creator.as_deref(),
+            username,
+            false,
+            0,
+        )
+        .await?;
+        state.hub.broadcast(WsEvent::MemberJoined {
+            server: key.clone(),
+            member,
+        });
+        announce_system(state, &key, notice).await;
+    }
+    for id in roles {
+        let Json(OkResp { ok: _ }) = assign_role(
+            State(state.clone()),
+            Authed(admin.clone()),
+            Path((key.clone(), *id)),
+            Json(UsernameReq {
+                username: username.to_string(),
+            }),
+        )
+        .await?;
+    }
+    Ok(key)
+}
+
 /// Join a server
 ///
 /// Adds the caller as a member (not an admin) and returns the server details. Requires a
