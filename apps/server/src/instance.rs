@@ -524,6 +524,13 @@ pub struct Limits {
     /// (`SERVERS_PER_ACCOUNT`); 0 for no cap.
     #[schema(example = 1000)]
     pub servers_per_account: i64,
+    /// Seconds a session lasts after sign-in: by default no limit, 0 (`SESSION_MAX_AGE_SECS`).
+    #[schema(example = 0)]
+    pub session_max_age_secs: i64,
+    /// Seconds a session lasts without a request the user made: by default no limit, 0
+    /// (`SESSION_IDLE_SECS`). Requests with an `X-Background: 1` header don't count.
+    #[schema(example = 0)]
+    pub session_idle_secs: i64,
 }
 
 impl Limits {
@@ -546,6 +553,8 @@ impl Limits {
             resync_jitter_ms: limits.resync_jitter_ms,
             catch_up_delay_ms: limits.catch_up_delay_ms,
             servers_per_account: limits.servers_per_account,
+            session_max_age_secs: limits.session_max_age_secs,
+            session_idle_secs: limits.session_idle_secs,
         }
     }
 }

@@ -40,6 +40,9 @@ pub fn forget(db: &Db) {
     if let Ok(mut touches) = GRANT_TOUCHES.lock() {
         touches.remove(&key);
     }
+    if let Ok(mut touches) = TOKEN_TOUCHES.lock() {
+        touches.remove(&key);
+    }
 }
 
 pub async fn touch_interaction(db: &Db, server: &str, username: &str) -> sqlx::Result<()> {
@@ -57,6 +60,77 @@ pub async fn touch_interaction(db: &Db, server: &str, username: &str) -> sqlx::R
     .execute(&mut *tx)
     .await?;
     tx.commit().await
+}
+
+/// Session uses waiting to be written, per database: the token key and when it was queued.
+static TOKEN_TOUCHES: LazyLock<Mutex<HashMap<String, HashMap<String, Instant>>>> =
+    LazyLock::new(Default::default);
+
+/// Sessions whose use waits to be written, per database; past it a use is dropped until the
+/// next flush.
+pub const TOKEN_TOUCHES_MAX: usize = 100_000;
+
+/// Notes a use of the session with the token key `token_key`, written by the next
+/// `flush_token_touches`: at most once a minute per session and process.
+pub fn queue_token_touch(db: &Db, token_key: &str) {
+    let Ok(mut touches) = TOKEN_TOUCHES.lock() else {
+        return;
+    };
+    let queued = touches.entry(pool_key(db)).or_default();
+    let now = Instant::now();
+    if queued
+        .get(token_key)
+        .is_some_and(|at| now.duration_since(*at) < TOUCH_EVERY)
+    {
+        return;
+    }
+    if queued.len() >= TOKEN_TOUCHES_MAX && !queued.contains_key(token_key) {
+        return;
+    }
+    queued.insert(token_key.to_string(), now);
+}
+
+#[cfg(test)]
+pub(crate) fn token_touch_queued(db: &Db, token_key: &str) -> bool {
+    TOKEN_TOUCHES
+        .lock()
+        .ok()
+        .and_then(|touches| {
+            touches
+                .get(&pool_key(db))
+                .map(|queued| queued.contains_key(token_key))
+        })
+        .unwrap_or(false)
+}
+
+/// Writes the queued session uses as `tokens.last_used_at`. Returns the rows written.
+pub async fn flush_token_touches(db: &Db) -> sqlx::Result<u64> {
+    let keys: Vec<String> = TOKEN_TOUCHES
+        .lock()
+        .ok()
+        .and_then(|mut touches| touches.remove(&pool_key(db)))
+        .map(|queued| queued.into_keys().collect())
+        .unwrap_or_default();
+    let t = now();
+    let mut total = 0;
+    for chunk in keys.chunks(100) {
+        let sql = format!(
+            "UPDATE tokens SET last_used_at = $1 WHERE last_used_at < $1 AND token IN ({})",
+            (0..chunk.len())
+                .map(|i| format!("${}", i + 2))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(t);
+        for key in chunk {
+            query = query.bind(key);
+        }
+        let mut tx = db.begin().await?;
+        light(db, &mut tx).await?;
+        total += query.execute(&mut *tx).await?.rows_affected();
+        tx.commit().await?;
+    }
+    Ok(total)
 }
 
 pub const GRANT_TOUCH_SECS: i64 = 86400;

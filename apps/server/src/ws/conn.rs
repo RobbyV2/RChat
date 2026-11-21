@@ -261,7 +261,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
     let mut epoch = state.hub.epoch();
     let mut lossy = epoch.borrow_and_update().lossy;
     let (username, is_site_admin, since): (Option<String>, bool, Option<i64>) = match &token {
-        Some(token) => match token_row(&state.read(), token).await {
+        Some(token) => match token_row(&state.read(), &state.limits, token).await {
             Ok(Some(r)) => (
                 r.try_get("username").ok(),
                 r.try_get::<i64, _>("is_site_admin")
@@ -399,7 +399,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                     }
                     match ev {
                         WsEvent::Banned { username: banned } if Some(banned.as_str()) == access.user.as_deref() => break,
-                        WsEvent::TokensRevoked { username: user } if Some(user.as_str()) == access.user.as_deref() && !access.check_token(&state.read()).await => break,
+                        WsEvent::TokensRevoked { username: user } if Some(user.as_str()) == access.user.as_deref() && !access.check_token(&state.read(), &state.limits).await => break,
                         WsEvent::SettingsChanged { settings } if !access.settings_changed(&state, conn, settings).await => break,
                         WsEvent::PresenceMode { username: user, appear_offline, seq } if Some(user.as_str()) == access.user.as_deref() => {
                             access.set_hidden(&state.hub, conn, *appear_offline, *seq);

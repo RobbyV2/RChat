@@ -114,6 +114,7 @@ mod tests {
             "x-trust-token",
             "x-trust-client",
             "if-none-match",
+            "x-background",
         ] {
             assert!(allowed.contains(&asked.to_string()), "{allowed:?}");
         }

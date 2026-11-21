@@ -204,6 +204,7 @@ fn only_bookkeeping_uses_light_commits() {
             ("api/auth.rs", "throttle_attempt"),
             ("api/messages.rs", "read_scope"),
             ("db/touch.rs", "flush_grant_touches"),
+            ("db/touch.rs", "flush_token_touches"),
             ("db/touch.rs", "touch_interaction"),
         ]
     );

@@ -365,7 +365,8 @@ export interface RChatState {
   loadInstance: () => Promise<boolean>
   switchInstance: (address: string) => Promise<string | null>
   bootstrap: () => Promise<void>
-  loadSettings: () => Promise<void>
+  // `background`: the app polls on its own (see `BACKGROUND` in api.ts).
+  loadSettings: (background?: boolean) => Promise<void>
   setTheme: (theme: Theme) => void
   setStreamer: (streamer: boolean) => void
   setIceHelpers: (on: boolean) => void

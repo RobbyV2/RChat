@@ -42,12 +42,12 @@ pub(crate) use sweep::{KEPT_USERS_SQL, sweep_stale_at};
 pub use sweep::{
     PINGS_KEPT, PURGE_BATCH, SERVER_PASSWORD_KEEP, Swept, TIMEOUT_KEEP, purge_messages, sweep_stale,
 };
-#[cfg(test)]
-pub(crate) use touch::grant_touch_queued;
 pub use touch::{
-    GRANT_TOUCH_SECS, GRANT_TOUCHES_MAX, flush_grant_touches, forget, queue_grant_touches,
-    touch_interaction,
+    GRANT_TOUCH_SECS, GRANT_TOUCHES_MAX, TOKEN_TOUCHES_MAX, flush_grant_touches,
+    flush_token_touches, forget, queue_grant_touches, queue_token_touch, touch_interaction,
 };
+#[cfg(test)]
+pub(crate) use touch::{grant_touch_queued, token_touch_queued};
 
 /// Placeholder for `server_passwords.hash`: extra passwords are checked through `lookup`
 /// only, so no second verifier is kept.

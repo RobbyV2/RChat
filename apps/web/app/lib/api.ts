@@ -107,6 +107,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
 
 const NEXT_CURSOR = 'X-Next-Cursor'
 
+// Requests the app makes on its own, so they don't keep an idle session alive.
+export const BACKGROUND: Readonly<Record<string, string>> = Object.freeze({ 'X-Background': '1' })
+
 export const withCursor = (path: string, cursor: string | null) =>
   cursor ? `${path}${path.includes('?') ? '&' : '?'}cursor=${seg(cursor)}` : path
 
@@ -482,7 +485,8 @@ export const endpoints = (c: ApiClient) => ({
       3000
     ),
   words: (username: string) => c.req<{ words: string[] }>('GET', `/auth/words/${seg(username)}`),
-  me: () => c.req<Me>('GET', '/me').then(localMe),
+  me: (background = false) =>
+    c.req<Me>('GET', '/me', undefined, background ? BACKGROUND : {}).then(localMe),
   myServers: (cursor: string | null, limit: number) =>
     c
       .page<ServerSummary>(withCursor(`/me/servers?limit=${limit}`, cursor))
@@ -814,16 +818,18 @@ export const endpoints = (c: ApiClient) => ({
       'POST',
       '/read',
       pings_until === undefined ? { scope, last_read } : { scope, last_read, pings_until },
-      {},
+      BACKGROUND,
       keepalive
     ),
-  postReadBatch: (scopes: string[]) => c.req<{ ok: boolean }>('POST', '/read/batch', { scopes }),
+  postReadBatch: (scopes: string[]) =>
+    c.req<{ ok: boolean }>('POST', '/read/batch', { scopes }, BACKGROUND),
   uploadMedia: (file: File) => {
     const form = new FormData()
     form.append('file', file, file.name)
     return c.req<{ id: string }>('POST', '/media', form)
   },
-  getSettings: () => c.req<SiteSettings>('GET', '/settings'),
+  getSettings: (background = false) =>
+    c.req<SiteSettings>('GET', '/settings', undefined, background ? BACKGROUND : {}),
   patchSettings: (body: SiteSettingsPatch) => c.req<SiteSettings>('PATCH', '/admin/settings', body),
   adminOverview: () => c.req<AdminOverview>('GET', '/admin/overview'),
   adminConfig: () => c.req<AdminConfig>('GET', '/admin/config'),

@@ -686,10 +686,10 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     if (!same) void selectionHub.loadJobs()
   }
 
-  const refetchMe = () => {
+  const refetchMe = (background = false) => {
     const at = sessionMark()
     return api
-      .me()
+      .me(background)
       .then(me => {
         if (at === sessionMark()) applyMe(me, true)
       })
@@ -738,8 +738,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   }
 
   // Refetches the account, or retries the boot when a token is saved but the account never loaded.
-  const refreshMe = () => {
-    if (get().me) void refetchMe()
+  const refreshMe = (background = false) => {
+    if (get().me) void refetchMe(background)
     else if (get().token) void recoverMe()
   }
 
@@ -835,7 +835,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         resyncTimer = null
         set({ p2pAvailability: {}, voiceUsers: {}, voiceMuted: {}, voiceHushed: {} })
         home.ws.resubscribe()
-        refreshMe()
+        refreshMe(true)
         void loadBlocked()
         void friendsHub.loadSummary()
         friendsHub.reloadOpenLists()
@@ -879,7 +879,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     catchUpTimer = setTimeout(
       () => {
         catchUpTimer = null
-        refreshMe()
+        refreshMe(true)
         catchUpLists()
       },
       catchUpDelay(outage, Math.random, limitsOf(get().instance).reconnect_cap_ms)
@@ -979,11 +979,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       const now = Date.now()
       if (due(polledMe, now, POLL_EVERY)) {
         polledMe = now
-        refreshMe()
+        refreshMe(true)
       }
       if (due(polledSettings, now, POLL_EVERY)) {
         polledSettings = now
-        void get().loadSettings()
+        void get().loadSettings(true)
       }
     }
     home.ws.start(get().token)
@@ -1396,9 +1396,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }
     },
 
-    loadSettings: async () => {
+    loadSettings: async (background = false) => {
       try {
-        set({ settings: siteSettings(await api.getSettings()) })
+        set({ settings: siteSettings(await api.getSettings(background)) })
       } catch (e) {
         fail(e)
       }

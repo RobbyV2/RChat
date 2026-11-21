@@ -250,7 +250,7 @@ pub(crate) fn split_list(raw: &str) -> Vec<String> {
 
 pub const NEXT_CURSOR: &str = "x-next-cursor";
 
-pub const CORS_REQUEST_HEADERS: [&str; 15] = [
+pub const CORS_REQUEST_HEADERS: [&str; 16] = [
     "content-type",
     "authorization",
     "accept",
@@ -266,6 +266,7 @@ pub const CORS_REQUEST_HEADERS: [&str; 15] = [
     "x-trust-token",
     "x-trust-client",
     "if-none-match",
+    BACKGROUND,
 ];
 
 pub const CORS_RESPONSE_HEADERS: [&str; 8] = [
@@ -1853,11 +1854,21 @@ fn auth_unavailable(e: sqlx::Error) -> ApiError {
 /// The account row (`users.*`, plus the session's `session_created_at`) holding session
 /// `token`, `None` when no live account has it. REST sign-in and the realtime sign-in and
 /// session checks all use it. Never answers a client.
-pub(crate) async fn token_row(db: &Db, token: &str) -> sqlx::Result<Option<AnyRow>> {
+/// The account row of session `token`, with `session_created_at`: `None` for an unknown
+/// token, an account being deleted, or a session past `SESSION_MAX_AGE_SECS` or idle past
+/// `SESSION_IDLE_SECS`.
+pub(crate) async fn token_row(
+    db: &Db,
+    limits: &crate::limits::Limits,
+    token: &str,
+) -> sqlx::Result<Option<AnyRow>> {
+    let (born_after, used_after) = limits.session_cutoffs(crate::db::now());
     sqlx::query(
-        "SELECT u.*, t.created_at AS session_created_at FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging'",
+        "SELECT u.*, t.created_at AS session_created_at FROM tokens t JOIN users u ON u.username = t.username WHERE t.token = $1 AND u.password_hash <> '!purging' AND t.created_at >= $2 AND (t.last_used_at >= $3 OR t.created_at >= $3)",
     )
     .bind(crate::db::secret_key(token))
+    .bind(born_after)
+    .bind(used_after)
     .fetch_optional(db)
     .await
 }
@@ -1878,7 +1889,7 @@ pub(crate) async fn session_for_token(
     state: &AppState,
     token: &str,
 ) -> Result<Option<(User, i64)>, ApiError> {
-    let row = token_row(&state.read(), token)
+    let row = token_row(&state.read(), &state.limits, token)
         .await
         .map_err(auth_unavailable)?;
     row.map(|row| Ok((User::from_row(&row)?, row.try_get("session_created_at")?)))
@@ -1898,11 +1909,18 @@ pub(crate) fn unauthorized() -> ApiError {
     ApiError(StatusCode::UNAUTHORIZED, "Unauthorized".to_string(), None)
 }
 
+/// Marks that a request uses its session, unless it says it runs in the background.
+pub(crate) const BACKGROUND: &str = "x-background";
+
 async fn bearer_user(parts: &Parts, state: &AppState) -> Result<Option<User>, ApiError> {
-    match bearer_token(&parts.headers) {
-        Some(token) => user_for_token(state, token).await,
-        None => Ok(None),
+    let Some(token) = bearer_token(&parts.headers) else {
+        return Ok(None);
+    };
+    let user = user_for_token(state, token).await?;
+    if user.is_some() && !parts.headers.contains_key(BACKGROUND) {
+        crate::db::queue_token_touch(&state.db, &crate::db::secret_key(token));
     }
+    Ok(user)
 }
 
 pub(crate) fn request_token(headers: &HeaderMap) -> Option<String> {

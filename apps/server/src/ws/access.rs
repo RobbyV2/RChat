@@ -815,9 +815,9 @@ impl Access {
         self.retry.fail(e, started)
     }
 
-    pub(super) async fn check_token(&mut self, db: &Db) -> bool {
+    pub(super) async fn check_token(&mut self, db: &Db, limits: &Limits) -> bool {
         let started = Instant::now();
-        match token_live(db, self.token.as_deref()).await {
+        match token_live(db, limits, self.token.as_deref()).await {
             Ok(live) => live,
             Err(e) => self.hold(e, started),
         }
@@ -883,9 +883,13 @@ impl Access {
     }
 }
 
-pub(super) async fn token_live(db: &Db, token: Option<&str>) -> sqlx::Result<bool> {
+pub(super) async fn token_live(
+    db: &Db,
+    limits: &Limits,
+    token: Option<&str>,
+) -> sqlx::Result<bool> {
     match token {
-        Some(token) => Ok(token_row(db, token).await?.is_some()),
+        Some(token) => Ok(token_row(db, limits, token).await?.is_some()),
         None => Ok(false),
     }
 }
@@ -897,7 +901,7 @@ pub(super) async fn reauthorize(state: &AppState, access: &mut Access) -> sqlx::
     let (servers, mode) = match &access.user {
         Some(user) => {
             if let Some(token) = &access.token
-                && token_row(db, token).await?.is_none()
+                && token_row(db, &state.limits, token).await?.is_none()
             {
                 return Ok(false);
             }

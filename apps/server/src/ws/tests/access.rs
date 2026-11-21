@@ -530,13 +530,33 @@ async fn token_live_follows_the_tokens_table() {
         "INSERT INTO tokens(token, username, created_at) VALUES('h:628b49d96dcde97a430dd4f597705899e09a968f793491e4b704cae33a40dc02', 'tia', 0)",
     )
     .await;
-    assert!(token_live(db, Some("t1")).await.unwrap());
-    assert!(!token_live(db, Some("t2")).await.unwrap());
-    assert!(!token_live(db, None).await.unwrap());
+    assert!(
+        token_live(db, &crate::limits::Limits::default(), Some("t1"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !token_live(db, &crate::limits::Limits::default(), Some("t2"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !token_live(db, &crate::limits::Limits::default(), None)
+            .await
+            .unwrap()
+    );
     exec(db, "DELETE FROM tokens WHERE token = 'h:628b49d96dcde97a430dd4f597705899e09a968f793491e4b704cae33a40dc02'").await;
-    assert!(!token_live(db, Some("t1")).await.unwrap());
+    assert!(
+        !token_live(db, &crate::limits::Limits::default(), Some("t1"))
+            .await
+            .unwrap()
+    );
     crate::db::close(&state.db).await;
-    assert!(token_live(db, Some("t1")).await.is_err());
+    assert!(
+        token_live(db, &crate::limits::Limits::default(), Some("t1"))
+            .await
+            .is_err()
+    );
     crate::api::test_util::done(state, path).await;
 }
 
@@ -558,8 +578,12 @@ async fn token_recheck_fails_closed() {
     };
     let (mut tia, mut gone) = (session("t1"), session("t2"));
     exec(db, "DELETE FROM tokens WHERE token = 'h:c44474038d459e40e4714afefa7bf8dae9f9834b22f5e8ec1dd434ecb62b512e'").await;
-    assert!(tia.check_token(db).await && !tia.retry.pending());
-    assert!(!gone.check_token(db).await);
+    assert!(tia.check_token(db, &crate::limits::Limits::default()).await && !tia.retry.pending());
+    assert!(
+        !gone
+            .check_token(db, &crate::limits::Limits::default())
+            .await
+    );
     let dm = WsEvent::Message {
         server: None,
         channel_id: None,
@@ -599,7 +623,7 @@ async fn token_recheck_fails_closed() {
     assert!(scoped.iter().take(4).all(|ev| tia.wants(ev)));
     crate::db::close(&state.db).await;
     let started = Instant::now();
-    assert!(tia.check_token(db).await);
+    assert!(tia.check_token(db, &crate::limits::Limits::default()).await);
     assert!(tia.retry.pending() && tia.missed && tia.retry.since >= Some(started));
     assert!(scoped.iter().all(|ev| !tia.wants(ev)));
     let conn = state.hub.next_conn();

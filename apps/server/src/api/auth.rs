@@ -496,6 +496,55 @@ pub(crate) fn secret_from(
     }
 }
 
+/// Sessions a sweep ends per batch.
+const SESSION_SWEEP_BATCH: i64 = 500;
+
+/// Ends the sessions past `SESSION_MAX_AGE_SECS` or idle past `SESSION_IDLE_SECS` and tells
+/// each of their accounts' connections (`TokensRevoked`), so their sockets close. Returns how
+/// many ended.
+pub async fn sweep_sessions(state: &AppState) -> sqlx::Result<u64> {
+    let (born_after, used_after) = state.limits.session_cutoffs(now());
+    if born_after == i64::MIN && used_after == i64::MIN {
+        return Ok(0);
+    }
+    let mut total = 0;
+    loop {
+        let rows = sqlx::query("SELECT token, username FROM tokens WHERE created_at < $1 OR (last_used_at < $2 AND created_at < $2) LIMIT $3")
+            .bind(born_after)
+            .bind(used_after)
+            .bind(SESSION_SWEEP_BATCH)
+            .fetch_all(&state.db)
+            .await?;
+        if rows.is_empty() {
+            return Ok(total);
+        }
+        let mut tokens = Vec::with_capacity(rows.len());
+        let mut users = std::collections::BTreeSet::new();
+        for row in &rows {
+            tokens.push(row.try_get::<String, _>(0)?);
+            users.insert(row.try_get::<String, _>(1)?);
+        }
+        let sql = format!(
+            "DELETE FROM tokens WHERE token IN ({})",
+            (1..=tokens.len())
+                .map(|i| format!("${i}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for token in &tokens {
+            query = query.bind(token);
+        }
+        total += query.execute(&state.db).await?.rows_affected();
+        for username in users {
+            state.hub.broadcast(WsEvent::TokensRevoked { username });
+        }
+        if (rows.len() as i64) < SESSION_SWEEP_BATCH {
+            return Ok(total);
+        }
+    }
+}
+
 pub(crate) async fn me_payload(db: &Db, user: &User) -> Result<Me, ApiError> {
     let Page {
         items: servers,
@@ -1270,6 +1319,163 @@ mod tests {
     use super::*;
     use crate::api::test_util::{done, pg_done, pg_state, temp_state};
     use crate::state::AppState;
+
+    /// The account `alice` with a session `token` made at `created_at`.
+    async fn session(state: &AppState, token: &str, created_at: i64) {
+        crate::db::NewUser::plain("alice").add(&state.db).await;
+        sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, 'alice', $2)")
+            .bind(crate::db::secret_key(token))
+            .bind(created_at)
+            .execute(&state.db)
+            .await
+            .expect("token");
+    }
+
+    fn with_sessions(state: &AppState, max_age: i64, idle: i64) -> AppState {
+        state
+            .clone()
+            .with_limits(std::sync::Arc::new(crate::limits::Limits {
+                session_max_age_secs: max_age,
+                session_idle_secs: idle,
+                ..crate::limits::Limits::default()
+            }))
+    }
+
+    async fn signed_in(state: &AppState, token: &str) -> bool {
+        crate::api::user_for_token(state, token)
+            .await
+            .expect("lookup")
+            .is_some()
+    }
+
+    /// An authenticated request with `token`, in the background or not.
+    async fn request(state: &AppState, token: &str, background: bool) -> bool {
+        use axum::extract::FromRequestParts;
+        let mut req = axum::http::Request::builder()
+            .uri("/api/v1/me")
+            .header("authorization", format!("Bearer {token}"));
+        if background {
+            req = req.header("x-background", "1");
+        }
+        let (mut parts, ()) = req.body(()).expect("request").into_parts();
+        crate::api::Authed::from_request_parts(&mut parts, state)
+            .await
+            .is_ok()
+    }
+
+    #[tokio::test]
+    async fn sessions_past_max_age_are_refused() {
+        let (state, path) = temp_state("session_max_age").await;
+        session(&state, "tok", now() - 7200).await;
+        assert!(signed_in(&with_sessions(&state, 0, 0), "tok").await);
+        assert!(signed_in(&with_sessions(&state, 7300, 0), "tok").await);
+        let short = with_sessions(&state, 3600, 0);
+        assert!(!signed_in(&short, "tok").await, "past the max age");
+        assert!(
+            !request(&short, "tok", false).await,
+            "a 401 like an unknown token"
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn idle_sessions_are_refused_and_use_extends_them() {
+        let (state, path) = temp_state("session_idle").await;
+        let t = now();
+        session(&state, "tok", t - 4000).await;
+        let idle = with_sessions(&state, 0, 600);
+        assert!(!signed_in(&idle, "tok").await, "never used since sign-in");
+        sqlx::query("UPDATE tokens SET last_used_at = $1")
+            .bind(t - 300)
+            .execute(&state.db)
+            .await
+            .expect("used");
+        assert!(signed_in(&idle, "tok").await, "used 5 minutes ago");
+        let key = crate::db::secret_key("tok");
+        assert!(request(&idle, "tok", true).await);
+        assert!(
+            !crate::db::token_touch_queued(&state.db, &key),
+            "a background request does not count as use"
+        );
+        assert_eq!(
+            crate::db::flush_token_touches(&state.db)
+                .await
+                .expect("flush"),
+            0
+        );
+        assert!(request(&idle, "tok", false).await);
+        assert!(crate::db::token_touch_queued(&state.db, &key));
+        assert_eq!(
+            crate::db::flush_token_touches(&state.db)
+                .await
+                .expect("flush"),
+            1
+        );
+        let used: i64 = sqlx::query("SELECT last_used_at FROM tokens")
+            .fetch_one(&state.db)
+            .await
+            .expect("row")
+            .try_get(0)
+            .expect("used");
+        assert!(used >= t, "the use moved the session on");
+        sqlx::query("UPDATE tokens SET last_used_at = $1")
+            .bind(t - 601)
+            .execute(&state.db)
+            .await
+            .expect("idle");
+        assert!(!signed_in(&idle, "tok").await, "idle past the limit");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_sweep_closes_expired_sessions() {
+        let (state, path) = temp_state("session_sweep").await;
+        let t = now();
+        session(&state, "old", t - 7200).await;
+        sqlx::query("INSERT INTO tokens(token, username, created_at, last_used_at) VALUES($1, 'alice', $2, $2)")
+            .bind(crate::db::secret_key("fresh"))
+            .bind(t)
+            .execute(&state.db)
+            .await
+            .expect("fresh");
+        let mut rx = state.hub.subscribe();
+        assert_eq!(
+            sweep_sessions(&state).await.expect("sweep"),
+            0,
+            "no limit, no sweep"
+        );
+        let limited = with_sessions(&state, 3600, 0);
+        assert_eq!(sweep_sessions(&limited).await.expect("sweep"), 1);
+        let revoked: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|ev| match ev {
+                WsEvent::TokensRevoked { username } => Some(username),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(revoked, ["alice"]);
+        assert!(signed_in(&limited, "fresh").await);
+        assert!(!signed_in(&state, "old").await, "the session is gone");
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn zero_means_no_session_limit() {
+        let (state, path) = temp_state("session_none").await;
+        session(&state, "tok", 1).await;
+        assert!(signed_in(&state, "tok").await);
+        assert!(request(&state, "tok", false).await);
+        assert_eq!(sweep_sessions(&state).await.expect("sweep"), 0);
+        assert!(signed_in(&state, "tok").await);
+        let err = crate::limits::Limits::load(&|name| {
+            (name == "SESSION_IDLE_SECS").then(|| "60".to_string())
+        })
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "SESSION_IDLE_SECS: expected 0 or at least 300, got 60"
+        );
+        done(state, path).await;
+    }
 
     #[test]
     fn sign_ups_lock_the_default_servers_in_one_order() {

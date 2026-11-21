@@ -18,8 +18,11 @@ const MIB: usize = 1024 * 1024;
 /// Seconds a request waits for a free database connection when the operator sets nothing.
 pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 
+/// The shortest idle timeout: sessions are marked used once a minute.
+pub const SESSION_IDLE_MIN: i64 = 300;
+
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 118] = [
+const RANGES: [(&str, i64, i64); 120] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
@@ -138,6 +141,8 @@ const RANGES: [(&str, i64, i64); 118] = [
     ("SIGNUPS_PER_NETWORK_PER_DAY", 0, 1_000_000),
     ("SERVERS_PER_NETWORK_PER_DAY", 0, 1_000_000),
     ("WS_SOCKETS_MAX", 0, 10_000_000),
+    ("SESSION_MAX_AGE_SECS", 0, 315_360_000),
+    ("SESSION_IDLE_SECS", 0, 315_360_000),
 ];
 
 /// The P2P limits registry, generated from the web app's `p2p/limits.ts`: each device-local name
@@ -364,6 +369,8 @@ pub struct Limits {
     pub signups_per_network_per_day: u32,
     pub servers_per_network_per_day: u32,
     pub ws_sockets_max: usize,
+    pub session_max_age_secs: i64,
+    pub session_idle_secs: i64,
     /// `P2P_LIMITS`: the names given that the P2P registry has, with their values.
     pub p2p: BTreeMap<String, f64>,
     /// Names in `P2P_LIMITS` the registry doesn't have, left out of `p2p`.
@@ -493,6 +500,8 @@ impl Default for Limits {
             signups_per_network_per_day: 0,
             servers_per_network_per_day: 0,
             ws_sockets_max: 0,
+            session_max_age_secs: 0,
+            session_idle_secs: 0,
             p2p: BTreeMap::new(),
             p2p_unknown: Vec::new(),
         }
@@ -791,6 +800,8 @@ impl Limits {
             servers_per_network_per_day: e
                 .num("SERVERS_PER_NETWORK_PER_DAY", d.servers_per_network_per_day)?,
             ws_sockets_max: e.num("WS_SOCKETS_MAX", d.ws_sockets_max)?,
+            session_max_age_secs: e.num("SESSION_MAX_AGE_SECS", d.session_max_age_secs)?,
+            session_idle_secs: e.num("SESSION_IDLE_SECS", d.session_idle_secs)?,
             p2p,
             p2p_unknown,
         };
@@ -922,6 +933,8 @@ impl Limits {
             signups_per_network_per_day,
             servers_per_network_per_day,
             ws_sockets_max,
+            session_max_age_secs,
+            session_idle_secs,
             p2p: _,
             p2p_unknown: _,
         } = *self;
@@ -1092,6 +1105,8 @@ impl Limits {
                 set(servers_per_network_per_day),
             ),
             ("WS_SOCKETS_MAX", set(ws_sockets_max)),
+            ("SESSION_MAX_AGE_SECS", set(session_max_age_secs)),
+            ("SESSION_IDLE_SECS", set(session_idle_secs)),
         ]
     }
 
@@ -1130,6 +1145,12 @@ impl Limits {
                 "RECONNECT_CAP_MS: expected at least RECONNECT_BASE_MS ({}), got {}",
                 self.reconnect_base_ms,
                 self.reconnect_cap_ms
+            );
+        }
+        if self.session_idle_secs != 0 && self.session_idle_secs < SESSION_IDLE_MIN {
+            anyhow::bail!(
+                "SESSION_IDLE_SECS: expected 0 or at least {SESSION_IDLE_MIN}, got {}",
+                self.session_idle_secs
             );
         }
         if self.ws_max_write_buffer_kib != 0
@@ -1276,6 +1297,19 @@ impl Limits {
     /// Seconds an audit log entry is kept (`AUDIT_KEEP_DAYS`).
     pub fn audit_keep_secs(&self) -> i64 {
         self.audit_keep_days.max(1) * 86400
+    }
+
+    /// The oldest creation time and the oldest last use a session may have at `now` (Unix
+    /// seconds): `SESSION_MAX_AGE_SECS` and `SESSION_IDLE_SECS`, `i64::MIN` for no limit.
+    pub fn session_cutoffs(&self, now: i64) -> (i64, i64) {
+        let cutoff = |secs: i64| match secs {
+            0 => i64::MIN,
+            secs => now.saturating_sub(secs),
+        };
+        (
+            cutoff(self.session_max_age_secs),
+            cutoff(self.session_idle_secs),
+        )
     }
 
     /// Seconds a ping is kept (`PING_KEEP_DAYS`).

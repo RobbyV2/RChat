@@ -74,6 +74,9 @@ impl Held {
             if let Err(e) = crate::db::flush_grant_touches(&db, grant_ttl).await {
                 tracing::warn!("guest grant refresh failed: {e}");
             }
+            if let Err(e) = crate::db::flush_token_touches(&db).await {
+                tracing::warn!("session use refresh failed: {e}");
+            }
             crate::db::forget(&db);
             crate::api::Settings::forget(&db);
             crate::api::policy::Policy::forget(&db);
@@ -313,6 +316,9 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
             if let Err(e) = crate::db::flush_grant_touches(&touches.db, ttl).await {
                 tracing::warn!("guest grant refresh failed: {e}");
             }
+            if let Err(e) = crate::db::flush_token_touches(&touches.db).await {
+                tracing::warn!("session use refresh failed: {e}");
+            }
         }
     });
     if roles.jobs {
@@ -393,6 +399,20 @@ fn spawn_jobs(state: &AppState, held: &mut Held) {
             interval.tick().await;
             if holds(&sweeper, "media-sweep", Duration::from_secs(55)).await {
                 crate::api::media::sweep_expired(&sweeper).await;
+            }
+        }
+    });
+    let sessions = state.clone();
+    held.spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            if holds(&sessions, "session-sweep", Duration::from_secs(55)).await {
+                match crate::api::auth::sweep_sessions(&sessions).await {
+                    Ok(0) => {}
+                    Ok(n) => info!("ended {n} sessions past their age or idle limit"),
+                    Err(e) => tracing::warn!("session sweep failed: {e}"),
+                }
             }
         }
     });

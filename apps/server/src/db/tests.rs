@@ -8006,3 +8006,56 @@ async fn retention_follows_limits() {
     assert_eq!(images, ["new"]);
     done(state, path).await;
 }
+
+#[tokio::test]
+async fn existing_tokens_get_a_last_used_at() {
+    on_each_database("token_use_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        for stmt in [
+            "ALTER TABLE tokens DROP COLUMN last_used_at",
+            "UPDATE settings SET value = '37' WHERE key = 'schema_version'",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'x', 'text', 'identicon', 5)",
+            "INSERT INTO tokens(token, username, created_at) VALUES('old-a', 'alice', 100), ('old-b', 'alice', 200)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            const { assert!(SCHEMA_VERSION >= 38) };
+            let rows: Vec<(i64, i64)> =
+                sqlx::query("SELECT created_at, last_used_at FROM tokens ORDER BY created_at")
+                    .fetch_all(&db)
+                    .await
+                    .expect("tokens")
+                    .iter()
+                    .map(|r| (r.try_get(0).expect("created"), r.try_get(1).expect("used")))
+                    .collect();
+            assert_eq!(
+                rows,
+                [(100, 100), (200, 200)],
+                "start {round}: old sessions count as used when they were made"
+            );
+            close(&db).await;
+        }
+        let db = open_started(Some(&url)).await.expect("open");
+        let key = crate::db::secret_key("new");
+        sqlx::query("INSERT INTO tokens(token, username, created_at) VALUES($1, 'alice', 300)")
+            .bind(&key)
+            .execute(&db)
+            .await
+            .expect("new token");
+        assert_eq!(
+            count(&db, "SELECT last_used_at FROM tokens WHERE created_at = 300").await,
+            0,
+            "a new session starts unused"
+        );
+        crate::db::queue_token_touch(&db, &key);
+        assert!(crate::db::token_touch_queued(&db, &key));
+        assert_eq!(crate::db::flush_token_touches(&db).await.expect("flush"), 1);
+        assert!(count(&db, "SELECT last_used_at FROM tokens WHERE created_at = 300").await > 300);
+        close(&db).await;
+    })
+    .await;
+}

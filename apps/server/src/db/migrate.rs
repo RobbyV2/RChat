@@ -128,6 +128,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("servers", "listed {INT} NOT NULL DEFAULT 1"),
     ("server_passwords", "code TEXT"),
     ("server_passwords", "code_lookup TEXT"),
+    ("tokens", "last_used_at {INT} NOT NULL DEFAULT 0"),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -160,6 +161,11 @@ const BACKFILLS: &[(&str, &str, &str)] = &[
         "media",
         "kept_by",
         "UPDATE media SET kept_by = (SELECT c.server FROM messages m JOIN channels c ON c.id = m.channel_id WHERE m.media_id = media.id AND m.media_kind = 'server' AND m.media_removed = 0 AND m.fwd_created_at IS NULL ORDER BY m.id LIMIT 1) WHERE ttl = 0 OR ttl > 86400",
+    ),
+    (
+        "tokens",
+        "last_used_at",
+        "UPDATE tokens SET last_used_at = created_at",
     ),
     (
         "servers",
@@ -229,7 +235,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 36: `channels.sensitive`, the shared sensitive channel label.
 /// 37: join modes (`servers.join_mode`, `servers.listed`) and invite codes
 /// (`server_passwords.code`, `server_passwords.code_lookup` with its unique index).
-pub const SCHEMA_VERSION: i64 = 37;
+/// 38: `tokens.last_used_at`, when a session was last used, for the idle timeout.
+pub const SCHEMA_VERSION: i64 = 38;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 17] {
