@@ -16,6 +16,7 @@ type ProxyClient = Client<HttpConnector, Body>;
 use crate::config::AppConfig;
 use crate::limits::{Limits, http};
 use crate::peerjs::Peers;
+use crate::server::branded;
 use crate::server::client_ip::ClientIp;
 use crate::state::AppState;
 
@@ -50,7 +51,7 @@ pub fn register_routes(
         let key = ClientIp(config.proxy_trust.clone());
         limited(peers.routes(key.clone()), key, &state.limits)
     });
-    let router = api_router(config, state);
+    let router = api_router(config, state.clone());
     let router = match signaling {
         Some(signaling) => router.merge(signaling),
         None => router,
@@ -58,11 +59,13 @@ pub fn register_routes(
     let router = match frontend {
         Some(Frontend::Proxy(url)) => {
             let client: ProxyClient = Client::builder(TokioExecutor::new()).build_http();
+            let pages = state.clone();
             router.fallback(move |OriginalUri(asked): OriginalUri, mut req: Request| {
                 *req.uri_mut() = asked;
                 let url = Arc::clone(&url);
                 let client = client.clone();
-                async move { proxy_to_frontend(url, client, req).await }
+                let state = pages.clone();
+                async move { branded_frontend(state, url, client, req).await }
             })
         }
         Some(Frontend::Service(service)) => router.fallback_service(outside_api(service)),
@@ -207,6 +210,44 @@ fn frontend_refusal(req: &Request) -> Option<Response> {
                 .into_response(),
         ),
     }
+}
+
+/// The frontend's answer to `req`, with the instance's brand where it sets one: its manifest
+/// and its mark in place of the web app's own, and its app name in the titles of pages. An
+/// instance without a brand gets the frontend's answer as it is.
+async fn branded_frontend(
+    state: AppState,
+    proxy_url: Arc<str>,
+    client: ProxyClient,
+    mut req: Request,
+) -> Response {
+    let reads = matches!(*req.method(), hyper::Method::GET | hyper::Method::HEAD);
+    if !reads || frontend_refusal(&req).is_some() {
+        return proxy_to_frontend(proxy_url, client, req).await;
+    }
+    let policy = crate::api::policy::Policy::cached(&state.read()).await;
+    let brand = &policy.brand;
+    if !brand.is_set() {
+        return proxy_to_frontend(proxy_url, client, req).await;
+    }
+    if let Some(answer) = branded::file(&state, brand, req.uri().path()).await {
+        return answer;
+    }
+    let retitle = *req.method() == hyper::Method::GET
+        && branded::retitles(brand)
+        && branded::wants_html(req.headers());
+    if !retitle {
+        return proxy_to_frontend(proxy_url, client, req).await;
+    }
+    for name in [
+        hyper::header::ACCEPT_ENCODING,
+        hyper::header::IF_NONE_MATCH,
+        hyper::header::IF_MODIFIED_SINCE,
+    ] {
+        req.headers_mut().remove(name);
+    }
+    let answer = proxy_to_frontend(proxy_url, client, req).await;
+    branded::retitled(answer, brand.app()).await
 }
 
 async fn proxy_to_frontend(proxy_url: Arc<str>, client: ProxyClient, mut req: Request) -> Response {

@@ -9,6 +9,7 @@ use crate::config::AppConfig;
 use crate::peerjs::Peers;
 use crate::state::AppState;
 
+pub(crate) mod branded;
 pub mod client_ip;
 pub mod route_builder;
 

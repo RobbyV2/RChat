@@ -1468,7 +1468,10 @@ mod tests {
         crate::api::policy::Policy::forget(&state.db);
         let headers = HeaderMap::new();
         let info = info(&state, None, &headers).await;
-        assert_eq!(info.name, "Lobby", "the stored name, not the one of the start");
+        assert_eq!(
+            info.name, "Lobby",
+            "the stored name, not the one of the start"
+        );
         assert_eq!(info.mark_url, None);
         assert_eq!(info.public_url, "https://chat.example");
         assert_eq!(info.host, "chat.example");
