@@ -383,6 +383,9 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
         WsEvent::SettingsChanged { settings: _ } => Some(WsEvent::SettingsChanged {
             settings: PublicSettings::load(db).await,
         }),
+        WsEvent::BrandChanged { brand: _ } => Some(WsEvent::BrandChanged {
+            brand: crate::api::policy::Policy::load(db).await.brand.view(),
+        }),
         WsEvent::RtcSignal {
             to,
             from,

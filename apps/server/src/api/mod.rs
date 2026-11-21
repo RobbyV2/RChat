@@ -5,6 +5,7 @@ pub mod admin_users;
 pub mod audit;
 pub mod auth;
 pub mod blocks;
+pub mod brand;
 pub mod budget;
 pub mod bulk_delete;
 pub mod categories;
@@ -2133,6 +2134,7 @@ pub fn routes(
             .route("/servers", post(servers::create_server))
             .route("/admin/servers", post(admin::create_server_for))
             .route("/admin/users", post(admin_users::create_account))
+            .route("/admin/brand/{kind}", put(brand::put_asset))
             .route(
                 "/admin/users/{username}/temp_password",
                 post(admin_users::reset_password),
@@ -2463,6 +2465,8 @@ fn api_routes(
         .route("/read", post(messages::mark_read))
         .route("/read/batch", post(messages::mark_read_batch))
         .route("/settings", get(admin::get_settings))
+        .route("/brand", get(brand::get_brand))
+        .route("/admin/brand/{kind}", delete(brand::delete_asset))
         .route("/instance", get(instance::instance))
         .route("/identity/assertion", post(instance::assertion))
         .route("/p2p/ice", get(instance::ice))

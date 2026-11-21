@@ -363,7 +363,9 @@ impl Hub {
                 self.inner.shown.send((username, online));
                 continue;
             }
-            if let WsEvent::SettingsChanged { settings: _ } = ev {
+            if let WsEvent::SettingsChanged { settings: _ } | WsEvent::BrandChanged { brand: _ } =
+                ev
+            {
                 self.inner.settings.send_modify(|n| *n += 1);
             }
             if self.inner.tx.receiver_count() > 0 {

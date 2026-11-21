@@ -12,7 +12,7 @@ use crate::api::policy::{
 };
 use crate::api::reports::forms::{self, ReportForms};
 use crate::api::{
-    ProfanitySwitch, ProfanityTargets, PublicSettings, STRICT_FILE_NAMES, upload_expiry,
+    ProfanitySwitch, ProfanityTargets, PublicSettings, STRICT_FILE_NAMES, brand, upload_expiry,
 };
 use crate::db::{ConfigStart, Db};
 use crate::limits::Env;
@@ -38,6 +38,12 @@ pub enum Kind {
     Forms,
     /// A comma list of up to 10 server names, or `none`, stored as the servers' keys.
     Servers,
+    /// Text of `min` to `max` characters, on one line unless `lines`.
+    Text { min: usize, max: usize, lines: bool },
+    /// Up to 4 links, a JSON list of `{label, url}`.
+    Links,
+    /// The instances the app suggests, JSON `{mode, list: [{url, label}]}`.
+    Suggestions,
 }
 
 /// Something the site admin page changes while the server runs: one or more rows of the
@@ -180,6 +186,67 @@ static CONTROLS: LazyLock<Vec<Control>> = LazyLock::new(|| {
         default: "72",
         public: true,
     });
+    let text = |key, env, min, max, lines, default| Control {
+        key,
+        env,
+        kind: Kind::Text { min, max, lines },
+        default,
+        public: false,
+    };
+    all.push(text(
+        brand::INSTANCE_NAME,
+        "INSTANCE_NAME",
+        1,
+        brand::NAME_MAX,
+        false,
+        crate::instance::DEFAULT_NAME,
+    ));
+    all.push(text(
+        brand::APP_NAME,
+        "BRAND_APP_NAME",
+        0,
+        brand::NAME_MAX,
+        false,
+        "",
+    ));
+    all.push(text(
+        brand::SHORT_NAME,
+        "BRAND_SHORT_NAME",
+        0,
+        brand::SHORT_NAME_MAX,
+        false,
+        "",
+    ));
+    all.push(text(
+        brand::ABOUT,
+        "BRAND_ABOUT",
+        0,
+        brand::ABOUT_MAX,
+        true,
+        "",
+    ));
+    all.push(Control {
+        key: brand::LINKS,
+        env: "BRAND_LINKS",
+        kind: Kind::Links,
+        default: "[]",
+        public: false,
+    });
+    all.push(text(
+        brand::LOGIN_NOTE,
+        "BRAND_LOGIN_NOTE",
+        0,
+        brand::LOGIN_NOTE_MAX,
+        true,
+        "",
+    ));
+    all.push(Control {
+        key: brand::SUGGESTIONS,
+        env: "INSTANCE_SUGGESTIONS",
+        kind: Kind::Suggestions,
+        default: r#"{"mode":"add","list":[]}"#,
+        public: false,
+    });
     all.push(Control {
         key: forms::KEY,
         env: forms::ENV,
@@ -258,6 +325,9 @@ impl Control {
                 _ => parse_servers(raw)
                     .ok_or_else(|| format!("expected none or up to {SERVERS_MAX} server names")),
             },
+            Kind::Text { min, max, lines } => brand::clean_text(raw, min, max, lines),
+            Kind::Links => brand::parse_links(raw),
+            Kind::Suggestions => brand::parse_suggestions(raw),
         }
     }
 
@@ -272,7 +342,14 @@ impl Control {
                 | Kind::Targets
                 | Kind::Number { min: _, max: _ }
                 | Kind::Names
-                | Kind::Servers,
+                | Kind::Servers
+                | Kind::Text {
+                    min: _,
+                    max: _,
+                    lines: _,
+                }
+                | Kind::Links
+                | Kind::Suggestions,
                 stored,
             ) => stored.to_string(),
             (Kind::Forms, stored) => match ReportForms::from_stored(stored) {
@@ -290,7 +367,14 @@ impl Control {
             | Kind::Targets
             | Kind::Number { min: _, max: _ }
             | Kind::Names
-            | Kind::Servers => stored == env,
+            | Kind::Servers
+            | Kind::Text {
+                min: _,
+                max: _,
+                lines: _,
+            }
+            | Kind::Links
+            | Kind::Suggestions => stored == env,
             Kind::Forms => match (
                 ReportForms::from_stored(stored),
                 ReportForms::from_stored(env),
@@ -310,7 +394,14 @@ impl Control {
             | Kind::Targets
             | Kind::Number { min: _, max: _ }
             | Kind::Names
-            | Kind::Servers => env.to_string(),
+            | Kind::Servers
+            | Kind::Text {
+                min: _,
+                max: _,
+                lines: _,
+            }
+            | Kind::Links
+            | Kind::Suggestions => env.to_string(),
             Kind::Forms => match (
                 ReportForms::from_stored(stored),
                 ReportForms::from_stored(env),
@@ -333,7 +424,14 @@ impl Control {
             | Kind::Number { min: _, max: _ }
             | Kind::Names
             | Kind::Forms
-            | Kind::Servers => {
+            | Kind::Servers
+            | Kind::Text {
+                min: _,
+                max: _,
+                lines: _,
+            }
+            | Kind::Links
+            | Kind::Suggestions => {
                 vec![self.key]
             }
             Kind::Targets => ProfanitySwitch::ALL.into_iter().map(|t| t.key()).collect(),
@@ -348,7 +446,14 @@ impl Control {
             | Kind::Number { min: _, max: _ }
             | Kind::Names
             | Kind::Forms
-            | Kind::Servers => {
+            | Kind::Servers
+            | Kind::Text {
+                min: _,
+                max: _,
+                lines: _,
+            }
+            | Kind::Links
+            | Kind::Suggestions => {
                 vec![(self.key, stored.to_string())]
             }
             Kind::Targets => {
@@ -369,7 +474,14 @@ impl Control {
             | Kind::Number { min: _, max: _ }
             | Kind::Names
             | Kind::Forms
-            | Kind::Servers => rows.get(self.key).cloned(),
+            | Kind::Servers
+            | Kind::Text {
+                min: _,
+                max: _,
+                lines: _,
+            }
+            | Kind::Links
+            | Kind::Suggestions => rows.get(self.key).cloned(),
             Kind::Targets => ProfanitySwitch::ALL
                 .into_iter()
                 .any(|t| rows.contains_key(t.key()))
@@ -516,7 +628,14 @@ impl ControlSeeds {
                 | Kind::Targets
                 | Kind::Number { min: _, max: _ }
                 | Kind::Names
-                | Kind::Servers => c
+                | Kind::Servers
+                | Kind::Text {
+                    min: _,
+                    max: _,
+                    lines: _,
+                }
+                | Kind::Links
+                | Kind::Suggestions => c
                     .parse(&raw)
                     .map_err(|expected| anyhow::anyhow!("{}: {expected}, got {raw}", c.env))?,
                 Kind::Forms => {
@@ -610,6 +729,9 @@ pub async fn config_applied(state: &AppState) {
     }
     let settings = PublicSettings::load(&state.db).await;
     state.hub.broadcast(WsEvent::SettingsChanged { settings });
+    if changes.iter().any(|c| brand::KEYS.contains(&c.key)) {
+        brand::announce(state).await;
+    }
 }
 
 /// The `settings` rows that say what the server config set and pins: `env:<key>` for each
@@ -687,7 +809,7 @@ mod tests {
             assert_eq!(c.default == "1", f.default_on(), "{f:?}");
         }
         assert_eq!(
-            table[table.len() - 16..table.len() - 1],
+            table[table.len() - 23..table.len() - 1],
             [
                 ("upload_expiry_max_days", "UPLOAD_EXPIRY_MAX_DAYS", "0"),
                 ("server_creation", "SERVER_CREATION", "everyone"),
@@ -704,8 +826,38 @@ mod tests {
                 ("profile_choices", "PROFILE_CHOICES", "any"),
                 ("password_change", "TEMP_PASSWORD_CHANGE", "required"),
                 ("temp_password_hours", "TEMP_PASSWORD_HOURS", "72"),
+                ("instance_name", "INSTANCE_NAME", "RChat"),
+                ("app_name", "BRAND_APP_NAME", ""),
+                ("app_short_name", "BRAND_SHORT_NAME", ""),
+                ("brand_about", "BRAND_ABOUT", ""),
+                ("brand_links", "BRAND_LINKS", "[]"),
+                ("login_note", "BRAND_LOGIN_NOTE", ""),
+                (
+                    "instance_suggestions",
+                    "INSTANCE_SUGGESTIONS",
+                    r#"{"mode":"add","list":[]}"#
+                ),
             ]
         );
+        assert_eq!(
+            control("instance_name").kind,
+            Kind::Text {
+                min: 1,
+                max: 64,
+                lines: false
+            }
+        );
+        assert_eq!(
+            control("brand_about").kind,
+            Kind::Text {
+                min: 0,
+                max: 1000,
+                lines: true
+            }
+        );
+        assert_eq!(control("brand_links").kind, Kind::Links);
+        assert_eq!(control("instance_suggestions").kind, Kind::Suggestions);
+        assert!(!control("instance_name").public);
         assert_eq!(
             control("password_change").kind,
             Kind::Choice(&["required", "encouraged"])
@@ -773,7 +925,14 @@ mod tests {
         for c in Control::all() {
             assert_eq!(Control::by_env(c.env), Some(c));
             let written = match c.kind {
-                Kind::Forms => c.default.to_string(),
+                Kind::Forms
+                | Kind::Text {
+                    min: _,
+                    max: _,
+                    lines: _,
+                }
+                | Kind::Links
+                | Kind::Suggestions => c.default.to_string(),
                 Kind::Switch
                 | Kind::Choice(_)
                 | Kind::Targets
@@ -912,7 +1071,18 @@ mod tests {
     #[test]
     fn bad_env_values_name_what_they_expect() {
         for c in Control::all() {
-            if matches!(c.kind, Kind::Names | Kind::Forms | Kind::Servers) {
+            let any_word = matches!(
+                c.kind,
+                Kind::Names
+                    | Kind::Forms
+                    | Kind::Servers
+                    | Kind::Text {
+                        min: _,
+                        max: _,
+                        lines: _
+                    }
+            );
+            if any_word {
                 continue;
             }
             let err = c.parse("maybe").unwrap_err();
@@ -941,7 +1111,15 @@ mod tests {
                     TARGETS.replace(',', ", ")
                 ),
                 Kind::Number { min, max } => format!("expected {min} to {max}"),
-                Kind::Names | Kind::Servers => unreachable!("a list of names takes any word"),
+                Kind::Links => "expected a JSON list of {label, url}".to_string(),
+                Kind::Suggestions => "expected JSON {mode, list: [{url, label}]}".to_string(),
+                Kind::Names
+                | Kind::Servers
+                | Kind::Text {
+                    min: _,
+                    max: _,
+                    lines: _,
+                } => unreachable!("a list of names and a text take any word"),
                 Kind::Forms => unreachable!("the forms come from a file"),
             };
             assert_eq!(err, want, "{}", c.key);
@@ -1125,10 +1303,19 @@ mod tests {
                 Kind::Targets => "all, none, or a list".to_string(),
                 Kind::Number { min, max } => format!("{min} to {max}"),
                 Kind::Names => "server:role".to_string(),
-                Kind::Forms => "JSON".to_string(),
+                Kind::Forms | Kind::Links | Kind::Suggestions => "JSON".to_string(),
                 Kind::Servers => "none".to_string(),
+                Kind::Text {
+                    min: _,
+                    max,
+                    lines: _,
+                } => format!("{max} characters"),
             };
             let value = documented(c.env, &[&words, "Admin page"]);
+            let value = match value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
+                Some(quoted) => quoted.to_string(),
+                None => value,
+            };
             if c.kind == Kind::Forms {
                 assert!(value.ends_with(".json"), "{}={value} names a file", c.env);
                 continue;

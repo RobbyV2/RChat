@@ -1,6 +1,7 @@
 // The site administration page's view of the server config: where each control's value comes
 // from, and how to set a control to what the config says.
 
+import { brandRow, linksOf, suggestionsOf } from './admin_brand'
 import { PROFANITY_TARGETS } from './rules'
 import type { AdminConfig, ConfigControl, ConfigLimit, SiteSettingsPatch } from './types'
 
@@ -23,6 +24,11 @@ const LISTS = new Set(['server_creators', 'default_servers'])
 const NUMBERS = new Set(['upload_expiry_max_days', 'temp_password_hours'])
 // The report forms are a document: only the config or their own editor replaces them.
 const DOCUMENTS = new Set(['report_forms'])
+// Brand values the settings take as lists and objects; the config view shows them as JSON.
+const BRAND_JSON: Record<string, (shown: string) => unknown> = {
+  brand_links: linksOf,
+  instance_suggestions: suggestionsOf,
+}
 
 const list = (shown: string) =>
   shown === '' || shown === 'none'
@@ -46,6 +52,9 @@ const targets = (shown: string): SiteSettingsPatch => {
 export const patchFor = (key: string, shown: string): SiteSettingsPatch | null => {
   if (DOCUMENTS.has(key)) return null
   if (key === 'profanity_targets') return targets(shown)
+  const json = BRAND_JSON[key]
+  if (json) return { [key]: json(shown) } as SiteSettingsPatch
+  if (brandRow(key)) return { [key]: shown } as SiteSettingsPatch
   const value = LISTS.has(key)
     ? list(shown)
     : NUMBERS.has(key)

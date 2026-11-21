@@ -359,8 +359,8 @@ fn servers_of(list: &str) -> impl Iterator<Item = &str> {
     list.split(',').map(str::trim).filter(|e| !e.is_empty())
 }
 
-/// The instance's lists and report forms, which `Settings` (a `Copy` value sent to every
-/// client) leaves out.
+/// The instance's lists, report forms and brand, which `Settings` (a `Copy` value sent to
+/// every client) leaves out.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Policy {
     pub server_creators: Vec<Creator>,
@@ -369,11 +369,19 @@ pub struct Policy {
     pub default_servers: Vec<String>,
     /// The default servers that people who aren't members can read right now.
     pub guest_servers: Vec<String>,
+    /// The instance's brand: its name, the app's names and texts, and the uploaded images.
+    pub brand: crate::api::brand::Stored,
 }
 
-/// What `Policy::read` finds: the creators, the stored forms, the default servers and the ones
-/// of them anyone may read.
-type Stored = (String, Option<String>, Vec<String>, Vec<String>);
+/// What `Policy::read` finds: the creators, the stored forms, the default servers, the ones
+/// of them anyone may read, and the brand.
+type Stored = (
+    String,
+    Option<String>,
+    Vec<String>,
+    Vec<String>,
+    crate::api::brand::Stored,
+);
 
 /// The lists of each database this process has open, with when they were read.
 type PolicyCache = Mutex<HashMap<String, (Instant, Arc<Policy>)>>;
@@ -394,7 +402,7 @@ impl Policy {
                     .unwrap_or_default();
             }
         };
-        let (creators, forms, default_servers, guest_servers) = rows;
+        let (creators, forms, default_servers, guest_servers, brand) = rows;
         let report_forms = match forms {
             Some(stored) => ReportForms::from_stored(&stored).unwrap_or_else(|| {
                 tracing::warn!("the stored report forms can't be read, using the defaults");
@@ -412,6 +420,7 @@ impl Policy {
                 .collect(),
             default_servers,
             guest_servers,
+            brand,
         });
         if let Ok(mut cache) = POLICY_CACHE.lock() {
             cache.insert(pool_key(db), (Instant::now(), policy.clone()));
@@ -423,13 +432,18 @@ impl Policy {
     /// the default servers that people who aren't members can read.
     async fn read(db: &Db) -> sqlx::Result<Stored> {
         let mut stored = HashMap::new();
-        for row in sqlx::query("SELECT key, value FROM settings WHERE key IN ($1, $2, $3)")
-            .bind(SERVER_CREATORS)
-            .bind(DEFAULT_SERVERS)
-            .bind(forms::KEY)
-            .fetch_all(db)
-            .await?
-        {
+        let keys = [SERVER_CREATORS, DEFAULT_SERVERS, forms::KEY]
+            .into_iter()
+            .chain(crate::api::brand::KEYS);
+        let sql = format!(
+            "SELECT key, value FROM settings WHERE key IN ({})",
+            crate::api::placeholders(1, 3 + crate::api::brand::KEYS.len())
+        );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for key in keys {
+            query = query.bind(key);
+        }
+        for row in query.fetch_all(db).await? {
             stored.insert(row.try_get::<String, _>(0)?, row.try_get::<String, _>(1)?);
         }
         let creators = stored.remove(SERVER_CREATORS).unwrap_or_default();
@@ -439,7 +453,9 @@ impl Policy {
             .unwrap_or_else(|| crate::db::BUILTIN_SERVER.to_string());
         let default_servers: Vec<String> = servers_of(&defaults).map(str::to_string).collect();
         let guest_servers = crate::api::access::readable_by_name(db, &default_servers).await?;
-        Ok((creators, forms, default_servers, guest_servers))
+        let assets = crate::api::brand::asset_versions(db).await?;
+        let brand = crate::api::brand::Stored::of(&stored, assets);
+        Ok((creators, forms, default_servers, guest_servers, brand))
     }
 
     pub async fn cached(db: &Db) -> Arc<Policy> {

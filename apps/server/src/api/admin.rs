@@ -18,8 +18,9 @@ use crate::api::policy::{
 };
 use crate::api::reports::forms::{self, Form, ReportForms};
 use crate::api::{
-    ApiError, Authed, OkResp, Paged, ProfanitySwitch, PublicSettings, STRICT_FILE_NAMES,
-    ServerSummaryLite, UserRef, bad, decode_cursor, encode_cursor, ok, reports, upload_expiry,
+    ApiError, Authed, OkResp, Paged, ProfanitySwitch, ProfanityTarget, PublicSettings,
+    STRICT_FILE_NAMES, ServerSummaryLite, UserRef, bad, brand, check_profanity, decode_cursor,
+    encode_cursor, ok, reports, upload_expiry,
 };
 use crate::db::{AvatarKind, Db, User, get_user, now, purge_messages, recount_members, user_row};
 use crate::state::AppState;
@@ -275,6 +276,13 @@ pub struct SettingsPatch {
     profile_choices: Option<ProfileChoices>,
     password_change: Option<TempChange>,
     temp_password_hours: Option<i64>,
+    instance_name: Option<String>,
+    app_name: Option<String>,
+    app_short_name: Option<String>,
+    brand_about: Option<String>,
+    brand_links: Option<Vec<brand::Link>>,
+    login_note: Option<String>,
+    instance_suggestions: Option<brand::Suggestions>,
 }
 
 /// The stored form of `word` for the choice control `key`. A word the control does not take is
@@ -363,7 +371,47 @@ pub(crate) async fn patch_settings(
         profile_choices,
         password_change,
         temp_password_hours,
+        instance_name,
+        app_name,
+        app_short_name,
+        brand_about,
+        brand_links,
+        login_note,
+        instance_suggestions,
     } = req;
+    let mut branded: Vec<(&str, String)> = Vec::new();
+    for (key, text) in [
+        (brand::INSTANCE_NAME, instance_name),
+        (brand::APP_NAME, app_name),
+        (brand::SHORT_NAME, app_short_name),
+        (brand::ABOUT, brand_about),
+        (brand::LOGIN_NOTE, login_note),
+    ] {
+        if let Some(text) = text {
+            branded.push((key, brand_value(&state, key, &text).await?));
+        }
+    }
+    if let Some(links) = brand_links {
+        for link in &links {
+            check_profanity(&state.db, ProfanityTarget::ServerNames, &link.label).await?;
+        }
+        let stored = brand::clean_links(links).map_err(|expected| {
+            ApiError::invalid(format!("{}: {expected}", brand::LINKS), brand::LINKS)
+        })?;
+        branded.push((brand::LINKS, stored));
+    }
+    if let Some(suggestions) = instance_suggestions {
+        for suggestion in &suggestions.list {
+            check_profanity(&state.db, ProfanityTarget::ServerNames, &suggestion.label).await?;
+        }
+        let stored = brand::clean_suggestions(suggestions).map_err(|expected| {
+            ApiError::invalid(
+                format!("{}: {expected}", brand::SUGGESTIONS),
+                brand::SUGGESTIONS,
+            )
+        })?;
+        branded.push((brand::SUGGESTIONS, stored));
+    }
     if temp_password_hours.is_some_and(|h| !(0..=TEMP_PASSWORD_HOURS_MAX).contains(&h)) {
         return Err(ApiError::invalid(
             "Temporary passwords last 0 to 720 hours",
@@ -469,6 +517,7 @@ pub(crate) async fn patch_settings(
         .chain(choices.map(|choices| (ProfileChoices::KEY, choices)))
         .chain(password_change.map(|c| (TempChange::KEY, c.as_str().to_string())))
         .chain(temp_password_hours.map(|h| (TEMP_PASSWORD_HOURS, h.to_string())))
+        .chain(branded)
         .collect();
     let records = ConfigRecords::load(&state.db).await?;
     let touched: Vec<&Control> = Control::all()
@@ -492,18 +541,29 @@ pub(crate) async fn patch_settings(
         after.insert(key.to_string(), value);
     }
     let t = now();
+    let mut rebranded = false;
     for control in touched {
         let shown = |rows: &HashMap<String, String>| {
             control.shown(control.read(rows).as_deref().unwrap_or(control.default))
         };
         let (from, to) = (shown(&before), shown(&after));
         if from != to {
+            let (action, detail) = match brand::KEYS.contains(&control.key) {
+                true => {
+                    rebranded = true;
+                    ("branding.change", serde_json::json!({"key": control.key}))
+                }
+                false => (
+                    "settings.change",
+                    serde_json::json!({"key": control.key, "from": from, "to": to}),
+                ),
+            };
             crate::api::instance_audit::record_in(
                 &mut tx,
                 &user.username,
-                "settings.change",
+                action,
                 Some(control.key),
-                serde_json::json!({"key": control.key, "from": from, "to": to}),
+                detail,
                 t,
             )
             .await?;
@@ -518,7 +578,21 @@ pub(crate) async fn patch_settings(
     state.hub.broadcast(WsEvent::SettingsChanged {
         settings: settings.clone(),
     });
+    if rebranded {
+        brand::announce(&state).await;
+    }
     Ok(Json(settings))
+}
+
+/// `text` as the brand control `key` stores it, through the name filter. A value the control
+/// does not take is refused as an invalid value of `key`.
+async fn brand_value(state: &AppState, key: &str, text: &str) -> Result<String, ApiError> {
+    let stored = Control::find(key)
+        .ok_or_else(not_found)?
+        .parse(text)
+        .map_err(|expected| ApiError::invalid(format!("{key}: {expected}"), key))?;
+    check_profanity(&state.db, ProfanityTarget::ServerNames, &stored).await?;
+    Ok(stored)
 }
 
 /// The `settings` rows of every control, by key.

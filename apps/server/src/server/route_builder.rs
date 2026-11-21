@@ -107,7 +107,9 @@ pub(crate) fn api_router(config: &AppConfig, state: AppState) -> Router {
     let api_routes = limited(api_routes, key.clone(), &state.limits);
     let well_known = match config.roles.api {
         true => limited(
-            crate::api::instance::well_known_routes().with_state(state.clone()),
+            crate::api::instance::well_known_routes()
+                .merge(crate::api::brand::asset_routes())
+                .with_state(state.clone()),
             key,
             &state.limits,
         ),

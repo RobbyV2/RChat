@@ -8170,3 +8170,119 @@ async fn temporary_passwords_are_added_to_an_old_database() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn the_temporary_password_controls_reach_an_old_database() {
+    controls_reach_an_old_database(
+        "temp_password_controls",
+        &["password_change", "temp_password_hours"],
+        &["required", "72"],
+        &[
+            ("TEMP_PASSWORD_CHANGE", " Encouraged ", "encouraged"),
+            ("TEMP_PASSWORD_HOURS", "0", "0"),
+        ],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn an_instance_keeps_the_name_its_config_gives_it_when_the_brand_arrives() {
+    controls_reach_an_old_database(
+        "brand_controls",
+        &[
+            "instance_name",
+            "app_name",
+            "app_short_name",
+            "brand_about",
+            "brand_links",
+            "login_note",
+            "instance_suggestions",
+        ],
+        &["RChat", "", "", "", "[]", "", r#"{"mode":"add","list":[]}"#],
+        &[
+            ("INSTANCE_NAME", " My server ", "My server"),
+            ("BRAND_APP_NAME", "My app", "My app"),
+            ("BRAND_SHORT_NAME", "Mine", "Mine"),
+            ("BRAND_ABOUT", "Run by me.", "Run by me."),
+            (
+                "BRAND_LINKS",
+                r#"[{"label":"Help","url":"https://help.example.com/"}]"#,
+                r#"[{"label":"Help","url":"https://help.example.com/"}]"#,
+            ),
+            ("BRAND_LOGIN_NOTE", "Ask me for an account.", "Ask me for an account."),
+            (
+                "INSTANCE_SUGGESTIONS",
+                r#"{"mode":"replace","list":[{"url":"https://chat.example.com/x","label":"Example"}]}"#,
+                r#"{"mode":"replace","list":[{"url":"https://chat.example.com","label":"Example"}]}"#,
+            ),
+        ],
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn brand_images_are_added_to_an_old_database() {
+    const { assert!(SCHEMA_VERSION >= 40) };
+    on_each_database("brand_assets_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        for stmt in [
+            "DROP TABLE brand_assets",
+            "UPDATE settings SET value = '39' WHERE key = 'schema_version'",
+            "INSERT INTO users(username, display_name, password_hash, password_kind, avatar_kind, created_at) VALUES('alice', 'Alice', 'hash-a', 'text', 'identicon', 5)",
+            "INSERT INTO temp_passwords(username, issued_at, expires_at, issued_by) VALUES('alice', 300, 900, NULL)",
+            "INSERT INTO servers(name, display_name, created_at) VALUES('club', 'Club', 7)",
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION, "{round}");
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM brand_assets").await,
+                0,
+                "start {round}: no image until one is uploaded"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM users WHERE username = 'alice' AND password_hash = 'hash-a' AND created_at = 5").await,
+                1,
+                "start {round}"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM temp_passwords WHERE username = 'alice' AND issued_at = 300 AND expires_at = 900").await,
+                1,
+                "start {round}"
+            );
+            assert_eq!(
+                count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'club' AND display_name = 'Club' AND created_at = 7").await,
+                1,
+                "start {round}"
+            );
+            let brand = crate::api::policy::Policy::load(&db).await.brand.clone();
+            assert!(!brand.is_set(), "start {round}: an old instance has no brand");
+            assert_eq!(brand.view().app_name, "RChat");
+            close(&db).await;
+        }
+        let db = open_started(Some(&url)).await.expect("open");
+        let bytes = vec![0x89u8, b'P', b'N', b'G', 0, 255, 7];
+        sqlx::query("INSERT INTO brand_assets(kind, bytes, etag, updated_at) VALUES('logo', $1, 'abc', 9)")
+            .bind(bytes.clone())
+            .execute(&db)
+            .await
+            .expect("image");
+        let stored = crate::api::brand::stored_asset(&db, crate::api::brand::Asset::Logo)
+            .await
+            .expect("read");
+        assert_eq!(stored, Some((bytes, "abc".to_string())), "bytes come back as they went in");
+        assert!(
+            sqlx::query("INSERT INTO brand_assets(kind, bytes, etag, updated_at) VALUES('logo', $1, 'def', 10)")
+                .bind(vec![1u8])
+                .execute(&db)
+                .await
+                .is_err(),
+            "one image per kind"
+        );
+        close(&db).await;
+    })
+    .await;
+}

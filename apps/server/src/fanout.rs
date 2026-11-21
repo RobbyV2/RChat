@@ -437,9 +437,9 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             targets.extend(users(partners));
             to(targets)
         }
-        WsEvent::Banned { username: _ } | WsEvent::SettingsChanged { settings: _ } => {
-            Route::Everyone
-        }
+        WsEvent::Banned { username: _ }
+        | WsEvent::SettingsChanged { settings: _ }
+        | WsEvent::BrandChanged { brand: _ } => Route::Everyone,
         WsEvent::Error {
             message: _,
             reason: _,

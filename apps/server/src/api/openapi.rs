@@ -253,6 +253,8 @@ impl Modify for Bearer {
         super::media::download_media,
         super::media::delete_media,
         super::admin::get_settings,
+        super::brand::get_brand,
+        super::brand::get_asset,
         super::reports::forms::get_forms,
         super::reports::create_report,
         super::reports::list_reports,
@@ -410,7 +412,7 @@ pub(crate) mod tests {
         ),
     ];
 
-    const ADMIN_ROUTES: [(&str, &str); 28] = [
+    const ADMIN_ROUTES: [(&str, &str); 30] = [
         ("patch", "/api/v1/admin/settings"),
         ("get", "/api/v1/admin/report_forms"),
         ("put", "/api/v1/admin/report_forms"),
@@ -439,6 +441,8 @@ pub(crate) mod tests {
         ("post", "/api/v1/admin/users/{username}/servers"),
         ("delete", "/api/v1/admin/messages/{id}"),
         ("post", "/api/v1/admin/ban"),
+        ("put", "/api/v1/admin/brand/{kind}"),
+        ("delete", "/api/v1/admin/brand/{kind}"),
     ];
 
     const UNDOCUMENTED: [(&str, &str, &str); 1] = [(
@@ -450,7 +454,8 @@ pub(crate) mod tests {
     const ADMIN_REASON: &str =
         "site-admin only; site admins must stay hidden, so the public document leaves these out";
 
-    const ROUTE_SOURCES: [(&str, &str); 5] = [
+    const ROUTE_SOURCES: [(&str, &str); 6] = [
+        ("", include_str!("brand.rs")),
         ("/api/v1", include_str!("mod.rs")),
         ("/api/v1", include_str!("health.rs")),
         ("/api/v1", include_str!("openapi.rs")),

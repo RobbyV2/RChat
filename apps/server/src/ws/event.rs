@@ -533,6 +533,10 @@ pub enum WsEvent {
     SettingsChanged {
         settings: PublicSettings,
     },
+    /// The instance's brand changed: its names, texts, links, suggested instances or images.
+    BrandChanged {
+        brand: crate::api::brand::Brand,
+    },
     TokensRevoked {
         username: String,
     },

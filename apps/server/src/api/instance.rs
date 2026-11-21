@@ -119,6 +119,12 @@ async fn info(state: &AppState, peer: Option<IpAddr>, headers: &HeaderMap) -> In
     if !p2p && !p2p_attachments {
         info.peerjs_url = String::new();
     }
+    let policy = crate::api::policy::Policy::cached(&state.read()).await;
+    info.name = policy.brand.instance_name.clone();
+    info.mark_url = policy
+        .brand
+        .asset(crate::api::brand::Asset::Mark192)
+        .map(|path| format!("{}{path}", info.public_url));
     info
 }
 
@@ -1447,7 +1453,7 @@ mod tests {
         state.instance = Instance::load(
             &state.db,
             &InstanceConfig {
-                name: Some("Lobby".to_string()),
+                name: Some("Named at start".to_string()),
                 public_url: Some("https://chat.example/".to_string()),
                 ws_url: Some("https://gw.example".to_string()),
                 ..Default::default()
@@ -1455,9 +1461,15 @@ mod tests {
         )
         .await
         .unwrap();
+        sqlx::query("UPDATE settings SET value = 'Lobby' WHERE key = 'instance_name'")
+            .execute(&state.db)
+            .await
+            .expect("name");
+        crate::api::policy::Policy::forget(&state.db);
         let headers = HeaderMap::new();
         let info = info(&state, None, &headers).await;
-        assert_eq!(info.name, "Lobby");
+        assert_eq!(info.name, "Lobby", "the stored name, not the one of the start");
+        assert_eq!(info.mark_url, None);
         assert_eq!(info.public_url, "https://chat.example");
         assert_eq!(info.host, "chat.example");
         assert_eq!(info.api_url, "https://chat.example/api");

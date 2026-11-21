@@ -134,5 +134,13 @@
   {
     "route": "post /api/v1/admin/users/{username}/servers",
     "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "put /api/v1/admin/brand/{kind}",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "delete /api/v1/admin/brand/{kind}",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
   }
 ]

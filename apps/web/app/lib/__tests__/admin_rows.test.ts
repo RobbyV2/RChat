@@ -10,6 +10,7 @@ import {
   registrationOptions,
   rowsUnder,
 } from '../admin_rows'
+import { BRAND_ROWS } from '../admin_brand'
 import { patchFor } from '../admin_config'
 import { searchRows } from '../settings_search'
 import type { SiteSettings } from '../types'
@@ -93,8 +94,18 @@ test('every site setting has a row', () => {
 })
 
 test('every setting the server config marks for the admin page has a row', () => {
-  const envs = ADMIN_ROWS.map(r => r.env)
+  const envs = [...ADMIN_ROWS, ...BRAND_ROWS].map(r => r.env)
   for (const env of marked) expect(envs).toContain(env)
+})
+
+test('a control is a feature or a part of the brand, never both', () => {
+  const features = ADMIN_ROWS.map(r => r.key)
+  for (const row of BRAND_ROWS) {
+    expect(features).not.toContain(row.key)
+    expect(marked).toContain(row.env)
+  }
+  const keys = BRAND_ROWS.map(r => r.key)
+  expect(new Set(keys).size).toBe(keys.length)
 })
 
 test('the page sets every control the way its row says', () => {

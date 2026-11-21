@@ -669,6 +669,45 @@ export type SiteSettingsPatch = Partial<Omit<SiteSettings, 'profanity_targets'>>
   // servers (usernames and server:role entries), and the servers new accounts join.
   server_creators?: string[]
   default_servers?: string[]
+  // The brand, which everyone reads in `Brand`.
+  instance_name?: string
+  app_name?: string
+  app_short_name?: string
+  brand_about?: string
+  brand_links?: BrandLink[]
+  login_note?: string
+  instance_suggestions?: InstanceSuggestions
+}
+
+export interface BrandLink {
+  label: string
+  url: string
+}
+
+export interface InstanceSuggestion {
+  url: string
+  label: string
+}
+
+// `add`: after the list the app was built with. `replace`: instead of it.
+export interface InstanceSuggestions {
+  mode: 'add' | 'replace'
+  list: InstanceSuggestion[]
+}
+
+export type BrandAsset = 'logo' | 'mark-32' | 'mark-180' | 'mark-192' | 'mark-512' | 'mark-maskable'
+
+// The names, texts and images an instance sets for itself and for the app it serves.
+export interface Brand {
+  instance_name: string
+  app_name: string
+  short_name: string
+  about: string
+  links: BrandLink[]
+  login_note: string
+  suggestions: InstanceSuggestions
+  // The uploaded images, each as a path on the instance with its version.
+  assets: Partial<Record<BrandAsset, string>>
 }
 
 // One row of the instance audit log, which only the site admin's panel lists.

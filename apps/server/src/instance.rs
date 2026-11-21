@@ -410,6 +410,7 @@ impl Instance {
             software: SOFTWARE.to_string(),
             id: self.id.clone(),
             name: self.name.clone(),
+            mark_url: None,
             host,
             version: env!("CARGO_PKG_VERSION").to_string(),
             api_version: API_VERSION.to_string(),
@@ -569,9 +570,13 @@ pub struct InstanceInfo {
     pub software: String,
     /// Random id generated once per instance and kept in its database.
     pub id: String,
-    /// Display name of the instance (`INSTANCE_NAME`, default `RChat`).
+    /// Display name of the instance (`instance_name` of `GET /api/v1/brand`, default `RChat`).
     #[schema(example = "RChat")]
     pub name: String,
+    /// URL of the instance's mark, a 192 by 192 PNG, when it uploaded one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = "https://chat.example.com/brand/mark-192.png?v=3f2a9c1e5b7d0a46")]
+    pub mark_url: Option<String>,
     /// Host (with port when not the default) users of this instance belong to, as in
     /// `user@host`.
     #[schema(example = "chat.example.com")]
