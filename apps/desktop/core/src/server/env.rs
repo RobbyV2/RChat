@@ -31,7 +31,8 @@ fn plain(byte: u8) -> bool {
 }
 
 // The address of the SQLite database in `dir`, with forward slashes and everything else that
-// means something in an address percent-encoded (spaces, `?`, `#`, `%`).
+// means something in an address percent-encoded (spaces, `?`, `#`, `%`). There is no `//`, so a
+// URL parser never reads a drive letter as a host.
 pub fn sqlite_url(dir: &str) -> String {
     let dir = dir.replace('\\', "/");
     let path: String = dir
@@ -42,7 +43,7 @@ pub fn sqlite_url(dir: &str) -> String {
             false => format!("%{byte:02X}"),
         })
         .collect();
-    format!("sqlite://{path}/{DB_FILE}?mode=rwc")
+    format!("sqlite:{path}/{DB_FILE}?mode=rwc")
 }
 
 pub fn is_postgres(settings: &ServerSettings) -> bool {
@@ -273,7 +274,7 @@ mod tests {
 
     const LOCAL: [(&str, &str); 7] = [
         ("APP_MODE", "api-only"),
-        ("DATABASE_URL", "sqlite:///data/rchat.db?mode=rwc"),
+        ("DATABASE_URL", "sqlite:/data/rchat.db?mode=rwc"),
         ("HOST", "127.0.0.1"),
         ("INSTANCE_NAME", "My server"),
         ("PEERJS_BUILTIN", "true"),
@@ -448,28 +449,29 @@ mod tests {
     #[test]
     fn the_database_address_encodes_the_folder() {
         for (dir, url) in [
-            ("/data", "sqlite:///data/rchat.db?mode=rwc"),
-            ("/data/", "sqlite:///data/rchat.db?mode=rwc"),
-            ("/home/a b/x", "sqlite:///home/a%20b/x/rchat.db?mode=rwc"),
+            ("/data", "sqlite:/data/rchat.db?mode=rwc"),
+            ("/data/", "sqlite:/data/rchat.db?mode=rwc"),
+            ("/home/a b/x", "sqlite:/home/a%20b/x/rchat.db?mode=rwc"),
             (
                 r"C:\Users\A B\x",
-                "sqlite://C:/Users/A%20B/x/rchat.db?mode=rwc",
+                "sqlite:C:/Users/A%20B/x/rchat.db?mode=rwc",
             ),
             (
                 r"C:\Users\A B\x\",
-                "sqlite://C:/Users/A%20B/x/rchat.db?mode=rwc",
+                "sqlite:C:/Users/A%20B/x/rchat.db?mode=rwc",
             ),
             (
                 "/x/50%?#&=+",
-                "sqlite:///x/50%25%3F%23%26%3D%2B/rchat.db?mode=rwc",
+                "sqlite:/x/50%25%3F%23%26%3D%2B/rchat.db?mode=rwc",
             ),
-            ("/x/caf\u{e9}", "sqlite:///x/caf%C3%A9/rchat.db?mode=rwc"),
+            ("/x/caf\u{e9}", "sqlite:/x/caf%C3%A9/rchat.db?mode=rwc"),
             (
                 "/Users/a/Library/Application Support/io.github.robbyv2.rchat/server",
-                "sqlite:///Users/a/Library/Application%20Support/io.github.robbyv2.rchat/server/rchat.db?mode=rwc",
+                "sqlite:/Users/a/Library/Application%20Support/io.github.robbyv2.rchat/server/rchat.db?mode=rwc",
             ),
         ] {
             assert_eq!(sqlite_url(dir), url, "{dir}");
+            assert_eq!(url::Url::parse(url).expect("parses").as_str(), url, "{dir}");
         }
     }
 
