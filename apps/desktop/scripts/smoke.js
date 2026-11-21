@@ -105,7 +105,7 @@
         type(input, SMOKE_INSTANCE)
         setTimeout(() => connect.click(), 100)
       }
-      find('button', 'cannot send messages')?.click()
+      find('button', 'Continue as a guest')?.click()
       return document.querySelector('button[title="Settings"]')
     })
 
