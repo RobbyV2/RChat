@@ -1,7 +1,7 @@
 'use client'
 
+import { useAccount } from '../lib/client/react'
 import { useEffect, useId, useState } from 'react'
-import { api } from '../lib/instances'
 import { limitsOf } from '../lib/instance_limits'
 import { errorText, useStore } from '../lib/store'
 import { durationText } from '../lib/timeouts'
@@ -50,6 +50,7 @@ const UNITS: { value: ExpiryUnit; label: string }[] = [
 
 // How long files uploaded in a server stay. For people with the Delete server permission.
 export function ServerUploadExpiry({ server }: { server: string }) {
+  const { store, api, lifetime } = useAccount()
   const { label } = useInstanceLabel()
   const base = useStore(s => limitsOf(s.instance).media_retention_secs)
   const cap = useStore(s => s.settings.upload_expiry_max_days ?? 0)
@@ -76,7 +77,7 @@ export function ServerUploadExpiry({ server }: { server: string }) {
     return () => {
       live = false
     }
-  }, [server, tick])
+  }, [api, server, tick])
   // `revert`: a chip saved at once goes back to the stored choice when the save fails.
   const save = (next: ExpiryForm, revert = false) => {
     const choice = expiryFromChoice(next)
@@ -87,16 +88,16 @@ export function ServerUploadExpiry({ server }: { server: string }) {
     api
       .setUploadExpiry(server, choice)
       .then(
-        s => {
+        lifetime.inSession(s => {
           setSaved(s)
           setDone(true)
-          useStore.setState(st => {
+          store.setState(st => {
             const detail = st.servers[server]
             return detail
               ? { servers: { ...st.servers, [server]: { ...detail, ...serverPatch(s) } } }
               : {}
           })
-        },
+        }),
         (err: unknown) => {
           setError(errorText(err))
           if (revert && saved) setForm(expiryChoice(saved.upload_expiry))

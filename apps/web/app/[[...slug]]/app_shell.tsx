@@ -78,9 +78,11 @@ p2pHost.textOnly = () => {
 
 export default function AppShell() {
   const sessions = useLiveSessions()
+  const shown = client.shown()
   return (
-    <AccountProvider session={client.shown()}>
-      <Chat />
+    <AccountProvider session={shown}>
+      <Startup />
+      <Chat key={shown.renderKey} />
       <CallBanner />
       {sessions.map(session => (
         <AccountProvider key={session.renderKey} session={session}>
@@ -117,11 +119,23 @@ export function SessionServices() {
     const reload = (event: StorageEvent) => {
       const key = account.conn.scoped(historyKey(ownerOf(account.store.getState())))
       if (event.key === key || event.key === null) reloadHistory()
+      if (event.key?.startsWith('rchat_layout:')) account.store.getState().reloadLayout()
+      if (event.key?.startsWith('rchat_emoji:')) account.store.getState().reloadEmoji()
+      if (event.key?.startsWith('rchat_forward:')) account.store.getState().reloadForward()
+      if (event.key?.startsWith('rchat_notify:')) account.store.getState().reloadNotify()
+      if (event.key?.startsWith('rchat_typing:')) account.store.getState().reloadTyping()
       if (event.key?.startsWith('rchat_home:')) account.home.reloadHome()
       if (event.key?.startsWith('rchat_palette:')) account.palettePrefs.reloadPalettePrefs()
     }
+    const onWake = () => {
+      if (document.visibilityState === 'visible') account.store.getState().pruneNotify()
+    }
+    window.addEventListener('focus', onWake)
+    document.addEventListener('visibilitychange', onWake)
     window.addEventListener('storage', reload)
     return () => {
+      window.removeEventListener('focus', onWake)
+      document.removeEventListener('visibilitychange', onWake)
       window.removeEventListener('storage', reload)
       stopP2pPings?.()
       stopP2pIndex?.()
@@ -159,7 +173,20 @@ function OverlayLayer() {
   )
 }
 
+function Startup() {
+  const account = useAccount()
+  const router = useRouter()
+  const booted = useRef(false)
+  useEffect(() => {
+    if (booted.current) return
+    booted.current = true
+    void startApp(() => router.replace('/login'), account)
+  }, [account, router])
+  return null
+}
+
 function Chat() {
+  const { store } = useAccount()
   const router = useRouter()
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
@@ -185,7 +212,6 @@ function Chat() {
   const p2pChannel = useP2p(s => (s.server ? `${s.server.room}/${s.server.ch}` : null))
   const p2pPanelKind = useP2p(s => (s.server ? s.panel : null))
   const p2pPanel = me !== null ? p2pPanelKind : null
-  const booted = useRef(false)
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
   const closeLeft = useCallback(() => setLeftOpen(false), [])
@@ -196,12 +222,6 @@ function Chat() {
     setLeftOpen(false)
     setRightOpen(false)
   }, 'panel')
-
-  useEffect(() => {
-    if (booted.current) return
-    booted.current = true
-    void startApp(() => router.replace('/login'))
-  }, [router])
 
   useEffect(() => {
     notifications().setBadge(pings)
@@ -215,42 +235,24 @@ function Chat() {
   const guestBlocked = useStore(s => s.guest && !s.settings.guests_enabled)
   useEffect(() => {
     if (!guestBlocked) return
-    useStore.getState().logout()
-    useStore.getState().setError('Guest access is disabled')
+    store.getState().logout()
+    store.getState().setError('Guest access is disabled')
     router.replace('/login')
-  }, [guestBlocked, router])
+  }, [guestBlocked, router, store])
 
   const authExpired = useStore(s => s.authExpired)
   useEffect(() => {
     if (!authExpired) return
-    useStore.setState({ authExpired: false })
-    useStore.getState().setError('Your session has ended. Please sign in again.')
+    store.setState({ authExpired: false })
+    store.getState().setError('Your session has ended. Please sign in again.')
     router.replace('/login')
-  }, [authExpired, router])
+  }, [authExpired, router, store])
 
   useEffect(() => {
-    const onPop = () => void useStore.getState().syncFromUrl('none')
-    const onStorage = (e: StorageEvent) => {
-      if (e.key?.startsWith('rchat_layout:')) useStore.getState().reloadLayout()
-      if (e.key?.startsWith('rchat_emoji:')) useStore.getState().reloadEmoji()
-      if (e.key?.startsWith('rchat_forward:')) useStore.getState().reloadForward()
-      if (e.key?.startsWith('rchat_notify:')) useStore.getState().reloadNotify()
-      if (e.key?.startsWith('rchat_typing:')) useStore.getState().reloadTyping()
-    }
-    const onWake = () => {
-      if (document.visibilityState === 'visible') useStore.getState().pruneNotify()
-    }
+    const onPop = () => void store.getState().syncFromUrl('none')
     window.addEventListener('popstate', onPop)
-    window.addEventListener('storage', onStorage)
-    window.addEventListener('focus', onWake)
-    document.addEventListener('visibilitychange', onWake)
-    return () => {
-      window.removeEventListener('popstate', onPop)
-      window.removeEventListener('storage', onStorage)
-      window.removeEventListener('focus', onWake)
-      document.removeEventListener('visibilitychange', onWake)
-    }
-  }, [])
+    return () => window.removeEventListener('popstate', onPop)
+  }, [store])
 
   // The place the address restores on load keeps the P2P home open (it comes back from its
   // session key); a change of view after that closes it.
@@ -258,9 +260,9 @@ function Chat() {
   useEffect(() => {
     setLeftOpen(false)
     setRightOpen(false)
-    if (useStore.getState().panel?.kind === 'thread') useStore.getState().closePanel()
+    if (store.getState().panel?.kind === 'thread') store.getState().closePanel()
     if (settled.current) p2p.closeHome()
-  }, [view])
+  }, [view, store])
   useEffect(() => {
     if (view !== null || atHome) settled.current = true
   }, [view, atHome])
@@ -278,9 +280,9 @@ function Chat() {
   // A P2P server's thread or search takes the panel's place.
   useEffect(() => {
     if (!p2pPanel) return
-    const kind = useStore.getState().panel?.kind
-    if (kind === 'thread' || kind === 'search') useStore.getState().closePanel()
-  }, [p2pPanel])
+    const kind = store.getState().panel?.kind
+    if (kind === 'thread' || kind === 'search') store.getState().closePanel()
+  }, [p2pPanel, store])
 
   const paletteOpen = usePaletteUi(s => s.open)
   const adminOpen = useStore(s => s.adminPage !== null)

@@ -1,17 +1,18 @@
 'use client'
 
+import { useApi } from '../lib/client/react'
 import {
   useCallback,
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
   type RefObject,
 } from 'react'
 import { serverAdminPerms, useStore, viewKey } from '../lib/store'
-import { api } from '../lib/instances'
 import { Perm, hasPerm, type Message, type Role, type UserRef } from '../lib/types'
 import {
   MENTION_QUERY,
@@ -44,6 +45,7 @@ const CACHE_MAX = 200
 // Mention suggestions: recent authors in view, then server members that match the query
 // (debounced and cached), then cached members. DMs suggest the other person.
 function useMentionSearch(listKey: string | null, query: string | null) {
+  const api = useApi()
   const me = useStore(s => s.me?.username ?? null)
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const dmOther = useStore(s => {
@@ -57,25 +59,25 @@ function useMentionSearch(listKey: string | null, query: string | null) {
     ) ?? NO_MESSAGES
   const list = useStore(s => (server ? s.members[server]?.list : undefined)) ?? NO_PEOPLE
   const info = useStore(s => (server ? s.memberInfo[server] : undefined))
-  const cache = useRef(new Map<string, UserRef[]>())
+  const cache = useMemo(() => new Map<string, UserRef[]>(), [api])
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
     if (!server || !query) return
     const key = suggestKey(server, query)
-    if (cache.current.has(key)) return
+    if (cache.has(key)) return
     const t = setTimeout(() => {
       api
         .suggestMembers(server, query)
         .then(found => {
-          if (cache.current.size >= CACHE_MAX) cache.current.clear()
-          cache.current.set(key, found)
+          if (cache.size >= CACHE_MAX) cache.clear()
+          cache.set(key, found)
           setTick(n => n + 1)
         })
         .catch(() => {})
     }, SUGGEST_DEBOUNCE)
     return () => clearTimeout(t)
-  }, [server, query])
+  }, [api, cache, server, query])
 
   return useCallback(
     (q: string): UserRef[] => {
@@ -84,7 +86,7 @@ function useMentionSearch(listKey: string | null, query: string | null) {
       if (!server) return []
       let remote: UserRef[] = NO_PEOPLE
       for (let n = q.length; n > 0; n -= 1) {
-        const hit = cache.current.get(suggestKey(server, q.slice(0, n)))
+        const hit = cache.get(suggestKey(server, q.slice(0, n)))
         if (hit) {
           remote = hit
           break
@@ -96,7 +98,7 @@ function useMentionSearch(listKey: string | null, query: string | null) {
         name => name === me || info?.[name] === null
       )
     },
-    [tick, dmOther, server, own, parent, list, info, me]
+    [cache, tick, dmOther, server, own, parent, list, info, me]
   )
 }
 

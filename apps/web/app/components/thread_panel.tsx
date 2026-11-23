@@ -8,7 +8,7 @@ import { ReactionBar } from './reactions'
 import { readOnly } from '../lib/reactions'
 import { messageRights, replyAccess } from '../lib/actions/message'
 import { openActionMenu } from '../lib/actions/menu'
-import { confirmDeleteMessage, myPerms, roleColor, threadKey, useStore } from '../lib/store'
+import { myPerms, roleColor, threadKey, useStore } from '../lib/store'
 import { Perm, hasPerm, type Message } from '../lib/types'
 import type { Outgoing } from '../lib/store_types'
 import { findById } from '../lib/window'
@@ -119,6 +119,7 @@ export function ThreadPanelView({
 
 export default function ThreadPanel() {
   const acct = useAccount()
+  const { store } = acct
 
   const root = useStore(s => {
     if (s.panel?.kind !== 'thread') return null
@@ -173,7 +174,7 @@ export default function ThreadPanel() {
   )
   const selecting = useStore(s => key !== null && s.selection?.scope === key)
   useEscape(e => {
-    if (acct.store.getState().selection) acct.store.getState().exitSelection()
+    if (store.getState().selection) store.getState().exitSelection()
     else if (!e.defaultPrevented) closePanel()
   }, 'panel')
 
@@ -252,7 +253,7 @@ export default function ThreadPanel() {
 
   const rowMenu = (m: Message) => (x: number, y: number) => {
     if (m.id !== root.id && openSelectionMenu(key, m, x, y, acct)) return
-    const react = messageRights(acct.store.getState(), m, key).react
+    const react = messageRights(store.getState(), m, key).react
     openActionMenu(
       x,
       y,
@@ -275,7 +276,7 @@ export default function ThreadPanel() {
         label: 'Delete reply (hold Shift to skip confirmation)',
         icon: Trash2,
         danger: true,
-        onClick: e => confirmDeleteMessage(m.id, e.shiftKey),
+        onClick: e => store.menu.confirmDeleteMessage(m.id, e.shiftKey),
       })
     const quote = m.reply_to
     const body = (

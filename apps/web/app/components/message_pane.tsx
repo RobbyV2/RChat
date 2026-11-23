@@ -1,5 +1,6 @@
 'use client'
 import { useAccount, useStoreApi } from '../lib/client/react'
+
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
@@ -282,11 +283,12 @@ export function AuthorRow({
   meta: ReactNode
   children: ReactNode
 }) {
+  const store = useStoreApi()
   return (
     <div className="flex gap-3">
       <div className="shrink-0 pt-0.5">
         <span
-          {...profileTrigger(author, server, false)}
+          {...profileTrigger(store, author, server, false)}
           title="View profile"
           className={avatarTriggerCls}
         >
@@ -302,7 +304,7 @@ export function AuthorRow({
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
           <FitName
             user={author}
-            {...profileTrigger(author, server)}
+            {...profileTrigger(store, author, server)}
             style={{ color }}
             className={`streamer min-w-0 truncate text-sm font-medium ${nameTriggerCls}`}
           />
@@ -351,9 +353,10 @@ const gutterStatusCls =
 
 // The other person in a DM's header: avatar and name, opening their profile.
 export function DmPeer({ other }: { other: UserRef }) {
+  const store = useStoreApi()
   return (
     <span
-      {...profileTrigger(other, null)}
+      {...profileTrigger(store, other, null)}
       className="-ml-1.5 flex min-w-0 cursor-pointer items-center gap-2 rounded-full py-1 pr-2.5 pl-1.5 outline-offset-2 hover:bg-surface-container-high focus-visible:outline-2 focus-visible:outline-primary"
     >
       <span className={`flex shrink-0 ${showsUsername(other) ? 'max-sm:hidden' : ''}`.trim()}>

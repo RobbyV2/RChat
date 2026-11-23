@@ -3,7 +3,7 @@ import { useAccount } from '../../lib/client/react'
 
 import { useLayoutEffect, useRef, useState } from 'react'
 import { Ban, Check, Menu, QrCode as QrIcon, UserPlus, Waypoints, X } from 'lucide-react'
-import { useStore } from '../../lib/store'
+import { useStore, type RChatState } from '../../lib/store'
 import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
 import { p2pTileCount } from '../../lib/p2p/alerts'
 import { dmRoomId, movedText, MOVING_TEXT, RESUME_TEXT } from '../../lib/p2p/dm'
@@ -138,7 +138,7 @@ export const RESET_BODY =
 const RESET_MOVED_BODY =
   'You get a new key. This browser no longer has the old one, so contacts get a request from the new key and have to accept and verify you again.'
 
-export const confirmReset = (ask: ReturnType<typeof useStore.getState>['askConfirm']) =>
+export const confirmReset = (ask: RChatState['askConfirm']) =>
   ask({
     title: 'Reset your P2P identity?',
     body: useP2p.getState().movedAt === null ? RESET_BODY : RESET_MOVED_BODY,

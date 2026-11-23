@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useId, useState, type ReactNode } from 'react'
 import { Check, Copy, Lock, LockOpen, Plus } from 'lucide-react'
-import { api, home, readLocal, writeLocal } from '../lib/instances'
+import { readLocal, writeLocal } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
-import { useAccount } from '../lib/client/react'
+import { useAccount, useApi } from '../lib/client/react'
 import { inviteUrl } from '../lib/invite'
 import { passwordDone, passwordPrompt } from '../lib/rules'
 import { goingPublic, protectedDetail, publicDetail } from '../lib/joining'
@@ -73,18 +73,16 @@ export const passwordName = (label: string | null) => label ?? UNTITLED
 
 const nowSeconds = () => Math.floor(Date.now() / 1000)
 
-const bookKey = (username: string) => home.scoped(secretsKey(username))
-
-const readBook = (username: string) => {
+const readBook = (key: string) => {
   try {
-    return parseSecrets(readLocal(bookKey(username)))
+    return parseSecrets(readLocal(key))
   } catch {
     return parseSecrets(null)
   }
 }
 
-const saveBook = (username: string, book: SecretBook) =>
-  writeLocal(bookKey(username), Object.keys(book.servers).length ? JSON.stringify(book) : null)
+const saveBook = (key: string, book: SecretBook) =>
+  writeLocal(key, Object.keys(book.servers).length ? JSON.stringify(book) : null)
 
 const CHIP: Record<PasswordStatus, string> = {
   live: 'bg-primary-container text-on-primary-container',
@@ -245,6 +243,7 @@ function PermanentPassword({
   canRemove: boolean
   refresh: () => void
 }) {
+  const api = useApi()
   const askConfirm = useStore(s => s.askConfirm)
   const siteAdmin = useStore(s => s.me?.is_site_admin ?? false)
   const [password, setPassword] = useState('')
@@ -337,7 +336,7 @@ function NewPasswordDialog({
   onClose: () => void
   onCreated: (created: CreatedPassword) => void
 }) {
-  const { shareOrigin } = useAccount()
+  const { shareOrigin, api } = useAccount()
   const ids = useId()
   const streamer = useStore(s => s.streamer)
   const [label, setLabel] = useState('')
@@ -561,6 +560,7 @@ function PublicReading({
   hasPassword: boolean
   option: PublicRead
 }) {
+  const api = useApi()
   const settings = useStore(s => s.settings)
   const [error, setError] = useState<string | null>(null)
   const label = 'Anyone can read this server'
@@ -590,6 +590,7 @@ function PublicReading({
 }
 
 export function GuestParticipation({ server }: { server: string }) {
+  const api = useApi()
   const detail = useStore(s => s.servers[server])
   const site = useStore(s => s.settings)
   const [error, setError] = useState<string | null>(null)
@@ -639,6 +640,7 @@ export function GuestParticipation({ server }: { server: string }) {
 
 // "Members can be seen by people outside this server": on or off.
 function MemberPrivacy({ server, visible }: { server: string; visible: boolean }) {
+  const api = useApi()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const flip = (next: boolean) => {
@@ -685,16 +687,16 @@ export function ServerAccessSection({
   publicRead: PublicRead
   membersVisible: boolean | null
 }) {
+  const { api, conn: home } = useAccount()
   const username = useStore(s => s.me?.username ?? null)
+  const key = username && home.scoped(secretsKey(username))
   const askConfirm = useStore(s => s.askConfirm)
   const settings = useStore(s => s.settings)
   const publicReadable = readableNow(publicRead, false, settings)
   const name = useId()
   const [data, setData] = useState<ServerPasswords | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [book, setBook] = useState<SecretBook>(() =>
-    username ? readBook(username) : parseSecrets(null)
-  )
+  const [book, setBook] = useState<SecretBook>(() => (key ? readBook(key) : parseSecrets(null)))
   const [creating, setCreating] = useState(false)
   const [rev, setRev] = useState(0)
   const refresh = useCallback(() => setRev(r => r + 1), [])
@@ -712,18 +714,18 @@ export function ServerAccessSection({
     return () => {
       live = false
     }
-  }, [server, rev, hasPassword, canSettings, canInvites])
+  }, [api, server, rev, hasPassword, canSettings, canInvites])
 
   useEffect(() => {
-    if (!canInvites || !data || !username) return
+    if (!canInvites || !data || !key) return
     const now = nowSeconds()
     const live = data.passwords.filter(p => statusAt(p, now) === 'live').map(p => p.id)
     setBook(prev => {
       const next = keepSecrets(prev, server, live)
-      if (next !== prev) saveBook(username, next)
+      if (next !== prev) saveBook(key, next)
       return next
     })
-  }, [data, server, username, canInvites])
+  }, [data, server, key, canInvites])
 
   const soonest = (data?.passwords ?? [])
     .filter(p => p.status === 'live' && p.expires_at !== null)
@@ -880,10 +882,10 @@ export function ServerAccessSection({
           server={server}
           onClose={() => setCreating(false)}
           onCreated={res => {
-            if (username)
+            if (key)
               setBook(prev => {
                 const next = withSecret(prev, server, res.id, res.password)
-                saveBook(username, next)
+                saveBook(key, next)
                 return next
               })
             refresh()

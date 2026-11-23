@@ -26,6 +26,7 @@ import {
   useStore,
 } from '../lib/store'
 import { useAccount } from '../lib/client/react'
+import type { RChatState } from '../lib/store_types'
 import { openActionMenu } from '../lib/actions/menu'
 import { folderKey, railItems, serverKey, type Folder } from '../lib/nav_layout'
 import { folderStyle } from '../lib/folder_colors'
@@ -56,8 +57,7 @@ const FOLDER = folderKey('')
 const strip = (key: string | null, prefix: string) =>
   key?.startsWith(prefix) ? key.slice(prefix.length) : null
 
-const dropServer = (name: string, { zone, index, onto }: DropTarget) => {
-  const s = useStore.getState()
+const dropServer = (s: RChatState, name: string, { zone, index, onto }: DropTarget) => {
   const folder = strip(onto, FOLDER)
   const target = strip(onto, SERVER)
   const into = strip(zone, FOLDER)
@@ -125,7 +125,7 @@ function ServerTile({
           // P2P servers have zones of their own.
           zones: zone => zone !== 'p2p' && !zone.startsWith('p2p:'),
           onto: key => key !== parent,
-          onDrop: target => dropServer(name, target),
+          onDrop: target => dropServer(account.store.getState(), name, target),
         }
       )}
       data-drop-onto={folder === null ? 'Create folder' : undefined}

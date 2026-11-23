@@ -1,8 +1,8 @@
 'use client'
 
+import { useStoreApi } from '../../lib/client/react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { CircleAlert, RefreshCw, ShieldCheck, X } from 'lucide-react'
-import { useStore } from '../../lib/store'
 import { memberName, p2p, p2pDevices, p2pServer, useP2p, type P2pDialog } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
 import {
@@ -512,13 +512,14 @@ const useDevices = () => {
 }
 
 // From the settings dialog: it closes, so the P2P dialog shows.
-const openOver = (d: P2pDialog) => {
-  useStore.getState().closeDialog()
+const openOver = (store: ReturnType<typeof useStoreApi>, d: P2pDialog) => {
+  store.getState().closeDialog()
   p2p.openDialog(d)
 }
 
 // P2P settings: our devices in P2P servers, a lost or stolen one, and recovery.
 export function DevicesSection() {
+  const store = useStoreApi()
   const list = useDevices()
   const mine = p2pDevices.current()
   if (!list.length) return null
@@ -548,7 +549,7 @@ export function DevicesSection() {
             </div>
             {d.dk !== mine && (
               <button
-                onClick={() => openOver({ kind: 'lost_device', dk: d.dk })}
+                onClick={() => openOver(store, { kind: 'lost_device', dk: d.dk })}
                 className="rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest"
               >
                 Lost or stolen
@@ -559,7 +560,7 @@ export function DevicesSection() {
       </ul>
       {others.length > 0 && (
         <button
-          onClick={() => openOver({ kind: 'recover' })}
+          onClick={() => openOver(store, { kind: 'recover' })}
           className={`${textBtn} flex items-center gap-1.5 self-start`}
         >
           <ShieldCheck size={16} />

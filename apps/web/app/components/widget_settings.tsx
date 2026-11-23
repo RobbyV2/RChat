@@ -1,8 +1,8 @@
 'use client'
+import { useAccount, useApi } from '../lib/client/react'
 import { useEffect, useMemo, useState } from 'react'
 import { withCursor } from '../lib/api'
 import { appendUnique } from '../lib/lists'
-import { api, home } from '../lib/instances'
 import { sharing } from '../lib/platform'
 import { useStore, errorText } from '../lib/store'
 import type { Channel } from '../lib/types'
@@ -39,6 +39,7 @@ export function WidgetSettings({ server, channels }: WidgetSettingsProps) {
 }
 
 function WidgetPicker({ server, channels }: WidgetSettingsProps) {
+  const api = useApi()
   const [list, setList] = useState<Widget[]>([])
   const [selected, setSelected] = useState('')
   const [error, setError] = useState('')
@@ -64,7 +65,7 @@ function WidgetPicker({ server, channels }: WidgetSettingsProps) {
       }
     )
     return () => abort.abort()
-  }, [path, request])
+  }, [api, path, request])
   return (
     <>
       <label className="block text-sm">
@@ -122,6 +123,7 @@ function WidgetForm({
   channels: Channel[]
   save: (body: WidgetConfig) => Promise<void>
 }) {
+  const { conn: home } = useAccount()
   const [channel, setChannel] = useState(widget?.channel_id ?? channels[0]?.id ?? 0)
   const voice = channels.find(c => c.id === channel)?.kind === 'voice'
   const [mode, setMode] = useState<WidgetMode>(widget?.mode ?? (voice ? 'voice' : 'public_read'))

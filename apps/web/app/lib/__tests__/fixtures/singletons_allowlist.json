@@ -1,70 +1,15 @@
 {
-  "[[...slug]]/app_shell.tsx": {
-    "useStore.getState": 14,
-    "useStore.setState": 1
-  },
   "components/channel_sidebar.tsx": {
     "useP2p.getState": 1
   },
   "components/p2p/add_contact.tsx": {
-    "useP2p.getState": 1,
-    "useStore.getState": 1
+    "useP2p.getState": 1
   },
   "components/p2p/p2p_chat.tsx": {
-    "useP2p.getState": 3,
-    "useStore.getState": 7
+    "useP2p.getState": 3
   },
   "components/p2p/p2p_home.tsx": {
     "useP2p.getState": 2
-  },
-  "components/p2p/p2p_invite_dialog.tsx": {
-    "useStore.getState": 3
-  },
-  "components/p2p/p2p_server_flows.tsx": {
-    "useStore.getState": 1
-  },
-  "components/p2p/p2p_server_roles.tsx": {
-    "useStore.getState": 1
-  },
-  "components/p2p/p2p_server_settings.tsx": {
-    "useStore.getState": 3
-  },
-  "components/pins.tsx": {
-    "useStore.getState": 4
-  },
-  "components/poll_card.tsx": {
-    "useStore.getState": 2
-  },
-  "components/profile_card.tsx": {
-    "useStore.getState": 1
-  },
-  "components/search_panel.tsx": {
-    "useStore.getState": 2
-  },
-  "components/server_access.tsx": {
-    "import api": 1,
-    "import home": 1
-  },
-  "components/server_rail.tsx": {
-    "useStore.getState": 1
-  },
-  "components/system_messages.tsx": {
-    "import api": 1
-  },
-  "components/text_assist.tsx": {
-    "import api": 1
-  },
-  "components/upload_expiry.tsx": {
-    "import api": 1,
-    "useStore.setState": 1
-  },
-  "components/use_guest_posting_check.ts": {
-    "import api": 1,
-    "useStore.setState": 3
-  },
-  "components/widget_settings.tsx": {
-    "import api": 1,
-    "import home": 1
   },
   "lib/actions/folder.ts": {
     "useP2p.getState": 1
@@ -190,20 +135,11 @@
   "lib/slices/ctx.ts": {
     "useP2p.getState": 1
   },
-  "lib/start.ts": {
-    "import home": 1,
-    "useStore.getState": 3
-  },
   "lib/store.ts": {
     "import home": 1
   },
   "lib/viewing.ts": {
     "import home": 1
-  },
-  "login/page.tsx": {
-    "import api": 1,
-    "import home": 1,
-    "useStore.getState": 1
   },
   "widget/page.tsx": {
     "useStore.getState": 1

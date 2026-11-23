@@ -17,7 +17,7 @@ import { useRouter } from 'next/navigation'
 import { ExternalLink, Globe, Hash, Link2Off, Lock, Paperclip } from 'lucide-react'
 import { ApiError } from '../lib/api'
 import type { InviteAccess } from '../lib/remote_invite'
-import { useAccount } from '../lib/client/react'
+import { useAccount, useStoreApi } from '../lib/client/react'
 import { InstanceError, type InstanceConnection } from '../lib/instances'
 import { useForwardAccess } from '../lib/forward_access'
 import { carriedTarget } from '../lib/forward_viewing'
@@ -389,6 +389,7 @@ export function PreviewLine({
   // Another instance's preview: only the label a copy carries can decide.
   remote?: InstanceConnection
 }) {
+  const store = useStoreApi()
   const streamer = useStore(s => s.streamer)
   const account = useStore(s => s.me?.username ?? null)
   const { useViewing, canView } = useAccount().viewing
@@ -417,7 +418,7 @@ export function PreviewLine({
         }`}
       >
         <span
-          {...(host ? {} : profileTrigger(author, null))}
+          {...(host ? {} : profileTrigger(store, author, null))}
           title={host && !streamer ? formatQualified(author.username, host) : undefined}
           className={`streamer font-medium text-on-surface ${host ? '' : 'cursor-pointer hover:underline'}`}
         >

@@ -1,5 +1,6 @@
 'use client'
 
+import { useAccount } from '../lib/client/react'
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
 import { useStore } from '../lib/store'
@@ -19,11 +20,12 @@ const dotTitle: Record<WsStatus, string> = {
 }
 
 export function ThemeToggle() {
+  const account = useAccount()
   const theme = useStore(s => s.theme)
   const setTheme = useStore(s => s.setTheme)
   useEffect(() => {
-    restoreTheme()
-  }, [])
+    restoreTheme(account)
+  }, [account])
   return (
     <button
       title="Toggle theme"

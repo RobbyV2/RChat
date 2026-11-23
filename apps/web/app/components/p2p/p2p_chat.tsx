@@ -1,5 +1,5 @@
 'use client'
-import { useAccount } from '../../lib/client/react'
+import { useAccount, useStoreApi } from '../../lib/client/react'
 
 import {
   memo,
@@ -575,6 +575,7 @@ export function P2pComposer({
   nameOf: (ik: string) => string
   disabled: ReactNode
 }) {
+  const { store, viewing, lifetime } = useAccount()
   const text = useP2p(s => s.drafts[key] ?? '')
   const replying = useP2p(s => (s.replying?.room === key ? s.replying.id : null))
   const replyTo = useP2p(s => shownRow(s, replying))
@@ -641,15 +642,15 @@ export function P2pComposer({
       </span>
     </ComposerBar>
   ) : channelTextOnly && (forwardClip?.has_media || forwardClip?.has_poll) ? (
-    <ComposerBar onClose={() => useStore.getState().clearForward()} closeLabel="Discard forward">
+    <ComposerBar onClose={() => store.getState().clearForward()} closeLabel="Discard forward">
       This channel only accepts text.
     </ComposerBar>
   ) : forwardClip ? (
     <ForwardBar
       draftKey={scope}
       onSend={() => {
-        const clip = useStore.getState().forwardClip
-        if (!clip || !clipAllowed(useStore.getState(), clip)) return
+        const clip = store.getState().forwardClip
+        if (!clip || !clipAllowed(store.getState(), clip, viewing)) return
         const author = clip.author?.display_name ?? 'Deleted user'
         void p2pDm
           .forward(key, {
@@ -657,11 +658,13 @@ export function P2pComposer({
             ts: clip.created_at * 1000,
             body: clip.body ?? clip.snippet,
           })
-          .then(ok => {
-            if (!ok) return
-            if (useStore.getState().forwardClip?.id === clip.id) useStore.getState().clearForward()
-            useStore.getState().showToast('Forwarded to', title)
-          })
+          .then(
+            lifetime.inSession(ok => {
+              if (!ok) return
+              if (store.getState().forwardClip?.id === clip.id) store.getState().clearForward()
+              store.getState().showToast('Forwarded to', title)
+            })
+          )
       }}
     />
   ) : null
@@ -864,6 +867,7 @@ export function useP2pList({
   threads,
 }: ListOpts) {
   const acct = useAccount()
+  const { store } = acct
 
   const me = useP2p(s => s.me)
   const editingState = useP2p(s => (s.editing?.room === draftKey ? s.editing : null))
@@ -930,7 +934,7 @@ export function useP2pList({
         if (!id) return
         const adding = !m.reactions?.some(r => r.emoji === emoji && r.me)
         if (adding && note) {
-          const s = useStore.getState()
+          const s = store.getState()
           s.noteEmoji(emojiBase(s.emoji, emoji), emoji)
         }
         void p2pDm.react(id, emoji, adding)
@@ -957,7 +961,7 @@ export function useP2pList({
           .map(p => ({ ...p2pUser(p.ik, p.name), username: p.handle }))
       },
     }),
-    [idOf, rows, user, names, me, people]
+    [store, idOf, rows, user, names, me, people]
   )
 
   const editing = useMemo<EditBinding | null>(
@@ -1061,6 +1065,7 @@ export interface ChatBodyProps {
 }
 
 export function P2pChatBody(props: ChatBodyProps) {
+  const store = useStoreApi()
   const { chat, canAct, nameOf, people, mayDelete, mayPin, disabled, forwardSkip, typingNames } =
     props
   const key = chatKey(chat)
@@ -1315,7 +1320,7 @@ export function P2pChatBody(props: ChatBodyProps) {
             }}
             onUnpin={n => {
               const id = pins.list?.find(p => (num.get(p.id) ?? Math.max(1, p.ts * 1000)) === n)?.id
-              if (id) confirmUnpin(() => void p2pDm.pin(id, false))
+              if (id) confirmUnpin(store, () => void p2pDm.pin(id, false))
             }}
           />
         )}

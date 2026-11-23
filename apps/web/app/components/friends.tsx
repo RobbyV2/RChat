@@ -101,6 +101,7 @@ const friendAt = (user: UserRef): Target => ({
 
 export function FriendRow({ friend }: { friend: Friend }) {
   const acct = useAccount()
+  const { store } = acct
 
   const { user, online } = friend
   return (
@@ -109,7 +110,10 @@ export function FriendRow({ friend }: { friend: Friend }) {
       {...longPress((x, y) => openActionMenu(x, y, friendAt(user), undefined, acct))}
       className={rowCls}
     >
-      <div {...profileTrigger(user, null)} className="flex min-w-0 flex-1 items-center gap-3">
+      <div
+        {...profileTrigger(store, user, null)}
+        className="flex min-w-0 flex-1 items-center gap-3"
+      >
         <Avatar user={user} online={online} />
         <Name user={user} sub={online ? 'Online' : 'Offline'} />
       </div>
@@ -138,6 +142,7 @@ export function FriendRow({ friend }: { friend: Friend }) {
 
 export function RequestRow({ request }: { request: FriendRequest }) {
   const acct = useAccount()
+  const { store } = acct
 
   const acceptFriend = useStore(s => s.acceptFriend)
   const denyFriend = useStore(s => s.denyFriend)
@@ -157,7 +162,10 @@ export function RequestRow({ request }: { request: FriendRequest }) {
       )}
       className={rowCls}
     >
-      <div {...profileTrigger(user, null)} className="flex min-w-0 flex-1 items-center gap-3">
+      <div
+        {...profileTrigger(store, user, null)}
+        className="flex min-w-0 flex-1 items-center gap-3"
+      >
         <Avatar user={user} />
         <Name user={user} sub={incoming ? 'Incoming request' : 'Outgoing request'} />
       </div>

@@ -224,6 +224,7 @@ function VoiceMemberRow({
   server: string
   inRoom: boolean
 }) {
+  const store = useStoreApi()
   const { rtc } = useAccount()
   const mine = useStore(voiceSelf)
   const selfAudio = useStore(s => s.selfAudio)
@@ -242,7 +243,11 @@ function VoiceMemberRow({
   const live = inRoom && (self ? rtc.sharing : shownMedia(rtc.peer(username), silenced).screen)
   return (
     <div
-      {...(isGuestName(username) ? (menu ? longPress(menu) : {}) : profileTrigger(user, server))}
+      {...(isGuestName(username)
+        ? menu
+          ? longPress(menu)
+          : {}
+        : profileTrigger(store, user, server))}
       className={`mr-2 ml-7 flex items-center gap-2 rounded-md px-2 py-1 text-sm text-on-surface-variant outline-offset-[-2px] ${
         isGuestName(username)
           ? ''

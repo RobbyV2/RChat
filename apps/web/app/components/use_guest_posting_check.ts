@@ -1,18 +1,19 @@
+import { useAccount } from '../lib/client/react'
 import { useEffect } from 'react'
 import { guestCanPost, guestSessionHeaders } from '../lib/guest_chat'
-import { api } from '../lib/instances'
 import { keyed } from '../lib/lists'
 import { useStore } from '../lib/store'
 
 export function useGuestPostingCheck(server: string | null, channel: number | null) {
+  const { store, api } = useAccount()
   const detail = useStore(s => (s.guest && server !== null ? s.servers[server] : undefined))
   const writable = useStore(s => guestCanPost(s.settings, detail, channel))
   useEffect(() => {
     if (!writable || channel === null) return
     return () => {
-      useStore.setState(s => ({ guestPosting: keyed(s.guestPosting, String(channel), null) }))
+      store.setState(s => ({ guestPosting: keyed(s.guestPosting, String(channel), null) }))
     }
-  }, [channel, server, writable])
+  }, [store, channel, server, writable])
   useEffect(() => {
     if (!writable || !detail || channel === null) return
     let live = true
@@ -26,14 +27,14 @@ export function useGuestPostingCheck(server: string | null, channel: number | nu
           guestSessionHeaders(api, detail.name)
         )
         if (!live) return
-        useStore.setState(s => ({
+        store.setState(s => ({
           guestPosting: { ...s.guestPosting, [channel]: until ? 'paused' : 'ready' },
         }))
         if (until)
           timer = setTimeout(() => void check(), Math.max(1000, until * 1000 - Date.now() + 500))
       } catch {
         if (!live) return
-        useStore.setState(s => ({ guestPosting: { ...s.guestPosting, [channel]: 'unavailable' } }))
+        store.setState(s => ({ guestPosting: { ...s.guestPosting, [channel]: 'unavailable' } }))
         timer = setTimeout(() => void check(), 15000)
       }
     }
@@ -42,5 +43,5 @@ export function useGuestPostingCheck(server: string | null, channel: number | nu
       live = false
       clearTimeout(timer)
     }
-  }, [channel, detail, writable])
+  }, [api, store, channel, detail, writable])
 }

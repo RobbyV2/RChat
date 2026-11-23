@@ -1,8 +1,8 @@
 'use client'
 
+import { useStoreApi, useApi } from '../lib/client/react'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
-import { api } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { choiceId, systemChoices, systemParts } from '../lib/system_messages'
 import type { Message, SystemMessages } from '../lib/types'
@@ -26,6 +26,7 @@ export function SystemNotice({
   divider: ReactNode
   onMenu: (m: Message, x: number, y: number) => void
 }) {
+  const store = useStoreApi()
   const [before, after] = systemParts(m)
   const join = m.kind === 'join'
   const Arrow = join ? ArrowRight : ArrowLeft
@@ -45,7 +46,7 @@ export function SystemNotice({
         <p className="min-w-0 flex-1 text-sm text-on-surface-variant">
           {before}
           <span
-            {...profileTrigger(m.author, server)}
+            {...profileTrigger(store, m.author, server)}
             className={`streamer font-medium text-on-surface ${nameTriggerCls}`}
           >
             <NameWithUsername user={m.author} />
@@ -59,6 +60,7 @@ export function SystemNotice({
 }
 
 export function ServerSystemMessages({ server }: { server: string }) {
+  const api = useApi()
   const channels = useStore(s => s.servers[server]?.channels)
   const [saved, setSaved] = useState<SystemMessages | null>(null)
   const [failed, setFailed] = useState(false)
@@ -81,7 +83,7 @@ export function ServerSystemMessages({ server }: { server: string }) {
     return () => {
       live = false
     }
-  }, [server, tick, channelKey])
+  }, [api, server, tick, channelKey])
   const save = (patch: Partial<SystemMessages>) => {
     if (!saved) return
     setSaving(true)

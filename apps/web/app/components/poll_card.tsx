@@ -60,11 +60,6 @@ function useNow(on: boolean) {
   return now
 }
 
-export const canManagePoll = (m: Message) => managesPoll(useStore.getState(), m)
-
-const openVoters = (m: Message) =>
-  useStore.getState().openDialog({ kind: 'poll_voters', message: m })
-
 // Whether the question and the options are your own text: options only when nobody else could
 // add any.
 const OwnPoll = createContext({ question: false, options: false })
@@ -572,7 +567,8 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
   const retractVote = useStore(s => s.retractVote)
   const closePoll = useStore(s => s.closePoll)
   const reopenPoll = useStore(s => s.reopenPoll)
-  const manage = useStore(() => canManagePoll(m))
+  const manage = useStore(s => managesPoll(s, m))
+  const openDialog = useStore(s => s.openDialog)
   const [picked, setPicked] = useState<number[]>(poll?.mine ?? [])
   const [editing, setEditing] = useState(false)
   const [adding, setAdding] = useState(false)
@@ -698,7 +694,7 @@ export function PollCard({ m, canVote = false }: { m: Message; canVote?: boolean
           {votersShown(poll) && (
             <button
               type="button"
-              onClick={() => openVoters(m)}
+              onClick={() => openDialog({ kind: 'poll_voters', message: m })}
               className="font-medium text-primary hover:underline pointer-coarse:min-h-8"
             >
               View votes

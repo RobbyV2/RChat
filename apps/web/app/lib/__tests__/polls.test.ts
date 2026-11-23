@@ -23,7 +23,7 @@ import { canForward } from '../forward'
 import { canPin } from '../pins'
 import { canQuote } from '../replies'
 import type { Message, Poll, ServerDetail, WsEvent } from '../types'
-import { canManagePoll } from '../../components/poll_card'
+import { managesPoll } from '../actions/message'
 import { advance, me, msg, serverDetail } from './fixtures'
 
 afterAll(resetSessionCaches)
@@ -323,12 +323,12 @@ describe('poll store', () => {
         }),
       })
     timedOut(undefined)
-    expect(canManagePoll(mine)).toBe(true)
+    expect(managesPoll(st(), mine)).toBe(true)
     timedOut(Math.floor(Date.now() / 1000) + 600)
-    expect(canManagePoll(mine)).toBe(false)
-    expect(canManagePoll(inDm)).toBe(true)
+    expect(managesPoll(st(), mine)).toBe(false)
+    expect(managesPoll(st(), inDm)).toBe(true)
     timedOut(Math.floor(Date.now() / 1000) - 1)
-    expect(canManagePoll(mine)).toBe(true)
+    expect(managesPoll(st(), mine)).toBe(true)
   })
 
   test('a replaced message keeps my vote and counts', () => {

@@ -143,6 +143,7 @@ export function ForwardCard({
   // A snapshot in a P2P conversation: only a name and a time, nothing to open.
   local?: boolean
 }) {
+  const store = useStoreApi()
   const openForward = useStore(s => s.openForward)
   const fwd = m.forward
   const blocked = useStore(s => (fwd?.author ? s.blocked[fwd.author.username] === true : false))
@@ -190,7 +191,7 @@ export function ForwardCard({
             {author ? (
               <>
                 <span
-                  {...(local ? {} : profileTrigger(author, null, false))}
+                  {...(local ? {} : profileTrigger(store, author, null, false))}
                   title={local ? undefined : 'View profile'}
                   className={`block shrink-0 rounded-full ${local ? '' : 'cursor-pointer hover:opacity-85'}`}
                 >
@@ -202,7 +203,7 @@ export function ForwardCard({
                   />
                 </span>
                 <span
-                  {...(local ? {} : profileTrigger(author, null))}
+                  {...(local ? {} : profileTrigger(store, author, null))}
                   className={`streamer min-w-0 truncate rounded-sm text-sm font-medium ${local ? '' : 'cursor-pointer outline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary'}`}
                 >
                   <NameWithUsername user={author} />

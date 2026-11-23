@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
+import { useAccount } from '../lib/client/react'
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Globe } from 'lucide-react'
-import { DEFAULT_INSTANCE_NAME, api, home, knownInstances, normalizeOrigin } from '../lib/instances'
+import { DEFAULT_INSTANCE_NAME, knownInstances, normalizeOrigin } from '../lib/instances'
 import { hostOf } from '../lib/qualified'
 import { useStore } from '../lib/store'
 import { keptSession, restoreStreamer } from '../lib/start'
@@ -48,6 +49,7 @@ function InstancePicker({
   onSwitched: () => void
   onMissing: (missing: boolean) => void
 }) {
+  const { conn: home, store } = useAccount()
   const info = useStore(s => s.instance)
   const host = useStore(s => s.instanceHost)
   const loadInstance = useStore(s => s.loadInstance)
@@ -59,14 +61,16 @@ function InstancePicker({
   const [busy, setBusy] = useState(false)
   const [known, setKnown] = useState<{ origin: string; name: string }[]>([])
   const listId = useId()
+  const mounted = useRef(false)
 
   useEffect(() => {
+    mounted.current = true
     let live = true
     void loadInstance().then(found => {
       if (!live || found === null) return
       onMissing(!found)
       if (found) {
-        void useStore.getState().loadSettings()
+        void store.getState().loadSettings()
         return
       }
       setOpen(true)
@@ -83,9 +87,10 @@ function InstancePicker({
     })
     setKnown(knownInstances().map(({ origin, info }) => ({ origin, name: info.name })))
     return () => {
+      mounted.current = false
       live = false
     }
-  }, [loadInstance, onMissing])
+  }, [home, store, loadInstance, onMissing])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -93,6 +98,7 @@ function InstancePicker({
     setBusy(true)
     setError(null)
     const failed = await switchInstance(address || home.origin)
+    if (!mounted.current) return
     setBusy(false)
     if (failed) {
       const typed = normalizeOrigin(address)
@@ -102,7 +108,7 @@ function InstancePicker({
     setOpen(false)
     setAddress('')
     onMissing(false)
-    if (keptSession()) onSwitched()
+    if (keptSession(home)) onSwitched()
   }
 
   const name = info?.name || DEFAULT_INSTANCE_NAME
@@ -197,7 +203,15 @@ function InstancePicker({
 }
 
 export default function LoginPage() {
+  const account = useAccount()
+  return <LoginForm key={account.renderKey} />
+}
+
+function LoginForm() {
+  const account = useAccount()
+  const { api } = account
   const router = useRouter()
+  const host = useStore(s => s.instanceHost)
   const authed = useStore(s => !!s.token || s.guest)
   const error = useStore(s => s.error)
   const setError = useStore(s => s.setError)
@@ -222,9 +236,9 @@ export default function LoginPage() {
   const nameId = useId()
 
   useEffect(() => {
-    restoreStreamer()
+    restoreStreamer(account)
     if (new URLSearchParams(window.location.search).get('mode') === 'register') setMode('register')
-  }, [])
+  }, [account])
 
   useEffect(() => {
     if (!authed) return
@@ -239,17 +253,22 @@ export default function LoginPage() {
       setSelected([])
       return
     }
+    let live = true
     const timer = setTimeout(() => {
       api
         .words(name)
         .then(res => {
+          if (!live) return
           setWords(res.words)
           setSelected(sel => sel.filter(w => res.words.includes(w)))
         })
-        .catch(e => setError(e instanceof Error ? e.message : String(e)))
+        .catch(e => live && setError(e instanceof Error ? e.message : String(e)))
     }, 300)
-    return () => clearTimeout(timer)
-  }, [username, passKind, setError])
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [api, host, username, passKind, setError])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()

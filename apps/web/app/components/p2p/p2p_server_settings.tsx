@@ -1,5 +1,5 @@
 'use client'
-import { useAccount } from '../../lib/client/react'
+import { useAccount, useStoreApi } from '../../lib/client/react'
 
 import { useCallback, useState, type ReactNode } from 'react'
 import { Clock, Crown, Hash, Lock, Trash2, Volume2 } from 'lucide-react'
@@ -48,7 +48,6 @@ const TABS: { tab: ServerTab; label: string }[] = [
 const can = (v: ServerView, bit: number) => v.me === 'join' && (v.perms & bit) !== 0
 
 // A member's name in plain text (confirm bodies), unless streamer mode is on.
-const who = (name: string) => (useStore.getState().streamer ? 'this member' : name)
 
 const Note = ({ children }: { children: ReactNode }) => (
   <p className="text-xs text-on-surface-variant">{children}</p>
@@ -107,6 +106,7 @@ function Overview({ v }: { v: ServerView }) {
 }
 
 function Channels({ v }: { v: ServerView }) {
+  const store = useStoreApi()
   const edit = can(v, P.ManageChannels)
   const me = useP2p(s => s.me)
   const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
@@ -129,7 +129,7 @@ function Channels({ v }: { v: ServerView }) {
             <button
               className={textBtn}
               onClick={() =>
-                useStore.getState().askConfirm({
+                store.getState().askConfirm({
                   title: 'Upgrade server?',
                   body: 'This creates a new copy with the same owner. The old copy becomes read-only and keeps its message history.',
                   confirm: 'Upgrade',
@@ -198,7 +198,7 @@ function Channels({ v }: { v: ServerView }) {
                   title={`Delete ${voice ? mask(c.name) : `#${mask(c.name)}`}`}
                   aria-label={`Delete ${label}`}
                   onClick={() =>
-                    useStore.getState().askConfirm({
+                    store.getState().askConfirm({
                       title: 'Delete Channel',
                       body: voice
                         ? `Delete ${c.name}?`
@@ -404,6 +404,7 @@ function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children
 
 function Members({ v }: { v: ServerView }) {
   const acct = useAccount()
+  const who = (name: string) => (acct.store.getState().streamer ? 'this member' : name)
 
   const me = useP2p(s => s.me)
   const ask = useStore(s => s.askConfirm)

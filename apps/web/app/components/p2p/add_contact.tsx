@@ -1,5 +1,6 @@
 'use client'
 
+import { useStoreApi } from '../../lib/client/react'
 import { useEffect, useState } from 'react'
 import { Eye } from 'lucide-react'
 import { useStore } from '../../lib/store'
@@ -74,6 +75,7 @@ function Preview({ card }: { card: Card }) {
 }
 
 export function AddContactDialog({ initial = 'paste' }: { initial?: Tab }) {
+  const store = useStoreApi()
   const [tab, setTab] = useState<Tab>(initial)
   const [code, setCode] = useState('')
   const [intro, setIntro] = useState('')
@@ -116,7 +118,7 @@ export function AddContactDialog({ initial = 'paste' }: { initial?: Tab }) {
     setBusy(false)
     if (!res) return setError(useP2p.getState().error ?? "Couldn't add that contact")
     if (!res.ok) return setError(res.error)
-    useStore
+    store
       .getState()
       .showToast(res.contact.state === 'mutual' ? 'Contact added' : 'Contact request sent')
     p2p.openDialog({ kind: 'contact', ik: res.contact.ik })

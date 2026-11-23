@@ -28,7 +28,7 @@ import {
   ShieldAlert,
   X,
 } from 'lucide-react'
-import { useAccount } from '../lib/client/react'
+import { useAccount, useStoreApi } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
 import { fmtSize } from '../lib/bytes'
 import { fileLang, fenceTag } from '../lib/code'
@@ -303,6 +303,7 @@ function SpoilerText({
 }
 
 function Mention({ username }: { username: string }) {
+  const store = useStoreApi()
   const src = useChatSource()
   const stored = useStore(s => (src ? null : userRefFor(s, username)))
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
@@ -311,7 +312,7 @@ function Mention({ username }: { username: string }) {
   const mine = src ? src.mine(username) : storeMine
   return (
     <span
-      {...(src ? {} : profileTrigger(user, server))}
+      {...(src ? {} : profileTrigger(store, user, server))}
       data-mention={username}
       className={`streamer cursor-pointer rounded px-0.5 font-medium hover:underline ${
         mine ? 'bg-primary-container text-on-primary-container' : 'bg-primary/15 text-primary'

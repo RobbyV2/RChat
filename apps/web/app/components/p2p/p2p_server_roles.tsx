@@ -288,6 +288,7 @@ const mayWrite = mayWriteRow
 // A subject's name as text (labels): @everyone, the role's (`maskRole`) or the member's (`mask`,
 // never your own).
 const subjectText = (
+  streamer: boolean,
   v: ServerView,
   subj: string,
   me: string | null,
@@ -298,7 +299,7 @@ const subjectText = (
     ? '@everyone'
     : subj.startsWith('r:')
       ? maskRole(v.roles.find(x => `r:${x.id}` === subj)?.name ?? 'Deleted role')
-      : useStore.getState().streamer
+      : streamer
         ? 'this member'
         : subj === `u:${me}`
           ? memberName(v.id, subj.slice(2))
@@ -392,6 +393,7 @@ export function MemberPicker({
 
 export function ChannelAccess({ v, c }: { v: ServerView; c: ChannelView }) {
   const [role, setRole] = useState('')
+  const streamer = useStore(s => s.streamer)
   const [picking, setPicking] = useState(false)
   const me = useP2p(s => s.me)
   const own = useP2p(s => ownsP2pServer(v, s.me))
@@ -431,7 +433,7 @@ export function ChannelAccess({ v, c }: { v: ServerView; c: ChannelView }) {
         const off = !mayWrite(v, subj)
         const set = (view: boolean, send: boolean) =>
           void p2pServer.setOverwrite(v.id, c.id, subj, overBits(view, send))
-        const name = subjectText(v, subj, me, maskRole, mask)
+        const name = subjectText(streamer, v, subj, me, maskRole, mask)
         return (
           <div
             key={subj}

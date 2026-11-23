@@ -1,6 +1,6 @@
 'use client'
 
-import { useAccount } from '../lib/client/react'
+import { useAccount, useStoreApi } from '../lib/client/react'
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type {
@@ -81,15 +81,22 @@ export function Badge({ tone, children }: { tone: 'primary' | 'tertiary'; childr
   )
 }
 
-let anchor: Element | null = null
+const anchors = new WeakMap<ReturnType<typeof useStoreApi>, Element>()
 
-const openFrom = (el: Element, user: UserRef, server: string | null, x: number, y: number) => {
-  const s = useStore.getState()
-  if (s.profile?.user.username === user.username && anchor === el) {
+const openFrom = (
+  store: ReturnType<typeof useStoreApi>,
+  el: Element,
+  user: UserRef,
+  server: string | null,
+  x: number,
+  y: number
+) => {
+  const s = store.getState()
+  if (s.profile?.user.username === user.username && anchors.get(store) === el) {
     s.closeProfile()
     return
   }
-  anchor = el
+  anchors.set(store, el)
   s.openProfile(user, server, x, y)
 }
 
@@ -101,6 +108,7 @@ interface ProfileTriggerProps {
 }
 
 export function profileTrigger(
+  store: ReturnType<typeof useStoreApi>,
   user: UserRef,
   server: string | null,
   focusable = true
@@ -113,6 +121,7 @@ export function profileTrigger(
       const r = e.currentTarget.getBoundingClientRect()
       const keyboard = e.detail === 0
       openFrom(
+        store,
         e.currentTarget,
         user,
         server,
@@ -125,7 +134,7 @@ export function profileTrigger(
       e.preventDefault()
       e.stopPropagation()
       const r = e.currentTarget.getBoundingClientRect()
-      openFrom(e.currentTarget, user, server, r.right, r.top)
+      openFrom(store, e.currentTarget, user, server, r.right, r.top)
     },
   }
 }
@@ -281,7 +290,7 @@ function Card({ target }: { target: ProfileTarget }) {
     return () => {
       current = false
     }
-  }, [username, server, rev, hook])
+  }, [username, server, rev, hook, api, store, sessionMark, noteTimeout])
 
   useEffect(() => {
     if (view !== opened.current.view || dialog !== opened.current.dialog) close()
@@ -293,7 +302,7 @@ function Card({ target }: { target: ProfileTarget }) {
     }
     const outside = (e: Event) => {
       const t = e.target
-      if (t instanceof Node && (ref.current?.contains(t) || anchor?.contains(t))) return
+      if (t instanceof Node && (ref.current?.contains(t) || anchors.get(store)?.contains(t))) return
       close()
     }
     window.addEventListener('keydown', onKey)
@@ -308,7 +317,7 @@ function Card({ target }: { target: ProfileTarget }) {
       document.removeEventListener('wheel', outside, true)
       window.removeEventListener('resize', close)
     }
-  }, [close, sheet])
+  }, [store, close, sheet])
 
   useLayoutEffect(() => {
     if (!sheet) return
@@ -325,13 +334,13 @@ function Card({ target }: { target: ProfileTarget }) {
   }, [shown])
 
   useEffect(() => {
-    const from = anchor
+    const from = anchors.get(store)
     return () => {
       const lost = document.activeElement === null || document.activeElement === document.body
       if (inside.current && lost && from instanceof HTMLElement && from.isConnected)
         from.focus({ preventScroll: true })
     }
-  }, [])
+  }, [store])
 
   const focusProps = {
     tabIndex: -1,

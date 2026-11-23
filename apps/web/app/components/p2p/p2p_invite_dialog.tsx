@@ -1,5 +1,6 @@
 'use client'
 
+import { useStoreApi } from '../../lib/client/react'
 import { useEffect, useMemo, useState } from 'react'
 import { Eye, Waypoints } from 'lucide-react'
 import { useStore } from '../../lib/store'
@@ -92,6 +93,7 @@ export function CodeBox({ text }: { text: string }) {
 
 // The server's codes: active ones with their string (when made here) and revoke.
 export function CodeList({ room, version }: { room: string; version: number }) {
+  const store = useStoreApi()
   const v = useP2p(s => s.servers[room])
   const me = useP2p(s => s.me)
   const [list, setList] = useState<CodeRow[] | null>(null)
@@ -138,7 +140,7 @@ export function CodeList({ room, version }: { room: string; version: number }) {
               {live && (mine || manage) && (
                 <button
                   onClick={() =>
-                    useStore.getState().askConfirm({
+                    store.getState().askConfirm({
                       title: 'Revoke Invite',
                       body: `Revoke this invite? ${CODE_REVOKE_TEXT}`,
                       confirm: 'Revoke',
@@ -300,6 +302,7 @@ export function ServerNewDialog({
   tab?: NewTab
   code?: string
 }) {
+  const store = useStoreApi()
   const [tab, setTab] = useState<NewTab>(given ? 'join' : first)
   const [name, setName] = useState('')
   const [coOwners, setCoOwners] = useState<string[]>([])
@@ -315,14 +318,14 @@ export function ServerNewDialog({
     setError(null)
     const room = await p2pServer.create(name, coOwners)
     setBusy(false)
-    if (!room) setError(useStore.getState().toast?.text ?? "Couldn't create the server")
+    if (!room) setError(store.getState().toast?.text ?? "Couldn't create the server")
   }
   const join = async () => {
     setBusy(true)
     setError(null)
     const room = await p2pServer.join(code)
     setBusy(false)
-    if (!room) setError(useStore.getState().toast?.text ?? "Couldn't join")
+    if (!room) setError(store.getState().toast?.text ?? "Couldn't join")
   }
   return (
     <Dialog title="P2P server" onClose={p2p.closeDialog} full>

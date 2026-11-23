@@ -1,5 +1,6 @@
 'use client'
 
+import { useStoreApi } from '../lib/client/react'
 import { useEffect, useId, useLayoutEffect, useRef, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ChartColumn, FileText, Pin, X } from 'lucide-react'
@@ -36,8 +37,8 @@ export function useCanPin() {
   return can && !timedOut
 }
 
-export const confirmUnpin = (unpin: () => void) =>
-  useStore.getState().askConfirm({
+export const confirmUnpin = (store: ReturnType<typeof useStoreApi>, unpin: () => void) =>
+  store.getState().askConfirm({
     title: 'Unpin Message',
     body: 'Remove this message from the pinned messages?',
     confirm: 'Unpin',
@@ -143,6 +144,7 @@ export function PinNotice({
   divider: ReactNode
   onMenu: (m: Message, x: number, y: number) => void
 }) {
+  const store = useStoreApi()
   const openPins = useStore(s => s.openPins)
   const openPinned = useStore(s => s.openPinned)
   const scope = useStore(s => (s.view ? viewKey(s.view) : null))
@@ -154,7 +156,7 @@ export function PinNotice({
       press={longPress((x, y) => onMenu(m, x, y))}
       name={
         <span
-          {...profileTrigger(m.author, server)}
+          {...profileTrigger(store, m.author, server)}
           className={`streamer font-medium text-on-surface ${nameTriggerCls}`}
         >
           <NameWithUsername user={m.author} />
@@ -223,6 +225,7 @@ function PinEntry({
   onUnpin: (id: number) => void
   profiles: boolean
 }) {
+  const store = useStoreApi()
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : null))
   const { access, target } = useForwardAccess(m, { server: server ?? undefined })
   const text = { ...m, media: null, embeds: [] }
@@ -244,7 +247,7 @@ function PinEntry({
           size={24}
         />
         <span
-          {...(profiles ? profileTrigger(m.author, server) : {})}
+          {...(profiles ? profileTrigger(store, m.author, server) : {})}
           className={`streamer min-w-0 truncate text-sm font-medium text-on-surface ${profiles ? nameTriggerCls : ''}`}
         >
           <NameWithUsername user={m.author} />
@@ -296,6 +299,7 @@ function PinEntry({
 }
 
 export function PinsWindow() {
+  const store = useStoreApi()
   const pins = useStore(s => s.pins)
   const scope = useStore(s => (s.view ? viewKey(s.view) : null))
   const closePins = useStore(s => s.closePins)
@@ -317,7 +321,7 @@ export function PinsWindow() {
         closePins()
         void jumpTo(scope, id)
       }}
-      onUnpin={id => confirmUnpin(() => void useStore.getState().unpinMessage(id))}
+      onUnpin={id => confirmUnpin(store, () => void store.getState().unpinMessage(id))}
     />
   )
 }
@@ -346,6 +350,7 @@ export function PinsPanel({
   onJump: (id: number) => void
   onUnpin: (id: number) => void
 }) {
+  const store = useStoreApi()
   const sheet = useMedia(SHEET_QUERY)
   const rootRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
@@ -357,7 +362,7 @@ export function PinsPanel({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return
-      const s = useStore.getState()
+      const s = store.getState()
       if (s.confirm || s.contextMenu || s.profile) return
       const modal = document.querySelector('[aria-modal="true"]')
       if (modal && !rootRef.current?.contains(modal)) return
@@ -367,7 +372,7 @@ export function PinsPanel({
     const onDown = (e: PointerEvent) => {
       const t = e.target
       if (!(t instanceof Element)) return
-      const s = useStore.getState()
+      const s = store.getState()
       if (s.confirm || s.contextMenu || s.profile) return
       if (rootRef.current?.contains(t) || t.closest('[data-pins-button], [aria-modal="true"]'))
         return
@@ -379,7 +384,7 @@ export function PinsPanel({
       window.removeEventListener('keydown', onKey)
       document.removeEventListener('pointerdown', onDown, true)
     }
-  }, [])
+  }, [store])
 
   useLayoutEffect(() => {
     if (!sheet) return

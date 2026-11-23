@@ -32,7 +32,7 @@ import {
   VolumeOff,
 } from 'lucide-react'
 import { client } from '../lib/client/client'
-import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
+import { AccountProvider, useAccount, useLiveSessions, useStoreApi } from '../lib/client/react'
 import {
   callRtc,
   memberName,
@@ -87,7 +87,7 @@ import { useMyTimeoutEnds } from './timeout_dialog'
 import { shownMedia, TIMED_OUT_CAMERA, TIMED_OUT_MIC, TIMED_OUT_SHARE } from '../lib/timeouts'
 
 const useAudioGate = create<{ blocked: boolean }>(() => ({ blocked: false }))
-const useSeenShares = create<{ seen: ReadonlySet<string> }>(() => ({ seen: new Set() }))
+const seenShares = new WeakMap<object, ReadonlySet<string>>()
 
 const unblockAudio = () => {
   const els = [...document.querySelectorAll<HTMLAudioElement>('audio[data-remote-audio]')]
@@ -376,6 +376,7 @@ export function Tile({
   height?: number
   onToggle: () => void
 }) {
+  const store = useStoreApi()
   const { user, stream, hasVideo, muted, deafened, speaking, mirror, pending, tint, screen } = tile
   const streamer = useStore(s => s.streamer)
   const box = height ?? (compact ? 72 : 240)
@@ -463,7 +464,7 @@ export function Tile({
         className="absolute inset-0 rounded-xl outline-offset-[-3px] transition-colors hover:bg-on-surface/5 focus-visible:outline-2 focus-visible:outline-primary"
       />
       <span
-        {...(tile.local || isGuestName(user.username) ? {} : profileTrigger(user, server))}
+        {...(tile.local || isGuestName(user.username) ? {} : profileTrigger(store, user, server))}
         title={tile.local || isGuestName(user.username) ? undefined : 'View profile'}
         className={`absolute bottom-1.5 left-1.5 flex max-w-[calc(100%-0.75rem)] ${
           isGuestName(user.username) ? '' : 'cursor-pointer'
@@ -921,7 +922,7 @@ export function VoiceGrid({
   // A voice channel of the P2P server `p2pRoom`.
   p2pCh?: string
 }) {
-  const { rtc, files: p2p, store } = useAccount()
+  const { rtc, files: p2p, store, lifetime } = useAccount()
   useStore(s => s.rtcTick)
   useStore(s => s.members)
   useStore(s => s.memberInfo)
@@ -1016,7 +1017,7 @@ export function VoiceGrid({
       user,
       user.username === me?.username
         ? me.banner_color
-        : cachedProfile(profileKey(user.username, server))?.banner_color
+        : cachedProfile(profileKey(user.username, server), lifetime.sessionMark())?.banner_color
     )
 
   const p2pIdentity = forRoom !== null || forVoice !== null
@@ -1129,10 +1130,10 @@ export function VoiceGrid({
     )
   )
   useEffect(() => {
-    const next = autoFocus(useSeenShares.getState().seen, JSON.parse(shares) as LiveShare[])
-    useSeenShares.setState({ seen: next.seen })
+    const next = autoFocus(seenShares.get(store) ?? new Set(), JSON.parse(shares) as LiveShare[])
+    seenShares.set(store, next.seen)
     if (next.focus !== null) setFocus(next.focus)
-  }, [shares])
+  }, [store, shares])
   const area = useRef<HTMLDivElement>(null)
   const refocus = useRef<string | null>(null)
   useEscape(() => {

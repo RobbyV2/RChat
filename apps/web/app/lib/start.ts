@@ -1,5 +1,5 @@
-import { home, readLocal } from './instances'
-import { useStore } from './store'
+import { readLocal } from './instances'
+import { client } from './client/client'
 import type { Theme } from './types'
 
 // The theme and streamer mode kept in this browser, or null when nothing is readable.
@@ -14,25 +14,25 @@ const keptStreamer = () => {
 
 // Puts the kept theme or streamer mode in place; with nothing kept, this tab's stays (dark and
 // off at first).
-export const restoreTheme = () => {
-  const st = useStore.getState()
+export const restoreTheme = (account = client.shown()) => {
+  const st = account.store.getState()
   st.setTheme(keptTheme() ?? st.theme)
 }
-export const restoreStreamer = () => {
-  const st = useStore.getState()
+export const restoreStreamer = (account = client.shown()) => {
+  const st = account.store.getState()
   st.setStreamer(keptStreamer() ?? st.streamer)
 }
 
-// A session kept in this browser for the home instance: a token or a guest visit.
-export const keptSession = (conn = home) =>
+// A session kept in this browser for this connection: a token or a guest visit.
+export const keptSession = (conn = client.shown().conn) =>
   !!(readLocal(conn.scoped('rchat_token')) || readLocal(conn.scoped('rchat_guest')))
 
 // The first step of every app page: a session of this tab or kept in this browser starts, an
 // invite or config link opens signed out, and anything else goes to `toLogin`.
-export const startApp = async (toLogin: () => void) => {
-  const st = useStore.getState()
-  restoreStreamer()
-  if (!st.token && !st.guest && !keptSession()) {
+export const startApp = async (toLogin: () => void, account = client.shown()) => {
+  const st = account.store.getState()
+  restoreStreamer(account)
+  if (!st.token && !st.guest && !keptSession(account.conn)) {
     if (st.syncInvite() || st.syncConfigLink()) await st.loadSettings()
     else toLogin()
     return

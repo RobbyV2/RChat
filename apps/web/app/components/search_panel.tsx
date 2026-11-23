@@ -1,7 +1,7 @@
 'use client'
 
+import { useAccount, useStoreApi } from '../lib/client/react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { canView, instanceTarget, useViewing } from '../lib/viewing'
 import { FileText, Hash, Search } from 'lucide-react'
 import { useMask, useStore } from '../lib/store'
 import { dayEndTs, dayStartTs, endOfList, shortSearch, type SearchArgs } from '../lib/search'
@@ -306,6 +306,7 @@ export function SearchView({
 }
 
 const instanceHit = (
+  store: ReturnType<typeof useStoreApi>,
   r: SearchResult,
   me: string | null,
   owns: (server: string) => boolean,
@@ -316,7 +317,7 @@ const instanceHit = (
   server: <Masked text={r.server} own={owns(r.server)} />,
   avatar: (
     <span
-      {...profileTrigger(r.message.author, r.server, false)}
+      {...profileTrigger(store, r.message.author, r.server, false)}
       title="View profile"
       className={`shrink-0 ${avatarTriggerCls}`}
     >
@@ -330,7 +331,7 @@ const instanceHit = (
   ),
   name: (
     <span
-      {...profileTrigger(r.message.author, r.server)}
+      {...profileTrigger(store, r.message.author, r.server)}
       className={`streamer truncate text-sm font-medium ${nameTriggerCls}`}
     >
       <NameWithUsername user={r.message.author} />
@@ -347,6 +348,7 @@ const instanceHit = (
 })
 
 export default function SearchPanel() {
+  const { store, viewing } = useAccount()
   const channels = useStore(s =>
     s.view?.kind === 'channel' ? s.servers[s.view.server]?.channels : undefined
   )
@@ -361,22 +363,23 @@ export default function SearchPanel() {
   const me = useStore(s => s.me?.username ?? null)
   const mine = useStore(s => s.me?.servers)
   const servers = useStore(s => s.servers)
+  const { useViewing, canView, instanceTarget } = viewing
   const revision = useViewing(s => s.revision)
   useEffect(() => {
     for (const name of new Set(search.results.map(r => r.server))) {
       if (!servers[name])
-        void useStore
+        void store
           .getState()
           .discoverChannels(name)
           .catch(() => {})
     }
-  }, [search.results, servers])
+  }, [store, search.results, servers])
   const hits = useMemo<SearchHitView[]>(() => {
     const owns = (server: string) =>
       me !== null && mine?.find(x => x.name === server)?.creator === me
     return search.results.map(r => {
-      const t = instanceTarget(useStore.getState(), r.server, r.message.channel_id ?? -1)
-      if (t && canView(t)) return instanceHit(r, me, owns, x => void openResult(x))
+      const t = instanceTarget(store.getState(), r.server, r.message.channel_id ?? -1)
+      if (t && canView(t)) return instanceHit(store, r, me, owns, x => void openResult(x))
       return {
         key: String(r.message.id),
         channel: <Masked text={r.channel_name} />,
@@ -394,7 +397,7 @@ export default function SearchPanel() {
         },
       }
     })
-  }, [search.results, me, mine, openResult, servers, revision])
+  }, [store, canView, instanceTarget, search.results, me, mine, openResult, servers, revision])
   const run = useCallback(
     (f: SearchFilters, fresh: boolean) =>
       void searchRun(

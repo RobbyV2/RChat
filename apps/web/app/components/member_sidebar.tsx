@@ -80,6 +80,7 @@ function MemberTimeout({ server, username }: { server: string; username: string 
 
 export default function MemberSidebar() {
   const acct = useAccount()
+  const { store } = acct
 
   const detail = useStore(s => (s.view?.kind === 'channel' ? s.servers[s.view.server] : null))
   const cache = useStore(s => (s.view?.kind === 'channel' ? s.members[s.view.server] : undefined))
@@ -170,7 +171,7 @@ export default function MemberSidebar() {
               )
             )
           : {})}
-        {...profileTrigger(m, detail.name)}
+        {...profileTrigger(store, m, detail.name)}
         className={`flex h-10 cursor-pointer items-center gap-2 rounded-xl px-2 hover:bg-surface-container-high ${rowFocus} ${
           m.online ? '' : 'opacity-50'
         }`}
@@ -203,7 +204,7 @@ export default function MemberSidebar() {
             )
           )
         : {})}
-      {...profileTrigger(u, detail.name)}
+      {...profileTrigger(store, u, detail.name)}
       className={`flex h-10 cursor-pointer items-center gap-2 rounded-xl px-2 opacity-70 hover:bg-surface-container-high ${rowFocus}`}
     >
       <UserAvatar
