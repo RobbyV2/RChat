@@ -79,6 +79,10 @@ Never run an older release on a database that a newer release upgraded.
 
 For more load, run many copies of the same image on one Postgres database and one Redis server, and give each copy its roles with `RCHAT_ROLES`. Set `REDIS_URL` on every copy and `PEERJS_BUILTIN=false`, and send `/peerjs` to one separate PeerJS server (`deploy/peer`). Both examples above do this. Upgrade all copies together. With `WS_SOCKETS_MAX` set, run the `gateway` role on copies of its own: a full copy answers `/api/ready` with 503.
 
+Set Postgres `max_connections` above the sum of the application pools plus space for maintenance. Use S3 for uploads on larger installations. Site administration → Config shows this copy's database pools and index builds.
+
+Set `DATABASE_REPLICA_URLS` on the copies serving searches and older pages. Provision each streaming replica with a replication slot, give it at least the primary's `max_connections`, and drop its slot when retiring it.
+
 ## Configuration
 
 Settings live in `.env.local` or in the environment (`docker run -e NAME=value`). The scaled Compose example reads `RCHAT_*` values such as `RCHAT_PUBLIC_URL` from `deploy/.env`, and Kubernetes reads `deploy/k8s/config.yaml`. `.env.local.example` lists every setting with its default and range. These are the ones almost everyone sets:
