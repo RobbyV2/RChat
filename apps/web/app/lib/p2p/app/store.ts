@@ -1,3 +1,4 @@
+import type { AccountSession } from '../../client/session'
 import { create } from 'zustand'
 import { home, readLocal, sessionStore, writeLocal } from '../../instances'
 import { emptyLayout, type Layout } from '../../nav_layout'
@@ -460,11 +461,7 @@ export interface P2pHost {
   toast: (text: string, name?: string) => void
   // The instance is text and emoji only: no attachments anywhere, P2P ones included.
   textOnly: () => boolean
-  // In an instance call or voice channel (a P2P ring then gets "busy").
-  inCall: () => boolean
-  // Ends instance calls and voice before a P2P call starts.
-  leaveInstanceCalls: () => void
-  muted: () => boolean
+  account?: AccountSession
 }
 
 export const p2pHost: P2pHost = {
@@ -474,9 +471,6 @@ export const p2pHost: P2pHost = {
   typingOn: () => true,
   toast: () => {},
   textOnly: () => false,
-  inCall: () => false,
-  leaveInstanceCalls: () => {},
-  muted: () => false,
 }
 
 // Auto-download per account: files up to `dm` bytes in direct messages, images up to `server`

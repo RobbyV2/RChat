@@ -15,7 +15,9 @@ import { useHome } from '../lib/home_store'
 import { registerAppActions } from '../lib/actions'
 import { revealMasked } from '../lib/actions/masked'
 import { actionsVersion, subscribeActions } from '../lib/actions/registry'
-import { loadApiDoc, loadApiHistory, useApiDoc } from '../lib/api_console'
+import { useAccount } from '../lib/client/react'
+import type { AccountSession } from '../lib/client/session'
+import { useApiDoc } from '../lib/api_console'
 import {
   hasMasked,
   isMac,
@@ -31,7 +33,6 @@ import { buildSections, flatItems, noApi, type ResultCtx } from '../lib/palette_
 import {
   closePalette,
   closePalettePoll,
-  noteUsed,
   openPalette,
   setPaletteText,
   setPaletteView,
@@ -39,8 +40,7 @@ import {
   togglePalette,
   usePaletteUi,
 } from '../lib/palette_store'
-import { useViewing } from '../lib/viewing'
-import { docVisible, paletteIndex, startIndexSync, useIndexStatus } from '../lib/palette_sync'
+import { useIndexStatus } from '../lib/palette_sync'
 import { shortcutLabel } from '../lib/shortcuts'
 import { useMask, useStore } from '../lib/store'
 import { ApiConsoleFor } from './api_console'
@@ -54,6 +54,7 @@ const SHEET = '(max-width: 767px)'
 const counted = (id: string) => !id.startsWith('message_') && !id.startsWith('apihistory_')
 
 export function PaletteHost() {
+  const { store, viewing } = useAccount()
   const open = usePaletteUi(s => s.open)
   const poll = usePaletteUi(s => s.poll)
   const owner = useStore(s => s.me?.username ?? (s.guest ? 'guest' : null))
@@ -61,16 +62,13 @@ export function PaletteHost() {
   useEffect(() => {
     registerAppActions()
     registerPalette(() => openPalette())
-    const stop = startIndexSync()
     return () => {
       registerPalette(null)
-      stop()
     }
   }, [])
 
   const lastOwner = useRef(owner)
   useEffect(() => {
-    loadApiHistory(owner)
     // What the previous account had open (API form values, a response) is not shown to the next.
     if (lastOwner.current !== owner) closePalette()
     lastOwner.current = owner
@@ -80,9 +78,9 @@ export function PaletteHost() {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (!paletteKey(e) || e.isComposing || e.repeat) return
       if (
-        useStore.getState().confirm ||
-        useViewing.getState().prompt ||
-        useStore.getState().activeDialog?.kind === 'app_preview'
+        store.getState().confirm ||
+        viewing.useViewing.getState().prompt ||
+        store.getState().activeDialog?.kind === 'app_preview'
       )
         return
       e.preventDefault()
@@ -91,7 +89,7 @@ export function PaletteHost() {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
+  }, [store, viewing])
 
   return (
     <>
@@ -204,6 +202,7 @@ function Row({
 }
 
 function ArgView({ item, onBack }: { item: PaletteItem; onBack: () => void }) {
+  const { noteUsed } = useAccount().palettePrefs
   const arg = item.arg!
   const [text, setText] = useState('')
   const [active, setActive] = useState(0)
@@ -313,7 +312,8 @@ function ArgView({ item, onBack }: { item: PaletteItem; onBack: () => void }) {
 }
 
 function useResults(text: string) {
-  const viewing = useViewing(s => s.revision)
+  const account = useAccount()
+  const viewing = account.viewing.useViewing(s => s.revision)
   const s = useStore()
   const usage = usePaletteUi(x => x.prefs.used)
   const mask = useMask()
@@ -326,8 +326,8 @@ function useResults(text: string) {
     const ctx: ResultCtx = {
       usage,
       now: Date.now(),
-      index: paletteIndex(),
-      visible: d => docVisible(s, d),
+      index: account.indexer.paletteIndex(),
+      visible: d => account.indexer.docVisible(s, d),
       ops,
       history,
       recents,
@@ -336,11 +336,14 @@ function useResults(text: string) {
     void viewing
     void indexTick
     void actions
-    return buildSections(s, text, ctx)
-  }, [s, text, usage, mask, ops, history, recents, indexTick, actions, viewing])
+    return buildSections(s, text, ctx, account)
+  }, [account, s, text, usage, mask, ops, history, recents, indexTick, actions, viewing])
 }
 
 function ListView() {
+  const account = useAccount()
+  const { loadApiDoc } = account.apiDoc
+  const { noteUsed } = account.palettePrefs
   const text = usePaletteUi(s => s.text)
   const indexMode = useIndexStatus(s => s.mode)
   const apiLoading = useApiDoc(s => s.loading)
@@ -358,7 +361,7 @@ function ListView() {
 
   useEffect(() => {
     if (apiMode) void loadApiDoc()
-  }, [apiMode])
+  }, [apiMode, loadApiDoc])
 
   const [seenText, setSeenText] = useState(text)
   if (seenText !== text) {
@@ -516,13 +519,14 @@ function ListView() {
   )
 }
 
-let listsFor: string | null = null
+const listsFor = new WeakMap<object, string>()
 
 // Friend, request and block lists load lazily; the palette's commands for them need them once.
-const loadLists = () => {
-  const s = useStore.getState()
-  if (!s.me || s.guest || listsFor === s.me.username) return
-  listsFor = s.me.username
+const loadLists = (account: AccountSession) => {
+  const s = account.store.getState()
+  const mark = account.lifetime.sessionMark()
+  if (!s.me || s.guest || listsFor.get(mark) === s.me.username) return
+  listsFor.set(mark, s.me.username)
   if (!s.friends.list.length && !s.friends.loading) void s.loadFriends('', true)
   if (!s.incomingRequests.list.length && !s.incomingRequests.loading)
     void s.loadFriendRequests(true, true)
@@ -530,8 +534,9 @@ const loadLists = () => {
 }
 
 function Palette() {
+  const account = useAccount()
   const stored = usePaletteUi(s => s.view)
-  useViewing(s => s.revision)
+  account.viewing.useViewing(s => s.revision)
   useSyncExternalStore(subscribeActions, actionsVersion, actionsVersion)
   const revoked = stored.kind === 'arg' && stored.item.available?.() === false
   useEffect(() => {
@@ -541,7 +546,7 @@ function Palette() {
   // Guests never get the API console, whatever asked for it.
   const view =
     revoked || (stored.kind === 'api' && noConsole) ? ({ kind: 'list' } as const) : stored
-  useEffect(loadLists, [])
+  useEffect(() => loadLists(account), [account])
   const sheet = useMedia(SHEET)
   const pressed = useRef(false)
   const box = useRef<HTMLDivElement>(null)

@@ -1,11 +1,12 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { client } from '../client/client'
 import { home } from '../instances'
 import { rtc } from '../rtc'
 import { useStore, resetSessionCaches } from '../store'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from '../voice_layout'
 import type { VoiceMsg } from '../types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE } from '../timeouts'
-import { me, serverDetail, until } from './fixtures'
+import { drain, me, serverDetail, until } from './fixtures'
 
 afterAll(resetSessionCaches)
 
@@ -91,6 +92,16 @@ afterEach(() => {
   })
 })
 
+const switchCall = async (action: () => Promise<void>) => {
+  const done = action()
+  await until(() => !!st().confirm)
+  const request = st().confirm!
+  expect(request.confirm).toBe('Switch')
+  st().closeConfirm()
+  request.action('')
+  return done
+}
+
 const ringFromBob = () =>
   useStore.setState({
     call: {
@@ -127,7 +138,7 @@ describe('voice and call mic state', () => {
     expect(lastTrack().enabled).toBe(true)
     st().toggleDeafen()
     expect(lastTrack().enabled).toBe(false)
-    await st().joinVoice('lounge', 2)
+    await switchCall(() => st().joinVoice('lounge', 2))
     expect(st().voice?.channelId).toBe(2)
     expect(tracks).toHaveLength(2)
     expect(lastTrack().enabled).toBe(false)
@@ -138,7 +149,7 @@ describe('voice and call mic state', () => {
   test('mute, then switch channel: the new mic stays muted', async () => {
     await st().joinVoice('lounge', 1)
     st().toggleMute()
-    await st().joinVoice('lounge', 2)
+    await switchCall(() => st().joinVoice('lounge', 2))
     expect(lastTrack().enabled).toBe(false)
     expect(rtc.muted).toBe(true)
   })
@@ -147,7 +158,7 @@ describe('voice and call mic state', () => {
     await st().joinVoice('lounge', 1)
     st().toggleDeafen()
     ringFromBob()
-    await st().acceptCall()
+    await switchCall(() => st().acceptCall())
     expect(st().error).toBeNull()
     expect(st().voice).toBeNull()
     expect(tracks).toHaveLength(2)
@@ -161,11 +172,12 @@ describe('voice and call mic state', () => {
     ringFromBob()
     const media = navigator.mediaDevices as unknown as { getUserMedia: () => Promise<unknown> }
     const open = media.getUserMedia
-    let grant = () => {}
+    let grant: (() => void) | undefined
     media.getUserMedia = () => new Promise(done => (grant = () => done(open())))
-    const accepting = st().acceptCall()
+    const accepting = switchCall(() => st().acceptCall())
+    await until(() => grant !== undefined)
     useStore.setState({ call: null })
-    grant()
+    grant!()
     await accepting
     expect(sent.some(m => m.type === 'call_accept')).toBe(false)
     expect(sent.some(m => m.type === 'voice_leave')).toBe(true)
@@ -194,6 +206,331 @@ describe('voice and call mic state', () => {
     expect(rtc.muted).toBe(false)
   })
 
+  test('a ring ending while the switch prompt is open keeps the existing call', async () => {
+    await st().joinVoice('lounge', 1)
+    const voice = client.calls.current()
+    ringFromBob()
+    const accepting = st().acceptCall()
+    await until(() => !!st().confirm)
+    const stale = st().confirm!
+    st().applyWsEvent({
+      type: 'call_state',
+      dm_id: 7,
+      dm_users: ['alice', 'bob'],
+      from: 'bob',
+      kind: 'rtc',
+      state: 'ended',
+    })
+    expect(st().confirm).toBeNull()
+    ringFromBob()
+    stale.action('')
+    await accepting
+    expect(client.calls.current()).toBe(voice)
+    expect(st().voice?.channelId).toBe(1)
+    expect(sent.map(m => m.type)).toEqual(['voice_join'])
+  })
+
+  describe('DM signaling replies', () => {
+    const sync = rtc.sync
+    beforeEach(() => {
+      rtc.sync = () => {}
+    })
+    afterEach(() => {
+      rtc.sync = sync
+    })
+
+    function callState(from: string, state: 'ringing' | 'active' | 'ended', dmId = 7) {
+      st().applyWsEvent({
+        type: 'call_state',
+        dm_id: dmId,
+        dm_users: ['alice', 'bob'],
+        from,
+        kind: 'rtc',
+        state,
+      })
+    }
+
+    function lastRequest() {
+      const msg = sent.at(-1)
+      if ((msg?.type !== 'call_accept' && msg?.type !== 'call_start') || !msg.attempt_id)
+        throw new Error('Expected a call request')
+      return { type: 'call' as const, attempt_id: msg.attempt_id }
+    }
+
+    for (const scoped of [false, true]) {
+      const refuse = (request: ReturnType<typeof lastRequest>) =>
+        st().applyWsEvent({
+          type: 'error',
+          message: 'Calling too often, try again in a moment',
+          ...(scoped && { request }),
+        })
+
+      test(`an accept refused after hangup preserves the redial (scoped reply: ${scoped})`, async () => {
+        useStore.setState({ dms: [{ id: 7, is_self: false, other: me('bob') }] })
+        callState('bob', 'ringing')
+        await st().acceptCall()
+        const accepted = lastRequest()
+        callState('bob', 'ended')
+        expect(client.calls.current()).toBeNull()
+        expect(rtc.active()).toBe(false)
+
+        const starting = st().startCall(7, false)
+        await drain()
+        const redial = client.calls.current()
+        expect(lastRequest()).toEqual(accepted)
+        st().applyWsEvent({
+          type: 'error',
+          message: 'No incoming call',
+          ...(scoped && { request: accepted }),
+        })
+        await starting
+        expect(lastRequest()).not.toEqual(accepted)
+        expect(client.calls.current()).toBe(redial)
+        expect(rtc.active()).toBe(true)
+        callState('alice', 'ringing')
+        callState('alice', 'active')
+        expect(st().call?.state).toBe('active')
+        callState('alice', 'ended')
+        expect(rtc.active()).toBe(false)
+        expect(client.calls.current()).toBeNull()
+      })
+
+      test(`a refused accept stops its microphone and leaves the ring answerable (scoped reply: ${scoped})`, async () => {
+        useStore.setState({ dms: [{ id: 7, is_self: false, other: me('bob') }] })
+        callState('bob', 'ringing')
+        await st().acceptCall()
+        for (const message of ['No shared voice session', 'Signal too large']) {
+          st().applyWsEvent({
+            type: 'error',
+            message,
+            ...(scoped && { request: { type: 'other' as const } }),
+          })
+          expect(rtc.active()).toBe(true)
+        }
+        let stopped = false
+        lastTrack().stop = () => {
+          stopped = true
+        }
+        callState('bob', 'ringing')
+        st().applyWsEvent({
+          type: 'error',
+          message: 'Too many requests, slow down',
+          ...(scoped && { request: lastRequest() }),
+        })
+        expect(stopped).toBe(true)
+        expect(client.calls.current()).toBeNull()
+        expect(st().call?.state).toBe('ringing')
+        await st().acceptCall()
+        callState('bob', 'active')
+        expect(client.calls.current()?.kind).toBe('dm')
+        expect(rtc.active()).toBe(true)
+        callState('bob', 'ended')
+        expect(rtc.active()).toBe(false)
+      })
+
+      for (const oldRefused of [false, true]) {
+        test(`redial after voice waits for the first DM (old refused: ${oldRefused}, scoped: ${scoped})`, async () => {
+          useStore.setState({ dms: [7, 8].map(id => ({ id, is_self: false, other: me('bob') })) })
+          await st().joinVoice('lounge', 1)
+          await switchCall(() => st().startCall(7, false))
+          const old = lastRequest()
+          st().hangupCall()
+          const starting = st().startCall(8, false)
+          await drain()
+          expect(sent.at(-1)?.type).toBe('call_leave')
+          expect(rtc.active()).toBe(false)
+          if (oldRefused) refuse(old)
+          else {
+            callState('alice', 'ringing')
+            callState('alice', 'ended')
+          }
+          await starting
+          expect(sent.at(-1)).toMatchObject({ type: 'call_start', dm_id: 8 })
+          expect(rtc.active()).toBe(true)
+          if (oldRefused) {
+            st().applyWsEvent({ type: 'error', message: 'No incoming call' })
+            callState('alice', 'ringing', 8)
+            expect(st().call?.dmId).toBe(8)
+            expect(rtc.active()).toBe(true)
+            callState('alice', 'ended', 8)
+          } else refuse(lastRequest())
+          expect(client.calls.current()).toBeNull()
+          expect(rtc.active()).toBe(false)
+        })
+      }
+
+      test(`switching a waiting redial to voice preserves its new guard (scoped: ${scoped})`, async () => {
+        await st().startCall(7, false)
+        const first = lastRequest()
+        st().hangupCall()
+        const waiting = st().startCall(8, false)
+        await drain()
+        await switchCall(() => st().joinVoice('lounge', 1))
+        await waiting
+        const voice = client.calls.current()
+        refuse(first)
+        expect(voice?.kind).toBe('voice')
+        expect(client.calls.current()).toBe(voice)
+        expect(st().voice?.channelId).toBe(1)
+        expect(rtc.active()).toBe(true)
+        expect(sent.map(m => m.type)).toEqual(['call_start', 'call_leave', 'voice_join'])
+      })
+
+      test(`successive refusals skip a cancelled waiter (scoped: ${scoped})`, async () => {
+        await st().startCall(7, false)
+        const first = lastRequest()
+        st().hangupCall()
+        const cancelled = st().startCall(8, false)
+        await drain()
+        st().hangupCall()
+        await cancelled
+        const next = st().startCall(9, false)
+        await drain()
+        refuse(first)
+        await next
+        expect(sent.filter(m => m.type === 'call_start').map(m => m.dm_id)).toEqual([7, 9])
+        refuse(lastRequest())
+        expect(rtc.active()).toBe(false)
+        expect(client.calls.current()).toBeNull()
+      })
+    }
+
+    test('a lost end before redial clears both outgoing and incoming stale calls', async () => {
+      await st().startCall(7, false)
+      callState('alice', 'ringing')
+      st().hangupCall()
+      st().applyWsEvent({ type: 'resync' })
+      await st().startCall(8, false)
+      expect(sent.at(-1)).toMatchObject({ type: 'call_start', dm_id: 8 })
+      callState('alice', 'ringing', 8)
+      callState('alice', 'ended', 8)
+      callState('bob', 'ringing')
+      st().applyWsEvent({ type: 'resync' })
+      expect(st().call).toBeNull()
+      await st().startCall(9, false)
+      expect(sent.at(-1)).toMatchObject({ type: 'call_start', dm_id: 9 })
+    })
+
+    test('resync dismisses an unanswered ring during voice with an older DM outstanding', async () => {
+      await st().startCall(7, false)
+      st().hangupCall()
+      await st().joinVoice('lounge', 1)
+      const voice = client.calls.current()
+      callState('bob', 'ringing', 8)
+      st().applyWsEvent({ type: 'resync' })
+      expect(st().call).toBeNull()
+      expect(st().voice?.channelId).toBe(1)
+      expect(client.calls.current()).toBe(voice)
+      expect(rtc.active()).toBe(true)
+      expect(sent.at(-1)).toMatchObject({ type: 'call_decline', dm_id: 8 })
+    })
+
+    test('lost call events cancel the waiting redial and allow a fresh call', async () => {
+      await st().startCall(7, false)
+      callState('alice', 'ringing')
+      st().hangupCall()
+      const waiting = st().startCall(8, false)
+      await drain()
+      st().applyWsEvent({ type: 'resync' })
+      await waiting
+      expect(client.calls.current()).toBeNull()
+      expect(rtc.active()).toBe(false)
+      await st().startCall(8, false)
+      expect(sent.filter(m => m.type === 'call_start').map(m => m.dm_id)).toEqual([7, 8])
+    })
+
+    test('session reset cancels a waiting redial and clears the wire slot', async () => {
+      await st().startCall(7, false)
+      st().hangupCall()
+      const waiting = st().startCall(8, false)
+      await drain()
+      resetSessionCaches()
+      await waiting
+      expect(client.calls.current()).toBeNull()
+      expect(rtc.active()).toBe(false)
+      useStore.setState({ me: me('alice'), guest: false })
+      await st().startCall(9, false)
+      expect(sent.filter(m => m.type === 'call_start').map(m => m.dm_id)).toEqual([7, 9])
+    })
+  })
+
+  for (const earlyHangup of [false, true]) {
+    test(`same-DM redial captures after the previous call ends (early hangup: ${earlyHangup})`, async () => {
+      useStore.setState({ dms: [{ id: 7, is_self: false, other: me('bob') }] })
+      const phase = (state: 'ringing' | 'ended') =>
+        st().applyWsEvent({
+          type: 'call_state',
+          dm_id: 7,
+          dm_users: ['alice', 'bob'],
+          from: 'alice',
+          kind: 'rtc',
+          video: false,
+          state,
+        })
+      await st().startCall(7, false)
+      if (!earlyHangup) phase('ringing')
+      st().hangupCall()
+      const starting = st().startCall(7, false)
+      await drain()
+      const successor = client.calls.current()
+      expect(successor?.kind).toBe('dm')
+      if (earlyHangup) {
+        phase('ringing')
+        expect(st().call).toBeNull()
+      }
+      phase('ended')
+      await starting
+      expect(rtc.active()).toBe(true)
+      expect(client.calls.current()).toBe(successor)
+      expect(sent.map(m => m.type)).toEqual(['call_start', 'call_leave', 'call_start'])
+      phase('ringing')
+      expect(st().call?.state).toBe('ringing')
+      phase('ended')
+      expect(st().call).toBeNull()
+      expect(rtc.active()).toBe(false)
+      expect(client.calls.current()).toBeNull()
+    })
+  }
+
+  for (const decline of [true, false]) {
+    test(`ending a ring during voice capture preserves the voice join (decline: ${decline})`, async () => {
+      const devices = navigator.mediaDevices
+      const capture = devices.getUserMedia
+      let grant: (() => void) | undefined
+      devices.getUserMedia = async options => {
+        await new Promise<void>(done => {
+          grant = done
+        })
+        return capture.call(devices, options)
+      }
+      useStore.setState({ dms: [{ id: 7, is_self: false, other: me('bob') }] })
+      const joining = st().joinVoice('lounge', 1)
+      await until(() => !!grant)
+      const claim = client.calls.current()
+      const ring = {
+        type: 'call_state',
+        kind: 'rtc',
+        from: 'bob',
+        dm_id: 7,
+        dm_users: ['bob', 'alice'],
+      } as const
+      const phase = (state: 'ringing' | 'ended') =>
+        st().applyWsEvent({ ...ring, dm_users: [...ring.dm_users], state })
+      phase('ringing')
+      if (decline) st().declineCall()
+      phase('ended')
+      expect(st().call).toBeNull()
+      expect(client.calls.current()).toBe(claim)
+      grant!()
+      await joining
+      expect(st().voice?.channelId).toBe(1)
+      expect(rtc.active()).toBe(true)
+      expect(sent.at(-1)?.type).toBe('voice_join')
+      st().leaveVoice()
+      expect(client.calls.current()).toBeNull()
+    })
+  }
+
   test('hanging up a call resets mute and deafen', async () => {
     await st().startCall(7, false)
     st().toggleDeafen()
@@ -216,7 +553,7 @@ describe('voice and call mic state', () => {
   test('starting a call while deafened in voice starts muted', async () => {
     await st().joinVoice('lounge', 1)
     st().toggleDeafen()
-    await st().startCall(7, false)
+    await switchCall(() => st().startCall(7, false))
     expect(st().voice).toBeNull()
     expect(lastTrack().enabled).toBe(false)
     expect(sent.some(m => m.type === 'call_start')).toBe(true)
@@ -229,7 +566,7 @@ describe('voice and call mic state', () => {
       configurable: true,
       value: { mediaDevices: { getUserMedia: async () => Promise.reject(new Error('denied')) } },
     })
-    await st().joinVoice('lounge', 2)
+    await switchCall(() => st().joinVoice('lounge', 2))
     expect(st().error === null).toBe(false)
     expect(rtc.active()).toBe(false)
     expect(st().voice).toBeNull()
@@ -258,8 +595,8 @@ describe('voice and call mic state', () => {
       st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id, users })
     await st().joinVoice('lounge', 3)
     roomState(3, ['alice'])
-    await st().joinVoice('lounge', 4)
-    await st().joinVoice('lounge', 3)
+    await switchCall(() => st().joinVoice('lounge', 4))
+    await switchCall(() => st().joinVoice('lounge', 3))
     // our leave from channel 3 arrives after we already rejoined it
     roomState(3, [])
     expect(rtc.active()).toBe(true)
@@ -270,8 +607,8 @@ describe('voice and call mic state', () => {
     const roomState = (channel_id: number, users: string[]) =>
       st().applyWsEvent({ type: 'voice_state', server: 'lounge', channel_id, users })
     await st().joinVoice('lounge', 13)
-    await st().joinVoice('lounge', 14)
-    await st().joinVoice('lounge', 13)
+    await switchCall(() => st().joinVoice('lounge', 14))
+    await switchCall(() => st().joinVoice('lounge', 13))
     // the server applies the three joins in order
     roomState(13, ['alice'])
     roomState(13, [])

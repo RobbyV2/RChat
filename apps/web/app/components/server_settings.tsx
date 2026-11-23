@@ -1181,7 +1181,7 @@ function ConfirmBody({ request, onClose }: { request: ConfirmRequest; onClose: (
   return (
     <Dialog title={title} onClose={onClose} layer="confirm">
       <p className="text-sm text-on-surface-variant">
-        <LabelText text={body} />
+        <LabelText text={body} name={request.bodyName} />
       </p>
       {choices && (
         <fieldset className="mt-4 space-y-2">

@@ -166,7 +166,7 @@ fn error_frames_carry_the_reason_of_rest_errors() {
 
     use crate::api::ApiError;
     use crate::ws::protocol::Refused;
-    let wire = |refused: Refused| serde_json::to_string(&refused.frame()).expect("json");
+    let wire = |refused: Refused| serde_json::to_string(&refused.frame(None)).expect("json");
     assert_eq!(
         wire("Not a voice channel".into()),
         r#"{"type":"error","message":"Not a voice channel"}"#,
@@ -192,5 +192,32 @@ fn error_frames_carry_the_reason_of_rest_errors() {
     );
     let back: WsEvent =
         serde_json::from_str(r#"{"type":"error","message":"old"}"#).expect("an older copy");
-    assert!(matches!(back, WsEvent::Error { message, reason: None } if message == "old"));
+    assert!(
+        matches!(back, WsEvent::Error { message, reason: None, request: None } if message == "old")
+    );
+}
+
+#[test]
+fn refused_call_commands_echo_the_requesting_attempt() {
+    use crate::ws::protocol::{ClientMsg, Refused};
+
+    for (command, message) in [
+        ("call_start", crate::ws::p2p::CALLING_TOO_OFTEN),
+        ("call_accept", "No incoming call"),
+    ] {
+        let msg: ClientMsg = serde_json::from_value(serde_json::json!({
+            "type": command, "dm_id": 7, "attempt_id": 12
+        }))
+        .unwrap();
+        let frame = Refused::from(message).frame(Some(msg.refusal_target()));
+        let wire = serde_json::to_value(frame).unwrap();
+        assert_eq!(
+            wire["request"],
+            serde_json::json!({"type":"call", "attempt_id":12})
+        );
+        let ended =
+            Refused::AfterJoin(Box::new(Refused::from("Calls are turned off on this site")));
+        let wire = serde_json::to_value(ended.frame(Some(msg.refusal_target()))).unwrap();
+        assert_eq!(wire["request"], serde_json::json!({"type": "other"}));
+    }
 }

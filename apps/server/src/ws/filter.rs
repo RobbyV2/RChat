@@ -955,6 +955,7 @@ pub(super) fn wants(
             until: _,
         } => me != Some(username.as_str()) && scoped(server, dm_users),
         WsEvent::Error {
+            request: _,
             message: _,
             reason: _,
         }

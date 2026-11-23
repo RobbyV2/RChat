@@ -963,13 +963,14 @@ export type VoiceMsg =
   | { type: 'voice_leave' }
   | {
       type: 'call_start'
+      attempt_id?: number
       dm_id: number
       p2p?: boolean
       video?: boolean
       peer_id?: string
       relays?: string[]
     }
-  | { type: 'call_accept'; dm_id: number; peer_id?: string; relays?: string[] }
+  | { type: 'call_accept'; attempt_id?: number; dm_id: number; peer_id?: string; relays?: string[] }
   | { type: 'call_decline' | 'call_leave'; dm_id: number }
   | {
       type: 'p2p_hosting'
@@ -1127,7 +1128,14 @@ export type WsEvent =
       payload: RtcPayload
     }
   | ({ type: 'voice_ended'; reason: string } & Scoped)
-  | { type: 'error'; message: string }
+  | {
+      type: 'error'
+      message: string
+      request?:
+        | { type: 'call'; attempt_id: number }
+        | { type: 'voice_join'; channel_id: number }
+        | { type: 'other' }
+    }
   | { type: 'guest_name'; name: string }
   | { type: 'dm_created'; dm_id: number; dm_users: string[] }
   | { type: 'dm_closed'; username: string; dm_id: number }

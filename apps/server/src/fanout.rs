@@ -441,6 +441,7 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
         | WsEvent::SettingsChanged { settings: _ }
         | WsEvent::BrandChanged { brand: _ } => Route::Everyone,
         WsEvent::Error {
+            request: _,
             message: _,
             reason: _,
         }

@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -32,11 +33,12 @@ import {
   refreshHead,
   refreshOnCount,
   sourcesToLoad,
+  type InboxAdapter,
   type InboxEntry,
   type InboxView,
   type SourceState,
 } from '../lib/inbox'
-import { inboxAdapters } from '../lib/inbox_source'
+import { useAccount, useStoreApi } from '../lib/client/react'
 import { PingBadge, pingLabel } from './ping_badge'
 import { UserAvatar } from './user_avatar'
 import { WebhookBadge } from './webhooks'
@@ -68,40 +70,58 @@ const tabCls = (on: boolean) =>
       : 'text-on-surface-variant hover:bg-surface-container-high'
   }`
 
-const freshSources = (): Record<string, SourceState> =>
-  Object.fromEntries(inboxAdapters().map(a => [a.id, freshSource()]))
-
-const adapterOf = (id: string) => inboxAdapters().find(a => a.id === id)
-
-const subscribeCounts = (onChange: () => void) => {
-  const offs = inboxAdapters().flatMap(a => (a.subscribe ? [a.subscribe(onChange)] : []))
-  return () => offs.forEach(off => off())
-}
-
-const adapterCounts = () => inboxAdapters().reduce((n, a) => n + (a.count?.() ?? 0), 0)
+const freshSources = (adapters: InboxAdapter[]): Record<string, SourceState> =>
+  Object.fromEntries(adapters.map(a => [a.id, freshSource()]))
 
 // Notifications that badge, from the store and from sources that count their own (P2P).
-export const useInboxCount = () =>
-  useStore(allPings) + useSyncExternalStore(subscribeCounts, adapterCounts, adapterCounts)
+export const useInboxCount = () => {
+  const { subscribeCounts, adapterCounts } = useAccount().inbox
+  return useStore(allPings) + useSyncExternalStore(subscribeCounts, adapterCounts, adapterCounts)
+}
 
 // Loads the inbox for a view from every source, merged by time. When the badge count changes it
 // fetches the first page again and merges it in front of what is loaded, so new and cleared
 // notifications show up and deeper pages stay. A lower count right after this panel marked
 // something read is skipped (`markedHere`): the list already shows it.
 function useInbox(view: InboxView) {
-  const [sources, setSources] = useState<Record<string, SourceState>>(freshSources)
-  const gen = useRef(0)
+  const { inbox } = useAccount()
+  const adapters = useSyncExternalStore(
+    inbox.subscribeAdapters,
+    inbox.inboxAdapters,
+    inbox.inboxAdapters
+  )
+  const [request, setRequest] = useState({ adapters, view })
+  const active = useRef<typeof request | null>(null)
+  const generation = useRef(0)
+  const markedUntil = useRef(0)
+  const [sources, setSources] = useState(() => freshSources(adapters))
+  if (request.adapters !== adapters || request.view !== view) {
+    setRequest({ adapters, view })
+    setSources(freshSources(adapters))
+  }
+  // Invalidate old handlers as soon as a different provider, registry or view commits.
+  useLayoutEffect(() => {
+    active.current = request
+    markedUntil.current = 0
+    return () => {
+      active.current = null
+    }
+  }, [request])
+  const isCurrent = useCallback(
+    () => active.current === request && inbox.inboxAdapters() === adapters,
+    [request, inbox, adapters]
+  )
   const live = useRef(sources)
   live.current = sources
 
   const fetchPage = useCallback(
     (id: string, cursor: string | null, at: number) => {
-      const adapter = adapterOf(id)
+      const adapter = adapters.find(a => a.id === id)
       if (!adapter) return
       setSources(s => ({ ...s, [id]: { ...(s[id] ?? freshSource()), loading: true } }))
       adapter.load(view, cursor).then(
         page => {
-          if (gen.current !== at) return
+          if (!isCurrent() || generation.current !== at) return
           setSources(s => {
             const prev = s[id] ?? freshSource()
             if (cursor === null) return { ...s, [id]: refreshHead(prev, page) }
@@ -119,7 +139,7 @@ function useInbox(view: InboxView) {
           })
         },
         () => {
-          if (gen.current !== at) return
+          if (!isCurrent() || generation.current !== at) return
           setSources(s => ({
             ...s,
             [id]: { ...(s[id] ?? freshSource()), loading: false, failed: true },
@@ -127,36 +147,37 @@ function useInbox(view: InboxView) {
         }
       )
     },
-    [view]
+    [adapters, view, isCurrent]
   )
 
   const reload = useCallback(() => {
-    gen.current += 1
-    for (const a of inboxAdapters()) fetchPage(a.id, null, gen.current)
-  }, [fetchPage])
+    if (!isCurrent()) return
+    generation.current += 1
+    for (const a of adapters) fetchPage(a.id, null, generation.current)
+  }, [isCurrent, adapters, fetchPage])
 
-  useEffect(() => {
-    setSources(freshSources())
-    reload()
-  }, [reload])
+  useEffect(reload, [reload])
 
-  const own = useRef(0)
-  const markedHere = useCallback(() => {
-    own.current = Date.now() + OWN_MARK_MS
-  }, [])
+  const markedHere = () => {
+    markedUntil.current = Date.now() + OWN_MARK_MS
+  }
   const count = useInboxCount()
-  const lastCount = useRef(count)
+  const lastCount = useRef({ request, count })
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     const before = lastCount.current
-    lastCount.current = count
-    if (!refreshOnCount(before, count, own.current, Date.now())) return
+    lastCount.current = { request, count }
+    if (
+      before.request !== request ||
+      !refreshOnCount(before.count, count, markedUntil.current, Date.now())
+    )
+      return
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => {
       timer.current = null
       reload()
     }, 400)
-  }, [count, reload])
+  }, [count, reload, request])
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current)
@@ -165,18 +186,57 @@ function useInbox(view: InboxView) {
   )
 
   const loadMore = useCallback(() => {
+    if (!isCurrent()) return
     for (const id of sourcesToLoad(live.current)) {
       const cur = live.current[id]
-      if (cur?.next) fetchPage(id, cur.next, gen.current)
+      if (cur?.next) fetchPage(id, cur.next, generation.current)
     }
-  }, [fetchPage])
+  }, [fetchPage, isCurrent])
 
   const entries = useMemo(() => mergeEntries(sources), [sources])
   const more = hasMore(sources)
   const loading = Object.values(sources).some(s => s.loading)
   const failed = Object.values(sources).some(s => s.failed)
 
-  return { setSources, entries, more, loading, failed, loadMore, reload, markedHere }
+  const adapterOf = (id: string) => adapters.find(a => a.id === id)
+  const open = (entry: InboxEntry, onClose?: (jumped: boolean) => void) => {
+    const adapter = adapterOf(entry.adapter)
+    if (!adapter || !isCurrent()) return
+    if (entry.unread && adapter.canPreview?.(entry) !== false) {
+      markedHere()
+      void adapter.markRead(entry).catch(() => {})
+    }
+    onClose?.(true)
+    void adapter.open(entry)
+  }
+
+  const read = (entry: InboxEntry) => {
+    const adapter = adapterOf(entry.adapter)
+    if (!adapter || !isCurrent()) return
+    markedHere()
+    setSources(s => markedRead(s, entry.key, view.unread))
+    void adapter.markRead(entry).then(
+      () => {},
+      () => reload()
+    )
+  }
+
+  const readAll = () => {
+    if (!isCurrent()) return
+    const shown = entries
+    markedHere()
+    setSources(s => allRead(s, view.unread))
+    void Promise.allSettled(
+      adapters.map(a =>
+        a.markAll(
+          view,
+          shown.filter(e => e.adapter === a.id)
+        )
+      )
+    ).then(reload)
+  }
+
+  return { adapterOf, open, read, readAll, entries, more, loading, failed, loadMore, reload }
 }
 
 function Place({ entry }: { entry: InboxEntry }) {
@@ -227,10 +287,12 @@ export function InboxAction({ entry }: { entry: Pick<InboxEntry, 'kind' | 'emoji
 }
 
 function Row({
+  adapter,
   entry,
   onOpen,
   onRead,
 }: {
+  adapter: InboxAdapter | undefined
   entry: InboxEntry
   onOpen: (e: InboxEntry) => void
   onRead: (e: InboxEntry) => void
@@ -238,8 +300,9 @@ function Row({
   const streamer = useStore(s => s.streamer)
   useViewing(s => s.revision)
   useStore(s => s.servers)
-  const adapter = adapterOf(entry.adapter)
-  if (adapter?.canPreview?.(entry) === false) {
+  const account = useAccount()
+  if (!adapter) return null
+  if (adapter.canPreview?.(entry) === false) {
     const target = adapter.previewTarget?.(entry)
     return (
       <li className="flex min-w-0 flex-wrap items-center gap-x-1 rounded-xl hover:bg-surface-container-high">
@@ -255,12 +318,18 @@ function Row({
   }
   const snippet = inboxPreview(entry, streamer)
   const menu = longPress((x, y) =>
-    openActionMenu(x, y, {
-      kind: 'inbox',
-      entry,
-      open: () => onOpen(entry),
-      read: () => onRead(entry),
-    })
+    openActionMenu(
+      x,
+      y,
+      {
+        kind: 'inbox',
+        entry,
+        open: () => onOpen(entry),
+        read: () => onRead(entry),
+      },
+      {},
+      account
+    )
   )
   return (
     <li className="group relative">
@@ -339,7 +408,7 @@ function Row({
 // (`jumped`).
 export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void }) {
   const [view, setView] = useState<InboxView>(DEFAULT_VIEW)
-  const { setSources, entries, more, loading, failed, loadMore, reload, markedHere } =
+  const { adapterOf, open, read, readAll, entries, more, loading, failed, loadMore, reload } =
     useInbox(view)
   const ids = useId()
   const tabId = (unread: boolean) => `${ids}-${unread ? 'unread' : 'all'}`
@@ -348,42 +417,6 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
   const streamer = useStore(s => s.streamer)
   const mask = useMask()
   const anyUnread = entries.some(e => e.unread)
-
-  const open = (entry: InboxEntry) => {
-    const adapter = adapterOf(entry.adapter)
-    if (!adapter) return
-    if (entry.unread && adapter.canPreview?.(entry) !== false) {
-      markedHere()
-      void adapter.markRead(entry).catch(() => {})
-    }
-    onClose?.(true)
-    void adapter.open(entry)
-  }
-
-  const read = (entry: InboxEntry) => {
-    const adapter = adapterOf(entry.adapter)
-    if (!adapter) return
-    markedHere()
-    setSources(s => markedRead(s, entry.key, view.unread))
-    void adapter.markRead(entry).then(
-      () => {},
-      () => reload()
-    )
-  }
-
-  const readAll = () => {
-    const shown = entries
-    markedHere()
-    setSources(s => allRead(s, view.unread))
-    void Promise.allSettled(
-      inboxAdapters().map(a =>
-        a.markAll(
-          view,
-          shown.filter(e => e.adapter === a.id)
-        )
-      )
-    ).then(reload)
-  }
 
   const set = (patch: Partial<InboxView>) => setView(v => ({ ...v, ...patch }))
   const empty = !loading && !failed && entries.length === 0 && !more
@@ -512,7 +545,13 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
         )}
         <ul aria-label={view.unread ? 'Unread notifications' : 'All notifications'}>
           {entries.map(e => (
-            <Row key={e.key} entry={e} onOpen={open} onRead={read} />
+            <Row
+              key={e.key}
+              adapter={adapterOf(e.adapter)}
+              entry={e}
+              onOpen={entry => open(entry, onClose)}
+              onRead={read}
+            />
           ))}
         </ul>
         {more && !failed && !loading && <Sentinel key={entries.length} onVisible={loadMore} />}
@@ -526,30 +565,9 @@ export function InboxPanel({ onClose }: { onClose?: (jumped: boolean) => void })
 
 // The newest unread notifications, for Home. Opens the full inbox for the rest.
 export function InboxPreview({ max = 5 }: { max?: number }) {
-  const { setSources, entries, more, loading, failed, reload, markedHere } = useInbox(DEFAULT_VIEW)
+  const { adapterOf, open, read, entries, more, loading, failed, reload } = useInbox(DEFAULT_VIEW)
   const setOpen = useStore(s => s.setInboxOpen)
   const shown = entries.slice(0, max)
-
-  const open = (entry: InboxEntry) => {
-    const adapter = adapterOf(entry.adapter)
-    if (!adapter) return
-    if (entry.unread && adapter.canPreview?.(entry) !== false) {
-      markedHere()
-      void adapter.markRead(entry).catch(() => {})
-    }
-    void adapter.open(entry)
-  }
-
-  const read = (entry: InboxEntry) => {
-    const adapter = adapterOf(entry.adapter)
-    if (!adapter) return
-    markedHere()
-    setSources(s => markedRead(s, entry.key, true))
-    void adapter.markRead(entry).then(
-      () => {},
-      () => reload()
-    )
-  }
 
   return (
     <div className="flex flex-col">
@@ -570,7 +588,7 @@ export function InboxPreview({ max = 5 }: { max?: number }) {
       ) : (
         <ul aria-label="Unread notifications">
           {shown.map(e => (
-            <Row key={e.key} entry={e} onOpen={open} onRead={read} />
+            <Row key={e.key} adapter={adapterOf(e.adapter)} entry={e} onOpen={open} onRead={read} />
           ))}
         </ul>
       )}
@@ -621,6 +639,7 @@ const focusBell = () => {
 export function InboxHost() {
   const open = useStore(s => s.inboxOpen)
   const setOpen = useStore(s => s.setInboxOpen)
+  const store = useStoreApi()
   const sheet = useMedia(SHEET)
   const ref = useRef<HTMLDivElement>(null)
   const close = useCallback(
@@ -631,7 +650,7 @@ export function InboxHost() {
     [setOpen]
   )
   useEscape(() => {
-    if (useStore.getState().inboxOpen) close()
+    if (store.getState().inboxOpen) close()
   }, 'dialog')
 
   useEffect(() => {
@@ -644,14 +663,14 @@ export function InboxHost() {
     const onDown = (e: PointerEvent) => {
       const t = e.target
       if (!(t instanceof Element)) return
-      const s = useStore.getState()
+      const s = store.getState()
       if (s.confirm || s.contextMenu || s.profile) return
       if (ref.current?.contains(t) || t.closest('[data-inbox-button], [aria-modal="true"]')) return
       setOpen(false)
     }
     document.addEventListener('pointerdown', onDown, true)
     return () => document.removeEventListener('pointerdown', onDown, true)
-  }, [open, sheet, setOpen])
+  }, [open, sheet, setOpen, store])
 
   if (!open) return null
 

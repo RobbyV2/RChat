@@ -244,6 +244,20 @@ impl Drop for Listening {
     }
 }
 
+async fn handle_voice(
+    state: &AppState,
+    access: &mut Access,
+    conn: u64,
+    out: &Out,
+    msg: ClientMsg,
+) -> bool {
+    let request = msg.refusal_target();
+    match voice_cmd(state, access, conn, msg).await {
+        Ok(()) => true,
+        Err(refused) => sent(access, out.event(&refused.frame(Some(request)))),
+    }
+}
+
 async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
     let conn = state.hub.next_conn();
     let token = match tokio::time::timeout(state.hub.auth_wait(), first_frame(&mut socket)).await {
@@ -493,17 +507,13 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                         Ok(ClientMsg::Auth { token: _ }) | Err(_) => {}
                         Ok(other) => {
                             let now = Instant::now();
-                            let res = match (access.voice_name(), &other) {
-                                (Some(me), ClientMsg::VoiceJoin { channel_id: _ } | ClientMsg::VoiceLeave) => {
-                                    match voice.offer(other, || state.hub.voice_ok(me), now) {
-                                        Some(msg) => voice_cmd(&state, &access, conn, msg).await,
-                                        None => Ok(()),
-                                    }
-                                }
-                                (_, _) => voice_cmd(&state, &access, conn, other).await,
+                            let ready = match (access.voice_name(), &other) {
+                                (Some(me), ClientMsg::VoiceJoin { channel_id: _ } | ClientMsg::VoiceLeave) =>
+                                    voice.offer(other, || state.hub.voice_ok(me), now),
+                                (_, _) => Some(other),
                             };
-                            if let Err(refused) = res
-                                && !sent(&mut access, out.event(&refused.frame()))
+                            if let Some(msg) = ready
+                                && !handle_voice(&state, &mut access, conn, &out, msg).await
                             {
                                 break;
                             }
@@ -536,8 +546,7 @@ async fn run(state: AppState, mut socket: WebSocket, mut slot: AddrSlot) {
                     None => voice.wanted.take(),
                 };
                 if let Some(msg) = ready
-                    && let Err(refused) = voice_cmd(&state, &access, conn, msg).await
-                    && !sent(&mut access, out.event(&refused.frame()))
+                    && !handle_voice(&state, &mut access, conn, &out, msg).await
                 {
                     break;
                 }

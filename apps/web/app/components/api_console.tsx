@@ -2,8 +2,8 @@
 
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { ArrowLeft, Check, Copy, Eye, Plus, Send, TriangleAlert, X } from 'lucide-react'
-import { api } from '../lib/instances'
-import { noteRequest, sendRequest, useApiDoc, type ApiResponse } from '../lib/api_console'
+import { useAccount } from '../lib/client/react'
+import { useApiDoc, type ApiResponse } from '../lib/api_console'
 import {
   buildRequest,
   emptyValue,
@@ -24,7 +24,7 @@ import {
 } from '../lib/openapi'
 import { holdEscape } from '../lib/palette_store'
 import { sharing } from '../lib/platform'
-import { sessionMark, useStore } from '../lib/store'
+import { useStore } from '../lib/store'
 import { CodeBlock } from './code_block'
 import { SettingSwitch } from './settings_fields'
 import { dangerBtn, filledBtn, filledDangerBtn, iconBtn, textBtn, useCopied } from './ui'
@@ -319,6 +319,7 @@ function ResponseBody({ res }: { res: ApiResponse }) {
 }
 
 function CurlButton({ op, values }: { op: Operation; values: Values }) {
+  const { api, store } = useAccount()
   const guest = useStore(s => s.guest)
   const [withToken, setWithToken] = useState(false)
   const [copied, flash] = useCopied()
@@ -329,10 +330,10 @@ function CurlButton({ op, values }: { op: Operation; values: Values }) {
     const request = withToken ? built.request : hideSecrets(op, values, built.request)
     const url = requestUrl(new URL(api.base, window.location.href).href, request)
     if (!url) return
-    const token = withToken ? useStore.getState().token : null
+    const token = withToken ? store.getState().token : null
     void sharing()
       .copyText(toCurl(url, request, token))
-      .then(ok => (ok ? flash() : useStore.getState().setError('Could not copy to the clipboard')))
+      .then(ok => (ok ? flash() : store.getState().setError('Could not copy to the clipboard')))
   }
   return (
     <div className="flex flex-col gap-2">
@@ -375,6 +376,9 @@ export function ApiConsole({
   initial?: unknown
   onBack: () => void
 }) {
+  const account = useAccount()
+  const { sessionMark } = account.lifetime
+  const { sendRequest, noteRequest } = account.apiDoc
   const guest = useStore(s => s.guest)
   const [values, setRawValues] = useState<Values>(() =>
     initial && typeof initial === 'object' ? restoreValues(op, initial as Values) : emptyValues(op)
@@ -418,9 +422,11 @@ export function ApiConsole({
       )
     try {
       const out = await sendRequest(request)
+      if (at !== sessionMark()) return
       setRes(out)
       note(out.status)
     } catch (e) {
+      if (at !== sessionMark()) return
       setRes(null)
       setFailure(e instanceof Error ? e.message : "Can't reach the server")
       note(0)

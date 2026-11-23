@@ -1,6 +1,14 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import { create } from 'zustand'
 import {
   HeadphoneOff,
@@ -23,8 +31,8 @@ import {
   Volume2,
   VolumeOff,
 } from 'lucide-react'
-import { rtc } from '../lib/rtc'
-import { p2p } from '../lib/p2p'
+import { client } from '../lib/client/client'
+import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
 import {
   callRtc,
   memberName,
@@ -39,7 +47,7 @@ import {
 } from '../lib/p2p/app'
 import { pastFit, voiceNotice, type VoiceUser } from '../lib/p2p/voice'
 import { displayName } from '../lib/p2p/contacts'
-import type { CallView } from '../lib/p2p/calls'
+import { AccountLabel } from './instance_badge'
 import { KeyAvatar, P2pBadge } from './p2p/p2p_badge'
 import { useMask, userRefFor, useStore, voiceMutedIn } from '../lib/store'
 import { voiceHushedIn } from '../lib/selectors'
@@ -88,10 +96,8 @@ const unblockAudio = () => {
   )
 }
 
-// A call with a P2P contact whose media is up here: ours, or one we answered. Instance calls and
-// voice come first (starting either ends it).
-const mediaCall = (c: CallView | null, instance: boolean) =>
-  !instance && c !== null && (c.dir === 'out' || c.state === 'active') ? c : null
+const useCallClaim = () =>
+  useSyncExternalStore(client.calls.subscribe, client.calls.current, client.calls.current)
 
 export const contactNameOf = (s: P2pState, ik: string) => {
   const c = s.contacts.find(x => x.ik === ik)
@@ -99,21 +105,23 @@ export const contactNameOf = (s: P2pState, ik: string) => {
 }
 
 function useCallMedia() {
+  const account = useAccount()
+  const { rtc, files: p2p } = account
+  const claim = useCallClaim()
+  const kind = claim?.account === account ? claim.kind : null
   useStore(s => s.rtcTick)
-  const voice = useStore(s => s.voice)
-  const call = useStore(s => s.call)
-  const contactCall = useP2p(s => s.call)
-  const serverVoice = useP2p(s => s.voice)
+  const voice = useStore(s => (kind === 'voice' ? s.voice : null))
+  const call = useStore(s => (kind === 'dm' ? s.call : null))
+  const roomCall = useP2p(s => (kind === 'p2p-call' ? s.call : null))
+  const roomVoice = useP2p(s => (kind === 'p2p-voice' ? s.voice : null))
   const { muted, deafened } = useStore(s => s.selfAudio)
-  const instance = voice !== null || call !== null
-  // A voice channel of a P2P server, and calls with P2P contacts, use callRtc.
-  const roomVoice = !instance ? serverVoice : null
-  const roomCall = roomVoice ? null : mediaCall(contactCall, instance)
   const own = roomCall !== null || roomVoice !== null
-  const p2pCall = !voice && call?.kind === 'p2p'
+  const p2pCall = call?.kind === 'p2p'
   const connected = own
     ? callRtc.active()
-    : (p2pCall ? p2p.mediaActive() : rtc.active()) && instance
+    : p2pCall
+      ? p2p.mediaActive()
+      : (voice !== null || call !== null) && rtc.active()
   const quality: LinkQuality = own
     ? callRtc.quality()
     : p2pCall
@@ -146,6 +154,7 @@ export function useRoomCallShare(room: string) {
 
 // Whether a share is on in the DM call shown, which then gets a taller stage.
 export function useCallShare(dmId: number) {
+  const { rtc, files: p2p } = useAccount()
   useStore(s => s.rtcTick)
   const call = useStore(s => s.call)
   const voice = useStore(s => s.voice)
@@ -238,6 +247,7 @@ function useStaffMuted(): boolean {
 }
 
 function VoiceAudio() {
+  const { rtc, files: p2p } = useAccount()
   const { connected, p2pCall, roomCall, roomVoice, deafened, voice } = useCallMedia()
   const silenced = useStore(s => voiceMutedIn(s, voice?.channelId ?? null))
   const hushed = useStore(s => voiceHushedIn(s, voice?.channelId ?? null))
@@ -684,7 +694,22 @@ export function DockPlace({ place, peer }: { place: string; peer?: UserRef }) {
   return peer ? <NameWithUsername user={peer} /> : <Masked text={place} />
 }
 
+function CallOwner({ children }: { children: ReactNode }) {
+  const shown = useAccount()
+  const call = useCallClaim()
+  return <AccountProvider session={call?.account ?? shown}>{children}</AccountProvider>
+}
+
 export function VoiceDock() {
+  return (
+    <CallOwner>
+      <VoiceDockBody />
+    </CallOwner>
+  )
+}
+
+function VoiceDockBody() {
+  const account = useAccount()
   const { voice, call, roomCall, roomVoice, connected, quality } = useCallMedia()
   const contactName = useP2p(s => (roomCall ? contactNameOf(s, roomCall.peer) : ''))
   const sv = useP2p(s => (roomVoice ? s.servers[roomVoice.room] : undefined))
@@ -721,6 +746,7 @@ export function VoiceDock() {
           <Icon size={18} strokeWidth={2.5} />
         </span>
         <div className="min-w-0 flex-1">
+          {account !== client.shown() && <AccountLabel />}
           <p className={`truncate text-sm leading-tight font-semibold ${status.cls}`}>
             {status.label}
           </p>
@@ -894,6 +920,7 @@ export function VoiceGrid({
   // A voice channel of the P2P server `p2pRoom`.
   p2pCh?: string
 }) {
+  const { rtc, files: p2p, store } = useAccount()
   useStore(s => s.rtcTick)
   useStore(s => s.members)
   useStore(s => s.memberInfo)
@@ -975,7 +1002,7 @@ export function VoiceGrid({
     : forDm?.state === 'ringing'
       ? forDm.dmUsers.find(u => u !== me?.username)
       : undefined
-  const state = useStore.getState()
+  const state = store.getState()
   const refFor = (u: string): UserRef =>
     forVoice
       ? p2pUser(u, u === self ? myP2pName || 'You' : memberName(forVoice.room, u))
@@ -1284,6 +1311,25 @@ export function VoiceGrid({
 }
 
 export function CallBanner() {
+  const sessions = useLiveSessions()
+  return (
+    <>
+      <CallOwner>
+        <VoiceAudio />
+      </CallOwner>
+      <div className="pointer-events-none fixed inset-x-0 top-app z-50 flex max-h-[calc(100dvh-var(--safe-top))] flex-col items-center gap-2 overflow-y-auto pt-3 pb-5 empty:hidden">
+        {sessions.map(account => (
+          <AccountProvider key={account.renderKey} session={account}>
+            <CallBannerBody />
+          </AccountProvider>
+        ))}
+      </div>
+    </>
+  )
+}
+
+function CallBannerBody() {
+  const account = useAccount()
   const call = useStore(s => s.call)
   const streamer = useStore(s => s.streamer)
   const me = useStore(s => s.me)
@@ -1292,104 +1338,102 @@ export function CallBanner() {
   const declineCall = useStore(s => s.declineCall)
   const hangupCall = useStore(s => s.hangupCall)
   const openDm = useStore(s => s.openDm)
-  useStore(s => s.dms)
+  const dms = useStore(s => s.dms)
   const ringing = call !== null && call.state === 'ringing' && me !== null
   const incoming = ringing && call.from !== me.username
-  const watching = view?.kind === 'dm' && view.dmId === call?.dmId
-  const banner = (() => {
-    if (!ringing || (!incoming && watching)) return null
-    const state = useStore.getState()
-    const other = userRefFor(state, call.dmUsers.find(u => u !== me.username) ?? me.username)
-    const p2pCall = call.kind === 'p2p'
-    const dm = state.dms.find(d => d.id === call.dmId)
-    const avatar = (size: number) => <RingAvatar user={other} size={size} streamer={streamer} />
-    if (!incoming)
-      return (
-        <div
-          role="status"
-          className="fixed top-[calc(var(--safe-top)+0.75rem)] left-1/2 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
-        >
-          <button
-            title="Go to call"
-            onClick={() => void openDm(call.dmId)}
-            className="flex min-w-0 items-center gap-3 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
-          >
-            {avatar(28)}
-            <span className="flex min-w-0 flex-col text-left">
-              <span className="flex min-w-0 items-center gap-1 text-sm">
-                Calling
-                <span className="streamer truncate font-medium">
-                  <NameWithUsername user={other} />
-                </span>
-                …
-              </span>
-              <CallType video={call.video} p2p={p2pCall} />
-            </span>
-          </button>
-          <button
-            title="Cancel call"
-            aria-label="Cancel call"
-            onClick={hangupCall}
-            className={`${ctlBase} h-9 w-9 bg-danger text-on-danger hover:brightness-110`}
-          >
-            <PhoneOff size={16} />
-          </button>
-        </div>
-      )
+  const shown = account === client.shown()
+  const watching = shown && view?.kind === 'dm' && view.dmId === call?.dmId
+  const other = useStore(s =>
+    call && me ? userRefFor(s, call.dmUsers.find(u => u !== me.username) ?? me.username) : null
+  )
+  if (!call) return account.isHome ? <ContactCallBanner /> : null
+  if (!ringing || !other || (!incoming && watching)) return null
+  const go = () => void openDm(call.dmId, shown ? 'push' : 'none')
+  const p2pCall = call.kind === 'p2p'
+  const dm = dms.find(d => d.id === call.dmId)
+  const avatar = (size: number) => <RingAvatar user={other} size={size} streamer={streamer} />
+  if (!incoming)
     return (
       <div
-        role="alertdialog"
-        aria-label="Incoming call"
-        className="fixed top-[calc(var(--safe-top)+0.75rem)] left-1/2 z-50 flex w-72 max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col items-center gap-3 rounded-3xl bg-surface-container-high px-5 pt-6 pb-5 text-center shadow-elevation-3 max-sm:flex-row max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-left"
+        role="status"
+        className="pointer-events-auto flex shrink-0 max-w-[calc(100vw-2rem)] items-center gap-3 rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
       >
-        <span className="max-sm:hidden">{avatar(72)}</span>
-        <span className="sm:hidden">{avatar(40)}</span>
-        <div className="flex min-w-0 flex-col items-center gap-0.5 max-sm:flex-1 max-sm:items-start">
-          <span className="streamer w-full truncate text-base font-semibold">
-            <NameWithUsername user={other} />
-          </span>
-          <CallType video={call.video} p2p={p2pCall} incoming />
-          <button
-            title="Go to DM"
-            onClick={() => void openDm(call.dmId)}
-            className="flex max-w-full min-w-0 items-center gap-1 rounded-sm text-xs text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
-          >
-            <MessageCircle size={12} aria-hidden className="shrink-0" />
-            <span className="shrink-0">DM with</span>
-            <span className="streamer truncate">
-              <NameWithUsername user={dm?.other ?? other} />
+        <button
+          title="Go to call"
+          onClick={go}
+          className="flex min-w-0 items-center gap-3 rounded-full outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary"
+        >
+          {avatar(28)}
+          <span className="flex min-w-0 flex-col text-left">
+            <span className="flex min-w-0 items-center gap-1 text-sm">
+              Calling
+              <span className="streamer truncate font-medium">
+                <NameWithUsername user={other} />
+              </span>
+              …
             </span>
-          </button>
-        </div>
-        <div className="flex shrink-0 items-center gap-4 max-sm:gap-2 sm:mt-1">
-          <button
-            title="Decline"
-            aria-label="Decline"
-            onClick={declineCall}
-            className={`${ctlBase} h-12 w-12 bg-danger text-on-danger hover:brightness-110 max-sm:h-11 max-sm:w-11`}
-          >
-            <PhoneOff size={20} />
-          </button>
-          <button
-            title="Accept"
-            aria-label="Accept"
-            onClick={() => {
-              void openDm(call.dmId)
-              void acceptCall()
-            }}
-            className={`${ctlBase} h-12 w-12 bg-status-green text-surface hover:brightness-110 max-sm:h-11 max-sm:w-11`}
-          >
-            <Phone size={20} />
-          </button>
-        </div>
+            {!shown && <AccountLabel />}
+            <CallType video={call.video} p2p={p2pCall} />
+          </span>
+        </button>
+        <button
+          title="Cancel call"
+          aria-label="Cancel call"
+          onClick={hangupCall}
+          className={`${ctlBase} h-9 w-9 bg-danger text-on-danger hover:brightness-110`}
+        >
+          <PhoneOff size={16} />
+        </button>
       </div>
     )
-  })()
   return (
-    <>
-      <VoiceAudio />
-      {banner ?? (call === null && <ContactCallBanner />)}
-    </>
+    <div
+      role="alertdialog"
+      aria-label="Incoming call"
+      className="pointer-events-auto flex shrink-0 w-72 max-w-[calc(100vw-2rem)] flex-col items-center gap-3 rounded-3xl bg-surface-container-high px-5 pt-6 pb-5 text-center shadow-elevation-3 max-sm:flex-row max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-left"
+    >
+      <span className="max-sm:hidden">{avatar(72)}</span>
+      <span className="sm:hidden">{avatar(40)}</span>
+      <div className="flex min-w-0 flex-col items-center gap-0.5 max-sm:flex-1 max-sm:items-start">
+        <span className="streamer w-full truncate text-base font-semibold">
+          <NameWithUsername user={other} />
+        </span>
+        {!shown && <AccountLabel />}
+        <CallType video={call.video} p2p={p2pCall} incoming />
+        <button
+          title="Go to DM"
+          onClick={go}
+          className="flex max-w-full min-w-0 items-center gap-1 rounded-sm text-xs text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+        >
+          <MessageCircle size={12} aria-hidden className="shrink-0" />
+          <span className="shrink-0">DM with</span>
+          <span className="streamer truncate">
+            <NameWithUsername user={dm?.other ?? other} />
+          </span>
+        </button>
+      </div>
+      <div className="flex shrink-0 items-center gap-4 max-sm:gap-2 sm:mt-1">
+        <button
+          title="Decline"
+          aria-label="Decline"
+          onClick={declineCall}
+          className={`${ctlBase} h-12 w-12 bg-danger text-on-danger hover:brightness-110 max-sm:h-11 max-sm:w-11`}
+        >
+          <PhoneOff size={20} />
+        </button>
+        <button
+          title="Accept"
+          aria-label="Accept"
+          onClick={() => {
+            go()
+            void acceptCall()
+          }}
+          className={`${ctlBase} h-12 w-12 bg-status-green text-surface hover:brightness-110 max-sm:h-11 max-sm:w-11`}
+        >
+          <Phone size={20} />
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -1424,6 +1468,7 @@ function RingAvatar({ user, size, streamer }: { user: UserRef; size: number; str
 // chip. A quiet call (the conversation is set to "Nothing" or muted) rings only in the
 // conversation itself.
 function ContactCallBanner() {
+  const shown = useAccount() === client.shown()
   const c = useP2p(s => s.call)
   const quiet = useP2p(s => s.callQuiet)
   const accepting = useP2p(s => s.callAccepting)
@@ -1433,7 +1478,7 @@ function ContactCallBanner() {
   const voice = useStore(s => s.voice)
   if (!c || c.state !== 'ringing' || voice) return null
   const incoming = c.dir === 'in'
-  if (incoming ? quiet : watching) return null
+  if (incoming ? quiet : shown && watching) return null
   const user = p2pUser(c.peer, name)
   const avatar = (size: number) => <RingAvatar user={user} size={size} streamer={streamer} />
   const go = () => {
@@ -1444,7 +1489,7 @@ function ContactCallBanner() {
     return (
       <div
         role="status"
-        className="fixed top-[calc(var(--safe-top)+0.75rem)] left-1/2 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
+        className="pointer-events-auto flex shrink-0 max-w-[calc(100vw-2rem)] items-center gap-3 rounded-full bg-surface-container-high py-1.5 pr-1.5 pl-2 shadow-elevation-3"
       >
         <button
           title="Go to call"
@@ -1478,7 +1523,7 @@ function ContactCallBanner() {
       role="alertdialog"
       aria-label="Incoming call"
       data-p2p-call-card
-      className="fixed top-[calc(var(--safe-top)+0.75rem)] left-1/2 z-50 flex w-72 max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col items-center gap-3 rounded-3xl bg-surface-container-high px-5 pt-6 pb-5 text-center shadow-elevation-3 max-sm:flex-row max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-left"
+      className="pointer-events-auto flex shrink-0 w-72 max-w-[calc(100vw-2rem)] flex-col items-center gap-3 rounded-3xl bg-surface-container-high px-5 pt-6 pb-5 text-center shadow-elevation-3 max-sm:flex-row max-sm:rounded-2xl max-sm:px-4 max-sm:py-3 max-sm:text-left"
     >
       <span className="max-sm:hidden">{avatar(72)}</span>
       <span className="sm:hidden">{avatar(40)}</span>

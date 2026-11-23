@@ -178,7 +178,7 @@ pub(super) async fn still_on(state: &AppState, kind: CallKind) -> Result<(), Ref
         Ok(()) => Ok(()),
         Err(refusal) => {
             end_switched_off(state).await;
-            Err(refusal)
+            Err(Refused::AfterJoin(Box::new(refusal)))
         }
     }
 }
@@ -231,6 +231,7 @@ pub(super) async fn voice_msg(
             Ok(())
         }
         ClientMsg::CallStart {
+            attempt_id: _,
             dm_id,
             p2p,
             video,
@@ -293,6 +294,7 @@ pub(super) async fn voice_msg(
             }
         }
         ClientMsg::CallAccept {
+            attempt_id: _,
             dm_id,
             peer_id,
             relays,

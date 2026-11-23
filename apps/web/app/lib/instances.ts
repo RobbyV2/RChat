@@ -327,9 +327,10 @@ export class InstanceConnection {
   constructor(
     private ends: Endpoints,
     info: InstanceInfo | null = null,
-    public isDefault = false
+    public isDefault = false,
+    readonly isHome = false
   ) {
-    this.api = createApi(ends.api)
+    this.api = createApi(ends.api, isHome ? 'same-origin' : 'omit')
     this.info = info
     this.ws = new WsClient(this.pinned)
   }
@@ -547,8 +548,8 @@ function initialHome() {
   const origin = savedHome(defaults.origin)
   const info = readKnown()[origin] ?? null
   return origin === defaults.origin
-    ? new InstanceConnection(defaults, info, true)
-    : new InstanceConnection(endpointsFrom(origin, info), info, false)
+    ? new InstanceConnection(defaults, info, true, true)
+    : new InstanceConnection(endpointsFrom(origin, info), info, false, true)
 }
 
 export const registry = new InstanceRegistry(initialHome(), defaultEndpoints)

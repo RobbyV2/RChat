@@ -1,4 +1,4 @@
-import { api, home, sessionStore } from './instances'
+import { home, sessionStore, type InstanceConnection } from './instances'
 import type { IceServers, InstanceIce } from './types'
 
 // The only source of ICE servers. Without it, PeerJS uses its own public STUN and TURN servers,
@@ -183,6 +183,13 @@ export class IceCache {
     this.gen++
     this.cancel()
     this.signedIn = false
+    this.list = []
+    this.expires = 0
+  }
+
+  dispose() {
+    this.stop()
+    this.listeners.clear()
   }
 }
 
@@ -231,12 +238,17 @@ const forcedPolicy = (): RTCIceTransportPolicy | null => {
   }
 }
 
-export const ice = new IceCache({
-  info: () => home.info?.ice,
-  fetch: () => api.p2pIce(),
-  now: () => Date.now(),
-})
-ice.policy = forcedPolicy()
+export function createIceCache(conn: InstanceConnection) {
+  const cache = new IceCache({
+    info: () => conn.info?.ice,
+    fetch: () => conn.api.p2pIce(),
+    now: () => Date.now(),
+  })
+  cache.policy = forcedPolicy()
+  return cache
+}
+
+export const ice = createIceCache(home)
 
 export const iceServers = (): RTCIceServer[] => ice.servers()
 

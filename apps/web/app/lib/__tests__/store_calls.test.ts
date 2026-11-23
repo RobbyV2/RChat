@@ -84,10 +84,21 @@ describe('call type on the wire', () => {
 
   test('server and direct calls say whether they start with video', async () => {
     await st().startCall(5, true)
-    useStore.setState({ call: null })
+    st().hangupCall()
+    for (const state of ['ringing', 'ended'] as const)
+      dispatch({
+        type: 'call_state',
+        dm_id: 5,
+        dm_users: ['alice', 'bob'],
+        from: 'alice',
+        kind: 'rtc',
+        state,
+        video: true,
+      })
     await st().startP2pCall(5, false)
-    expect(sent).toEqual([
+    expect(sent).toMatchObject([
       { type: 'call_start', dm_id: 5, video: true },
+      { type: 'call_leave', dm_id: 5 },
       { type: 'call_start', dm_id: 5, p2p: true, video: false, peer_id: 'alice-tab' },
     ])
   })

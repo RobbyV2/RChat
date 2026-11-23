@@ -1,7 +1,10 @@
 'use client'
 
-import { useId, useState, type FormEvent } from 'react'
+import { useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
 import { X } from 'lucide-react'
+import { client } from '../lib/client/client'
+import { useAccount } from '../lib/client/react'
+import { AccountLabel } from './instance_badge'
 import { useStore } from '../lib/store'
 import {
   AUTO,
@@ -16,7 +19,16 @@ import {
   type RelayPrefs,
 } from '../lib/relays'
 import { SettingSwitch } from './settings_fields'
-import { Dialog, FieldError, fieldCls, filledBtn, iconBtn, sectionCls, textBtn } from './ui'
+import {
+  CloseButton,
+  useBackdrop,
+  FieldError,
+  fieldCls,
+  filledBtn,
+  iconBtn,
+  sectionCls,
+  textBtn,
+} from './ui'
 
 const relayLabel = (url: string) => displayHost(hostOf(url) ?? url)
 
@@ -241,22 +253,61 @@ export function RelaySection() {
 // Asks before connecting through another side's relay this device doesn't know.
 export function RelayPrompt() {
   const host = useStore(s => s.relayPrompt)
+  return host === null ? null : <RelayConsent key={host} host={host} />
+}
+
+function RelayConsent({ host }: { host: string }) {
+  const owner = useAccount()
   const answer = useStore(s => s.answerRelayPrompt)
-  if (host === null) return null
+  const deny = () => answer('deny')
+  const backdrop = useBackdrop(deny)
+  const dialog = useRef<HTMLDialogElement>(null)
+  const denyButton = useRef<HTMLButtonElement>(null)
+  const title = useId()
+  useLayoutEffect(() => {
+    const element = dialog.current!
+    const opener = document.activeElement
+    element.showModal()
+    denyButton.current?.focus()
+    return () => {
+      element.close()
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true })
+    }
+  }, [])
   return (
-    <Dialog title="Unknown relay" onClose={() => answer('deny')} layer="confirm" compact>
-      <p className="text-sm break-words text-on-surface-variant">{promptText(host)}</p>
-      <div className="mt-5 flex flex-wrap justify-end gap-2">
-        <button type="button" onClick={() => answer('deny')} className={textBtn}>
-          Deny
-        </button>
-        <button type="button" onClick={() => answer('once')} className={textBtn}>
-          Allow once
-        </button>
-        <button type="button" onClick={() => answer('always')} className={filledBtn}>
-          Always allow
-        </button>
+    <dialog
+      ref={dialog}
+      aria-labelledby={title}
+      aria-modal="true"
+      onCancel={event => {
+        event.preventDefault()
+        deny()
+      }}
+      onKeyDown={event => event.stopPropagation()}
+      className="fixed inset-0 m-auto max-h-[85dvh] w-[min(24rem,calc(100%-2rem))] rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 backdrop:bg-scrim/60"
+      {...backdrop}
+    >
+      <div className="p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 id={title} className="text-lg font-medium">
+            Unknown relay
+          </h2>
+          <CloseButton onClick={deny} compact />
+        </div>
+        {owner !== client.shown() && <AccountLabel />}
+        <p className="text-sm break-words text-on-surface-variant">{promptText(host)}</p>
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button ref={denyButton} type="button" onClick={deny} className={textBtn}>
+            Deny
+          </button>
+          <button type="button" onClick={() => answer('once')} className={textBtn}>
+            Allow once
+          </button>
+          <button type="button" onClick={() => answer('always')} className={filledBtn}>
+            Always allow
+          </button>
+        </div>
       </div>
-    </Dialog>
+    </dialog>
   )
 }

@@ -6,9 +6,7 @@ import { useStore } from './client/react'
 export { useStore }
 import { defaultViewing, channelTarget, cleanupRemoval, eventRoom } from './viewing'
 import { sourceAccess } from './forward_viewing'
-import { p2p } from './p2p'
 import { useP2p } from './p2p/app/store'
-import { relayBook } from './relays'
 import { home, homeLookup } from './instances'
 import { NO_PINGS } from './pings'
 import { NO_GROUP_PINGS } from './group_pings'
@@ -67,6 +65,7 @@ export const IGNORED = [
 type Ignored = (typeof IGNORED)[number]
 
 export function createChatStore(acct: AccountSession) {
+  const { files: p2p, relays: relayBook } = acct
   const home = acct.conn
   const { canView, instanceTarget, useViewing } = acct.viewing
   let routed: readonly Handlers[] = []
@@ -77,7 +76,7 @@ export function createChatStore(acct: AccountSession) {
   let forgetChannelViews: (keys: string[]) => void = () => {}
 
   let sessionHub!: ReturnType<typeof sessionSlice>
-  let bindMedia!: () => () => void
+  let bindRtcMedia!: () => () => void
   let unbindMedia: (() => void) | undefined
   const chatStore = createStore<RChatState>()((set, get) => {
     const { confirmDeleteMessage, noteMemberTimeouts, noteTimeout } = menuActions(
@@ -136,7 +135,7 @@ export function createChatStore(acct: AccountSession) {
     })
 
     const rtcHub = rtcSlice(set, get, { acct, act, fail, saveCallRoute })
-    bindMedia = rtcHub.bindMedia
+    bindRtcMedia = rtcHub.bindMedia
     const { applyMic, endRtc, endVoiceMedia, joins } = rtcHub
 
     const readsHub = readsSlice(set, get, {
@@ -286,6 +285,8 @@ export function createChatStore(acct: AccountSession) {
       dropLinkCards,
       dropServer,
       endRtc,
+      resetCallEvents: rtcHub.resetCallEvents,
+      recoverCallHistory: rtcHub.recoverCallHistory,
       ensureMembership,
       fail,
       fetchPage,
@@ -623,10 +624,10 @@ export function createChatStore(acct: AccountSession) {
     eventTables,
     resetSessionCaches,
     tapWs: sessionHub.tapWs,
-    bindHomeMedia() {
+    bindMedia() {
       if (unbindMedia) return
-      const offRtc = bindMedia()
-      const offSession = sessionHub.bindHomeMedia()
+      const offRtc = bindRtcMedia()
+      const offSession = sessionHub.bindSessionMedia()
       unbindMedia = () => {
         offSession()
         offRtc()
@@ -642,6 +643,7 @@ export function createChatStore(acct: AccountSession) {
       sessionHub.dispose()
       sessionHub.forgetSession()
       home.ws.stop()
+      acct.disposeSideStores()
     },
   })
 }
@@ -651,7 +653,6 @@ export const getHomeSession = (() => {
   return () => {
     if (!session) {
       session = new AccountSession(home, defaultViewing, homeLookup)
-      session.store.bindHomeMedia()
     }
     return session
   }

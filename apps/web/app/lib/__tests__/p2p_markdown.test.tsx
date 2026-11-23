@@ -2,13 +2,15 @@ import { beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
 import { MarkdownMessage } from '../../components/markdown_message'
+import { AccountProvider } from '../client/react'
 import { api } from '../instances'
+import { testAccount } from './test_account'
 import type { Message } from '../types'
 
 // In a P2P conversation nothing loads by itself: images from the instance (or anywhere) are
 // links, and instance embeds and previews are never shown.
 
-const ORIGIN = 'http://localhost:3510'
+const ORIGIN = api.origin()
 
 // The window only exists while an instance message renders: P2P messages must not need it.
 const withWindow = <T,>(fn: () => T): T => {
@@ -80,8 +82,9 @@ describe('P2P messages fetch nothing', () => {
   const text = `![pixel](${ORIGIN}/api/media/7) and ![rel](/api/media/8) https://example.com/a`
 
   test('instance messages show same-origin images', () => {
-    const html = render(text, false)
+    const html = render(text + ' ![asset](/asset.png)', false)
     expect(html).toContain(`<img src="${ORIGIN}/api/media/7"`)
+    expect(html).toContain('<img src="/asset.png"')
     expect(html).toContain('/messages/1/embeds/0/image?v=0123456789abcdef')
   })
 
@@ -93,4 +96,42 @@ describe('P2P messages fetch nothing', () => {
     expect(html).toContain('>pixel</a>')
     expect(html).toContain('>rel</a>')
   })
+})
+
+describe('inline images follow the account rendering the message', () => {
+  for (const origin of [ORIGIN, 'https://secondary.test']) {
+    test(`secondary on ${origin} only previews its own uploaded media`, () => {
+      const owner = testAccount('reader', origin)
+      try {
+        const renderImage = (src: string) =>
+          withWindow(() =>
+            renderToStaticMarkup(
+              <AccountProvider session={owner}>
+                <MarkdownMessage message={{ ...message(`![photo](${src})`), embeds: [] }} />
+              </AccountProvider>
+            )
+          )
+        for (const src of ['/api/media/7', 'api/media/7', `${origin}/api/v1/media/7`]) {
+          const html = renderImage(src)
+          expect(html).toContain('animate-pulse')
+          expect(html).not.toContain('<img')
+        }
+        for (const src of [
+          '/api/media/7?private',
+          '/api/media/7/other',
+          '/api/media/%FF',
+          '/api/messages/1/embeds/0/image',
+          `${ORIGIN}/private/image.png`,
+          ...(origin === ORIGIN ? [] : [`${ORIGIN}/api/media/7`]),
+        ]) {
+          const html = renderImage(src)
+          expect(html).toContain(`href="${new URL(src, origin).href}"`)
+          expect(html).not.toContain('animate-pulse')
+          expect(html).not.toContain('<img')
+        }
+      } finally {
+        owner.store.dispose()
+      }
+    })
+  }
 })

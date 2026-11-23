@@ -49,12 +49,11 @@ import { mentionsUser } from '../mentions'
 import { type Layout, noteSelfPin, unpinDm as unpinIn } from '../nav_layout'
 import type { AlertInput } from '../notices'
 import { messageAlert, scopeOfKey } from '../notify'
-import { newP2pId, p2p } from '../p2p'
+import { newP2pId } from '../p2p'
 import { unlinkPin, withPinnedAt, withoutPin } from '../pins'
 import { mergePoll } from '../polls'
 import { canAddEmoji, emojiBase, reacted, reactorKey, withReaction } from '../reactions'
 import { ownRead } from '../reads'
-import { relayBook } from '../relays'
 import {
   type Replying,
   editedQuote,
@@ -253,6 +252,7 @@ export const dropDeletedIn = (
 export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) => {
   const { acct } = deps
   const { canView, instanceTarget, requestViewing } = acct.viewing
+  const { files: p2p, relays: relayBook } = acct
   const home = acct.conn
   const api = acct.api
   const { inSession, live, sessionMark } = acct.lifetime

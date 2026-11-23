@@ -201,7 +201,7 @@ impl Seat<'_> {
             if !joining && matches!(e, Refused::NoSharedVoice) {
                 return true;
             }
-            send(socket, e.frame(), self.state.limits.ws_send_timeout()).await;
+            send(socket, e.frame(None), self.state.limits.ws_send_timeout()).await;
             return false;
         }
         self.active |= joining;

@@ -1,3 +1,5 @@
+import { client } from '../../client/client'
+import type { AccountSession } from '../../client/session'
 import { api, home, homeLabel, homeLookup, sessionStore, shareOrigin } from '../../instances'
 import { probeAddress } from '../../ice'
 import { keepAsker } from '../keep'
@@ -12,7 +14,7 @@ import { pausesHidden } from '../../platform'
 import { TabLeader, webLeaderDeps } from '../leader'
 import { P2pNode, squatted, type Visibility } from '../node'
 import { PeerTransport } from '../transport'
-import { hidesIp, relayBook } from '../../relays'
+import { hidesIp } from '../../relays'
 import { Calls, type PendingCall } from '../calls'
 import { RELAY_DENIED_TEXT } from '../voice'
 import { Servers } from '../server'
@@ -306,6 +308,7 @@ export const run = (username: string, create: string | null) => {
 export const startDeps = (username: string, lim: Readonly<Local> = limitsFor(username)) => {
   const rt = runtimeLimits(lim)
   return {
+    account: p2pHost.account ?? client.shown(),
     limits: lim,
     transport: rt.transport,
     calls: rt.calls,
@@ -346,6 +349,11 @@ export const startParts = (deps: StartDeps, s: P2pStore, n: P2pNode) => {
     onWrite: pingLogged,
     limits: deps.inbox,
   })
+  const { account } = deps
+  const claim = (kind: 'p2p-voice' | 'p2p-call', leave: () => void, valid: () => boolean) =>
+    client.calls.request({ account, identity: n.ik, kind }, leave, () => node === n && valid())
+  sv.voice.consent = (hosts, ik) => account.relays.consent(hosts, ik)
+  sv.voice.claim = (leave, valid) => claim('p2p-voice', leave, valid)
   const calls = new Calls({
     me: () => n.ik,
     sessions: ik => n.readySessions(ik),
@@ -353,21 +361,18 @@ export const startParts = (deps: StartDeps, s: P2pStore, n: P2pNode) => {
     roomOf: ik => dmRoomId(n.ik, ik),
     name: ik => contactName(ik),
     media: callRtc,
-    plan: choice => relayBook.check(choice ?? relayBook.prefs.choice),
+    plan: choice => account.relays.check(choice ?? account.relays.prefs.choice),
     hidesIp,
-    consent: hosts => relayBook.consent(hosts),
+    consent: hosts => account.relays.consent(hosts),
     log: async (room, call) => {
       if (await s.room(room)) await d.logCall(room, call)
     },
     missed: (room, m) => void noteMissed(s, room, m).catch(() => {}),
-    busy: () => p2pHost.inCall() || sv.voice.current() !== null,
-    muted: () => p2pHost.muted(),
+    busy: () => client.calls.current() !== null,
+    muted: () => account.store.getState().selfAudio.muted,
     save: p => void s.setMeta(PENDING_CALL, p).catch(() => {}),
     notice: text => p2pHost.toast(text),
-    leaveOthers: () => {
-      p2pHost.leaveInstanceCalls()
-      sv.voice.leave()
-    },
+    claim: (leave, valid) => claim('p2p-call', leave, valid),
     limits: deps.calls,
   })
   const badges = new Badges({
@@ -439,7 +444,6 @@ export const boot = async (
     put.dms(d)
     put.servers(sv)
     sv.voice.media = callRtc
-    sv.voice.consent = (hosts, ik) => relayBook.consent(hosts, ik)
     sv.voice.denied = ik => {
       const at = sv.voice.current()
       p2pHost.toast(RELAY_DENIED_TEXT, at ? memberName(at.room, ik) : 'a member')
@@ -509,7 +513,7 @@ export const boot = async (
     await n.start()
     k.start()
     void d.blobs.resume().catch(() => {})
-    void checkAddress(n).catch(() => {})
+    void checkAddress(n, deps.account).catch(() => {})
     void keep(storageManager())
   } catch {
     if (live())
@@ -518,15 +522,16 @@ export const boot = async (
 }
 
 // Relay only hides the address on purpose, and connects through the relay.
-const checkAddress = async (n: P2pNode) => {
-  const { iceServers, iceTransportPolicy } = relayBook.autoConfig()
+const checkAddress = async (n: P2pNode, account: AccountSession) => {
+  const { iceServers, iceTransportPolicy } = account.relays.autoConfig()
   if (iceTransportPolicy === 'relay') return
   const seen = await probeAddress({ iceServers })
   if (node === n) useP2p.setState({ addressHidden: seen === 'hidden' })
 }
 
 // Called on every sign in and out (null): one node per account, none for guests.
-export const p2pAccount = async (username: string | null) => {
+export const p2pAccount = async (username: string | null, account?: AccountSession) => {
+  if (account) p2pHost.account = account
   const cur = useP2p.getState()
   if (username !== null && cur.account === username && (node || leader || cur.loading)) return
   put.gen(gen + 1)

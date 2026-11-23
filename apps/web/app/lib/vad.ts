@@ -56,6 +56,13 @@ export class SpeakingDetector {
     this.stop()
   }
 
+  dispose() {
+    this.clear()
+    const ctx = this.ctx
+    this.ctx = null
+    if (ctx && ctx.state !== 'closed') void ctx.close().catch(() => {})
+  }
+
   private release(w: Watched) {
     w.source.disconnect()
     w.sink.pause()

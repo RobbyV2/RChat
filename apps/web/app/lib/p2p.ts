@@ -1,14 +1,15 @@
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs'
 import { backoffDelay } from './backoff'
 import { fromBase64, fromBase64Url, randomHex, toBase64 } from './bytes'
-import { home, readLocal, writeLocal } from './instances'
-import { ice } from './ice'
+import { home, readLocal, writeLocal, type InstanceConnection } from './instances'
+import { ice, type IceCache } from './ice'
 import {
   AUTO,
   DENIED_DOWNLOAD,
   failedText,
   hidesIp,
   relayBook,
+  type RelayBook,
   type RelayChoice,
   type Resolved,
   unknownHosts,
@@ -190,35 +191,7 @@ export interface Preview {
   kind: PreviewKind
 }
 
-const previews = new Map<number, Preview>()
 const PREVIEWS_MAX = 32
-
-export const previewUrl = (messageId: number) => {
-  const p = previews.get(messageId)
-  if (p === undefined) return null
-  previews.delete(messageId)
-  previews.set(messageId, p)
-  return p
-}
-
-export const keepPreview = (messageId: number, p: Preview) => {
-  const old = previews.get(messageId)
-  if (old !== undefined && old.url !== p.url) URL.revokeObjectURL(old.url)
-  previews.delete(messageId)
-  previews.set(messageId, p)
-  for (const [key, stale] of previews) {
-    if (previews.size <= PREVIEWS_MAX) break
-    previews.delete(key)
-    URL.revokeObjectURL(stale.url)
-  }
-}
-
-const dropPreview = (messageId: number) => {
-  const p = previews.get(messageId)
-  if (p === undefined) return
-  previews.delete(messageId)
-  URL.revokeObjectURL(p.url)
-}
 
 // Where a downloaded copy is kept: ids are 32 hex characters and hashes 64, so the hoster,
 // last, keeps keys of different files apart.
@@ -421,12 +394,38 @@ const refuseOffer = (peer: Peer, to: string, connectionId: string, reason: strin
   p.socket?.send?.({ type: 'OFFER', dst: to, payload: { type: REFUSED, connectionId, reason } })
 }
 
-const dropPreviews = () => {
-  for (const p of previews.values()) URL.revokeObjectURL(p.url)
-  previews.clear()
-}
-
 export class P2pManager {
+  private previews = new Map<number, Preview>()
+
+  previewUrl(messageId: number) {
+    const p = this.previews.get(messageId)
+    if (p === undefined) return null
+    this.previews.delete(messageId)
+    this.previews.set(messageId, p)
+    return p
+  }
+
+  keepPreview(messageId: number, p: Preview) {
+    const old = this.previews.get(messageId)
+    if (old !== undefined && old.url !== p.url) URL.revokeObjectURL(old.url)
+    this.previews.delete(messageId)
+    this.previews.set(messageId, p)
+    for (const [key, stale] of this.previews) {
+      if (this.previews.size <= PREVIEWS_MAX) break
+      this.previews.delete(key)
+      URL.revokeObjectURL(stale.url)
+    }
+  }
+
+  private dropPreview(messageId: number) {
+    const p = this.previews.get(messageId)
+    if (p === undefined) return
+    this.previews.delete(messageId)
+    URL.revokeObjectURL(p.url)
+  }
+
+  private epoch = 0
+  private pendingTransfers = new Set<() => void>()
   private peer: Peer | null = null
   private retry: ReturnType<typeof setTimeout> | null = null
   private iceWatch: (() => void) | null = null
@@ -506,7 +505,13 @@ export class P2pManager {
   onChange: () => void = () => {}
   onError: (message: string) => void = () => {}
 
-  constructor() {
+  constructor()
+  constructor(conn: InstanceConnection, iceCache: IceCache, relays: RelayBook)
+  constructor(
+    private conn: InstanceConnection = home,
+    private iceCache = ice,
+    private relays = relayBook
+  ) {
     this.detector.onSpeak = (id, speaking) => {
       if (id === 'local') this.localSpeaking = speaking
       else this.remoteSpeaking = speaking
@@ -518,14 +523,16 @@ export class P2pManager {
   // out with null) disconnects from the broker and forgets the previous account's state. The
   // peer id is new for each session and is never stored.
   setAccount(username: string | null) {
-    const next = username === null ? null : home.scoped(username)
+    const next = username === null ? null : this.conn.scoped(username)
     if (next === this.account) return
+    const purging = this.purgeTimer !== null
     this.disconnect()
     this.account = next
     this.user = username
     if (next !== null) {
-      writeLocal(LEGACY_ID, null)
+      if (this.conn.isHome) writeLocal(LEGACY_ID, null)
       writeLocal(this.key('rchat_peer_id'), null)
+      if (purging) this.ensurePurge()
     }
   }
 
@@ -538,18 +545,43 @@ export class P2pManager {
         .catch(() => {})
       writeLocal(this.key('rchat_p2p_got'), null)
     }
-    dropPreviews()
     this.disconnect()
     this.account = null
     this.user = null
   }
 
+  dispose() {
+    this.onChange = () => {}
+    this.onError = () => {}
+    this.disconnect()
+    this.detector.dispose()
+    this.account = null
+    this.user = null
+  }
+
   private disconnect() {
+    this.epoch++
+    this.iceWatch?.()
+    this.iceWatch = null
+    this.relayWatch?.()
+    this.relayWatch = null
+    if (this.purgeTimer !== null) clearInterval(this.purgeTimer)
+    this.purgeTimer = null
+    for (const p of this.previews.values()) URL.revokeObjectURL(p.url)
+    this.previews.clear()
+    for (const cancel of this.pendingTransfers) cancel()
+    this.pendingTransfers.clear()
+    this.holdingBy.clear()
+    this.holding = 0
+    this.offers.clear()
+    this.attempt = 0
+
     this.endMedia()
     if (this.retry) clearTimeout(this.retry)
     this.retry = null
-    this.peer?.destroy()
+    const former = this.peer
     this.peer = null
+    former?.destroy()
     this.cached = null
     this.legacy = null
     this.got = null
@@ -608,6 +640,7 @@ export class P2pManager {
 
   // Files kept by versions before per-account storage, until the server says whose they are.
   private legacyFiles(): Record<string, StoredFile> {
+    if (!this.conn.isHome) return {}
     this.legacy ??= readJson<StoredFile>(LEGACY_FILES)
     return this.legacy
   }
@@ -669,11 +702,14 @@ export class P2pManager {
   ) {
     const full = new Error('Browser storage is full; P2P file could not be kept')
     if (this.account === null) throw new Error('Sign in to share P2P files')
+    const epoch = this.epoch
     try {
-      await blobs().put(this.hostKey(id), file)
+      await blobs().put(this.hostKey(id), file, () => this.epoch === epoch)
     } catch {
+      if (epoch !== this.epoch) throw new Error(CANCELED)
       throw full
     }
+    if (epoch !== this.epoch) throw new Error(CANCELED)
     const files = { ...this.fresh() }
     files[id] = {
       name: file.name,
@@ -724,7 +760,7 @@ export class P2pManager {
       this.drop(files, gone)
       this.announce()
     }
-    dropPreview(messageId)
+    this.dropPreview(messageId)
     const got = this.received()
     for (const [key, r] of Object.entries(got))
       if (r.message_id === messageId) this.dropReceived(key)
@@ -782,18 +818,18 @@ export class P2pManager {
     const legacy = { ...this.legacyFiles() }
     const mine = checked.filter(id => Object.hasOwn(legacy, id) && alive.has(id))
     let adopted = 0
-    const owner: string = this.account
+    const epoch = this.epoch
     for (const id of mine) {
       const f = legacy[id]
       try {
         const blob =
           f.data !== undefined ? base64ToBlob(f.data, NEUTRAL_TYPE) : await blobs().get(id)
-        if (!blob || this.account !== owner) return
-        await blobs().put(this.hostKey(id), blob)
+        if (!blob || this.epoch !== epoch) return
+        await blobs().put(this.hostKey(id), blob, () => this.epoch === epoch)
       } catch {
         continue
       }
-      if (this.account !== owner) return
+      if (this.epoch !== epoch) return
       const next = { ...this.fresh() }
       next[id] = { name: f.name, mime: f.mime, size: f.size, expires_at: f.expires_at }
       this.save(next)
@@ -821,7 +857,7 @@ export class P2pManager {
       Object.entries(this.files()),
       Object.keys(this.legacyFiles()),
       id => {
-        const plan = relayBook.resolve(this.file(id)?.relay ?? AUTO)
+        const plan = this.relays.resolve(this.file(id)?.relay ?? AUTO)
         return plan.ok ? plan.declared : []
       }
     )
@@ -829,7 +865,7 @@ export class P2pManager {
     this.watchRelays()
     if (msg.ids.length) this.ensurePeer()
     this.announced = msg.ids.length > 0
-    home.ws.sendVoice(msg)
+    this.conn.ws.sendVoice(msg)
   }
 
   // The server's key for checking download tokens, sent in answer to an announce.
@@ -896,7 +932,9 @@ export class P2pManager {
     }, GRANT_MS)
     this.grants.set(messageId, { done, resolve, reject, timer })
     this.ensurePeer(true)
-    if (!home.ws.sendVoice({ type: 'p2p_peer', message_id: messageId, peer_id: this.peerId() })) {
+    if (
+      !this.conn.ws.sendVoice({ type: 'p2p_peer', message_id: messageId, peer_id: this.peerId() })
+    ) {
       clearTimeout(timer)
       this.grants.delete(messageId)
       reject(new Error('Not connected'))
@@ -939,28 +977,29 @@ export class P2pManager {
       cur.reconnect()
       return cur
     }
-    const peer = new Peer(this.peerId(), { ...home.peer(), config: relayBook.autoConfig() })
+    const peer = new Peer(this.peerId(), { ...this.conn.peer(), config: this.relays.autoConfig() })
     this.wire(peer)
     return peer
   }
 
   private wire(peer: Peer) {
     this.hookOffers(peer)
-    this.iceWatch ??= ice.onChange(() => {
-      if (this.peer && !this.peer.destroyed) this.peer.options.config = relayBook.autoConfig()
+    this.iceWatch ??= this.iceCache.onChange(() => {
+      if (this.peer && !this.peer.destroyed) this.peer.options.config = this.relays.autoConfig()
     })
     this.watchRelays()
     peer.on('open', () => {
-      this.attempt = 0
+      if (this.peer === peer) this.attempt = 0
     })
     peer.on('connection', conn => {
+      if (this.peer !== peer) return conn.close()
       const offer = this.takeOffer(conn)
       if (offer.intent.kind === 'call') this.incomingControl(conn)
       else if (offer.intent.kind === 'bad') conn.close()
       else this.serve(conn, offer)
     })
     peer.on('call', call =>
-      intentOf('media', undefined, call.metadata).kind === 'call'
+      this.peer === peer && intentOf('media', undefined, call.metadata).kind === 'call'
         ? this.incomingMedia(call)
         : call.close()
     )
@@ -968,6 +1007,7 @@ export class P2pManager {
       if (this.peer === peer) this.retryLater()
     })
     peer.on('error', err => {
+      if (this.peer !== peer) return
       if (err.type === 'unavailable-id') this.taken(peer)
       else console.error('peer', err)
     })
@@ -976,8 +1016,8 @@ export class P2pManager {
 
   // Relay edits change the broker's default config and what hosted files declare.
   private watchRelays() {
-    this.relayWatch ??= relayBook.onChange(() => {
-      if (this.peer && !this.peer.destroyed) this.peer.options.config = relayBook.autoConfig()
+    this.relayWatch ??= this.relays.onChange(() => {
+      if (this.peer && !this.peer.destroyed) this.peer.options.config = this.relays.autoConfig()
       if (this.announced) this.announce()
     })
   }
@@ -990,9 +1030,11 @@ export class P2pManager {
   // relay are never served (see serve).
   private hookOffers(peer: Peer) {
     const p = peer as Hooked
+    const epoch = this.epoch
     const handle = p._handleMessage
     if (typeof handle !== 'function') return
     p._handleMessage = (msg: unknown) => {
+      if (this.epoch !== epoch) return
       const m = msg as BrokerMsg | null
       if (m?.type !== 'OFFER') return handle.call(peer, msg)
       const payload = m.payload ?? {}
@@ -1018,13 +1060,22 @@ export class P2pManager {
       this.holding += 1
       this.holdingBy.set(src, mine + 1)
       let timer: ReturnType<typeof setTimeout> | undefined
+      let cancel!: () => void
       const late = new Promise<'busy'>(resolve => {
-        timer = setTimeout(() => resolve('busy'), this.heldMs)
+        cancel = () => resolve('busy')
+        timer = setTimeout(cancel, this.heldMs)
       })
+      this.pendingTransfers.add(cancel)
       void Promise.race([gate.catch(() => 'missing' as const), late])
-        .then(refused => (refused === null ? admit() : refuseOffer(peer, src, cid, refused)))
+        .then(refused => {
+          if (epoch !== this.epoch) return
+          if (refused === null) admit()
+          else refuseOffer(peer, src, cid, refused)
+        })
         .finally(() => {
           clearTimeout(timer)
+          this.pendingTransfers.delete(cancel)
+          if (epoch !== this.epoch) return
           this.holding -= 1
           const left = (this.holdingBy.get(src) ?? 1) - 1
           if (left > 0) this.holdingBy.set(src, left)
@@ -1038,31 +1089,32 @@ export class P2pManager {
   private offerGate(intent: Intent, from: string): Promise<'relay' | 'missing' | null> | null {
     if (intent.kind !== 'file') return null
     const relay = this.file(intent.id)?.relay
-    const plan = relayBook.resolve(relay ?? AUTO)
+    const plan = this.relays.resolve(relay ?? AUTO)
     const ask =
       !hidesIp(plan) &&
-      relayBook.prefs.ask &&
-      unknownHosts(intent.relays, relayBook.known()).length > 0
+      this.relays.prefs.ask &&
+      unknownHosts(intent.relays, this.relays.known()).length > 0
     if (relay === undefined && !ask) return null
+    const epoch = this.epoch
     return this.tokenUser(intent.token, intent.id, from).then(async user => {
-      if (user === null) return 'missing'
+      if (epoch !== this.epoch || user === null) return 'missing'
       if (!ask) return null
-      return (await relayBook.consent(intent.relays, `user:${user}`)) === null ? null : 'relay'
+      return (await this.relays.consent(intent.relays, `user:${user}`)) === null ? null : 'relay'
     })
   }
 
   private offerPlan(intent: Intent): { config: RTCConfiguration; pinned: string | null } {
     switch (intent.kind) {
       case 'call':
-        return { config: this.callIce?.config ?? relayBook.autoConfig(), pinned: null }
+        return { config: this.callIce?.config ?? this.relays.autoConfig(), pinned: null }
       case 'bad':
         return { config: NO_PATH, pinned: null }
       case 'auto':
-        return { config: relayBook.autoConfig(), pinned: null }
+        return { config: this.relays.autoConfig(), pinned: null }
       case 'file': {
         const relay = this.file(intent.id)?.relay
-        if (relay === undefined) return { config: relayBook.autoConfig(), pinned: null }
-        const r = relayBook.resolve(relay)
+        if (relay === undefined) return { config: this.relays.autoConfig(), pinned: null }
+        const r = this.relays.resolve(relay)
         return r.ok ? { config: r.config, pinned: intent.id } : { config: NO_PATH, pinned: null }
       }
     }
@@ -1125,6 +1177,7 @@ export class P2pManager {
   // gives its slot back.
   private serve(conn: DataConnection, offer: Offer = this.takeOffer(conn)) {
     const from = String(conn.peer)
+    const epoch = this.epoch
     let peer = from
     let answered = false
     let held = false
@@ -1136,13 +1189,18 @@ export class P2pManager {
       if (n > 0) this.servingBy.set(peer, n)
       else this.servingBy.delete(peer)
     }
-    const quiet = setTimeout(() => {
-      if (!answered) conn.close()
-    }, ASK_MS)
-    conn.on('close', () => {
-      clearTimeout(quiet)
+    let timer = setTimeout(() => conn.close(), ASK_MS)
+    const closed = () => {
+      clearTimeout(timer)
+      this.pendingTransfers.delete(cancel)
       release()
-    })
+    }
+    const cancel = () => {
+      closed()
+      conn.close()
+    }
+    this.pendingTransfers.add(cancel)
+    conn.on('close', closed)
     // Bytes the downloader stored, or null when it doesn't send acks.
     const flow: { acked: number | null } = { acked: null }
     conn.on('data', d => {
@@ -1154,12 +1212,13 @@ export class P2pManager {
       if (answered || msg?.type !== 'get' || typeof msg.id !== 'string') return
       answered = true
       if (msg.acks === true) flow.acked = 0
-      clearTimeout(quiet)
+      clearTimeout(timer)
       const id = msg.id
       void this.tokenUser(msg.token, id, from).then(user => {
+        if (epoch !== this.epoch) return
         const refuse = (type: 'busy' | 'missing') => {
           void Promise.resolve(conn.send({ type, id })).catch(() => {})
-          setTimeout(() => conn.close(), 1000)
+          timer = setTimeout(() => conn.close(), 1000)
         }
         // A file served through a chosen relay only goes to a connection answered on that plan.
         const planned = this.file(id)?.relay === undefined || offer.pinned === id
@@ -1185,20 +1244,25 @@ export class P2pManager {
     chunked: boolean,
     flow: { acked: number | null }
   ) {
+    const epoch = this.epoch
     const f = servable(this.file(id), nowS())
     const blob = f ? await this.blob(id) : null
+    if (epoch !== this.epoch) return
     if (!f || !blob || (!chunked && blob.size > LEGACY_MAX)) {
       await conn.send({ type: 'missing', id })
       return
     }
     const mime = safeType(await headOf(blob))
+    if (epoch !== this.epoch) return
     if (!chunked) {
       const data = f.data ?? (await blobToBase64(blob))
-      await conn.send({ type: 'file', id, name: f.name, mime, data })
+      if (epoch === this.epoch) await conn.send({ type: 'file', id, name: f.name, mime, data })
       return
     }
     const deadline = Date.now() + this.deadlineMs(blob.size)
     const cutoff = setTimeout(() => conn.close(), deadline - Date.now())
+    const cancel = () => clearTimeout(cutoff)
+    this.pendingTransfers.add(cancel)
     try {
       await conn.send({ type: 'meta', id, mime, size: blob.size })
       for (let at = 0; at < blob.size; at += CHUNK_BYTES) {
@@ -1207,11 +1271,13 @@ export class P2pManager {
           return
         }
         const data = await blob.slice(at, at + CHUNK_BYTES).arrayBuffer()
+        if (epoch !== this.epoch) return
         await conn.send({ type: 'chunk', id, data })
       }
-      await conn.send({ type: 'end', id })
+      if (epoch === this.epoch) await conn.send({ type: 'end', id })
     } finally {
-      clearTimeout(cutoff)
+      this.pendingTransfers.delete(cancel)
+      cancel()
     }
   }
 
@@ -1258,12 +1324,14 @@ export class P2pManager {
   // A kept download of this exact file (same id, hoster and hash), rebuilt with its checked type.
   async receivedFile(id: string, hoster: string, sha256: string | null): Promise<Download | null> {
     const key = copyKey(id, hoster, sha256)
+    const epoch = this.epoch
     const got = this.received()
     const r = Object.hasOwn(got, key) ? got[key] : null
     if (!r || r.id !== id || r.hoster !== hoster || r.sha256 !== sha256) return null
     const blob = await blobs()
       .get(this.gotKey(key))
       .catch(() => null)
+    if (epoch !== this.epoch) return null
     if (!blob || blob.size !== r.size) {
       this.dropReceived(key)
       return null
@@ -1285,7 +1353,7 @@ export class P2pManager {
     const got = { ...this.received() }
     if (Object.hasOwn(got, key)) {
       const { message_id } = got[key]
-      if (message_id !== null) dropPreview(message_id)
+      if (message_id !== null) this.dropPreview(message_id)
       delete got[key]
       this.saveReceived(got)
     }
@@ -1302,7 +1370,7 @@ export class P2pManager {
     for (const [old, x] of order) {
       if (old === key || (count <= RECEIVED_MAX && bytes <= RECEIVED_BYTES)) continue
       delete got[old]
-      if (x.message_id !== null) dropPreview(x.message_id)
+      if (x.message_id !== null) this.dropPreview(x.message_id)
       void blobs()
         .remove(this.gotKey(old))
         .catch(() => {})
@@ -1316,8 +1384,8 @@ export class P2pManager {
   // the message gives (and when storage runs out), never trusts the type the peer sends.
   async download(peerId: string, id: string, opts: DownloadOpts): Promise<Download> {
     const { size, sha256, hoster, signal } = opts
-    const account = this.account
-    if (account === null) throw new Error('Sign in to download P2P files')
+    const epoch = this.epoch
+    if (this.account === null) throw new Error('Sign in to download P2P files')
     const limit = size ?? LEGACY_MAX
     if (!Number.isSafeInteger(limit) || limit < 0)
       throw new Error('P2P download failed: file too large')
@@ -1327,24 +1395,32 @@ export class P2pManager {
       .room()
       .catch(() => null)
     if (room !== null && limit > room) throw new Error(NO_ROOM)
-    if (signal?.aborted) throw new Error(CANCELED)
-    const plan = relayBook.resolve()
+    if (signal?.aborted || epoch !== this.epoch) throw new Error(CANCELED)
+    const plan = this.relays.resolve()
     if (!plan.ok) throw new Error(plan.error)
-    if (!hidesIp(plan) && (await relayBook.consent(opts.relays ?? [])) !== null)
+    if (!hidesIp(plan) && (await this.relays.consent(opts.relays ?? [])) !== null)
       throw new Error(DENIED_DOWNLOAD)
-    if (signal?.aborted || this.account !== account) throw new Error(CANCELED)
+    if (signal?.aborted || epoch !== this.epoch) throw new Error(CANCELED)
     const key = this.gotKey(copy)
     const writer: BlobWriter = await blobs().create(key)
-    return new Promise<Download>((resolve, reject) => {
+    if (signal?.aborted || epoch !== this.epoch) {
+      await writer.abort()
+      throw new Error(CANCELED)
+    }
+    const metadata = {
+      f: id,
+      ...(plan.declared.length ? { r: plan.declared } : {}),
+      ...(opts.token !== undefined ? { t: opts.token } : {}),
+    }
+    let conn: DataConnection
+    try {
       const peer = this.ensurePeer(true)
-      const metadata = {
-        f: id,
-        ...(plan.declared.length ? { r: plan.declared } : {}),
-        ...(opts.token !== undefined ? { t: opts.token } : {}),
-      }
-      const conn = withConfig(peer, plan.config, () =>
-        peer.connect(peerId, { reliable: true, metadata })
-      )
+      conn = withConfig(peer, plan.config, () => peer.connect(peerId, { reliable: true, metadata }))
+    } catch (err) {
+      await writer.abort()
+      throw err
+    }
+    return new Promise<Download>((resolve, reject) => {
       const waiting = `${peerId}:${String(conn.connectionId)}`
       // A manual relay that never got the connection up is named in the error.
       let opened = false
@@ -1369,6 +1445,7 @@ export class P2pManager {
         if (timer) clearTimeout(timer)
         timer = null
         signal?.removeEventListener('abort', canceled)
+        this.pendingTransfers.delete(canceled)
         this.refusals.delete(waiting)
         conn.close()
         if (err) {
@@ -1381,6 +1458,7 @@ export class P2pManager {
         } else if (out) resolve(out)
       }
       const canceled = () => finish(new Error(CANCELED))
+      this.pendingTransfers.add(canceled)
       signal?.addEventListener('abort', canceled)
       const idle = () => {
         if (timer) clearTimeout(timer)
@@ -1421,7 +1499,7 @@ export class P2pManager {
           if (expect !== null && sha.hex() !== expect) throw new Error(MISMATCH)
           const type = safeType(head.subarray(0, headLen), opts.audio === true)
           const blob = await writer.finish(type)
-          if (this.account !== account) throw new Error(CANCELED)
+          if (epoch !== this.epoch) throw new Error(CANCELED)
           const verified = expect !== null
           this.keepReceived(copy, {
             id,
@@ -1521,9 +1599,14 @@ export class P2pManager {
 
   async startMedia(muted = false) {
     this.endMedia()
+    const gen = this.gen
     const mic = await navigator.mediaDevices.getUserMedia({ audio: true }).catch((e: unknown) => {
       throw mediaError(e, 'microphone', 'call')
     })
+    if (gen !== this.gen) {
+      for (const track of mic.getTracks()) track.stop()
+      throw new Error(CANCELED)
+    }
     for (const track of mic.getAudioTracks()) track.enabled = !muted
     this.muted = muted
     const canvas = document.createElement('canvas')
@@ -1738,7 +1821,7 @@ export class P2pManager {
     if (this.hold(this.heldMedia, call)) return
     if (!this.fromCaller(call) || this.media !== null) return call.close()
     const peer = this.peer
-    const config = this.callIce?.config ?? relayBook.autoConfig()
+    const config = this.callIce?.config ?? this.relays.autoConfig()
     if (peer) withConfig(peer, config, () => call.answer(this.callStream()))
     else call.answer(this.callStream())
     this.attach(call)
@@ -1786,7 +1869,7 @@ export class P2pManager {
     if (!this.local || b === null || !b.dial || this.media !== null) return
     const peer = this.ensurePeer(true)
     const metadata = { call: b.callId }
-    const config = this.callIce?.config ?? relayBook.autoConfig()
+    const config = this.callIce?.config ?? this.relays.autoConfig()
     withConfig(peer, config, () => {
       this.attach(peer.call(b.peer, this.callStream(), { metadata }))
       this.attachControl(peer.connect(b.peer, { label: 'call', reliable: true, metadata }))
@@ -1883,3 +1966,7 @@ export class P2pManager {
 }
 
 export const p2p = new P2pManager()
+
+export const previewUrl = (messageId: number) => p2p.previewUrl(messageId)
+export const keepPreview = (messageId: number, preview: Preview) =>
+  p2p.keepPreview(messageId, preview)

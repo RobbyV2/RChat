@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { api } from './instances'
+import type { InstanceConnection } from './instances'
+import { client } from './client/client'
+import { useAccount } from './client/react'
 import { headOf } from './p2p'
 import { sharing } from './platform'
-import { live } from './slices/ctx'
 import { downloadName, NEUTRAL_TYPE, sniff } from './sniff'
 
 // Media a URL can't load is fetched with the credential in a header and shown from a `blob:`
@@ -22,12 +23,6 @@ export const mediaMode = (
 ): MediaMode => {
   if (token) return apiOrigin === pageOrigin ? 'url' : 'blob'
   return grant ? 'blob' : 'url'
-}
-
-// How the media of `server` (undefined outside servers) loads right now.
-export const mediaModeFor = (server: string | undefined) => {
-  const page = typeof window === 'undefined' ? 'http://localhost/' : window.location.href
-  return mediaMode(api.origin(page), new URL(page).origin, api.signedIn(), api.guestMedia(server))
 }
 
 type Load = (id: string, signal: AbortSignal) => Promise<Blob>
@@ -129,41 +124,120 @@ export const blobCache = (
   return { acquire, clear, size: () => entries.size, bytes: () => total }
 }
 
-const cache = blobCache(60, MEDIA_CACHE_BYTES)
-
-export const forgetMedia = () => cache.clear()
-
-// The address to show an image from: `plain` where media loads by URL, else a `blob:` URL
-// (undefined while it loads, null when it failed or the bytes are not an image).
-const useBlobSrc = (plain: string, server: string | undefined, wanted: boolean) => {
-  const fetched = mediaModeFor(server) === 'blob'
-  const [blob, setBlob] = useState<{ key: string; url: string | null } | null>(null)
-  useEffect(() => {
-    if (!fetched || !wanted) return
-    let live = true
-    const held = cache.acquire(plain, (_, signal) => api.authedBlob(plain, server, signal))
-    held.url.then(
-      url => live && setBlob({ key: plain, url }),
-      () => live && setBlob({ key: plain, url: null })
-    )
-    return () => {
-      live = false
-      held.release()
+export function createMediaSrc(conn: InstanceConnection, live: <T>(p: Promise<T>) => Promise<T>) {
+  const cache = blobCache(60, MEDIA_CACHE_BYTES)
+  let generation = 0
+  const saves = new Set<AbortController>()
+  const { api } = conn
+  function mediaModeFor(server: string | undefined): MediaMode {
+    // Only the home session owns the page cookie. Even a public URL on the same
+    // host could otherwise load with a different account's credential.
+    if (!conn.isHome) return 'blob'
+    const page = typeof window === 'undefined' ? 'http://localhost/' : window.location.href
+    return mediaMode(api.origin(page), new URL(page).origin, api.signedIn(), api.guestMedia(server))
+  }
+  function key(plain: string, server: string | undefined) {
+    return JSON.stringify([generation, conn.origin, server, plain])
+  }
+  function acquire(plain: string, server?: string) {
+    return cache.acquire(key(plain, server), (_, signal) => api.authedBlob(plain, server, signal))
+  }
+  async function saveMedia(id: string, server: string | undefined, filename: string) {
+    const ctrl = new AbortController()
+    saves.add(ctrl)
+    try {
+      const blob = await live(api.mediaBlob(id, server, ctrl.signal))
+      if (!ctrl.signal.aborted)
+        sharing().saveBlob(downloadName(filename), new Blob([blob], { type: NEUTRAL_TYPE }))
+    } finally {
+      saves.delete(ctrl)
     }
-  }, [fetched, wanted, plain, server])
-  if (!fetched) return plain
-  return blob?.key === plain ? blob.url : undefined
+  }
+  function clear() {
+    ++generation
+    cache.clear()
+    for (const ctrl of saves) ctrl.abort()
+    saves.clear()
+  }
+  return { key, acquire, clear, saveMedia, mediaModeFor }
 }
 
-export const useMediaSrc = (id: string, server: string | undefined, wanted: boolean) =>
-  useBlobSrc(api.mediaUrl(id), server, wanted)
+export const mediaModeFor = (server: string | undefined) =>
+  client.shown().media.mediaModeFor(server)
+export const forgetMedia = () => client.shown().media.clear()
 
-// An image a message names by address. One of this instance's media files loads like an
-// attachment; any other address is shown as it is.
-export const useLinkedSrc = (src: string | undefined, server: string | undefined, on: boolean) => {
-  const id = src === undefined ? null : api.mediaId(src)
-  const held = useBlobSrc(api.mediaUrl(id ?? ''), server, on && id !== null)
-  return id === null || mediaModeFor(server) === 'url' ? src : held
+// The address to show an image from: plain where media loads by URL, else a blob URL.
+const useBlobSrc = (
+  media: ReturnType<typeof createMediaSrc>,
+  plain: string,
+  server: string | undefined,
+  wanted: boolean,
+  fetched = media.mediaModeFor(server) === 'blob'
+) => {
+  const key = media.key(plain, server)
+  const [blob, setBlob] = useState<{ media: typeof media; key: string; url: string | null } | null>(
+    null
+  )
+  useEffect(() => {
+    if (!fetched || !wanted) return
+    let current = true
+    const held = media.acquire(plain, server)
+    held.url.then(
+      url => current && setBlob({ media, key, url }),
+      () => current && setBlob({ media, key, url: null })
+    )
+    return () => {
+      current = false
+      held.release()
+    }
+  }, [fetched, wanted, key, media, plain, server])
+  if (!fetched) return plain
+  return wanted && blob?.media === media && blob.key === key ? blob.url : undefined
+}
+
+export const useMediaSrc = (id: string, server: string | undefined, wanted: boolean) => {
+  const { api, media } = useAccount()
+  return useBlobSrc(media, api.mediaUrl(id), server, wanted)
+}
+
+// Only the primary account on the page's API may display an arbitrary image URL.
+function linkedImage(conn: InstanceConnection, src: string, page: string) {
+  const origin = conn.api.origin(page)
+  const pageOrigin = new URL(page).origin
+  const primary = conn.isHome && conn.origin === pageOrigin && origin === pageOrigin
+  try {
+    const url = new URL(src, primary ? page : origin)
+    const href = primary ? src : url.href
+    if (url.origin === origin && ['http:', 'https:'].includes(url.protocol))
+      return { href, id: conn.api.mediaId(url.href), direct: primary }
+    return { href, id: null, direct: false }
+  } catch {
+    return { href: src, id: null, direct: false }
+  }
+}
+
+export const useLinkedSrc = (
+  src: string | undefined,
+  server: string | undefined,
+  instanceMessage: boolean,
+  previews: boolean
+) => {
+  const { conn, api, media } = useAccount()
+  const link =
+    src && instanceMessage
+      ? linkedImage(
+          conn,
+          src,
+          typeof window === 'undefined' ? 'http://localhost/' : window.location.href
+        )
+      : null
+  const id = link?.id ?? null
+  const fetched = !link?.direct || media.mediaModeFor(server) === 'blob'
+  const held = useBlobSrc(media, api.mediaUrl(id ?? ''), server, previews && id !== null, fetched)
+  const href = link?.href ?? src
+  if (!previews) return { href, shown: null }
+  if (id !== null && fetched) return { href, shown: held }
+  return { href, shown: link?.direct ? href : null }
 }
 
 // Link preview images are served by this instance, which fetched them; the page's image host
@@ -179,11 +253,10 @@ export const previewPath = (messageId: number, ord: number, imageUrl: string | n
 }
 
 export const usePreviewSrc = (path: string | null, server: string | undefined) => {
-  const src = useBlobSrc(path === null ? '' : api.previewUrl(path), server, path !== null)
+  const { api, media } = useAccount()
+  const src = useBlobSrc(media, path === null ? '' : api.previewUrl(path), server, path !== null)
   return path === null ? null : src
 }
 
-export const saveMedia = async (id: string, server: string | undefined, filename: string) => {
-  const blob = await live(api.mediaBlob(id, server))
-  sharing().saveBlob(downloadName(filename), new Blob([blob], { type: NEUTRAL_TYPE }))
-}
+export const saveMedia = (id: string, server: string | undefined, filename: string) =>
+  client.shown().media.saveMedia(id, server, filename)

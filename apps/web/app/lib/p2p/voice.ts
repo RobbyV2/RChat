@@ -1,3 +1,4 @@
+import type { CallClaim, ClaimMedia } from '../client/calls'
 import { isRecord } from '../bytes'
 import { declaredHosts } from '../relays'
 import type { RtcTarget, Signaler } from '../rtc'
@@ -336,6 +337,7 @@ const stateKey = (f: VoiceFrame) =>
   `${f.ch}\n${f.on}\n${f.video === true}\n${(f.relays ?? []).join()}`
 
 interface Mine {
+  claim?: CallClaim | null
   room: string
   ch: string
   video: boolean
@@ -348,6 +350,7 @@ export class Voice implements Signaler {
   readonly limits: VoiceLimits
   readonly roster: VoiceRoster
   media: VoiceMedia | null = null
+  claim?: ClaimMedia
   // Asks about a participant's relays; the host denied, or null.
   consent: (hosts: string[], ik: string) => Promise<string | null> = () => Promise.resolve(null)
   // A participant left out because their relay wasn't allowed.
@@ -620,17 +623,33 @@ export class Voice implements Signaler {
     if (!media || !this.deps.isVoice(room, ch)) throw new Error(NO_VOICE)
     if (!(await this.deps.allowed(room, ch, this.deps.me()))) throw new Error(NO_VOICE)
     const plan = typeof o.plan === 'function' ? await o.plan() : o.plan
+    const claim = this.claim
+      ? await this.claim(
+          () => this.leave(),
+          () => this.media === media
+        )
+      : null
+    if (this.claim && !claim?.current()) return
     o.leaveOthers?.()
     const muted = typeof o.muted === 'function' ? o.muted() : o.muted
     this.leave()
     this.away = false
-    const m: Mine = { room, ch, video: false, plan, since: this.deps.clock.now(), timer: null }
+    const m: Mine = {
+      claim,
+      room,
+      ch,
+      video: false,
+      plan,
+      since: this.deps.clock.now(),
+      timer: null,
+    }
     this.mine = m
     this.changed()
     try {
       await media.join(this.deps.me(), { p2pRoom: room, ch }, muted)
     } catch (e) {
       if (this.mine === m) {
+        m.claim?.release()
         this.mine = null
         this.changed()
       }
@@ -655,6 +674,7 @@ export class Voice implements Signaler {
   leave() {
     const m = this.mine
     if (!m) return
+    m.claim?.release()
     this.mine = null
     if (m.timer !== null) this.deps.clock.clear(m.timer)
     this.broadcast(this.own(m, false))

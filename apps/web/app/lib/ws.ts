@@ -70,6 +70,7 @@ export class WsClient {
   private openedAt: number | null = null
   private failedAt: number | null = null
   private limited = false
+  private gap: PromiseWithResolvers<boolean> | null = null
 
   onEvent: (ev: WsEvent) => void = () => {}
   onStatus: (status: WsStatus) => void = () => {}
@@ -90,6 +91,7 @@ export class WsClient {
   }
 
   stop() {
+    this.finishGap(false)
     this.stopped = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.connectTimer) clearTimeout(this.connectTimer)
@@ -104,6 +106,25 @@ export class WsClient {
     ws?.close()
     this.subs.clear()
     this.viewing = null
+  }
+
+  private finishGap(open: boolean) {
+    this.gap?.resolve(open)
+    this.gap = null
+  }
+
+  afterGap() {
+    return this.gap?.promise
+  }
+
+  reconnectAfterGap() {
+    const previous = this.ws
+    if (this.stopped || !previous || this.gap) return
+    this.gap = Promise.withResolvers<boolean>()
+    this.ws = null
+    previous.close()
+    this.onStatus('yellow')
+    this.connect()
   }
 
   ensureConnected() {
@@ -168,6 +189,7 @@ export class WsClient {
       if (this.ws === ws && ws.readyState !== WebSocket.OPEN) ws.close()
     }, 5_000)
     ws.onopen = () => {
+      if (this.ws !== ws) return
       if (this.connectTimer) clearTimeout(this.connectTimer)
       this.connectTimer = null
       this.openedAt = Date.now()
@@ -175,9 +197,11 @@ export class WsClient {
       this.send({ type: 'auth', token: this.token })
       if (this.token) this.send({ type: 'viewing', server: this.viewing })
       if (this.subs.size) this.sendSubscribe()
+      this.finishGap(true)
       this.onStatus('green')
     }
     ws.onmessage = e => {
+      if (this.ws !== ws) return
       try {
         this.onEvent(JSON.parse(e.data as string) as WsEvent)
       } catch (err) {
@@ -185,9 +209,10 @@ export class WsClient {
       }
     }
     ws.onclose = e => {
+      if (this.ws !== ws || this.stopped) return
+      this.finishGap(false)
       if (this.connectTimer) clearTimeout(this.connectTimer)
       this.connectTimer = null
-      if (this.ws !== ws || this.stopped) return
       if (reconnectsAfter(e.code)) {
         this.dropped(e.code === CLOSE_TOO_OFTEN)
         return

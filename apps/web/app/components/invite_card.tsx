@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -15,7 +16,9 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { ExternalLink, Globe, Hash, Link2Off, Lock, Paperclip } from 'lucide-react'
 import { ApiError } from '../lib/api'
-import { InstanceError, api, home, registry, type InstanceConnection } from '../lib/instances'
+import type { InviteAccess } from '../lib/remote_invite'
+import { useAccount } from '../lib/client/react'
+import { InstanceError, api, home, type InstanceConnection } from '../lib/instances'
 import { useForwardAccess } from '../lib/forward_access'
 import { carriedTarget } from '../lib/forward_viewing'
 import { errorText, useStore, type Nav } from '../lib/store'
@@ -35,20 +38,14 @@ import {
   watchInvites,
   type RemoteInvite,
 } from '../lib/invite'
-import { canView, channelTarget, requestViewing, useViewing, instanceTarget } from '../lib/viewing'
+import { channelTarget } from '../lib/viewing'
 import { formatQualified, hostOf } from '../lib/qualified'
-import {
-  previewRequested,
-  remoteConnection,
-  remoteInvite,
-  requestPreview,
-} from '../lib/remote_invite'
 import { deniedAccess, needsPassword } from '../lib/join_flow'
 import { absoluteTime, countdown, tickMs, useNow, usesLeftText } from '../lib/passwords'
 import { plainStamps } from '../lib/timestamps'
 import { serverInitial } from '../lib/rules'
 import { joinNeeds } from '../lib/joining'
-import type { InstanceInfo, Invite, InviteStatus, Message } from '../lib/types'
+import type { Invite, InviteStatus, Message } from '../lib/types'
 import { ServerGlyph } from './server_rail'
 import { Dialog, fieldCls, FieldError, filledBtn, LinkPage, Masked, textBtn, useOwn } from './ui'
 import { SpoilerLine } from './replies'
@@ -386,6 +383,7 @@ export function PreviewLine({
 }) {
   const streamer = useStore(s => s.streamer)
   const account = useStore(s => s.me?.username ?? null)
+  const { useViewing, canView } = useAccount().viewing
   useViewing(s => s.revision)
   const copy = useForwardAccess(remote ? null : message, { server })
   const carried =
@@ -448,15 +446,19 @@ function Preview({
   big,
   host,
   password,
-  origin,
+  remote,
+  access,
 }: {
   invite: Invite
   big: boolean
   host?: string
   password: string | null
-  origin?: string
+  remote?: InstanceConnection
+  access?: InviteAccess
 }) {
-  const conn = origin ? registry.get(origin) : home
+  const owner = useAccount()
+  const { instanceTarget, canView, useViewing, requestViewing } = owner.viewing
+  const conn = remote ?? owner.conn
   const account = useStore(s => s.me?.username ?? null)
   const [seen, setSeen] = useState<{
     of: Invite
@@ -464,13 +466,13 @@ function Preview({
     label: boolean
     name: string | null
   } | null>(null)
-  const fresh = seen?.of === invite ? seen : null
+  const fresh = seen?.of === invite && (!access || access.current()) ? seen : null
   const id = fresh ? fresh.id : invite.preview_channel_id
   const server = invite.server.name
   const label = fresh ? fresh.label : invite.preview_sensitive
   const preview_channel = fresh ? fresh.name : invite.preview_channel
   const local = useStore(s => {
-    if (origin || id == null || !s.servers[server]) return undefined
+    if (remote || id == null || !s.servers[server]) return undefined
     return instanceTarget(s, server, id)?.sensitive ?? null
   })
   useViewing(s => s.revision)
@@ -488,10 +490,14 @@ function Preview({
     )
   const allowed = !!target && canView(target)
   const key = JSON.stringify([target && target.key, password, label])
-  const [loaded, setLoaded] = useState<{ key: string; data: Message[] } | null>(null)
+  const [loaded, setLoaded] = useState<{
+    key: string
+    access?: InviteAccess
+    data: Message[]
+  } | null>(null)
   useEffect(() => {
-    if (!origin && local === null)
-      void useStore
+    if (!remote && local === null)
+      void owner.store
         .getState()
         .discoverChannels(server)
         .catch(() => {})
@@ -500,19 +506,22 @@ function Preview({
       return
     }
     let live = true
-    void conn.api
-      .getInvite(server, password, { revision: `${id}.${label ? 1 : 0}` })
+    const revision = { revision: `${id}.${label ? 1 : 0}` }
+    const messages = access
+      ? access.read(conn, server, password, revision)
+      : conn.api.getInvite(server, password, revision)
+    void messages
       .then(data => {
-        if (!live) return
+        if (!live || (access && !access.current())) return
         const answer = pinnedPreview({ id, label }, data)
         if (answer.changed) setSeen({ of: invite, ...answer.changed })
-        else setLoaded({ key, data: answer.messages })
+        else setLoaded({ key, access, data: answer.messages })
       })
       .catch(() => {})
     return () => {
       live = false
     }
-  }, [allowed, conn, id, label, key, server, password, origin, local, invite])
+  }, [allowed, conn, id, label, key, server, password, remote, local, invite, owner, access])
   if (!target || !preview_channel) return null
   if (!allowed)
     return (
@@ -524,7 +533,7 @@ function Preview({
         Open channel preview
       </button>
     )
-  if (!loaded || loaded.key !== key) return null
+  if (!loaded || loaded.key !== key || loaded.access !== access) return null
   const preview = loaded.data
   if (preview_channel === null || (preview.length === 0 && !big)) return null
   return (
@@ -544,7 +553,7 @@ function Preview({
               big={big}
               host={host}
               server={server}
-              remote={origin ? (conn ?? undefined) : undefined}
+              remote={remote}
             />
           ))}
         </div>
@@ -1022,13 +1031,18 @@ function RemoteOrigin({ host, name }: { host: string; name?: string }) {
 }
 
 function useRemoteInvite(invite: RemoteInvite, enabled: boolean) {
+  const owner = useAccount()
+  const { remoteConnection } = owner.invites
   const { origin, server, password } = invite
-  const key = `${origin}\n${server}\n${password ?? ''}`
+  const observer = useMemo(() => owner.invites.watch(origin), [owner, origin])
+  const access = useSyncExternalStore(observer.subscribe, observer.snapshot, observer.snapshot)
+  const key = `${owner.renderKey}:${origin}\n${server}\n${password ?? ''}`
   const [loaded, setLoaded] = useState<{
     key: string
+    access: InviteAccess
     data: Invite | null
     error: unknown
-    instance: InstanceInfo | null
+    connection: InstanceConnection | null
   } | null>(null)
   const [tick, setTick] = useState(0)
   useEffect(() => {
@@ -1036,20 +1050,29 @@ function useRemoteInvite(invite: RemoteInvite, enabled: boolean) {
     let live = true
     remoteConnection(origin).then(
       conn =>
-        remoteInvite(origin, server, password, tick > 0).then(
-          data => live && setLoaded({ key, data, error: null, instance: conn.info }),
-          (error: unknown) => live && setLoaded({ key, data: null, error, instance: conn.info })
+        access.read(conn, server, password ?? null, 'metadata', tick > 0).then(
+          data =>
+            live &&
+            access.current() &&
+            setLoaded({ key, access, data, error: null, connection: conn }),
+          (error: unknown) =>
+            live &&
+            access.current() &&
+            setLoaded({ key, access, data: null, error, connection: conn })
         ),
-      (error: unknown) => live && setLoaded({ key, data: null, error, instance: null })
+      (error: unknown) =>
+        live && access.current() && setLoaded({ key, access, data: null, error, connection: null })
     )
     return () => {
       live = false
     }
-  }, [enabled, key, origin, server, password, tick])
-  const current = enabled && loaded?.key === key ? loaded : null
+  }, [enabled, key, origin, server, password, tick, remoteConnection, access])
+  const current = enabled && loaded?.key === key && loaded.access === access ? loaded : null
   return {
+    access,
     ready: current !== null,
-    instance: current?.instance ?? null,
+    instance: current?.connection?.info ?? null,
+    connection: current?.connection,
     data: current?.data ?? null,
     error: current?.error ?? null,
     reload: () => setTick(t => t + 1),
@@ -1066,9 +1089,13 @@ export function RemoteInviteCard({
   const previews = useStore(s => s.settings.asset_previews)
   const streamer = useStore(s => s.streamer)
   const key = remoteKey(invite)
-  const [asked, setAsked] = useState(() => previewRequested(key))
-  const wanted = previews && (asked || previewRequested(key))
-  const { ready, instance, data, error, reload } = useRemoteInvite(invite, wanted)
+  const cache = useAccount().invites
+  const [, refreshRequest] = useState(0)
+  const wanted = previews && cache.previewRequested(key)
+  const { access, ready, connection, instance, data, error, reload } = useRemoteInvite(
+    invite,
+    wanted
+  )
   const root = useRef<HTMLDivElement>(null)
   const rchat = instance !== null
   useKeepBottom(root, ready)
@@ -1079,8 +1106,8 @@ export function RemoteInviteCard({
   const host = hostOf(invite.origin) ?? new URL(invite.origin).host
   const where = <RemoteOrigin host={host} name={instance?.name} />
   const load = () => {
-    requestPreview(key)
-    setAsked(true)
+    cache.requestPreview(key)
+    refreshRequest(n => n + 1)
   }
   const open = () => window.open(remoteInviteUrl(invite), '_blank', 'noopener,noreferrer')
   const openBtn = (
@@ -1217,7 +1244,8 @@ export function RemoteInviteCard({
           big={false}
           host={host}
           password={invite.password ?? null}
-          origin={invite.origin}
+          remote={connection ?? undefined}
+          access={access}
         />
       ),
     }

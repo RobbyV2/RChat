@@ -1,11 +1,13 @@
+import { client } from './client/client'
+import type { AccountSession } from './client/session'
+import { Ended } from './slices/ctx'
 import {
   InstanceError,
   compatible,
   fetchInstance,
-  home,
-  registry,
+  endpointsFrom,
   remoteAllowed,
-  type InstanceConnection,
+  InstanceConnection,
 } from './instances'
 import { hostOf } from './qualified'
 import type { Invite } from './types'
@@ -39,35 +41,147 @@ export const bounded = <T>(
   return promise
 }
 
-const connections = new Map<string, Entry<InstanceConnection>>()
-const invites = new Map<string, Entry<Invite>>()
-
-export const remoteConnection = (origin: string) =>
-  bounded(connections, origin, INFO_TTL, async () => {
-    if (!remoteAllowed(origin, home.origin))
-      throw new InstanceError(`${hostOf(origin) ?? origin} is not a public https site`)
-    const info = await fetchInstance(origin)
-    if (!compatible(info))
-      throw new InstanceError(`${hostOf(origin) ?? origin} runs an RChat API this client can't use`)
-    return registry.add(origin, info)
-  })
-
-export const remoteInvite = (
-  origin: string,
-  server: string,
-  password: string | null,
-  fresh = false
-) =>
-  bounded(invites, `${origin}\n${server}\n${password ?? ''}`, fresh ? 0 : INVITE_TTL, async () => {
-    const conn = await remoteConnection(origin)
-    return conn.api.getInvite(server, password, 'metadata')
-  })
-
-const requested = new Set<string>()
-
-export const previewRequested = (key: string) => requested.has(key)
-
-export const requestPreview = (key: string) => {
-  requested.add(key)
-  if (requested.size > CACHE_MAX) requested.delete(requested.values().next().value as string)
+export interface InviteAccess {
+  current(): boolean
+  read(
+    conn: InstanceConnection,
+    server: string,
+    password: string | null,
+    part: 'metadata' | { revision: string },
+    fresh?: boolean
+  ): Promise<Invite>
 }
+
+export function createInviteCache(account: AccountSession) {
+  const connections = new Map<string, Entry<InstanceConnection>>()
+  const invites = new Map<string, Entry<Invite>>()
+  const requested = new Set<string>()
+
+  const knownAccount = (origin: string) =>
+    account.conn.origin === origin
+      ? account
+      : client.live().find(other => other.conn.origin === origin)
+
+  function remoteConnection(origin: string) {
+    const known = knownAccount(origin)
+    if (known) return Promise.resolve(known.conn)
+    return bounded(connections, origin, INFO_TTL, async () => {
+      if (!remoteAllowed(origin, account.conn.origin))
+        throw new InstanceError(`${hostOf(origin) ?? origin} is not a public https site`)
+      const info = await fetchInstance(origin)
+      if (!compatible(info))
+        throw new InstanceError(
+          `${hostOf(origin) ?? origin} runs an RChat API this client can't use`
+        )
+      return new InstanceConnection(endpointsFrom(origin, info), info)
+    })
+  }
+
+  function forCredentials(session: AccountSession) {
+    const mark = session.lifetime.sessionMark()
+    const { token, guestGrants } = session.store.getState()
+    return () => {
+      const state = session.store.getState()
+      return (
+        mark === session.lifetime.sessionMark() &&
+        token === state.token &&
+        guestGrants === state.guestGrants
+      )
+    }
+  }
+
+  function access(origin: string): InviteAccess {
+    const target = knownAccount(origin)
+    const sourceValid = forCredentials(account)
+    const targetValid = target ? forCredentials(target) : () => true
+    const current = () => sourceValid() && target === knownAccount(origin) && targetValid()
+    const read = async (
+      conn: InstanceConnection,
+      server: string,
+      password: string | null,
+      part: 'metadata' | { revision: string },
+      fresh = false
+    ) => {
+      if (!current() || (target && target.conn !== conn) || conn.origin !== origin)
+        throw new Ended()
+      const load = () => conn.api.getInvite(server, password, part)
+      const result =
+        !target && part === 'metadata'
+          ? await bounded(
+              invites,
+              JSON.stringify([origin, server, password]),
+              fresh ? 0 : INVITE_TTL,
+              load
+            )
+          : await load()
+      if (!current()) throw new Ended()
+      return result
+    }
+    return { current, read }
+  }
+
+  // The mounted card loses its previous data as soon as either account or its grants change.
+  function watch(origin: string) {
+    let audience = access(origin)
+    const snapshot = () => {
+      if (!audience.current()) audience = access(origin)
+      return audience
+    }
+    const subscribe = (notify: () => void) => {
+      let target: AccountSession | undefined
+      let stopTarget: (() => void) | undefined
+      const changed = () => {
+        followTarget()
+        notify()
+      }
+      const followTarget = () => {
+        const next = knownAccount(origin)
+        if (next === target) return
+        stopTarget?.()
+        target = next
+        stopTarget = target !== account ? target?.store.subscribe(changed) : undefined
+      }
+      followTarget()
+      const stopBook = client.subscribe(changed)
+      const stopSource = account.store.subscribe(changed)
+      return () => {
+        stopSource()
+        stopBook()
+        stopTarget?.()
+      }
+    }
+    return { subscribe, snapshot }
+  }
+
+  async function remoteInvite(
+    origin: string,
+    server: string,
+    password: string | null,
+    fresh = false
+  ) {
+    const audience = access(origin)
+    const conn = await remoteConnection(origin)
+    return audience.read(conn, server, password, 'metadata', fresh)
+  }
+
+  const requestPreview = (key: string) => {
+    requested.add(key)
+    if (requested.size > CACHE_MAX) requested.delete(requested.values().next().value as string)
+  }
+
+  return {
+    remoteConnection,
+    remoteInvite,
+    watch,
+    requestPreview,
+    previewRequested: (key: string) => requested.has(key),
+    clear() {
+      connections.clear()
+      invites.clear()
+      requested.clear()
+    },
+  }
+}
+
+export const previewRequested = (key: string) => client.shown().invites.previewRequested(key)
+export const requestPreview = (key: string) => client.shown().invites.requestPreview(key)

@@ -21,7 +21,7 @@ import {
 import { errorText, type UploadMode, useMask, useStore, viewKey } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
 import { guestPostingStatus, postGuest } from '../lib/guest_chat'
-import { api } from '../lib/instances'
+import { useAccount } from '../lib/client/react'
 import { TextComposer } from './text_composer'
 import { accountPrompt } from '../lib/features'
 import { charCount, counterFrom, messageFilterOn } from '../lib/rules'
@@ -39,7 +39,7 @@ import { useCountdown } from '../lib/countdown'
 import { Dialog, FieldError, fieldCls, filledBtn, Masked, useOwnServer } from './ui'
 import { SITE_FILTER_NOTE } from '../lib/home'
 import { useUploadHint } from './upload_expiry'
-import { hideTip, useHome } from '../lib/home_store'
+import { useHome } from '../lib/home_store'
 import { EmojiPicker, SHEET_QUERY } from './emoji_picker'
 import { useMedia } from './context_menu'
 import { ReplyBar } from './replies'
@@ -48,7 +48,7 @@ import { useTextAssist } from './text_assist'
 import { FormatToolbar, useFormatting } from './format_toolbar'
 import { useMyTimeoutEnds, useNow } from './timeout_dialog'
 import { remainingText, timedOutLine } from '../lib/timeouts'
-import { dispatchPreviewText } from '../lib/apps/preview'
+import { previewFor } from '../lib/apps/preview'
 import { CreatePollDialog } from './poll_dialog'
 import type { PollTarget } from '../lib/polls_store'
 import { RelayPicker } from './relay_settings'
@@ -218,6 +218,7 @@ function JoinBar({ server }: { server: string }) {
 
 // Said once in server channels while the instance filter checks messages, until closed.
 function SiteFilterNote() {
+  const { home } = useAccount()
   const { label } = useInstanceLabel()
   const on = useStore(s => s.view?.kind === 'channel' && messageFilterOn(s.settings))
   const owner = useHome(s => s.owner)
@@ -234,7 +235,7 @@ function SiteFilterNote() {
       </span>
       <button
         type="button"
-        onClick={() => hideTip(SITE_FILTER_NOTE)}
+        onClick={() => home.hideTip(SITE_FILTER_NOTE)}
         className="shrink-0 cursor-pointer rounded-full px-2 py-0.5 font-medium text-primary hover:bg-surface-container-highest focus-visible:outline-2 focus-visible:outline-primary"
       >
         Got it
@@ -252,6 +253,7 @@ const modeTitle = (mode: UploadMode, switchable: boolean, hint: string) => {
 }
 
 export function MessageComposer({ thread = false }: { thread?: boolean }) {
+  const account = useAccount()
   const guest = useStore(s => s.guest)
   const logout = useStore(s => s.logout)
   const ask = useStore(s => accountPrompt(s.settings))
@@ -330,7 +332,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     return () => noteTyping(draftKey, false)
   }, [draftKey, noteTyping])
 
-  const draftNow = () => (draftKey ? (useStore.getState().drafts[draftKey] ?? '') : '')
+  const draftNow = () => (draftKey ? (account.store.getState().drafts[draftKey] ?? '') : '')
 
   const assist = useTextAssist({
     listKey: draftKey,
@@ -399,17 +401,14 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
             reply={quote?.author.display_name}
             cancelReply={() => cancelReply(draftKey)}
             send={async content => {
-              const message = await postGuest(
-                api,
-                view.server,
-                `/channels/${channelId}/guest-messages`,
-                {
+              const message = await account.lifetime.live(
+                postGuest(account.api, view.server, `/channels/${channelId}/guest-messages`, {
                   content,
                   reply_to: quote?.id,
                   thread_root_id: thread && rootId !== null ? rootId : undefined,
-                }
+                })
               )
-              useStore.getState().applyWsEvent({
+              account.store.getState().applyWsEvent({
                 type: 'message',
                 server: view.server,
                 channel_id: channelId,
@@ -510,9 +509,11 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     const sed = pending || !draftKey ? null : parseSed(text)
     if (sed && draftKey) {
       const key = draftKey
-      void sedEdit(key, sed).then(ok => {
-        if (ok && draftNow() === text) setDraft(key, '')
-      })
+      void sedEdit(key, sed).then(
+        account.lifetime.inSession(ok => {
+          if (ok && draftNow() === text) setDraft(key, '')
+        })
+      )
       return
     }
     if (
@@ -521,7 +522,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       !replying &&
       !forwarding &&
       view?.kind === 'channel' &&
-      dispatchPreviewText(text)
+      previewFor(account).dispatchPreviewText(text)
     ) {
       setText('')
       return
@@ -530,11 +531,11 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     const go = () => (pending?.mode === 'p2p' ? setExpiryOpen(true) : doSend())
     // A P2P server invite code posted here can be read by the instance.
     if (hasInviteCode(text))
-      return useStore.getState().askConfirm({
+      return account.store.getState().askConfirm({
         title: 'Post Invite Code',
         body: INVITE_POST_TEXT,
         confirm: 'Post',
-        action: go,
+        action: account.lifetime.inSession(go),
       })
     go()
   }

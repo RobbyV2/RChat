@@ -97,6 +97,7 @@ pub(super) async fn guest_voice(
             payload: _,
         } => Err(Refused::NoSharedVoice),
         ClientMsg::CallStart {
+            attempt_id: _,
             dm_id: _,
             p2p: _,
             video: _,
@@ -104,6 +105,7 @@ pub(super) async fn guest_voice(
             relays: _,
         }
         | ClientMsg::CallAccept {
+            attempt_id: _,
             dm_id: _,
             peer_id: _,
             relays: _,

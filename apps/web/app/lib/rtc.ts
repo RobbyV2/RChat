@@ -1,5 +1,5 @@
-import { home } from './instances'
-import { iceConfig } from './ice'
+import { home, type InstanceConnection } from './instances'
+import { iceConfig, type IceCache } from './ice'
 import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
 import { linkQuality, type LinkQuality } from './voice_layout'
@@ -107,6 +107,7 @@ export interface PeerView {
 }
 
 interface Detector {
+  dispose?(): void
   onSpeak: (id: string, speaking: boolean) => void
   watch(id: string, stream: MediaStream): void
   unwatch(id: string): void
@@ -206,6 +207,12 @@ export class RtcManager {
     this.local = local
     this.detector.watch(me, local)
     this.onChange()
+  }
+
+  dispose() {
+    this.onChange = () => {}
+    this.leave()
+    this.detector.dispose?.()
   }
 
   leave() {
@@ -411,6 +418,10 @@ export class RtcManager {
 
   private close(peer: Peer) {
     this.stopTimers(peer)
+    peer.pc.onicecandidate = null
+    peer.pc.onnegotiationneeded = null
+    peer.pc.onconnectionstatechange = null
+    peer.pc.ontrack = null
     peer.pc.close()
   }
 
@@ -694,6 +705,7 @@ export class RtcManager {
           if (description.type === 'offer') p.ignoreOffer = action === 'ignore'
           if (action !== 'apply') return
           await pc.setRemoteDescription(description)
+          if (!this.current(from, p)) return
           p.negotiated = true
           for (const held of p.candidates.drain()) await this.addCandidate(p, held)
           if (description.type === 'offer') {
@@ -702,8 +714,10 @@ export class RtcManager {
             const desc = pc.localDescription
             if (desc?.type === 'answer') p.send({ description: desc })
           }
-          this.hear(from, p)
-          this.onChange()
+          if (this.current(from, p)) {
+            this.hear(from, p)
+            this.onChange()
+          }
         } else if (candidate) {
           const verdict = p.candidates.accept(candidate, {
             hasRemote: pc.remoteDescription !== null,
@@ -723,5 +737,8 @@ export class RtcManager {
     }
   }
 }
+
+export const createRtc = (conn: InstanceConnection, ice: IceCache) =>
+  new RtcManager({ signaler: wsSignaler(msg => conn.ws.sendVoice(msg)), ice: () => ice.config() })
 
 export const rtc = new RtcManager()

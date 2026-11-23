@@ -1,3 +1,5 @@
+import { createPaletteControls } from './palette_ui'
+import { CallGuard } from './calls'
 import { writeLocal } from '../instances'
 import type { Theme } from '../types'
 import type { AccountId, AccountSession } from './session'
@@ -21,6 +23,7 @@ function loadHome(): AccountSession {
 function createClient() {
   let nextKey = 0
   let live: readonly AccountSession[] = []
+  const calls = new CallGuard()
   const listeners = new Set<() => void>()
   const subscriptions = new Map<AccountSession, () => void>()
 
@@ -63,6 +66,8 @@ function createClient() {
   }
 
   return {
+    calls,
+    palette: createPaletteControls(),
     device,
     shown: loadHome,
     live: () => live,
@@ -75,9 +80,14 @@ function createClient() {
     },
     nextSessionKey: (): number => ++nextKey,
     attach(account: AccountSession) {
+      let origin = account.conn.origin
       subscriptions.set(
         account,
         account.store.subscribe((state, previous) => {
+          if (origin !== account.conn.origin) {
+            origin = account.conn.origin
+            publish([...live])
+          }
           if (overlays.some(key => state[key] !== null && state[key] !== previous[key]))
             claim(account)
         })
@@ -86,6 +96,7 @@ function createClient() {
     },
     detach(account: AccountSession) {
       if (!subscriptions.has(account)) return
+      calls.end(account)
       subscriptions.get(account)?.()
       subscriptions.delete(account)
       publish(live.filter(session => session !== account))

@@ -43,10 +43,10 @@ import {
   shownTips,
   type Recent,
 } from '../lib/home'
-import { forgetRecent, hideTip, parseSummary, unreadSummaryKey, useHome } from '../lib/home_store'
+import { useAccount } from '../lib/client/react'
+import { parseSummary, useHome } from '../lib/home_store'
 import { isMac, paletteShortcut, usePalette } from '../lib/palette'
 import { openActionMenu } from '../lib/actions/menu'
-import { openContactMenu } from '../lib/actions/p2p_contact'
 import type { Target } from '../lib/actions/types'
 import { dmSections } from '../lib/nav_layout'
 import { passwordSignup } from '../lib/features'
@@ -153,6 +153,7 @@ function Greeting() {
 }
 
 function Tips() {
+  const account = useAccount()
   const prefs = useHome(s => s.prefs)
   const tips = shownTips(prefs)
   if (!tips.length) return null
@@ -170,7 +171,7 @@ function Tips() {
             type="button"
             title="Dismiss tip"
             aria-label="Dismiss tip"
-            onClick={() => hideTip(t.id)}
+            onClick={() => account.home.hideTip(t.id)}
             className="shrink-0 rounded-full p-1.5 hover:bg-on-tertiary-container/10"
           >
             <X size={16} />
@@ -385,13 +386,16 @@ function RecentItem({
   open: () => void
   card: () => CardMenu
 }) {
+  const account = useAccount()
   return (
     <button
       type="button"
       data-recent={id}
       onClick={open}
       title={title}
-      {...longPress((x, y) => openActionMenu(x, y, { kind: 'card', key: id, open, ...card() }))}
+      {...longPress((x, y) =>
+        openActionMenu(x, y, { kind: 'card', key: id, open, ...card() }, {}, account)
+      )}
       className={rowCls}
     >
       {glyph}
@@ -412,6 +416,7 @@ function RecentItem({
 }
 
 function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
+  const account = useAccount()
   const key = recentKey(recent)
   const dm = useStore(s =>
     recent.kind === 'dm' ? s.dms.find(d => d.id === recent.dmId) : undefined
@@ -437,7 +442,7 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
   const own = recent.kind === 'dm' ? dm?.is_self === true : ownServer
   const mask = useMask(own)
   const open = () => {
-    const s = useStore.getState()
+    const s = account.store.getState()
     if (recent.kind === 'dm') void s.openDm(recent.dmId)
     else void s.openServer(recent.server, recent.channelId)
   }
@@ -486,9 +491,9 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
       pings={pings}
       open={open}
       card={() => ({
-        read: scopeMarkTargets(useStore.getState(), key),
+        read: scopeMarkTargets(account.store.getState(), key),
         markRead: () => void markScopesRead([key]),
-        forget: () => forgetRecent(key),
+        forget: account.lifetime.inSession(() => account.home.forgetRecent(key)),
       })}
     />
   )
@@ -496,6 +501,7 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
 
 // A P2P conversation or channel visited: names, counts and actions come from P2P.
 function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) {
+  const account = useAccount()
   const key = recentKey(recent)
   const { room, ch } = recent
   const peer = useP2p(s =>
@@ -554,7 +560,7 @@ function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) 
       card={() => ({
         read: unread || pings ? [key] : [],
         markRead: () => p2pDm.markRead(ch === null ? room : `${room}/${ch}`),
-        forget: () => forgetRecent(key),
+        forget: account.lifetime.inSession(() => account.home.forgetRecent(key)),
       })}
     />
   )
@@ -628,10 +634,13 @@ function UnreadRow({
   markLabel: string
   card: () => CardMenu
 }) {
+  const account = useAccount()
   return (
     <div
       data-unread-server={id}
-      {...longPress((x, y) => openActionMenu(x, y, { kind: 'card', key: id, open, ...card() }))}
+      {...longPress((x, y) =>
+        openActionMenu(x, y, { kind: 'card', key: id, open, ...card() }, {}, account)
+      )}
       className="flex min-w-0 items-center gap-1 rounded-xl hover:bg-surface-container-high"
     >
       <button
@@ -678,6 +687,7 @@ function ServerUnreadRow({
   pings: number
   channels: number
 }) {
+  const account = useAccount()
   const display = useStore(
     s =>
       s.me?.servers.find(x => x.name === name)?.display_name ??
@@ -706,7 +716,7 @@ function ServerUnreadRow({
       mark={() => void markServerRead(name)}
       markLabel={`Mark ${shown} as read`}
       card={() => ({
-        read: serversMarkTargets(useStore.getState(), [name]),
+        read: serversMarkTargets(account.store.getState(), [name]),
         markRead: () => void markServerRead(name),
       })}
     />
@@ -714,6 +724,7 @@ function ServerUnreadRow({
 }
 
 function DmUnreadRow({ pings }: { pings: number }) {
+  const account = useAccount()
   const markDmsRead = useStore(s => s.markDmsRead)
   const openLastDm = useStore(s => s.openLastDm)
   return (
@@ -731,7 +742,7 @@ function DmUnreadRow({ pings }: { pings: number }) {
       mark={() => void markDmsRead()}
       markLabel="Mark direct messages as read"
       card={() => ({
-        read: dmsMarkTargets(useStore.getState()),
+        read: dmsMarkTargets(account.store.getState()),
         markRead: () => void markDmsRead(),
       })}
     />
@@ -797,8 +808,9 @@ function P2pDmUnreadRow({ pings }: { pings: number }) {
 const UNREAD_SHOWN = 6
 
 function UnreadSummary() {
+  const account = useAccount()
   const ready = useStore(s => s.readsReady)
-  const key = useStore(unreadSummaryKey)
+  const key = useStore(account.home.unreadSummaryKey)
   const askMarkAllRead = useStore(s => s.askMarkAllRead)
   const [all, setAll] = useState(false)
   const summary = useMemo(() => parseSummary(key), [key])
@@ -854,6 +866,7 @@ function UnreadSummary() {
 }
 
 function PinnedDmRow({ dm }: { dm: DmSummary }) {
+  const account = useAccount()
   const key = `d${dm.id}`
   const unread = useStore(s => scopeUnread(s, key))
   const pings = useStore(s => scopePingCount(s, key))
@@ -867,12 +880,15 @@ function PinnedDmRow({ dm }: { dm: DmSummary }) {
       data-pinned-dm={dm.id}
       title={streamer ? 'Direct message' : mask(dm.other.display_name)}
       onClick={() => void openDm(dm.id)}
-      {...longPress((x, y) => openActionMenu(x, y, { kind: 'dm', dm, where: 'home' }), {
-        group: 'home_dm',
-        key: String(dm.id),
-        zones: zone => zone === 'home_pinned',
-        onDrop: ({ index }) => placeDm(dm.id, 'pinned', index),
-      })}
+      {...longPress(
+        (x, y) => openActionMenu(x, y, { kind: 'dm', dm, where: 'home' }, {}, account),
+        {
+          group: 'home_dm',
+          key: String(dm.id),
+          zones: zone => zone === 'home_pinned',
+          onDrop: ({ index }) => placeDm(dm.id, 'pinned', index),
+        }
+      )}
       className={rowCls}
     >
       <UserAvatar
@@ -924,6 +940,7 @@ function PinnedDms() {
 const P2P_ROW_ICONS = { requests: MessageCircle, invites: Compass, asks: Users } as const
 
 function P2pCard() {
+  const account = useAccount()
   const card = useP2pCard()
   const error = useP2p(s => s.error)
   const me = useP2p(s => s.me)
@@ -1016,7 +1033,9 @@ function P2pCard() {
                       title={label}
                       aria-label={label}
                       onClick={() => void p2pDm.openDm(c.ik)}
-                      {...longPress((x, y) => openContactMenu(x, y, c, me))}
+                      {...longPress((x, y) =>
+                        openActionMenu(x, y, { kind: 'p2p_contact', c, me }, {}, account)
+                      )}
                       className="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-primary"
                     >
                       <KeyAvatar ik={c.ik} />
@@ -1139,13 +1158,14 @@ function GuestHome() {
 }
 
 function MemberHome() {
+  const account = useAccount()
   const recents = useHome(s => s.prefs.recents)
   const otherDms = useStore(s => s.dms.filter(d => !d.is_self).length)
   const servers = useStore(s => s.me?.servers.length ?? 0)
   const p2pRows = useP2pUnread()
   const unread =
     useStore(s => {
-      const { dms, servers } = parseSummary(unreadSummaryKey(s))
+      const { dms, servers } = parseSummary(account.home.unreadSummaryKey(s))
       return dms.unread || dms.pings > 0 || servers.length > 0
     }) ||
     p2pRows.dms.unread ||

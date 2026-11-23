@@ -109,6 +109,7 @@ export interface ReactPicker {
 }
 
 export interface ConfirmRequest {
+  bodyName?: string
   title: string
   body: string
   confirm: string
@@ -653,6 +654,7 @@ export interface RChatState {
   toggleDeafen: () => void
   toggleCamera: () => Promise<void>
   toggleShare: () => Promise<void>
+  canStartCall: (dmId: number) => boolean
   startCall: (dmId: number, video: boolean) => Promise<void>
   startP2pCall: (dmId: number, video: boolean, relay?: RelayChoice) => Promise<void>
   setCallRoute: (route: CallRoute) => void

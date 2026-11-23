@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '../lib/store'
-import { AccountProvider, useLiveSessions } from '../lib/client/react'
+import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
 import { client } from '../lib/client/client'
+import type { RChatState } from '../lib/store_types'
+import { historyKey } from '../lib/openapi'
 import { notifications } from '../lib/platform'
 import { useGuestPostingCheck } from '../components/use_guest_posting_check'
 import { startApp } from '../lib/start'
@@ -15,7 +17,6 @@ import { ServerRail } from '../components/server_rail'
 import { ChannelSidebar } from '../components/channel_sidebar'
 import { MessagePane } from '../components/message_pane'
 import { HomePage } from '../components/home'
-import { reloadHome, useHomeSync } from '../lib/home_store'
 import { ServerDialogs } from '../components/server_dialogs'
 import { FolderDialog } from '../components/folder_dialog'
 import { CategoryDialog } from '../components/category_dialog'
@@ -34,7 +35,7 @@ import SearchPanel from '../components/search_panel'
 import FriendsPanel, { AddFriendsDialog } from '../components/friends'
 import { InboxHost, useInboxCount } from '../components/inbox'
 import { PaletteHost } from '../components/palette'
-import { reloadPalettePrefs, usePaletteUi } from '../lib/palette_store'
+import { usePaletteUi } from '../lib/palette_store'
 import { PollVotersDialog } from '../components/poll_card'
 import { CallBanner } from '../components/voice_grid'
 import { AnnouncementBanner } from '../components/announcements'
@@ -49,7 +50,6 @@ import { P2pChannelPane, P2pMemberList, P2pServerSidebar } from '../components/p
 import { P2pThreadPanel } from '../components/p2p/p2p_thread'
 import { P2pSearchPanel } from '../components/p2p/p2p_search'
 import { p2p, p2pHost, useP2p } from '../lib/p2p/app'
-import { addInboxAdapter } from '../lib/inbox_source'
 import { p2pInbox, startP2pPings } from '../lib/p2p/inbox_source'
 import { startP2pIndex } from '../lib/p2p/palette_source'
 
@@ -63,29 +63,18 @@ p2pHost.textOnly = () => {
   const s = useStore.getState().settings
   return !s.asset_uploads && !s.p2p_attachments
 }
-p2pHost.inCall = () => {
-  const s = useStore.getState()
-  return s.voice !== null || s.call !== null
-}
-p2pHost.leaveInstanceCalls = () => {
-  const s = useStore.getState()
-  if (s.voice) s.leaveVoice()
-  if (s.call) {
-    if (s.call.state === 'ringing' && s.call.from !== s.me?.username) s.declineCall()
-    else s.hangupCall()
-  }
-}
-p2pHost.muted = () => useStore.getState().selfAudio.muted
-addInboxAdapter(p2pInbox)
 
 export default function AppShell() {
   const sessions = useLiveSessions()
   return (
     <AccountProvider session={client.shown()}>
       <Chat />
+      <CallBanner />
       {sessions.map(session => (
         <AccountProvider key={session.renderKey} session={session}>
+          <SessionServices />
           <OverlayLayer />
+          <RelayPrompt />
         </AccountProvider>
       ))}
       <ShellBanners multiple={sessions.length > 1} />
@@ -96,6 +85,40 @@ export default function AppShell() {
 function ShellBanners({ multiple }: { multiple: boolean }) {
   const ready = useStore(s => !!s.me || s.guest)
   return ready || multiple ? <Banners /> : null
+}
+
+export function SessionServices() {
+  const account = useAccount()
+  useEffect(() => {
+    const stopHome = account.home.startSync(account.isHome ? useP2p : undefined)
+    const ownerOf = (s: RChatState) => s.me?.username ?? (s.guest ? 'guest' : null)
+    const reloadHistory = () => account.apiDoc.loadApiHistory(ownerOf(account.store.getState()))
+    reloadHistory()
+    const stopHistory = account.store.subscribe((s, prev) => {
+      if (s.instanceHost !== prev.instanceHost || ownerOf(s) !== ownerOf(prev)) reloadHistory()
+    })
+    const stopIndex = account.indexer.startIndexSync()
+    if (account.isHome) account.inbox.addInboxAdapter(p2pInbox)
+    const stopP2pIndex = account.isHome ? startP2pIndex() : null
+    const stopP2pPings = account.isHome ? startP2pPings() : null
+    const reload = (event: StorageEvent) => {
+      const key = account.conn.scoped(historyKey(ownerOf(account.store.getState())))
+      if (event.key === key || event.key === null) reloadHistory()
+      if (event.key?.startsWith('rchat_home:')) account.home.reloadHome()
+      if (event.key?.startsWith('rchat_palette:')) account.palettePrefs.reloadPalettePrefs()
+    }
+    window.addEventListener('storage', reload)
+    return () => {
+      window.removeEventListener('storage', reload)
+      stopP2pPings?.()
+      stopP2pIndex?.()
+      if (account.isHome) account.inbox.removeInboxAdapter(p2pInbox.id)
+      stopHistory()
+      stopIndex()
+      stopHome()
+    }
+  }, [account])
+  return null
 }
 
 function OverlayLayer() {
@@ -153,9 +176,6 @@ function Chat() {
   const [leftOpen, setLeftOpen] = useState(false)
   const [rightOpen, setRightOpen] = useState(false)
   const closeLeft = useCallback(() => setLeftOpen(false), [])
-  useHomeSync()
-  useEffect(() => startP2pIndex(), [])
-  useEffect(() => startP2pPings(), [])
   // The member list of a P2P server on wide screens (on by default, like instance servers).
   const [p2pMembers, setP2pMembers] = useState(true)
 
@@ -203,8 +223,6 @@ function Chat() {
       if (e.key?.startsWith('rchat_forward:')) useStore.getState().reloadForward()
       if (e.key?.startsWith('rchat_notify:')) useStore.getState().reloadNotify()
       if (e.key?.startsWith('rchat_typing:')) useStore.getState().reloadTyping()
-      if (e.key?.startsWith('rchat_home:')) reloadHome()
-      if (e.key?.startsWith('rchat_palette:')) reloadPalettePrefs()
     }
     const onWake = () => {
       if (document.visibilityState === 'visible') useStore.getState().pruneNotify()
@@ -368,10 +386,8 @@ function Chat() {
         <AdminHost />
         <InboxHost />
         <PaletteHost />
-        <RelayPrompt />
         <ViewingPrompt />
         <P2pDialogs />
-        <CallBanner />
       </div>
       <InvitePage />
       <ConfigLinkPage />

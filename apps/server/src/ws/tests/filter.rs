@@ -787,6 +787,7 @@ fn every_event() -> Vec<WsEvent> {
             },
         },
         WsEvent::Error {
+            request: None,
             message: s("e"),
             reason: None,
         },

@@ -4,7 +4,8 @@ import { resolve as resolveNotify } from '../../notify'
 import { P2pStore } from '../db'
 import type { MissedCall } from '../dm'
 import { JoinAborted, RtcManager } from '../../rtc'
-import { hidesIp, relayBook } from '../../relays'
+import { client } from '../../client/client'
+import { hidesIp } from '../../relays'
 import { Calls, type CallView } from '../calls'
 import { data, calls, limits, useP2p, p2pHost, servers, type P2pState } from './store'
 import { p2pUser, contactName, p2pDm, timers, refreshRoom } from './dms'
@@ -104,6 +105,8 @@ const mediaVideo = () => callRtc.videoTrack !== null || callRtc.sharing
 export const p2pVoice = {
   active: () => !!servers?.voice.current() && callRtc.active(),
   async join(room: string, ch: string) {
+    const account = p2pHost.account ?? client.shown()
+    const relayBook = account.relays
     const sv = servers
     if (!sv) return p2pHost.toast(ELSEWHERE_TEXT)
     const at = useP2p.getState().server
@@ -119,11 +122,7 @@ export const p2pVoice = {
           const plan = await relayBook.check(relayBook.prefs.choice)
           return { config: plan.config, declared: plan.declared, hidesIp: hidesIp(plan) }
         },
-        muted: () => p2pHost.muted(),
-        leaveOthers: () => {
-          calls?.hangup()
-          p2pHost.leaveInstanceCalls()
-        },
+        muted: () => account.store.getState().selfAudio.muted,
       })
       if (!peerVisible(useP2p.getState(), room, ch) && sv.voice.current()?.ch === ch)
         sv.voice.leave()
@@ -157,8 +156,8 @@ export const p2pCall = {
     const c = calls
     if (!c) return p2pHost.toast(ELSEWHERE_TEXT)
     try {
-      await c.start(ik, video, choice)
-      if (video && calls === c && c.view()) await callRtc.camera(true)
+      const started = await c.start(ik, video, choice)
+      if (started && video && calls === c && c.view()) await callRtc.camera(true)
     } catch (e) {
       callFailed(e)
     }

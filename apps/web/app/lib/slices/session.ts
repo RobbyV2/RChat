@@ -23,7 +23,7 @@ import { accountPrompt, createP2pGate, siteSettings } from '../features'
 import { forwardKey } from '../forward'
 import { type FriendsDeps, friendsInitial, type friendsSlice } from '../friends_store'
 import { NO_GROUP_PINGS } from '../group_pings'
-import { ice, iceKey, iceValue, parseIce } from '../ice'
+import { iceKey, iceValue, parseIce } from '../ice'
 import { limitsOf } from '../instance_limits'
 import {
   fitsHome,
@@ -49,19 +49,16 @@ import {
 } from '../invite'
 import { deniedAccess } from '../join_flow'
 import { keyed, mergeHead, refreshTail, samePrefix } from '../lists'
-import { forgetMedia } from '../media_src'
 import { bootDms, emptyLayout, knownDms, layoutServers, pruneLayout } from '../nav_layout'
 import { EMPTY_NOTIFY, keepScopes } from '../notify'
 import { historyKey } from '../openapi'
-import { p2p } from '../p2p'
 import { p2pAccount, p2pRail } from '../p2p/app'
 import { coversInstance, useP2p } from '../p2p/app/store'
 import { secretsKey } from '../passwords'
 import { NO_PINGS } from '../pings'
 import { clearProfiles } from '../profile'
 import { retrySeconds, tooManyText } from '../rate_limit'
-import { type Decision, mergeRelays, relayBook, relaysKey } from '../relays'
-import { rtc } from '../rtc'
+import { type Decision, mergeRelays, relaysKey } from '../relays'
 import { cleanBio } from '../rules'
 import { displayNameError } from '../display_name'
 import { selectionInitial, type selectionSlice } from '../selection_store'
@@ -151,7 +148,7 @@ export type SessionDeps = { acct: AccountSession } & Pick<
   | 'useNotify'
   | 'useProfanity'
 > &
-  Pick<ReturnType<typeof rtcSlice>, 'endRtc' | 'joins'> &
+  Pick<ReturnType<typeof rtcSlice>, 'endRtc' | 'resetCallEvents' | 'recoverCallHistory' | 'joins'> &
   Pick<Reads, 'lateAnchor' | 'loadUnreads' | 'placeAnchor' | 'readQueue'> &
   Pick<
     Messages,
@@ -200,6 +197,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   const { acct } = deps
   const { cancelViewing, canView, endViewing, instanceTarget, leaveVisit, requestViewing } =
     acct.viewing
+  const { files: p2p, ice, relays: relayBook, rtc } = acct
   const home = acct.conn
   const api = acct.api
   const { endSession, inSession, live, sessionMark } = acct.lifetime
@@ -248,6 +246,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     dropLinkCards,
     dropServer,
     endRtc,
+    resetCallEvents,
+    recoverCallHistory,
     ensureMembership,
     fail,
     fetchPage,
@@ -367,8 +367,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     set({ relayPrompt: null })
     answer?.(decision)
   }
-  const bindHomeMedia = () => {
-    openP2p = username => void p2pAccount(username)
+  const bindSessionMedia = () => {
+    if (acct.isHome) openP2p = username => void p2pAccount(username, acct)
     relayBook.prompt = host =>
       new Promise<Decision>(resolve => {
         relayAnswer?.('deny')
@@ -965,7 +965,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         if (get().guestVoiceName !== null) set({ guestVoiceName: null })
         forgetTyping(false)
         if (downSince === null) downSince = Date.now()
-        if (get().voice || get().call) endRtc()
+        endRtc()
         return
       }
       const outage = downSince === null ? 0 : Date.now() - downSince
@@ -1310,6 +1310,12 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   // Drops the timers, queues and caches of the signed-in session.
   const forgetSession = () => {
+    client.calls.end(acct)
+    resetCallEvents()
+    acct.invites.clear()
+    acct.media.clear()
+    acct.textPreviews.clear()
+    acct.apiDoc.reset()
     beginNavigation()
     endViewing(get().guest)
     endSession()
@@ -1678,7 +1684,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       setMediaCookie(home, null)
       writeLocal(LS.guest, null)
       writeLocal(LS.guestGrants, null)
-      forgetMedia()
       api.setToken(null)
       api.setGrants({})
       home.ws.setGrants({})
@@ -2029,6 +2034,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   const handlers = {
     resync: () => {
+      recoverCallHistory()
       dropLinkCards()
       resync()
     },
@@ -2057,7 +2063,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     rememberGuestName,
     syncUrl,
     forgetSession,
-    bindHomeMedia,
+    bindSessionMedia,
     tapWs,
     p2pGate,
     dispose: () => {

@@ -1,6 +1,10 @@
 import { useEffect } from 'react'
+import { client } from './client/client'
+import type { AccountSession } from './client/session'
+import { accountBoundStore, useAccount } from './client/react'
+
 import { create } from 'zustand'
-import { home, readLocal, writeLocal } from './instances'
+import { readLocal, writeLocal } from './instances'
 import {
   EMPTY_HOME,
   dismissTip,
@@ -26,7 +30,6 @@ import {
   scopeUnread,
   serverPingCount,
   serverUnread,
-  useStore,
   type RChatState,
 } from './store'
 
@@ -35,116 +38,159 @@ interface HomeState {
   prefs: HomePrefs
 }
 
-export const useHome = create<HomeState>(() => ({ owner: null, prefs: EMPTY_HOME }))
-
-const read = (owner: string): HomePrefs => {
-  try {
-    const prefs = parseHome(readLocal(home.scoped(homeKey(owner))))
-    return legacyIntroKeys(owner)
-      .filter(([, key]) => readLocal(home.scoped(key)) === '1')
-      .reduce((p, [id]) => dismissTip(p, id), prefs)
-  } catch {
-    return EMPTY_HOME
-  }
-}
-
-const save = (prefs: HomePrefs) => {
-  const { owner, prefs: before } = useHome.getState()
-  if (!owner || prefs === before) return
-  useHome.setState({ prefs })
-  writeLocal(home.scoped(homeKey(owner)), homeValue(prefs))
-}
-
-export const loadHome = (owner: string | null) =>
-  useHome.setState({ owner, prefs: owner ? read(owner) : EMPTY_HOME })
-
-export const reloadHome = () => loadHome(useHome.getState().owner)
-
-export const forgetRecent = (key: string) => save(dropRecent(useHome.getState().prefs, key))
-
-export const hideTip = (id: string) => save(dismissTip(useHome.getState().prefs, id))
-
-// Records the open channel or DM as the latest visit. Previewed servers are not recorded.
-export const noteVisit = (s: RChatState, now = Date.now()) => {
-  const view = s.view
-  if (!view || !s.me || useHome.getState().owner !== s.me.username) return
-  if (previewServer(s) !== null) return
-  const names =
-    view.kind === 'channel'
-      ? {
-          channel:
-            s.servers[view.server]?.channels.find(c => c.id === view.channelId)?.name ?? null,
-          serverName:
-            s.me.servers.find(x => x.name === view.server)?.display_name ??
-            s.servers[view.server]?.display_name ??
-            null,
-        }
-      : { channel: null, serverName: null }
-  save(pushRecent(useHome.getState().prefs, view, names, now))
-}
-
-// Records a P2P conversation or channel when it opens.
-export const noteP2pVisit = (st: P2pState, prev: P2pState, now = Date.now()) => {
-  const c = st.chat
-  if (!c || (c.room === prev.chat?.room && (c.ch ?? null) === (prev.chat?.ch ?? null))) return
-  const owner = useStore.getState().me?.username
-  if (!owner || useHome.getState().owner !== owner || st.account !== owner) return
-  save(pushP2pRecent(useHome.getState().prefs, c.room, c.ch ?? null, now))
-}
-
-// Keeps Home's state on the signed-in account and records every view it opens.
-export function useHomeSync() {
-  useEffect(() => {
-    const sync = (s: RChatState, prev: RChatState | null) => {
-      const owner = s.me?.username ?? null
-      if (owner !== useHome.getState().owner) loadHome(owner)
-      if (s.view && (s.view !== prev?.view || s.me?.username !== prev?.me?.username)) noteVisit(s)
-    }
-    sync(useStore.getState(), null)
-    const off = useStore.subscribe(sync)
-    const offP2p = useP2p.subscribe((st, prev) => noteP2pVisit(st, prev))
-    return () => {
-      off()
-      offP2p()
-    }
-  }, [])
-}
-
 export interface UnreadSummary {
   servers: UnreadRow[]
   dms: { pings: number; unread: boolean }
 }
 
-let summaryMemo: {
-  key: unknown[]
-  value: string
-} | null = null
-
-// Home's unread summary as a string, so a selector can compare it cheaply; `parseSummary` reads it.
-export const unreadSummaryKey = (s: RChatState): string => {
-  const key = [s.reads, s.pings, s.groupPings, s.notifyPrefs, s.me?.servers, s.servers, s.layout]
-  if (summaryMemo && summaryMemo.key.every((k, i) => k === key[i])) return summaryMemo.value
-  const text = (scope: string) => {
-    const detail = s.servers[s.reads[scope]?.server ?? '']
-    return !detail || detail.channels.some(c => c.kind === 'text' && `c${c.id}` === scope)
-  }
-  const counts = unreadChannels(s.reads, scope => scopeUnread(s, scope) && text(scope))
-  const names = new Map((s.me?.servers ?? []).map(x => [x.name, x]))
-  const order = railOrder(s).filter(n => names.has(n))
-  const rows = unreadRows(
-    order.map(name => ({
-      name,
-      pings: serverPingCount(s, name),
-      channels: serverUnread(s, name) ? Math.max(1, counts[name] ?? 0) : 0,
-    }))
-  )
-  const summary: UnreadSummary = {
-    servers: rows,
-    dms: { pings: dmPings(badgePings(s)), unread: dmsUnread(s) },
-  }
-  const value = JSON.stringify(summary)
-  summaryMemo = { key, value }
-  return value
-}
-
 export const parseSummary = (value: string): UnreadSummary => JSON.parse(value) as UnreadSummary
+
+const emptyHome = (): HomePrefs => ({ ...EMPTY_HOME, recents: [], tips: [] })
+
+export function createHomeStore(acct: AccountSession) {
+  const { conn: home, store } = acct
+  const useHome = create<HomeState>(() => ({ owner: null, prefs: emptyHome() }))
+
+  const read = (owner: string): HomePrefs => {
+    try {
+      const parsed = parseHome(readLocal(home.scoped(homeKey(owner))))
+      const prefs = parsed === EMPTY_HOME ? emptyHome() : parsed
+      return legacyIntroKeys(owner)
+        .filter(([, key]) => readLocal(home.scoped(key)) === '1')
+        .reduce((p, [id]) => dismissTip(p, id), prefs)
+    } catch {
+      return emptyHome()
+    }
+  }
+
+  const save = (prefs: HomePrefs) => {
+    const { owner, prefs: before } = useHome.getState()
+    if (!owner || prefs === before) return
+    useHome.setState({ prefs })
+    writeLocal(home.scoped(homeKey(owner)), homeValue(prefs))
+  }
+
+  const loadHome = (owner: string | null) =>
+    useHome.setState({ owner, prefs: owner ? read(owner) : emptyHome() })
+
+  const reloadHome = () => loadHome(useHome.getState().owner)
+
+  const forgetRecent = (key: string) => save(dropRecent(useHome.getState().prefs, key))
+
+  const hideTip = (id: string) => save(dismissTip(useHome.getState().prefs, id))
+
+  // Records the open channel or DM as the latest visit. Previewed servers are not recorded.
+  const noteVisit = (s: RChatState, now = Date.now()) => {
+    const view = s.view
+    if (!view || !s.me || useHome.getState().owner !== s.me.username) return
+    if (previewServer(s) !== null) return
+    const names =
+      view.kind === 'channel'
+        ? {
+            channel:
+              s.servers[view.server]?.channels.find(c => c.id === view.channelId)?.name ?? null,
+            serverName:
+              s.me.servers.find(x => x.name === view.server)?.display_name ??
+              s.servers[view.server]?.display_name ??
+              null,
+          }
+        : { channel: null, serverName: null }
+    save(pushRecent(useHome.getState().prefs, view, names, now))
+  }
+
+  // Records a P2P conversation or channel when it opens.
+  const noteP2pVisit = (st: P2pState, prev: P2pState, now = Date.now()) => {
+    const c = st.chat
+    if (!c || (c.room === prev.chat?.room && (c.ch ?? null) === (prev.chat?.ch ?? null))) return
+    const owner = store.getState().me?.username
+    if (!owner || useHome.getState().owner !== owner || st.account !== owner) return
+    save(pushP2pRecent(useHome.getState().prefs, c.room, c.ch ?? null, now))
+  }
+
+  // Keeps Home's state on the signed-in account and records every view it opens.
+  let stop: (() => void) | null = null
+  function startSync(p2p?: Pick<typeof useP2p, 'subscribe'>) {
+    stop?.()
+    const sync = (s: RChatState, prev: RChatState | null) => {
+      const owner = s.me?.username ?? null
+      if (owner !== useHome.getState().owner) loadHome(owner)
+      if (s.view && (s.view !== prev?.view || s.me?.username !== prev?.me?.username)) noteVisit(s)
+    }
+    sync(store.getState(), null)
+    const off = store.subscribe(sync)
+    const offP2p = p2p?.subscribe((st, prev) => noteP2pVisit(st, prev))
+    const cleanup = () => {
+      off()
+      offP2p?.()
+    }
+    stop = cleanup
+    return cleanup
+  }
+
+  let summaryMemo: {
+    key: unknown[]
+    value: string
+  } | null = null
+
+  // Home's unread summary as a string, so a selector can compare it cheaply; `parseSummary` reads it.
+  const unreadSummaryKey = (s: RChatState): string => {
+    const key = [s.reads, s.pings, s.groupPings, s.notifyPrefs, s.me?.servers, s.servers, s.layout]
+    if (summaryMemo && summaryMemo.key.every((k, i) => k === key[i])) return summaryMemo.value
+    const text = (scope: string) => {
+      const detail = s.servers[s.reads[scope]?.server ?? '']
+      return !detail || detail.channels.some(c => c.kind === 'text' && `c${c.id}` === scope)
+    }
+    const counts = unreadChannels(s.reads, scope => scopeUnread(s, scope) && text(scope))
+    const names = new Map((s.me?.servers ?? []).map(x => [x.name, x]))
+    const order = railOrder(s).filter(n => names.has(n))
+    const rows = unreadRows(
+      order.map(name => ({
+        name,
+        pings: serverPingCount(s, name),
+        channels: serverUnread(s, name) ? Math.max(1, counts[name] ?? 0) : 0,
+      }))
+    )
+    const summary: UnreadSummary = {
+      servers: rows,
+      dms: { pings: dmPings(badgePings(s)), unread: dmsUnread(s) },
+    }
+    const value = JSON.stringify(summary)
+    summaryMemo = { key, value }
+    return value
+  }
+
+  return {
+    useHome,
+    startSync,
+    loadHome,
+    reloadHome,
+    forgetRecent,
+    hideTip,
+    noteVisit,
+    noteP2pVisit,
+    unreadSummaryKey,
+    dispose() {
+      stop?.()
+      stop = null
+      summaryMemo = null
+      loadHome(null)
+    },
+  }
+}
+export const useHome = accountBoundStore<HomeState>(acct => acct.home.useHome)
+export const loadHome = (owner: string | null) => client.shown().home.loadHome(owner)
+export const reloadHome = () => client.shown().home.reloadHome()
+export const forgetRecent = (key: string) => client.shown().home.forgetRecent(key)
+export const hideTip = (id: string) => client.shown().home.hideTip(id)
+export const noteVisit = (state: RChatState, now?: number) =>
+  client.shown().home.noteVisit(state, now)
+export const noteP2pVisit = (state: P2pState, previous: P2pState, now?: number) =>
+  client.shown().home.noteP2pVisit(state, previous, now)
+export const unreadSummaryKey = (state: RChatState) => client.shown().home.unreadSummaryKey(state)
+export function useHomeSync() {
+  const account = useAccount()
+  useEffect(
+    () => account.home.startSync(account === client.shown() ? useP2p : undefined),
+    [account]
+  )
+}

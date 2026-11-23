@@ -101,6 +101,14 @@ impl Updated {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+pub enum RefusedRequest {
+    Call { attempt_id: u64 },
+    VoiceJoin { channel_id: i64 },
+    Other,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsEvent {
     Message {
         server: Option<String>,
@@ -436,6 +444,8 @@ pub enum WsEvent {
     },
     Error {
         message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request: Option<RefusedRequest>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<crate::api::Reason>,
     },

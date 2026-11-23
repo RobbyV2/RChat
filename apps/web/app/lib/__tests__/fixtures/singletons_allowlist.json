@@ -1,6 +1,6 @@
 {
   "[[...slug]]/app_shell.tsx": {
-    "useStore.getState": 23,
+    "useStore.getState": 20,
     "useStore.setState": 1
   },
   "components/admin/announcements.tsx": {
@@ -34,26 +34,18 @@
     "import home": 1,
     "useStore.getState": 2
   },
-  "components/api_console.tsx": {
-    "import api": 1,
-    "useStore.getState": 2
-  },
   "components/backup_phrase/reveal.tsx": {
     "useStore.subscribe": 1
   },
-  "components/call_buttons.tsx": {
-    "useStore.getState": 1
-  },
   "components/channel_sidebar.tsx": {
     "useP2p.getState": 1,
-    "useStore.getState": 4
+    "useStore.getState": 3
   },
   "components/channel_topic.tsx": {
     "useStore.getState": 1,
     "useStore.subscribe": 1
   },
   "components/code_block.tsx": {
-    "import api": 1,
     "useStore.getState": 1
   },
   "components/context_menu.tsx": {
@@ -73,26 +65,14 @@
   "components/forwards.tsx": {
     "useStore.getState": 3
   },
-  "components/home.tsx": {
-    "useStore.getState": 4
-  },
-  "components/inbox.tsx": {
-    "useStore.getState": 2
-  },
   "components/invite_card.tsx": {
     "import api": 1,
     "import home": 1,
-    "import registry": 1,
-    "useStore.getState": 5
-  },
-  "components/markdown_message.tsx": {
-    "import api": 1,
-    "import home": 1,
     "useStore.getState": 4
   },
-  "components/message_composer.tsx": {
-    "import api": 1,
-    "useStore.getState": 3
+  "components/markdown_message.tsx": {
+    "import home": 1,
+    "useStore.getState": 2
   },
   "components/message_editor.tsx": {
     "useStore.getState": 2
@@ -108,9 +88,6 @@
   },
   "components/p2p/add_contact.tsx": {
     "useP2p.getState": 1,
-    "useStore.getState": 1
-  },
-  "components/p2p/p2p_call.tsx": {
     "useStore.getState": 1
   },
   "components/p2p/p2p_chat.tsx": {
@@ -135,9 +112,6 @@
   },
   "components/p2p/p2p_server_view.tsx": {
     "useStore.getState": 1
-  },
-  "components/palette.tsx": {
-    "useStore.getState": 3
   },
   "components/pins.tsx": {
     "useStore.getState": 4
@@ -177,9 +151,6 @@
   "components/use_guest_posting_check.ts": {
     "import api": 1,
     "useStore.setState": 3
-  },
-  "components/voice_grid.tsx": {
-    "useStore.getState": 2
   },
   "components/widget_settings.tsx": {
     "import api": 1,
@@ -262,14 +233,6 @@
   "lib/actions/steps.ts": {
     "useStore.getState": 1
   },
-  "lib/actions/voice.ts": {
-    "useStore.getState": 1
-  },
-  "lib/api_console.ts": {
-    "create in useApiDoc": 1,
-    "import api": 1,
-    "import home": 1
-  },
   "lib/forward_access.ts": {
     "useStore.getState": 3
   },
@@ -277,30 +240,11 @@
     "import api": 1,
     "useP2p.getState": 1
   },
-  "lib/home_store.ts": {
-    "create in useHome": 1,
-    "import home": 1,
-    "let summaryMemo": 1,
-    "useStore.getState": 2,
-    "useStore.subscribe": 1
-  },
   "lib/ice.ts": {
-    "import api": 1,
     "import home": 1
   },
-  "lib/inbox_source.ts": {
-    "import api": 1,
-    "let adapters": 1,
-    "let bounds": 1,
-    "new Map in bounds": 1,
-    "useStore.getState": 5
-  },
-  "lib/media_src.ts": {
-    "import api": 1
-  },
   "lib/p2p.ts": {
-    "import home": 1,
-    "new Map in previews": 1
+    "import home": 1
   },
   "lib/p2p/app/account.ts": {
     "import api": 1,
@@ -388,48 +332,11 @@
   "lib/p2p/user_limits.ts": {
     "import home": 1
   },
-  "lib/palette_results.ts": {
-    "useStore.getState": 1
-  },
-  "lib/palette_store.ts": {
-    "create in usePaletteUi": 1,
-    "import home": 1,
-    "let escapeHolder": 1,
-    "useStore.getState": 1
-  },
   "lib/palette_sync.ts": {
-    "create in useIndexStatus": 1,
-    "import api": 1,
-    "import home": 1,
-    "let epoch": 1,
-    "let gen": 1,
-    "let index": 1,
-    "let mode": 1,
-    "let owner": 1,
-    "let ownerId": 1,
-    "let ownerPrefix": 1,
-    "let saveTimer": 1,
-    "let saving": 1,
-    "let seenMembers": 1,
-    "let seenMessages": 1,
-    "let wiping": 1,
-    "new Map in seenMembers": 1,
-    "new Map in seenMessages": 1,
-    "new Map in sources": 1,
-    "new Map in verified": 1,
-    "new Set in INDEXED_KINDS": 1,
-    "useStore.getState": 13,
-    "useStore.subscribe": 1
+    "new Set in INDEXED_KINDS": 1
   },
   "lib/platform/index.ts": {
     "useStore.getState": 1
-  },
-  "lib/remote_invite.ts": {
-    "import home": 1,
-    "import registry": 1,
-    "new Map in connections": 1,
-    "new Map in invites": 1,
-    "new Set in requested": 1
   },
   "lib/rtc.ts": {
     "import home": 1

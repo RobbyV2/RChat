@@ -74,12 +74,16 @@ test('notices from different accounts share one region and retain independent li
     // React's server snapshot is the initial state.
     Object.assign(session.store.getInitialState(), session.store.getState())
   }
-  const html = renderToStaticMarkup(<Banners />)
-  expect(html.match(/aria-label="Notifications"/g)).toHaveLength(1)
-  expect(html.match(/aria-label="Dismiss"/g)).toHaveLength(2 * NOTICES_MAX)
-  for (const session of [a, b]) {
-    expect(html).toContain(session.id + '/1')
-    expect(html).not.toContain(session.id + '/0')
+  for (const streamer of [false, true]) {
+    for (const session of [a, b]) Object.assign(session.store.getInitialState(), { streamer })
+    const html = renderToStaticMarkup(<Banners />)
+    expect(html.match(/aria-label="Notifications"/g)).toHaveLength(1)
+    expect(html.match(/aria-label="Dismiss"/g)).toHaveLength(2 * NOTICES_MAX)
+    const text = html.replace(/<[^>]*>/g, '')
+    for (const session of [a, b]) {
+      expect(text.includes(session.id + '/1')).toBe(!streamer)
+      expect(text).not.toContain(session.id + '/0')
+    }
   }
   const notice = b.store.getState().notices[0]!
   b.store.getState().dismissNotice(notice.id)

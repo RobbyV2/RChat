@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { Check, Copy, FileCode, ShieldAlert } from 'lucide-react'
-import { api } from '../lib/instances'
+import { useAccount } from '../lib/client/react'
 import { fmtSize } from '../lib/bytes'
 import {
   decodeText,
@@ -12,6 +12,7 @@ import {
   lineCount,
   PREVIEW_TEXT_MAX,
   type Lang,
+  type TextFile,
 } from '../lib/code'
 import { useHighlight, type CodeNode } from '../lib/highlight'
 import { sharing } from '../lib/platform'
@@ -90,29 +91,7 @@ export function CodeBlock({ code, tag }: { code: string; tag: string | null }) {
 export const nodeText = (n: CodeNode | undefined): string =>
   !n ? '' : n.type === 'text' ? (n.value ?? '') : (n.children ?? []).map(nodeText).join('')
 
-export interface TextFile {
-  text: string
-  cut: boolean
-  // For P2P files: whether the bytes matched the sender's checksum.
-  verified?: boolean
-  // The whole file's size, when known.
-  total?: number | null
-}
-
-// Text previews already loaded, by file, newest last.
-const kept = new Map<string, TextFile | null>()
-const KEEP_MAX = 16
-
-export const keptText = (key: string) => kept.get(key)
-
-export const keepText = (key: string, t: TextFile | null) => {
-  kept.delete(key)
-  kept.set(key, t)
-  for (const k of kept.keys()) {
-    if (kept.size <= KEEP_MAX) break
-    kept.delete(k)
-  }
-}
+export type { TextFile } from '../lib/code'
 
 export const blobText = async (blob: Blob): Promise<TextFile | null> => {
   const cut = blob.size > PREVIEW_TEXT_MAX
@@ -124,10 +103,13 @@ export const blobText = async (blob: Blob): Promise<TextFile | null> => {
 // The start of an uploaded text file: undefined while it loads, null when it is not text or
 // could not be loaded.
 export const useServerText = (id: string, server: string | undefined, wanted: boolean) => {
-  const key = `media:${id}`
-  const [got, setGot] = useState<{ key: string; file: TextFile | null } | null>(null)
+  const account = useAccount()
+  const { api, textPreviews } = account
+  const mark = account.lifetime.sessionMark()
+  const key = JSON.stringify([account.conn.origin, 'media', server, id])
+  const [got, setGot] = useState<{ key: string; mark: object; file: TextFile | null } | null>(null)
   useEffect(() => {
-    if (!wanted || kept.has(key)) return
+    if (!wanted || textPreviews.get(key) !== undefined) return
     const stop = new AbortController()
     api
       .mediaStart(id, server, PREVIEW_TEXT_MAX, stop.signal)
@@ -137,17 +119,20 @@ export const useServerText = (id: string, server: string | undefined, wanted: bo
       })
       .then(
         file => {
-          keepText(key, file)
-          setGot({ key, file })
+          if (stop.signal.aborted || mark !== account.lifetime.sessionMark()) return
+          textPreviews.keep(key, file)
+          setGot({ key, mark, file })
         },
         () => {
-          if (!stop.signal.aborted) setGot({ key, file: null })
+          if (!stop.signal.aborted && mark === account.lifetime.sessionMark())
+            setGot({ key, mark, file: null })
         }
       )
     return () => stop.abort()
-  }, [id, key, server, wanted])
-  if (kept.has(key)) return kept.get(key) ?? null
-  return got?.key === key ? got.file : undefined
+  }, [id, key, server, wanted, account, api, textPreviews, mark])
+  const cached = textPreviews.get(key)
+  if (cached !== undefined) return cached
+  return got?.key === key && got.mark === mark ? got.file : undefined
 }
 
 export function CodePreviewLoading({ filename }: { filename: string }) {

@@ -252,3 +252,25 @@ export const lineCount = (text: string) => {
   for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) n += 1
   return text.endsWith('\n') ? n - 1 : n
 }
+
+export interface TextFile {
+  text: string
+  cut: boolean
+  // For P2P files: whether the bytes matched the sender's checksum.
+  verified?: boolean
+  // The whole file's size, when known.
+  total?: number | null
+}
+
+export function createTextPreviews() {
+  const files = new Map<string, TextFile | null>()
+  return {
+    get: (key: string) => files.get(key),
+    keep(key: string, file: TextFile | null) {
+      files.delete(key)
+      files.set(key, file)
+      if (files.size > 16) files.delete(files.keys().next().value!)
+    },
+    clear: () => files.clear(),
+  }
+}

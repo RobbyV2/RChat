@@ -6,10 +6,11 @@ import { accountPrompt } from '../features'
 import { guestVoiceOff, voiceSelf } from '../guest_voice'
 
 import { JoinTracker } from '../negotiation'
-import { p2p } from '../p2p'
+import { client } from '../client/client'
+import type { CallClaim } from '../client/calls'
 import { callRtc, p2pCall, p2pVoice } from '../p2p/app'
-import { DENIED_CALL, hidesIp, relayBook } from '../relays'
-import { JoinAborted, rtc } from '../rtc'
+import { DENIED_CALL, hidesIp } from '../relays'
+import { JoinAborted } from '../rtc'
 import { myTimeoutEnds, voiceHushedIn, voiceMutedIn } from '../selectors'
 import type { RChatState } from '../store_types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE, timedOutLine } from '../timeouts'
@@ -107,6 +108,7 @@ export const applyCallState = (
 
 export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   const { acct } = deps
+  const { rtc, files: p2p, relays: relayBook } = acct
   const home = acct.conn
   const { sessionMark } = acct.lifetime
   const { act, fail, saveCallRoute } = deps
@@ -144,6 +146,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     const plan = p2p.callPlan()
     const asked = plan && hidesIp(plan) ? Promise.resolve(null) : relayBook.consent(theirs)
     void asked.then(denied => {
+      if (dialing !== binding.callId) return
       dialing = null
       const call = get().call
       if (call?.dmId !== ev.dm_id || call.state !== 'active' || !p2p.mediaActive()) return
@@ -156,6 +159,105 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     })
   }
   const joins = new JoinTracker()
+  let lease: CallClaim | null = null
+  type Attempt = {
+    dmId: number
+    from: string
+    kind: CallKind
+    video: boolean
+    confirmed: boolean
+    id: number | null
+    ack: 'ringing' | 'active'
+    missed?: boolean
+    ended?: boolean
+  }
+  let nextId = 0
+  let attempt: Attempt | null = null
+  // Only active P2P events have a call_id. The socket reports each successful
+  // start with ringing before active/ended, including starts hung up locally.
+  let onWire: Attempt | null = null
+  // Plain refusals have no request ID. Keep one DM request on the wire, and
+  // let only the current claim start capture after the previous call settles.
+  let wake: (() => void) | null = null
+  const wakeWaiting = () => {
+    const resume = wake
+    wake = null
+    resume?.()
+  }
+  const resetCallEvents = () => {
+    onWire = null
+    wakeWaiting()
+  }
+  const showsAttempt = (dm: Attempt, call: RChatState['call']) =>
+    call?.dmId === dm.dmId && call.from === dm.from && call.kind === dm.kind
+  const matches = (a: Attempt, ev: Extract<WsEvent, { type: 'call_state' }>) =>
+    a.dmId === ev.dm_id &&
+    a.from === ev.from &&
+    a.kind === ev.kind &&
+    (ev.video === undefined || a.video === ev.video)
+  const release = (kind?: CallClaim['kind']) => {
+    if (kind && lease?.kind !== kind) return
+    lease?.release()
+    dialing = null
+    lease = null
+    attempt = null
+    wakeWaiting()
+  }
+  const captureAborted = (claim: CallClaim, error: unknown) => {
+    if (!claim.current()) return true
+    if (!(error instanceof JoinAborted)) return false
+    release(claim.kind)
+    return true
+  }
+  const acquire = async (kind: 'voice' | 'dm', dm?: Attempt, valid = () => true) => {
+    // A newer join can supersede a capture that has not joined a channel yet.
+    if (kind === 'voice' && lease?.kind === kind && !get().voice) release('voice')
+    const at = sessionMark()
+    const previous = client.calls.current()
+    const audio = get().selfAudio
+    const next = await client.calls.request(
+      { account: acct, kind },
+      () => {
+        if (kind === 'voice') {
+          if (get().voice && home.ws.sendVoice({ type: 'voice_leave' })) joins.left()
+          endVoiceMedia()
+        } else if (dm && attempt === dm) {
+          if (dm.id) home.ws.sendVoice({ type: 'call_leave', dm_id: dm.dmId })
+          if (showsAttempt(dm, get().call)) set({ call: null })
+          endCallMedia(dm)
+        }
+      },
+      () => at === sessionMark() && valid()
+    )
+    if (!next?.current()) return null
+    if (previous?.account === acct) set({ selfAudio: audio })
+    if (dm && onWire?.missed) {
+      resetCallEvents()
+      home.ws.reconnectAfterGap()
+    }
+    lease = next
+    attempt = dm ?? null
+    if (dm && onWire) {
+      await new Promise<void>(resolve => {
+        wake = resolve
+      })
+      if (!next.current()) return null
+    }
+    const opening = dm && home.ws.afterGap()
+    if (opening) {
+      const ready = await opening
+      if (!next.current()) return null
+      if (!ready) {
+        release(kind)
+        throw new Error('Not connected')
+      }
+    }
+    if (!valid()) {
+      release(kind)
+      return null
+    }
+    return next
+  }
 
   // Muted by a timeout in the voice channel you are in: by the server, or by your own clock.
   const forcedMute = () => {
@@ -180,7 +282,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     const muted = get().selfAudio.muted || forced || staffMuted()
     if (rtc.active() && rtc.muted !== muted) rtc.setMuted(muted)
     if (p2p.mediaActive() && p2p.muted !== muted) p2p.setMuted(muted)
-    if (callRtc.active() && callRtc.muted !== muted) callRtc.setMuted(muted)
+    if (acct.isHome && callRtc.active() && callRtc.muted !== muted) callRtc.setMuted(muted)
     if (forced && rtc.active()) {
       if (rtc.videoTrack) void rtc.camera(false)
       if (rtc.sharing) void rtc.share(false)
@@ -193,6 +295,9 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   }
 
   const endRtc = () => {
+    resetCallEvents()
+    if (!lease && !get().voice && !get().call) return
+    release()
     rtc.leave()
     joins.reset()
     p2p.endMedia()
@@ -202,19 +307,41 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     }))
   }
 
+  // A resync can stand in for a lost ringing, refusal or end event. An older
+  // socket cannot identify which call a later plain refusal belonged to.
+  const recoverCallHistory = () => {
+    const call = get().call
+    if (!attempt && call?.state === 'ringing') {
+      home.ws.sendVoice({ type: 'call_decline', dm_id: call.dmId })
+      set({ call: null })
+    }
+    if (!onWire) return
+    if (!attempt && lease?.kind === 'voice') {
+      onWire.missed = true
+      return
+    }
+    const interrupted = attempt !== null
+    endRtc()
+    home.ws.reconnectAfterGap()
+    if (interrupted) fail(new Error('Call connection interrupted. Try calling again.'))
+  }
+
   const endVoiceMedia = () => {
+    release('voice')
     rtc.leave()
     set({ voice: null, selfAudio: SELF_AUDIO_IDLE })
   }
 
-  const endCallMedia = (kind: CallKind) => {
-    if (get().voice) return
-    if (kind === 'p2p') p2p.endMedia()
+  const endCallMedia = (owner: Attempt) => {
+    if (owner !== attempt || lease?.kind !== 'dm') return
+    release('dm')
+    if (owner.kind === 'p2p') p2p.endMedia()
     else rtc.leave()
     set({ selfAudio: SELF_AUDIO_IDLE })
   }
 
   const abandonMedia = () => {
+    release()
     const { voice, call, me } = get()
     const ours = call !== null && (call.state === 'active' || call.from === me?.username)
     if (voice && home.ws.sendVoice({ type: 'voice_leave' })) joins.left()
@@ -226,24 +353,33 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
 
   // Sends a voice or call message once the media is up; when the socket is down it drops it again.
   const sendOrAbandon = (msg: VoiceMsg) => {
-    if (home.ws.sendVoice(msg)) return
+    if (attempt && (msg.type === 'call_start' || msg.type === 'call_accept')) {
+      const id = ++nextId
+      if (home.ws.sendVoice({ ...msg, attempt_id: id })) {
+        attempt.id = id
+        onWire = attempt
+        return
+      }
+    } else if (home.ws.sendVoice(msg)) return
     abandonMedia()
     throw new Error('Not connected')
   }
 
+  const ownsCall = (call: RChatState['call']) =>
+    !!attempt && showsAttempt(attempt, call) && !!lease?.current()
+
   const caller = () => {
     const { me, guest, call, settings } = get()
     if (guest || !me) throw new Error(`${accountPrompt(settings)} to start calls`)
-    if (call) throw new Error('Already in a call')
+    if (call && !ownsCall(call)) throw new Error('Already in a call')
     return me
   }
 
   const endCall = (type: 'call_decline' | 'call_leave') => {
     const { call } = get()
-    if (call) {
-      home.ws.sendVoice({ type, dm_id: call.dmId })
-      endCallMedia(call.kind)
-    }
+    if (call) home.ws.sendVoice({ type, dm_id: call.dmId })
+    else if (attempt?.id) home.ws.sendVoice({ type, dm_id: attempt.dmId })
+    if (attempt && (!call || showsAttempt(attempt, call))) endCallMedia(attempt)
     set({ call: null })
   }
 
@@ -253,14 +389,16 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   let voiceListed = false
   const bindMedia = () => {
     rtc.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
-    callRtc.onChange = () => {
-      set(s => ({ rtcTick: s.rtcTick + 1 }))
-      p2pVoice.videoChanged()
-    }
+    if (acct.isHome)
+      callRtc.onChange = () => {
+        set(s => ({ rtcTick: s.rtcTick + 1 }))
+        p2pVoice.videoChanged()
+      }
     p2p.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
     p2p.onError = message => fail(new Error(message))
     return () => {
-      rtc.onChange = callRtc.onChange = p2p.onChange = p2p.onError = () => {}
+      rtc.onChange = p2p.onChange = p2p.onError = () => {}
+      if (acct.isHome) callRtc.onChange = () => {}
     }
   }
   const actions: Pick<
@@ -271,6 +409,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     | 'toggleDeafen'
     | 'toggleCamera'
     | 'toggleShare'
+    | 'canStartCall'
     | 'startCall'
     | 'startP2pCall'
     | 'setCallRoute'
@@ -293,19 +432,20 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
         const shut = guestVoiceOff(get(), server)
         if (shut !== null) throw new Error(shut)
         if (voice?.channelId === channelId) return
+        const claim = await acquire('voice', undefined, () => get().view === view)
+        if (!claim?.current()) return
         const at = sessionMark()
         try {
-          p2pCall.hangup()
-          p2pVoice.leave()
           p2p.endMedia()
           await rtc.join(self, { channelId }, get().selfAudio.muted)
+          if (!claim.current()) return
           if (get().view !== view) {
-            rtc.leave()
+            endVoiceMedia()
             return
           }
           applyMic()
         } catch (e) {
-          if (e instanceof JoinAborted) return
+          if (captureAborted(claim, e)) return
           if (at === sessionMark()) abandonMedia()
           throw e
         }
@@ -325,68 +465,90 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     toggleDeafen: () => setSelfAudio(toggleDeafenAudio(get().selfAudio)),
     toggleCamera: () =>
       act(async () => {
-        const { call, voice } = get()
-        if (!voice && !call && p2pVoice.active()) return await p2pVoice.camera()
-        if (!voice && !call && p2pCall.media()) return await p2pCall.camera()
-        if (!voice && call?.kind === 'p2p') return await p2p.toggleCamera()
+        const owner = client.calls.current()
+        if (owner?.account === acct && owner.kind === 'p2p-voice') return await p2pVoice.camera()
+        if (owner?.account === acct && owner.kind === 'p2p-call') return await p2pCall.camera()
+        if (attempt?.kind === 'p2p') return await p2p.toggleCamera()
         const on = rtc.videoTrack === null
         if (on && forcedMute()) throw new Error(TIMED_OUT_CAMERA)
         await rtc.camera(on)
       }),
     toggleShare: () =>
       act(async () => {
-        const { call, voice } = get()
-        if (!voice && !call && p2pVoice.active()) return await p2pVoice.share()
-        if (!voice && !call && p2pCall.media()) return await p2pCall.share()
-        if (!voice && call?.kind === 'p2p') return await p2p.toggleShare()
+        const owner = client.calls.current()
+        if (owner?.account === acct && owner.kind === 'p2p-voice') return await p2pVoice.share()
+        if (owner?.account === acct && owner.kind === 'p2p-call') return await p2pCall.share()
+        if (attempt?.kind === 'p2p') return await p2p.toggleShare()
         const on = !rtc.sharing
         if (on && forcedMute()) throw new Error(TIMED_OUT_SHARE)
         await rtc.share(on)
       }),
 
+    canStartCall: dmId => {
+      const { call } = get()
+      return !call || (call.dmId !== dmId && ownsCall(call))
+    },
     startCall: (dmId, video) =>
       act(async () => {
         const me = caller()
+        const claim = await acquire('dm', {
+          dmId,
+          from: me.username,
+          kind: 'rtc',
+          video,
+          confirmed: false,
+          id: null,
+          ack: 'ringing',
+        })
+        if (!claim?.current()) return
         const at = sessionMark()
         try {
-          p2pCall.hangup()
-          p2pVoice.leave()
           p2p.endMedia()
           await rtc.join(me.username, { dmId }, get().selfAudio.muted)
           applyMic()
+          if (!claim.current()) return
           if (video) await rtc.camera(true)
         } catch (e) {
-          if (e instanceof JoinAborted) return
+          if (captureAborted(claim, e)) return
           if (at === sessionMark()) abandonMedia()
           throw e
         }
-        if (at !== sessionMark()) return
+        if (!claim.current() || at !== sessionMark()) return
         sendOrAbandon({ type: 'call_start', dm_id: dmId, video })
         set({ voice: null })
       }),
 
     startP2pCall: (dmId, video, relay) =>
       act(async () => {
-        caller()
+        const me = caller()
         const at = sessionMark()
         const plan = await relayBook.check(relay ?? relayBook.prefs.choice)
         if (at !== sessionMark()) return
+        const claim = await acquire('dm', {
+          dmId,
+          from: me.username,
+          kind: 'p2p',
+          video,
+          confirmed: false,
+          id: null,
+          ack: 'ringing',
+        })
+        if (!claim?.current()) return
         try {
-          p2pCall.hangup()
-          p2pVoice.leave()
           rtc.leave()
           await p2p.startMedia(get().selfAudio.muted)
+          if (!claim.current()) {
+            if (client.calls.current()?.account !== acct) p2p.endMedia()
+            return
+          }
           p2p.setCallIce(plan)
           applyMic()
           if (video) await p2p.toggleCamera()
         } catch (e) {
-          if (at === sessionMark()) abandonMedia()
+          if (claim.current() && at === sessionMark()) abandonMedia()
           throw e
         }
-        if (at !== sessionMark()) {
-          p2p.endMedia()
-          return
-        }
+        if (!claim.current() || at !== sessionMark()) return
         sendOrAbandon({
           type: 'call_start',
           dm_id: dmId,
@@ -412,18 +574,20 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
           const mine = await relayBook.check(relayBook.prefs.choice)
           plan = mine
           if (!hidesIp(mine) && (await relayBook.consent(theirs)) !== null) {
-            if (get().call?.dmId === call.dmId) get().declineCall()
+            if (get().call === call) get().declineCall()
             throw new Error(DENIED_CALL)
           }
-          const still = get().call
-          if (still?.dmId !== call.dmId || still.state !== 'ringing') return
+          if (get().call !== call) return
         }
+        const ringingNow = () => get().call === call
+        const accepting: Attempt = { ...call, confirmed: false, id: null, ack: 'active' }
+        const claim = await acquire('dm', accepting, ringingNow)
+        if (!claim?.current()) return
         try {
-          p2pCall.hangup()
-          p2pVoice.leave()
           if (call.kind === 'p2p') {
             rtc.leave()
             await p2p.startMedia(get().selfAudio.muted)
+            if (!claim.current()) return
             p2p.setCallIce(plan)
           } else {
             p2p.endMedia()
@@ -431,13 +595,13 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
           }
           applyMic()
         } catch (e) {
-          if (e instanceof JoinAborted) return
+          if (captureAborted(claim, e)) return
           abandonMedia()
           throw e
         }
-        const ringing = get().call
-        if (ringing?.dmId !== call.dmId || ringing.state !== 'ringing') {
-          abandonMedia()
+        if (!claim.current()) return
+        if (!ringingNow()) {
+          endCallMedia(accepting)
           return
         }
         if (call.kind === 'p2p') p2p.expectCall()
@@ -495,11 +659,20 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     call_state: ev => {
       const { me } = get()
       if (!me) return
-      if (ev.state === 'ended') {
-        if (get().call?.dmId === ev.dm_id) {
-          endCallMedia(ev.kind)
-          set(s => applyCallState(s, ev))
+      const owner = onWire && !onWire.ended && matches(onWire, ev) ? onWire : null
+      if (owner) {
+        if (ev.state === owner.ack) owner.confirmed = true
+        if (ev.state === 'ended') {
+          if (owner.ack === 'active' && !owner.confirmed) owner.ended = true
+          else if (owner.confirmed) resetCallEvents()
         }
+        if (owner !== attempt) return
+      }
+      if (ev.state === 'ended') {
+        if (get().call?.dmId === ev.dm_id) dialing = null
+        if (attempt && (attempt.confirmed || attempt.ack === 'active') && matches(attempt, ev))
+          endCallMedia(attempt)
+        if (get().call?.dmId === ev.dm_id) set(s => applyCallState(s, ev))
         return
       }
       if (!get().dms.some(d => d.id === ev.dm_id))
@@ -536,16 +709,35 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
 
     error: ev => {
       fail(new Error(ev.message))
-      const { voice, call, voiceUsers } = get()
+      const { request } = ev
+      if (request?.type === 'other') return
+      if (request?.type === 'call' || !request) {
+        if (
+          !request &&
+          ['No such call', 'No shared voice session', 'Signal too large'].includes(ev.message)
+        )
+          return
+        const acceptOnly = ev.message === 'No incoming call'
+        const owner = onWire
+        if (
+          owner &&
+          (request
+            ? owner.id === request.attempt_id
+            : !owner.confirmed && (!acceptOnly || owner.ack === 'active'))
+        ) {
+          resetCallEvents()
+          endCallMedia(owner)
+          return
+        }
+        if (request || acceptOnly) return
+      }
+      const { voice, voiceUsers } = get()
+      if (!voice || lease?.kind !== 'voice') return
+      if (request && voice.channelId !== request.channel_id) return
       const self = voiceSelf(get())
-      const confirmed =
-        call !== null ||
-        (voice !== null && self !== null && (voiceUsers[voice.channelId] ?? []).includes(self))
-      if (confirmed) return
-      if (voice) joins.refused()
-      if (rtc.active() || voice) endVoiceMedia()
-      if (p2p.mediaActive()) p2p.endMedia()
-      set({ selfAudio: SELF_AUDIO_IDLE })
+      if (self !== null && (voiceUsers[voice.channelId] ?? []).includes(self)) return
+      joins.refused()
+      endVoiceMedia()
     },
   } satisfies Handlers
 
@@ -555,6 +747,8 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     actions,
     applyMic,
     endRtc,
+    resetCallEvents,
+    recoverCallHistory,
     endVoiceMedia,
     joins,
   }

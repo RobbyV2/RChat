@@ -10,12 +10,9 @@ import {
 } from '../call_choice'
 import { relayOnly } from '../ice'
 import { displayHost, hostOf, manualRelays, ownTurn } from '../relays'
-import { useStore } from '../store'
 import type { RChatState } from '../store_types'
 import type { DmSummary } from '../types'
 import type { Action, ActionCtx } from './types'
-
-const get = () => useStore.getState()
 
 // Whether a call with the DM's other person can go direct (P2P) now.
 export const p2pCallOk = (s: RChatState, dm: DmSummary) =>
@@ -32,7 +29,7 @@ export const hidesIp = (s: RChatState) =>
   relayOnly(s.instance?.ice, s.iceHelpers, s.iceRelay, ownTurn(s.relayPrefs))
 
 const callOf = ({ s, target }: ActionCtx) =>
-  target.kind === 'call' && s.call === null ? target : null
+  target.kind === 'call' && s.canStartCall(target.dm.id) ? target : null
 
 const routeOf = (ctx: ActionCtx): CallRoute | null => {
   const at = callOf(ctx)
@@ -59,8 +56,8 @@ export const voiceActions: Action[] = [
     run: ctx => {
       const at = callOf(ctx)
       if (!at) return
-      get().setCallRoute('server')
-      void get().startCall(at.dm.id, at.video)
+      ctx.s.setCallRoute('server')
+      void ctx.s.startCall(at.dm.id, at.video)
     },
   },
   {
@@ -77,8 +74,8 @@ export const voiceActions: Action[] = [
     run: ctx => {
       const at = callOf(ctx)
       if (!at) return
-      get().setCallRoute('p2p')
-      void get().startP2pCall(at.dm.id, at.video)
+      ctx.s.setCallRoute('p2p')
+      void ctx.s.startP2pCall(at.dm.id, at.video)
     },
   },
   {
@@ -99,8 +96,8 @@ export const voiceActions: Action[] = [
     run: (ctx, { relay }) => {
       const at = callOf(ctx)
       if (!at || !relay) return
-      get().setCallRoute('p2p')
-      void get().startP2pCall(at.dm.id, at.video, relay)
+      ctx.s.setCallRoute('p2p')
+      void ctx.s.startP2pCall(at.dm.id, at.video, relay)
     },
   },
 ]

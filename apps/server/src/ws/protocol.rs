@@ -6,7 +6,7 @@ use tokio::time::Instant;
 use tracing::{debug, warn};
 
 use super::access::AUTH_FAILED;
-use super::event::WsEvent;
+use super::event::{RefusedRequest, WsEvent};
 use super::p2p::RelaySet;
 use crate::api::{ApiError, Reason};
 
@@ -14,6 +14,8 @@ use crate::api::{ApiError, Reason};
 #[derive(Debug, PartialEq)]
 pub(super) enum Refused {
     NoSharedVoice,
+    // The join already broadcast its state. Its end follows that broadcast.
+    AfterJoin(Box<Refused>),
     Error {
         message: String,
         reason: Option<Reason>,
@@ -24,13 +26,22 @@ impl Refused {
     pub(super) fn into_parts(self) -> (String, Option<Reason>) {
         match self {
             Self::NoSharedVoice => ("No shared voice session".into(), None),
+            Self::AfterJoin(refusal) => refusal.into_parts(),
             Self::Error { message, reason } => (message, reason),
         }
     }
 
-    pub(super) fn frame(self) -> WsEvent {
+    pub(super) fn frame(self, request: Option<RefusedRequest>) -> WsEvent {
+        let request = match self {
+            Self::AfterJoin(_) => request.map(|_| RefusedRequest::Other),
+            _ => request,
+        };
         let (message, reason) = self.into_parts();
-        WsEvent::Error { message, reason }
+        WsEvent::Error {
+            message,
+            reason,
+            request,
+        }
     }
 }
 
@@ -82,6 +93,7 @@ pub(super) enum ClientMsg {
     },
     VoiceLeave,
     CallStart {
+        attempt_id: Option<u64>,
         dm_id: i64,
         #[serde(default)]
         p2p: bool,
@@ -108,6 +120,7 @@ pub(super) enum ClientMsg {
         peer_id: String,
     },
     CallAccept {
+        attempt_id: Option<u64>,
         dm_id: i64,
         #[serde(default)]
         peer_id: Option<String>,
@@ -132,6 +145,25 @@ pub(super) enum ClientMsg {
     TypingStop {
         scope: String,
     },
+}
+
+impl ClientMsg {
+    pub(super) fn refusal_target(&self) -> RefusedRequest {
+        match self {
+            Self::CallStart {
+                attempt_id: Some(id),
+                ..
+            }
+            | Self::CallAccept {
+                attempt_id: Some(id),
+                ..
+            } => RefusedRequest::Call { attempt_id: *id },
+            Self::VoiceJoin { channel_id } => RefusedRequest::VoiceJoin {
+                channel_id: *channel_id,
+            },
+            _ => RefusedRequest::Other,
+        }
+    }
 }
 
 /// Close codes of realtime connections closed for a limit: the user opened more than

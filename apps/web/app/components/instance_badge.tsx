@@ -16,11 +16,11 @@ export function useInstanceLabel() {
 }
 
 // Text that may name the instance, the name hidden in streamer mode like other names.
-export function LabelText({ text }: { text: string }) {
+export function LabelText({ text, name }: { text: string; name?: string }) {
   const { label } = useInstanceLabel()
   return (
     <>
-      {labelParts(text, label).map((p, i) =>
+      {labelParts(text, name ?? label).map((p, i) =>
         p.label ? (
           <span key={i} className="streamer">
             {p.text}

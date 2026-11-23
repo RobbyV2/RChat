@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { ChevronDown, Phone, Video } from 'lucide-react'
+import { useAccount } from '../lib/client/react'
 import { openActionMenu } from '../lib/actions/menu'
 import { p2pCallOk } from '../lib/actions/voice'
 import { ROUTE_LABEL, routeFor, type CallRoute } from '../lib/call_choice'
@@ -64,10 +65,11 @@ export function CallType({
 
 function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
   const chosen = useStore(s => s.callRoute)
-  const busy = useStore(s => s.call !== null)
+  const busy = useStore(s => !s.canStartCall(dm.id))
   const startCall = useStore(s => s.startCall)
   const startP2pCall = useStore(s => s.startP2pCall)
   const p2pOk = useStore(s => p2pCallOk(s, dm))
+  const account = useAccount()
   const [shown, setShown] = useState<object | null>(null)
   const open = useStore(s => shown !== null && s.contextMenu === shown)
   const route = routeFor(chosen, p2pOk)
@@ -89,9 +91,10 @@ function SplitCall({ dm, video }: { dm: DmSummary; video: boolean }) {
             {video ? 'Start a video call' : 'Start a call'}
           </span>
         ),
-      }
+      },
+      account
     )
-    setShown(useStore.getState().contextMenu)
+    setShown(account.store.getState().contextMenu)
   }
   return (
     <div

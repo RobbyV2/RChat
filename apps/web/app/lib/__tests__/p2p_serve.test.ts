@@ -15,14 +15,12 @@ import {
   hostingMsg,
   intentOf,
   expiryDelay,
-  keepPreview,
   LEGACY_MAX,
   MISMATCH,
   NO_ROOM,
   P2pManager,
   PEER_SERVE_MAX,
   PENDING_MAX,
-  previewUrl,
   REFUSED,
   REFUSED_RELAY,
   SERVE_MAX,
@@ -858,12 +856,14 @@ describe('p2p transfer', () => {
     expect(await content('mallory', hex(real))).toBeNull()
     expect(await content('alice', hex(fake))).toBeNull()
     expect(await content('alice', null)).toBeNull()
-    keepPreview(1, { url: 'blob:one', kind: 'image' })
-    keepPreview(2, { url: 'blob:two', kind: 'image' })
-    expect([previewUrl(1)?.url, previewUrl(2)?.url]).toEqual(['blob:one', 'blob:two'])
+    viewer.keepPreview(1, { url: 'blob:one', kind: 'image' })
+    viewer.keepPreview(2, { url: 'blob:two', kind: 'image' })
+    expect([viewer.previewUrl(1)?.url, viewer.previewUrl(2)?.url]).toEqual(['blob:one', 'blob:two'])
+    hosts.alice.m.keepPreview(2, { url: 'blob:other-account', kind: 'image' })
     viewer.forgetMessage(2)
+    expect(hosts.alice.m.previewUrl(2)?.url).toBe('blob:other-account')
     await Promise.resolve()
-    expect([previewUrl(1)?.url, previewUrl(2)]).toEqual(['blob:one', null])
+    expect([viewer.previewUrl(1)?.url, viewer.previewUrl(2)]).toEqual(['blob:one', null])
     expect(await content('mallory', hex(fake))).toBeNull()
     expect(await content('alice', hex(real))).toEqual(real)
     viewer.received()[`${id}:${hex(real)}:alice`].hoster = 'mallory'

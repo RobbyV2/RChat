@@ -1,3 +1,4 @@
+import type { CallClaim, ClaimMedia } from '../client/calls'
 import { DENIED_CALL, type Resolved } from '../relays'
 import type { RtcTarget } from '../rtc'
 import type { RtcPayload } from '../types'
@@ -91,14 +92,13 @@ export interface CallDeps {
   muted: () => boolean
   save: (p: PendingCall | null) => void
   notice: (text: string) => void
-  // Leaves any instance call or voice channel: called only once this call is sure to go ahead,
-  // right before it takes the microphone.
-  leaveOthers?: () => void
+  claim?: ClaimMedia
   clock?: Clock
   limits?: Partial<CallLimits>
 }
 
 interface Live extends CallView {
+  claim?: CallClaim | null
   plan: CallPlan | null
   // The relay hosts the other side declared.
   theirs: string[]
@@ -225,11 +225,12 @@ export class Calls {
   // ----- Actions -----
 
   async start(ik: string, video: boolean, choice?: string) {
-    if (this.cur) throw new Error(IN_CALL_TEXT)
+    const previous = this.cur
+    if (previous && !previous.claim?.current()) throw new Error(IN_CALL_TEXT)
     if (!this.deps.mutual(ik)) throw new Error(NOT_MUTUAL_TEXT)
     if (!this.deps.sessions(ik).length) throw new Error(OFFLINE_TEXT(this.deps.name(ik)))
     const plan = await this.deps.plan(choice)
-    if (this.cur) throw new Error(IN_CALL_TEXT)
+    if (this.cur !== previous) throw new Error(IN_CALL_TEXT)
     const now = this.clock.now()
     const c: Live = {
       id: newCallId(),
@@ -253,10 +254,18 @@ export class Calls {
       lost: null,
       alive: null,
     }
+    if (this.deps.claim) {
+      c.claim = await this.deps.claim(
+        () => {
+          if (this.cur === c) this.hangup()
+        },
+        () => this.cur === previous
+      )
+      if (!c.claim?.current()) return false
+    }
     this.cur = c
     this.changed()
     try {
-      this.deps.leaveOthers?.()
       await this.deps.media.join(this.deps.me(), { p2pRoom: c.room }, this.deps.muted())
     } catch (e) {
       if (this.cur === c) this.end(c, { quiet: true })
@@ -273,6 +282,7 @@ export class Calls {
       () => this.end(c, { op: 'end', outcome: 'missed' }),
       this.limits.ringMs
     )
+    return true
   }
 
   async accept() {
@@ -288,10 +298,21 @@ export class Calls {
         throw new Error(DENIED_CALL)
       }
       if (this.cur !== c) return
+      if (this.deps.claim) {
+        c.claim = await this.deps.claim(
+          () => {
+            if (this.cur === c) this.hangup()
+          },
+          () => this.cur === c
+        )
+        if (!c.claim?.current() || this.cur !== c) {
+          c.claim?.release()
+          return
+        }
+      }
       c.plan = plan
       c.media = true
       try {
-        this.deps.leaveOthers?.()
         await this.deps.media.join(this.deps.me(), { p2pRoom: c.room }, this.deps.muted())
       } catch (e) {
         if (this.cur === c) this.end(c, { op: 'decline' })
@@ -342,6 +363,7 @@ export class Calls {
     for (const s of c.dk === null ? c.rung : [c.session]) this.send(s, this.frame(c, 'end'))
     this.clearAll(c)
     this.cur = null
+    c.claim?.release()
     if (c.media) this.deps.media.leave()
     this.changed()
   }
@@ -578,6 +600,7 @@ export class Calls {
       const to = c.dk === null ? [...c.rung, ...(c.dir === 'in' ? [c.session] : [])] : [c.session]
       for (const s of to) this.send(s, this.frame(c, o.op))
     }
+    c.claim?.release()
     if (c.media) this.deps.media.leave()
     if (c.dir === 'out') this.deps.save(null)
     if (c.dir === 'out' && !o.quiet) {

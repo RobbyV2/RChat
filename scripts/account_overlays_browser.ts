@@ -141,6 +141,61 @@ try {
       await page.getByRole('region', { name: 'App: Field notes' }).waitFor()
       await button('Close').click()
       await page.getByRole('dialog', { name: 'App previews' }).waitFor({ state: 'detached' })
+      await button('Ring owner').click()
+      const ring = page.getByRole('alertdialog', { name: 'Incoming call' })
+      assert.match(await ring.innerText(), /reader@owner.test/)
+      await ring.getByRole('button', { name: 'Decline' }).click()
+      await ring.waitFor({ state: 'detached' })
+      await button('Ring owner').click()
+      await ring.getByRole('button', { name: 'Accept' }).click()
+      await page
+        .getByRole('dialog', { name: 'Switch call?' })
+        .getByRole('button', { name: 'Switch', exact: true })
+        .click()
+
+      const relayOpener = button('Prompt both relays')
+      await relayOpener.click()
+      const relay = page.getByRole('dialog', { name: 'Unknown relay' })
+      const ownerRelay = relay.filter({ hasText: 'relay.owner.test' })
+      assert(
+        await ownerRelay
+          .getByRole('button', { name: 'Deny' })
+          .evaluate(el => el === document.activeElement)
+      )
+      await page.keyboard.press('Escape')
+      await ownerRelay.waitFor({ state: 'detached' })
+      await relay.getByRole('button', { name: 'Allow once' }).click()
+      assert(await relayOpener.evaluate(el => el === document.activeElement))
+      assert.deepEqual(await page.evaluate(() => JSON.parse(document.body.dataset.events!)), [
+        'owner.test call_decline',
+        'owner DM 3 none',
+        'left shown call',
+        'owner.test capture',
+        'owner.test call_accept',
+        'owner.test deny',
+        'shown.test once',
+      ])
+      const dm = page.getByRole('region', { name: 'Other DM' })
+      const handoff = page.getByRole('dialog', { name: 'Switch call?' })
+      const contact = page.getByRole('region', { name: 'Online contact' })
+      await contact.getByRole('button', { name: 'Call, direct (P2P)', exact: true }).click()
+      await handoff.getByRole('button', { name: 'Cancel' }).click()
+      await dm.getByRole('button', { name: 'Call', exact: true }).click()
+      await handoff.getByRole('button', { name: 'Cancel' }).click()
+
+      const options = dm.getByRole('button', { name: 'Call options', exact: true })
+      if (viewport.width < 500) await options.tap()
+      else if (colorScheme === 'dark') await options.click()
+      else await options.press('Enter')
+      const route = owner.getByRole('menuitemradio', { name: 'Through server' })
+      if (viewport.width < 500) await route.tap()
+      else if (colorScheme === 'dark') await route.click()
+      else await route.press('Enter')
+      await handoff.getByRole('button', { name: 'Switch', exact: true }).click()
+      assert.deepEqual(
+        await page.evaluate(() => JSON.parse(document.body.dataset.events!).slice(-3)),
+        ['owner.test call_leave', 'owner.test capture', 'owner.test call_start']
+      )
       assert.deepEqual(errors, [])
       await page.close()
       console.log(`Passed ${viewport.width}x${viewport.height} ${colorScheme}`)

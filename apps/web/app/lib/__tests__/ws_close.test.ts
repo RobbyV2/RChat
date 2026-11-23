@@ -53,6 +53,18 @@ afterEach(() => {
 })
 
 describe('realtime reconnects', () => {
+  test('replacing a socket after an event gap ignores late frames from the old socket', () => {
+    const { client, ws } = openClient()
+    const events: string[] = []
+    client.onEvent = ev => events.push(ev.type)
+    client.reconnectAfterGap()
+    ws.onmessage?.({ data: '{"type":"resync"}' })
+    const fresh = sockets.at(-1)!
+    fresh.onmessage?.({ data: '{"type":"hello"}' })
+    expect(events).toEqual(['hello'])
+    client.stop()
+  })
+
   test('wait as long as the instance asks', () => {
     globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket
     globalThis.fetch = (async () => new Response('ok')) as unknown as typeof fetch

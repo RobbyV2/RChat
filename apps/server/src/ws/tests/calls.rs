@@ -502,6 +502,7 @@ async fn guests_use_voice_where_they_can_open_the_server() {
             &state,
             &all,
             ClientMsg::CallStart {
+                attempt_id: None,
                 dm_id: 1,
                 p2p: false,
                 video: false,
@@ -922,6 +923,7 @@ async fn active_call_state_carries_the_answer_time() {
     .await;
     let mut rx = state.hub.subscribe();
     let start = ClientMsg::CallStart {
+        attempt_id: None,
         dm_id: dm,
         p2p: false,
         video: false,
@@ -930,6 +932,7 @@ async fn active_call_state_carries_the_answer_time() {
     };
     voice_msg(&state, "alice", 1, start).await.expect("start");
     let accept = ClientMsg::CallAccept {
+        attempt_id: None,
         dm_id: dm,
         peer_id: None,
         relays: Vec::new(),
@@ -977,6 +980,7 @@ async fn blocked_users_cannot_call() {
         .await
         .expect("block");
     let start = || ClientMsg::CallStart {
+        attempt_id: None,
         dm_id: dm,
         p2p: false,
         video: false,
@@ -1020,6 +1024,7 @@ async fn calls_answer_alike_for_missing_and_unreachable_dms() {
     )
     .await;
     let start = |dm_id| ClientMsg::CallStart {
+        attempt_id: None,
         dm_id,
         p2p: false,
         video: false,
@@ -1072,6 +1077,7 @@ async fn accepts_answer_alike_for_missing_and_unreachable_dms() {
     )
     .await;
     let start = ClientMsg::CallStart {
+        attempt_id: None,
         dm_id: theirs,
         p2p: true,
         video: false,
@@ -1080,6 +1086,7 @@ async fn accepts_answer_alike_for_missing_and_unreachable_dms() {
     };
     voice_msg(&state, "bob", 1, start).await.expect("start");
     let accept = |dm_id, relays: Vec<String>| ClientMsg::CallAccept {
+        attempt_id: None,
         dm_id,
         peer_id: Some(s("peer-x")),
         relays,
@@ -1124,6 +1131,7 @@ async fn blocking_ends_calls_and_stops_answers_and_signals() {
     )
     .await;
     let start = || ClientMsg::CallStart {
+        attempt_id: None,
         dm_id: dm,
         p2p: false,
         video: false,
@@ -1131,6 +1139,7 @@ async fn blocking_ends_calls_and_stops_answers_and_signals() {
         relays: Vec::new(),
     };
     let accept = || ClientMsg::CallAccept {
+        attempt_id: None,
         dm_id: dm,
         peer_id: None,
         relays: Vec::new(),
@@ -1243,6 +1252,7 @@ async fn p2p_calls_take_only_valid_relay_hosts() {
     )
     .await;
     let start = |relays: Vec<String>| ClientMsg::CallStart {
+        attempt_id: None,
         dm_id: dm,
         p2p: true,
         video: false,
@@ -1261,12 +1271,14 @@ async fn p2p_calls_take_only_valid_relay_hosts() {
         .await
         .expect("start");
     let bad_accept = ClientMsg::CallAccept {
+        attempt_id: None,
         dm_id: dm,
         peer_id: Some(s("peer-b")),
         relays: vec![s("<b>")],
     };
     assert!(voice_msg(&state, "bob", 2, bad_accept).await.is_err());
     let accept = ClientMsg::CallAccept {
+        attempt_id: None,
         dm_id: dm,
         peer_id: Some(s("peer-b")),
         relays: vec![s("turn.b.example")],
@@ -1328,6 +1340,7 @@ async fn instance_calls_ignore_relays_on_accept() {
     )
     .await;
     let start = ClientMsg::CallStart {
+        attempt_id: None,
         dm_id: dm,
         p2p: false,
         video: false,
@@ -1338,6 +1351,7 @@ async fn instance_calls_ignore_relays_on_accept() {
     assert_eq!(state.hub.call_kind(dm), Some(CallKind::Rtc));
     let mut rx = state.hub.subscribe();
     let accept = ClientMsg::CallAccept {
+        attempt_id: None,
         dm_id: dm,
         peer_id: None,
         relays: vec![s("<b>")],
@@ -1385,6 +1399,7 @@ async fn call_logs_record_video_and_the_connection() {
     let mut logs = Vec::new();
     for (p2p, video) in [(false, false), (true, true), (false, true)] {
         let start = ClientMsg::CallStart {
+            attempt_id: None,
             dm_id: dm,
             p2p,
             video,
@@ -1549,6 +1564,7 @@ async fn refused_call_starts_write_nothing_and_are_paced() {
     )
     .await;
     let start = |dm_id| ClientMsg::CallStart {
+        attempt_id: None,
         dm_id,
         p2p: false,
         video: false,
@@ -1686,6 +1702,7 @@ async fn answering_a_call_is_paced_apart_from_voice_hops() {
     )
     .await;
     let start = ClientMsg::CallStart {
+        attempt_id: None,
         dm_id: ab,
         p2p: false,
         video: false,
@@ -1695,6 +1712,7 @@ async fn answering_a_call_is_paced_apart_from_voice_hops() {
     voice_msg(&state, "alice", 1, start).await.expect("call");
     while state.hub.voice_ok("bob") {}
     let accept = ClientMsg::CallAccept {
+        attempt_id: None,
         dm_id: ab,
         peer_id: None,
         relays: Vec::new(),
@@ -1784,6 +1802,7 @@ async fn call_errors_never_carry_database_text() {
     let held = starved.acquire().await.expect("the only connection");
     let busy = state.clone().with_reader(starved.clone());
     let start = ClientMsg::CallStart {
+        attempt_id: None,
         dm_id: dm,
         p2p: false,
         video: false,
@@ -1822,6 +1841,7 @@ const P2P_OFF: &str = "P2P is turned off on this site";
 
 fn rtc_call(dm_id: i64, p2p: bool) -> ClientMsg {
     ClientMsg::CallStart {
+        attempt_id: None,
         dm_id,
         p2p,
         video: false,
@@ -1832,6 +1852,7 @@ fn rtc_call(dm_id: i64, p2p: bool) -> ClientMsg {
 
 fn accept(dm_id: i64) -> ClientMsg {
     ClientMsg::CallAccept {
+        attempt_id: None,
         dm_id,
         peer_id: None,
         relays: Vec::new(),

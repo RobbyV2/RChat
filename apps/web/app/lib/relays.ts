@@ -1,4 +1,4 @@
-import { ice, probeRelay } from './ice'
+import { ice, probeRelay, type IceCache } from './ice'
 import { device } from './platform'
 
 // The user's own STUN and TURN relays, on top of what the instance offers, for P2P files and
@@ -394,18 +394,25 @@ export class RelayBook {
   probe: (server: RTCIceServer) => Promise<boolean> = s => probeRelay(s)
   now: () => number = () => Date.now()
 
+  private version = 0
+  private cancelPrompt: (() => void) | null = null
+
   constructor(
-    private inputs: () => IceInputs = () => ({
-      instance: ice.instanceServers(),
-      helpers: ice.helpersOn(),
-      relayOnly: ice.relayWanted(),
-      instanceTurn: ice.instanceTurn(),
-      forced: ice.policy,
-    })
+    private inputs: () => IceInputs = () => iceInputs(ice),
+    private setOwnTurn: (on: boolean) => void = () => {}
   ) {}
+
+  dispose() {
+    this.listeners.clear()
+    this.load(null)
+    this.prompt = () => Promise.resolve('deny')
+  }
 
   // `key` is the scoped storage key of the account, or null signed out.
   load(key: string | null) {
+    ++this.version
+    this.cancelPrompt?.()
+    this.cancelPrompt = null
     this.unwatch?.()
     this.unwatch = null
     this.key = key
@@ -440,7 +447,7 @@ export class RelayBook {
   }
 
   private changed() {
-    ice.setOwnTurn(this.prefs.relays.some(r => isTurn(r.url)))
+    this.setOwnTurn(ownTurn(this.prefs))
     for (const fn of this.listeners) fn()
   }
 
@@ -457,11 +464,13 @@ export class RelayBook {
 
   // Throws when a manual choice is gone or its relay hands out no relayed candidates.
   async check(choice: RelayChoice): Promise<Resolved & { ok: true }> {
+    const version = this.version
     const r = this.resolve(choice)
     if (!r.ok) throw new Error(r.error)
     if (r.manual !== null) {
       const server = r.config.iceServers?.[0]
       if (!server || !(await this.probe(server))) throw new Error(failedText(r.manual))
+      if (version !== this.version) throw new Error(GONE)
     }
     return r
   }
@@ -477,7 +486,9 @@ export class RelayBook {
     const key = from === undefined ? null : `${from}\n${declaredHosts(declared)?.join(' ')}`
     const same = key === null ? undefined : this.asking.get(key)
     if (same) return same
+    const version = this.version
     const run = async (): Promise<string | null> => {
+      if (version !== this.version) return UNREADABLE
       if (!this.prefs.ask) return null
       const unknown = unknownHosts(declared, this.known())
       if (key !== null && unknown.length && this.refused.has(key)) return unknown[0]
@@ -488,7 +499,17 @@ export class RelayBook {
         const seen = this.recent.get(host)
         if (seen && seen.until > this.now() && (seen.d === 'once' || from !== undefined)) d = seen.d
         else if (from !== undefined && !this.mayPrompt(from)) return host
-        else d = await this.prompt(host)
+        else {
+          const canceled = new Promise<Decision>(resolve => {
+            this.cancelPrompt = () => resolve('deny')
+          })
+          try {
+            d = await Promise.race([this.prompt(host), canceled])
+          } finally {
+            if (version === this.version) this.cancelPrompt = null
+          }
+          if (version !== this.version) return host
+        }
         if (d !== 'always') this.recent.set(host, { d, until: this.now() + PROMPTS.recentMs })
         if (d === 'deny') {
           if (key !== null) this.refuse(key)
@@ -502,7 +523,9 @@ export class RelayBook {
     this.queue = next.catch(() => null)
     if (key !== null) {
       this.asking.set(key, next)
-      const done = () => void this.asking.delete(key)
+      const done = () => {
+        if (this.asking.get(key) === next) this.asking.delete(key)
+      }
       next.then(done, done)
     }
     return next
@@ -533,4 +556,18 @@ export class RelayBook {
   }
 }
 
-export const relayBook = new RelayBook()
+const iceInputs = (cache: IceCache): IceInputs => ({
+  instance: cache.instanceServers(),
+  helpers: cache.helpersOn(),
+  relayOnly: cache.relayWanted(),
+  instanceTurn: cache.instanceTurn(),
+  forced: cache.policy,
+})
+
+export const createRelayBook = (cache: IceCache) =>
+  new RelayBook(
+    () => iceInputs(cache),
+    on => cache.setOwnTurn(on)
+  )
+
+export const relayBook = createRelayBook(ice)

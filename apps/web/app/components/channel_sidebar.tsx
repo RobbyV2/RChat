@@ -42,7 +42,7 @@ import {
   type DmRows,
 } from '../lib/dm_list'
 import { enterKey } from '../lib/keys'
-import { rtc } from '../lib/rtc'
+import { useAccount } from '../lib/client/react'
 import { Perm, hasPerm, type Category, type Channel, type DmSummary } from '../lib/types'
 import {
   CATEGORIES_ZONE,
@@ -216,10 +216,11 @@ function VoiceMemberRow({
   server: string
   inRoom: boolean
 }) {
+  const { rtc } = useAccount()
   const mine = useStore(voiceSelf)
   const selfAudio = useStore(s => s.selfAudio)
   useStore(s => s.rtcTick)
-  const user = userRefFor(useStore.getState(), username)
+  const user = useStore(s => userRefFor(s, username))
   const self = mine === username
   const silenced = useStore(s => Object.values(s.voiceMuted).some(l => l.includes(username)))
   const hushed = useStore(s => Object.values(s.voiceHushed).some(l => l.includes(username)))

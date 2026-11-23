@@ -2,12 +2,13 @@
 
 import { useState } from 'react'
 import { fmtSize } from '../lib/bytes'
-import { clearApiHistory, useApiDoc } from '../lib/api_console'
+import { useApiDoc } from '../lib/api_console'
 import { isMac, paletteShortcut, type IndexMode } from '../lib/palette'
 import { FULL_MAX_BYTES } from '../lib/palette_index'
-import { clearUsage, setIndexMode, usePaletteUi } from '../lib/palette_store'
-import { clearIndex, setIndexModeNow, useIndexStatus } from '../lib/palette_sync'
+import { usePaletteUi } from '../lib/palette_store'
+import { useIndexStatus } from '../lib/palette_sync'
 import { useStore } from '../lib/store'
+import { useAccount } from '../lib/client/react'
 import { Choice } from './friends'
 import { dangerBtn, sectionCls, textBtn } from './ui'
 
@@ -26,6 +27,7 @@ const MODE_NOTE: Record<IndexMode, string> = {
 
 // Settings > Command palette: the local index and the palette's local history.
 export function PaletteSettingsSection() {
+  const { apiDoc, indexer, palettePrefs, lifetime } = useAccount()
   const guest = useStore(s => s.guest)
   const wanted = usePaletteUi(s => s.prefs.index)
   const status = useIndexStatus()
@@ -36,8 +38,8 @@ export function PaletteSettingsSection() {
   const shown = guest && wanted === 'full' ? 'loaded' : wanted
 
   const pick = (mode: IndexMode) => {
-    setIndexMode(mode)
-    setIndexModeNow(mode)
+    palettePrefs.setIndexMode(mode)
+    indexer.setIndexModeNow(mode)
     setCleared(false)
   }
 
@@ -97,9 +99,7 @@ export function PaletteSettingsSection() {
             <button
               type="button"
               onClick={() =>
-                void clearIndex().then(() => {
-                  setCleared(true)
-                })
+                void indexer.clearIndex().then(lifetime.inSession(() => setCleared(true)))
               }
               className={dangerBtn}
             >
@@ -120,7 +120,7 @@ export function PaletteSettingsSection() {
             <button
               type="button"
               disabled={!used}
-              onClick={clearUsage}
+              onClick={palettePrefs.clearUsage}
               className={`${textBtn} disabled:opacity-40`}
             >
               Forget recent commands
@@ -128,7 +128,7 @@ export function PaletteSettingsSection() {
             <button
               type="button"
               disabled={!requests}
-              onClick={clearApiHistory}
+              onClick={apiDoc.clearApiHistory}
               className={`${textBtn} disabled:opacity-40`}
             >
               Clear request history

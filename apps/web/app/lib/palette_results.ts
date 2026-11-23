@@ -2,7 +2,7 @@
 // local index, API operations and help, ranked and grouped. Pure apart from the actions the
 // items run, so it is tested without a DOM.
 
-import { canView, channelTarget } from './viewing'
+import { channelTarget } from './viewing'
 import {
   AtSign,
   Bot,
@@ -36,10 +36,9 @@ import {
 import { paletteCtx } from './actions/ctx'
 import { paletteCommands } from './actions/palette'
 import type { IndexDoc, PaletteIndex } from './palette_index'
-import { indexSource } from './palette_sync'
 import { openPalette, setPaletteView } from './palette_store'
 import { SHORTCUTS, shortcutLabel } from './shortcuts'
-import { sessionMark, useStore } from './store'
+import { client } from './client/client'
 import type { RChatState } from './store_types'
 import type { Message, UserRef } from './types'
 
@@ -60,8 +59,6 @@ export interface Section {
   items: Ranked<PaletteItem>[]
 }
 
-const get = () => useStore.getState()
-
 const SNIPPET_MAX = 120
 
 // One line of a message for a result row: spoilers as blocks, the personal filter applied.
@@ -79,7 +76,7 @@ const serverLabel = (s: RChatState, name: string) =>
 const channelName = (s: RChatState, server: string, id: number) =>
   s.servers[server]?.channels.find(c => c.id === id)?.name ?? null
 
-export const serverItems = (s: RChatState): PaletteItem[] => {
+export const serverItems = (s: RChatState, acct = client.shown()): PaletteItem[] => {
   const names = [...(s.me?.servers.map(x => x.name) ?? []), ...s.guestServers]
   return [...new Set(names)].map(name => ({
     id: `server_${name}`,
@@ -90,11 +87,11 @@ export const serverItems = (s: RChatState): PaletteItem[] => {
     icon: Server,
     name: true,
     own: !!s.me && s.me.servers.find(x => x.name === name)?.creator === s.me.username,
-    run: () => void get().openServer(name),
+    run: () => void acct.store.getState().openServer(name),
   }))
 }
 
-export const channelItems = (s: RChatState): PaletteItem[] => {
+export const channelItems = (s: RChatState, acct = client.shown()): PaletteItem[] => {
   const out: PaletteItem[] = []
   for (const [server, d] of Object.entries(s.servers)) {
     const label = serverLabel(s, server)
@@ -109,7 +106,7 @@ export const channelItems = (s: RChatState): PaletteItem[] => {
         keywords: cat ? [cat] : [],
         group: 'navigation',
         icon: c.kind === 'voice' ? Volume2 : Hash,
-        run: () => void get().openChannel(server, c.id),
+        run: () => void acct.store.getState().openChannel(server, c.id),
       })
     }
     for (const cat of d.categories ?? []) {
@@ -122,9 +119,9 @@ export const channelItems = (s: RChatState): PaletteItem[] => {
         group: 'navigation',
         icon: Folder,
         run: () => {
-          get().setCategoriesCollapsed(server, [cat.id], false)
-          if (first) void get().openChannel(server, first.id)
-          else void get().openServer(server)
+          acct.store.getState().setCategoriesCollapsed(server, [cat.id], false)
+          if (first) void acct.store.getState().openChannel(server, first.id)
+          else void acct.store.getState().openServer(server)
         },
       })
     }
@@ -135,7 +132,7 @@ export const channelItems = (s: RChatState): PaletteItem[] => {
 const dmTitle = (s: RChatState, other: UserRef, self: boolean) =>
   self ? `${other.display_name} (you)` : other.display_name
 
-export const dmItems = (s: RChatState): PaletteItem[] =>
+export const dmItems = (s: RChatState, acct = client.shown()): PaletteItem[] =>
   s.dms
     .filter(d => !d.closed)
     .map(d => ({
@@ -148,16 +145,25 @@ export const dmItems = (s: RChatState): PaletteItem[] =>
       icon: MessageSquare,
       name: true,
       own: d.is_self,
-      run: () => void get().openDm(d.id),
+      run: () => void acct.store.getState().openDm(d.id),
     }))
 
 const THREADS_MAX = 40
 
-export const threadItems = (s: RChatState, mask: (t: string) => string): PaletteItem[] => {
+export const threadItems = (
+  s: RChatState,
+  mask: (t: string) => string,
+  acct = client.shown()
+): PaletteItem[] => {
   const roots: { m: Message; server: string }[] = []
   for (const [server, d] of Object.entries(s.servers))
     for (const c of d.channels) {
-      if (!canView(channelTarget(s.me?.username ?? null, 'instance', server, c))) continue
+      if (
+        !acct.viewing.canView(
+          channelTarget(s.me?.username ?? null, 'instance', server, c, acct.conn)
+        )
+      )
+        continue
       for (const m of s.messages[`c${c.id}`] ?? [])
         if (m.reply_count > 0 && m.kind === 'user') roots.push({ m, server })
     }
@@ -171,15 +177,19 @@ export const threadItems = (s: RChatState, mask: (t: string) => string): Palette
       group: 'navigation',
       icon: MessagesSquare,
       run: async () => {
-        const at = sessionMark()
-        if (m.channel_id !== null) await get().openChannel(server, m.channel_id)
-        if (at === sessionMark()) await get().openThread(m)
+        const at = acct.lifetime.sessionMark()
+        if (m.channel_id !== null) await acct.store.getState().openChannel(server, m.channel_id)
+        if (at === acct.lifetime.sessionMark()) await acct.store.getState().openThread(m)
       },
     }
   })
 }
 
-export const recentItems = (s: RChatState, recents: Recent[]): PaletteItem[] =>
+export const recentItems = (
+  s: RChatState,
+  recents: Recent[],
+  acct = client.shown()
+): PaletteItem[] =>
   recents.flatMap((r): PaletteItem[] => {
     if (r.kind === 'p2p') return []
     const v = s.view
@@ -201,7 +211,7 @@ export const recentItems = (s: RChatState, recents: Recent[]): PaletteItem[] =>
               group: 'recent',
               icon: MessageSquare,
               name: true,
-              run: () => void get().openDm(d.id),
+              run: () => void acct.store.getState().openDm(d.id),
             },
           ]
         : []
@@ -216,17 +226,22 @@ export const recentItems = (s: RChatState, recents: Recent[]): PaletteItem[] =>
         subtitleName: true,
         group: 'recent',
         icon: Hash,
-        run: () => void get().openChannel(r.server, r.channelId),
+        run: () => void acct.store.getState().openChannel(r.server, r.channelId),
       },
     ]
   })
 
-const personRun = (s: RChatState, u: UserRef) =>
+const personRun = (s: RChatState, u: UserRef, acct = client.shown()) =>
   s.me && !s.guest
-    ? () => void get().startDm(u.username)
-    : () => get().openProfile(u, null, Math.round(window.innerWidth / 2), 96)
+    ? () => void acct.store.getState().startDm(u.username)
+    : () => acct.store.getState().openProfile(u, null, Math.round(window.innerWidth / 2), 96)
 
-export const peopleItems = (s: RChatState, ctx: ResultCtx, q: string): PaletteItem[] => {
+export const peopleItems = (
+  s: RChatState,
+  ctx: ResultCtx,
+  q: string,
+  acct = client.shown()
+): PaletteItem[] => {
   const seen = new Map<string, UserRef>()
   const note = (u: UserRef) => {
     if (!seen.has(u.username)) seen.set(u.username, u)
@@ -258,7 +273,7 @@ export const peopleItems = (s: RChatState, ctx: ResultCtx, q: string): PaletteIt
       group: 'people',
       icon: User,
       name: true,
-      run: personRun(s, u),
+      run: personRun(s, u, acct),
     }))
 }
 
@@ -268,13 +283,14 @@ export const messageItems = (
   s: RChatState,
   ctx: ResultCtx,
   q: string,
-  limit: number
+  limit: number,
+  acct = client.shown()
 ): Ranked<PaletteItem>[] => {
   if (!ctx.index || q.length < 2) return []
   return ctx.index
     .search(q, { kind: 'message', limit, visible: ctx.visible })
     .map(({ doc, score }) => {
-      const source = doc.source === 'instance' ? null : indexSource(doc.source)
+      const source = doc.source === 'instance' ? null : acct.indexer.indexSource(doc.source)
       const place = source
         ? (source.place?.(doc) ?? '')
         : doc.dm !== null
@@ -294,7 +310,7 @@ export const messageItems = (
         subtitleName: true,
         run: () => {
           if (source) source.open(doc)
-          else if (id !== null) void get().openMessage(id)
+          else if (id !== null) void acct.store.getState().openMessage(id)
         },
       }
       return { item, score, hits: [] }
@@ -335,7 +351,7 @@ export const historyItems = (history: HistoryEntry[], ops: Operation[]): Palette
       : []
   })
 
-export const helpItems = (guest = false): PaletteItem[] => [
+export const helpItems = (guest = false, acct = client.shown()): PaletteItem[] => [
   ...prefixesFor(guest).map(p => ({
     id: `help_${p.mode}`,
     title: `${p.prefix}  ${p.label}`,
@@ -361,7 +377,7 @@ export const helpItems = (guest = false): PaletteItem[] => [
     hint: shortcutLabel(sc.keys),
     group: 'help' as const,
     icon: Keyboard,
-    run: () => get().openDialog({ kind: 'settings', section: 'information' }),
+    run: () => acct.store.getState().openDialog({ kind: 'settings', section: 'information' }),
   })),
 ]
 
@@ -375,7 +391,11 @@ const take = (
   if (items.length) out.push({ group, label, items: items.slice(0, max) })
 }
 
-const searchServerItem = (s: RChatState, q: string): Ranked<PaletteItem>[] =>
+const searchServerItem = (
+  s: RChatState,
+  q: string,
+  acct = client.shown()
+): Ranked<PaletteItem>[] =>
   s.view?.kind === 'channel' && q
     ? [
         {
@@ -384,7 +404,7 @@ const searchServerItem = (s: RChatState, q: string): Ranked<PaletteItem>[] =>
             title: `Search the server for “${q}”`,
             group: 'messages',
             icon: Search,
-            run: () => get().openSearch(q),
+            run: () => acct.store.getState().openSearch(q),
           },
           score: 0,
           hits: [],
@@ -395,7 +415,12 @@ const searchServerItem = (s: RChatState, q: string): Ranked<PaletteItem>[] =>
 // Guests get no API console.
 export const noApi = (s: Pick<RChatState, 'guest' | 'me'>) => s.guest || !s.me
 
-export const buildSections = (s: RChatState, text: string, ctx: ResultCtx): Section[] => {
+export const buildSections = (
+  s: RChatState,
+  text: string,
+  ctx: ResultCtx,
+  acct = client.shown()
+): Section[] => {
   const { mode, q } = parseQuery(text)
   const { usage, now } = ctx
   const out: Section[] = []
@@ -405,7 +430,7 @@ export const buildSections = (s: RChatState, text: string, ctx: ResultCtx): Sect
   const r = <T extends PaletteItem>(items: T[], query = q) => rank(items, query, usage, now)
 
   if (mode === 'help') {
-    take(out, 'help', r(helpItems(noApi(s))), 50)
+    take(out, 'help', r(helpItems(noApi(s), acct)), 50)
     return out
   }
   if (mode === 'api') {
@@ -427,13 +452,13 @@ export const buildSections = (s: RChatState, text: string, ctx: ResultCtx): Sect
     take(
       out,
       'navigation',
-      r([...channelItems(s), ...threadItems(s, ctx.mask), ...serverItems(s)]),
+      r([...channelItems(s, acct), ...threadItems(s, ctx.mask, acct), ...serverItems(s, acct)]),
       50
     )
     return out
   }
   if (mode === 'people') {
-    take(out, 'people', r(peopleItems(s, ctx, q)), 50)
+    take(out, 'people', r(peopleItems(s, ctx, q, acct)), 50)
     return out
   }
   // Everything: what was selected first, then a typed command with its argument.
@@ -454,7 +479,7 @@ export const buildSections = (s: RChatState, text: string, ctx: ResultCtx): Sect
     )
   }
   if (!q) {
-    take(out, 'recent', r(recentItems(s, ctx.recents), ''), 5)
+    take(out, 'recent', r(recentItems(s, ctx.recents, acct), ''), 5)
     const used = r(others, '').filter(x => Object.hasOwn(usage, x.item.id))
     take(out, 'commands', used, 6, 'Frequent commands')
     take(
@@ -472,12 +497,17 @@ export const buildSections = (s: RChatState, text: string, ctx: ResultCtx): Sect
   take(
     out,
     'navigation',
-    r([...serverItems(s), ...channelItems(s), ...dmItems(s), ...threadItems(s, ctx.mask)]),
+    r([
+      ...serverItems(s, acct),
+      ...channelItems(s, acct),
+      ...dmItems(s, acct),
+      ...threadItems(s, ctx.mask, acct),
+    ]),
     8
   )
-  take(out, 'people', r(peopleItems(s, ctx, q)), 5)
+  take(out, 'people', r(peopleItems(s, ctx, q, acct)), 5)
   take(out, 'commands', r(others), 8, 'Commands')
-  take(out, 'messages', [...messageItems(s, ctx, q, 6), ...searchServerItem(s, q)], 7)
+  take(out, 'messages', [...messageItems(s, ctx, q, 6, acct), ...searchServerItem(s, q, acct)], 7)
   return out
 }
 

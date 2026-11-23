@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { ChevronDown, Phone, PhoneOff, Video } from 'lucide-react'
+import { useAccount } from '../../lib/client/react'
 import { openActionMenu } from '../../lib/actions/menu'
 import { useStore } from '../../lib/store'
 import { CALL_ELSEWHERE, p2pCall, useP2p } from '../../lib/p2p/app'
@@ -42,6 +43,7 @@ export function P2pCallRow({ p, me }: { p: P2pMessage; me: string | null }) {
 // Call and Video for a P2P contact. A call with a contact is always direct; the chevron offers
 // a relay of the user's own for this call only, as in instance DMs.
 function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: string | null }) {
+  const account = useAccount()
   const [shown, setShown] = useState<object | null>(null)
   const open = useStore(s => shown !== null && s.contextMenu === shown)
   const kind = video ? 'Video call' : 'Call'
@@ -59,9 +61,10 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
             {video ? 'Start a video call' : 'Start a call'}
           </span>
         ),
-      }
+      },
+      account
     )
-    setShown(useStore.getState().contextMenu)
+    setShown(account.store.getState().contextMenu)
   }
   return (
     <div
@@ -115,8 +118,9 @@ export function P2pCallButtons({
 }) {
   const elsewhere = useP2p(s => s.reader || s.elsewhere)
   const there = useP2p(s => s.callElsewhere)
-  const own = useP2p(s => s.call !== null)
-  const instance = useStore(s => s.call !== null)
+  const busy = useP2p(
+    s => s.call?.peer === peer || (s.call?.dir === 'in' && s.call.state === 'ringing')
+  )
   if (elsewhere && there)
     return (
       <span
@@ -130,7 +134,7 @@ export function P2pCallButtons({
     ? 'P2P is open in another tab'
     : !canCall
       ? 'Calls need a mutual contact'
-      : own || instance
+      : busy
         ? 'Already in a call'
         : !online
           ? `${name} is offline`

@@ -28,20 +28,18 @@ import {
   ShieldAlert,
   X,
 } from 'lucide-react'
+import { useAccount } from '../lib/client/react'
 import { fmtSize } from '../lib/bytes'
 import { fileLang, fenceTag } from '../lib/code'
 import type { CodeNode } from '../lib/highlight'
 import { relayOnly } from '../lib/ice'
 import { ownTurn } from '../lib/relays'
-import { api, home, localOrigins, remoteAllowed, shareOrigin } from '../lib/instances'
+import { home, localOrigins, remoteAllowed, shareOrigin } from '../lib/instances'
 import { mentionCandidates, splitKnownMentions } from '../lib/mentions'
 import {
   CANCELED,
   expiryDelay,
   headOf,
-  keepPreview,
-  p2p,
-  previewUrl,
   unexpired,
   type Download as Fetched,
   type Preview,
@@ -66,15 +64,8 @@ import {
 } from '../lib/invite'
 import { postedUrl, spoileredUrls } from '../lib/embed_links'
 import { findMessageLinks, parseMessageLink } from '../lib/message_links'
-import {
-  mediaModeFor,
-  previewPath,
-  saveMedia,
-  useLinkedSrc,
-  useMediaSrc,
-  usePreviewSrc,
-} from '../lib/media_src'
-import { expiryText, sameOriginImage } from '../lib/rules'
+import { previewPath, useLinkedSrc, useMediaSrc, usePreviewSrc } from '../lib/media_src'
+import { expiryText } from '../lib/rules'
 import { remarkMask } from '../lib/profanity'
 import { markSpoilers, spoilerParts } from '../lib/spoilers'
 import { hideSpoilers, type MdNode as SpoilerNode } from '../lib/spoiler_tree'
@@ -84,7 +75,6 @@ import {
   errorText,
   groupPills,
   knownMentions,
-  sessionMark,
   useMask,
   userRefFor,
   useStore,
@@ -102,8 +92,6 @@ import {
   CodeBlock,
   CodePreview,
   CodePreviewLoading,
-  keepText,
-  keptText,
   nodeText,
   useServerText,
   type TextFile,
@@ -218,21 +206,17 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   // was said and when it was read.
   const chat = useChatSource()
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
-  const local =
-    !plain &&
-    !chat &&
-    sameOriginImage(src, window.location.href, [window.location.origin, api.origin()])
-  const shown = useLinkedSrc(src, server, previews && local)
-  if (previews && local && shown === undefined)
+  const { href, shown } = useLinkedSrc(src, server, !chat, previews && !plain)
+  if (shown === undefined)
     return (
       <span className="my-1 block h-40 w-60 max-w-full motion-safe:animate-pulse rounded-xl bg-surface-container" />
     )
-  if (previews && local && shown)
+  if (shown)
     return <img src={shown} alt={alt ?? ''} className="my-1 max-h-80 max-w-full rounded-xl" />
   if (!src) return <>{alt}</>
   if (inLink) return <>{alt || src}</>
   return (
-    <a href={src} target="_blank" rel="noreferrer" className="text-primary underline">
+    <a href={href} target="_blank" rel="noreferrer" className="text-primary underline">
       {alt || src}
     </a>
   )
@@ -538,6 +522,10 @@ export function SpoilerCover({ title, onReveal }: { title?: string; onReveal: ()
 const UNVERIFIED = 'Unverified: sent from an older app'
 
 function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number }) {
+  const account = useAccount()
+  const p2p = account.files
+  const { sessionMark } = account.lifetime
+  const key = JSON.stringify([account.conn.origin, 'p2p', messageId, media.id])
   const me = useStore(s => s.me)
   const previews = useStore(s => s.settings.asset_previews)
   const streamer = useStore(s => s.streamer)
@@ -549,7 +537,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   )
   const { id, filename, hoster, expires_at, spoiler, size, mime } = media
   const sha256 = media.sha256 ?? null
-  const [shown, setShown] = useState<Preview | null>(() => previewUrl(messageId))
+  const [shown, setShown] = useState<Preview | null>(() => p2p.previewUrl(messageId))
   const [progress, setProgress] = useState<{ got: number; total: number } | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [revealed, setRevealed] = useState(false)
@@ -576,7 +564,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   const hosted = live && avail?.online === true && avail.ids.includes(id)
   const online = localFile !== null || hosted
   const hosterName =
-    hoster !== null ? userRefFor(useStore.getState(), hoster).display_name : 'the sender'
+    hoster !== null ? userRefFor(account.store.getState(), hoster).display_name : 'the sender'
   const guess = guessKind(filename)
   const audio = audioHint(filename, mime)
   const unverified = sha256 === null && !own
@@ -586,7 +574,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
   const lang = fileLang(filename)
   const canText = previews && lang !== null && size !== null && size <= PREVIEW_MAX
   const [text, setText] = useState<TextFile | null>(
-    () => (canText && live ? keptText(`p2p:${messageId}`) : null) ?? null
+    () => (canText && live ? account.textPreviews.get(key) : null) ?? null
   )
   const always = useSpoilersOpen()
   const hidden = spoiler && !revealed && !always
@@ -632,13 +620,14 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
         if (at !== sessionMark()) return
         if (canText && !save) {
           const file = await blobText(got.blob)
-          keepText(`p2p:${messageId}`, file && { ...file, verified: got.verified })
+          if (at !== sessionMark()) return
+          account.textPreviews.keep(key, file && { ...file, verified: got.verified })
           setText(file && { ...file, verified: got.verified })
         }
         const kind = kindOf(got.type)
         if (canPreview && got.verified && kind !== null && got.blob.size <= PREVIEW_MAX) {
           const preview = { url: URL.createObjectURL(got.blob), kind }
-          keepPreview(messageId, preview)
+          p2p.keepPreview(messageId, preview)
           setShown(preview)
         }
         if (save)
@@ -665,7 +654,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
 
   useEffect(() => {
     if (!canText || !autoLoad || text !== null || !online || hidden) return
-    if (ctl.current || failed !== null || keptText(`p2p:${messageId}`) === null) return
+    if (ctl.current || failed !== null || account.textPreviews.get(key) === null) return
     run(false)
   }, [canText, autoLoad, text, online, hidden, failed, messageId])
 
@@ -823,7 +812,7 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
                 <ImageIcon size={14} />
               </button>
             )}
-            {canText && !autoLoad && keptText(`p2p:${messageId}`) !== null && (
+            {canText && !autoLoad && account.textPreviews.get(key) !== null && (
               <button
                 title="Show preview (connects to the sender)"
                 aria-label="Show preview"
@@ -874,6 +863,11 @@ function MediaAttachment({
   own: boolean
   postedAt: number
 }) {
+  const account = useAccount()
+  const {
+    api,
+    media: { mediaModeFor, saveMedia },
+  } = account
   const previews = useStore(s => s.settings.asset_previews)
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const [revealed, setRevealed] = useState(false)
@@ -948,7 +942,7 @@ function MediaAttachment({
   }
   const save = () =>
     void saveMedia(id, server, filename).catch((err: unknown) => {
-      if (!(err instanceof Ended)) useStore.getState().setError(errorText(err))
+      if (!(err instanceof Ended)) account.store.getState().setError(errorText(err))
     })
   if (lang !== null && text === undefined) return <CodePreviewLoading filename={filename} />
   if (lang !== null && text) {
