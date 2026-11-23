@@ -151,3 +151,29 @@ describe('access gate', () => {
     for (const item of fine) expect([item, permBits(item)]).toEqual([item, false])
   })
 })
+
+test('only older history, search, audit and admin list handlers use a database replica', () => {
+  const readers: string[] = []
+  for (const path of rustFiles(src)) {
+    const file = relative(src, path)
+    const source = code(readFileSync(path, 'utf8'))
+    let handler = ''
+    for (const line of source.split('\n')) {
+      const declaration = line.match(/\bfn\s+(\w+)/)
+      if (declaration) handler = declaration[1]
+      // The hub has its own in-memory view of remote sessions.
+      const expression = file.startsWith('hub/') ? /\bstate\s*\.replica\s*\(/ : /\.replica\s*\(/
+      if (expression.test(line)) readers.push(`${file}::${handler}`)
+    }
+  }
+  expect(readers.sort()).toEqual([
+    'api/admin.rs::list_servers',
+    'api/admin.rs::list_users',
+    'api/audit.rs::list_audit',
+    'api/instance_audit.rs::list',
+    'api/messages.rs::channel_messages',
+    'api/messages.rs::dm_messages',
+    'api/messages.rs::search_screened',
+    'api/servers.rs::search_servers',
+  ])
+})

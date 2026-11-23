@@ -2,6 +2,7 @@ mod channel_index;
 mod indexes;
 mod migrate;
 mod pool;
+pub(crate) mod replica;
 mod schema;
 mod secrets;
 mod sweep;

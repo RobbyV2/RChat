@@ -83,6 +83,10 @@ Run `mem.ts` against a freshly started server. `PHASES` with `presence` or `send
 | `FED_NEIGHBOUR`            | `fed.ts`                       | Calls a second from a host on the `pressed` host's network. Default 50.                                                                                                      |
 | `FED_STAMP_WORK`           | `fed.ts`                       | Work of a stamp the target did not size. Default 2000000.                                                                                                                    |
 
+## Replica visibility
+
+Set `DATABASE_URL` and `REPLICA_URL` to the benchmark primary and its streaming replica, then run `bun scripts/load/replica.ts`. Set `SAMPLES` for the number of writes (default 100). It writes to a scratch table and reports first-read misses and visibility latency. Run it again during `PHASES=storm,send` to measure replication under load.
+
 ## Instance protocol
 
 `fed.ts` signs calls as simulated instances `h0` to `h9`, `pressed`, `neighbour`, `new` and minted

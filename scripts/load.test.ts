@@ -45,6 +45,7 @@ describe('load harness files', () => {
         'lib.ts',
         'mem.ts',
         'perms.ts',
+        'replica.ts',
         'run.ts',
         'seed.sql',
         'upgrade.ts',

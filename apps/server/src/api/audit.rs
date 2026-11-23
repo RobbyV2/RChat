@@ -887,14 +887,18 @@ pub(crate) async fn list_audit(
         "SELECT id, actor, staff, action, target_kind, target_id, target_name, target_staff, details, created_at, {hidden} FROM audit_log WHERE server = $1{clauses}{only_visible} ORDER BY created_at DESC, id DESC LIMIT {}",
         limit + 1
     );
-    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(access.name());
-    for b in binds {
-        query = match b {
-            Bind::Int(v) => query.bind(v),
-            Bind::Text(v) => query.bind(v),
-        };
-    }
-    let rows = query.fetch_all(db).await?;
+    let rows = state
+        .replica(async |db| {
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str())).bind(access.name());
+            for b in &binds {
+                query = match b {
+                    Bind::Int(v) => query.bind(v),
+                    Bind::Text(v) => query.bind(v),
+                };
+            }
+            Ok(query.fetch_all(db).await?)
+        })
+        .await?;
     let mut raw = Vec::with_capacity(rows.len());
     for r in &rows {
         raw.push(Raw {

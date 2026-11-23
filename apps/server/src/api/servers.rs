@@ -2270,10 +2270,14 @@ pub(crate) async fn search_servers(
         "SELECT name, display_name, password_hash FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging' AND ((name IN ({}) AND listed <> 0 AND COALESCE(password_hash, '') <> '!none') OR name IN (SELECT server FROM members WHERE username = $2)) ORDER BY name LIMIT 50",
         crate::api::access::Reading::now(db).await.servers_sql()
     );
-    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .bind(like_pattern(&q, fuzzy))
-        .bind(viewer.as_ref().map(|u| u.username.clone()))
-        .fetch_all(db)
+    let rows = state
+        .replica(async |db| {
+            Ok(sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                .bind(like_pattern(&q, fuzzy))
+                .bind(viewer.as_ref().map(|u| u.username.clone()))
+                .fetch_all(db)
+                .await?)
+        })
         .await?;
     let mut out = Vec::new();
     for r in &rows {

@@ -205,13 +205,13 @@ pub(crate) async fn list(
         Some(raw) => cursor_int(&decode_cursor(raw, 1)?.remove(0))?,
         None => i64::MAX,
     };
-    let rows = sqlx::query(
+    let rows = state.replica(async |db| Ok(sqlx::query(
         "SELECT id, at, actor, action, target, detail FROM instance_audit WHERE id < $1 ORDER BY id DESC LIMIT $2",
     )
     .bind(before)
     .bind(PAGE + 1)
-    .fetch_all(&state.read())
-    .await?;
+    .fetch_all(db)
+    .await?)).await?;
     let more = rows.len() as i64 > PAGE;
     let mut entries = Vec::with_capacity(rows.len());
     for r in rows.iter().take(PAGE as usize) {

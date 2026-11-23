@@ -286,8 +286,16 @@ async fn boot(config: &AppConfig, opts: RunOptions, held: &mut Held) -> anyhow::
         }
         held.hold([crate::relay::follow_revocations(&relay, &hub, &db)]);
     }
-    let state = AppState::new(db, hub, config.s3()?, bus, instance)
+    let mut state = AppState::new(db, hub, config.s3()?, bus, instance)
         .with_limits(Arc::new(config.limits.clone()));
+    let urls = config.replica_urls()?;
+    if !urls.is_empty() {
+        state.replicas = Arc::new(crate::db::replica::Replicas::open(&urls, &state.limits)?);
+        held.spawn(state.replicas.clone().monitor(
+            state.instance.id.clone(),
+            state.limits.database_replica_max_lag_ms,
+        ));
+    }
     crate::api::webhooks::configure(config.outbound()?);
     crate::api::media::configure(config.upload_limits());
     crate::api::auth::configure(&config.limits);

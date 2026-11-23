@@ -976,15 +976,15 @@ pub(crate) async fn list_users(
             ));
         }
     };
-    let (rows, next) = name_page(
-        &state.read(),
+    let (rows, next) = state.replica(async |db| name_page(
+        db,
         &format!(
             "SELECT username, display_name, avatar_kind, avatar_color FROM users WHERE (lower(username) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND password_hash <> '!purging'{marked}"
         ),
         "username",
         &page,
     )
-    .await?;
+    .await).await?;
     let mut users = Vec::with_capacity(rows.len());
     for r in &rows {
         let username: String = r.try_get(0)?;
@@ -1011,13 +1011,13 @@ pub(crate) async fn list_servers(
     let page = query.page()?;
     let q = page.q.clone();
     let fuzzy = is_fuzzy(&q);
-    let (rows, next) = name_page(
-        &state.read(),
+    let (rows, next) = state.replica(async |db| name_page(
+        db,
         &format!("SELECT {} FROM servers WHERE (lower(name) LIKE $1 ESCAPE '\\' OR lower(display_name) LIKE $1 ESCAPE '\\') AND COALESCE(password_hash, '') <> '!purging'", crate::api::access::LITE_COLUMNS),
         "name",
         &page,
     )
-    .await?;
+    .await).await?;
     let mut servers = Vec::with_capacity(rows.len());
     for r in &rows {
         let name: String = r.try_get(0)?;

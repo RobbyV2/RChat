@@ -15,6 +15,7 @@ pub struct AppState {
     pub s3: Option<Arc<Bucket>>,
     pub bus: Option<Bus>,
     reader: Db,
+    pub(crate) replicas: Arc<crate::db::replica::Replicas>,
     pub instance: Arc<Instance>,
     pub limits: Arc<Limits>,
 }
@@ -35,6 +36,7 @@ impl AppState {
             s3,
             bus,
             reader,
+            replicas: Arc::default(),
             instance,
             limits: limits.clone(),
         }
@@ -50,6 +52,16 @@ impl AppState {
 
     pub fn read(&self) -> Db {
         self.reader.clone()
+    }
+
+    pub(crate) async fn replica<'a, T, F>(
+        &'a self,
+        read: impl Fn(&'a Db) -> F,
+    ) -> Result<T, crate::api::ApiError>
+    where
+        F: Future<Output = Result<T, crate::api::ApiError>>,
+    {
+        self.replicas.read(&self.reader, read).await
     }
 
     /// The same state reading from `reader`, standing in for a replica behind the primary.

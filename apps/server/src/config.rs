@@ -152,6 +152,7 @@ pub struct AppConfig {
     pub port: u16,
     pub server_proxy_url: Option<String>,
     pub database_url: Option<String>,
+    pub database_replica_urls: Option<Secret>,
     pub s3_endpoint: Option<String>,
     pub s3_bucket: Option<String>,
     pub s3_access_key: Option<String>,
@@ -603,6 +604,28 @@ impl AppConfig {
         }))
     }
 
+    pub(crate) fn replica_urls(&self) -> anyhow::Result<Vec<url::Url>> {
+        let Some(value) = &self.database_replica_urls else {
+            return Ok(Vec::new());
+        };
+        let mut urls = Vec::new();
+        for raw in value.0.split(',') {
+            let url = url::Url::parse(raw.trim())
+                .ok()
+                .filter(|url| url.scheme() == "postgres" && url.host().is_some())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "DATABASE_REPLICA_URLS expects comma-separated postgres:// addresses"
+                    )
+                })?;
+            if urls.len() >= 16 {
+                anyhow::bail!("DATABASE_REPLICA_URLS accepts at most 16 addresses");
+            }
+            urls.push(url);
+        }
+        Ok(urls)
+    }
+
     fn check_shared_state(&self) -> anyhow::Result<()> {
         let shared = [
             ("DATABASE_URL", &self.database_url),
@@ -618,6 +641,10 @@ impl AppConfig {
             .as_deref()
             .map(str::trim)
             .is_some_and(|u| u.starts_with("postgres://") || u.starts_with("postgresql://"));
+        let replicas = self.replica_urls()?;
+        if !replicas.is_empty() && !postgres {
+            anyhow::bail!("DATABASE_REPLICA_URLS needs DATABASE_URL=postgres://...");
+        }
         if self.relay_enabled && self.roles.relay && !self.roles.api && !postgres {
             anyhow::bail!(
                 "RCHAT_ROLES={} runs the relay without the api role, so it must share the relay secret with the api processes through one Postgres (DATABASE_URL=postgres://...)",

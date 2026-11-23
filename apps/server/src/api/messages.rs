@@ -902,7 +902,7 @@ async fn slice(
     edge: i64,
     min_ts: Option<i64>,
     limit: i64,
-) -> Result<Vec<Message>, ApiError> {
+) -> Result<Vec<AnyRow>, ApiError> {
     let (bound, order) = match span {
         Span::Before => ("m.id < $2", "DESC"),
         Span::From => ("m.id >= $2", "ASC"),
@@ -911,22 +911,22 @@ async fn slice(
     let sql = format!(
         "SELECT {COLS} FROM messages m WHERE {cond} AND {bound} AND m.created_at >= $3 AND {LIVE_AUTHOR} ORDER BY m.id {order} LIMIT $4"
     );
-    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+    let mut rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(key)
         .bind(edge)
         .bind(min_ts.unwrap_or(i64::MIN))
         .bind(limit)
         .fetch_all(db)
         .await?;
-    let mut msgs = rows_messages(db, &rows, Quotes::Since(min_ts)).await?;
     if let Span::Before = span {
-        msgs.reverse();
+        rows.reverse();
     }
-    Ok(msgs)
+    Ok(rows)
 }
 
 async fn page(
     db: &Db,
+    current: &Db,
     cond: &str,
     key: i64,
     q: &PageQuery,
@@ -939,7 +939,7 @@ async fn page(
         limit,
     } = *q;
     let limit = limit.unwrap_or(LIST_PAGE).clamp(1, LIST_MAX);
-    let mut msgs = match (around, after) {
+    let rows = match (around, after) {
         (Some(id), _) => {
             let older = limit / 2;
             let mut out = match older {
@@ -955,7 +955,8 @@ async fn page(
             slice(db, cond, key, Span::Before, edge, min_ts, limit).await?
         }
     };
-    attach_embeds(db, &mut msgs).await?;
+    let mut msgs = rows_messages(current, &rows, Quotes::Since(min_ts)).await?;
+    attach_embeds(current, &mut msgs).await?;
     Ok(msgs)
 }
 
@@ -995,6 +996,7 @@ pub(crate) async fn recent_channel_messages(
     limit: i64,
 ) -> Result<Vec<Message>, ApiError> {
     page(
+        db,
         db,
         "m.channel_id = $1 AND m.thread_root_id IS NULL AND m.kind = 'user'",
         channel_id,
@@ -2074,6 +2076,16 @@ pub(crate) async fn channel_messages(
         &Proof::headers(&headers, &state.limits),
     )
     .await?;
+    if q.before.is_some() && q.after.is_none() && q.around.is_none() {
+        let min_ts = channel.read_since(db).await?;
+        return Ok(Json(
+            state
+                .replica(async |reader| {
+                    read_channel_page(reader, db, &channel, user.as_ref(), &q, min_ts).await
+                })
+                .await?,
+        ));
+    }
     Ok(Json(read_channel(db, &channel, user.as_ref(), &q).await?))
 }
 
@@ -2084,15 +2096,26 @@ pub(crate) async fn read_channel(
     q: &PageQuery,
 ) -> Result<Vec<Message>, ApiError> {
     let min_ts = channel.read_since(db).await?;
+    read_channel_page(db, db, channel, user, q, min_ts).await
+}
+
+async fn read_channel_page(
+    db: &Db,
+    current: &Db,
+    channel: &super::access::ResolvedChannel,
+    user: Option<&User>,
+    q: &PageQuery,
+    min_ts: Option<i64>,
+) -> Result<Vec<Message>, ApiError> {
     let cond = match channel.shows_membership_notices() {
         true => "m.channel_id = $1 AND m.thread_root_id IS NULL",
         false => {
             "m.channel_id = $1 AND m.thread_root_id IS NULL AND m.kind NOT IN ('join', 'leave')"
         }
     };
-    let mut msgs = page(db, cond, channel.id(), q, min_ts).await?;
-    attach_reactions(db, &mut msgs, user).await?;
-    crate::api::polls::personalize(db, &mut msgs, user).await?;
+    let mut msgs = page(db, current, cond, channel.id(), q, min_ts).await?;
+    attach_reactions(current, &mut msgs, user).await?;
+    crate::api::polls::personalize(current, &mut msgs, user).await?;
     Ok(msgs)
 }
 
@@ -2156,7 +2179,7 @@ pub(crate) async fn thread_messages(
     )
     .await?;
     let min_ts = root.thread_channel()?.read_since(db).await?;
-    let mut msgs = page(db, "m.thread_root_id = $1", id, &q, min_ts).await?;
+    let mut msgs = page(db, db, "m.thread_root_id = $1", id, &q, min_ts).await?;
     attach_reactions(db, &mut msgs, user.as_ref()).await?;
     crate::api::polls::personalize(db, &mut msgs, user.as_ref()).await?;
     Ok(Json(msgs))
@@ -2212,10 +2235,17 @@ pub(crate) async fn dm_messages(
 ) -> Result<Json<Vec<Message>>, ApiError> {
     let db = &state.read();
     resolve_dm(db, id, &user).await?;
-    let mut msgs = page(db, "m.dm_id = $1", id, &q, None).await?;
-    attach_reactions(db, &mut msgs, Some(&user)).await?;
-    crate::api::polls::personalize(db, &mut msgs, Some(&user)).await?;
-    Ok(Json(msgs))
+    let read = async |reader: &Db| {
+        let mut msgs = page(reader, db, "m.dm_id = $1", id, &q, None).await?;
+        attach_reactions(db, &mut msgs, Some(&user)).await?;
+        crate::api::polls::personalize(db, &mut msgs, Some(&user)).await?;
+        Ok(Json(msgs))
+    };
+    if q.before.is_some() && q.after.is_none() && q.around.is_none() {
+        state.replica(read).await
+    } else {
+        read(db).await
+    }
 }
 
 /// Send a DM message
@@ -2676,9 +2706,24 @@ async fn search_screened(
         },
         (_, _) => scope,
     };
-    let scope = &scope;
+    let fts = has_fts(db);
+    state
+        .replica(async |reader| {
+            search_page(reader, db, &scope, sq.clone(), resume.clone(), fts).await
+        })
+        .await
+}
+
+async fn search_page(
+    db: &Db,
+    current: &Db,
+    scope: &Scope,
+    sq: SearchQuery,
+    resume: Option<Pass>,
+    fts: bool,
+) -> Result<(Vec<SearchResult>, Option<SearchCursor>), ApiError> {
     let text = sq.q.as_deref().map(str::trim).unwrap_or("");
-    let short = text.chars().count() < FTS_MIN_CHARS || !has_fts(db);
+    let short = text.chars().count() < FTS_MIN_CHARS || !fts;
     let unscoped = sq.server.is_none() && sq.channel_id.is_none();
     let first_page = sq.offset.is_none_or(|n| n <= 0);
     if !text.is_empty() && !short && is_sqlite(db) {
@@ -2708,9 +2753,9 @@ async fn search_screened(
         };
         let results = match scan {
             Scan::All if !is_sqlite(db) && !text.is_empty() && unscoped && first_page => {
-                newest_first(db, scope, sq).await?
+                newest_first(db, current, scope, sq).await?
             }
-            scan => search_once(db, scope, sq, scan, SEARCH_PAGE).await?,
+            scan => search_once(db, current, scope, sq, scan, SEARCH_PAGE).await?,
         };
         let next = match results.len() as i64 == SEARCH_PAGE {
             true => results.last().map(|r| r.message.id),
@@ -2729,7 +2774,7 @@ async fn search_screened(
     while (results.len() as i64) < SEARCH_PAGE && hi > floor.saturating_add(1) && scanned < budget {
         let lo = hi.saturating_sub(size).max(floor.saturating_add(1));
         let want = SEARCH_PAGE - results.len() as i64;
-        let page = search_once(db, scope, sq.clone(), Scan::Window(lo, hi), want).await?;
+        let page = search_once(db, current, scope, sq.clone(), Scan::Window(lo, hi), want).await?;
         results.extend(page);
         scanned = scanned.saturating_add(hi - lo);
         hi = lo;
@@ -2751,6 +2796,7 @@ async fn search_screened(
 /// gave less than a page, one query below the window.
 async fn newest_first(
     db: &Db,
+    current: &Db,
     scope: &Scope,
     sq: SearchQuery,
 ) -> Result<Vec<SearchResult>, ApiError> {
@@ -2762,14 +2808,22 @@ async fn newest_first(
     let lo = hi
         .saturating_sub(SEARCH_WINDOW)
         .max(floor.saturating_add(1));
-    let mut results = search_once(db, scope, sq.clone(), Scan::Window(lo, hi), SEARCH_PAGE).await?;
+    let mut results = search_once(
+        db,
+        current,
+        scope,
+        sq.clone(),
+        Scan::Window(lo, hi),
+        SEARCH_PAGE,
+    )
+    .await?;
     let left = SEARCH_PAGE - results.len() as i64;
     if left > 0 && lo > floor.saturating_add(1) {
         let below = SearchQuery {
             before: Some(lo),
             ..sq
         };
-        results.extend(search_once(db, scope, below, Scan::All, left).await?);
+        results.extend(search_once(db, current, scope, below, Scan::All, left).await?);
     }
     Ok(results)
 }
@@ -2854,7 +2908,7 @@ async fn fts_paged(
         };
         let full = ids.len() as i64 == FTS_BATCH;
         let want = SEARCH_PAGE - results.len() as i64;
-        results.extend(search_once(db, scope, sq.clone(), Scan::Rows(ids), want).await?);
+        results.extend(search_once(db, db, scope, sq.clone(), Scan::Rows(ids), want).await?);
         hi = lo;
         if !full {
             more = false;
@@ -3347,6 +3401,7 @@ fn searches_run(db: &Db) -> usize {
 
 async fn search_once(
     db: &Db,
+    current: &Db,
     scope: &Scope,
     sq: SearchQuery,
     scan: Scan,
@@ -3371,7 +3426,7 @@ async fn search_once(
     } else {
         query.fetch_all(db).await?
     };
-    search_results(db, &rows).await
+    search_results(current, &rows).await
 }
 
 async fn search_results(db: &Db, rows: &[AnyRow]) -> Result<Vec<SearchResult>, ApiError> {
@@ -5392,6 +5447,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replica_history_uses_current_author_and_preview_data() {
+        let (current, path) = temp_state("history_primary").await;
+        let (replica, other) = temp_state("history_replica").await;
+        add_user(&current.db, "alice", "Current").await;
+        add_user(&replica.db, "alice", "Previous").await;
+        let cid = general_id(&replica.db).await;
+        let id = post(&replica.db, cid, "alice", "older message", 1).await;
+        sqlx::query("INSERT INTO embeds(url, fetched_at) VALUES('https://example.com', 1)")
+            .execute(&replica.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO message_embeds(message_id, ord, url) VALUES($1, 0, 'https://example.com')",
+        )
+        .bind(id)
+        .execute(&replica.db)
+        .await
+        .unwrap();
+        let messages = page(
+            &replica.db,
+            &current.db,
+            "m.channel_id = $1",
+            cid,
+            &PageQuery {
+                before: Some(id + 1),
+                after: None,
+                around: None,
+                limit: Some(1),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(messages[0].id, id);
+        assert_eq!(messages[0].author.display_name, "Current");
+        assert!(messages[0].embeds.is_empty());
+        done(replica, other).await;
+        done(current, path).await;
+    }
+
+    #[tokio::test]
     async fn pages_batch_authors_and_clamp() {
         let (state, path) = temp_state("page_batch").await;
         let db = &state.db;
@@ -6009,7 +6105,7 @@ mod tests {
                 search_paged(&state, Some(&alice), &HeaderMap::new(), sq.clone())
                     .await
                     .expect("search");
-            let whole = search_once(db, &scope, sq, Scan::All, SEARCH_PAGE)
+            let whole = search_once(db, db, &scope, sq, Scan::All, SEARCH_PAGE)
                 .await
                 .expect("one query");
             let ids = |rows: &[SearchResult]| rows.iter().map(|r| r.message.id).collect::<Vec<_>>();
@@ -6491,6 +6587,7 @@ mod tests {
         for (setting, expected) in [("SET jit = on", "on"), ("SET jit = off", "off")] {
             sqlx::query(setting).execute(&pooled).await.unwrap();
             let empty = search_once(
+                &pooled,
                 &pooled,
                 &scope,
                 query(Some("ordinary phrase")),

@@ -430,6 +430,23 @@ fn on_connect(options: AnyPoolOptions, session: Vec<String>) -> AnyPoolOptions {
     })
 }
 
+pub(super) fn replica_pool(url: &url::Url, limits: &Limits) -> anyhow::Result<Db> {
+    let options = pool_options(
+        limits.database_replica_max_connections,
+        limits.acquire_timeout_secs(),
+    );
+    let session = vec![
+        "SET default_transaction_read_only = on".to_owned(),
+        format!(
+            "SET statement_timeout = '{}s'",
+            limits.database_statement_timeout_secs
+        ),
+    ];
+    on_connect(options, session)
+        .connect_lazy(url.as_str())
+        .map_err(|_| anyhow::anyhow!("DATABASE_REPLICA_URLS contains an invalid connection option"))
+}
+
 async fn open_reader(url: &str, max: u32, acquire_timeout_secs: u64) -> anyhow::Result<Db> {
     let session = [
         "PRAGMA busy_timeout=5000",

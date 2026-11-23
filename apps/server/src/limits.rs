@@ -22,7 +22,7 @@ pub const DEFAULT_ACQUIRE_TIMEOUT_SECS: u64 = 10;
 pub const SESSION_IDLE_MIN: i64 = 300;
 
 /// Every numeric limit: its env name, smallest and largest value.
-const RANGES: [(&str, i64, i64); 120] = [
+const RANGES: [(&str, i64, i64); 122] = [
     ("RATE_LIMIT_PER_SECOND", 1, 1_000),
     ("RATE_LIMIT_BURST", 1, 1_000_000),
     ("RATE_LIMIT_STRICT_PER_SECOND", 1, 1_000),
@@ -44,6 +44,8 @@ const RANGES: [(&str, i64, i64); 120] = [
     ("WS_GUEST_SOCKETS_MAX", 0, 1_000_000),
     ("REDIS_HUB_MAXLEN", 1_000, 100_000_000),
     ("DATABASE_MAX_CONNECTIONS", 1, 1_000),
+    ("DATABASE_REPLICA_MAX_CONNECTIONS", 1, 1_000),
+    ("DATABASE_REPLICA_MAX_LAG_MS", 100, 600_000),
     ("DATABASE_MIN_CONNECTIONS", 0, 1_000),
     ("DATABASE_ACQUIRE_TIMEOUT_SECS", 1, 3_600),
     ("DATABASE_READ_CONNECTIONS", 0, 64),
@@ -275,6 +277,8 @@ pub struct Limits {
     pub database_read_connections: Option<u32>,
     pub database_index_build_mib: u32,
     pub database_statement_timeout_secs: u64,
+    pub database_replica_max_connections: u32,
+    pub database_replica_max_lag_ms: u64,
     pub upload_max_mib: u64,
     pub upload_budget_mib: u64,
     pub upload_buffer_mib: u64,
@@ -406,6 +410,8 @@ impl Default for Limits {
             database_read_connections: None,
             database_index_build_mib: 256,
             database_statement_timeout_secs: 60,
+            database_replica_max_connections: 8,
+            database_replica_max_lag_ms: 2000,
             upload_max_mib: 25,
             upload_budget_mib: DEFAULT_BUDGET_MIB,
             upload_buffer_mib: DEFAULT_BUFFER_MIB,
@@ -676,6 +682,12 @@ impl Limits {
             ws_guest_sockets_max: e.num("WS_GUEST_SOCKETS_MAX", d.ws_guest_sockets_max)?,
             redis_hub_maxlen: e.num("REDIS_HUB_MAXLEN", d.redis_hub_maxlen)?,
             database_max_connections: e.opt("DATABASE_MAX_CONNECTIONS")?,
+            database_replica_max_connections: e.num(
+                "DATABASE_REPLICA_MAX_CONNECTIONS",
+                d.database_replica_max_connections,
+            )?,
+            database_replica_max_lag_ms: e
+                .num("DATABASE_REPLICA_MAX_LAG_MS", d.database_replica_max_lag_ms)?,
             database_min_connections: e.opt("DATABASE_MIN_CONNECTIONS")?,
             database_acquire_timeout_secs: e.opt("DATABASE_ACQUIRE_TIMEOUT_SECS")?,
             database_read_connections: e.opt("DATABASE_READ_CONNECTIONS")?,
@@ -839,6 +851,8 @@ impl Limits {
             database_read_connections,
             database_index_build_mib,
             database_statement_timeout_secs,
+            database_replica_max_connections,
+            database_replica_max_lag_ms,
             upload_max_mib,
             upload_budget_mib,
             upload_buffer_mib,
@@ -978,6 +992,14 @@ impl Limits {
             ("WS_GUEST_SOCKETS_MAX", set(ws_guest_sockets_max)),
             ("REDIS_HUB_MAXLEN", set(redis_hub_maxlen)),
             ("DATABASE_MAX_CONNECTIONS", opt(database_max_connections)),
+            (
+                "DATABASE_REPLICA_MAX_CONNECTIONS",
+                set(database_replica_max_connections),
+            ),
+            (
+                "DATABASE_REPLICA_MAX_LAG_MS",
+                set(database_replica_max_lag_ms),
+            ),
             ("DATABASE_MIN_CONNECTIONS", opt(database_min_connections)),
             (
                 "DATABASE_ACQUIRE_TIMEOUT_SECS",
