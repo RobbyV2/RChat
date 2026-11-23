@@ -31,6 +31,13 @@ struct Replica {
     sample: Mutex<Sample>,
 }
 
+#[derive(serde::Serialize)]
+pub(crate) struct ReplicaStatus {
+    host: String,
+    healthy: bool,
+    lag_ms: Option<i64>,
+}
+
 #[derive(Default)]
 pub(crate) struct Replicas {
     entries: Vec<Replica>,
@@ -82,6 +89,20 @@ impl Replicas {
             }))
             .await;
         }
+    }
+
+    pub(crate) fn status(&self) -> Vec<ReplicaStatus> {
+        self.entries
+            .iter()
+            .map(|r| {
+                let sample = *r.sample.lock().unwrap();
+                ReplicaStatus {
+                    host: r.host.clone(),
+                    healthy: sample.available(),
+                    lag_ms: sample.lag_ms,
+                }
+            })
+            .collect()
     }
 
     fn choose(&self) -> Option<&Replica> {

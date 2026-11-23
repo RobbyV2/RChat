@@ -630,6 +630,7 @@ pub struct LimitRow {
 
 #[derive(Serialize)]
 pub struct ConfigView {
+    database: crate::db::status::DatabaseStatus,
     pub controls: Vec<ControlRow>,
     pub limits: Vec<LimitRow>,
 }
@@ -671,7 +672,11 @@ pub(crate) async fn get_config(
                 .map_or(String::new(), |(lo, hi)| format!("{lo}-{hi}")),
         })
         .collect();
-    Ok(Json(ConfigView { controls, limits }))
+    Ok(Json(ConfigView {
+        controls,
+        limits,
+        database: crate::db::status::database_status(&state).await?,
+    }))
 }
 
 /// The whole forms document, turned-off categories included.

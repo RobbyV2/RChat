@@ -67,6 +67,14 @@ pub async fn light(db: &Db, tx: &mut AnyConnection) -> sqlx::Result<()> {
         .map(|_| ())
 }
 
+pub(super) fn light_mode(db: &Db) -> &'static str {
+    if SYNC_LIGHT.lock().unwrap().contains(&pool_key(db)) {
+        "sync"
+    } else {
+        "async"
+    }
+}
+
 /// What `open_with` reads from the configuration: the limits, `PASSWORD_PEPPER` and the
 /// controls the env sets and pins. `controls` is `Some` only for a server start, which brings
 /// the stored controls in line with its env. `None` (the default, for tools that open the
@@ -111,11 +119,14 @@ pub fn opened_limits(db: &Db) -> Limits {
 }
 
 pub fn reader(db: &Db) -> Db {
+    separate_reader(db).unwrap_or_else(|| db.clone())
+}
+
+pub(super) fn separate_reader(db: &Db) -> Option<Db> {
     READERS
         .lock()
         .ok()
         .and_then(|readers| readers.get(&pool_key(db)).cloned())
-        .unwrap_or_else(|| db.clone())
 }
 
 pub async fn close(db: &Db) {
@@ -472,7 +483,7 @@ pub async fn no_statement_limit(tx: &mut AnyConnection) -> sqlx::Result<()> {
 }
 
 /// What the Postgres connection limit leaves for more copies of this process.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ConnectionBudget {
     /// This process's pool size.
     pub pool: u32,

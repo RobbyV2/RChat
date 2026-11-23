@@ -751,7 +751,27 @@ export interface ConfigLimit {
   range: string
 }
 
+export interface DatabasePool {
+  max: number
+  in_use: number
+  idle: number
+}
+
+export interface DatabaseStatus {
+  kind: 'sqlite' | 'postgres'
+  version: string
+  schema_version: number
+  pool: DatabasePool
+  reader: DatabasePool | null
+  connections: { used: number; allowed: number } | null
+  light_commits: 'async' | 'sync' | null
+  statement_timeout_secs: number | null
+  replicas: { host: string; healthy: boolean; lag_ms: number | null }[]
+  online_indexes: { name: string; state: string; percent: number | null; size_mib: number }[]
+}
+
 export interface AdminConfig {
+  database?: DatabaseStatus
   controls: ConfigControl[]
   limits: ConfigLimit[]
 }

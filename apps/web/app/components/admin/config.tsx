@@ -13,6 +13,7 @@ import {
   summaryLine,
   type ConfigFilter,
 } from '../../lib/admin_config'
+import { databaseRows } from '../../lib/database_rows'
 import { adminRow } from '../../lib/admin_rows'
 import { useStore } from '../../lib/store'
 import type { ConfigControl } from '../../lib/types'
@@ -138,6 +139,19 @@ export function ConfigSection() {
               </span>
             </PageRow>
           ))}
+        </PageGroup>
+      )}
+      {filter === 'all' && config.database && (
+        <PageGroup label="Database">
+          <p className="pb-2 text-sm text-on-surface-variant">On this copy</p>
+          <dl className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-3 gap-y-2 px-3 text-sm">
+            {databaseRows(config.database).map(([label, value]) => (
+              <div key={label} className="contents">
+                <dt className="break-words text-on-surface-variant">{label}</dt>
+                <dd className="break-words">{value}</dd>
+              </div>
+            ))}
+          </dl>
         </PageGroup>
       )}
     </div>

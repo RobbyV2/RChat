@@ -5,6 +5,7 @@ mod pool;
 pub(crate) mod replica;
 mod schema;
 mod secrets;
+pub(crate) mod status;
 mod sweep;
 mod touch;
 
