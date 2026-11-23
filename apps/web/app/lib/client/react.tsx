@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, type ReactNode } from 'react'
+import { createContext, useContext, useSyncExternalStore, type ReactNode } from 'react'
 import { useStore as useZustand, type UseBoundStore } from 'zustand'
 import type { StoreApi } from 'zustand/vanilla'
 import type { RChatState } from '../store_types'
@@ -21,8 +21,13 @@ export function AccountProvider({
 
 export function useAccount() {
   const account = useContext(AccountContext)
-  const shown = client.shown()
-  return account ?? shown
+  return account ?? client.shown()
+}
+
+export function useLiveSessions() {
+  // Materialize the lazy home session before taking the first snapshot.
+  client.shown()
+  return useSyncExternalStore(client.subscribe, client.live, client.live)
 }
 
 export const useStoreApi = () => useAccount().store

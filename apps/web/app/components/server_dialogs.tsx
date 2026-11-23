@@ -1,8 +1,9 @@
 'use client'
 
+import { useAccount } from '../lib/client/react'
+
 import { useEffect, useState } from 'react'
-import { api, shareOrigin } from '../lib/instances'
-import { errorText, inSession, useStore } from '../lib/store'
+import { errorText, useStore } from '../lib/store'
 import type { ServerMatch } from '../lib/types'
 import { enterKey } from '../lib/keys'
 import { JOIN_NOTE, joinByCode, joinInput, runJoinStep, type JoinStep } from '../lib/join_flow'
@@ -18,6 +19,11 @@ function AddServerDialog({
   locked?: boolean
   initial?: 'create' | 'join'
 }) {
+  const {
+    api,
+    shareOrigin,
+    lifetime: { inSession },
+  } = useAccount()
   const guest = useStore(s => s.guest)
   const createServer = useStore(s => s.createServer)
   const joinServer = useStore(s => s.joinServer)
@@ -35,7 +41,7 @@ function AddServerDialog({
   const joining = !creating
   const id = name.trim().toLowerCase()
   const nameTaken = creating && taken?.id === id && taken.taken
-  const link = joining ? joinInput(name, shareOrigin()) : null
+  const link = joining ? joinInput(name, shareOrigin) : null
 
   useEffect(() => {
     if (!joining || !id || id.includes('/')) {

@@ -5,7 +5,7 @@ import type { Action, ActionCtx, Args, Scope } from './types'
 
 interface Host {
   refresh(ctx: ActionCtx): ActionCtx | null
-  gone(): void
+  gone(ctx?: ActionCtx): void
 }
 
 let host: Host = { refresh: ctx => ctx, gone: () => {} }
@@ -142,7 +142,7 @@ export const recheckAction = (
   const action = actionById(id)
   const fresh = action ? host.refresh(ctx) : null
   if (action && fresh && isAvailable(action, fresh)) return { action, ctx: fresh }
-  host.gone()
+  host.gone(ctx)
   return null
 }
 

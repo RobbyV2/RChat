@@ -330,8 +330,8 @@ export const memberActions: Action[] = [
       const { server, user } = seat
       const id = Number(pick[2])
       void (pick[1] === '-'
-        ? get().unassignRole(server, id, user.username)
-        : get().assignRole(server, id, user.username))
+        ? ctx.s.unassignRole(server, id, user.username)
+        : ctx.s.assignRole(server, id, user.username))
     },
   },
   {

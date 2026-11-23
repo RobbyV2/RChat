@@ -2,18 +2,14 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useStore } from '../lib/store'
-import { canView, useViewing } from '../lib/viewing'
+import { useAccount } from '../lib/client/react'
 import {
-  closePreview,
   exampleSource,
   fileSource,
-  forgetPreview,
-  forgetSavedPreview,
   savedSource,
-  launchPreview,
   previewPlace,
-  previewStep,
-  usePreview,
+  previewFor,
+  type LoadedPreview,
 } from '../lib/apps/preview'
 import { savedPreviews } from '../lib/apps/preview_files'
 import type { Node } from '../lib/apps/ui/types'
@@ -21,9 +17,8 @@ import { CloseButton, fieldCls, filledBtn, textBtn, Masked } from './ui'
 
 const button = filledBtn + ' min-h-11 cursor-pointer'
 const secondary = textBtn + ' min-h-11 cursor-pointer'
-type Loaded = NonNullable<ReturnType<typeof usePreview.getState>['loaded']>
-
-function Parts({ node, app }: { node: Node; app: Loaded }): ReactNode {
+function Parts({ node, app }: { node: Node; app: LoadedPreview }): ReactNode {
+  const { usePreview, previewStep } = previewFor(useAccount())
   const values = usePreview(s => s.values)
   const setField = (name: string, value: string) =>
     usePreview.setState(s => ({ values: { ...s.values, [name]: value } }))
@@ -103,7 +98,8 @@ function Parts({ node, app }: { node: Node; app: Loaded }): ReactNode {
   }
 }
 
-function AppDialog({ node, app }: { node: Extract<Node, { c: 'dialog' }>; app: Loaded }) {
+function AppDialog({ node, app }: { node: Extract<Node, { c: 'dialog' }>; app: LoadedPreview }) {
+  const { previewStep } = previewFor(useAccount())
   const pane = useRef<HTMLDivElement>(null)
   const close = () => previewStep(app, { op: 'close' })
   useEffect(() => {
@@ -178,6 +174,16 @@ export function AppPreview() {
 }
 
 function Launcher({ where }: { where: string }) {
+  const owner = useAccount()
+  const { canView, useViewing } = owner.viewing
+  const {
+    usePreview,
+    closePreview,
+    launchPreview,
+    forgetPreview,
+    forgetSavedPreview,
+    previewStep,
+  } = previewFor(owner)
   const frame = useRef<HTMLDialogElement>(null)
   const identity = useRef<HTMLHeadingElement>(null)
   useLayoutEffect(() => {
@@ -194,8 +200,8 @@ function Launcher({ where }: { where: string }) {
   const revision = useViewing(s => s.revision)
   const files = useMemo(() => {
     void revision
-    return account ? savedPreviews(account, where) : []
-  }, [account, where, revision])
+    return account ? savedPreviews(account, where, owner.conn) : []
+  }, [account, where, revision, owner])
   const app = loaded?.server === where ? loaded : null
   const shown = app && canView(app.target)
   const modal = shown && dialog && app.definition.dialogs.get(dialog)
@@ -278,7 +284,9 @@ function Launcher({ where }: { where: string }) {
               <li key={f.revision} className="flex min-w-0 items-center gap-2">
                 <button
                   className={secondary + ' min-w-0 truncate'}
-                  onClick={() => void launchPreview(where, savedSource(account, where, f))}
+                  onClick={() =>
+                    void launchPreview(where, savedSource(account, where, f, owner.conn))
+                  }
                 >
                   Open {f.name}
                 </button>

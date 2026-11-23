@@ -17,7 +17,6 @@ import { adminRow, featureSearchRows } from '../../lib/admin_rows'
 import { useStore } from '../../lib/store'
 import type { AdminSection } from '../../lib/view'
 import { SettingsPage, type PageSection } from '../settings_page'
-import AdminDialogs from './dialogs'
 import { AuditSection } from './audit'
 import { BRAND_IMAGE_ROWS, BrandingSection } from './branding'
 import { ConfigSection, controlLabel } from './config'
@@ -159,13 +158,4 @@ function Page() {
   )
 }
 
-// The site administration page and the confirm dialogs of its account actions. Only the site
-// admin's browser loads this module.
-export default function AdminRoot() {
-  return (
-    <>
-      <Page />
-      <AdminDialogs />
-    </>
-  )
-}
+export default Page

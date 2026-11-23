@@ -1,5 +1,7 @@
 'use client'
 
+import { useAccount } from '../lib/client/react'
+
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ChevronDown,
@@ -14,8 +16,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { api } from '../lib/instances'
-import { errorText, inSession, useStore } from '../lib/store'
+import { errorText, useStore } from '../lib/store'
 import {
   AUDIT_GROUPS,
   NO_FILTERS,
@@ -78,6 +79,10 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 function AuditLog({ server }: { server: string }) {
+  const {
+    api,
+    lifetime: { inSession },
+  } = useAccount()
   const openDialog = useStore(s => s.openDialog)
   const setError = useStore(s => s.setError)
   const [group, setGroup] = useState<AuditGroup | ''>('')

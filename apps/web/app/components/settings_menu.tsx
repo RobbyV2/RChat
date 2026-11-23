@@ -1,10 +1,11 @@
 'use client'
 
+import { useAccount } from '../lib/client/react'
+
 import { AnnouncementSetting } from './announcements'
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { Globe, UserRound, X } from 'lucide-react'
-import { api } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
 import { limitsOf } from '../lib/instance_limits'
 import { iceOffer } from '../lib/ice'
@@ -90,6 +91,7 @@ function BannerPicker({
 }
 
 function AboutMe({ focus }: { focus: boolean }) {
+  const { store } = useAccount()
   const saved = useStore(s => s.me?.bio ?? '')
   const setBio = useStore(s => s.setBio)
   const [text, setText] = useState(saved)
@@ -128,7 +130,7 @@ function AboutMe({ focus }: { focus: boolean }) {
     setError(err)
     if (err) return
     setDone(true)
-    setText(useStore.getState().me?.bio ?? '')
+    setText(store.getState().me?.bio ?? '')
   }
 
   const cancel = () => {
@@ -377,6 +379,7 @@ function SecretField({
 }
 
 function PasswordSection() {
+  const { api } = useAccount()
   const username = useStore(s => s.me?.username)
   const savedKind = useStore(s => s.me?.password_kind ?? 'text')
   const changePassword = useStore(s => s.changePassword)

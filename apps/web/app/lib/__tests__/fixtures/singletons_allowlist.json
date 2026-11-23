@@ -3,10 +3,6 @@
     "useStore.getState": 23,
     "useStore.setState": 1
   },
-  "components/admin/accounts.tsx": {
-    "import api": 1,
-    "import home": 1
-  },
   "components/admin/announcements.tsx": {
     "import api": 1,
     "import home": 1
@@ -42,9 +38,6 @@
     "import api": 1,
     "useStore.getState": 2
   },
-  "components/audit_log.tsx": {
-    "import api": 1
-  },
   "components/backup_phrase/reveal.tsx": {
     "useStore.subscribe": 1
   },
@@ -60,10 +53,6 @@
     "useStore.subscribe": 1
   },
   "components/code_block.tsx": {
-    "import api": 1,
-    "useStore.getState": 1
-  },
-  "components/config_sync.tsx": {
     "import api": 1,
     "useStore.getState": 1
   },
@@ -84,18 +73,11 @@
   "components/forwards.tsx": {
     "useStore.getState": 3
   },
-  "components/friends.tsx": {
-    "import api": 1,
-    "useStore.getState": 1
-  },
   "components/home.tsx": {
     "useStore.getState": 4
   },
   "components/inbox.tsx": {
     "useStore.getState": 2
-  },
-  "components/instance_badge.tsx": {
-    "import home": 1
   },
   "components/invite_card.tsx": {
     "import api": 1,
@@ -161,13 +143,10 @@
     "useStore.getState": 4
   },
   "components/poll_card.tsx": {
-    "import api": 1,
     "useStore.getState": 2
   },
   "components/profile_card.tsx": {
-    "import api": 1,
-    "useStore.getState": 9,
-    "useStore.setState": 1
+    "useStore.getState": 1
   },
   "components/search_panel.tsx": {
     "useStore.getState": 2
@@ -179,18 +158,7 @@
     "import api": 1,
     "import home": 1
   },
-  "components/server_dialogs.tsx": {
-    "import api": 1
-  },
   "components/server_rail.tsx": {
-    "useStore.getState": 1
-  },
-  "components/server_settings.tsx": {
-    "import api": 1,
-    "useStore.getState": 3
-  },
-  "components/settings_menu.tsx": {
-    "import api": 1,
     "useStore.getState": 1
   },
   "components/system_messages.tsx": {
@@ -202,9 +170,6 @@
   "components/thread_panel.tsx": {
     "useStore.getState": 3
   },
-  "components/ui.tsx": {
-    "useStore.getState": 1
-  },
   "components/upload_expiry.tsx": {
     "import api": 1,
     "useStore.setState": 1
@@ -215,9 +180,6 @@
   },
   "components/voice_grid.tsx": {
     "useStore.getState": 2
-  },
-  "components/webhooks_dialog.tsx": {
-    "import api": 1
   },
   "components/widget_settings.tsx": {
     "import api": 1,
@@ -260,9 +222,7 @@
     "useStore.getState": 1
   },
   "lib/actions/menu.ts": {
-    "useStore.getState": 5,
-    "useStore.setState": 1,
-    "useStore.subscribe": 1
+    "useStore.getState": 1
   },
   "lib/actions/message.ts": {
     "import api": 1,
@@ -309,10 +269,6 @@
     "create in useApiDoc": 1,
     "import api": 1,
     "import home": 1
-  },
-  "lib/apps/preview.ts": {
-    "useStore.getState": 7,
-    "useStore.subscribe": 1
   },
   "lib/forward_access.ts": {
     "useStore.getState": 3

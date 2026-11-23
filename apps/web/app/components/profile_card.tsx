@@ -1,5 +1,7 @@
 'use client'
 
+import { useAccount } from '../lib/client/react'
+
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type {
   KeyboardEvent as ReactKeyboardEvent,
@@ -26,19 +28,11 @@ import {
 import { ApiError } from '../lib/api'
 import { formatQualified, isHomeHost } from '../lib/qualified'
 import { InstanceChip } from './instance_badge'
-import { api } from '../lib/instances'
 import {
-  confirmBan,
-  confirmKick,
-  confirmTransfer,
-  inSession,
   memberState,
   myPerms,
   myRolePerms,
-  noteTimeout,
   type ProfileTarget,
-  revokeAdminFor,
-  sessionMark,
   useMask,
   useStore,
 } from '../lib/store'
@@ -197,6 +191,12 @@ export function ProfileCard() {
 }
 
 function Card({ target }: { target: ProfileTarget }) {
+  const {
+    api,
+    store,
+    lifetime: { inSession, sessionMark },
+  } = useAccount()
+  const { confirmBan, confirmKick, confirmTransfer, noteTimeout, revokeAdminFor } = store.menu
   const { server, x, y, rev } = target
   const username = target.user.username
   const close = useStore(s => s.closeProfile)
@@ -235,7 +235,7 @@ function Card({ target }: { target: ProfileTarget }) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<Point | null>(null)
   const [profile, setProfile] = useState<Profile | null>(() =>
-    cachedProfile(profileKey(username, server))
+    cachedProfile(profileKey(username, server), sessionMark())
   )
   const [hidden, setHidden] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -253,16 +253,17 @@ function Card({ target }: { target: ProfileTarget }) {
     api
       .userProfile(username, server)
       .then(p => {
-        rememberProfile(key, p, at)
-        if (!current) return
+        const mark = sessionMark()
+        rememberProfile(key, p, at, mark)
+        if (!current || at !== mark) return
         setProfile(p)
         setHidden(false)
         setFailed(false)
-        const s = useStore.getState()
+        const s = store.getState()
         if (server && s.servers[server]) s.rememberMember(server, username, asMember(p))
         if (server && p.member) noteTimeout(server, username, p.member.timeout)
         if (server && p.member) s.notePresence(server, username, p.member.online)
-        useStore.setState(st =>
+        store.setState(st =>
           st.profile?.user.username === username ? { profile: { ...st.profile, user: p.user } } : {}
         )
       })
@@ -271,7 +272,8 @@ function Card({ target }: { target: ProfileTarget }) {
           if (current) setFailed(true)
           return
         }
-        forgetProfile(key)
+        if (at !== sessionMark()) return
+        forgetProfile(key, at)
         if (!current) return
         setProfile(null)
         setHidden(true)
@@ -402,7 +404,7 @@ function Card({ target }: { target: ProfileTarget }) {
   const showRoles = member !== null && (roles.length > 0 || addable.length > 0)
 
   const run = (action: ProfileAction) => {
-    const s = useStore.getState()
+    const s = store.getState()
     if (action === 'site_ban') {
       close()
       s.openDialog({ kind: 'ban_confirm', username })
@@ -451,11 +453,11 @@ function Card({ target }: { target: ProfileTarget }) {
   const roleChange = (role: Role, assign: boolean) => {
     if (!server) return
     setAdding(false)
-    const s = useStore.getState()
+    const s = store.getState()
     const done = assign
       ? s.assignRole(server, role.id, username)
       : s.unassignRole(server, role.id, username)
-    void done.then(inSession(() => useStore.getState().refreshMember(server, username)))
+    void done.then(inSession(() => store.getState().refreshMember(server, username)))
   }
 
   const copyId = () => {
@@ -464,7 +466,7 @@ function Card({ target }: { target: ProfileTarget }) {
 
   const send = () => {
     close()
-    void useStore.getState().messageUser(username, text)
+    void store.getState().messageUser(username, text)
   }
 
   const body = hook ? (
@@ -523,7 +525,7 @@ function Card({ target }: { target: ProfileTarget }) {
             <button
               onClick={() => {
                 close()
-                useStore.getState().openDialog({ kind: 'settings', focus: 'bio' })
+                store.getState().openDialog({ kind: 'settings', focus: 'bio' })
               }}
               className="mt-1 text-xs font-medium text-primary hover:underline"
             >
@@ -668,7 +670,7 @@ function Card({ target }: { target: ProfileTarget }) {
           {me && !guest && !self && !remote && (
             <button
               onClick={() => {
-                const s = useStore.getState()
+                const s = store.getState()
                 if (isBlocked) void s.unblockUser(username, user.display_name)
                 else {
                   close()
@@ -690,7 +692,7 @@ function Card({ target }: { target: ProfileTarget }) {
               <button
                 onClick={() => {
                   close()
-                  useStore.getState().openDialog({ kind: 'settings' })
+                  store.getState().openDialog({ kind: 'settings' })
                 }}
                 className="flex w-full items-center justify-center gap-2 rounded-full bg-secondary-container px-4 py-2 text-sm font-medium text-on-secondary-container hover:opacity-90"
               >

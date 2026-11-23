@@ -6,9 +6,11 @@ import { VIEW_LIMITS } from './ui/catalog'
 // An alias a remembered app answers, so its invocation stays local before the app loads.
 export type SavedAlias = { slash: string; argument: boolean }
 export type SavedPreview = { name: string; revision: string; size: number; aliases?: SavedAlias[] }
-const prefix = (account: string, server: string) => viewingKey(account, ['app-files', server]) + ':'
-const keyFor = (account: string, server: string, revision: string) =>
-  prefix(account, server) + revision
+type Connection = Parameters<typeof viewingKey>[2]
+const prefix = (account: string, server: string, conn?: Connection) =>
+  viewingKey(account, ['app-files', server], conn) + ':'
+const keyFor = (account: string, server: string, revision: string, conn?: Connection) =>
+  prefix(account, server, conn) + revision
 const maxFiles = 16
 export const fileDigest = (bytes: Uint8Array) => new Sha256().update(bytes).hex()
 
@@ -47,8 +49,12 @@ const storedFile = (
   return null
 }
 
-export const savedPreviews = (account: string, server: string): SavedPreview[] => {
-  const group = prefix(account, server)
+export const savedPreviews = (
+  account: string,
+  server: string,
+  conn?: Connection
+): SavedPreview[] => {
+  const group = prefix(account, server, conn)
   return localKeys(group).flatMap(key => {
     const revision = key.slice(group.length)
     if (!/^[0-9a-f]{64}$/.test(revision)) return []
@@ -59,8 +65,13 @@ export const savedPreviews = (account: string, server: string): SavedPreview[] =
   })
 }
 
-export const readSavedPreview = (account: string, server: string, revision: string) => {
-  const entry = storedFile(keyFor(account, server, revision))
+export const readSavedPreview = (
+  account: string,
+  server: string,
+  revision: string,
+  conn?: Connection
+) => {
+  const entry = storedFile(keyFor(account, server, revision, conn))
   if (!entry || fileDigest(new TextEncoder().encode(entry.raw)) !== revision)
     throw new Error('Choose this app definition again.')
   return entry.raw
@@ -71,15 +82,20 @@ export const storePreview = (
   server: string,
   file: SavedPreview,
   raw: string,
-  aliases: SavedAlias[]
+  aliases: SavedAlias[],
+  conn?: Connection
 ) => {
-  const key = keyFor(account, server, file.revision)
-  if (!readLocal(key) && localKeys(prefix(account, server)).length >= maxFiles) return false
+  const key = keyFor(account, server, file.revision, conn)
+  if (!readLocal(key) && localKeys(prefix(account, server, conn)).length >= maxFiles) return false
   return (
     writeLocal(key, JSON.stringify({ name: file.name, size: file.size, raw, aliases })) &&
     readLocal(key) !== null
   )
 }
 
-export const removePreviewFile = (account: string, server: string, revision: string) =>
-  writeLocal(keyFor(account, server, revision), null)
+export const removePreviewFile = (
+  account: string,
+  server: string,
+  revision: string,
+  conn?: Connection
+) => writeLocal(keyFor(account, server, revision, conn), null)

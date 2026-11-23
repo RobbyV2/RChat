@@ -1,5 +1,7 @@
 'use client'
 
+import { useAccount } from '../lib/client/react'
+
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import {
   ChartColumn,
@@ -15,7 +17,6 @@ import {
   X,
 } from 'lucide-react'
 import { managesPoll } from '../lib/actions/message'
-import { api } from '../lib/instances'
 import {
   KIND_HINTS,
   KIND_LABELS,
@@ -478,6 +479,7 @@ export function VoterRow({ v }: { v: PollVoter }) {
 }
 
 function VoterList({ id, option }: { id: number; option: number | null }) {
+  const { api } = useAccount()
   const [list, setList] = useState<PollVoter[]>([])
   const [next, setNext] = useState<string | null>(null)
   const [more, setMore] = useState(true)

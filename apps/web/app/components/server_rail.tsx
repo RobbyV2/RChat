@@ -25,6 +25,7 @@ import {
   useMask,
   useStore,
 } from '../lib/store'
+import { useAccount } from '../lib/client/react'
 import { openActionMenu } from '../lib/actions/menu'
 import { folderKey, railItems, serverKey, type Folder } from '../lib/nav_layout'
 import { folderStyle } from '../lib/folder_colors'
@@ -99,6 +100,7 @@ function ServerTile({
   folder: string | null
   at: number
 }) {
+  const account = useAccount()
   const me = useStore(s => s.me)
   const p2pOpen = useP2p(s => s.home || s.server !== null)
   const active = useStore(s => s.view?.kind === 'channel' && s.view.server === name) && !p2pOpen
@@ -115,14 +117,17 @@ function ServerTile({
     <button
       title={`${mine ? `${shown} (Creator)` : shown}${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}`}
       onClick={() => void openServer(name)}
-      {...longPress((x, y) => openActionMenu(x, y, { kind: 'server', server: name, folder, at }), {
-        group: 'rail',
-        key: serverKey(name),
-        // P2P servers have zones of their own.
-        zones: zone => zone !== 'p2p' && !zone.startsWith('p2p:'),
-        onto: key => key !== parent,
-        onDrop: target => dropServer(name, target),
-      })}
+      {...longPress(
+        (x, y) => openActionMenu(x, y, { kind: 'server', server: name, folder, at }, {}, account),
+        {
+          group: 'rail',
+          key: serverKey(name),
+          // P2P servers have zones of their own.
+          zones: zone => zone !== 'p2p' && !zone.startsWith('p2p:'),
+          onto: key => key !== parent,
+          onDrop: target => dropServer(name, target),
+        }
+      )}
       data-drop-onto={folder === null ? 'Create folder' : undefined}
       className={`${tile} relative text-lg font-semibold ${active ? 'bg-primary text-on-primary' : idle}`}
     >
@@ -152,6 +157,7 @@ function ServerTile({
 // The previewed server (open without joining). It shows only while open and is never saved to
 // the layout. A dashed, dimmed tile with an eye badge marks it.
 function PreviewTile() {
+  const account = useAccount()
   const name = useStore(previewServer)
   const display = useStore(s => (name ? (s.servers[name]?.display_name ?? name) : ''))
   const openServer = useStore(s => s.openServer)
@@ -167,7 +173,7 @@ function PreviewTile() {
       aria-current="page"
       onClick={() => void openServer(name)}
       {...longPress((x, y) =>
-        openActionMenu(x, y, { kind: 'server', server: name, folder: null, at: -1 })
+        openActionMenu(x, y, { kind: 'server', server: name, folder: null, at: -1 }, {}, account)
       )}
       className={`${tile} relative border-2 border-dashed border-primary bg-surface-container-high text-lg font-semibold text-on-surface`}
     >
@@ -212,6 +218,7 @@ export function FolderEntry({
   servers: RailServer[]
   at: number
 }) {
+  const account = useAccount()
   const toggleFolder = useStore(s => s.toggleFolder)
   const moveFolder = useStore(s => s.moveFolder)
   const unread = useStore(s => !folder.open && servers.some(x => serverUnread(s, x.name)))
@@ -229,10 +236,16 @@ export function FolderEntry({
     onClick: () => toggleFolder(folder.id),
     ...longPress(
       (x, y) =>
-        openActionMenu(x, y, {
-          kind: 'folder',
-          folder: { ...folder, servers: servers.map(x => x.name) },
-        }),
+        openActionMenu(
+          x,
+          y,
+          {
+            kind: 'folder',
+            folder: { ...folder, servers: servers.map(x => x.name) },
+          },
+          {},
+          account
+        ),
       {
         group: 'rail',
         key,
@@ -284,6 +297,7 @@ export function FolderEntry({
 // Direct messages: the badge counts the instance's DM and friend pings and the P2P
 // conversations' pings, the dot an unread DM in either.
 function DmTile({ active }: { active: boolean }) {
+  const account = useAccount()
   const openLastDm = useStore(s => s.openLastDm)
   const rooms = useP2p(s => s.rooms)
   const contacts = useP2p(s => s.contacts)
@@ -294,7 +308,7 @@ function DmTile({ active }: { active: boolean }) {
       title={pings ? `Direct messages, ${pingLabel(pings)}` : 'Direct messages'}
       aria-label="Direct messages"
       onClick={openLastDm}
-      {...longPress((x, y) => openActionMenu(x, y, { kind: 'home' }))}
+      {...longPress((x, y) => openActionMenu(x, y, { kind: 'home' }, {}, account))}
       className={`${tile} relative ${active ? 'bg-primary text-on-primary' : idle}`}
     >
       <MessageCircle size={22} />

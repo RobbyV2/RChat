@@ -54,8 +54,8 @@ export const serverActions: Action[] = [
       s.view?.kind === 'channel' &&
       s.view.server === server &&
       s.me.servers.some(x => x.name === server),
-    run: ({ server }) => {
-      if (server) get().openDialog({ kind: 'app_preview', server })
+    run: ({ s, server }) => {
+      if (server) s.openDialog({ kind: 'app_preview', server })
     },
   },
   notifySettings('server_notify', 'server', ['server'], ctx => {

@@ -434,8 +434,8 @@ export function createChatStore(acct: AccountSession) {
       authExpired: false,
       bootError: null,
       wsStatus: 'red',
-      theme: 'dark',
-      streamer: false,
+      theme: client.device.theme,
+      streamer: client.device.streamer,
       iceHelpers: true,
       iceRelay: false,
       relayPrefs: relayBook.prefs,
@@ -633,6 +633,7 @@ export function createChatStore(acct: AccountSession) {
       }
     },
     dispose() {
+      client.detach(acct)
       unbindMedia?.()
       unbindMedia = undefined
       unsubscribeStore()

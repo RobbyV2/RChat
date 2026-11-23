@@ -1,13 +1,14 @@
 'use client'
 
+import { useAccount } from '../lib/client/react'
+
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Check, MessageCircle, MoreVertical, UserMinus, UserPlus, Users, X } from 'lucide-react'
 import { ApiError } from '../lib/api'
-import { api } from '../lib/instances'
 import { messageFriend } from '../lib/actions/member'
 import { openActionMenu } from '../lib/actions/menu'
 import type { Target } from '../lib/actions/types'
-import { inSession, useStore } from '../lib/store'
+import { useStore } from '../lib/store'
 import { bannerColor } from '../lib/profile'
 import { scopePings } from '../lib/pings'
 import { badgePings } from '../lib/selectors'
@@ -451,6 +452,7 @@ export function FriendsSection({ max = 5 }: { max?: number }) {
 
 // Mini profiles and relations of `names`, loaded once per name list.
 export function useFriendPreviews(names: string[]) {
+  const { api } = useAccount()
   const key = names.join(' ')
   const [previews, setPreviews] = useState<Record<string, FriendPreviewState>>({})
   useEffect(() => {
@@ -556,6 +558,9 @@ export function AddFriendsDialog() {
 }
 
 function AddFriends({ names }: { names: string[] }) {
+  const {
+    lifetime: { inSession },
+  } = useAccount()
   const closeDialog = useStore(s => s.closeDialog)
   const sendFriendRequests = useStore(s => s.sendFriendRequests)
   const previews = useFriendPreviews(names)
@@ -616,6 +621,7 @@ export function ProfileFriendButton({
   className: string
   onDone: () => void
 }) {
+  const { api, store } = useAccount()
   const [relation, setRelation] = useState<Relation | null>(null)
   const rev = useStore(
     s =>
@@ -636,7 +642,7 @@ export function ProfileFriendButton({
     }
   }, [user.username, rev])
   if (relation === null) return null
-  const s = useStore.getState()
+  const s = store.getState()
   const [label, icon, run, danger]: [string, ReactNode, () => void, boolean] =
     relation === 'friend'
       ? ['Remove friend', <UserMinus key="i" size={16} />, () => s.askRemoveFriend(user), true]

@@ -1410,7 +1410,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
         expireSession()
         return
       }
-      forgetProfiles(ev.username)
+      forgetProfiles(ev.username, sessionMark())
       const gone = get()
         .dms.filter(d => d.other.username === ev.username)
         .map(d => `d${d.id}`)

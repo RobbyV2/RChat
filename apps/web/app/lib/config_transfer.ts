@@ -39,7 +39,7 @@ import {
   type RelayPrefs,
   type RelaysSection,
 } from './relays'
-import { sessionStore, shareOrigin, type StorageLike } from './instances'
+import { sessionStore, type StorageLike } from './instances'
 import { isShowSpoilers, type ShowSpoilers } from './spoilers'
 import { cleanP2pSection, type P2pSection } from './p2p/section'
 
@@ -466,7 +466,7 @@ const LINK_ID = /^[A-Za-z0-9]{12}$/
 
 export const configPath = (id: string) => `/config/${id}/`
 
-export const configUrl = (id: string, origin = shareOrigin()) => `${origin}${configPath(id)}`
+export const configUrl = (id: string, origin: string) => `${origin}${configPath(id)}`
 
 export const parseConfigPath = (pathname: string): string | null => {
   const m = pathname.match(/^\/config\/([^/]+)\/?$/)

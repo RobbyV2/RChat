@@ -618,7 +618,13 @@ export function shareOrigin(
   app = shellInfo() !== null,
   connection = home
 ): string {
-  if (page && !app && (page.protocol === 'http:' || page.protocol === 'https:')) return page.origin
+  if (
+    connection === home &&
+    page &&
+    !app &&
+    (page.protocol === 'http:' || page.protocol === 'https:')
+  )
+    return page.origin
   return normalizeOrigin(connection.info?.public_url ?? '') ?? connection.origin
 }
 

@@ -100,6 +100,8 @@ export type Target =
   | { kind: 'voice_guest'; server: string; name: string }
 
 export interface ActionCtx {
+  // A menu opened inside an account-owned layer rechecks its target in that store.
+  current?: () => RChatState
   s: RChatState
   via: Via
   target: Target

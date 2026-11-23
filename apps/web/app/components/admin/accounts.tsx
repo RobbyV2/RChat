@@ -16,9 +16,9 @@ import {
   type AccountForm,
 } from '../../lib/admin_accounts'
 import { listOf } from '../../lib/admin_servers'
-import { api, home } from '../../lib/instances'
+import { useAccount } from '../../lib/client/react'
 import { sharing } from '../../lib/platform'
-import { errorText, inSession, useStore } from '../../lib/store'
+import { errorText, useStore } from '../../lib/store'
 import type {
   AccountServer,
   AddedServer,
@@ -33,10 +33,6 @@ import { fieldCls, filledBtn, textBtn } from './touch'
 
 const now = () => Math.floor(Date.now() / 1000)
 
-// Where people sign in to this instance.
-const address = () =>
-  home.info?.public_url ?? (typeof window === 'undefined' ? '' : window.location.origin)
-
 // A temporary password, shown once. It lives in this component only: closing the dialog
 // forgets it.
 export function PasswordReveal({
@@ -50,6 +46,8 @@ export function PasswordReveal({
   servers?: AddedServer[]
   onDone: () => void
 }) {
+  const { conn, shareOrigin } = useAccount()
+  const address = conn.info?.public_url ?? shareOrigin
   const [copied, flash] = useCopied()
   const [detailsCopied, flashDetails] = useCopied()
   const mode = useStore(s => s.settings.password_change)
@@ -95,7 +93,7 @@ export function PasswordReveal({
           type="button"
           onClick={() =>
             void sharing()
-              .copyText(signInDetails(address(), username, issued.temp_password))
+              .copyText(signInDetails(address, username, issued.temp_password))
               .then(flashDetails)
           }
           className={`${textBtn} cursor-pointer`}
@@ -120,6 +118,10 @@ function ServerSearch({
   disabled: boolean
   onPick: (server: ServerSummaryLite) => void
 }) {
+  const {
+    api,
+    lifetime: { inSession },
+  } = useAccount()
   const setError = useStore(s => s.setError)
   const [q, setQ] = useState('')
   const [found, setFound] = useState<ServerSummaryLite[]>([])
@@ -188,6 +190,10 @@ function RoleToggles({
   roles: number[]
   onChange: (roles: number[]) => void
 }) {
+  const {
+    api,
+    lifetime: { inSession },
+  } = useAccount()
   const setError = useStore(s => s.setError)
   const [all, setAll] = useState<Role[] | null>(null)
   useEffect(() => {
@@ -279,6 +285,10 @@ const labelCls = 'text-sm font-medium text-on-surface'
 
 // Makes an account, then shows its temporary password once.
 export function CreateAccountDialog() {
+  const {
+    api,
+    lifetime: { inSession },
+  } = useAccount()
   const closeDialog = useStore(s => s.closeDialog)
   const loadAdminOverview = useStore(s => s.loadAdminOverview)
   const passwords = useStore(s => s.settings.password_login)
@@ -405,6 +415,10 @@ export function CreateAccountDialog() {
 
 // Asks before replacing an account's password, then shows the new temporary one once.
 export function TempPasswordDialog({ username }: { username: string }) {
+  const {
+    api,
+    lifetime: { inSession },
+  } = useAccount()
   const closeDialog = useStore(s => s.closeDialog)
   const loadAdminOverview = useStore(s => s.loadAdminOverview)
   const changed = useAccountChanges(s => s.changed)
@@ -455,6 +469,10 @@ export function TempPasswordDialog({ username }: { username: string }) {
 
 // Adds an account to one server, with roles.
 export function AddToServerDialog({ username }: { username: string }) {
+  const {
+    api,
+    lifetime: { inSession },
+  } = useAccount()
   const closeDialog = useStore(s => s.closeDialog)
   const showToast = useStore(s => s.showToast)
   const changed = useAccountChanges(s => s.changed)

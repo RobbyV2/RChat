@@ -271,12 +271,15 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
 // The same context on the store's current state, or null when its target is gone. The element
 // stays only while it is still on the page.
 export const refreshCtx = (ctx: ActionCtx): ActionCtx | null => {
-  const s = useStore.getState()
+  const s = ctx.current?.() ?? useStore.getState()
   const t = freshTarget(s, ctx.target)
-  return t && ctxWith(s, t, ctx.via, ctx.element?.isConnected ? ctx.element : null)
+  if (!t) return null
+  const fresh = ctxWith(s, t, ctx.via, ctx.element?.isConnected ? ctx.element : null)
+  if (ctx.current) fresh.current = ctx.current
+  return fresh
 }
 
 bindActionHost({
   refresh: refreshCtx,
-  gone: () => useStore.getState().showToast("That's no longer available"),
+  gone: ctx => (ctx?.current?.() ?? useStore.getState()).showToast("That's no longer available"),
 })

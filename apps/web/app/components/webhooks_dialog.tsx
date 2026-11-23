@@ -1,9 +1,10 @@
 'use client'
 
+import { useAccount } from '../lib/client/react'
+
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Check, ChevronDown, Copy, KeyRound, Pencil, Plus, Power, Send, Trash2 } from 'lucide-react'
-import { api, shareOrigin } from '../lib/instances'
-import { errorText, inSession, useStore } from '../lib/store'
+import { errorText, useStore } from '../lib/store'
 import { sharing } from '../lib/platform'
 import { fullTimeOf, relativeTime } from '../lib/timestamps'
 import type { AvatarKind, Channel, UserRef } from '../lib/types'
@@ -244,6 +245,7 @@ function HookEditor({
 }
 
 function Incoming({ server }: { server: string }) {
+  const { api, shareOrigin } = useAccount()
   const all = useStore(s => s.servers[server]?.channels)
   const channels = useMemo(() => textChannels(all), [all])
   const askConfirm = useStore(s => s.askConfirm)
@@ -265,7 +267,7 @@ function Incoming({ server }: { server: string }) {
 
   const channelName = (id: number) => channels.find(c => c.id === id)?.name ?? 'unknown'
   const reveal = (name: string, path: string) =>
-    setSecret({ name, url: webhookUrl(shareOrigin(), path) })
+    setSecret({ name, url: webhookUrl(shareOrigin, path) })
 
   const create = async (f: HookForm): Promise<string | null> => {
     if (f.channel === null) return 'Pick a channel'
@@ -636,6 +638,7 @@ const statusCls: Record<Delivery['status'], string> = {
 }
 
 function DeliveryLog({ server, hook }: { server: string; hook: number }) {
+  const { api } = useAccount()
   const [list, setList] = useState<Delivery[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const load = useCallback(() => {
@@ -678,6 +681,10 @@ function DeliveryLog({ server, hook }: { server: string; hook: number }) {
 }
 
 function Outgoing({ server }: { server: string }) {
+  const {
+    api,
+    lifetime: { inSession },
+  } = useAccount()
   const { label } = useInstanceLabel()
   const askConfirm = useStore(s => s.askConfirm)
   const showToast = useStore(s => s.showToast)

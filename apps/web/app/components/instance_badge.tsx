@@ -2,7 +2,7 @@
 
 import { Globe } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { home } from '../lib/instances'
+import { useAccount, useConn } from '../lib/client/react'
 import { instanceLabel, labelParts } from '../lib/instance_label'
 import { openActionMenu } from '../lib/actions/menu'
 import { longPress } from './context_menu'
@@ -10,7 +10,8 @@ import { longPress } from './context_menu'
 // What the copy calls this instance: its name, or its host when the name tells nothing.
 export function useInstanceLabel() {
   const info = useStore(s => s.instance)
-  const host = useStore(s => s.instanceHost) || home.host
+  const conn = useConn()
+  const host = useStore(s => s.instanceHost) || conn.host
   return { label: instanceLabel(info, host), host }
 }
 
@@ -29,6 +30,16 @@ export function LabelText({ text }: { text: string }) {
         )
       )}
     </>
+  )
+}
+
+export function AccountLabel() {
+  const account = useAccount()
+  const username = useStore(s => s.me?.username ?? '~guest')
+  return (
+    <span className="streamer block truncate text-xs">
+      {username}@{account.conn.host}
+    </span>
   )
 }
 

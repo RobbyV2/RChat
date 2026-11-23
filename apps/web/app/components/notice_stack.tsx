@@ -1,7 +1,11 @@
 'use client'
 
-import { useEffect, useRef, useState, type FocusEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FocusEvent } from 'react'
 import { User, X } from 'lucide-react'
+import { client } from '../lib/client/client'
+import { AccountProvider } from '../lib/client/react'
+import type { AccountSession } from '../lib/client/session'
+import { AccountLabel } from './instance_badge'
 import { useStore } from '../lib/store'
 import {
   alertBody,
@@ -40,7 +44,15 @@ function TimeBar({ notice, paused }: { notice: Notice; paused: boolean }) {
   )
 }
 
-function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
+function NoticeCard({
+  notice,
+  paused,
+  labelled,
+}: {
+  notice: Notice
+  paused: boolean
+  labelled: boolean
+}) {
   const streamer = useStore(s => s.streamer)
   const dismiss = useStore(s => s.dismissNotice)
   const where = context(notice)
@@ -87,6 +99,7 @@ function NoticeCard({ notice, paused }: { notice: Notice; paused: boolean }) {
           </span>
         )}
         <span className="min-w-0 flex-1">
+          {labelled && <AccountLabel />}
           <span className="block truncate text-sm font-medium">
             <Pieces pieces={headline(notice)} />
           </span>
@@ -129,27 +142,34 @@ const keyboardFocus = (region: HTMLElement | null) => {
   return !!region && !!el && region.contains(el) && matches(el, ':focus-visible')
 }
 
-// The toast stack. Hovering it or moving keyboard focus into it pauses every toast's timer.
-export function NoticeStack() {
+function AccountNotices({ labelled, onChange }: { labelled: boolean; onChange: () => void }) {
   const notices = useStore(s => s.notices)
   const paused = useStore(s => s.noticesPaused)
-  const pause = useStore(s => s.pauseNotices)
+  useEffect(onChange, [notices, onChange])
+  return notices.map(n => <NoticeCard key={n.id} notice={n} paused={paused} labelled={labelled} />)
+}
+
+export function NoticeStack({ sessions }: { sessions: readonly AccountSession[] }) {
   const [hover, setHover] = useState(false)
   const [focus, setFocus] = useState(false)
-  const empty = notices.length === 0
   const region = useRef<HTMLElement>(null)
-
-  // Removing a toast fires no blur or mouseleave, and a toast appearing under a still pointer
-  // fires no mouseenter, so both are read back from the DOM whenever the toasts change.
-  useEffect(() => {
+  const onChange = useCallback(() => {
     const el = region.current
-    setHover(notices.length > 0 && matches(el, ':hover'))
-    setFocus(notices.length > 0 && keyboardFocus(el))
-  }, [notices])
-
+    setHover(!!el?.childElementCount && matches(el, ':hover'))
+    setFocus(!!el?.childElementCount && keyboardFocus(el))
+  }, [])
+  useEffect(onChange, [sessions, onChange])
   useEffect(() => {
-    pause(hover || focus)
-  }, [hover, focus, pause])
+    for (const session of sessions) session.store.getState().pauseNotices(hover || focus)
+  }, [sessions, hover, focus])
+  useEffect(
+    () => () => {
+      for (const session of sessions) {
+        if (client.live().includes(session)) session.store.getState().pauseNotices(false)
+      }
+    },
+    [sessions]
+  )
 
   return (
     <section
@@ -162,10 +182,12 @@ export function NoticeStack() {
       onBlur={(e: FocusEvent) => {
         if (!region.current?.contains(e.relatedTarget as Node | null)) setFocus(false)
       }}
-      className={`flex w-full flex-col gap-2 sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:right-[max(1rem,env(safe-area-inset-right))] sm:z-50 sm:w-80 sm:max-w-[calc(100vw-2rem)] ${empty ? '' : 'pointer-events-auto'}`}
+      className="flex w-full flex-col gap-2 sm:fixed sm:top-[calc(var(--safe-top)+4rem)] sm:right-[max(1rem,env(safe-area-inset-right))] sm:z-50 sm:w-80 sm:max-w-[calc(100vw-2rem)] pointer-events-auto empty:pointer-events-none"
     >
-      {notices.map(n => (
-        <NoticeCard key={n.id} notice={n} paused={paused} />
+      {sessions.map(session => (
+        <AccountProvider key={session.renderKey} session={session}>
+          <AccountNotices labelled={sessions.length > 1} onChange={onChange} />
+        </AccountProvider>
       ))}
     </section>
   )

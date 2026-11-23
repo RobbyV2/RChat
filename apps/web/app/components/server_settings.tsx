@@ -1,15 +1,14 @@
 'use client'
 
+import { useAccount } from '../lib/client/react'
+
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Hash, Lock, Trash2, TriangleAlert, Volume2, X } from 'lucide-react'
 import type { Page } from '../lib/lists'
 import { openChoiceMenu } from '../lib/actions/menu'
-import { api } from '../lib/instances'
 import {
   changeableRoles,
   errorText,
-  inSession,
-  revokeAdminFor,
   serverAdminPerms,
   useStore,
   type ConfirmRequest,
@@ -97,6 +96,10 @@ interface MemberSearch {
 }
 
 export function useMemberSearch(server: string, q: string, admins = false, enabled = true) {
+  const {
+    api,
+    lifetime: { inSession },
+  } = useAccount()
   const needle = q.trim()
   const active = enabled && (needle !== '' || admins)
   const [state, setState] = useState<MemberSearch>({ list: [], next: null, loading: false })
@@ -266,6 +269,9 @@ function RoleRow({
   limit?: number
   limits?: RoleLimits
 }) {
+  const {
+    lifetime: { inSession },
+  } = useAccount()
   const updateRole = useStore(s => s.updateRole)
   const deleteRole = useStore(s => s.deleteRole)
   const after = () => refresh?.()
@@ -365,6 +371,9 @@ export function RolesEditor({
 }
 
 function RoleCreate({ server, refresh }: { server: string; refresh?: () => void }) {
+  const {
+    lifetime: { inSession },
+  } = useAccount()
   const createRole = useStore(s => s.createRole)
   return (
     <RoleCreateForm
@@ -386,6 +395,10 @@ function ChannelPermsEditor({
   roles: Role[]
   refresh?: () => void
 }) {
+  const {
+    api,
+    lifetime: { inSession },
+  } = useAccount()
   const channelId = channel.id
   const setChannelPerm = useStore(s => s.setChannelPerm)
   const clearChannelPerm = useStore(s => s.clearChannelPerm)
@@ -522,6 +535,9 @@ function ChannelPermsEditor({
 }
 
 function ChannelSlowmode({ channel, refresh }: { channel: Channel; refresh?: () => void }) {
+  const {
+    lifetime: { inSession },
+  } = useAccount()
   const setSlowmode = useStore(s => s.setSlowmode)
   return (
     <SlowmodeField
@@ -573,6 +589,10 @@ export function ChannelControls({
   refresh?: () => void
   lead?: ReactNode
 }) {
+  const {
+    store,
+    lifetime: { inSession },
+  } = useAccount()
   const [open, setOpen] = useState(false)
   const [topicOpen, setTopicOpen] = useState(false)
   return (
@@ -604,7 +624,7 @@ export function ChannelControls({
             className="cursor-pointer accent-primary"
             checked={channel.sensitive === true}
             onChange={() =>
-              void useStore
+              void store
                 .getState()
                 .setChannelSensitive(server, channel.id, !channel.sensitive)
                 .then(inSession(() => refresh?.()))
@@ -619,7 +639,7 @@ export function ChannelControls({
               className="cursor-pointer accent-primary"
               checked={channel.text_only === true}
               onChange={() =>
-                void useStore
+                void store
                   .getState()
                   .setChannelTextOnly(server, channel.id, !channel.text_only)
                   .then(inSession(() => refresh?.()))
@@ -682,6 +702,10 @@ export function ServerPasswordField({
   publicRead: PublicRead
   refresh?: () => void
 }) {
+  const {
+    api,
+    lifetime: { inSession },
+  } = useAccount()
   const askConfirm = useStore(s => s.askConfirm)
   const siteAdmin = useStore(s => s.me?.is_site_admin ?? false)
   const settings = useStore(s => s.settings)
@@ -770,6 +794,10 @@ export function ServerAppearance({
   detail?: ServerDetail
   refresh?: () => void
 }) {
+  const {
+    api,
+    lifetime: { inSession },
+  } = useAccount()
   const detail = useStore(s => s.servers[server]) ?? fetched
   const theme = useStore(s => s.theme)
   const showGear = useStore(s => serverAdminPerms(s, server) !== 0)
@@ -910,6 +938,7 @@ export function ServerAppearance({
 }
 
 function StandingInvite({ server, manage }: { server: string; manage: boolean }) {
+  const { api, shareOrigin } = useAccount()
   const [link, setLink] = useState<string | null>()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -920,7 +949,7 @@ function StandingInvite({ server, manage }: { server: string; manage: boolean })
     let active = true
     api.standingInvite(server).then(
       result => {
-        if (active) setLink(result ? codeUrl(result.code) : null)
+        if (active) setLink(result ? codeUrl(result.code, shareOrigin) : null)
       },
       (err: unknown) => {
         if (active) setError(errorText(err))
@@ -940,7 +969,7 @@ function StandingInvite({ server, manage }: { server: string; manage: boolean })
         setLink(null)
       } else {
         const invite = await api.renewInvite(server)
-        setLink(codeUrl(invite.code))
+        setLink(codeUrl(invite.code, shareOrigin))
       }
     } catch (err) {
       setError(errorText(err))
@@ -997,7 +1026,8 @@ function InviteLinkField({ server, hasPassword }: { server: string; hasPassword:
   const [password, setPassword] = useState('')
   const [copied, setCopied] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const link = inviteUrl(server, hasPassword ? password : null)
+  const { shareOrigin } = useAccount()
+  const link = inviteUrl(server, hasPassword ? password : null, shareOrigin)
   const withPassword = hasPassword && password.trim() !== ''
   return (
     <>
@@ -1059,6 +1089,9 @@ export function AdminPermsEditor({
   refresh?: () => void
   limit?: number
 }) {
+  const {
+    lifetime: { inSession },
+  } = useAccount()
   const setAdminPerms = useStore(s => s.setAdminPerms)
   const [lastBlocked, setLastBlocked] = useState(false)
   const value = adminMask(perms)
@@ -1220,6 +1253,11 @@ export default function ServerSettings() {
 }
 
 function Settings({ server }: { server: string }) {
+  const {
+    store,
+    lifetime: { inSession },
+  } = useAccount()
+  const { revokeAdminFor } = store.menu
   const detail = useStore(s => s.servers[server])
   const me = useStore(s => s.me)
   const perms = useStore(s => serverAdminPerms(s, server))
@@ -1269,15 +1307,22 @@ function Settings({ server }: { server: string }) {
   const others = (found.active ? found.list : loaded).filter(m => !canAdmin || !m.is_admin)
 
   const rolesButton = (m: Member) =>
-    canAssign && changeableRoles(useStore.getState(), server, m.username).length > 0 ? (
+    canAssign && changeableRoles(store.getState(), server, m.username).length > 0 ? (
       <button
         onClick={e =>
-          openChoiceMenu(e.clientX, e.clientY, 'member_roles', {
-            kind: 'member',
-            user: m,
-            server,
-            where: 'list',
-          })
+          openChoiceMenu(
+            e.clientX,
+            e.clientY,
+            'member_roles',
+            {
+              kind: 'member',
+              user: m,
+              server,
+              where: 'list',
+            },
+            {},
+            store.getState
+          )
         }
         className={textBtn}
       >

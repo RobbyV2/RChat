@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useShallow } from 'zustand/react/shallow'
 import { Check, Copy, Eye, QrCode as QrIcon, Share2, Trash2 } from 'lucide-react'
 import { encode } from 'uqr'
-import { api, shareOrigin } from '../lib/instances'
+import { useAccount, useApi } from '../lib/client/react'
 import { errorText, useStore } from '../lib/store'
 import { accountPrompt } from '../lib/features'
 import { sharing } from '../lib/platform'
@@ -500,6 +500,7 @@ function ExportBlock({
 }
 
 function ShareBlock({ doc }: { doc: ConfigDoc }) {
+  const { api, shareOrigin } = useAccount()
   const { label } = useInstanceLabel()
   const [links, setLinks] = useState<ConfigShare[] | null>(null)
   const [expiry, setExpiry] = useState(EXPIRY_CHOICES[2].seconds)
@@ -517,7 +518,7 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
     } catch (e) {
       setError(errorText(e))
     }
-  }, [])
+  }, [api])
 
   useEffect(() => {
     void load()
@@ -553,7 +554,7 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
     await load()
   }
 
-  const shownUrl = shown ? configUrl(shown) : null
+  const shownUrl = shown ? configUrl(shown, shareOrigin) : null
   const empty = presentSections(linkDoc(doc)).length === 0
 
   return (
@@ -654,7 +655,7 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
                 >
                   <QrIcon size={16} />
                 </button>
-                <CopyButton text={configUrl(l.id)} label="Copy link" />
+                <CopyButton text={configUrl(l.id, shareOrigin)} label="Copy link" />
                 <button
                   type="button"
                   title="Revoke link"
@@ -674,6 +675,7 @@ function ShareBlock({ doc }: { doc: ConfigDoc }) {
 }
 
 function ImportBlock() {
+  const { api, shareOrigin } = useAccount()
   const [text, setText] = useState('')
   const [doc, setDoc] = useState<ConfigDoc | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -693,7 +695,7 @@ function ImportBlock() {
       setError('Too long to paste. Use Import file instead')
       return
     }
-    const id = file ? null : parseConfigLink(raw, shareOrigin())
+    const id = file ? null : parseConfigLink(raw, shareOrigin)
     let input = raw
     if (id) {
       try {
@@ -852,6 +854,8 @@ type LinkState =
 
 function LinkCard({ id }: { id: string }) {
   const router = useRouter()
+  const api = useApi()
+  const showToast = useStore(s => s.showToast)
   const authed = useStore(s => s.me !== null || s.guest)
   const closeConfigLink = useStore(s => s.closeConfigLink)
   const [state, setState] = useState<LinkState>({ kind: 'loading' })
@@ -879,7 +883,7 @@ function LinkCard({ id }: { id: string }) {
     return () => {
       live = false
     }
-  }, [id])
+  }, [id, api])
 
   const logIn = () => router.push('/login/')
 
@@ -911,7 +915,7 @@ function LinkCard({ id }: { id: string }) {
                 setError(err)
                 if (!applied) return
                 if (authed) {
-                  useStore.getState().showToast('Config applied')
+                  showToast('Config applied')
                   closeConfigLink()
                 } else if (hasStashedConfig()) logIn()
                 else setDone('Applied on this device')

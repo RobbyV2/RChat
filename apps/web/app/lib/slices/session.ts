@@ -1,3 +1,4 @@
+import { client } from '../client/client'
 import type { AccountSession } from '../client/session'
 // The signed-in session: sign-in and sign-out, the account and its settings, the URL and what
 // is open, guests, invites, the socket and catch-up after outages.
@@ -74,7 +75,6 @@ import type {
   Me,
   ServerDetail,
   ServerSummaryLite,
-  Theme,
   UserRef,
   WsEvent,
 } from '../types'
@@ -106,8 +106,6 @@ import type { uiSlice } from './ui'
 export const BOOT_RETRY_MS = [1000, 3000, 10_000]
 
 const SWITCHED = 'You switched accounts'
-
-const THEME_COLORS: Record<Theme, string> = { dark: '#141218', light: '#fef7ff' }
 
 const readJson = <T>(key: string, fallback: T): T => {
   try {
@@ -221,8 +219,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     get guestNames() {
       return home.scoped('rchat_guest_names')
     },
-    theme: 'rchat_theme',
-    streamer: 'rchat_streamer',
     get lastDm() {
       return home.scoped('rchat_last_dm')
     },
@@ -1450,20 +1446,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     setBrand: raw => set({ brand: brandOf(raw) }),
 
-    setTheme: theme => {
-      writeLocal(LS.theme, theme)
-      document.documentElement.dataset.theme = theme
-      document
-        .querySelector('meta[name="theme-color"]')
-        ?.setAttribute('content', THEME_COLORS[theme])
-      set({ theme })
-    },
-
-    setStreamer: streamer => {
-      writeLocal(LS.streamer, streamer ? '1' : '0')
-      document.body.classList.toggle('streamer-mode', streamer)
-      set({ streamer })
-    },
+    setTheme: client.device.setTheme,
+    setStreamer: client.device.setStreamer,
 
     setIceHelpers: on => {
       const relay = get().iceRelay
@@ -1699,7 +1683,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       api.setGrants({})
       home.ws.setGrants({})
       armIce(null, false)
-      clearProfiles()
+      clearProfiles(sessionMark())
       dropStashedInvite()
       set({
         token: null,

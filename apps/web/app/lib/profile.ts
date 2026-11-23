@@ -3,29 +3,45 @@ import { sessionMark } from './slices/ctx'
 import { Perm, hasPerm, type Profile, type Role, type UserRef } from './types'
 
 const PROFILE_CACHE = 100
-const profiles = new Map<string, Profile>()
+const profileCaches = new WeakMap<object, Map<string, Profile>>()
+const profilesFor = (mark: object) => {
+  let profiles = profileCaches.get(mark)
+  if (!profiles) {
+    profiles = new Map()
+    profileCaches.set(mark, profiles)
+  }
+  return profiles
+}
 
 export const profileKey = (username: string, server: string | null) =>
   `${username}\n${server ?? ''}`
 
-export const cachedProfile = (key: string) => profiles.get(key) ?? null
+export const cachedProfile = (key: string, mark = sessionMark()) =>
+  profilesFor(mark).get(key) ?? null
 
 // `at`: the session that asked; a profile that answers after it ended is not kept.
-export const rememberProfile = (key: string, profile: Profile, at: object) => {
-  if (at !== sessionMark()) return
+export const rememberProfile = (
+  key: string,
+  profile: Profile,
+  at: object,
+  mark = sessionMark()
+) => {
+  if (at !== mark) return
+  const profiles = profilesFor(mark)
   profiles.delete(key)
   profiles.set(key, profile)
   if (profiles.size > PROFILE_CACHE) profiles.delete(profiles.keys().next().value as string)
 }
 
-export const forgetProfile = (key: string) => profiles.delete(key)
+export const forgetProfile = (key: string, mark = sessionMark()) => profilesFor(mark).delete(key)
 
-export const forgetProfiles = (username: string) => {
+export const forgetProfiles = (username: string, mark = sessionMark()) => {
+  const profiles = profilesFor(mark)
   for (const key of [...profiles.keys()])
     if (key.startsWith(profileKey(username, null))) profiles.delete(key)
 }
 
-export const clearProfiles = () => profiles.clear()
+export const clearProfiles = (mark = sessionMark()) => profileCaches.delete(mark)
 
 export interface Point {
   x: number

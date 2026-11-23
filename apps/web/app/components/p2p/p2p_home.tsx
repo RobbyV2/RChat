@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Ban, Check, Menu, QrCode as QrIcon, UserPlus, Waypoints, X } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
@@ -29,7 +29,17 @@ import { PingBadge, RailPingBadge } from '../ping_badge'
 import { MutedIcon } from '../notify_menu'
 import { P2pDmPane } from './p2p_dm_pane'
 import { VoiceDock } from '../voice_grid'
-import { dangerBtn, Dialog, fieldCls, filledBtn, iconBtn, Masked, textBtn } from '../ui'
+import {
+  CloseButton,
+  useBackdrop,
+  dangerBtn,
+  Dialog,
+  fieldCls,
+  filledBtn,
+  iconBtn,
+  Masked,
+  textBtn,
+} from '../ui'
 import { AddContactDialog } from './add_contact'
 import { VerifyDialog } from './verify_dialog'
 import { P2pFolderDialog, ServerInviteDialog, ServerNewDialog } from './p2p_invite_dialog'
@@ -258,46 +268,72 @@ export function MovedBanner() {
 }
 
 export function EnableDialog() {
+  const frame = useRef<HTMLDialogElement>(null)
+  const backdrop = useBackdrop(p2p.closeDialog)
+  useLayoutEffect(() => {
+    const el = frame.current!
+    el.showModal()
+    return () => el.close()
+  }, [])
   const [name, setName] = useState('')
   const turnOn = () => {
     p2p.closeDialog()
     void p2p.enable(name)
   }
   return (
-    <Dialog title="Turn on peer-to-peer" onClose={p2p.closeDialog} compact>
-      <div className="flex flex-col items-start gap-3 text-sm">
-        <P2pBadge />
-        <p>{ENABLE_COPY}</p>
-        <p className="text-on-surface-variant">
-          On iPhone and iPad, Safari may delete this data after 7 days without a visit. Install the
-          app to keep it longer.
-        </p>
-        <label className="flex w-full flex-col gap-1">
-          <span className="text-xs text-on-surface-variant">
-            Name shown to contacts (not your account name)
-          </span>
-          <input
-            value={name}
-            maxLength={32}
-            onChange={e => setName(e.target.value)}
-            onKeyDown={e => {
-              if (enterKey(e)) turnOn()
-            }}
-            placeholder="P2P user"
-            aria-label="P2P display name"
-            className={`${fieldCls} streamer`}
-          />
-        </label>
+    <dialog
+      ref={frame}
+      aria-labelledby="p2p-enable-title"
+      aria-modal="true"
+      onCancel={e => {
+        e.preventDefault()
+        p2p.closeDialog()
+      }}
+      onKeyDown={e => e.stopPropagation()}
+      className="fixed inset-0 m-auto max-h-[85dvh] w-[min(24rem,calc(100%-2rem))] max-w-full overflow-y-auto rounded-3xl bg-surface-container-high text-on-surface shadow-elevation-3 backdrop:bg-scrim/60"
+      {...backdrop}
+    >
+      <div className="p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 id="p2p-enable-title" className="text-lg font-medium">
+            Turn on peer-to-peer
+          </h2>
+          <CloseButton onClick={p2p.closeDialog} compact />
+        </div>
+        <div className="flex flex-col items-start gap-3 text-sm">
+          <P2pBadge />
+          <p>{ENABLE_COPY}</p>
+          <p className="text-on-surface-variant">
+            On iPhone and iPad, Safari may delete this data after 7 days without a visit. Install
+            the app to keep it longer.
+          </p>
+          <label className="flex w-full flex-col gap-1">
+            <span className="text-xs text-on-surface-variant">
+              Name shown to contacts (not your account name)
+            </span>
+            <input
+              value={name}
+              maxLength={32}
+              onChange={e => setName(e.target.value)}
+              onKeyDown={e => {
+                if (enterKey(e)) turnOn()
+              }}
+              placeholder="P2P user"
+              aria-label="P2P display name"
+              className={`${fieldCls} streamer`}
+            />
+          </label>
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <button onClick={p2p.closeDialog} className={textBtn}>
+            Cancel
+          </button>
+          <button onClick={turnOn} className={filledBtn}>
+            Turn on
+          </button>
+        </div>
       </div>
-      <div className="mt-6 flex justify-end gap-2">
-        <button onClick={p2p.closeDialog} className={textBtn}>
-          Cancel
-        </button>
-        <button onClick={turnOn} className={filledBtn}>
-          Turn on
-        </button>
-      </div>
-    </Dialog>
+    </dialog>
   )
 }
 

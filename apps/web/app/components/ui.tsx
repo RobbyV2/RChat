@@ -15,6 +15,10 @@ import {
   type SyntheticEvent,
 } from 'react'
 import { X, type LucideIcon } from 'lucide-react'
+import { client } from '../lib/client/client'
+import { useAccount } from '../lib/client/react'
+import type { AccountSession } from '../lib/client/session'
+import type { RChatState } from '../lib/store_types'
 import { layerCovered, type EscapeLayer } from '../lib/escape_layers'
 import { maskOutsideCode, maskRuns } from '../lib/profanity'
 import { useMask, useStore } from '../lib/store'
@@ -90,26 +94,38 @@ export function FieldError({ message, id }: { message: string | null; id?: strin
 
 // Each handler sees the store as it was at keydown. So a handler that runs after another closed
 // its layer still knows that the layer was covered.
-const pressed = new WeakMap<Event, ReturnType<typeof useStore.getState>>()
+const pressed = new WeakMap<Event, { owner: AccountSession; state: RChatState }>()
 
-const covered = (layer: EscapeLayer, e: Event) => {
-  const s = pressed.get(e) ?? useStore.getState()
-  pressed.set(e, s)
-  return layerCovered(layer, s, () => document.querySelector('[aria-modal="true"]') !== null)
+const covered = (layer: EscapeLayer, e: Event, account: AccountSession) => {
+  let snapshot = pressed.get(e)
+  if (!snapshot) {
+    const owner = client.overlayOwner() ?? account
+    snapshot = { owner, state: owner.store.getState() }
+    pressed.set(e, snapshot)
+  }
+  return (
+    snapshot.owner !== account ||
+    layerCovered(
+      layer,
+      snapshot.state,
+      () => document.querySelector('[aria-modal="true"]') !== null
+    )
+  )
 }
 
 export function useEscape(onEscape: (e: KeyboardEvent) => void, layer: EscapeLayer = 'dialog') {
+  const account = useAccount()
   const ref = useRef(onEscape)
   useEffect(() => {
     ref.current = onEscape
   })
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.isComposing && !covered(layer, e)) ref.current(e)
+      if (e.key === 'Escape' && !e.isComposing && !covered(layer, e, account)) ref.current(e)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [layer])
+  }, [layer, account])
 }
 
 export function useBackdrop(onClose: () => void) {

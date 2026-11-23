@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '../lib/store'
-import { AccountProvider } from '../lib/client/react'
+import { AccountProvider, useLiveSessions } from '../lib/client/react'
 import { client } from '../lib/client/client'
 import { notifications } from '../lib/platform'
 import { useGuestPostingCheck } from '../components/use_guest_posting_check'
@@ -20,7 +20,7 @@ import { ServerDialogs } from '../components/server_dialogs'
 import { FolderDialog } from '../components/folder_dialog'
 import { CategoryDialog } from '../components/category_dialog'
 import MemberSidebar from '../components/member_sidebar'
-import { AdminHost } from '../components/admin/admin_host'
+import { AdminHost, AdminDialogHost } from '../components/admin/admin_host'
 import ServerSettings, { ConfirmDialog } from '../components/server_settings'
 import AuditLogDialog from '../components/audit_log'
 import WebhooksDialog from '../components/webhooks_dialog'
@@ -79,10 +79,47 @@ p2pHost.muted = () => useStore.getState().selfAudio.muted
 addInboxAdapter(p2pInbox)
 
 export default function AppShell() {
+  const sessions = useLiveSessions()
   return (
     <AccountProvider session={client.shown()}>
       <Chat />
+      {sessions.map(session => (
+        <AccountProvider key={session.renderKey} session={session}>
+          <OverlayLayer />
+        </AccountProvider>
+      ))}
+      <ShellBanners multiple={sessions.length > 1} />
     </AccountProvider>
+  )
+}
+
+function ShellBanners({ multiple }: { multiple: boolean }) {
+  const ready = useStore(s => !!s.me || s.guest)
+  return ready || multiple ? <Banners /> : null
+}
+
+function OverlayLayer() {
+  const ready = useStore(s => !!s.me || s.guest)
+  if (!ready) return null
+  return (
+    <>
+      <AdminDialogHost />
+      <AppPreview />
+      <ServerDialogs />
+      <FolderDialog />
+      <CategoryDialog />
+      <AddFriendsDialog />
+      <PollVotersDialog />
+      <ServerSettings />
+      <AuditLogDialog />
+      <WebhooksDialog />
+      <TimeoutDialog />
+      <SettingsMenu />
+      <ConfirmDialog />
+      <ProfileCard />
+      <ContextMenu />
+      <ReactionPickerHost />
+    </>
   )
 }
 
@@ -329,28 +366,12 @@ function Chat() {
           </div>
         )}
         <AdminHost />
-        <ServerDialogs />
-        <FolderDialog />
-        <CategoryDialog />
-        <AddFriendsDialog />
-        <PollVotersDialog />
-        <ServerSettings />
-        <AuditLogDialog />
-        <WebhooksDialog />
-        <TimeoutDialog />
-        <SettingsMenu />
-        <ConfirmDialog />
         <InboxHost />
         <PaletteHost />
         <RelayPrompt />
         <ViewingPrompt />
-        <AppPreview />
         <P2pDialogs />
-        <ProfileCard />
-        <ContextMenu />
-        <ReactionPickerHost />
         <CallBanner />
-        <Banners />
       </div>
       <InvitePage />
       <ConfigLinkPage />
