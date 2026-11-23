@@ -2,7 +2,7 @@
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
-import { legacyP2pApp, type P2pApp } from '../../lib/p2p/app/runtime'
+import type { P2pApp } from '../../lib/p2p/app/runtime'
 
 import { useAccount } from '../../lib/client/react'
 import { client } from '../../lib/client/client'
@@ -85,7 +85,7 @@ const bitChecks = (identity: P2pApp) => (v: ServerView, role: string, value: num
 const rows = (
   target: Target,
   acct = client.shown(),
-  identity = acct.identities.get() ?? legacyP2pApp
+  identity = acct.identities.viewed() ?? null
 ) => {
   registerAppActions()
   return menuItems(ctxFor(acct.store.getState(), target, 'menu', acct, identity))
@@ -96,7 +96,7 @@ export const roleItems = (
   v: ServerView,
   r: RoleView,
   acct = client.shown(),
-  identity = acct.identities.get() ?? legacyP2pApp
+  identity = acct.identities.viewed() ?? null
 ) => rows({ kind: 'p2p_role', v, r }, acct, identity)
 
 function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
@@ -242,7 +242,7 @@ export const roleMenuItems = (
   v: ServerView,
   m: MemberView,
   acct = client.shown(),
-  identity = acct.identities.get() ?? legacyP2pApp
+  identity = acct.identities.viewed() ?? null
 ) => {
   registerAppActions()
   const ctx = ctxFor(acct.store.getState(), { kind: 'p2p_member', v, m }, 'menu', acct, identity)

@@ -1,3 +1,4 @@
+import { shownPeer } from './shown_peer'
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
@@ -25,7 +26,7 @@ import { resetSessionCaches, useStore } from '../store'
 import { SHORTCUTS, conflicts } from '../shortcuts'
 import { emptySelection, selectAll, toggle } from '../selection'
 import type { RChatState } from '../store_types'
-import { useP2p } from '../p2p/app'
+
 import { writeUserLimits } from '../p2p/user_limits'
 import { me, memoryStorage, msg, serverDetail, user } from './fixtures'
 
@@ -434,17 +435,17 @@ describe('sections', () => {
 
   test('P2P limits commands while P2P is on', () => {
     expect(commandsFor(st()).some(c => c.id.startsWith('p2p_limits'))).toBe(false)
-    useP2p.setState({ account: 'alice', enabled: true })
+    shownPeer().useP2p.setState({ account: 'alice', enabled: true })
     try {
       expect(commandsFor(st()).find(c => c.id === 'p2p_limits')?.title).toBe('P2P storage settings')
       expect(commandsFor(st()).some(c => c.id === 'p2p_limits_reset')).toBe(false)
-      writeUserLimits('alice', { v: 1, roomBytes: 64 * 1024 * 1024 })
+      writeUserLimits('alice', { v: 1, roomBytes: 64 * 1024 * 1024 }, shownPeer().owner.conn)
       expect(commandsFor(st()).find(c => c.id === 'p2p_limits_reset')?.title).toBe(
         'Reset P2P limits'
       )
     } finally {
-      writeUserLimits('alice', { v: 1 })
-      useP2p.setState({ account: null, enabled: false })
+      writeUserLimits('alice', { v: 1 }, shownPeer().owner.conn)
+      shownPeer().useP2p.setState({ account: null, enabled: false })
     }
   })
 

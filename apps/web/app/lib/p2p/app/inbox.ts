@@ -4,12 +4,6 @@ import { loadMessages, type P2pMessage } from '../dm'
 import type { PingRec, PingText } from '../inbox'
 import { pingAlive, pingText, readPings } from '../ping_log'
 import type { P2pState } from './store'
-import * as viewingPart from './viewing'
-import * as storePart from './store'
-import * as dmsPart from './dms'
-import * as callsPart from './calls'
-import * as serversPart from './servers'
-import * as accountPart from './account'
 import type { P2pParts } from './scope'
 
 export function createInboxPart(
@@ -130,13 +124,3 @@ export function createInboxPart(
   }
   return { pingLogged, p2pPings, p2pMarkAll, p2pOpenAt, channelLoaded, p2pRecent }
 }
-
-export const legacyInbox = createInboxPart({
-  viewing: viewingPart,
-  store: storePart,
-  dms: dmsPart,
-  calls: callsPart,
-  servers: serversPart,
-  account: accountPart,
-})
-export const { pingLogged, p2pPings, p2pMarkAll, p2pOpenAt, channelLoaded, p2pRecent } = legacyInbox

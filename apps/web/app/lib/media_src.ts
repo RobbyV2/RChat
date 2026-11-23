@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { AccountSession } from './client/session'
 import type { InstanceConnection } from './instances'
 import { client } from './client/client'
 import { useAccount } from './client/react'
@@ -124,7 +125,11 @@ export const blobCache = (
   return { acquire, clear, size: () => entries.size, bytes: () => total }
 }
 
-export function createMediaSrc(conn: InstanceConnection, live: <T>(p: Promise<T>) => Promise<T>) {
+export function createMediaSrc(account: AccountSession) {
+  const {
+    conn,
+    lifetime: { live },
+  } = account
   const cache = blobCache(60, MEDIA_CACHE_BYTES)
   let generation = 0
   const saves = new Set<AbortController>()
@@ -148,7 +153,7 @@ export function createMediaSrc(conn: InstanceConnection, live: <T>(p: Promise<T>
     try {
       const blob = await live(api.mediaBlob(id, server, ctrl.signal))
       if (!ctrl.signal.aborted)
-        sharing().saveBlob(downloadName(filename), new Blob([blob], { type: NEUTRAL_TYPE }))
+        sharing(account).saveBlob(downloadName(filename), new Blob([blob], { type: NEUTRAL_TYPE }))
     } finally {
       saves.delete(ctrl)
     }

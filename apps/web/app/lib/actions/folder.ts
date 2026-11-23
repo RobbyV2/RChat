@@ -7,8 +7,6 @@ import type { Folder } from '../nav_layout'
 import type { Action, ActionCtx, ArgChoice } from './types'
 import { identityActions } from './identity'
 export const peerFolder = identityActions(identity => {
-  const { p2p, p2pRail, useP2p } = identity
-
   const CUSTOM = 'custom'
   const DEFAULT = 'default'
 
@@ -21,7 +19,7 @@ export const peerFolder = identityActions(identity => {
     if (target.kind !== 'folder') return null
     const inP2p = target.p2p === true
     if (inP2p && !selected) return null
-    const entries = inP2p ? useP2p.getState().layout.servers : s.layout.servers
+    const entries = inP2p ? identity().useP2p.getState().layout.servers : s.layout.servers
     const folder = entries.find(
       (e): e is Folder => typeof e !== 'string' && e.id === target.folder.id
     )
@@ -67,12 +65,12 @@ export const peerFolder = identityActions(identity => {
         if (!now) return
         const id = now.folder.id
         if (color === CUSTOM) {
-          if (now.p2p) p2p.openDialog({ kind: 'p2p_folder', id, focus: 'color' })
+          if (now.p2p) identity().p2p.openDialog({ kind: 'p2p_folder', id, focus: 'color' })
           else ctx.s.openDialog({ kind: 'rename_folder', id, focus: 'color' })
           return
         }
         const next = color === DEFAULT ? null : color
-        if (now.p2p) p2pRail.setFolderColor(id, next)
+        if (now.p2p) identity().p2pRail.setFolderColor(id, next)
         else ctx.s.setFolderColor(id, next)
       },
     },
@@ -80,4 +78,4 @@ export const peerFolder = identityActions(identity => {
 
   return { actions: folderActions }
 })
-export const { actions: folderActions } = peerFolder.defaults
+export const folderActions = peerFolder.actions

@@ -163,7 +163,9 @@ export function PhraseExport({
   kind: 'account' | 'p2p'
   name?: string
 }) {
-  const { shareOrigin } = useAccount()
+  const account = useAccount()
+  const { shareOrigin, lifetime } = account
+  const mark = lifetime.sessionMark()
   const username = useStore(s => s.me?.username ?? '')
   const action = sheetAction(
     useSyncExternalStore<boolean | null>(
@@ -177,12 +179,14 @@ export function PhraseExport({
   const savePng = async () => {
     setNote(null)
     const blob = await qrPng(words, await logoDataUri())
-    if (!blob || !sharing().saveBlob(PNG_NAME, blob)) setNote("Couldn't save the image")
+    if (mark !== lifetime.sessionMark()) return
+    if (!blob || !sharing(account).saveBlob(PNG_NAME, blob)) setNote("Couldn't save the image")
   }
   const saveSvg = async () => {
     setNote(null)
     const svg = qrSvg(words, await logoDataUri())
-    if (!sharing().saveBlob(SVG_NAME, new Blob([svg], { type: 'image/svg+xml' })))
+    if (mark !== lifetime.sessionMark()) return
+    if (!sharing(account).saveBlob(SVG_NAME, new Blob([svg], { type: 'image/svg+xml' })))
       setNote("Couldn't save the image")
   }
   const sheet = async () =>
@@ -202,7 +206,8 @@ export function PhraseExport({
   const saveSheet = async () => {
     setNote(null)
     const blob = new Blob([await sheet()], { type: 'text/html' })
-    if (!sharing().saveBlob(SHEET_NAME, blob)) setNote("Couldn't save the sheet")
+    if (mark !== lifetime.sessionMark()) return
+    if (!sharing(account).saveBlob(SHEET_NAME, blob)) setNote("Couldn't save the sheet")
   }
 
   return (

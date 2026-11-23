@@ -1,3 +1,4 @@
+import type { AccountSession } from '../client/session'
 import { probe, type Capabilities } from '../capabilities'
 import type { BlobStore } from './blobs'
 import { webBlobs } from './web_blobs'
@@ -46,17 +47,18 @@ export const setNotifier = (next: Notifier) => {
   notifier = next
 }
 
-// Loaded on use: the store itself imports this module.
-const reportError = (message: string) =>
-  void import('../store').then(({ useStore }) => useStore.getState().setError(message))
+let sharer: Sharing | undefined
 
-let sharer: Sharing = !shell
-  ? webSharing
-  : mobile
-    ? mobileSharing(invoke, reportError)
-    : desktopSharing(invoke, reportError)
-
-export const sharing = () => sharer
+export const sharing = (owner?: AccountSession, valid = () => true): Sharing => {
+  if (sharer) return sharer
+  if (!shell) return webSharing
+  const report = owner
+    ? owner.lifetime.inSession((message: string) => {
+        if (valid()) owner.store.getState().setError(message)
+      })
+    : () => {}
+  return mobile ? mobileSharing(invoke, report) : desktopSharing(invoke, report)
+}
 
 export const setSharing = (next: Sharing) => {
   sharer = next

@@ -1,3 +1,4 @@
+import { shownPeer } from './shown_peer'
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
 import type { ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -32,12 +33,12 @@ import {
   tileName,
 } from '../display_name'
 import { DEFAULT_FEATURES } from '../features'
-import { api } from '../instances'
+import { api } from './home_instance'
 import { setMasking, resetMasking } from '../profanity'
 import { resetSessionCaches, useStore } from '../store'
 import { ApiError } from '../api'
 import { typerNames } from '../typing'
-import { p2pUser } from '../p2p/app'
+
 import type { P2pMessage } from '../p2p/dm'
 import type { ReplyRef, UserRef } from '../types'
 import { drain, me, member, msg, user } from './fixtures'
@@ -465,7 +466,7 @@ const source: ChatSource = {
 test('a P2P message quotes the sender it answers by P2P name', () => {
   const names: Record<string, string> = { [KEY]: 'Alice', [BOB_KEY]: 'Bob' }
   const p = p2pMessage()
-  const m = asMessage(p, 2, 1, ik => p2pUser(ik, names[ik]), BOB_KEY)
+  const m = asMessage(p, 2, 1, ik => shownPeer().p2pUser(ik, names[ik]), BOB_KEY)
   const html = render(
     <ChatSourceProvider value={source}>
       <P2pRow

@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { expect, test } from 'bun:test'
 import { listenForLinks } from '../../components/desktop_bridge'
 import { handleAndroidBack } from '../../components/mobile_bridge'
@@ -153,3 +155,9 @@ test('Android Back checks the shown and overlay lifetimes after two frames', asy
     b.store.dispose()
   }
 })
+
+test('native save errors belong to the requesting account until its session ends', () => {
+  const fixture = fileURLToPath(new URL('./fixtures/native_save_owner.ts', import.meta.url))
+  const result = spawnSync(process.execPath, [fixture], { encoding: 'utf8' })
+  expect([result.status, result.stderr]).toEqual([0, ''])
+}, 60_000)

@@ -6,7 +6,6 @@ import { useStore } from './client/react'
 export { useStore }
 import { defaultViewing, channelTarget, cleanupRemoval, eventRoom } from './viewing'
 import { clearHiddenForward } from './forward_viewing'
-import { home, homeLookup } from './instances'
 import { NO_PINGS } from './pings'
 import { NO_GROUP_PINGS } from './group_pings'
 import { EMPTY_NOTIFY } from './notify'
@@ -638,7 +637,7 @@ export const getHomeSession = (() => {
   let session: AccountSession
   return () => {
     if (!session) {
-      session = new AccountSession(home, defaultViewing, homeLookup)
+      session = new AccountSession(client.homeInstance(), defaultViewing)
     }
     return session
   }

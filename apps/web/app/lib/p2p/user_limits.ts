@@ -1,6 +1,6 @@
 import { peerStorage } from '../client/keys'
 import { fmtSize, plural } from '../bytes'
-import { home, readLocal, writeLocal, type InstanceConnection } from '../instances'
+import { readLocal, writeLocal, type InstanceConnection } from '../instances'
 import { fit, localDefaults, RANGES, type Local } from './limits'
 
 // What one account runs P2P with: the instance's P2P_LIMITS (its `local.` names), then the
@@ -88,7 +88,7 @@ export const instanceLimits = (p2p: unknown): Record<string, number> =>
 
 type HasLimits = { limits?: { p2p?: unknown } } | null | undefined
 
-export const instanceLocal = (info: HasLimits = home.info): Local =>
+export const instanceLocal = (info: HasLimits): Local =>
   localDefaults(instanceLimits(info?.limits?.p2p))
 
 export const accountLimits = (info: HasLimits, raw: string | null): Local =>
@@ -99,17 +99,17 @@ type LimitConnection = InstanceConnection
 const storageKey = (username: string, conn: LimitConnection, local: string) =>
   peerStorage(conn, username, local).scoped(userLimitsKey(username))
 
-export const readUserLimits = (username: string, conn: LimitConnection = home, local = 'main') =>
+export const readUserLimits = (username: string, conn: LimitConnection, local = 'main') =>
   parseUserLimits(readLocal(storageKey(username, conn, local)))
 
-export const limitsFor = (username: string, conn: LimitConnection = home, local = 'main') =>
+export const limitsFor = (username: string, conn: LimitConnection, local = 'main') =>
   applyUser(instanceLocal(conn.info), readUserLimits(username, conn, local))
 
 // Keeps only the values that differ from the instance's (clamped); none left clears the key.
 export const writeUserLimits = (
   username: string,
   u: UserLimits,
-  conn: LimitConnection = home,
+  conn: LimitConnection,
   local = 'main'
 ) => {
   const base = instanceLocal(conn.info)

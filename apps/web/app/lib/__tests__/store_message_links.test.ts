@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { MessageLocation, WsEvent } from '../types'
-import { home } from '../instances'
+import { home } from './home_instance'
 import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
 
 afterAll(resetSessionCaches)

@@ -1,11 +1,7 @@
-import { client } from '../../client/client'
-import { legacyScope } from './store'
 import { sessionStore } from '../../instances'
 import { verifyBinding } from '../../identity'
 import type { OwnBadge } from '../db'
 import type { BadgeSlot } from '../badge'
-import * as storePart from './store'
-import * as callsPart from './calls'
 import type { IdentityScope, P2pParts } from './scope'
 
 export function createBadgePart(parts: Pick<P2pParts, 'store' | 'calls'>, scope: IdentityScope) {
@@ -29,8 +25,7 @@ export function createBadgePart(parts: Pick<P2pParts, 'store' | 'calls'>, scope:
 
   // Bindings are accepted only from this client's own instance: P2P across instances isn't
   // supported, and a peer can't make us fetch keys from a host it picks.
-  const instanceHost = () =>
-    (scope.owner ?? client.shown()).conn.info?.host ?? (scope.owner ?? client.shown()).conn.host
+  const instanceHost = () => scope.owner.conn.info?.host ?? scope.owner.conn.host
 
   const checkBinding = (token: string, ik: string) =>
     verifyBinding(token, { ik, host: instanceHost(), allowLocal: badgeLocal })
@@ -116,20 +111,3 @@ export function createBadgePart(parts: Pick<P2pParts, 'store' | 'calls'>, scope:
   })
   return { badgeLocal, checkBinding, accountSub, mirrorBadges, scheduleBadges, tellBadge, p2pBadge }
 }
-
-export const legacyBadge = createBadgePart(
-  {
-    store: storePart,
-    calls: callsPart,
-  },
-  legacyScope
-)
-export const {
-  badgeLocal,
-  checkBinding,
-  accountSub,
-  mirrorBadges,
-  scheduleBadges,
-  tellBadge,
-  p2pBadge,
-} = legacyBadge

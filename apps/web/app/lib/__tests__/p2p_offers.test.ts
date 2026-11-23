@@ -1,11 +1,10 @@
-import { client } from '../client/client'
+import { createTestMedia } from './test_media'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Hub, makeNode, ManualClock, settle, waitFor } from './p2p_net'
 import type { OfferGuard, OfferProof, P2pNode } from '../p2p/node'
 import { LOCAL } from '../p2p/limits'
 import { OfferGate, PeerTransport, answerConfig } from '../p2p/transport'
-import { PROMPTS, RelayBook, defaultRelays, relayBook, type Decision } from '../relays'
-import { ice } from '../ice'
+import { PROMPTS, RelayBook, defaultRelays, type Decision } from '../relays'
 
 // Offers that declare relays we don't know: only a signed device of someone we
 // would talk to may cause a relay prompt, a few at most.
@@ -156,7 +155,9 @@ describe('relay prompts from offers', () => {
 
   test('the offer data names no identity: no identity key, no certificate', async () => {
     const { alice, bob } = await setup()
-    const t = new PeerTransport({}, undefined, undefined, client.shown())
+    const mediaAccount = createTestMedia()
+    const { ice, relays: relayBook } = mediaAccount
+    const t = new PeerTransport({}, undefined, undefined, mediaAccount)
     t.guard(guardOf(bob))
     const sent: unknown[] = []
     const handlers = new Map<string, () => void>()

@@ -1,5 +1,11 @@
-import { afterEach, describe, expect, test } from 'bun:test'
-import { p2p, p2pAccount, useP2p } from '../p2p/app'
+import { createPeerFixture } from './peer_fixture'
+import { AccountSession } from '../client/session'
+import { home } from './home_instance'
+const peerOwner = new AccountSession(home)
+afterAll(() => peerOwner.store.dispose())
+const peerApp = createPeerFixture(peerOwner, 'firefox')
+const { p2p, p2pAccount, useP2p } = peerApp
+import { afterAll, afterEach, describe, expect, test } from 'bun:test'
 
 // Firefox answers navigator.storage.persist() only once the user answers its doorhanger, and a
 // dismissed doorhanger never answers: turning P2P on must not wait for it.

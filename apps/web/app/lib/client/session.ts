@@ -4,17 +4,17 @@ import { createChannelEdit } from '../channel_edit'
 import { createApiDoc } from '../api_console'
 import { createTextPreviews } from '../code'
 import { createHomeStore } from '../home_store'
-import { createIceCache, ice as homeIce } from '../ice'
+import { createIceCache } from '../ice'
 import { createInboxSources } from '../inbox_source'
 import { createMediaSrc } from '../media_src'
 import { createPalettePrefs } from '../palette_store'
 import { createPaletteIndexer } from '../palette_sync'
-import { P2pManager, p2p as homeFiles } from '../p2p'
-import { createRelayBook, relayBook as homeRelays } from '../relays'
+import { P2pManager } from '../p2p'
+import { createRelayBook } from '../relays'
 import { createInviteUpdates } from '../invite'
 import { sessionStore, type StorageLike } from '../instances'
 import { createInviteCache } from '../remote_invite'
-import { createRtc, rtc as homeRtc } from '../rtc'
+import { createRtc } from '../rtc'
 import { createViewing } from '../viewing'
 import { createChatStore } from '../store'
 import { sessionLifetime } from '../slices/ctx'
@@ -75,11 +75,11 @@ export class AccountSession {
       },
     }
     this.keys = new KeyScope(conn, () => this.username)
-    this.ice = this.isHome ? homeIce : createIceCache(conn)
-    this.rtc = this.isHome ? homeRtc : createRtc(conn, this.ice)
-    this.relays = this.isHome ? homeRelays : createRelayBook(this.ice)
-    this.files = this.isHome ? homeFiles : new P2pManager(conn, this.ice, this.relays)
-    this.media = createMediaSrc(conn, this.lifetime.live)
+    this.ice = createIceCache(conn)
+    this.rtc = createRtc(conn, this.ice)
+    this.relays = createRelayBook(this.ice)
+    this.files = new P2pManager(conn, this.ice, this.relays)
+    this.media = createMediaSrc(this)
     this.invites = createInviteCache(this)
     this.store = createChatStore(this)
     this.home = createHomeStore(this)

@@ -6,17 +6,17 @@ import { type ConfigDoc, stashConfig } from '../config_transfer'
 import { loadApiHistory, noteRequest, sendRequest, useApiDoc } from '../api_console'
 import type { InboxView } from '../inbox'
 import { instanceInbox } from '../inbox_source'
-import { home, api, sessionStore } from '../instances'
+import { sessionStore } from '../instances'
+import { home, api } from './home_instance'
 import { saveMedia } from '../media_src'
 import { EMPTY_NOTIFY, notifyKey, notifyValue, setLevel } from '../notify'
 import { EMPTY_HISTORY, historyKey, type HistoryEntry } from '../openapi'
-import { p2p } from '../p2p'
 import { setSharing, sharing } from '../platform'
 import { threadItems } from '../palette_results'
 import { POLL_FETCH_MS } from '../polls_store'
 import { cachedProfile, profileKey, rememberProfile } from '../profile'
-import { rtc } from '../rtc'
 import {
+  getHomeSession,
   Ended,
   confirmKick,
   inSession,
@@ -27,7 +27,6 @@ import {
   type RChatState,
 } from '../store'
 import { emptyLayout, layoutKey } from '../nav_layout'
-import { relayBook } from '../relays'
 import { exportBackoff } from '../selection_store'
 import type { BulkJob, Message, Poll, Profile, VoiceMsg } from '../types'
 import {
@@ -42,6 +41,8 @@ import {
   serverDetail,
   user,
 } from './fixtures'
+
+const { files: p2p, relays: relayBook, rtc } = getHomeSession()
 
 afterAll(resetSessionCaches)
 

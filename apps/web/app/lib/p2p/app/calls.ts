@@ -1,18 +1,13 @@
-import { legacyScope } from './store'
 import { resolve as resolveNotify } from '../../notify'
 import { P2pStore } from '../db'
 import type { MissedCall } from '../dm'
 import { JoinAborted, RtcManager } from '../../rtc'
-import { client } from '../../client/client'
 import { hidesIp } from '../../relays'
 import { Calls, type CallView } from '../calls'
 import type { P2pState } from './store'
-import * as serversPart from './servers'
-import * as viewingPart from './viewing'
-import * as storePart from './store'
-import * as dmsPart from './dms'
-import * as accountPart from './account'
 import type { IdentityScope, P2pParts } from './scope'
+
+export const CALL_ELSEWHERE = 'Call in another tab.'
 
 export function createCallsPart(
   parts: Pick<P2pParts, 'servers' | 'viewing' | 'store' | 'dms' | 'account'>,
@@ -103,8 +98,6 @@ export function createCallsPart(
         : (state.calls?.config() ?? { iceServers: [], iceTransportPolicy: 'relay' }),
   })
 
-  const CALL_ELSEWHERE = 'Call in another tab.'
-
   const ELSEWHERE_TEXT = 'P2P is open in another tab.'
 
   const callFailed = (e: unknown) => p2pHost.toast(e instanceof Error ? e.message : String(e))
@@ -115,7 +108,7 @@ export function createCallsPart(
   const p2pVoice = {
     active: () => !!state.servers?.voice.current() && callRtc.active(),
     async join(room: string, ch: string) {
-      const account = scope.owner ?? p2pHost.account ?? client.shown()
+      const account = scope.owner
       const relayBook = account.relays
       const sv = state.servers
       if (!sv) return p2pHost.toast(ELSEWHERE_TEXT)
@@ -226,12 +219,10 @@ export function createCallsPart(
     )
   }
 
-  if (scope.owner) {
-    const owner = scope.owner
-    callRtc.onChange = () => {
-      owner.store.setState(s => ({ rtcTick: s.rtcTick + 1 }))
-      p2pVoice.videoChanged()
-    }
+  callRtc.onChange = () => {
+    if (!scope.current()) return
+    scope.owner.store.setState(s => ({ rtcTick: s.rtcTick + 1 }))
+    p2pVoice.videoChanged()
   }
 
   scope.onDispose(() => callRtc.dispose())
@@ -251,29 +242,3 @@ export function createCallsPart(
     scheduleRefresh,
   }
 }
-
-export const legacyCalls = createCallsPart(
-  {
-    servers: serversPart,
-    viewing: viewingPart,
-    store: storePart,
-    dms: dmsPart,
-    account: accountPart,
-  },
-  legacyScope
-)
-export const {
-  PENDING_CALL,
-  missedKey,
-  readMissed,
-  noteMissed,
-  elsewhereCall,
-  publishCall,
-  ringing,
-  callRtc,
-  CALL_ELSEWHERE,
-  ELSEWHERE_TEXT,
-  p2pVoice,
-  p2pCall,
-  scheduleRefresh,
-} = legacyCalls

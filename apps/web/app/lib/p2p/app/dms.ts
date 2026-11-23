@@ -1,4 +1,3 @@
-import { legacyScope } from './store'
 import { resolve as resolveNotify } from '../../notify'
 import { applySed, parseSed } from '../../sed'
 import type { UserRef } from '../../types'
@@ -22,11 +21,6 @@ import type { PageOpts } from '../jump'
 import { Servers, type ServerView } from '../server'
 import { typingResendMs } from '../sync'
 import type { RoomSummary, P2pChat } from './store'
-import * as storePart from './store'
-import * as serversPart from './servers'
-import * as callsPart from './calls'
-import * as accountPart from './account'
-import * as attachmentsPart from './attachments'
 import type { IdentityScope, P2pParts } from './scope'
 
 export function createDmsPart(
@@ -418,7 +412,6 @@ export function createDmsPart(
       const chat = useP2p.getState().chat
       if (!chat) return
       jumpRevision += 1
-      if (scope === legacyScope) jumpGen = jumpRevision
       useP2p.setState({ chat: { ...chat, newer: false } })
       await (chat.ch
         ? parts.servers.loadChannel(chat.room, chat.ch)
@@ -460,7 +453,6 @@ export function createDmsPart(
         if (!current() || now?.room !== chat.room || now.ch !== chat.ch) return
         // A page loading from before the jump would replace the messages around it.
         jumpRevision += 1
-        if (scope === legacyScope) jumpGen = jumpRevision
         // It also stands in for a first page still loading, which the jump drops.
         useP2p.setState({
           chat: {
@@ -671,11 +663,11 @@ export function createDmsPart(
 
   scope.onReset(() => {
     ++jumpRevision
-    if (scope === legacyScope) jumpGen = jumpRevision
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()
   })
   return {
+    currentSession,
     dbNow,
     meNow,
     refreshRooms,
@@ -694,30 +686,3 @@ export function createDmsPart(
     },
   }
 }
-
-export const legacyDms = createDmsPart(
-  {
-    store: storePart,
-    servers: serversPart,
-    calls: callsPart,
-    account: accountPart,
-    attachments: attachmentsPart,
-  },
-  legacyScope
-)
-export const {
-  dbNow,
-  meNow,
-  refreshRooms,
-  refreshWindow,
-  loadChat,
-  refreshRoom,
-  timers,
-  loadPinList,
-  contactName,
-  p2pUser,
-  arrived,
-  findMessage,
-  p2pDm,
-} = legacyDms
-export let jumpGen: (typeof legacyDms)['jumpGen'] = legacyDms.jumpGen

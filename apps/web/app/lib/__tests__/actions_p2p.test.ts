@@ -1,3 +1,4 @@
+import { shownPeer } from './shown_peer'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import {
   ArrowRight,
@@ -34,18 +35,7 @@ import type { ChatFacts, Target } from '../actions/types'
 import { P2P_IP_HINT } from '../call_choice'
 import { emptyLayout, type Folder } from '../nav_layout'
 import { EMPTY_NOTIFY, MUTE_CHOICES, setMute, type NotifyPrefs } from '../notify'
-import {
-  p2p,
-  p2pBadge,
-  p2pCall,
-  p2pDm,
-  p2pFiles,
-  p2pRail,
-  p2pServer,
-  p2pThread,
-  p2pVoice,
-  useP2p,
-} from '../p2p/app'
+
 import type { Attachment } from '../p2p/content'
 import type { Contact } from '../p2p/contacts'
 import type { P2pMessage } from '../p2p/dm'
@@ -55,11 +45,9 @@ import { P } from '../p2p/state'
 import { setSharing, sharing } from '../platform'
 import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
 import type { Message } from '../types'
-import { me } from './fixtures'
-import { client } from '../client/client'
 
 const initial = useStore.getState()
-const p2pInitial = useP2p.getState()
+const p2pInitial = shownPeer().useP2p.getState()
 const realSharing = sharing()
 
 beforeAll(registerAppActions)
@@ -67,7 +55,7 @@ beforeAll(registerAppActions)
 afterEach(() => {
   setSharing(realSharing)
   useStore.setState(initial, true)
-  useP2p.setState(p2pInitial, true)
+  shownPeer().useP2p.setState(p2pInitial, true)
 })
 
 afterAll(resetSessionCaches)
@@ -165,16 +153,8 @@ const server = (over: Partial<ServerView> = {}): ServerView =>
 const MOD = P.Kick | P.Ban | P.ManageRoles | P.ManageMessages
 
 const state = (o: { notify?: NotifyPrefs; streamer?: boolean } = {}) => {
-  const owner = client.shown()
-  owner.store.setState(s => ({
-    me: me('reader'),
-    guest: false,
-    settings: { ...s.settings, p2p: true },
-    notifyPrefs: o.notify ?? EMPTY_NOTIFY,
-    streamer: !!o.streamer,
-  }))
-  owner.identities.setAccount('reader')
-  useP2p.setState({
+  useStore.setState({ notifyPrefs: o.notify ?? EMPTY_NOTIFY, streamer: !!o.streamer })
+  shownPeer().useP2p.setState({
     enabled: true,
     me: ME,
     contacts: [contact(BOB, 'Bob'), contact(CAROL, 'Carol', 'incoming')],
@@ -229,6 +209,8 @@ const recorder = () => {
         return Promise.resolve(k === 'ensureRoom' ? 'room-x' : k === 'forward' ? true : null)
       }
   }
+  const { p2pServer, p2pRail, p2pVoice, p2p, p2pDm, p2pThread, p2pFiles, p2pCall, p2pBadge } =
+    shownPeer()
   const saved = {
     server: { ...p2pServer },
     rail: { ...p2pRail },
@@ -412,14 +394,14 @@ describe("a P2P folder's menu", () => {
   test('color, edit and ungroup, and none of an instance folder rows', async () => {
     state()
     const folder: Folder = { id: 'p1', name: 'Fun', servers: [SRV], open: false }
-    useP2p.setState({ layout: { ...emptyLayout, servers: [folder] } })
+    shownPeer().useP2p.setState({ layout: { ...emptyLayout, servers: [folder] } })
     const t: Target = { kind: 'folder', folder, p2p: true }
     expect(labels(t)).toEqual(['Folder color', 'Edit folder', 'Ungroup'])
     expect(await run(row(t, 'Edit folder'))).toEqual([
       ['p2p.openDialog', { kind: 'p2p_folder', id: 'p1' }],
     ])
     expect(await run(row(t, 'Ungroup'))).toEqual([['rail.ungroup', 'p1']])
-    useP2p.setState({ layout: emptyLayout })
+    shownPeer().useP2p.setState({ layout: emptyLayout })
     expect(labels(t)).toEqual([])
   })
 })
@@ -493,7 +475,7 @@ describe("a P2P channel's menu", () => {
       'Delete Lounge?',
       'Delete',
     ])
-    useP2p.setState({ voice: { room: SRV, ch: 'v1' } as never })
+    shownPeer().useP2p.setState({ voice: { room: SRV, ch: 'v1' } as never })
     const leave = row(t, 'Leave Voice')!
     expect(labels(t)[0]).toBe('Leave Voice')
     expect([leave.icon, leave.danger]).toEqual([Volume2, true])
@@ -672,7 +654,9 @@ describe("a P2P role's menu", () => {
 
 test('P2P server, channel, member and role rows stay out of the palette', () => {
   state()
-  useP2p.setState({ servers: { [SRV]: server({ perms: 0x7fffffff, owner: ME, owners: [ME] }) } })
+  shownPeer().useP2p.setState({
+    servers: { [SRV]: server({ perms: 0x7fffffff, owner: ME, owners: [ME] }) },
+  })
   const ids = new Set(paletteCommands(paletteCtx(useStore.getState())).map(r => r.id))
   const added = allActions()
     .map(a => a.id)
@@ -737,7 +721,7 @@ const onMessage = (p: P2pMessage, chat = facts()): Target => ({
 
 const chatState = () => {
   state()
-  useP2p.setState({
+  shownPeer().useP2p.setState({
     contacts: [contact(BOB, 'Bob'), contact(CAROL, 'Carol'), contact(DAVE, 'Dave', 'outgoing')],
     files: {},
   })
@@ -784,7 +768,6 @@ describe("a P2P message's menu", () => {
   })
 
   test('forwarding sends to a contact under the sender’s own name, or copies it', async () => {
-    useStore.setState({ me: me('reader') })
     chatState()
     const forward = row(onMessage(msg()), 'Forward')!.submenu!
     expect(await run(forward[0])).toEqual([
@@ -869,7 +852,7 @@ describe("a P2P message's menu", () => {
   test('one attachment is a row of its own; save, download or cancel', async () => {
     chatState()
     const one = onMessage(msg({ att: [att('h1', 'a.txt')] }))
-    useP2p.setState({ files: { h1: file('done') } as never })
+    shownPeer().useP2p.setState({ files: { h1: file('done') } as never })
     const saveRow = row(one, 'Save attachment')!
     expect([saveRow.subtitle, saveRow.icon, saveRow.disabled ?? false]).toEqual([
       'a.txt',
@@ -878,15 +861,15 @@ describe("a P2P message's menu", () => {
     ])
     expect(labels(one).indexOf('Save attachment')).toBe(2)
     expect(await run(saveRow)).toEqual([['files.save', 'h1']])
-    useP2p.setState({ files: { h1: file('downloading') } as never })
+    shownPeer().useP2p.setState({ files: { h1: file('downloading') } as never })
     const cancel = row(one, 'Cancel download attachment')!
     expect(cancel.icon).toBe(X)
     expect(await run(cancel)).toEqual([['files.cancel', 'h1']])
-    useP2p.setState({ files: { h1: file('none') } as never })
+    shownPeer().useP2p.setState({ files: { h1: file('none') } as never })
     expect(await run(row(one, 'Download attachment'))).toEqual([['files.download', 'h1']])
-    useP2p.setState({ files: {} })
+    shownPeer().useP2p.setState({ files: {} })
     expect(row(one, 'Download attachment')?.disabled).toBe(true)
-    useP2p.setState({ files: { h1: file('none') } as never })
+    shownPeer().useP2p.setState({ files: { h1: file('none') } as never })
     const offline = onMessage(msg({ att: [att('h1', 'a.txt')] }), facts({ canAct: false }))
     expect(row(offline, 'Download attachment')?.disabled).toBe(true)
   })
@@ -894,7 +877,7 @@ describe("a P2P message's menu", () => {
   test('two or more attachments are a submenu, each with what it can do', async () => {
     chatState()
     const two = onMessage(msg({ att: [att('h1', 'a.txt'), att('h2', 'b.txt')] }))
-    useP2p.setState({ files: { h1: file('downloading'), h2: file('none') } as never })
+    shownPeer().useP2p.setState({ files: { h1: file('downloading'), h2: file('none') } as never })
     const files = row(two, 'Attachments')!
     expect([files.icon, files.disabled ?? false]).toEqual([Download, false])
     expect(files.submenu?.map(i => [i.label, i.subtitle, i.icon, i.disabled ?? false])).toEqual([
@@ -902,7 +885,7 @@ describe("a P2P message's menu", () => {
       ['b.txt', 'Download', Download, false],
     ])
     expect(await run(files.submenu![1])).toEqual([['files.download', 'h2']])
-    useP2p.setState({ files: {} })
+    shownPeer().useP2p.setState({ files: {} })
     const none = row(two, 'Attachments')!
     expect([none.icon, none.disabled ?? false]).toEqual([Download, false])
     expect(none.submenu?.map(i => [i.label, i.subtitle, i.icon, i.disabled ?? false])).toEqual([
@@ -932,7 +915,9 @@ describe("a P2P message's menu", () => {
 test("a contact's menu: mutual and pending", () => {
   const [me, bob, dave] = [0, 1, 2].map(() => keyId(newKeyPair().pk))
   chatState()
-  useP2p.setState({ contacts: [contact(bob, 'Bob'), contact(dave, 'Dave', 'outgoing')] })
+  shownPeer().useP2p.setState({
+    contacts: [contact(bob, 'Bob'), contact(dave, 'Dave', 'outgoing')],
+  })
   const menu = (c: Contact) => labels({ kind: 'p2p_contact', c, me })
   expect(menu(contact(bob, 'Bob'))).toEqual([
     'Message',
@@ -984,7 +969,7 @@ test("an account badge's menu: copy the account, or check again when it couldn't
 test("the P2P tile's menu lists the storage settings", () => {
   chatState()
   useStore.setState({ me: { username: 'ann' } as never, guest: false })
-  useP2p.setState({ account: 'ann' })
+  shownPeer().useP2p.setState({ account: 'ann', enabled: true })
   expect(labels({ kind: 'p2p_home' })).toEqual(['P2P storage settings'])
 })
 

@@ -1,39 +1,48 @@
 import { peerStorage } from '../client/keys'
+import { peerChat } from '../actions/p2p_chat'
+import { ForwardBar } from '../../components/forwards'
+import { P2pProvider } from '../client/p2p_react'
+import { parseForward, forwardValue } from '../forward'
+import { testAccount } from './test_account'
+import { AccountProvider } from '../client/react'
+import { createPeerFixture } from './peer_fixture'
+import { AccountSession } from '../client/session'
+const peerOwner = new AccountSession(home)
+const peerApp = createPeerFixture(peerOwner, 'bob')
+const {
+  mirrorFrom,
+  p2pAccount,
+  profileName,
+  tellBadge,
+  useP2p,
+  put,
+  p2p,
+  p2pDm,
+  p2pHost,
+  p2pMarkAll,
+  p2pServer,
+} = peerApp
 import 'fake-indexeddb/auto'
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, beforeAll, describe, expect, test } from 'bun:test'
 import { openDB } from 'idb'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactElement } from 'react'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
-import {
-  getHomeSession,
-  maskOf,
-  resetSessionCaches,
-  useStore,
-  type ContextMenuItem,
-} from '../store'
+import { maskOf, type ContextMenuItem } from '../store'
 import { resetMasking, setMasking } from '../profanity'
 import { DEFAULT_VIEW, type InboxView } from '../inbox'
-import { addInboxAdapter, removeInboxAdapter } from '../inbox_source'
+const { addInboxAdapter, removeInboxAdapter } = peerOwner.inbox
 import { EMPTY_NOTIFY, setLevel } from '../notify'
 import { parseHome, pushP2pRecent, recentKey, recentShown } from '../home'
 import { messageItems, type ResultCtx } from '../palette_results'
 import { PaletteIndex } from '../palette_index'
-import {
-  mirrorFrom,
-  p2pAccount,
-  p2pKey,
-  profileName,
-  tellBadge,
-  useP2p,
-  type P2pState,
-} from '../p2p/app'
+import { p2pKey, type P2pState } from '../p2p/app'
 import { blankRoom } from '../p2p/dag'
-import { refreshRoom, refreshRooms } from '../p2p/app/dms'
+
 import { P2pStore } from '../p2p/db'
 import { createP2pApp } from '../p2p/app/runtime'
-import { home } from '../instances'
+import { home } from './home_instance'
 import { P2pOffSection, P2pSection } from '../../components/p2p/p2p_settings'
 import type { Fwd } from '../p2p/content'
 import { useP2pList } from '../../components/p2p/p2p_chat'
@@ -62,7 +71,7 @@ import {
   type PingWorld,
 } from '../p2p/inbox'
 import { LOCAL, type Local } from '../p2p/limits'
-import { put } from '../p2p/app/store'
+
 import {
   listedIn,
   pingInputsChanged,
@@ -78,10 +87,10 @@ import {
   p2pDoc,
   p2pDocPlace,
   p2pDocVisible,
-  p2pIndexSource,
+  createIndexSource,
   placesOf,
 } from '../p2p/palette_source'
-import { __sync, indexDocs, paletteIndex, registerIndexSource } from '../palette_sync'
+const { __sync, indexDocs, paletteIndex, registerIndexSource } = peerOwner.indexer
 import { startP2pIndex } from '../p2p/palette_source'
 import { ServerRail } from '../../components/server_rail'
 import { ChannelSidebar } from '../../components/channel_sidebar'
@@ -96,17 +105,12 @@ import { ServerSettingsDialog } from '../../components/p2p/p2p_server_settings'
 import { ServerInviteDialog, ServerNewDialog } from '../../components/p2p/p2p_invite_dialog'
 import { CallBanner } from '../../components/voice_grid'
 import { markAllReadItem, registerAppActions } from '../actions'
-import { p2p, p2pDm, p2pHost, p2pMarkAll, p2pServer } from '../p2p/app'
+
 import { me, memoryStorage, user } from './fixtures'
-import { ForwardBar } from '../../components/forwards'
-import { P2pProvider } from '../client/p2p_react'
-import { AccountProvider } from '../client/react'
-import { parseForward, forwardValue } from '../forward'
-import { testAccount } from './test_account'
 import { readText } from './masked_text'
 
 beforeAll(registerAppActions)
-afterAll(resetSessionCaches)
+afterAll(() => peerOwner.store.dispose())
 
 const NOW = 1_800_000_000_000
 const ROOM = 'dm-room'
@@ -429,7 +433,8 @@ describe('P2P inbox: the noted pings', () => {
 })
 
 // Server rendering reads each store's initial state, so the test state goes there.
-const initial = useStore.getInitialState()
+const accountStore = peerOwner.store
+const initial = accountStore.getInitialState()
 const saved = { ...initial }
 const p2pInitial = useP2p.getInitialState()
 const p2pSaved = { ...p2pInitial }
@@ -444,7 +449,11 @@ const router = {
 } as unknown as AppRouterInstance
 
 const render = (node: ReactElement) =>
-  renderToStaticMarkup(<AppRouterContext.Provider value={router}>{node}</AppRouterContext.Provider>)
+  renderToStaticMarkup(
+    <AccountProvider session={peerOwner}>
+      <AppRouterContext.Provider value={router}>{node}</AppRouterContext.Provider>
+    </AccountProvider>
+  )
 
 const p2pState = (over: Partial<P2pState>) => {
   Object.assign(p2pInitial, p2pSaved, over)
@@ -455,7 +464,7 @@ afterEach(() => {
   Object.assign(initial, saved)
   Object.assign(p2pInitial, p2pSaved)
   useP2p.setState(p2pSaved)
-  useStore.setState(saved)
+  accountStore.setState(saved)
   resetMasking()
 })
 
@@ -583,6 +592,23 @@ describe('rail', () => {
 })
 
 describe('P2P switched off on the instance', () => {
+  let offline: AccountSession
+  beforeEach(() => {
+    offline = new AccountSession(home)
+    offline.store.setState(s => ({
+      me: me('bob'),
+      guest: false,
+      settings: { ...s.settings, p2p: false },
+    }))
+    Object.assign(offline.store.getInitialState(), offline.store.getState())
+  })
+  afterEach(() => offline.store.dispose())
+  const offSection = () =>
+    render(
+      <AccountProvider session={offline}>
+        <P2pOffSection />
+      </AccountProvider>
+    )
   const db = () => peerStorage(home, 'bob').db!
   const stored = async () => (await indexedDB.databases()).some(d => d.name === db())
   const settings = (p2p: boolean) => ({ ...saved.settings, p2p })
@@ -594,20 +620,17 @@ describe('P2P switched off on the instance', () => {
     )
     ;(await openDB(db(), 1)).close()
     expect(await stored()).toBe(true)
-    await p2pAccount(null)
-    Object.assign(initial, { me: me('bob'), settings: settings(false) })
-    useStore.setState({ me: me('bob'), settings: settings(false) })
-    const off = render(<P2pOffSection />)
+    const off = offSection()
     expect(off).toContain(`P2P is off on <span class="streamer">${home.host}</span>.`)
     expect(off).toContain('Remove P2P data from this browser')
-    Object.assign(initial, { settings: settings(true) })
-    expect(render(<P2pOffSection />)).toBe('')
-    expect(await p2p.removeData('bob')).toBe(true)
+    Object.assign(offline.store.getInitialState(), { settings: settings(true) })
+    expect(offSection()).toBe('')
+    expect(await offline.identities.offlineData()[0]!.remove()).toBe(true)
     expect(await stored()).toBe(false)
     expect(localStorage.getItem(peerStorage(home, 'bob').scoped(p2pKey('bob')))).toBeNull()
-    expect(useP2p.getState().account).toBeNull()
-    Object.assign(initial, { settings: settings(false) })
-    expect(render(<P2pOffSection />)).toBe('')
+    expect(offline.identities.list()).toEqual([])
+    Object.assign(offline.store.getInitialState(), { settings: settings(false) })
+    expect(offSection()).toBe('')
   })
 
   test('after a failed remove, Settings offers removing the data that is left', async () => {
@@ -616,30 +639,27 @@ describe('P2P switched off on the instance', () => {
       JSON.stringify({ v: 1, on: true })
     )
     ;(await openDB(db(), 1)).close()
-    await p2pAccount(null)
-    Object.assign(initial, { me: me('bob'), settings: settings(false) })
-    useStore.setState({ me: me('bob'), settings: settings(false) })
     const del = indexedDB.deleteDatabase
     indexedDB.deleteDatabase = () => {
       throw new Error('denied')
     }
     try {
-      expect(await p2p.removeData('bob')).toBe(false)
+      expect(await offline.identities.offlineData()[0]!.remove()).toBe(false)
     } finally {
       indexedDB.deleteDatabase = del
     }
     expect(await stored()).toBe(true)
-    expect(p2p.hasData('bob')).toBe(true)
-    expect(render(<P2pOffSection />)).toContain('Remove P2P data from this browser')
-    expect(useP2p.getState().account).toBeNull()
-    expect(await p2p.removeData('bob')).toBe(true)
+    expect(offline.identities.offlineData().length > 0).toBe(true)
+    expect(offSection()).toContain('Remove P2P data from this browser')
+    expect(offline.identities.list()).toEqual([])
+    expect(await offline.identities.offlineData()[0]!.remove()).toBe(true)
     expect(await stored()).toBe(false)
-    expect(p2p.hasData('bob')).toBe(false)
+    expect(offline.identities.offlineData().length > 0).toBe(false)
   })
 
   test('without P2P data in this browser there is nothing to remove', () => {
-    Object.assign(initial, { me: me('carol'), settings: settings(false) })
-    expect(render(<P2pOffSection />)).toBe('')
+    Object.assign(offline.store.getInitialState(), { me: me('carol'), settings: settings(false) })
+    expect(offSection()).toBe('')
   })
 })
 
@@ -857,8 +877,8 @@ describe('personal filter on P2P names', () => {
     p2pState({ enabled: true, account: 'bob', me: BOB, servers: { [SRV]: v } })
     await setMasking(true, () => Promise.resolve(stub))
     Object.assign(initial, { profanityReady: true, streamer: false })
-    useStore.setState({ profanityReady: true, streamer: false })
-    const labels = memberMenu(v, member).map(i => i.label)
+    accountStore.setState({ profanityReady: true, streamer: false })
+    const labels = memberMenu(v, member, peerOwner, peerApp).map(i => i.label)
     expect(labels).toContain('Kick ****lord')
     expect(labels).toContain('Ban ****lord')
     expect(render(<ServerSettingsDialog room={SRV} tab="channels" />)).toContain(
@@ -881,7 +901,7 @@ describe('forwarding', () => {
   function Probe({ messages, draftKey = ROOM }: { messages: P2pMessage[]; draftKey?: string }) {
     list = useP2pList({
       messages,
-      nameOf: ik => maskOf(useStore.getState())(ik === ALICE ? 'Mom' : 'Carol'),
+      nameOf: ik => maskOf(accountStore.getState())(ik === ALICE ? 'Mom' : 'Carol'),
       ownName: ik => profileName(ik),
       people: [],
       draftKey,
@@ -916,11 +936,11 @@ describe('forwarding', () => {
     call: null,
   }
 
-  test('copy and send use the source identity for colliding channels, threads and direct messages', () => {
+  test('copy and send use the source identity for colliding channels, threads and direct messages', async () => {
     const account = testAccount('bob', 'https://forward-owner.test')
     const other = testAccount('bob', 'https://forward-other.test')
     try {
-      for (const owner of [account, other]) owner.identities.setAccount('bob')
+      for (const owner of [account, other]) createPeerFixture(owner, 'bob')
       const main = account.identities.get()!
       const work = account.identities.add('work')
       const elsewhere = other.identities.add('work')
@@ -972,7 +992,24 @@ describe('forwarding', () => {
       expect(state().forwardClip?.source).toEqual({ kind: 'direct' })
       copy(work, ROOM)
       expect(state().forwardClip?.source).toEqual({ kind: 'direct', identity: 'work' })
+      const commands = peerChat.forIdentity(work)
+      const wait = Promise.withResolvers<string>()
+      const forwarded: string[] = []
+      work.p2pDm.ensureRoom = () => wait.promise
+      work.p2pDm.forward = async room => {
+        forwarded.push(room)
+        return true
+      }
+      const pending = commands.forwardTo(ALICE, message, 'Alice', account, ROOM)
       account.identities.unregister('work')
+      expect(state().forwardClip).toBeNull()
+      account.identities.add('work')
+      wait.resolve(ROOM)
+      await pending
+      expect(forwarded).toEqual([])
+      const row = list!.rows[0]
+      commands.copyForP2p(message, row.m, 'Alice', ROOM, account)
+      peerChat.forIdentity(elsewhere).copyForP2p(message, row.m, 'Alice', ROOM, account)
       expect(state().forwardClip).toBeNull()
     } finally {
       account.store.dispose()
@@ -992,13 +1029,13 @@ describe('forwarding', () => {
     })
     await setMasking(true, () => Promise.resolve(stub))
     Object.assign(initial, { profanityReady: true, me: me('bob') })
-    useStore.setState({ profanityReady: true, me: me('bob') })
+    accountStore.setState({ profanityReady: true, me: me('bob') })
     let items: ContextMenuItem[] = []
     const capture = (_x: number, _y: number, it: ContextMenuItem[]) => {
       items = it
     }
     Object.assign(initial, { openContextMenu: capture })
-    useStore.setState({ openContextMenu: capture })
+    accountStore.setState({ openContextMenu: capture })
     const sent: Fwd[] = []
     const saved = { ensureRoom: p2pDm.ensureRoom, forward: p2pDm.forward }
     p2pDm.ensureRoom = async () => 'carol-room'
@@ -1025,9 +1062,9 @@ describe('forwarding', () => {
       expect(sent.map(f => f.name)).toEqual(['Shitlord'])
       // The forward clipboard carries the same name.
       fwdItem.submenu!.find(x => x.label === 'Copy for forwarding')!.action!()
-      expect(useStore.getState().forwardClip?.author?.display_name).toBe('Shitlord')
+      expect(accountStore.getState().forwardClip?.author?.display_name).toBe('Shitlord')
       list!.copyRow(row.p, row.m)
-      expect(useStore.getState().forwardClip?.author?.display_name).toBe('Shitlord')
+      expect(accountStore.getState().forwardClip?.author?.display_name).toBe('Shitlord')
     } finally {
       Object.assign(p2pDm, saved)
       Object.assign(g, dom)
@@ -1320,12 +1357,19 @@ describe('a tab that only reads', () => {
     const alice = await P2pStore.open(crypto.randomUUID())
     const room = blankRoom(dmRoomId(ALICE, CAROL), CAROL, NOW)
     const delayed = Promise.withResolvers<RoomRecord>()
+    const aliceOwner = new AccountSession(home)
+    const aliceApp = createPeerFixture(aliceOwner, 'alice')
     alice.room = () => delayed.promise
     alice.rooms = async () => [await delayed.promise]
     try {
-      await p2pAccount('alice')
-      put.reader({ store: alice, me: ALICE })
-      const reads = [refreshRooms(), refreshRoom(room.id), p2pDm.openDm(CAROL)]
+      expect(aliceApp.useP2p.getState().account).toBe('alice')
+      aliceApp.put.reader({ store: alice, me: ALICE })
+      const reads = [
+        aliceApp.refreshRooms(),
+        aliceApp.refreshRoom(room.id),
+        aliceApp.p2pDm.openDm(CAROL),
+      ]
+      aliceOwner.identities.setAccount(null)
       await p2pAccount('bob')
       const bob = useP2p.getState()
       delayed.resolve(room)
@@ -1334,6 +1378,7 @@ describe('a tab that only reads', () => {
       expect(bob.account).toBe('bob')
     } finally {
       await p2pAccount(null)
+      aliceOwner.store.dispose()
       alice.close()
     }
   })
@@ -1400,7 +1445,7 @@ describe('P2P inbox in the app', () => {
     expect(p2pPingCount(st, EMPTY_NOTIFY, new Map([[ROOM, 9]]))).toBe(2)
     expect(p2pPingCount(st, EMPTY_NOTIFY, new Map())).toBe(0)
     Object.assign(initial, { me: me('bob') })
-    addInboxAdapter({ ...createP2pInbox(getHomeSession()), id: 'counted', count: () => 4 })
+    addInboxAdapter({ ...createP2pInbox(peerOwner, peerApp), id: 'counted', count: () => 4 })
     try {
       expect(render(<InboxButton />)).toContain('title="Inbox, 4 notifications"')
     } finally {
@@ -1490,26 +1535,26 @@ describe('P2P inbox in the app', () => {
         [ROOM]: { id: ROOM, peer: ALICE, seq: 4, unread: 1, pings: 0 },
       } as unknown as P2pState['rooms'],
     })
-    useStore.setState({ me: me('bob'), confirm: null })
+    accountStore.setState({ me: me('bob'), confirm: null })
     expect(p2pMarkAll().pending).toBe(true)
-    expect(markAllReadItem().disabled).toBe(false)
+    expect(markAllReadItem(peerOwner).disabled).toBe(false)
     let marked = 0
-    useStore.getState().askMarkAllRead({ pending: true, mark: () => (marked += 1) })
-    const asked = useStore.getState().confirm
+    accountStore.getState().askMarkAllRead({ pending: true, mark: () => (marked += 1) })
+    const asked = accountStore.getState().confirm
     expect(asked?.body).toBe('Mark every channel and DM as read?')
     asked?.action('')
     expect(marked).toBe(1)
-    useStore.setState({ confirm: null })
-    useStore.getState().askMarkAllRead({ pending: false, mark: () => (marked += 1) })
-    expect(useStore.getState().confirm).toBe(null)
+    accountStore.setState({ confirm: null })
+    accountStore.getState().askMarkAllRead({ pending: false, mark: () => (marked += 1) })
+    expect(accountStore.getState().confirm).toBe(null)
     p2pState({ enabled: true, me: BOB })
     expect(p2pMarkAll().pending).toBe(false)
-    expect(markAllReadItem().disabled).toBe(true)
+    expect(markAllReadItem(peerOwner).disabled).toBe(true)
   })
 
   test('without P2P the source lists nothing', async () => {
     p2pState({ enabled: false })
-    expect(await createP2pInbox(getHomeSession()).load(DEFAULT_VIEW, null)).toEqual({
+    expect(await createP2pInbox(peerOwner, peerApp).load(DEFAULT_VIEW, null)).toEqual({
       entries: [],
       next: null,
     })
@@ -1542,9 +1587,9 @@ describe('P2P in the palette index', () => {
   test('two identities index, count and open coincident messages independently', async () => {
     Object.assign(globalThis, { localStorage: memoryStorage })
     memoryStorage.setItem('rchat_palette:bob', JSON.stringify({ v: 1, used: {}, index: 'loaded' }))
-    useStore.setState({ me: me('bob') })
+    accountStore.setState({ me: me('bob') })
     __sync.switchOwner('bob', false)
-    const account = getHomeSession()
+    const account = peerOwner
     const bind = (id: string) => {
       const app = createP2pApp(account, id)
       app.useP2p.setState({
@@ -1700,22 +1745,24 @@ describe('P2P in the palette index', () => {
     } as unknown as P2pState
     const dmDoc = p2pDoc(ROOM, null, msg('d', 'hello'), 'Alice')!
     const chDoc = p2pDoc(SRV, CH, msg('c', 'hello', { sender: CAROL }), 'Carol')!
-    expect(p2pDocVisible(base, dmDoc)).toBe(true)
-    expect(p2pDocVisible(base, chDoc)).toBe(true)
-    expect(p2pDocVisible({ ...base, enabled: false }, dmDoc)).toBe(false)
+    expect(p2pDocVisible(base, dmDoc, peerApp)).toBe(true)
+    expect(p2pDocVisible(base, chDoc, peerApp)).toBe(true)
+    expect(p2pDocVisible({ ...base, enabled: false }, dmDoc, peerApp)).toBe(false)
     const blockedAlice = { ...base, contacts: [contact(ALICE, 'Alice', 'blocked')] }
-    expect(p2pDocVisible(blockedAlice, dmDoc)).toBe(false)
-    expect(p2pDocVisible({ ...base, contacts: [] }, dmDoc)).toBe(false)
+    expect(p2pDocVisible(blockedAlice, dmDoc, peerApp)).toBe(false)
+    expect(p2pDocVisible({ ...base, contacts: [] }, dmDoc, peerApp)).toBe(false)
     const blockedCarol = { ...base, contacts: [contact(CAROL, 'Carol', 'blocked')] }
-    expect(p2pDocVisible(blockedCarol, chDoc)).toBe(false)
+    expect(p2pDocVisible(blockedCarol, chDoc, peerApp)).toBe(false)
     for (const m of ['leave', 'ban'] as const)
-      expect(p2pDocVisible({ ...base, servers: { [SRV]: server({ me: m }) } }, chDoc)).toBe(false)
-    expect(p2pDocVisible({ ...base, servers: { [SRV]: server({ channels: [] }) } }, chDoc)).toBe(
-      false
-    )
-    expect(p2pDocVisible({ ...base, servers: {} }, chDoc)).toBe(false)
-    expect(p2pDocPlace(base, dmDoc)).toBe('P2P direct message')
-    expect(p2pDocPlace(base, chDoc)).toBe('#general · Book club')
+      expect(
+        p2pDocVisible({ ...base, servers: { [SRV]: server({ me: m }) } }, chDoc, peerApp)
+      ).toBe(false)
+    expect(
+      p2pDocVisible({ ...base, servers: { [SRV]: server({ channels: [] }) } }, chDoc, peerApp)
+    ).toBe(false)
+    expect(p2pDocVisible({ ...base, servers: {} }, chDoc, peerApp)).toBe(false)
+    expect(p2pDocPlace(base, dmDoc, peerApp)).toBe('P2P direct message')
+    expect(p2pDocPlace(base, chDoc, peerApp)).toBe('#general · Book club')
     expect(placesOf(base)).toEqual([
       { room: ROOM, ch: null },
       { room: SRV, ch: CH },
@@ -1725,7 +1772,7 @@ describe('P2P in the palette index', () => {
   test('only stored changes refresh a place, and a refresh drops only in its own bucket', async () => {
     Object.assign(globalThis, { localStorage: memoryStorage })
     memoryStorage.setItem('rchat_palette:bob', JSON.stringify({ v: 1, used: {}, index: 'loaded' }))
-    useStore.setState({ me: me('bob') })
+    accountStore.setState({ me: me('bob') })
     __sync.switchOwner('bob', false)
     const CH2 = 'chan2'
     const v = server({
@@ -1760,7 +1807,8 @@ describe('P2P in the palette index', () => {
       p2pDoc(ROOM, null, msg('pd', 'private words'), 'Alice')!,
     ])
     const read: string[] = []
-    const stop = startP2pIndex(getHomeSession(), {
+    const stop = startP2pIndex(peerOwner, {
+      app: peerApp,
       recent: async (room: string, ch: string | null) => {
         read.push(p2pBucket(room, ch))
         return ch === CH ? [msg('pa', 'kept words')] : []
@@ -1795,7 +1843,7 @@ describe('P2P in the palette index', () => {
   })
 
   test('the palette finds a P2P message, shows its place and opens it through P2P', () => {
-    const off = registerIndexSource(p2pIndexSource)
+    const off = registerIndexSource(createIndexSource(peerApp))
     try {
       p2pState({
         enabled: true,
@@ -1806,16 +1854,17 @@ describe('P2P in the palette index', () => {
       index.add([p2pDoc(ROOM, null, msg('e9', 'pineapple pizza tonight'), 'Alice')!])
       const ctx = {
         index,
-        visible: (d: Parameters<typeof p2pDocVisible>[1]) => p2pDocVisible(useP2p.getState(), d),
+        visible: (d: Parameters<typeof p2pDocVisible>[1]) =>
+          p2pDocVisible(useP2p.getState(), d, peerApp),
         mask: (t: string) => t,
       } as unknown as ResultCtx
-      const s = { ...useStore.getState(), streamer: false }
-      const [hit] = messageItems(s, ctx, 'pineapple', 5)
+      const s = { ...accountStore.getState(), streamer: false }
+      const [hit] = messageItems(s, ctx, 'pineapple', 5, peerOwner)
       expect(hit.item.title).toContain('pineapple pizza tonight')
       expect(hit.item.subtitle).toContain('Alice')
       expect(hit.item.subtitle).toContain('P2P direct message')
       p2pState({ enabled: true, contacts: [contact(ALICE, 'Alice', 'blocked')] })
-      expect(messageItems(s, ctx, 'pineapple', 5)).toEqual([])
+      expect(messageItems(s, ctx, 'pineapple', 5, peerOwner)).toEqual([])
     } finally {
       off()
     }

@@ -1,5 +1,7 @@
+import { createTestMedia } from './test_media'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { P2pManager } from '../p2p'
+
+const { createFileManager } = createTestMedia()
 
 let ids = 0
 
@@ -125,7 +127,7 @@ afterEach(() => {
 
 // A call in progress: all four slots negotiated, in the P2P order.
 function call() {
-  const m = new P2pManager()
+  const m = createFileManager()
   const x = m as unknown as Internals
   x.detector = { ...quiet }
   x.ensurePeer = () => null
@@ -313,7 +315,7 @@ describe('p2p call setup', () => {
         captureStream: () => new FakeStream([new FakeTrack('video')]),
       }),
     }
-    const m = new P2pManager()
+    const m = createFileManager()
     const x = m as unknown as Internals
     x.detector = { ...quiet }
     x.ensurePeer = () => null
@@ -365,7 +367,7 @@ describe('p2p call acceptance', () => {
     ensurePeer: () => unknown
   }
   const inCall = () => {
-    const m = new P2pManager()
+    const m = createFileManager()
     const x = m as unknown as Gate
     x.detector = { ...quiet }
     x.ensurePeer = () => null

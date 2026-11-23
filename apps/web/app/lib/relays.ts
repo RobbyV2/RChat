@@ -1,4 +1,4 @@
-import { ice, probeRelay, type IceCache } from './ice'
+import { probeRelay, type IceCache } from './ice'
 import { device } from './platform'
 
 // The user's own STUN and TURN relays, on top of what the instance offers, for P2P files and
@@ -398,7 +398,7 @@ export class RelayBook {
   private cancelPrompt: (() => void) | null = null
 
   constructor(
-    private inputs: () => IceInputs = () => iceInputs(ice),
+    private inputs: () => IceInputs,
     private setOwnTurn: (on: boolean) => void = () => {}
   ) {}
 
@@ -569,5 +569,3 @@ export const createRelayBook = (cache: IceCache) =>
     () => iceInputs(cache),
     on => cache.setOwnTurn(on)
   )
-
-export const relayBook = createRelayBook(ice)

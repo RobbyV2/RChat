@@ -2,12 +2,11 @@ import { peerStorage } from './keys'
 import { clearHiddenForward } from '../forward_viewing'
 import { readLocal, writeLocal } from '../instances'
 import { coversInstance, parseOn, p2pKey } from '../p2p/app/store'
-import { createP2pApp, legacyP2pApp, type P2pApp } from '../p2p/app/runtime'
+import { createP2pApp, type P2pApp } from '../p2p/app/runtime'
 import { createP2pInbox, startP2pPings } from '../p2p/inbox_source'
 import { startP2pIndex } from '../p2p/palette_source'
 import { removeP2pDb } from '../p2p/db'
 import { viewKey } from '../view'
-import { bindP2pHost } from '../p2p/app/host'
 import type { AccountSession } from './session'
 
 const MAX_IDENTITIES = 8
@@ -150,19 +149,10 @@ export class P2pIdentities {
 
   private attach(localId: string, username: string) {
     const account = this.account
-    const legacy = account.isHome && localId === 'main'
-    const app = legacy ? legacyP2pApp : createP2pApp(account, localId)
+    const app = createP2pApp(account, localId)
     const state = account.store.getState
     let attached = true
     const live = () => attached && state().me?.username === username
-    if (legacy) {
-      bindP2pHost(app, account, live)
-      app.callRtc.onChange = () => {
-        if (!live()) return
-        account.store.setState(s => ({ rtcTick: s.rtcTick + 1 }))
-        app.p2pVoice.videoChanged()
-      }
-    }
     const offView = app.useP2p.subscribe((now, before) => {
       if (!live()) return
       if (now.servers !== before.servers) clearHiddenForward(account)
@@ -176,16 +166,13 @@ export class P2pIdentities {
     const detach = () => {
       attached = false
       offView()
-      if (legacy) {
-        app.callRtc.onChange = () => {}
-        void app.p2pAccount(null, account)
-      } else app.dispose()
+      app.dispose()
       stopIndex()
       stopPings()
       account.inbox.removeInboxAdapter(inbox.id)
     }
     this.entries.set(localId, { app, detach })
-    void app.p2pAccount(username, account)
+    void app.p2pAccount(username)
     account.inbox.addInboxAdapter(inbox)
     this.changed()
     return app

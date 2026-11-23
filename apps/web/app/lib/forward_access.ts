@@ -13,7 +13,8 @@ export function useForwardAccess(
   { server, active = true }: { server?: string; active?: boolean } = {}
 ) {
   const owner = useAccount()
-  const { store, conn, api, viewing } = owner
+  const { store, conn, api, viewing, lifetime } = owner
+  const session = lifetime.sessionMark()
   viewing.useViewing(s => s.revision)
   const account = useStore(s => s.me?.username ?? null)
   const servers = useStore(s => s.servers)
@@ -21,8 +22,13 @@ export function useForwardAccess(
   const id = fwd?.source_id
   const key = viewingKey(account, ['forward', id ?? 0], conn)
   const known = m && fwd ? quoteSource(store.getState(), m, server) : undefined
-  const [located, setLocated] = useState<{ key: string; source: ForwardSource } | null>(null)
-  const source = known ?? (located?.key === key ? located.source : undefined)
+  const [located, setLocated] = useState<{
+    key: string
+    session: object
+    source: ForwardSource
+  } | null>(null)
+  const source =
+    known ?? (located?.key === key && located.session === session ? located.source : undefined)
   const label =
     known?.kind === 'channel' && known.id === fwd?.origin_channel_id
       ? fwd.origin_sensitive === true
@@ -34,12 +40,13 @@ export function useForwardAccess(
     if (!lookup || !id) return
     let live = true
     void locateQuote(id, api).then(found => {
-      if (live && found) setLocated({ key, source: found })
+      if (live && found && session === lifetime.sessionMark())
+        setLocated({ key, session, source: found })
     })
     return () => {
       live = false
     }
-  }, [api, id, key, lookup])
+  }, [api, id, key, lifetime, lookup, session])
   useEffect(() => {
     if (active && sourceName && access === 'unknown')
       void store

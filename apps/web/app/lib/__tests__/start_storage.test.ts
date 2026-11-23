@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { api, home, sessionStore } from '../instances'
+import { sessionStore } from '../instances'
+import { home, api } from './home_instance'
 import { dropStashedInvite, stashInvite, takeStashedInvite } from '../invite'
 import { hasStashedConfig, takeStashedConfig } from '../config_transfer'
 import { useStore, resetSessionCaches } from '../store'

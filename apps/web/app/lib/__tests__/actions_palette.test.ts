@@ -1,4 +1,5 @@
 import { peerStorage } from '../client/keys'
+import { shownPeer } from './shown_peer'
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
 import { Copy, Trash2 } from 'lucide-react'
 import { ctxFor, paletteCtx } from '../actions/ctx'
@@ -7,9 +8,10 @@ import { menuItems } from '../actions/menu'
 import { paletteCommands } from '../actions/palette'
 import { actionById, allActions, defineAction, runAction } from '../actions/registry'
 import type { Args, Target } from '../actions/types'
-import { api, shareOrigin } from '../instances'
+import { shareOrigin } from '../instances'
+import { api, home } from './home_instance'
 import { EMPTY_NOTIFY } from '../notify'
-import { useP2p } from '../p2p/app'
+
 import type { PaletteCommand } from '../palette'
 import { buildSections, flatItems, type ResultCtx } from '../palette_results'
 import { closePalette, usePaletteUi } from '../palette_store'
@@ -71,7 +73,7 @@ const bobby = user('bob', { display_name: 'Bobby' })
 // bob is timed out, carol asked to be friends, dave is a friend and erin is blocked.
 // No P2P for alice, on or kept on this device: the rows that need it (Settings: P2P) stay out.
 const noP2p = () => {
-  useP2p.setState({ account: null, enabled: false })
+  shownPeer().useP2p.setState({ account: null, enabled: false })
   localStorage.removeItem(
     peerStorage(paletteCtx(useStore.getState()).acct.conn, 'alice').scoped('rchat_p2p:alice')
   )
@@ -660,7 +662,7 @@ const sample = (r: PaletteCommand) =>
   !r.arg ? undefined : r.arg.choices ? r.arg.choices.at(-1)?.value : SAMPLES[r.arg.placeholder]
 
 const plain = (x: unknown): unknown => {
-  const origin = shareOrigin()
+  const origin = shareOrigin(undefined, undefined, home)
   return JSON.parse(
     JSON.stringify(x, (_k, v: unknown) => {
       if (typeof v === 'function') return 'fn'

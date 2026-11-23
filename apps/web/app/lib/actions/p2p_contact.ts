@@ -1,4 +1,3 @@
-import { client } from '../client/client'
 // A P2P contact's menu: on the P2P page, in the contact's dialog and on Home's P2P card.
 
 import { Ban, Bell, BellOff, MessageCircle, Pencil, ShieldCheck, Trash2 } from 'lucide-react'
@@ -11,12 +10,12 @@ import { muteStep, muteUntil, notifySettings } from './notify'
 import type { Action, ActionCtx } from './types'
 import { identityActions } from './identity'
 export const peerContact = identityActions(identity => {
-  const { p2p, p2pDm, useP2p } = identity
-
   // The contact as it is now; none once it is gone.
   const contactOf = ({ target }: ActionCtx): Contact | null =>
     target.kind === 'p2p_contact'
-      ? (useP2p.getState().contacts.find(c => c.ik === target.c.ik) ?? null)
+      ? (identity()
+          .useP2p.getState()
+          .contacts.find(c => c.ik === target.c.ik) ?? null)
       : null
 
   const mutual = (ctx: ActionCtx) => {
@@ -41,7 +40,7 @@ export const peerContact = identityActions(identity => {
     return scope ? muteEnd(ctx.s.notifyPrefs, scope, Date.now()) : null
   }
 
-  const asked = (verb: string, c: Contact, acct = client.shown()) =>
+  const asked = (verb: string, c: Contact, acct = identity().owner) =>
     `${verb} ${acct.store.getState().streamer ? 'this contact' : displayName(c)}?`
 
   const onContact = { scope: 'p2p', targets: ['p2p_contact'] } as const
@@ -56,7 +55,7 @@ export const peerContact = identityActions(identity => {
       available: ctx => mutual(ctx) !== null,
       run: ctx => {
         const c = mutual(ctx)
-        if (c) void p2pDm.openDm(c.ik)
+        if (c) void identity().p2pDm.openDm(c.ik)
       },
     },
     {
@@ -98,7 +97,7 @@ export const peerContact = identityActions(identity => {
       available: ctx => unblocked(ctx) !== null,
       run: ctx => {
         const c = unblocked(ctx)
-        if (c) p2p.openDialog({ kind: 'rename', ik: c.ik })
+        if (c) identity().p2p.openDialog({ kind: 'rename', ik: c.ik })
       },
     },
     {
@@ -110,7 +109,7 @@ export const peerContact = identityActions(identity => {
       available: ctx => unblocked(ctx) !== null,
       run: ctx => {
         const c = unblocked(ctx)
-        if (c) p2p.openDialog({ kind: 'verify', ik: c.ik })
+        if (c) identity().p2p.openDialog({ kind: 'verify', ik: c.ik })
       },
     },
     {
@@ -128,7 +127,7 @@ export const peerContact = identityActions(identity => {
           title: asked('Block', c, ctx.acct),
           body: 'They can no longer reach you over P2P. You can remove the block later.',
           confirm: 'Block',
-          action: identity.inIdentity(() => void p2p.block(c.ik)),
+          action: identity().inIdentity(() => void identity().p2p.block(c.ik)),
         })
       },
     },
@@ -145,14 +144,14 @@ export const peerContact = identityActions(identity => {
         const c = contactOf(ctx)
         if (!c) return
         if (c.state === 'blocked') {
-          void p2p.remove(c.ik)
+          void identity().p2p.remove(c.ik)
           return
         }
         ctx.acct.store.getState().askConfirm({
           title: asked('Remove', c, ctx.acct),
           body: 'They stay able to send you a new request.',
           confirm: 'Remove',
-          action: identity.inIdentity(() => void p2p.remove(c.ik)),
+          action: identity().inIdentity(() => void identity().p2p.remove(c.ik)),
         })
       },
     },
@@ -163,9 +162,9 @@ export const peerContact = identityActions(identity => {
     y: number,
     c: Contact,
     me: string | null,
-    acct = client.shown()
-  ) => openActionMenu(x, y, { kind: 'p2p_contact', c, me }, undefined, acct, identity)
+    acct = identity().owner
+  ) => openActionMenu(x, y, { kind: 'p2p_contact', c, me }, undefined, acct, identity())
 
   return { actions: p2pContactActions, openContactMenu }
 })
-export const { actions: p2pContactActions, openContactMenu } = peerContact.defaults
+export const p2pContactActions = peerContact.actions

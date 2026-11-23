@@ -1,10 +1,16 @@
 import { peerStorage } from '../client/keys'
+import { createPeerFixture } from './peer_fixture'
+import { AccountSession } from '../client/session'
+const peerOwner = new AccountSession(home)
+const peerApp = createPeerFixture(peerOwner, 'ann')
+const { useP2p, startDeps } = peerApp
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { ctxFor } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { itemFor } from '../actions/menu'
 import { actionsFor, runAction } from '../actions/registry'
-import { endpointsFrom, home, InstanceConnection } from '../instances'
+import { endpointsFrom, InstanceConnection } from '../instances'
+import { home } from './home_instance'
 import { autoDefaults, parseAuto, autoChoices } from '../p2p/app'
 import { LOCAL, localDefaults, RANGES, type Local } from '../p2p/limits'
 import {
@@ -21,8 +27,8 @@ import {
   userLimitsKey,
   writeUserLimits,
 } from '../p2p/user_limits'
-import { resetSessionCaches, useStore } from '../store'
-import { useP2p } from '../p2p/app'
+const accountStore = peerOwner.store
+
 import { me, memoryStorage } from './fixtures'
 import { Hub, ManualClock } from './p2p_net'
 import {
@@ -37,7 +43,7 @@ import {
   withLimits,
   type Member,
 } from './p2p_server_net'
-import { startDeps } from '../p2p/app/account'
+
 import type { InstanceInfo } from '../types'
 import { RULES_VERSION } from '../p2p/acl/rules'
 import { genesisBundle } from '../p2p/acl/binding'
@@ -54,7 +60,7 @@ const GIB = 1024 * MIB
 
 Object.assign(globalThis, { localStorage: memoryStorage })
 
-afterAll(resetSessionCaches)
+afterAll(() => peerOwner.store.dispose())
 
 afterEach(() => {
   stopAll()
@@ -221,8 +227,8 @@ describe('user P2P limits', () => {
     expect(applyUser(LOCAL, { v: 1, hiddenPauseMs: 90_000.5 }).node.hiddenPauseMs).toBe(
       LOCAL.node.hiddenPauseMs
     )
-    writeUserLimits('ann', { v: 1, roomBytes: 64 * MIB + 0.5, totalBytes: 4 * GIB })
-    expect(readUserLimits('ann')).toEqual({ v: 1, totalBytes: 4 * GIB })
+    writeUserLimits('ann', { v: 1, roomBytes: 64 * MIB + 0.5, totalBytes: 4 * GIB }, home)
+    expect(readUserLimits('ann', home)).toEqual({ v: 1, totalBytes: 4 * GIB })
   })
 
   test('main retains its stored key while extra identities use their own overrides', () => {
@@ -241,22 +247,26 @@ describe('user P2P limits', () => {
   })
 
   test('overrides are kept per account and only when they differ', () => {
-    writeUserLimits('ann', { v: 1, roomBytes: 64 * MIB, hiddenPauseMs: LOCAL.node.hiddenPauseMs })
-    expect(readUserLimits('ann')).toEqual({ v: 1, roomBytes: 64 * MIB })
-    expect(readUserLimits('bob')).toEqual({ v: 1 })
+    writeUserLimits(
+      'ann',
+      { v: 1, roomBytes: 64 * MIB, hiddenPauseMs: LOCAL.node.hiddenPauseMs },
+      home
+    )
+    expect(readUserLimits('ann', home)).toEqual({ v: 1, roomBytes: 64 * MIB })
+    expect(readUserLimits('bob', home)).toEqual({ v: 1 })
     expect(
       JSON.parse(localStorage.getItem(peerStorage(home, 'ann').scoped(userLimitsKey('ann'))) ?? '')
     ).toEqual({
       v: 1,
       roomBytes: 64 * MIB,
     })
-    writeUserLimits('ann', { v: 1 })
+    writeUserLimits('ann', { v: 1 }, home)
     expect(localStorage.getItem(peerStorage(home, 'ann').scoped(userLimitsKey('ann')))).toBeNull()
     localStorage.setItem(
       peerStorage(home, 'ann').scoped(userLimitsKey('ann')),
       '{"v":1,"roomBytes":'
     )
-    expect(readUserLimits('ann')).toEqual({ v: 1 })
+    expect(readUserLimits('ann', home)).toEqual({ v: 1 })
   })
 
   test('choices stay inside the range and include the default and the current value', () => {
@@ -299,28 +309,28 @@ describe('user P2P limits', () => {
 
 describe('P2P limits actions', () => {
   beforeAll(registerAppActions)
-  const ctx = () => ctxFor(useStore.getState(), { kind: 'none' }, 'menu')
+  const ctx = () => ctxFor(accountStore.getState(), { kind: 'none' }, 'menu', peerOwner, peerApp)
   const ids = () => actionsFor(ctx(), 'p2p').map(a => a.id)
   test('open the settings, and reset only when something was changed', async () => {
-    useStore.setState({ me: me('ann'), guest: false, activeDialog: null })
+    accountStore.setState({ me: me('ann'), guest: false, activeDialog: null })
     useP2p.setState({ account: 'ann', enabled: false })
     expect(ids()).toEqual([])
     useP2p.setState({ enabled: true })
     expect(ids()).toEqual(['p2p_limits'])
     expect(itemFor('p2p_limits', ctx())?.label).toBe('P2P storage settings')
     await runAction('p2p_limits', ctx())
-    expect(useStore.getState().activeDialog).toEqual({
+    expect(accountStore.getState().activeDialog).toEqual({
       kind: 'settings',
       section: 'p2p',
       focus: 'p2p_limits',
     })
-    writeUserLimits('ann', { v: 1, totalBytes: 4 * GIB })
+    writeUserLimits('ann', { v: 1, totalBytes: 4 * GIB }, home)
     expect(ids()).toEqual(['p2p_limits', 'p2p_limits_reset'])
     expect(itemFor('p2p_limits_reset', ctx())?.label).toBe('Reset P2P limits')
     await runAction('p2p_limits_reset', ctx())
-    expect(readUserLimits('ann')).toEqual({ v: 1 })
+    expect(readUserLimits('ann', home)).toEqual({ v: 1 })
     expect(ids()).toEqual(['p2p_limits'])
-    useStore.setState({ me: null, guest: true })
+    accountStore.setState({ me: null, guest: true })
     expect(ids()).toEqual([])
     useP2p.setState({ account: null, enabled: false })
   })
@@ -371,7 +381,7 @@ describe('the P2P runtime', () => {
     const p2p = { 'local.gossip.perRoom': 4 }
     home.info = { ...was, limits: { ...was?.limits, p2p } } as InstanceInfo
     try {
-      writeUserLimits('ann', { v: 1, roomBytes: 64 * MIB, hiddenPauseMs: 60_000 })
+      writeUserLimits('ann', { v: 1, roomBytes: 64 * MIB, hiddenPauseMs: 60_000 }, home)
       const d = startDeps('ann')
       expect(d.limits.gossip.perRoom).toBe(4)
       expect(d.servers.local.gossip.perRoom).toBe(4)

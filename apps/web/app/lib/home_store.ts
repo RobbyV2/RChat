@@ -21,7 +21,7 @@ import {
   type UnreadRow,
 } from './home'
 import { dmPings } from './pings'
-import { useP2p, type P2pState } from './p2p/app'
+import type { P2pState } from './p2p/app'
 import {
   badgePings,
   dmsUnread,
@@ -109,7 +109,7 @@ export function createHomeStore(acct: AccountSession) {
 
   // Keeps Home's state on the signed-in account and records every view it opens.
   let stop: (() => void) | null = null
-  function startSync(p2p?: Pick<typeof useP2p, 'subscribe'>) {
+  function startSync() {
     stop?.()
     const sync = (s: RChatState, prev: RChatState | null) => {
       const owner = s.me?.username ?? null
@@ -118,10 +118,8 @@ export function createHomeStore(acct: AccountSession) {
     }
     sync(store.getState(), null)
     const off = store.subscribe(sync)
-    const offP2p = p2p?.subscribe((st, prev) => noteP2pVisit(st, prev))
     const cleanup = () => {
       off()
-      offP2p?.()
     }
     stop = cleanup
     return cleanup
@@ -189,8 +187,5 @@ export const noteP2pVisit = (state: P2pState, previous: P2pState, now?: number) 
 export const unreadSummaryKey = (state: RChatState) => client.shown().home.unreadSummaryKey(state)
 export function useHomeSync() {
   const account = useAccount()
-  useEffect(
-    () => account.home.startSync(account === client.shown() ? useP2p : undefined),
-    [account]
-  )
+  useEffect(() => account.home.startSync(), [account])
 }

@@ -316,9 +316,6 @@ const useExport = (include: Set<SectionKey>) => {
 
 const FILE_NAME = `rchat-config${FILE_EXT}`
 
-const download = (text: string) =>
-  sharing().saveFile(FILE_NAME, `${text}\n`, 'application/octet-stream')
-
 type SavePicker = (opts: { suggestedName: string }) => Promise<{
   createWritable: () => Promise<{
     write: (data: BufferSource | Blob | string) => Promise<void>
@@ -384,7 +381,10 @@ const downloadWithFiles =
       onBytes
     )
     check()
-    sharing().saveBlob(FILE_NAME, new Blob(parts, { type: 'application/octet-stream' }))
+    sharing(identity.owner, valid).saveBlob(
+      FILE_NAME,
+      new Blob(parts, { type: 'application/octet-stream' })
+    )
     return true
   }
 
@@ -473,7 +473,8 @@ function ExportBlock({
   }
   const fileOnly = text.length > TEXT_MAX || !!attachments
   const save = async () => {
-    if (!attachments) return download(text)
+    if (!attachments)
+      return sharing(acct).saveFile(FILE_NAME, `${text}\n`, 'application/octet-stream')
     if (!attachments.valid()) return
     setError(null)
     setWriting(0)

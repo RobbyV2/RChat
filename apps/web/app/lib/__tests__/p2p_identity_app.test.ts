@@ -1,9 +1,9 @@
 import { peerStorage } from '../client/keys'
-import { legacyScope } from '../p2p/app/store'
+import type { IdentityOptions } from '../p2p/identity_scope'
 import { expect, test } from 'bun:test'
 import { client } from '../client/client'
-import { createP2pApp, legacyP2pApp } from '../p2p/app/runtime'
-import { endpointsFrom } from '../instances'
+import { createP2pApp } from '../p2p/app/runtime'
+import { endpointsFrom, readLocal, writeLocal } from '../instances'
 import { dumpBytes, parseDump, summarize } from '../p2p/transfer'
 import { P2pStore, removeP2pDb } from '../p2p/db'
 import { webLeaderDeps, type LeaderDeps } from '../p2p/leader'
@@ -328,26 +328,29 @@ test('signout while opening the import database cancels the write and both journ
 })
 
 test('a previous reader finishing startup leaves the new account’s older chat page open', async () => {
-  const app = legacyP2pApp
   const alice = 'reader-start-alice'
   const bob = 'reader-start-bob'
   const before = P2pStore.prototype.rooms
-  const options = legacyScope.options
+  const options: IdentityOptions = {}
+  const owner = testAccount(alice)
+  const nextOwner = testAccount(bob)
+  const oldApp = createP2pApp(owner, 'main', options)
+  const app = createP2pApp(nextOwner, 'main', options)
   const deps = options.leaderDeps
   const waiting = Promise.withResolvers<void>()
   const resume = Promise.withResolvers<void>()
   const refreshed = Promise.withResolvers<void>()
-  const previousOwner = app.p2pHost.account
-  const owner = testAccount(alice)
-  app.p2pHost.account = owner
-  const enabled = [alice, bob].map(name => app.readOn(name))
+  const saved = [alice, bob].map(name => {
+    const key = owner.conn.scoped(app.p2pKey(name))
+    return { key, raw: readLocal(key), db: app.dbFor(name) }
+  })
   const hub = new Hub()
   try {
     for (const name of [alice, bob]) {
       const seed = await makeNode(hub, name, { db: app.dbFor(name) })
       seed.node.stop()
       seed.store.close()
-      app.writeOn(name, true)
+      ;(name === alice ? oldApp : app).writeOn(name, true)
     }
     options.leaderDeps = () => ({
       ...webLeaderDeps(),
@@ -362,9 +365,10 @@ test('a previous reader finishing startup leaves the new account’s older chat 
       } else if (this.db.name === app.dbFor(bob)) refreshed.resolve()
       return rows
     }
-    await app.p2pAccount(alice, owner)
+    await oldApp.p2pAccount(alice)
     await waiting.promise
-    await app.p2pAccount(bob, owner)
+    oldApp.dispose()
+    await app.p2pAccount(bob)
     await refreshed.promise
     await drain()
     const chat = {
@@ -389,11 +393,13 @@ test('a previous reader finishing startup leaves the new account’s older chat 
     P2pStore.prototype.rooms = before
     options.leaderDeps = deps
     await app.p2pAccount(null)
-    for (const [i, name] of [alice, bob].entries()) {
-      app.writeOn(name, enabled[i])
-      await removeP2pDb(app.dbFor(name))
-    }
-    app.p2pHost.account = previousOwner
+    oldApp.dispose()
+    app.dispose()
+    nextOwner.store.dispose()
     owner.store.dispose()
+    for (const { key, raw, db } of saved) {
+      writeLocal(key, raw)
+      await removeP2pDb(db)
+    }
   }
 })

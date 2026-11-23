@@ -3,15 +3,17 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  createHomeConnection,
+  knownInstances,
   InstanceConnection,
   InstanceError,
-  InstanceRegistry,
   apiMajor,
   compatible,
   endpointsFrom,
   fetchInstance,
-  home,
   homePeer,
+  localOrigins,
+  shareOrigin,
   lookup,
   normalizeOrigin,
   peerFrom,
@@ -31,6 +33,8 @@ import {
   type Endpoints,
   type StorageLike,
 } from '../instances'
+import { home } from './home_instance'
+import { InstanceRegistry } from '../client/instance_registry'
 import { ApiClient, createApi } from '../api'
 import type { InstanceInfo } from '../types'
 
@@ -503,24 +507,21 @@ describe('runtime instance resolution', () => {
   })
 
   test('the app starts at its default home when its storage throws', async () => {
-    // The home a fresh load of the module starts at under `window`.
-    const started = async (window: unknown, tag: string) => {
+    const started = async (window: unknown) => {
       let seen: unknown[] = []
       await withGlobal('window', window, async () => {
-        const m = (await import(`../instances?${tag}`)) as typeof import('../instances')
-        seen = [m.home.isDefault, m.home.origin, m.home.info, m.knownInstances()]
+        const home = createHomeConnection()
+        seen = [home.isDefault, home.origin, home.info, knownInstances()]
       })
       return seen
     }
-    const plain = await started(undefined, 'no-window')
+    const plain = await started(undefined)
     expect([plain[0], plain[2], plain[3]]).toEqual([true, null, []])
-    expect(await started({ localStorage: failing() }, 'failing-storage')).toEqual(plain)
-    expect(
-      await started(Object.defineProperty({}, 'localStorage', { get: fail }), 'no-storage')
-    ).toEqual(plain)
+    expect(await started({ localStorage: failing() })).toEqual(plain)
+    expect(await started(Object.defineProperty({}, 'localStorage', { get: fail }))).toEqual(plain)
     const store = memory()
     store.setItem('rchat_home', 'chat.example.com')
-    expect(await started({ localStorage: store }, 'saved-home')).toEqual([
+    expect(await started({ localStorage: store })).toEqual([
       false,
       'https://chat.example.com',
       null,
@@ -643,6 +644,17 @@ describe('instance origin checks', () => {
 })
 
 describe('instance registry', () => {
+  test('a background connection shares and recognizes links for its own instance', async () => {
+    const origin = 'https://other.example'
+    const conn = new InstanceConnection(fixed(origin), at(origin))
+    const page = new URL('https://page.example')
+    await withGlobal('window', { location: page }, () => {
+      expect(localOrigins(conn)).toEqual([origin])
+      expect(shareOrigin(page, false, conn)).toBe(origin)
+      expect(localOrigins(home)).toContain(page.origin)
+    })
+  })
+
   test('api clients trim trailing slashes from their base', () => {
     expect(new InstanceConnection(fixed('https://p.example'), null, true).api.base).toBe('/api')
     expect(createApi('https://p.example/api///').base).toBe('https://p.example/api')

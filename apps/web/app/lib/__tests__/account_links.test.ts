@@ -4,6 +4,7 @@ import { openDeepLink, type LinkEnv } from '../deep_links'
 import { stashInvite, takeStashedInvite } from '../invite'
 import { createP2pInbox } from '../p2p/inbox_source'
 import { startP2pIndex } from '../p2p/palette_source'
+import { createP2pApp } from '../p2p/app/runtime'
 import { testAccount } from './test_account'
 
 test('invite and config handoffs distinguish accounts at the same origin', () => {
@@ -91,8 +92,9 @@ test('P2P inbox preferences and palette registration follow the supplied account
   const a = testAccount('alice')
   const b = testAccount('bob')
   let changed = 0
-  const offInbox = createP2pInbox(b).subscribe!(() => changed++)
-  const offIndex = startP2pIndex(b)
+  const app = createP2pApp(b, 'main')
+  const offInbox = createP2pInbox(b, app).subscribe!(() => changed++)
+  const offIndex = startP2pIndex(b, { app })
   try {
     a.store.setState(s => ({ notifyPrefs: { ...s.notifyPrefs, desktop: true } }))
     expect(changed).toBe(0)
@@ -101,6 +103,7 @@ test('P2P inbox preferences and palette registration follow the supplied account
     expect(a.indexer.indexSource('p2p')).toBeUndefined()
     expect(b.indexer.indexSource('p2p')).not.toBeUndefined()
   } finally {
+    app.dispose()
     offInbox()
     offIndex()
     a.store.dispose()

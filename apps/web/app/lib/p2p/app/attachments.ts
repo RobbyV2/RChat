@@ -1,6 +1,5 @@
-import { legacyScope } from './store'
 import { instanceLabel } from '../../instance_label'
-import { homeLabel, writeLocal } from '../../instances'
+import { writeLocal } from '../../instances'
 import { fitContent, LIMITS as EV, type Attachment } from '../content'
 import { assemble, EMPTY_VIEW, offText } from '../blobs'
 import type { Hashed } from '../hashing'
@@ -8,10 +7,17 @@ import { checkedThumb, hashFile, imageFits, previewOf, saveName, UrlCache } from
 import { kindOf, NEUTRAL_TYPE } from '../../sniff'
 import { sharing } from '../../platform'
 import type { FileView, PendingFile } from './store'
-import * as dmsPart from './dms'
-import * as storePart from './store'
-import * as accountPart from './account'
 import type { IdentityScope, P2pParts } from './scope'
+
+// The attachments of a message: as many thumbnails as fit, the last ones dropped first.
+export const fitAttachments = (body: string, list: Attachment[]): Attachment[] | null =>
+  fitContent({ body, att: list })?.att ?? null
+
+export const TOO_MANY_FILES = 'These files have names too long to send in one message.'
+
+export const FILES_MAX_TEXT = `You can attach up to ${EV.att} files to a message.`
+
+export const PREPARING_TEXT = 'Files are still being prepared.'
 
 export function createAttachmentsPart(
   parts: Pick<P2pParts, 'dms' | 'store' | 'account'>,
@@ -98,16 +104,6 @@ export function createAttachmentsPart(
 
   const cleanMime = (t: string) => (/^[\x21-\x7e]{1,127}$/.test(t) ? t : 'application/octet-stream')
 
-  // The attachments of a message: as many thumbnails as fit, the last ones dropped first.
-  const fitAttachments = (body: string, list: Attachment[]): Attachment[] | null =>
-    fitContent({ body, att: list })?.att ?? null
-
-  const TOO_MANY_FILES = 'These files have names too long to send in one message.'
-
-  const FILES_MAX_TEXT = `You can attach up to ${EV.att} files to a message.`
-
-  const PREPARING_TEXT = 'Files are still being prepared.'
-
   const p2pFiles = {
     // A tile is shown: keep its state current and ask who has it.
     watch(att: Pick<Attachment, 'h' | 'size'>) {
@@ -161,10 +157,15 @@ export function createAttachmentsPart(
 
     // Saves a stored file under a safe name, as plain bytes (never opened).
     async save(att: Attachment) {
+      const current = parts.dms.currentSession()
       const s = parts.dms.dbNow()
       const blob = s ? await assemble(s.db, att.h).catch(() => null) : null
+      if (!current()) return
       if (!blob) return p2pHost.toast('This file is not on this device yet.')
-      sharing().saveBlob(saveName(att.name), new Blob([blob], { type: NEUTRAL_TYPE }))
+      sharing(scope.owner, current).saveBlob(
+        saveName(att.name),
+        new Blob([blob], { type: NEUTRAL_TYPE })
+      )
     },
 
     add(room: string, files: File[]) {
@@ -211,11 +212,7 @@ export function createAttachmentsPart(
         return null
       }
       if (p2pHost.textOnly()) {
-        p2pHost.toast(
-          offText(
-            scope.owner ? instanceLabel(scope.owner.conn.info, scope.owner.conn.host) : homeLabel()
-          )
-        )
+        p2pHost.toast(offText(instanceLabel(scope.owner.conn.info, scope.owner.conn.host)))
         return null
       }
       if (list.some(p => p.error)) {
@@ -280,10 +277,7 @@ export function createAttachmentsPart(
     writeAuto(patch: Partial<{ dm: number; server: number; daily: number }>) {
       const user = useP2p.getState().account
       if (!user || !scope.current(user)) return
-      writeLocal(
-        scope.scoped(autoKey(user), user),
-        JSON.stringify({ v: 1, ...readAuto(user), ...patch })
-      )
+      writeLocal(scope.scoped(autoKey(user)), JSON.stringify({ v: 1, ...readAuto(user), ...patch }))
     },
   }
 
@@ -296,20 +290,3 @@ export function createAttachmentsPart(
   })
   return { scheduleFile, fitAttachments, TOO_MANY_FILES, FILES_MAX_TEXT, PREPARING_TEXT, p2pFiles }
 }
-
-export const legacyAttachments = createAttachmentsPart(
-  {
-    dms: dmsPart,
-    store: storePart,
-    account: accountPart,
-  },
-  legacyScope
-)
-export const {
-  scheduleFile,
-  fitAttachments,
-  TOO_MANY_FILES,
-  FILES_MAX_TEXT,
-  PREPARING_TEXT,
-  p2pFiles,
-} = legacyAttachments

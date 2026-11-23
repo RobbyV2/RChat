@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { dmView, folderLabel, railOrder, railServers, useStore, resetSessionCaches } from '../store'
 import { emptyLayout, type Folder, type Layout } from '../nav_layout'
-import { home } from '../instances'
+import { home } from './home_instance'
 import type { DmSummary, ServerSummary, WsEvent } from '../types'
 import { me, memoryStorage, msg, serverDetail, until, user } from './fixtures'
 

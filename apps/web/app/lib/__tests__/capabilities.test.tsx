@@ -26,8 +26,9 @@ import {
 } from '../p2p/transfer'
 import { runKdfJob, type KdfReply } from '../p2p/kdf_job'
 import { LOCAL } from '../p2p/limits'
-import { p2pAccount, p2pTransfer, useP2p } from '../p2p/app'
-import { dbFor } from '../p2p/app/account'
+import { shownPeer } from './shown_peer'
+import { createP2pApp } from '../p2p/app/runtime'
+import { testAccount } from './test_account'
 import { P2pStore } from '../p2p/db'
 import { capabilities, setCapabilities } from '../platform'
 import { filterSwitch, maskProfanity, resetMasking, setMasking, type Matcher } from '../profanity'
@@ -484,6 +485,7 @@ describe('P2P passphrase protection without WebAssembly', () => {
     const pass = { pass: '', again: '', files: false }
     const section = { v: 1 } as unknown as P2pSection
     Object.assign(initial, { me: me('alice') })
+    shownPeer()
     for (const wasm of [false, true]) {
       setCapabilities({ wasm })
       const option = renderToStaticMarkup(
@@ -563,6 +565,9 @@ describe('P2P passphrase protection without WebAssembly', () => {
     delete (globalThis as { window?: unknown }).window
     setCapabilities({ wasm: false })
     const username = `cancel-${Math.random().toString(36).slice(2)}`
+    const owner = testAccount(username)
+    const app = createP2pApp(owner, 'main')
+    const { p2pAccount, p2pTransfer, useP2p, dbFor } = app
     const made = await makeNode(new Hub(), 'carol', { db: dbFor(username) })
     made.node.stop()
     made.store.close()
@@ -595,7 +600,8 @@ describe('P2P passphrase protection without WebAssembly', () => {
       expect(useP2p.getState().movingAt).not.toBeNull()
       expect((await stored()).every(x => x !== null)).toBe(true)
     } finally {
-      await p2pAccount(null)
+      app.dispose()
+      owner.store.dispose()
       if (realWindow) Object.defineProperty(globalThis, 'window', realWindow)
     }
   }, 60_000)

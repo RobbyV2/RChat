@@ -1,12 +1,13 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { client } from '../client/client'
-import { home } from '../instances'
-import { rtc } from '../rtc'
-import { useStore, resetSessionCaches } from '../store'
+import { home } from './home_instance'
+import { getHomeSession, useStore, resetSessionCaches } from '../store'
 import { SELF_AUDIO_IDLE, toggleDeafenAudio, toggleMicAudio, type SelfAudio } from '../voice_layout'
 import type { VoiceMsg } from '../types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE } from '../timeouts'
 import { drain, me, serverDetail, until } from './fixtures'
+
+const { rtc } = getHomeSession()
 
 afterAll(resetSessionCaches)
 

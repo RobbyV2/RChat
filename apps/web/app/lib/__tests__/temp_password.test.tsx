@@ -1,7 +1,7 @@
 import { afterAll, afterEach, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Banners } from '../../components/banners'
-import { api } from '../instances'
+import { api } from './home_instance'
 import { resetSessionCaches, useStore } from '../store'
 import { temporaryNotice } from '../temp_password'
 import { me } from './fixtures'

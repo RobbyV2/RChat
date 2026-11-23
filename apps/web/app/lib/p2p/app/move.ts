@@ -1,4 +1,3 @@
-import { legacyScope } from './store'
 import { P2pStore } from '../db'
 import { webLeaderDeps } from '../leader'
 import {
@@ -27,8 +26,6 @@ import {
   type P2pSection,
   type Summary,
 } from '../transfer'
-import * as storePart from './store'
-import * as accountPart from './account'
 import type { IdentityScope, P2pParts } from './scope'
 
 export interface Unlocked {
@@ -46,13 +43,13 @@ export interface FilesPart {
   blob: Blob
   head: FilesHead
 }
+// ----- Device move -----
+
+export const ELSEWHERE_IMPORT = 'P2P is open in another tab. Use it here first.'
+
 export function createMovePart(parts: Pick<P2pParts, 'store' | 'account'>, scope: IdentityScope) {
   const state = parts.store
   const { useP2p, writeOn, readImports, rememberImport } = state
-
-  // ----- Device move -----
-
-  const ELSEWHERE_IMPORT = 'P2P is open in another tab. Use it here first.'
 
   const errText = (e: unknown) =>
     e instanceof TransferError || e instanceof Error ? e.message : String(e)
@@ -288,12 +285,3 @@ export function createMovePart(parts: Pick<P2pParts, 'store' | 'account'>, scope
   }
   return { ELSEWHERE_IMPORT, p2pTransfer }
 }
-
-export const legacyMove = createMovePart(
-  {
-    store: storePart,
-    account: accountPart,
-  },
-  legacyScope
-)
-export const { ELSEWHERE_IMPORT, p2pTransfer } = legacyMove

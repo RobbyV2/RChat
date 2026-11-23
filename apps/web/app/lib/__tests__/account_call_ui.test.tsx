@@ -5,8 +5,8 @@ import AppShell from '../../[[...slug]]/app_shell'
 import { CallBanner, VoiceDock } from '../../components/voice_grid'
 import { ChannelSidebar } from '../../components/channel_sidebar'
 import { client } from '../client/client'
-import { getHomeSession } from '../store'
-import { p2pHost as legacyHost } from '../p2p/app'
+import { AccountSession } from '../client/session'
+import { InstanceConnection, endpointsFrom } from '../instances'
 import { AccountProvider } from '../client/react'
 import { me, member, memoryStorage, serverDetail, textChannel } from './fixtures'
 import { testAccount } from './test_account'
@@ -116,9 +116,10 @@ test('the channel sidebar uses the provider’s identity and RTC for a colliding
 test('the shell uses the P2P owner for alerts, quiet calls and runtime preferences', () => {
   const a = testAccount('reader', 'https://a.test')
   // The initial page identity backs the legacy call card during the W8 transition.
-  const b = getHomeSession()
+  const b = new AccountSession(
+    new InstanceConnection(endpointsFrom('https://b.test', null), null, false, true)
+  )
   const previous = client.shown
-  const previousHost = { ...legacyHost }
   b.store.setState(s => ({ me: me('reader'), settings: { ...s.settings, p2p: true } }))
   Object.assign(b.store.getInitialState(), b.store.getState())
   b.identities.setAccount('reader')
@@ -191,9 +192,7 @@ test('the shell uses the P2P owner for alerts, quiet calls and runtime preferenc
     useP2p.setState({ callQuiet: quiet })
     client.shown = previous
     a.store.dispose()
-    b.identities.setAccount(null)
-    b.store.resetSessionCaches()
-    Object.assign(legacyHost, previousHost, { account: previousHost.account })
+    b.store.dispose()
   }
 })
 

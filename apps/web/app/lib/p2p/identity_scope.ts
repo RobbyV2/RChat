@@ -8,14 +8,14 @@ export interface IdentityOptions {
   leaderDeps?: () => LeaderDeps
 }
 export interface IdentityScope {
-  owner?: AccountSession
+  owner: AccountSession
   localId: string
   readonly disposed?: boolean
   dbHost(username: string): string
   current(username?: string): boolean
   resetSignal(): AbortSignal
   options: IdentityOptions
-  scoped(key: string, username?: string): string
+  scoped(key: string): string
   reset(): void
   onReset(fn: () => void): void
   onDispose(fn: () => void): void

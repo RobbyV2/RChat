@@ -1,4 +1,11 @@
-import { describe, expect, test } from 'bun:test'
+import { createPeerFixture } from './peer_fixture'
+import { AccountSession } from '../client/session'
+import { home } from './home_instance'
+const peerOwner = new AccountSession(home)
+afterAll(() => peerOwner.store.dispose())
+const peerApp = createPeerFixture(peerOwner, 'owner')
+const { banRequest } = peerApp
+import { afterAll, describe, expect, test } from 'bun:test'
 import { genCase } from './acl_model_rules2/gen'
 import { orphanDrops as referenceDrops } from '../p2p/acl/equivocation'
 import type { EvalResult } from '../p2p/acl/facts'
@@ -13,7 +20,7 @@ import { LOCAL } from '../p2p/limits'
 import { MODEL_LIMITS, prodReplica, testBinds } from './p2p_acl_world'
 import { headerOk } from '../p2p/event_v2'
 import { messageActs, type P2pMessage } from '../p2p/dm'
-import { banRequest } from '../p2p/app'
+
 import type { ServerView } from '../p2p/server'
 import { ServerWorld, type Sent } from './p2p_server_world'
 

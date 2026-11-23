@@ -1,11 +1,14 @@
+import { AccountSession } from '../client/session'
+import { createHomeConnection } from '../instances'
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { home } from '../instances'
-import { rtc } from '../rtc'
-import { p2p } from '../p2p'
-import { useStore, resetSessionCaches } from '../store'
+import { home } from './home_instance'
+import { getHomeSession, useStore, resetSessionCaches } from '../store'
 import { SELF_AUDIO_IDLE } from '../voice_layout'
 import type { VoiceMsg, WsEvent } from '../types'
 import { me, memoryStorage } from './fixtures'
+
+const mediaAccount = getHomeSession()
+const { files: p2p, rtc } = mediaAccount
 
 afterAll(resetSessionCaches)
 
@@ -28,6 +31,19 @@ beforeEach(() => {
 afterEach(() => {
   Object.assign(globalThis, { localStorage: memoryStorage })
   useStore.setState({ me: null, call: null, callRoute: 'server', p2pCallFailed: {} })
+})
+
+test('recreating a home session gives it independent media', () => {
+  const next = new AccountSession(createHomeConnection())
+  const helpers = mediaAccount.ice.helpersOn()
+  try {
+    for (const key of ['ice', 'relays', 'rtc', 'files'] as const)
+      expect(next[key]).not.toBe(mediaAccount[key])
+    next.ice.setHelpers(!helpers)
+    expect(mediaAccount.ice.helpersOn()).toBe(helpers)
+  } finally {
+    next.store.dispose()
+  }
 })
 
 describe('call connection choice', () => {

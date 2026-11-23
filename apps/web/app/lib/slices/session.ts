@@ -33,7 +33,6 @@ import {
   pageHref,
   readLocal,
   resolveInstance,
-  selectHome,
   sessionStore,
   shareOrigin,
   writeLocal,
@@ -1450,7 +1449,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         if (origin !== home.origin || home.info?.id !== info.id) {
           forgetSession()
           home.ws.stop()
-          selectHome(origin, info, home)
+          client.selectHome(origin, info, home)
         } else noteHomeInfo(info, home)
         acct.discovery.done()
         set({ instance: info, instanceHost: home.host, error: null })

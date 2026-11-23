@@ -1,12 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { apiRoot, apiTail, prefixOf, versionedBase, versionedUrl } from '../api_version'
-import {
-  InstanceConnection,
-  InstanceRegistry,
-  endpointsFrom,
-  fetchInstance,
-  type Endpoints,
-} from '../instances'
+import { InstanceConnection, endpointsFrom, fetchInstance, type Endpoints } from '../instances'
+import { InstanceRegistry } from '../client/instance_registry'
 import type { InstanceInfo } from '../types'
 
 const g = globalThis as { WebSocket?: unknown }

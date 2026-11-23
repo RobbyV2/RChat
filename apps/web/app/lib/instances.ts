@@ -8,7 +8,7 @@ import { WsClient, wsUrlFrom, type WsEndpoints } from './ws'
 import { shellInfo } from './platform/desktop'
 import type { InstanceInfo } from './types'
 
-import { DEFAULT_INSTANCE_NAME, instanceLabel } from './instance_label'
+import { DEFAULT_INSTANCE_NAME } from './instance_label'
 import { limitsOf } from './instance_limits'
 
 export { DEFAULT_INSTANCE_NAME }
@@ -390,68 +390,6 @@ export class InstanceConnection {
   }
 }
 
-export class InstanceRegistry {
-  private others = new Map<string, InstanceConnection>()
-
-  constructor(
-    readonly home: InstanceConnection,
-    private defaults: () => Endpoints
-  ) {}
-
-  list() {
-    return [this.home, ...this.others.values()]
-  }
-
-  get(origin: string) {
-    const key = normalizeOrigin(origin)
-    if (!key) return null
-    return key === this.home.origin ? this.home : (this.others.get(key) ?? null)
-  }
-
-  byHost(host: string) {
-    const want = normalizeHost(host)
-    return this.list().find(c => c.host === want) ?? null
-  }
-
-  isHome(originOrHost: string) {
-    const origin = normalizeOrigin(originOrHost)
-    return origin === this.home.origin || normalizeHost(originOrHost) === this.home.host
-  }
-
-  add(origin: string, info: InstanceInfo | null = null) {
-    const key = normalizeOrigin(origin)
-    if (!key) throw new InstanceError('Not an instance address')
-    const found = this.get(key)
-    if (found) {
-      if (info) found.info = info
-      return found
-    }
-    const conn = new InstanceConnection(endpointsFrom(key, info), info)
-    this.others.set(key, conn)
-    return conn
-  }
-
-  remove(origin: string) {
-    const key = normalizeOrigin(origin)
-    const conn = key ? this.others.get(key) : undefined
-    if (!key || !conn) return false
-    conn.ws.stop()
-    this.others.delete(key)
-    return true
-  }
-
-  setHome(origin: string, info: InstanceInfo | null) {
-    const key = normalizeOrigin(origin)
-    if (!key) throw new InstanceError('Not an instance address')
-    const defaults = this.defaults()
-    const isDefault = key === defaults.origin
-    this.home.ws.stop()
-    this.home.retarget(isDefault ? defaults : endpointsFrom(key, info), info, isDefault)
-    this.others.delete(key)
-    return this.home
-  }
-}
-
 const storage = (): StorageLike | null => {
   try {
     return window.localStorage
@@ -543,7 +481,7 @@ export function savedHome(defaultOrigin: string, store: StorageLike | null = sto
   return origin ?? defaultOrigin
 }
 
-function initialHome() {
+export function createHomeConnection() {
   const defaults = defaultEndpoints()
   const origin = savedHome(defaults.origin)
   const info = readKnown()[origin] ?? null
@@ -552,38 +490,23 @@ function initialHome() {
     : new InstanceConnection(endpointsFrom(origin, info), info, false, true)
 }
 
-export const registry = new InstanceRegistry(initialHome(), defaultEndpoints)
-
-export const home = registry.home
-
-// What the copy calls the instance this tab is signed in to.
-export const homeLabel = () => instanceLabel(home.info, home.host)
-
-export const api = home.api
-
-export function selectHome(origin: string, info: InstanceInfo, connection = home) {
-  if (connection !== home) {
-    connection.retarget(endpointsFrom(origin, info), info, false)
-    rememberInstance(origin, info)
-    return connection
-  }
-  const conn = registry.setHome(origin, info)
+// The selected page instance survives reloads of the desktop client.
+export function rememberHome(connection: InstanceConnection, info: InstanceInfo) {
   const store = storage()
-  write(() => store, HOME_KEY, conn.isDefault ? null : conn.origin)
-  rememberInstance(conn.origin, info, store)
-  return conn
+  write(() => store, HOME_KEY, connection.isDefault ? null : connection.origin)
+  rememberInstance(connection.origin, info, store)
 }
 
 // Same-origin private media loads with the home connection's cookie.
 export function setMediaCookie(connection: InstanceConnection, token: string | null) {
-  if (connection !== home || !connection.isDefault) return
+  if (!connection.isHome || !connection.isDefault) return
   const attrs = `path=/; SameSite=Strict${window.location.protocol === 'https:' ? '; Secure' : ''}`
   document.cookie = token
     ? `rchat_token=${token}; ${attrs}; max-age=31536000`
     : `rchat_token=; ${attrs}; max-age=0`
 }
 
-export const fitsHome = (info: InstanceInfo, conn: InstanceConnection = home) =>
+export const fitsHome = (info: InstanceInfo, conn: InstanceConnection) =>
   conn.isDefault || (fromOrigin(conn.origin, info) && sameSite(conn.origin, info))
 
 // A lookup of the home instance's discovery document: `settled` waits for `done`, at most `ms`.
@@ -599,10 +522,7 @@ export const lookup = () => {
   }
 }
 
-// This page's first one, so P2P registers at the PeerJS address it gives (homePeer).
-export const homeLookup = lookup()
-
-export function noteHomeInfo(info: InstanceInfo, connection = home) {
+export function noteHomeInfo(info: InstanceInfo, connection: InstanceConnection) {
   connection.info = info
   rememberInstance(connection.origin, info)
 }
@@ -617,10 +537,10 @@ export function shareOrigin(
     ? null
     : window.location,
   app = shellInfo() !== null,
-  connection = home
+  connection: InstanceConnection
 ): string {
   if (
-    connection === home &&
+    connection.isHome &&
     page &&
     !app &&
     (page.protocol === 'http:' || page.protocol === 'https:')
@@ -630,11 +550,18 @@ export function shareOrigin(
 }
 
 // The current page's address on the share origin, so app-only origins parse like web ones.
-export const pageHref = (origin = shareOrigin()) =>
+export const pageHref = (origin: string) =>
   `${origin}${window.location.pathname}${window.location.search}${window.location.hash}`
 
-export function localOrigins(connection = home, publicUrl = connection.info?.public_url) {
-  const page = connection === home && typeof window !== 'undefined' ? window.location.origin : null
-  const all = [page, connection.origin, publicUrl ? normalizeOrigin(publicUrl) : null]
+export function localOrigins(
+  connection: InstanceConnection,
+  homePublic: string | null = connection.info?.public_url ?? null
+) {
+  const page = typeof window === 'undefined' ? null : window.location.origin
+  const all = [
+    connection.isHome ? page : null,
+    connection.origin,
+    homePublic ? normalizeOrigin(homePublic) : null,
+  ]
   return all.filter((o, at): o is string => o !== null && all.indexOf(o) === at)
 }

@@ -1,4 +1,3 @@
-import { client } from '../client/client'
 // The menus of a P2P server: its rail tile and header, a P2P rail folder, its channels, its
 // members and its roles.
 
@@ -19,26 +18,13 @@ import { muteStep, muteUntil, notifySettings } from './notify'
 import type { Action, ActionCtx, ArgChoice, Target } from './types'
 import { identityActions } from './identity'
 export const peerServer = identityActions(identity => {
-  const {
-    banRequest,
-    channelScope,
-    p2p,
-    p2pDm,
-    p2pRail,
-    p2pServer,
-    p2pVoice,
-    serverScope,
-    useP2p,
-    peerTarget,
-  } = identity
-
   const copy = (text: string) => void sharing().copyText(text)
 
   const can = (v: ServerView, bit: number) => v.me === 'join' && (v.perms & bit) !== 0
 
-  const me = () => useP2p.getState().me
+  const me = () => identity().useP2p.getState().me
 
-  const who = (name: string, acct = client.shown()) =>
+  const who = (name: string, acct = identity().owner) =>
     acct.store.getState().streamer ? 'this member' : name
 
   const serverOf = ({ target }: ActionCtx) => (target.kind === 'p2p_server' ? target : null)
@@ -49,12 +35,12 @@ export const peerServer = identityActions(identity => {
   // A text channel's own notifications (voice channels have none).
   const textScope = (ctx: ActionCtx): NotifyScope | null => {
     const t = channelOf(ctx)
-    return t && t.ch.kind !== 'voice' ? channelScope(t.v.id, t.ch.id) : null
+    return t && t.ch.kind !== 'voice' ? identity().channelScope(t.v.id, t.ch.id) : null
   }
 
   const tileScope = (ctx: ActionCtx): NotifyScope | null => {
     const t = serverOf(ctx)
-    return t && serverScope(t.v.id)
+    return t && identity().serverScope(t.v.id)
   }
 
   // Mute and unmute for the place `of` names in its menu: a channel's mute says when its server's
@@ -112,44 +98,44 @@ export const peerServer = identityActions(identity => {
     title: 'Withdraw Invite',
     body: WITHDRAW_TEXT,
     confirm: 'Withdraw',
-    action: identity.inIdentity(() => void p2pServer.withdraw(v.id, m.ik)),
+    action: identity().inIdentity(() => void identity().p2pServer.withdraw(v.id, m.ik)),
   })
 
   // The member takes the new copy; every other owner must approve.
   const transferRequest = (
     v: ServerView,
     m: MemberView,
-    acct = client.shown()
+    acct = identity().owner
   ): ConfirmRequest => ({
     title: 'Transfer Ownership',
     body: `${transferText(who(m.name, acct))}${v.owners.length > 1 ? ` ${TRANSFER_CO_OWNERS_TEXT}` : ''}`,
     confirm: 'Transfer',
-    action: identity.inIdentity(() => void p2pServer.transfer(v.id, m.ik)),
+    action: identity().inIdentity(() => void identity().p2pServer.transfer(v.id, m.ik)),
   })
 
   // Removing a server we are no longer in, with everything of it, from this device.
-  const confirmForget = (v: ServerView, acct = client.shown()) =>
+  const confirmForget = (v: ServerView, acct = identity().owner) =>
     acct.store.getState().askConfirm({
       title: 'Remove Server',
       body: `Remove ${acct.store.getState().streamer ? 'this server' : v.name} and everything of it from this device? You aren't a member any more, so it can't come back.`,
       confirm: 'Remove',
-      action: identity.inIdentity(() => void p2pServer.forget(v.id)),
+      action: identity().inIdentity(() => void identity().p2pServer.forget(v.id)),
     })
 
-  const kickRequest = (v: ServerView, m: MemberView, acct = client.shown()): ConfirmRequest => ({
+  const kickRequest = (v: ServerView, m: MemberView, acct = identity().owner): ConfirmRequest => ({
     title: 'Kick Member',
     body: `Kick ${who(m.name, acct)}? They can come back with a new invite.`,
     confirm: 'Kick',
-    action: identity.inIdentity(() => void p2pServer.kick(v.id, m.ik)),
+    action: identity().inIdentity(() => void identity().p2pServer.kick(v.id, m.ik)),
   })
 
   // Role names in our own server are our own text, never masked.
-  const roleMask = (v: ServerView, acct = client.shown()) =>
+  const roleMask = (v: ServerView, acct = identity().owner) =>
     maskOf(acct.store.getState(), ownsP2pServer(v, me()))
 
-  const moveRoles = (v: ServerView, moves: Move[], acct = client.shown()) => {
+  const moveRoles = (v: ServerView, moves: Move[], acct = identity().owner) => {
     if (!moves.length) return
-    const go = () => void p2pServer.moveRoles(v.id, moves)
+    const go = () => void identity().p2pServer.moveRoles(v.id, moves)
     if (movesWarn(v.roles, moves))
       acct.store
         .getState()
@@ -157,12 +143,12 @@ export const peerServer = identityActions(identity => {
     else go()
   }
 
-  const deleteRole = (v: ServerView, r: RoleView, acct = client.shown()) =>
+  const deleteRole = (v: ServerView, r: RoleView, acct = identity().owner) =>
     acct.store.getState().askConfirm({
       title: 'Delete Role',
       body: `Delete ${roleMask(v, acct)(r.name)}? ${r.holders ? 'Members who have it lose it.' : ''}`.trim(),
       confirm: 'Delete',
-      action: identity.inIdentity(() => void p2pServer.deleteRole(v.id, r.id)),
+      action: identity().inIdentity(() => void identity().p2pServer.deleteRole(v.id, r.id)),
     })
 
   // Whether we may give `r` to `m` (assign): Manage roles, ranked above the role and the
@@ -171,13 +157,13 @@ export const peerServer = identityActions(identity => {
     can(v, P.ManageRoles) && r.below && m.m === 'join' && m.ik !== me() && m.below && !m.owner
 
   // Taking a role; one's own asks first (nobody can give themselves a role back).
-  const takeRole = (v: ServerView, m: MemberView, r: RoleView, acct = client.shown()) => {
-    if (m.ik !== me()) return void p2pServer.revokeRole(v.id, m.ik, r.id)
+  const takeRole = (v: ServerView, m: MemberView, r: RoleView, acct = identity().owner) => {
+    if (m.ik !== me()) return void identity().p2pServer.revokeRole(v.id, m.ik, r.id)
     acct.store.getState().askConfirm({
       title: 'Remove Role',
       body: `Remove ${roleMask(v, acct)(r.name)} from yourself? You can't give it back to yourself.`,
       confirm: 'Remove',
-      action: identity.inIdentity(() => void p2pServer.revokeRole(v.id, m.ik, r.id)),
+      action: identity().inIdentity(() => void identity().p2pServer.revokeRole(v.id, m.ik, r.id)),
     })
   }
 
@@ -205,7 +191,9 @@ export const peerServer = identityActions(identity => {
   const p2pFolder = ({ target }: ActionCtx) => {
     if (target.kind !== 'folder' || target.p2p !== true) return null
     const id = target.folder.id
-    return useP2p.getState().layout.servers.some(e => typeof e !== 'string' && e.id === id)
+    return identity()
+      .useP2p.getState()
+      .layout.servers.some(e => typeof e !== 'string' && e.id === id)
       ? id
       : null
   }
@@ -231,7 +219,7 @@ export const peerServer = identityActions(identity => {
       available: ctx => serverOf(ctx) !== null,
       run: ctx => {
         const t = serverOf(ctx)
-        if (t) void p2pServer.markAllRead(t.v.id)
+        if (t) void identity().p2pServer.markAllRead(t.v.id)
       },
     },
     ...muteActions('server', 'Server', ['p2p_server'], tileScope),
@@ -248,7 +236,7 @@ export const peerServer = identityActions(identity => {
       },
       run: ctx => {
         const t = serverOf(ctx)
-        if (t) p2p.openDialog({ kind: 'server_invite', room: t.v.id })
+        if (t) identity().p2p.openDialog({ kind: 'server_invite', room: t.v.id })
       },
     },
     {
@@ -260,7 +248,7 @@ export const peerServer = identityActions(identity => {
       available: ctx => serverOf(ctx)?.v.me === 'join',
       run: ctx => {
         const t = serverOf(ctx)
-        if (t) p2p.openDialog({ kind: 'server_settings', room: t.v.id })
+        if (t) identity().p2p.openDialog({ kind: 'server_settings', room: t.v.id })
       },
     },
     {
@@ -282,7 +270,7 @@ export const peerServer = identityActions(identity => {
       available: ctx => (serverOf(ctx)?.folder ?? null) !== null,
       run: ctx => {
         const t = serverOf(ctx)
-        if (t) p2pRail.move(t.v.id, t.at + 1)
+        if (t) identity().p2pRail.move(t.v.id, t.at + 1)
       },
     },
     {
@@ -303,7 +291,7 @@ export const peerServer = identityActions(identity => {
           title: 'Leave Server',
           body: `Leave ${ctx.acct.store.getState().streamer ? 'this server' : t.v.name}? Someone who can invite has to let you in again.`,
           confirm: 'Leave',
-          action: identity.inIdentity(() => void p2pServer.leave(t.v.id)),
+          action: identity().inIdentity(() => void identity().p2pServer.leave(t.v.id)),
         })
       },
     },
@@ -333,7 +321,7 @@ export const peerServer = identityActions(identity => {
       available: ctx => p2pFolder(ctx) !== null,
       run: ctx => {
         const id = p2pFolder(ctx)
-        if (id !== null) p2p.openDialog({ kind: 'p2p_folder', id })
+        if (id !== null) identity().p2p.openDialog({ kind: 'p2p_folder', id })
       },
     },
     {
@@ -344,13 +332,13 @@ export const peerServer = identityActions(identity => {
       available: ctx => p2pFolder(ctx) !== null,
       run: ctx => {
         const id = p2pFolder(ctx)
-        if (id !== null) p2pRail.ungroup(id)
+        if (id !== null) identity().p2pRail.ungroup(id)
       },
     },
   ]
 
   const inVoice = (v: ServerView, ch: string) => {
-    const here = useP2p.getState().voice
+    const here = identity().useP2p.getState().voice
     return here?.room === v.id && here.ch === ch
   }
 
@@ -369,12 +357,12 @@ export const peerServer = identityActions(identity => {
       'p2p_channel',
       ctx => {
         const t = channelOf(ctx)
-        return t && (peerTarget(useP2p.getState(), t.v.id, t.ch.id) ?? null)
+        return t && (identity().peerTarget(identity().useP2p.getState(), t.v.id, t.ch.id) ?? null)
       },
       ctx => !!managed(ctx),
       (ctx, sensitive) => {
         const t = managed(ctx)
-        if (t) void p2pServer.editChannel(t.v.id, t.ch.id, { sensitive })
+        if (t) void identity().p2pServer.editChannel(t.v.id, t.ch.id, { sensitive })
       }
     ),
     {
@@ -390,7 +378,7 @@ export const peerServer = identityActions(identity => {
       run: ctx => {
         const t = voiceChannel(ctx)
         if (!t) return
-        void p2pVoice.join(t.v.id, t.ch.id)
+        void identity().p2pVoice.join(t.v.id, t.ch.id)
       },
     },
     {
@@ -404,7 +392,7 @@ export const peerServer = identityActions(identity => {
         const t = voiceChannel(ctx)
         return !!t && inVoice(t.v, t.ch.id)
       },
-      run: () => p2pVoice.leave(),
+      run: () => identity().p2pVoice.leave(),
     },
     {
       id: 'p2p_channel_mark_read',
@@ -420,7 +408,7 @@ export const peerServer = identityActions(identity => {
       available: ctx => textScope(ctx) !== null,
       run: ctx => {
         const t = channelOf(ctx)
-        if (t) void p2pServer.markRead(t.v.id, t.ch.id)
+        if (t) void identity().p2pServer.markRead(t.v.id, t.ch.id)
       },
     },
     ...muteActions('channel', 'Channel', ['p2p_channel'], textScope),
@@ -433,7 +421,7 @@ export const peerServer = identityActions(identity => {
       available: ctx => managed(ctx) !== null,
       run: ctx => {
         const t = managed(ctx)
-        if (t) p2p.openDialog({ kind: 'server_settings', room: t.v.id, tab: 'channels' })
+        if (t) identity().p2p.openDialog({ kind: 'server_settings', room: t.v.id, tab: 'channels' })
       },
     },
     {
@@ -454,7 +442,7 @@ export const peerServer = identityActions(identity => {
               ? `Delete ${ch.name}?`
               : `Delete #${ch.name}? Its messages stay on members' devices but can't be opened.`,
           confirm: 'Delete',
-          action: identity.inIdentity(() => void p2pServer.removeChannel(v.id, ch.id)),
+          action: identity().inIdentity(() => void identity().p2pServer.removeChannel(v.id, ch.id)),
         })
       },
     },
@@ -473,7 +461,11 @@ export const peerServer = identityActions(identity => {
 
   const contactOf = (ctx: ActionCtx) => {
     const t = memberOf(ctx)
-    return t ? useP2p.getState().contacts.find(c => c.ik === t.m.ik) : undefined
+    return t
+      ? identity()
+          .useP2p.getState()
+          .contacts.find(c => c.ik === t.m.ik)
+      : undefined
   }
 
   // Kick and ban need the right bit and a member ranked below us who isn't us.
@@ -497,8 +489,8 @@ export const peerServer = identityActions(identity => {
       run: ctx => {
         const t = memberOf(ctx)
         if (!t) return
-        p2p.openHome()
-        void p2pDm.openDm(t.m.ik)
+        identity().p2p.openHome()
+        void identity().p2pDm.openDm(t.m.ik)
       },
     },
     {
@@ -509,7 +501,7 @@ export const peerServer = identityActions(identity => {
       available: ctx => contactOf(ctx) !== undefined,
       run: ctx => {
         const t = memberOf(ctx)
-        if (t) p2p.openDialog({ kind: 'contact', ik: t.m.ik })
+        if (t) identity().p2p.openDialog({ kind: 'contact', ik: t.m.ik })
       },
     },
     {
@@ -524,7 +516,7 @@ export const peerServer = identityActions(identity => {
         const r = t?.v.roles.find(x => x.id === role)
         if (!t || !r) return
         if (t.m.roles.includes(r.id)) takeRole(t.v, t.m, r, ctx.acct)
-        else void p2pServer.assignRole(t.v.id, t.m.ik, r.id)
+        else void identity().p2pServer.assignRole(t.v.id, t.m.ik, r.id)
       },
     },
     {
@@ -598,7 +590,9 @@ export const peerServer = identityActions(identity => {
       run: ctx => {
         const t = memberOf(ctx)
         if (t)
-          ctx.acct.store.getState().askConfirm(banRequest(t.v, t.m.ik, who(t.m.name, ctx.acct)))
+          ctx.acct.store
+            .getState()
+            .askConfirm(identity().banRequest(t.v, t.m.ik, who(t.m.name, ctx.acct)))
       },
     },
     {
@@ -629,7 +623,7 @@ export const peerServer = identityActions(identity => {
         if (p)
           moveRoles(
             p.v,
-            placeRole(p.v.roles, p.r.id, p.at - 1, p.v.rank, p2p.limits().server),
+            placeRole(p.v.roles, p.r.id, p.at - 1, p.v.rank, identity().p2p.limits().server),
             ctx.acct
           )
       },
@@ -648,7 +642,7 @@ export const peerServer = identityActions(identity => {
         if (p)
           moveRoles(
             p.v,
-            placeRole(p.v.roles, p.r.id, p.at + 1, p.v.rank, p2p.limits().server),
+            placeRole(p.v.roles, p.r.id, p.at + 1, p.v.rank, identity().p2p.limits().server),
             ctx.acct
           )
       },
@@ -691,14 +685,4 @@ export const peerServer = identityActions(identity => {
     takeRole,
   }
 })
-export const {
-  actions: p2pServerActions,
-  withdrawRequest,
-  transferRequest,
-  confirmForget,
-  kickRequest,
-  roleMask,
-  moveRoles,
-  deleteRole,
-  takeRole,
-} = peerServer.defaults
+export const p2pServerActions = peerServer.actions

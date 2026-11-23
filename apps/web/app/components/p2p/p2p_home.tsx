@@ -2,7 +2,7 @@
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
-import { legacyP2pApp, type P2pApp } from '../../lib/p2p/app/runtime'
+import type { P2pApp } from '../../lib/p2p/app/runtime'
 
 import { useAccount } from '../../lib/client/react'
 
@@ -956,8 +956,6 @@ function P2pDialogsBody() {
       return <RecoverDialog />
   }
 }
-
-export const confirmReset = confirmResetFor(legacyP2pApp)
 
 export const P2pRailTile = withP2pIdentity(P2pRailTileBody)
 export const ElsewhereNotice = withP2pIdentity(ElsewhereNoticeBody)

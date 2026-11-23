@@ -10,10 +10,11 @@ import {
   useViewing,
 } from '../viewing'
 import { afterEach, expect, test } from 'bun:test'
-import { p2p } from '../p2p'
 import { parseForward, forwardKey } from '../forward'
-import { resetSessionCaches, useStore } from '../store'
+import { getHomeSession, resetSessionCaches, useStore } from '../store'
 import { me, serverDetail, textChannel, msg, user, memoryStorage } from './fixtures'
+
+const { files: p2p } = getHomeSession()
 
 const originalFetch = globalThis.fetch
 afterEach(() => {

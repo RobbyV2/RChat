@@ -1,8 +1,12 @@
-import { afterEach, describe, expect, test } from 'bun:test'
-import { home } from '../instances'
-import { p2pDm } from '../p2p/app'
-import { openNode, startDeps, startParts } from '../p2p/app/account'
-import { put } from '../p2p/app/store'
+import { createPeerFixture } from './peer_fixture'
+import { AccountSession } from '../client/session'
+const peerOwner = new AccountSession(home)
+afterAll(() => peerOwner.store.dispose())
+const peerApp = createPeerFixture(peerOwner, 'ann')
+const { p2pDm, openNode, startDeps, startParts, put } = peerApp
+import { afterAll, afterEach, describe, expect, test } from 'bun:test'
+import { home } from './home_instance'
+
 import { b64u } from '../p2p/canonical'
 import { Gossip } from '../p2p/gossip'
 import { LOCAL, RANGES, type Local } from '../p2p/limits'

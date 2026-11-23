@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 import { resetSessionCaches, useStore } from '../store'
 import { me, serverDetail } from './fixtures'
 
@@ -39,7 +40,22 @@ describe('test isolation', () => {
       .filter(f => /\.test\.tsx?$/.test(f))
       .filter(f => {
         const text = readFileSync(`${dir}${f}`, 'utf8')
-        return uses.test(text) && !text.includes('resetSessionCaches')
+        if (text.includes('resetSessionCaches') || !uses.test(text)) return false
+        // Text in scanner fixtures describes other modules and never runs against the store.
+        const tree = ts.createSourceFile(f, text, ts.ScriptTarget.Latest)
+        function touchesStore(node: ts.Node): boolean {
+          if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+            const { expression, name } = node.expression
+            if (
+              ts.isIdentifier(expression) &&
+              expression.text === 'useStore' &&
+              ['setState', 'getState', 'getInitialState'].includes(name.text)
+            )
+              return true
+          }
+          return ts.forEachChild(node, touchesStore) === true
+        }
+        return touchesStore(tree)
       })
     expect(missing).toEqual([])
   }, 60_000)

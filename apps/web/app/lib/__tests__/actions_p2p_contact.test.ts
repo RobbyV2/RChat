@@ -1,34 +1,24 @@
-import { afterAll, afterEach, beforeEach, beforeAll, describe, expect, test } from 'bun:test'
-import { client } from '../client/client'
-import { me } from './fixtures'
+import { shownPeer } from './shown_peer'
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { ctxFor } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { menuItems } from '../actions/menu'
-import { openContactMenu } from '../actions/p2p_contact'
+import { peerContact } from '../actions/p2p_contact'
 import { EMPTY_NOTIFY, LEVELS, MUTE_CHOICES, setMute, type NotifyScope } from '../notify'
-import { useP2p } from '../p2p/app'
+
 import type { Contact } from '../p2p/contacts'
 import { dmRoomId } from '../p2p/dm'
 import { keyId, newKeyPair } from '../p2p/keys'
 import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
 
 const initial = useStore.getState()
-const p2pInitial = useP2p.getState()
+const p2pInitial = shownPeer().useP2p.getState()
 
 beforeAll(registerAppActions)
-beforeEach(() => {
-  const owner = client.shown()
-  owner.store.setState(s => ({
-    me: me('reader'),
-    guest: false,
-    settings: { ...s.settings, p2p: true },
-  }))
-  owner.identities.setAccount('reader')
-})
 
 afterEach(() => {
   useStore.setState(initial, true)
-  useP2p.setState(p2pInitial, true)
+  shownPeer().useP2p.setState(p2pInitial, true)
 })
 
 afterAll(resetSessionCaches)
@@ -56,7 +46,7 @@ const room: NotifyScope = { kind: 'p2p', room: dmRoomId(ME, DANA) }
 
 // The contact's menu as the P2P page and Home's P2P card open it.
 const menu = (c: Contact, me: string | null = ME) => {
-  useP2p.setState({ contacts: [c] })
+  shownPeer().useP2p.setState({ contacts: [c] })
   return menuItems(ctxFor(useStore.getState(), { kind: 'p2p_contact', c, me }, 'menu'))
 }
 const labels = (items: ContextMenuItem[]) => items.map(i => i.label)
@@ -162,14 +152,14 @@ describe("a P2P contact's menu", () => {
   })
 
   test('the menu opens where it was asked for, and not for a contact that is gone', () => {
-    useP2p.setState({ contacts: [contact(DANA)] })
-    openContactMenu(12, 34, contact(DANA), ME)
+    shownPeer().useP2p.setState({ contacts: [contact(DANA)] })
+    peerContact.forIdentity(shownPeer()).openContactMenu(12, 34, contact(DANA), ME)
     const open = useStore.getState().contextMenu
     expect([open?.x, open?.y]).toEqual([12, 34])
     expect(labels(open?.items ?? [])[0]).toBe('Message')
     useStore.getState().closeContextMenu()
-    useP2p.setState({ contacts: [] })
-    openContactMenu(12, 34, contact(DANA), ME)
+    shownPeer().useP2p.setState({ contacts: [] })
+    peerContact.forIdentity(shownPeer()).openContactMenu(12, 34, contact(DANA), ME)
     expect(useStore.getState().contextMenu).toBe(null)
   })
 })

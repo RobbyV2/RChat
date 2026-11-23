@@ -22,7 +22,7 @@ import { UserAvatar } from '../components/user_avatar'
 import { fieldCls, filledBtn, Masked, textBtn } from '../components/ui'
 import { audibleStreams, guestLabel, isGuestName } from '../lib/guest_voice'
 import { restoreStreamer } from '../lib/start'
-import { errorText, useStore } from '../lib/store'
+import { errorText } from '../lib/store'
 import { WidgetConnection } from '../lib/widget_connection'
 import { ViewingPrompt } from '../components/viewing_prompt'
 import {
@@ -155,10 +155,10 @@ function ChatRow({
   const owner = 'widget-message-' + message.id
   useEffect(() => {
     return () => {
-      const state = useStore.getState()
+      const state = acct.store.getState()
       if (state.contextMenu?.owner === owner) state.closeContextMenu()
     }
-  }, [canReply, owner])
+  }, [acct, canReply, owner])
   const pick = () => {
     const target = client.replyTarget(message.id)
     if (target) reply(target)

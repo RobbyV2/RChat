@@ -67,8 +67,6 @@ const IDLE: IndexStatus = {
 export const effectiveMode = (wanted: IndexMode, guest: boolean): IndexMode =>
   guest && wanted === 'full' ? 'loaded' : wanted
 
-const INDEXED_KINDS = new Set(['user', 'poll'])
-
 // `server` is the message's server (null in DMs); a channel message without one is not indexed.
 export const messageDoc = (
   s: RChatState,
@@ -76,7 +74,7 @@ export const messageDoc = (
   m: Message,
   server: string | null
 ): IndexDoc | null => {
-  if (!INDEXED_KINDS.has(m.kind) || m.id <= 0) return null
+  if ((m.kind !== 'user' && m.kind !== 'poll') || m.id <= 0) return null
   // Spoiler text is never indexed, so a search can't confirm what a spoiler hides.
   const text = replaceSpoilers(m.content, () => '\u2588\u2588\u2588').trim()
   if (!text || Object.hasOwn(s.blocked, m.author.username)) return null

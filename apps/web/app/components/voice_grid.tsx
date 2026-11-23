@@ -720,12 +720,11 @@ function CallOwner({ children }: { children: ReactNode }) {
   const session = call?.account ?? shown
   const peer = call?.kind === 'p2p-call' || call?.kind === 'p2p-voice'
   const identity = peer ? session.identities.get(call.identity ?? 'main') : undefined
-  const content =
-    peer && (identity || call.identity) ? (
-      <P2pProvider identity={identity ?? null}>{children}</P2pProvider>
-    ) : (
-      children
-    )
+  const content = peer ? (
+    <P2pProvider identity={identity ?? null}>{children}</P2pProvider>
+  ) : (
+    children
+  )
   return shown === session ? (
     content
   ) : (

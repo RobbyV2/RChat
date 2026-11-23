@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { api, home } from '../instances'
+import { home, api } from './home_instance'
 import { secretsKey } from '../passwords'
 import { forwardKey } from '../forward'
 import { loadApiHistory, useApiDoc } from '../api_console'

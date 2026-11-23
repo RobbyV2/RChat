@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { api } from '../instances'
+import { api } from './home_instance'
 import { useStore, resetSessionCaches } from '../store'
 import { ALL_PERMS, Perm } from '../types'
 import { member, paged } from './fixtures'

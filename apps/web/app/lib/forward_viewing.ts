@@ -1,5 +1,4 @@
-import { ApiError } from './api'
-import { api } from './instances'
+import { ApiError, type Api } from './api'
 import type { ForwardClip, ForwardSource } from './forward'
 import type { AccountSession } from './client/session'
 import type { RChatState } from './store_types'
@@ -56,7 +55,9 @@ export const sourceTarget = (
   const { viewing } = account
   if (source?.kind === 'p2p') {
     const app = account.identities.get(source.identity)
-    return app?.peerTarget(app.useP2p.getState(), source.room, source.ch) ?? null
+    return app?.isCurrent()
+      ? (app.peerTarget(app.useP2p.getState(), source.room, source.ch) ?? null)
+      : null
   }
   if (source?.kind !== 'channel') return null
   const server = sourceServer(s, source.id) ?? source.server
@@ -79,7 +80,9 @@ export const sourceAccess = (
   account: AccountSession
 ): SourceAccess => {
   if (source?.kind === 'direct')
-    return !source.identity || account.identities.get(source.identity) ? 'open' : 'unknown'
+    return !source.identity || account.identities.get(source.identity)?.isCurrent()
+      ? 'open'
+      : 'unknown'
   const target = sourceTarget(s, source, label, account)
   return target ? (account.viewing.canView(target) ? 'open' : 'hidden') : 'unknown'
 }
@@ -118,7 +121,7 @@ export const quoteSource = (
 
 export const locateQuote = async (
   id: number,
-  accountApi = api
+  accountApi: Pick<Api, 'messagePlace'>
 ): Promise<ForwardSource | undefined> => {
   try {
     const place = await accountApi.messagePlace(id)

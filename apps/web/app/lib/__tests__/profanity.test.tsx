@@ -1,3 +1,4 @@
+import { shownPeer } from './shown_peer'
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -22,7 +23,7 @@ import {
   type Matcher,
 } from '../profanity'
 import { messageFilterOn, siteFilterOn } from '../rules'
-import { home } from '../instances'
+import { home } from './home_instance'
 import { maskOf, useStore, resetSessionCaches } from '../store'
 import { MarkdownMessage } from '../../components/markdown_message'
 import { MaskControl, Masked, MaskedWords } from '../../components/ui'
@@ -39,7 +40,7 @@ import {
   roleMenuItems,
 } from '../../components/p2p/p2p_server_roles'
 import { AuditRow } from '../../components/audit_log'
-import { useP2p } from '../p2p/app'
+
 import type { ChannelView, MemberView, RoleView, ServerView } from '../p2p/server'
 import { P } from '../p2p/state'
 import { nestedInteractive } from './nesting'
@@ -509,9 +510,9 @@ describe('in messages', () => {
       )
     expect(p2p('IK_ME')).toBe('shit')
     expect(p2p('alice')).toContain('>****</span>')
-    const p2pInitial = useP2p.getInitialState()
-    const was = { me: p2pInitial.me, name: p2pInitial.name }
-    Object.assign(p2pInitial, { me: 'IK_ME', name: 'shit head' })
+    const p2pInitial = () => shownPeer().useP2p.getInitialState()
+    const was = { me: p2pInitial().me, name: p2pInitial().name }
+    Object.assign(p2pInitial(), { me: 'IK_ME', name: 'shit head' })
     try {
       const view = {
         id: 'room',
@@ -540,15 +541,15 @@ describe('in messages', () => {
       expect(shown.includes('shit face')).toBe(false)
       expect(roster.split('data-masked-word').length - 1).toBe(1)
     } finally {
-      Object.assign(p2pInitial, was)
+      Object.assign(p2pInitial(), was)
     }
   })
 
   test('your own name in P2P channel access is never masked', async () => {
     await masking({})
-    const p2pInitial = useP2p.getInitialState()
-    const was = { me: p2pInitial.me, servers: p2pInitial.servers }
-    const live = useP2p.getState().servers
+    const p2pInitial = () => shownPeer().useP2p.getInitialState()
+    const was = { me: p2pInitial().me, servers: p2pInitial().servers }
+    const live = shownPeer().useP2p.getState().servers
     const people = [
       { ik: 'IK_ME', name: 'shit head', m: 'join', below: false, owner: false },
       { ik: 'IK_PEER', name: 'shit face', m: 'join', below: true, owner: false },
@@ -576,8 +577,8 @@ describe('in messages', () => {
     } as unknown as ChannelView
     const access = (owner: string) => {
       const v = view(owner)
-      Object.assign(p2pInitial, { me: 'IK_ME', servers: { room: v } })
-      useP2p.setState({ servers: { room: v } })
+      Object.assign(p2pInitial(), { me: 'IK_ME', servers: { room: v } })
+      shownPeer().useP2p.setState({ servers: { room: v } })
       return renderToStaticMarkup(<ChannelAccess v={v} c={channel} />)
     }
     try {
@@ -598,15 +599,15 @@ describe('in messages', () => {
       expect(shown).toContain('shit head')
       expect(shown.includes('shit face')).toBe(false)
     } finally {
-      Object.assign(p2pInitial, was)
-      useP2p.setState({ servers: live })
+      Object.assign(p2pInitial(), was)
+      shownPeer().useP2p.setState({ servers: live })
     }
   })
 
   test('role names in your own P2P server are never masked in menus and confirms', async () => {
     await masking({})
     const { profanityOn, profanityReady } = useStore.getState()
-    const was = useP2p.getState().me
+    const was = shownPeer().useP2p.getState().me
     const ME = { ik: 'IK_ME', name: 'me', m: 'join', below: false, owner: false, roles: ['R1'] }
     const PEER = { ik: 'IK_PEER', name: 'peer', m: 'join', below: true, owner: false, roles: [] }
     const crew = { id: 'R1', name: 'shit crew', below: true, held: false, holders: 1 }
@@ -626,7 +627,7 @@ describe('in messages', () => {
       return useStore.getState().confirm?.body
     }
     useStore.setState({ profanityOn: true, profanityReady: true })
-    useP2p.setState({ me: 'IK_ME' })
+    shownPeer().useP2p.setState({ me: 'IK_ME' })
     try {
       const owned = view('IK_ME')
       const labels = (v: ServerView) =>
@@ -646,7 +647,7 @@ describe('in messages', () => {
       expect(said(() => remove(theirs)?.())).toContain('Delete **** crew?')
     } finally {
       useStore.setState({ profanityOn, profanityReady, confirm: null })
-      useP2p.setState({ me: was })
+      shownPeer().useP2p.setState({ me: was })
     }
   })
 

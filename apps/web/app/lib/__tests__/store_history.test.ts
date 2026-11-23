@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { useStore, resetSessionCaches } from '../store'
-import { p2p } from '../p2p'
+import { getHomeSession, useStore, resetSessionCaches } from '../store'
 import type { Message, WsEvent } from '../types'
 import { textChannel, me, media, msg, result, serverDetail, user } from './fixtures'
+
+const { files: p2p } = getHomeSession()
 
 afterAll(resetSessionCaches)
 

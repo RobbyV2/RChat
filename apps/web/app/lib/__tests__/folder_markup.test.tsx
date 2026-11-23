@@ -1,3 +1,4 @@
+import { shownPeer } from './shown_peer'
 import { afterAll, afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ContextMenu } from '../../components/context_menu'
@@ -7,7 +8,7 @@ import { P2pFolderEntry } from '../../components/p2p/p2p_server_view'
 import { FolderEntry } from '../../components/server_rail'
 import { FOLDER_PRESETS } from '../folder_colors'
 import { emptyLayout, type Folder } from '../nav_layout'
-import { useP2p } from '../p2p/app'
+
 import type { ServerView } from '../p2p/server/types'
 import { resetSessionCaches, useStore } from '../store'
 import { me } from './fixtures'
@@ -19,11 +20,11 @@ const setState = (patch: Partial<typeof initial>) => {
   useStore.setState(patch)
   Object.assign(initial, useStore.getState())
 }
-const p2pInitial = useP2p.getInitialState()
-const p2pSaved = { ...p2pInitial }
-const setP2p = (patch: Partial<typeof p2pInitial>) => {
-  useP2p.setState(patch)
-  Object.assign(p2pInitial, useP2p.getState())
+const p2pInitial = () => shownPeer().useP2p.getInitialState()
+const p2pSaved = { ...p2pInitial() }
+const setP2p = (patch: Partial<ReturnType<typeof p2pInitial>>) => {
+  shownPeer().useP2p.setState(patch)
+  Object.assign(p2pInitial(), shownPeer().useP2p.getState())
 }
 
 afterEach(() => {
@@ -33,7 +34,7 @@ afterEach(() => {
 
 afterAll(() => {
   Object.assign(initial, saved)
-  Object.assign(p2pInitial, p2pSaved)
+  Object.assign(p2pInitial(), p2pSaved)
   resetSessionCaches()
 })
 

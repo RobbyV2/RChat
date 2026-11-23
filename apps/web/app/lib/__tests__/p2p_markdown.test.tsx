@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
 import { MarkdownMessage, messageLinkAction } from '../../components/markdown_message'
 import { AccountProvider } from '../client/react'
-import { api } from '../instances'
+import { api } from './home_instance'
 import { testAccount } from './test_account'
 import type { Message } from '../types'
 

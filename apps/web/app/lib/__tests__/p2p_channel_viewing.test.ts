@@ -1,15 +1,20 @@
-import { expect, test } from 'bun:test'
-import { p2pSearch, p2pServer } from '../p2p/app/servers'
-import { put, servers, useP2p } from '../p2p/app/store'
-import { peerTarget } from '../p2p/app/viewing'
-import { endViewing, forgetViewing, useViewing } from '../viewing'
+import { createPeerFixture } from './peer_fixture'
+import { AccountSession } from '../client/session'
+import { home } from './home_instance'
+const peerOwner = new AccountSession(home)
+afterAll(() => peerOwner.store.dispose())
+const peerApp = createPeerFixture(peerOwner, 'reader')
+const { p2pSearch, p2pServer, put, useP2p, peerTarget } = peerApp
+import { afterAll, expect, test } from 'bun:test'
+
+const { endViewing, forgetViewing, useViewing } = peerOwner.viewing
 import { Hub, ManualClock } from './p2p_net'
 import { general, joinWithCode, makeMember, pump, stopAll } from './p2p_server_net'
 import { until } from './fixtures'
 
 test('a peer receives the shared channel label and chooses before its local message history is read', async () => {
   const start = useP2p.getState()
-  const service = servers
+  const service = peerApp.servers
   try {
     const clock = new ManualClock(),
       hub = new Hub()

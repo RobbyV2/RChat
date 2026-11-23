@@ -2,7 +2,7 @@
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
-import { legacyP2pApp, type P2pApp } from '../../lib/p2p/app/runtime'
+import type { P2pApp } from '../../lib/p2p/app/runtime'
 
 import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
@@ -546,7 +546,7 @@ export const memberMenu = (
   v: ServerView,
   m: MemberView,
   acct = client.shown(),
-  identity = acct.identities.get() ?? legacyP2pApp
+  identity = acct.identities.viewed() ?? null
 ) => {
   registerAppActions()
   return menuItems(
@@ -561,7 +561,7 @@ export const openMemberMenu = (
   x: number,
   y: number,
   acct = client.shown(),
-  identity = acct.identities.get() ?? legacyP2pApp
+  identity = acct.identities.viewed() ?? null
 ) =>
   openActionMenu(
     x,
@@ -1046,8 +1046,6 @@ function ServerInviteRowsBody() {
     </section>
   )
 }
-
-export const sendBlock = sendBlockFor(legacyP2pApp)
 
 export const P2pFolderEntry = withP2pIdentity(P2pFolderEntryBody)
 export const P2pJoinTile = withP2pIdentity(P2pJoinTileBody)

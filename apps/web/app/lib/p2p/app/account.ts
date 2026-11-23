@@ -1,4 +1,3 @@
-import { legacyScope } from './store'
 import { client } from '../../client/client'
 import type { AccountSession } from '../../client/session'
 import { instanceLabel } from '../../instance_label'
@@ -23,14 +22,6 @@ import { Servers } from '../server'
 import { runtimeLimits } from '../user_limits'
 import { LOCAL, type Local } from '../limits'
 import type { P2pDialog } from './store'
-import * as storePart from './store'
-import * as badgePart from './badge'
-import * as callsPart from './calls'
-import * as dmsPart from './dms'
-import * as serversPart from './servers'
-import * as inboxPart from './inbox'
-import * as attachmentsPart from './attachments'
-import * as railPart from './rail'
 import type { IdentityScope, P2pParts } from './scope'
 
 export function createAccountPart(
@@ -47,7 +38,7 @@ export function createAccountPart(
     visible: () => typeof document === 'undefined' || document.visibilityState !== 'hidden',
     pauses: () => pausesHidden(),
     onChange: fn => {
-      if (typeof document === 'undefined') return () => {}
+      if (typeof globalThis.document?.addEventListener !== 'function') return () => {}
       document.addEventListener('visibilitychange', fn)
       return () => document.removeEventListener('visibilitychange', fn)
     },
@@ -55,7 +46,10 @@ export function createAccountPart(
 
   // Leaving the page says goodbye to every contact, so they see us go offline at once. A page
   // restored from the back-forward cache starts again.
-  if (typeof window !== 'undefined') {
+  if (
+    typeof globalThis.window?.addEventListener === 'function' &&
+    typeof globalThis.document?.addEventListener === 'function'
+  ) {
     // Frames are sealed asynchronously and a page that unloads doesn't wait for that, so what
     // pagehide sends is best effort (a contact call's `end` usually doesn't get out). A voice
     // channel's leave goes out on beforeunload instead, while there is still time; a page that
@@ -93,8 +87,8 @@ export function createAccountPart(
     )
   }
 
-  const owner = () => scope.owner ?? parts.store.p2pHost.account ?? client.shown()
-  const connection = () => owner().conn
+  const owner = scope.owner
+  const connection = () => owner.conn
 
   const homeLabel = () => instanceLabel(connection().info, connection().host)
 
@@ -327,7 +321,7 @@ export function createAccountPart(
   const startDeps = (username: string, lim: Readonly<Local> = state.identityLimits(username)) => {
     const rt = runtimeLimits(lim)
     return {
-      account: scope.owner ?? p2pHost.account ?? client.shown(),
+      account: scope.owner,
       limits: lim,
       transport: rt.transport,
       calls: rt.calls,
@@ -545,7 +539,7 @@ export function createAccountPart(
       const chat = useP2p.getState().chat
       if (chat) await parts.dms.loadChat(chat.room, chat.peer)
       // The instance's PeerJS address, on a first visit (later ones keep it).
-      if (!connection().info) await owner().discovery.settled(LOCAL.misc.infoWaitMs)
+      if (!connection().info) await owner.discovery.settled(LOCAL.misc.infoWaitMs)
       if (state.node !== n) return
       await n.start()
       if (state.node !== n) return
@@ -568,9 +562,8 @@ export function createAccountPart(
   }
 
   // Called on every sign in and out (null): one node per account, none for guests.
-  const p2pAccount = async (username: string | null, account?: AccountSession) => {
+  const p2pAccount = async (username: string | null) => {
     if (scope.disposed || (username !== null && !scope.current(username))) return
-    if (account && !scope.owner) p2pHost.account = account
     const cur = useP2p.getState()
     if (
       username !== null &&
@@ -744,29 +737,3 @@ export function createAccountPart(
     p2p,
   }
 }
-
-export const legacyAccount = createAccountPart(
-  {
-    store: storePart,
-    badge: badgePart,
-    calls: callsPart,
-    dms: dmsPart,
-    servers: serversPart,
-    inbox: inboxPart,
-    attachments: attachmentsPart,
-    rail: railPart,
-  },
-  legacyScope
-)
-export const {
-  dbFor,
-  mirrorFrom,
-  stopNode,
-  run,
-  startDeps,
-  openNode,
-  startParts,
-  boot,
-  p2pAccount,
-  p2p,
-} = legacyAccount

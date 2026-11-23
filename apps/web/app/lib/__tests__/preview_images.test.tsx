@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { api } from '../instances'
+import { api } from './home_instance'
 import { previewPath } from '../media_src'
 import { resetSessionCaches, useStore } from '../store'
 import { MarkdownMessage } from '../../components/markdown_message'

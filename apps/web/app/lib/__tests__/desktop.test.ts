@@ -12,7 +12,8 @@ import { mobileSharing, onBack, pressEscape, shareText, type BackEnv } from '../
 import { desktopNotifier } from '../platform/desktop_notifications'
 import { CHUNK_BYTES, SAVE_FAILED, desktopSharing, saveTo } from '../platform/desktop_sharing'
 import { confirmGate, deepLinkTarget, openDeepLink, type LinkEnv } from '../deep_links'
-import { home, shareOrigin } from '../instances'
+import { shareOrigin } from '../instances'
+import { home } from './home_instance'
 import { parsePath } from '../view'
 
 type Call = { cmd: string; args?: unknown; headers?: Record<string, string> }
@@ -390,14 +391,14 @@ describe('deep links', () => {
 
 describe('share origin', () => {
   test('web pages share their own origin; app-only origins share the home instance', () => {
-    expect(shareOrigin({ protocol: 'https:', origin: 'https://chat.example.com' }, false)).toBe(
-      'https://chat.example.com'
-    )
-    expect(shareOrigin({ protocol: 'tauri:', origin: 'null' }, false)).toBe(home.origin)
-    expect(shareOrigin({ protocol: 'http:', origin: 'http://tauri.localhost' }, true)).toBe(
+    expect(
+      shareOrigin({ protocol: 'https:', origin: 'https://chat.example.com' }, false, home)
+    ).toBe('https://chat.example.com')
+    expect(shareOrigin({ protocol: 'tauri:', origin: 'null' }, false, home)).toBe(home.origin)
+    expect(shareOrigin({ protocol: 'http:', origin: 'http://tauri.localhost' }, true, home)).toBe(
       home.origin
     )
-    expect(shareOrigin(null, false)).toBe(home.origin)
+    expect(shareOrigin(null, false, home)).toBe(home.origin)
   })
 })
 

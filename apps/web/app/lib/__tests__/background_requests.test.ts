@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { BACKGROUND } from '../api'
-import { api } from '../instances'
+import { api } from './home_instance'
 
 const realFetch = globalThis.fetch
 let sent: { path: string; background: string | null }[] = []

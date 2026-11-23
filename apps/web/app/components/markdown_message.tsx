@@ -627,7 +627,10 @@ function P2pFile({ media, messageId }: { media: MessageMedia; messageId: number 
           setShown(preview)
         }
         if (save)
-          sharing().saveBlob(downloadName(filename), new Blob([got.blob], { type: NEUTRAL_TYPE }))
+          sharing(account).saveBlob(
+            downloadName(filename),
+            new Blob([got.blob], { type: NEUTRAL_TYPE })
+          )
       })
       .catch((e: unknown) => {
         const text = e instanceof Error ? e.message : String(e)

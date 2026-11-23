@@ -3,17 +3,17 @@ import type { AccountSession } from '../../client/session'
 import { resetHandlers, type IdentityOptions, type IdentityScope } from '../identity_scope'
 import type { P2pParts } from './scope'
 import { bindP2pHost } from './host'
-import { createStorePart, legacyStore, legacyScope } from './store'
-import { createViewingPart, legacyViewing } from './viewing'
-import { createRailPart, legacyRail } from './rail'
-import { createDmsPart, legacyDms } from './dms'
-import { createAttachmentsPart, legacyAttachments } from './attachments'
-import { createBadgePart, legacyBadge } from './badge'
-import { createCallsPart, legacyCalls } from './calls'
-import { createInboxPart, legacyInbox } from './inbox'
-import { createServersPart, legacyServers } from './servers'
-import { createMovePart, legacyMove } from './move'
-import { createAccountPart, legacyAccount } from './account'
+import { createStorePart } from './store'
+import { createViewingPart } from './viewing'
+import { createRailPart } from './rail'
+import { createDmsPart } from './dms'
+import { createAttachmentsPart } from './attachments'
+import { createBadgePart } from './badge'
+import { createCallsPart } from './calls'
+import { createInboxPart } from './inbox'
+import { createServersPart } from './servers'
+import { createMovePart } from './move'
+import { createAccountPart } from './account'
 
 function makeParts(scope: IdentityScope): P2pParts {
   // Cross-part callbacks read these fields after construction. Only the server
@@ -46,18 +46,18 @@ function application(parts: P2pParts, scope: IdentityScope, cleanup: () => void)
     ...parts.servers,
     ...parts.move,
     ...parts.account,
-    get owner() {
-      return scope.owner ?? parts.store.p2pHost.account
-    },
+    owner: scope.owner,
     localId: scope.localId,
+    isCurrent: () => scope.current(),
     inIdentity<T extends unknown[], R>(fn: (...args: T) => R) {
-      const account = scope.owner ?? parts.store.p2pHost.account
-      const mark = account?.lifetime.sessionMark()
+      const account = scope.owner
+      const mark = account.lifetime.sessionMark()
       return (...args: T) => {
-        if (!scope.disposed && account?.lifetime.sessionMark() === mark) return fn(...args)
+        if (scope.current() && account.lifetime.sessionMark() === mark) return fn(...args)
       }
     },
     dispose() {
+      if (scope.disposed) return
       void parts.account.p2pAccount(null)
       cleanup()
     },
@@ -109,21 +109,3 @@ export function createP2pApp(
   bindP2pHost(app, owner, () => scope.current() && app.useP2p.getState().account === username)
   return app
 }
-
-export const legacyP2pApp = application(
-  {
-    store: legacyStore,
-    viewing: legacyViewing,
-    rail: legacyRail,
-    dms: legacyDms,
-    attachments: legacyAttachments,
-    badge: legacyBadge,
-    calls: legacyCalls,
-    inbox: legacyInbox,
-    servers: legacyServers,
-    move: legacyMove,
-    account: legacyAccount,
-  },
-  legacyScope,
-  () => {}
-)

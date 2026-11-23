@@ -1,4 +1,4 @@
-import { legacyP2pApp, type P2pApp } from '../p2p/app/runtime'
+import type { P2pApp } from '../p2p/app/runtime'
 import { actionElement } from '../masked_reveal'
 import { memberState, messageServer } from '../selectors'
 import { OPT_BASE } from '../slices/messages'
@@ -200,8 +200,7 @@ export const ctxFor = (
   target: Target,
   via: Via,
   acct = client.shown(),
-  identity: P2pApp | null = acct.identities.viewed() ??
-    (acct.isHome && s.me && !s.guest ? legacyP2pApp : null)
+  identity: P2pApp | null = acct.identities.viewed() ?? null
 ): ActionCtx => ctxWith(acct, s, target, via, actionElement(), identity)
 
 export const paletteCtx = (s: RChatState, acct = client.shown()) =>
@@ -286,12 +285,7 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
 // stays only while it is still on the page.
 export const refreshCtx = (ctx: ActionCtx): ActionCtx | null => {
   if (ctx.mark !== ctx.acct.lifetime.sessionMark()) return null
-  if (
-    ctx.identity &&
-    ctx.acct.identities.get(ctx.identity.localId) !== ctx.identity &&
-    !(ctx.identity === legacyP2pApp && ctx.acct.isHome && !ctx.acct.identities.get())
-  )
-    return null
+  if (ctx.identity && ctx.acct.identities.get(ctx.identity.localId) !== ctx.identity) return null
   const s = ctx.acct.store.getState()
   const t = freshTarget(s, ctx.target)
   if (!t) return null

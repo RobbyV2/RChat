@@ -1,4 +1,3 @@
-import { client } from '../client/client'
 // The menus of P2P conversations, channels and threads: a message, a pin line, the call
 // buttons' chevrons, an account badge and the rail's P2P tile.
 
@@ -21,12 +20,11 @@ import {
 } from 'lucide-react'
 import { fmtSize } from '../bytes'
 import { P2P_IP_HINT, ROUTE_LABEL } from '../call_choice'
+import type { AccountSession } from '../client/session'
 import { sourceAccess } from '../forward_viewing'
-import type { ForwardSource, ForwardClip } from '../forward'
+import type { ForwardClip, ForwardSource } from '../forward'
 
 import type { Attachment } from '../p2p/content'
-import { legacyP2pApp } from '../p2p/app/runtime'
-import type { AccountSession } from '../client/session'
 import { displayName } from '../p2p/contacts'
 import { messageActs, type P2pMessage } from '../p2p/dm'
 import { sharing } from '../platform'
@@ -39,9 +37,16 @@ import type { Message } from '../types'
 import { hidesIp } from './voice'
 import type { Action, ActionCtx, ArgChoice } from './types'
 import { identityActions } from './identity'
-export const peerChat = identityActions(identity => {
-  const { p2p, p2pBadge, p2pCall, p2pDm, p2pFiles, p2pThread, p2pUser, useP2p } = identity
+export const threadAct = (p: P2pMessage, canAct: boolean) =>
+  p.system || p.call || p.thread || p.noThread || p.archived
+    ? null
+    : p.replies
+      ? 'View thread'
+      : canAct && !p.unavailable
+        ? 'Create thread'
+        : null
 
+export const peerChat = identityActions(identity => {
   const copy = (text: string) => void sharing().copyText(text)
 
   const seconds = (ms: number) => Math.floor(ms / 1000)
@@ -50,36 +55,29 @@ export const peerChat = identityActions(identity => {
   // some.
   // A message whose body isn't here ("Message unavailable") keeps its thread reachable; one from
   // the copy a server was transferred from has none here.
-  const threadAct = (p: P2pMessage, canAct: boolean) =>
-    p.system || p.call || p.thread || p.noThread || p.archived
-      ? null
-      : p.replies
-        ? 'View thread'
-        : canAct && !p.unavailable
-          ? 'Create thread'
-          : null
-
-  const confirmDelete = (id: string, skip = false, acct = client.shown()) => {
-    const run = () => void p2pDm.remove(id)
+  const confirmDelete = (id: string, skip = false, acct = identity().owner) => {
+    const run = () => void identity().p2pDm.remove(id)
     if (skip) return run()
-    const server = !!useP2p.getState().chat?.ch
+    const server = !!identity().useP2p.getState().chat?.ch
     acct.store.getState().askConfirm({
       title: 'Delete Message',
       body: server
         ? 'Delete this message? It is removed here now, and on other members’ devices as they sync.'
         : 'Delete this message? It is removed here now, and on the other device the next time you are both online.',
       confirm: 'Delete',
-      action: identity.inIdentity(run),
+      action: identity().inIdentity(run),
     })
   }
 
-  const ownsSource = (acct: AccountSession) =>
-    acct.identities.get(identity.localId) === identity ||
-    (acct.isHome && identity === legacyP2pApp && !acct.identities.get())
+  const ownsSource = (account: AccountSession) => {
+    const app = identity()
+    return app.isCurrent() && account === app.owner && account.identities.get(app.localId) === app
+  }
 
   const sourceOf = (draftKey: string): ForwardSource => {
     const [room, ch] = draftKey.split('#')[0].split('/')
-    const slot = identity.localId === 'main' ? {} : { identity: identity.localId }
+    const localId = identity().localId
+    const slot = localId === 'main' ? {} : { identity: localId }
     return ch ? { kind: 'p2p', room, ch, ...slot } : { kind: 'direct', ...slot }
   }
 
@@ -90,12 +88,12 @@ export const peerChat = identityActions(identity => {
     m: Message,
     author: string,
     draftKey: string,
-    acct = identity.owner ?? client.shown()
+    acct = identity().owner
   ) => {
     if (!ownsSource(acct)) return
     const clip: ForwardClip = {
       id: 1 + Math.floor(Math.random() * 2 ** 40),
-      author: p.fwd ? (m.forward?.author ?? null) : p2pUser(p.sender, author),
+      author: p.fwd ? (m.forward?.author ?? null) : identity().p2pUser(p.sender, author),
       snippet: plainLine(p.fwd ? p.fwd.body : p.body),
       has_media: !!(p.att?.length || p.fwd?.att?.length),
       created_at: p.fwd ? seconds(p.fwd.ts) : m.created_at,
@@ -112,15 +110,12 @@ export const peerChat = identityActions(identity => {
     ik: string,
     p: P2pMessage,
     author: string,
-    draftKey: string,
-    acct = identity.owner ?? client.shown()
+    acct: AccountSession,
+    draftKey: string
   ) => {
     const source = sourceOf(draftKey)
-    const mark = acct.lifetime.sessionMark()
     const allowed = () =>
-      mark === acct.lifetime.sessionMark() &&
-      ownsSource(acct) &&
-      sourceAccess(acct.store.getState(), source, undefined, acct) === 'open'
+      ownsSource(acct) && sourceAccess(acct.store.getState(), source, undefined, acct) === 'open'
     if (!allowed()) return
     const fwd = p.fwd ?? {
       name: author,
@@ -128,22 +123,24 @@ export const peerChat = identityActions(identity => {
       body: p.body,
       ...(p.att.length ? { att: p.att } : {}),
     }
-    const target = await p2pDm.ensureRoom(ik)
-    if (target && allowed() && (await p2pDm.forward(target, fwd))) {
-      const c = useP2p.getState().contacts.find(x => x.ik === ik)
+    const target = await identity().p2pDm.ensureRoom(ik)
+    if (target && allowed() && (await identity().p2pDm.forward(target, fwd)) && allowed()) {
+      const c = identity()
+        .useP2p.getState()
+        .contacts.find(x => x.ik === ik)
       const s = acct.store.getState()
       s.showToast('Forwarded to', c ? maskOf(s)(displayName(c)) : 'contact')
     }
   }
 
-  const startDownload = (att: Attachment, acct = client.shown()) => {
-    const run = () => void p2pFiles.download(att)
-    if (att.size <= p2p.limits().files.bigFile) return run()
+  const startDownload = (att: Attachment, acct = identity().owner) => {
+    const run = () => void identity().p2pFiles.download(att)
+    if (att.size <= identity().p2p.limits().files.bigFile) return run()
     acct.store.getState().askConfirm({
       title: 'Download a large file',
       body: `This file is ${fmtSize(att.size)}. It is stored on this device and shared with others in this conversation.`,
       confirm: 'Download',
-      action: identity.inIdentity(run),
+      action: identity().inIdentity(run),
     })
   }
 
@@ -158,8 +155,8 @@ export const peerChat = identityActions(identity => {
     run(): void
   }
 
-  const fileRow = (att: Attachment, canFetch: boolean, acct = client.shown()): FileRow => {
-    const v = useP2p.getState().files[att.h]
+  const fileRow = (att: Attachment, canFetch: boolean, acct = identity().owner): FileRow => {
+    const v = identity().useP2p.getState().files[att.h]
     const name = maskOf(acct.store.getState(), false, true)(downloadName(att.name))
     if (v?.state === 'done')
       return {
@@ -168,7 +165,7 @@ export const peerChat = identityActions(identity => {
         verb: 'Save',
         icon: Download,
         disabled: false,
-        run: () => void p2pFiles.save(att),
+        run: () => void identity().p2pFiles.save(att),
       }
     const busy = v?.state === 'downloading'
     return {
@@ -177,7 +174,7 @@ export const peerChat = identityActions(identity => {
       verb: busy ? 'Cancel download' : 'Download',
       icon: busy ? X : Download,
       disabled: !busy && (!canFetch || !v || v.holders === 0),
-      run: () => (busy ? void p2pFiles.cancel(att.h) : startDownload(att, acct)),
+      run: () => (busy ? void identity().p2pFiles.cancel(att.h) : startDownload(att, acct)),
     }
   }
 
@@ -190,7 +187,7 @@ export const peerChat = identityActions(identity => {
     const t = rowOf(ctx)
     if (!t) return null
     const act = t.chat.canAct && !t.p.archived
-    return { ...t, act, can: messageActs(t.p, act, t.p.sender === useP2p.getState().me) }
+    return { ...t, act, can: messageActs(t.p, act, t.p.sender === identity().useP2p.getState().me) }
   }
 
   const filesOf = (ctx: ActionCtx) => {
@@ -208,8 +205,8 @@ export const peerChat = identityActions(identity => {
     if (!t) return []
     const mask = maskOf(ctx.s)
     return [
-      ...useP2p
-        .getState()
+      ...identity()
+        .useP2p.getState()
         .contacts.filter(c => c.state === 'mutual' && c.ik !== t.chat.forwardSkip)
         .map(c => ({ value: c.ik, label: mask(displayName(c)), name: true })),
       { value: COPY, label: 'Copy for forwarding', icon: Copy },
@@ -236,7 +233,7 @@ export const peerChat = identityActions(identity => {
       available: ctx => !!actsOf(ctx)?.can.reply,
       run: ctx => {
         const t = rowOf(ctx)
-        if (t) p2pDm.startReply(t.chat.draftKey, t.p.id)
+        if (t) identity().p2pDm.startReply(t.chat.draftKey, t.p.id)
       },
     },
     {
@@ -248,7 +245,7 @@ export const peerChat = identityActions(identity => {
       available: ctx => !!actsOf(ctx)?.can.edit,
       run: ctx => {
         const t = rowOf(ctx)
-        if (t) p2pDm.startEdit(t.chat.draftKey, t.p.id)
+        if (t) identity().p2pDm.startEdit(t.chat.draftKey, t.p.id)
       },
     },
     {
@@ -264,7 +261,7 @@ export const peerChat = identityActions(identity => {
         if (!t) return
         const author = t.chat.ownName(t.p.sender)
         if (to === COPY) copyForP2p(t.p, t.m, author, t.chat.draftKey, ctx.acct)
-        else void forwardTo(to, t.p, author, t.chat.draftKey, ctx.acct)
+        else void forwardTo(to, t.p, author, ctx.acct, t.chat.draftKey)
       },
     },
     {
@@ -283,7 +280,7 @@ export const peerChat = identityActions(identity => {
       },
       run: ctx => {
         const t = rowOf(ctx)
-        if (t) void p2pThread.open(t.p.id)
+        if (t) void identity().p2pThread.open(t.p.id)
       },
     },
     {
@@ -298,7 +295,7 @@ export const peerChat = identityActions(identity => {
       },
       run: ctx => {
         const t = rowOf(ctx)
-        if (t) void p2pDm.pin(t.p.id, true)
+        if (t) void identity().p2pDm.pin(t.p.id, true)
       },
     },
     {
@@ -313,7 +310,7 @@ export const peerChat = identityActions(identity => {
       },
       run: ctx => {
         const t = rowOf(ctx)
-        if (t) void p2pDm.pin(t.p.id, false)
+        if (t) void identity().p2pDm.pin(t.p.id, false)
       },
     },
     {
@@ -425,7 +422,7 @@ export const peerChat = identityActions(identity => {
       available: ctx => !!pinLineOf(ctx)?.p.system?.target,
       run: ctx => {
         const target = pinLineOf(ctx)?.p.system?.target
-        if (target) void p2pDm.jumpTo(target)
+        if (target) void identity().p2pDm.jumpTo(target)
       },
     },
     {
@@ -435,7 +432,7 @@ export const peerChat = identityActions(identity => {
       ...onPinLine,
       order: 110,
       available: ctx => pinLineOf(ctx) !== null,
-      run: () => void p2pDm.openPins(),
+      run: () => void identity().p2pDm.openPins(),
     },
   ]
 
@@ -458,7 +455,7 @@ export const peerChat = identityActions(identity => {
       available: ctx => callOf(ctx) !== null,
       run: ctx => {
         const t = callOf(ctx)
-        if (t) void p2pCall.start(t.peer, t.video)
+        if (t) void identity().p2pCall.start(t.peer, t.video)
       },
     },
     {
@@ -476,7 +473,7 @@ export const peerChat = identityActions(identity => {
         })),
       run: (ctx, { relay }) => {
         const t = callOf(ctx)
-        if (t && relay) void p2pCall.start(t.peer, t.video, relay)
+        if (t && relay) void identity().p2pCall.start(t.peer, t.video, relay)
       },
     },
   ]
@@ -495,7 +492,7 @@ export const peerChat = identityActions(identity => {
       available: ctx => !!badgeOf(ctx)?.stale,
       run: ctx => {
         const t = badgeOf(ctx)
-        if (t) p2pBadge.recheck(t.ik)
+        if (t) identity().p2pBadge.recheck(t.ik)
       },
     },
     {
@@ -524,11 +521,4 @@ export const peerChat = identityActions(identity => {
 
   return { actions: p2pChatActions, threadAct, confirmDelete, copyForP2p, forwardTo, startDownload }
 })
-export const {
-  actions: p2pChatActions,
-  threadAct,
-  confirmDelete,
-  copyForP2p,
-  forwardTo,
-  startDownload,
-} = peerChat.defaults
+export const p2pChatActions = peerChat.actions

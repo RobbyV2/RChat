@@ -7,7 +7,6 @@ import {
   RETRY_MS,
   cleanServers,
   helpersValue,
-  iceConfig,
   iceOffer,
   iceValue,
   parseHelpers,
@@ -36,8 +35,9 @@ const sources = () => {
 
 describe('ICE config', () => {
   test('nothing is configured until the instance advertises servers', () => {
-    expect(iceConfig()).toEqual({ iceServers: [] })
-    expect(iceConfig() === iceConfig()).toBe(false)
+    const { cache } = setup(null, [])
+    expect(cache.config()).toEqual({ iceServers: [] })
+    expect(cache.config()).not.toBe(cache.config())
   })
 
   test('no ICE server URL is written anywhere but ice.ts', () => {
@@ -59,9 +59,8 @@ describe('ICE config', () => {
     // P2P files and calls (p2p.ts) and P2P messaging (p2p/transport.ts), each with its own Peer.
     expect(peerjs.map(o => rel(o.f)).sort()).toEqual(['p2p.ts', 'transport.ts'])
     const rtc = files.find(({ f }) => f.endsWith('/lib/rtc.ts'))
-    expect(
-      /new\s+(?:window\.)?\w*RTCPeerConnection\s*\(\s*iceConfig\(\)\s*\)/.test(rtc?.src ?? '')
-    ).toBe(true)
+    const connections = [...(rtc?.src ?? '').matchAll(/new RTCPeerConnection\((.*)\)/g)]
+    expect(connections.map(match => match[1])).toEqual(['this.ice()'])
     for (const name of ['/lib/p2p.ts', '/p2p/transport.ts']) {
       const file = files.find(({ f }) => f.endsWith(name))
       const peers = [...(file?.src ?? '').matchAll(/new\s+Peer\s*\(([^;]*?)\)\s*(?:\n|;|$)/g)]

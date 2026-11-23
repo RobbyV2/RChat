@@ -3,7 +3,7 @@ import { memberOf, serverAdminPerms, useStore, resetSessionCaches } from '../sto
 import { Perm, type Member, type WsEvent } from '../types'
 import { PRESENCE_LOG_MAX, byCodePoint, onlineRows, onlineSection, onlineTotals } from '../presence'
 import { advance, me, member, paged, role, serverDetail, until } from './fixtures'
-import { home } from '../instances'
+import { home } from './home_instance'
 
 afterAll(resetSessionCaches)
 

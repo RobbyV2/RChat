@@ -1,3 +1,4 @@
+import { shownPeer } from './shown_peer'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import SettingsMenu from '../../components/settings_menu'
@@ -6,8 +7,8 @@ import { paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { paletteCommands } from '../actions/palette'
 import { runAction } from '../actions/registry'
-import { home } from '../instances'
-import { p2pKey, useP2p } from '../p2p/app'
+import { home } from './home_instance'
+import { p2pKey } from '../p2p/app'
 import { resetSessionCaches, useStore } from '../store'
 import type { ActiveDialog, RChatState } from '../store_types'
 import type { P2pState } from '../p2p/app/store'
@@ -16,16 +17,18 @@ import { me } from './fixtures'
 const alicePeerFlag = () => peerStorage(home, 'alice').scoped(p2pKey('alice'))
 const initial = useStore.getInitialState()
 const saved = { ...initial }
-const p2pInitial = useP2p.getInitialState()
-const p2pSaved = { ...p2pInitial }
+const p2pInitial = () => shownPeer().useP2p.getInitialState()
+const p2pSaved = { ...p2pInitial() }
 
 // A static render reads the initial state through hooks and the current one outside them.
 const seed = (state: Partial<RChatState>, p2p: Partial<P2pState> = {}) => {
   localStorage.removeItem(alicePeerFlag())
   Object.assign(initial, state)
   useStore.setState(state)
-  Object.assign(p2pInitial, p2p)
-  useP2p.setState(p2p)
+  if (state.me && !state.guest && state.settings?.p2p !== false) {
+    Object.assign(p2pInitial(), p2p)
+    shownPeer().useP2p.setState(p2p)
+  }
 }
 
 afterEach(() => seed({ ...saved }, { ...p2pSaved }))

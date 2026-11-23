@@ -1,7 +1,7 @@
+import { shownPeer } from './shown_peer'
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   allPings,
-  getHomeSession,
   dmPingCount,
   dmsUnread,
   scopePingCount,
@@ -15,13 +15,12 @@ import { EMPTY_NOTIFY, muteEnd, notifyValue, setLevel, setMute } from '../notify
 import { setNotifier } from '../platform'
 import { resetMasking, setMasking } from '../profanity'
 import { webNotifier } from '../platform/web_notifications'
-import { home } from '../instances'
+import { home } from './home_instance'
 import { fakeNotifier } from './fake_notifier'
 import { alertBody, context, headline, type Piece } from '../notices'
 import type { Ping, WsEvent } from '../types'
 import { me, media, memoryStorage, msg, serverDetail, user } from './fixtures'
-import { p2p, p2pDm, useP2p } from '../p2p/app'
-import { put } from '../p2p/app/store'
+
 import { keyId, newKeyPair } from '../p2p/keys'
 
 afterAll(resetSessionCaches)
@@ -208,7 +207,7 @@ describe('muting', () => {
 })
 
 describe('an instance view under P2P', () => {
-  const p2pSaved = { ...useP2p.getState() }
+  const p2pSaved = { ...shownPeer().useP2p.getState() }
   const BOB = keyId(newKeyPair().pk)
   const CAROL = keyId(newKeyPair().pk)
   const onDm = () => {
@@ -226,20 +225,18 @@ describe('an instance view under P2P', () => {
   }
 
   beforeEach(() => {
-    getHomeSession().identities.setAccount('bob')
-    put.reader({ store: { room: async () => undefined } as never, me: BOB })
-    useP2p.setState({ ...p2pSaved, enabled: true, account: 'bob' })
+    shownPeer().put.reader({ store: { room: async () => undefined } as never, me: BOB })
+    shownPeer().useP2p.setState({ ...p2pSaved, enabled: true, account: 'bob' })
   })
   afterEach(() => {
-    put.reader(null)
-    getHomeSession().identities.setAccount(null)
-    useP2p.setState(p2pSaved)
+    shownPeer().put.reader(null)
+    shownPeer().useP2p.setState(p2pSaved)
   })
 
   test('a P2P conversation open beside the DM list leaves the DM under it unread', async () => {
     onDm()
-    await p2pDm.openDm(CAROL, 'dms')
-    expect(useP2p.getState()).toMatchObject({ home: true, dmList: true })
+    await shownPeer().p2pDm.openDm(CAROL, 'dms')
+    expect(shownPeer().useP2p.getState()).toMatchObject({ home: true, dmList: true })
     notSeen(11)
     dispatch(pinged(ping({ id: 2, scope: 'd4', server: null, message_id: 12 })))
     expect(dmPingCount(st())).toBe(1)
@@ -247,7 +244,7 @@ describe('an instance view under P2P', () => {
 
   test('the P2P home over the DM leaves it unread too', () => {
     onDm()
-    p2p.openHome()
+    shownPeer().p2p.openHome()
     notSeen(11)
     dispatch(pinged(ping({ id: 2, scope: 'd4', server: null, message_id: 12 })))
     expect(dmPingCount(st())).toBe(1)
@@ -255,15 +252,15 @@ describe('an instance view under P2P', () => {
 
   test('a P2P server shown in its place leaves it unread too', () => {
     onDm()
-    useP2p.setState({ server: { room: 'r', ch: null } })
+    shownPeer().useP2p.setState({ server: { room: 'r', ch: null } })
     notSeen(11)
   })
 
   test('closed again, the DM counts as seen only once its pane is back on screen', async () => {
     onDm()
-    await p2pDm.openDm(CAROL, 'dms')
+    await shownPeer().p2pDm.openDm(CAROL, 'dms')
     notSeen(11)
-    p2p.closeHome()
+    shownPeer().p2p.closeHome()
     expect(st().unreadAnchor.d4).toBe(10)
     notSeen(12)
     st().setAtBottom('d4', true)
@@ -311,7 +308,7 @@ describe('an instance view under P2P', () => {
     onDm()
     useStore.setState({ outbox: {} })
     const answer = await slowSend(12)
-    p2p.openHome()
+    shownPeer().p2p.openHome()
     mention(11, 2)
     await answer()
     unseen(10, 1)
@@ -321,7 +318,7 @@ describe('an instance view under P2P', () => {
     onDm()
     useStore.setState({ outbox: {} })
     const answer = await slowSend(11)
-    await p2pDm.openDm(CAROL, 'dms')
+    await shownPeer().p2pDm.openDm(CAROL, 'dms')
     mention(12, 2)
     await answer()
     unseen(10, 1)
@@ -329,7 +326,7 @@ describe('an instance view under P2P', () => {
 
   test('my message from another device under P2P leaves what came in before it unread', () => {
     onDm()
-    p2p.openHome()
+    shownPeer().p2p.openHome()
     mention(11, 2)
     dispatch(own(12))
     unseen(10, 1)
@@ -337,7 +334,7 @@ describe('an instance view under P2P', () => {
 
   test('an older message of mine arriving under P2P keeps a newer mention unread', async () => {
     onDm()
-    await p2pDm.openDm(CAROL, 'dms')
+    await shownPeer().p2pDm.openDm(CAROL, 'dms')
     mention(12, 2)
     dispatch(own(11))
     unseen(10, 1)
@@ -347,7 +344,7 @@ describe('an instance view under P2P', () => {
     onDm()
     useStore.setState({ outbox: {} })
     const answer = await slowSend(12)
-    p2p.openHome()
+    shownPeer().p2p.openHome()
     dispatch(pinged(ping({ id: 2, kind: 'reaction', scope: 'd4', server: null, message_id: 9 })))
     expect(dmPingCount(st())).toBe(1)
     dispatch(own(11))
@@ -360,7 +357,7 @@ describe('an instance view under P2P', () => {
 
   test('a read from another device clears what P2P covers', () => {
     onDm()
-    p2p.openHome()
+    shownPeer().p2p.openHome()
     mention(11, 2)
     dispatch(own(12))
     dispatch({ type: 'read_updated', username: 'bob', scope: 'd4', last_read: 12, pings_until: 2 })
@@ -371,7 +368,7 @@ describe('an instance view under P2P', () => {
 
   test('a read from another device of what came before my message clears the DM', () => {
     onDm()
-    p2p.openHome()
+    shownPeer().p2p.openHome()
     mention(11, 2)
     dispatch(own(12))
     dispatch({ type: 'read_updated', username: 'bob', scope: 'd4', last_read: 11, pings_until: 2 })
@@ -384,7 +381,7 @@ describe('an instance view under P2P', () => {
     onDm()
     useStore.setState({ outbox: {} })
     const answer = await slowSend(12)
-    p2p.openHome()
+    shownPeer().p2p.openHome()
     mention(11, 2)
     await answer()
     dispatch({ type: 'read_updated', username: 'bob', scope: 'd4', last_read: 11, pings_until: 2 })
@@ -395,10 +392,10 @@ describe('an instance view under P2P', () => {
 
   test('back on screen, my messages read the DM once its pane follows the bottom', async () => {
     onDm()
-    await p2pDm.openDm(CAROL, 'dms')
+    await shownPeer().p2pDm.openDm(CAROL, 'dms')
     mention(11, 2)
     dispatch(own(12))
-    p2p.closeHome()
+    shownPeer().p2p.closeHome()
     dispatch(own(13))
     unseen(10, 1)
     st().setAtBottom('d4', true)
@@ -414,7 +411,7 @@ describe('an instance view under P2P', () => {
     onDm()
     useStore.setState({ outbox: {} })
     const answer = await slowSend(12)
-    p2p.openHome()
+    shownPeer().p2p.openHome()
     await answer()
     dispatch(inDm(11, 'are you there?'))
     unseen(10, 0)
@@ -471,7 +468,7 @@ describe('an instance view under P2P', () => {
   test("a mention's alert for the DM under a P2P conversation enters the DM again", async () => {
     onDm()
     const pushed = opening('/dm/4/')
-    await p2pDm.openDm(CAROL, 'dms')
+    await shownPeer().p2pDm.openDm(CAROL, 'dms')
     const covered = st().view
     mention(11, 2)
     expect(st().notices).toHaveLength(1)
@@ -489,7 +486,7 @@ describe('an instance view under P2P', () => {
     })
     dispatch(inChannel(10))
     const pushed = opening('/s/s/1/')
-    p2p.openHome()
+    shownPeer().p2p.openHome()
     const covered = st().view
     const p = ping({ id: 3, scope: 'c1', server: 's', message_id: 11 })
     dispatch(inChannel(11, 'hi @bob'))
@@ -505,7 +502,7 @@ describe('an instance view under P2P', () => {
   test('a link to a message in the DM under a P2P server enters the DM again', async () => {
     onDm()
     const pushed = opening('/dm/4/')
-    useP2p.setState({ server: { room: 'r', ch: null } })
+    shownPeer().useP2p.setState({ server: { room: 'r', ch: null } })
     const covered = st().view
     await st().openMessage(11)
     expect(st().view).not.toBe(covered)

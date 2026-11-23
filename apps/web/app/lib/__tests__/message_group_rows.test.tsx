@@ -1,5 +1,8 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { AccountProvider } from '../client/react'
+import { testAccount } from './test_account'
+import { createPeerFixture } from './peer_fixture'
 import { resetSessionCaches } from '../store'
 import { formatStamp, fullTime } from '../timestamps'
 import type { P2pMessage } from '../p2p/dm'
@@ -99,32 +102,41 @@ const p: P2pMessage = {
   call: null,
 }
 
-const p2pRow = (first: boolean, last: boolean, over: Partial<P2pMessage> = {}, mine = false) =>
-  renderToStaticMarkup(
-    <P2pRow
-      p={{ ...p, ...over }}
-      m={msg(1, {
-        author: user('ik-bob', { display_name: 'Bobby' }),
-        content: 'hello there',
-        created_at: AT,
-      })}
-      first={first}
-      last={last}
-      mine={mine}
-      pendingTip="Waiting for them to come online"
-      mentioned={false}
-      divider={false}
-      flash={false}
-      canAct
-      canDelete={false}
-      editing={null}
-      draftKey="room"
-      threads={false}
-      onMenu={() => {}}
-      onCopy={() => {}}
-      onJump={() => {}}
-    />
-  )
+const p2pRow = (first: boolean, last: boolean, over: Partial<P2pMessage> = {}, mine = false) => {
+  const owner = testAccount('bob')
+  try {
+    createPeerFixture(owner, 'bob')
+    return renderToStaticMarkup(
+      <AccountProvider session={owner}>
+        <P2pRow
+          p={{ ...p, ...over }}
+          m={msg(1, {
+            author: user('ik-bob', { display_name: 'Bobby' }),
+            content: 'hello there',
+            created_at: AT,
+          })}
+          first={first}
+          last={last}
+          mine={mine}
+          pendingTip="Waiting for them to come online"
+          mentioned={false}
+          divider={false}
+          flash={false}
+          canAct
+          canDelete={false}
+          editing={null}
+          draftKey="room"
+          threads={false}
+          onMenu={() => {}}
+          onCopy={() => {}}
+          onJump={() => {}}
+        />
+      </AccountProvider>
+    )
+  } finally {
+    owner.store.dispose()
+  }
+}
 
 describe('a P2P row', () => {
   test('the first of its group shows the name and time', () => {

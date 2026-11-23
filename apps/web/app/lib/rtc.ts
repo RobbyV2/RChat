@@ -1,5 +1,5 @@
-import { home, type InstanceConnection } from './instances'
-import { iceConfig, type IceCache } from './ice'
+import type { InstanceConnection } from './instances'
+import type { IceCache } from './ice'
 import { SpeakingDetector } from './vad'
 import { mediaError } from './rules'
 import { linkQuality, type LinkQuality } from './voice_layout'
@@ -114,13 +114,9 @@ interface Detector {
   clear(): void
 }
 
-export interface RtcOptions {
-  send?: (msg: VoiceMsg) => unknown
-  // Replaces `send` (which builds the instance signaler).
-  signaler?: Signaler
-  // The ICE config of each new peer connection; the instance's (iceConfig) when not given. P2P
-  // calls pass the plan relays.ts resolved for the call.
-  ice?: () => RTCConfiguration
+export type RtcOptions = ({ signaler: Signaler } | { send: (msg: VoiceMsg) => unknown }) & {
+  // The instance ICE config or the relay plan resolved for a P2P call.
+  ice: () => RTCConfiguration
   detector?: Detector
   connectTimeoutMs?: number
   graceMs?: number
@@ -144,15 +140,15 @@ export class RtcManager {
   localSpeaking = false
   private detector: Detector
   private signaler: Signaler
-  private ice: (() => RTCConfiguration) | null
+  private readonly ice: () => RTCConfiguration
   private connectTimeoutMs: number
   private graceMs: number
   private restartDebounceMs: number
   onChange: () => void = () => {}
 
-  constructor(opts: RtcOptions = {}) {
-    this.signaler = opts.signaler ?? wsSignaler(opts.send ?? (msg => home.ws.sendVoice(msg)))
-    this.ice = opts.ice ?? null
+  constructor(opts: RtcOptions) {
+    this.signaler = 'signaler' in opts ? opts.signaler : wsSignaler(opts.send)
+    this.ice = opts.ice
     this.detector = opts.detector ?? new SpeakingDetector()
     this.connectTimeoutMs = opts.connectTimeoutMs ?? CONNECT_TIMEOUT_MS
     this.graceMs = opts.graceMs ?? RECOVER_GRACE_MS
@@ -439,7 +435,7 @@ export class RtcManager {
   }
 
   private connect(user: string, target: RtcTarget): Peer {
-    const pc = this.ice ? new RTCPeerConnection(this.ice()) : new RTCPeerConnection(iceConfig())
+    const pc = new RTCPeerConnection(this.ice())
     const peer: Peer = {
       pc,
       target,
@@ -740,5 +736,3 @@ export class RtcManager {
 
 export const createRtc = (conn: InstanceConnection, ice: IceCache) =>
   new RtcManager({ signaler: wsSignaler(msg => conn.ws.sendVoice(msg)), ice: () => ice.config() })
-
-export const rtc = new RtcManager()

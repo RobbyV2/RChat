@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { home } from '../instances'
+import { home } from './home_instance'
 import { useStore, resetSessionCaches } from '../store'
 import type { TypingMsg } from '../typing'
 import type { WsEvent } from '../types'

@@ -1,5 +1,3 @@
-import { legacyScope } from './store'
-import { defaultViewing } from '../../viewing'
 import { resolve as resolveNotify } from '../../notify'
 import type { ConfirmRequest } from '../../store_types'
 import type { RoomRecord } from '../db'
@@ -19,11 +17,6 @@ import {
 } from '../server'
 import { unsentText, WIPE_TEXT } from '../flows'
 import { P, type HistoryVis } from '../state'
-import * as viewingPart from './viewing'
-import * as storePart from './store'
-import * as dmsPart from './dms'
-import * as inboxPart from './inbox'
-import * as callsPart from './calls'
 import type { IdentityScope, P2pParts } from './scope'
 
 // Messages stored here that match (search panel). `from` is matched against member names.
@@ -35,6 +28,25 @@ export interface P2pSearchArgs {
   beforeTs: number | null
   afterTs: number | null
 }
+export const serverScope = (room: string) => ({ kind: 'p2ps', room }) as const
+
+export const channelScope = (room: string, ch: string) => ({ kind: 'p2pc', room, ch }) as const
+
+export const threadPings = (c: { threads?: Record<string, number> }) =>
+  Object.values(c.threads ?? {}).reduce((a, b) => a + b, 0)
+
+export type Counts = { unread: number; pings: number; threads?: Record<string, number> }
+
+export const threadsSig = (c: Counts, seq: number) =>
+  `${seq}:${c.pings}:${Object.entries(c.threads ?? {})
+    .map(([t, n]) => `${t}=${n}`)
+    .join()}`
+
+// Whether reading a channel can be skipped: nothing unread, only thread pings left, and those
+// checked at this position already.
+export const channelReadSkips = (c: Counts, seq: number, checked: string | undefined) =>
+  !c.unread && c.pings <= threadPings(c) && (!threadPings(c) || checked === threadsSig(c, seq))
+
 export function createServersPart(
   parts: Pick<P2pParts, 'viewing' | 'store' | 'dms' | 'inbox' | 'calls'>,
   scope: IdentityScope
@@ -45,8 +57,7 @@ export function createServersPart(
 
   // ----- Servers -----
 
-  const { canView, cancelViewing, leaveVisit, requestViewing, useViewing } =
-    scope.owner?.viewing ?? defaultViewing
+  const { canView, cancelViewing, leaveVisit, requestViewing, useViewing } = scope.owner.viewing
 
   const readerView = (r: RoomRecord): ServerView => ({
     id: r.id,
@@ -464,10 +475,6 @@ export function createServersPart(
     return st.contacts.find(c => c.ik === ik)?.name || 'Member'
   }
 
-  const serverScope = (room: string) => ({ kind: 'p2ps', room }) as const
-
-  const channelScope = (room: string, ch: string) => ({ kind: 'p2pc', room, ch }) as const
-
   const SERVER_PING: Record<NonNullable<ServerArrival['ping']>, string> = {
     mention: 'mentioned you',
     reply: 'replied to you',
@@ -579,24 +586,9 @@ export function createServersPart(
     }
   }
 
-  const threadPings = (c: { threads?: Record<string, number> }) =>
-    Object.values(c.threads ?? {}).reduce((a, b) => a + b, 0)
-
   // Thread counters already checked on a read, at a stored-content position (`seq`: deletions and
   // hidden content move it too), so reading at the bottom again doesn't redo it.
   const threadsChecked = new Map<string, string>()
-
-  type Counts = { unread: number; pings: number; threads?: Record<string, number> }
-
-  const threadsSig = (c: Counts, seq: number) =>
-    `${seq}:${c.pings}:${Object.entries(c.threads ?? {})
-      .map(([t, n]) => `${t}=${n}`)
-      .join()}`
-
-  // Whether reading a channel can be skipped: nothing unread, only thread pings left, and those
-  // checked at this position already.
-  const channelReadSkips = (c: Counts, seq: number, checked: string | undefined) =>
-    !c.unread && c.pings <= threadPings(c) && (!threadPings(c) || checked === threadsSig(c, seq))
 
   // Reads a channel: thread pings whose reply or root stopped showing come off with it, and the
   // log notes them as seen. The counters are taken before the log, so a ping that arrives meanwhile
@@ -941,35 +933,3 @@ export function createServersPart(
     p2pDevices,
   }
 }
-
-export const legacyServers = createServersPart(
-  {
-    viewing: viewingPart,
-    store: storePart,
-    dms: dmsPart,
-    inbox: inboxPart,
-    calls: callsPart,
-  },
-  legacyScope
-)
-export const {
-  readerView,
-  refreshServers,
-  refreshServer,
-  scheduleServer,
-  loadChannel,
-  p2pThread,
-  p2pSearch,
-  readSlow,
-  memberName,
-  profileName,
-  serverScope,
-  channelScope,
-  serverArrived,
-  withServers,
-  banRequest,
-  threadsSig,
-  channelReadSkips,
-  p2pServer,
-  p2pDevices,
-} = legacyServers

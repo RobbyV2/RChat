@@ -1,7 +1,8 @@
+import { createTestMedia } from './test_media'
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import Peer from 'peerjs'
-import { home } from '../instances'
+import { home } from './home_instance'
 import {
   ACK_WINDOW,
   ASKS_PER_MIN,
@@ -32,11 +33,13 @@ import {
   unexpired,
 } from '../p2p'
 import { setBlobs, type BlobStore } from '../platform'
-import { DENIED_DOWNLOAD, PROMPTS, relayBook, type Decision } from '../relays'
+import { DENIED_DOWNLOAD, PROMPTS, type Decision } from '../relays'
 import { webBlobs } from '../platform/web_blobs'
 import { Sha256 } from '../sha256'
 import { NEUTRAL_TYPE } from '../sniff'
 import { drain, memoryStorage } from './fixtures'
+
+const { relays: relayBook, createFileManager } = createTestMedia(home)
 
 const file = (expires_at: number | null): StoredFile => ({
   name: 'a.txt',
@@ -96,7 +99,7 @@ describe('p2p storage failures', () => {
       },
       removeItem: () => {},
     }
-    const m = account(new P2pManager())
+    const m = account(createFileManager())
     const id = m.peerId()
     expect(/^[0-9a-f]+$/.test(id)).toBe(true)
     expect(m.peerId()).toBe(id)
@@ -109,7 +112,7 @@ describe('p2p storage failures', () => {
       setItem: (k: string, v: string) => void local.set(k, v),
       removeItem: (k: string) => void local.delete(k),
     }
-    const m = account(new P2pManager())
+    const m = account(createFileManager())
     const x = m as unknown as { taken: (peer: unknown) => void; announce: () => void }
     let announced = 0
     x.announce = () => {
@@ -131,7 +134,7 @@ describe('p2p storage failures', () => {
   })
 
   test('removing and expiring files never throws when storage writes fail', () => {
-    const m = account(new P2pManager())
+    const m = account(createFileManager())
     const x = m as unknown as { cached: unknown; announce: () => void }
     x.cached = { old: file(1), kept: file(null), gone: file(null) }
     console.warn = () => {}
@@ -279,7 +282,7 @@ describe('p2p transfer', () => {
   // reach the relay book during the next test, so afterEach waits for them.
   const checks: Promise<unknown>[] = []
   const manager = (name = 'host') => {
-    const m = new P2pManager()
+    const m = createFileManager()
     const x = m as unknown as Wire
     x.announce = () => {}
     const check = x.tokenUser.bind(m)
@@ -632,7 +635,7 @@ describe('p2p transfer', () => {
   })
 
   test('tokens made by the server check out here', async () => {
-    const m = new P2pManager()
+    const m = createFileManager()
     ;(m as unknown as { announce: () => void }).announce = () => {}
     m.setAccount('alice')
     const x = m as unknown as {
@@ -913,29 +916,28 @@ describe('p2p transfer', () => {
     await m.storeFile('f', new File([bytes(CHUNK_BYTES * 2)], 'f.bin'), null)
     let n = 0
     const start = async (user: string) => {
-      const { client, host } = pipe(`${user}-${(n += 1)}`)
+      const { host } = pipe(`${user}-${(n += 1)}`)
       const seen: string[] = []
-      client.on('data', d => seen.push((d as { type: string }).type))
+      const reply = Promise.withResolvers<void>()
       host.send = async (msg: unknown) => {
         const type = (msg as { type: string }).type
         if (type === 'chunk') await new Promise(() => {})
         seen.push(type)
+        reply.resolve()
       }
       x.serve(host)
       await ask(x, host, { id: 'f', chunked: true }, user)
+      await reply.promise
       return { seen, host }
     }
     const held: { seen: string[]; host: { close: () => void } }[] = []
     for (let i = 0; i < PEER_SERVE_MAX; i += 1) held.push(await start('greedy'))
-    await tick(10)
     const extra = await start('greedy')
     const other = await start('other')
-    await tick(10)
     expect(held.map(h => h.seen)).toEqual(held.map(() => ['meta']))
     expect([extra.seen, other.seen]).toEqual([['busy'], ['meta']])
     held[0].host.close()
     const again = await start('greedy')
-    await tick(10)
     expect(again.seen).toEqual(['meta'])
   })
 

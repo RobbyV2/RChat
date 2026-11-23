@@ -1,4 +1,5 @@
 import { peerStorage } from '../client/keys'
+import { shownPeer } from './shown_peer'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { ctxFor, paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
@@ -8,7 +9,7 @@ import { actionById } from '../actions/registry'
 import type { Target } from '../actions/types'
 import { FOLDER_PRESETS } from '../folder_colors'
 import { emptyLayout, type Folder, type Layout } from '../nav_layout'
-import { useP2p } from '../p2p/app'
+
 import { resetSessionCaches, useStore } from '../store'
 import type { ContextMenuItem } from '../store_types'
 import { me, memoryStorage } from './fixtures'
@@ -31,12 +32,14 @@ const F = (id: string, over: Partial<Folder> = {}): Folder => ({
 })
 const ROOMS = ['A'.repeat(43), 'B'.repeat(43)]
 const real = (({ openDialog, showToast }) => ({ openDialog, showToast }))(st())
-const p2pReal = useP2p.getState()
+const p2pReal = shownPeer().useP2p.getState()
 
 const folder = (id = 'f1') =>
   st().layout.servers.find((e): e is Folder => typeof e !== 'string' && e.id === id)
 const p2pFolder = (id = 'p1') =>
-  useP2p.getState().layout.servers.find((e): e is Folder => typeof e !== 'string' && e.id === id)
+  shownPeer()
+    .useP2p.getState()
+    .layout.servers.find((e): e is Folder => typeof e !== 'string' && e.id === id)
 const target = (f: Folder | undefined, p2p = false): Target => ({
   kind: 'folder',
   folder: f as Folder,
@@ -68,7 +71,7 @@ beforeEach(() => {
     activeDialog: null,
     layout: { ...emptyLayout, servers: ['x', F('f1'), 'c'] },
   })
-  useP2p.setState({
+  shownPeer().useP2p.setState({
     account: 'alice',
     dialog: null,
     layout: { ...emptyLayout, servers: [F('p1', { servers: ROOMS })] },
@@ -78,7 +81,7 @@ beforeEach(() => {
 afterEach(() => {
   Object.assign(globalThis, { localStorage: memoryStorage })
   useStore.setState({ ...real, me: null, layout: emptyLayout, toast: null, activeDialog: null })
-  useP2p.setState({ account: p2pReal.account, dialog: null, layout: emptyLayout })
+  shownPeer().useP2p.setState({ account: p2pReal.account, dialog: null, layout: emptyLayout })
 })
 
 describe('the folder color action', () => {
@@ -109,7 +112,7 @@ describe('the folder color action', () => {
     expect(saved('rchat_layout:alice')?.servers[1]).toEqual(F('f1', { color: '#3b82d9' }))
     const now = choices(target(folder())).filter(c => c.checked)
     expect(now.map(c => c.label)).toEqual(['Blue'])
-    expect(useP2p.getState().layout.servers).toEqual([F('p1', { servers: ROOMS })])
+    expect(shownPeer().useP2p.getState().layout.servers).toEqual([F('p1', { servers: ROOMS })])
   })
 
   test('default clears the color', async () => {
@@ -180,7 +183,11 @@ describe('the folder color action', () => {
     expect(storage.has('rchat_layout:alice')).toBe(false)
     pick(target(p2pFolder(), true), 'Custom color')
     await settle()
-    expect(useP2p.getState().dialog).toEqual({ kind: 'p2p_folder', id: 'p1', focus: 'color' })
+    expect(shownPeer().useP2p.getState().dialog).toEqual({
+      kind: 'p2p_folder',
+      id: 'p1',
+      focus: 'color',
+    })
     expect(st().activeDialog).toBeNull()
     pick(target(p2pFolder(), true), 'Default')
     await settle()

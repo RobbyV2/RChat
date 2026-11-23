@@ -1,5 +1,6 @@
 import { createPaletteControls } from './palette_ui'
 import { CallGuard } from './calls'
+import { createInstanceRegistry } from './instance_registry'
 import { writeLocal } from '../instances'
 import type { Theme } from '../types'
 import type { AccountId, AccountSession } from './session'
@@ -24,6 +25,7 @@ function createClient() {
   let nextKey = 0
   let live: readonly AccountSession[] = []
   const calls = new CallGuard()
+  const instances = createInstanceRegistry()
   const listeners = new Set<() => void>()
   const subscriptions = new Map<AccountSession, () => void>()
 
@@ -67,6 +69,8 @@ function createClient() {
 
   return {
     calls,
+    homeInstance: () => instances.home,
+    selectHome: instances.selectHome.bind(instances),
     palette: createPaletteControls(),
     device,
     shown: loadHome,

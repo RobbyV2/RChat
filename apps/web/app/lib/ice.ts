@@ -1,8 +1,8 @@
-import { home, sessionStore, type InstanceConnection } from './instances'
+import { sessionStore, type InstanceConnection } from './instances'
 import type { IceServers, InstanceIce } from './types'
 
 // The only source of ICE servers. Without it, PeerJS uses its own public STUN and TURN servers,
-// so every Peer and RTCPeerConnection gets its config from iceConfig(). The instance supplies the
+// so every Peer and RTCPeerConnection gets its config from its owner. The instance supplies the
 // servers: STUN from the discovery `ice` list, and TURN credentials from /api/p2p/ice for
 // signed-in users, refreshed at 80% of their lifetime.
 
@@ -247,12 +247,6 @@ export function createIceCache(conn: InstanceConnection) {
   cache.policy = forcedPolicy()
   return cache
 }
-
-export const ice = createIceCache(home)
-
-export const iceServers = (): RTCIceServer[] => ice.servers()
-
-export const iceConfig = (): RTCConfiguration => ice.config()
 
 // What the instance offers, for the settings line.
 export const iceOffer = (info: InstanceIce | null | undefined): string[] => {

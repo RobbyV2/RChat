@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, expect, test } from 'bun:test'
 import { ApiError } from '../api'
-import { api } from '../instances'
+import { api } from './home_instance'
 import { signupFailure, signupField } from '../signup'
 import { resetSessionCaches, useStore } from '../store'
 

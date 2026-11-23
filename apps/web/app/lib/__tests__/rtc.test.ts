@@ -345,6 +345,7 @@ const realError = console.error
 
 function manager(name: string, opts: { connectTimeoutMs?: number; graceMs?: number } = {}) {
   const m = new RtcManager({
+    ice: () => ({ iceServers: [] }),
     detector: { ...quiet },
     connectTimeoutMs: opts.connectTimeoutMs ?? 60_000,
     graceMs: opts.graceMs ?? 60_000,

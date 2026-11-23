@@ -1,14 +1,15 @@
+import { shownPeer } from './shown_peer'
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import { resetSessionCaches, useStore } from '../store'
-import { home } from '../instances'
+import { home } from './home_instance'
 import { emptyLayout } from '../nav_layout'
 import { loadHome, noteVisit, parseSummary, unreadSummaryKey, useHome } from '../home_store'
 import { registerPalette, usePalette } from '../palette'
 import { HomePage } from '../../components/home'
-import { useP2p } from '../p2p/app'
+
 import type { Contact } from '../p2p/contacts'
 import type { Channel, DmSummary } from '../types'
 import { me, memoryStorage, serverDetail, user } from './fixtures'
@@ -45,8 +46,8 @@ const saved = { ...initial }
 const paletteInitial = usePalette.getInitialState()
 const homeInitial = useHome.getInitialState()
 const homeSaved = { ...homeInitial }
-const p2pInitial = useP2p.getInitialState()
-const p2pSaved = { ...p2pInitial }
+const p2pInitial = () => shownPeer().useP2p.getInitialState()
+const p2pSaved = { ...p2pInitial() }
 const contact = (ik: string, state: Contact['state'] = 'mutual') =>
   ({
     ik,
@@ -133,7 +134,7 @@ afterEach(() => {
   Object.assign(initial, saved)
   Object.assign(paletteInitial, { open: null })
   Object.assign(homeInitial, homeSaved)
-  Object.assign(p2pInitial, p2pSaved)
+  Object.assign(p2pInitial(), p2pSaved)
   useStore.setState({ token: null, view: null, home: false })
   loadHome(null)
 })
@@ -341,7 +342,7 @@ describe('P2P on Home', () => {
       instanceHost: 'chat.a.test',
     })
     try {
-      Object.assign(p2pInitial, { enabled: true, loading: false, status: 'squatted' })
+      Object.assign(p2pInitial(), { enabled: true, loading: false, status: 'squatted' })
       const html = render()
       expect(html).toContain('blocking your P2P address on <span class="streamer">Alpha</span>')
       expect(html.split('<span class="streamer">Alpha</span>').join('')).not.toContain('Alpha')
@@ -351,7 +352,7 @@ describe('P2P on Home', () => {
   })
 
   test('running P2P shows its status, what waits for an answer and who is online', () => {
-    Object.assign(p2pInitial, {
+    Object.assign(p2pInitial(), {
       enabled: true,
       loading: false,
       status: 'online',
@@ -377,7 +378,7 @@ describe('P2P on Home', () => {
   })
 
   test('streamer mode keeps contact names out of the card', () => {
-    Object.assign(p2pInitial, {
+    Object.assign(p2pInitial(), {
       enabled: true,
       status: 'online',
       contacts: [contact('dana')],
@@ -390,7 +391,7 @@ describe('P2P on Home', () => {
   })
 
   test('another tab running P2P is said so, with a way to use it here', () => {
-    Object.assign(p2pInitial, { enabled: true, elsewhere: true, status: 'online' })
+    Object.assign(p2pInitial(), { enabled: true, elsewhere: true, status: 'online' })
     const html = render()
     expect(html).toContain('P2P is open in another tab.')
     expect(html).toContain('Use here')

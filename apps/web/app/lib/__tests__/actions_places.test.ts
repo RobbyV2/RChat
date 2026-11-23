@@ -12,7 +12,13 @@ import { P2P_IP_HINT } from '../call_choice'
 import { emptyLayout, type Folder, type Layout } from '../nav_layout'
 import { EMPTY_NOTIFY, setLevel, setMute, setSuppress, type NotifyPrefs } from '../notify'
 import { setSharing, sharing } from '../platform'
-import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
+import {
+  getHomeSession,
+  resetSessionCaches,
+  useStore,
+  type ConfirmRequest,
+  type ContextMenuItem,
+} from '../store'
 import { Perm, type Channel, type DmSummary } from '../types'
 import { drain, me, member, memoryStorage, paged, role, serverDetail, user } from './fixtures'
 
@@ -359,16 +365,23 @@ test('a folder', async () => {
 
 test('the home button offers only mark all, dimmed when nothing is unread', async () => {
   railState({ perms: 0, unread: false })
-  const home = menuItems(ctxFor(useStore.getState(), { kind: 'home' }, 'menu'))
-  expect(home.map(i => [i.label, i.disabled])).toEqual([['Mark all as read', true]])
-  railState({ unread: true })
-  const lit = menuItems(ctxFor(useStore.getState(), { kind: 'home' }, 'menu'))
-  expect(lit.map(i => [i.label, i.icon, i.disabled])).toEqual([
-    ['Mark all as read', CheckCheck, false],
-  ])
-  expect(await effects(lit)).toEqual([['Mark all as read', [['askMarkAllRead', 'p2p']]]])
-  railState({ guest: true })
-  expect(labels({ kind: 'home' })).toEqual([])
+  const account = getHomeSession()
+  useStore.setState(s => ({ settings: { ...s.settings, p2p: true } }))
+  account.identities.setAccount('alice')
+  try {
+    const home = menuItems(ctxFor(useStore.getState(), { kind: 'home' }, 'menu'))
+    expect(home.map(i => [i.label, i.disabled])).toEqual([['Mark all as read', true]])
+    railState({ unread: true })
+    const lit = menuItems(ctxFor(useStore.getState(), { kind: 'home' }, 'menu'))
+    expect(lit.map(i => [i.label, i.icon, i.disabled])).toEqual([
+      ['Mark all as read', CheckCheck, false],
+    ])
+    expect(await effects(lit)).toEqual([['Mark all as read', [['askMarkAllRead', 'p2p']]]])
+    railState({ guest: true })
+    expect(labels({ kind: 'home' })).toEqual([])
+  } finally {
+    account.identities.setAccount(null)
+  }
 })
 
 test('a text and a voice channel, as a member and as a manager', () => {

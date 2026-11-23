@@ -1,6 +1,7 @@
 // Viewing choices belong to the local profile. Only the shared channel label comes from its host.
 import { create } from 'zustand'
-import { home, readLocal, writeLocal, type InstanceConnection } from './instances'
+import { client } from './client/client'
+import { readLocal, writeLocal, type InstanceConnection } from './instances'
 import type { WsEvent } from './types'
 import type { RChatState } from './store_types'
 
@@ -14,8 +15,8 @@ export type ViewingTarget = {
 }
 
 const guestProfiles = new Map<string, string>()
-const guestKey = (connection: ViewingInstance = home) => connection.scoped('rchat_viewing_guest_v1')
-const guestId = (connection: ViewingInstance = home) => {
+const guestKey = (connection: ViewingInstance) => connection.scoped('rchat_viewing_guest_v1')
+const guestId = (connection: ViewingInstance) => {
   const key = guestKey(connection)
   const stored = readLocal(key)
   if (stored) return stored
@@ -30,7 +31,7 @@ const guestId = (connection: ViewingInstance = home) => {
 export const viewingKey = (
   account: string | null,
   parts: readonly (string | number)[],
-  connection: ViewingInstance = home
+  connection: ViewingInstance = client.homeInstance()
 ) =>
   connection.scoped(
     'rchat_viewing_v1:' +
@@ -46,7 +47,7 @@ export const channelTarget = (
   transport: 'instance' | 'p2p',
   server: string,
   channel: { id: string | number; name?: string; sensitive?: boolean },
-  connection: ViewingInstance = home
+  connection: ViewingInstance = client.homeInstance()
 ): ViewingTarget => ({
   kind: 'channel',
   key: viewingKey(account, [transport, server, channel.id], connection),
@@ -60,7 +61,7 @@ export const instanceTarget = (
     Partial<Pick<RChatState, 'channelLabelEpoch' | 'channelLabelEpochs'>>,
   server: string,
   id: number,
-  connection: ViewingInstance = home
+  connection: ViewingInstance = client.homeInstance()
 ) => {
   if ((s.channelLabelEpochs?.[server] ?? 0) !== (s.channelLabelEpoch ?? 0)) return null
   const channel = s.servers[server]?.channels.find(c => c.id === id)
@@ -71,7 +72,8 @@ export const instanceTarget = (
 
 type Choice = { personal: boolean; remember: boolean }
 const clean: Choice = { personal: false, remember: false }
-export function createViewing(connection: ViewingInstance) {
+export function createViewing(connection: ViewingInstance | (() => ViewingInstance)) {
+  const instance = typeof connection === 'function' ? connection : () => connection
   const memory = new Map<string, Choice>()
   const choice = (key: string): Choice => {
     const cached = memory.get(key)
@@ -175,8 +177,9 @@ export function createViewing(connection: ViewingInstance) {
     leaveAppVisit()
     memory.clear()
     if (endGuest) {
-      writeLocal(guestKey(connection), null)
-      guestProfiles.delete(guestKey(connection))
+      const key = guestKey(instance())
+      writeLocal(key, null)
+      guestProfiles.delete(key)
     }
   }
 
@@ -209,11 +212,14 @@ export function createViewing(connection: ViewingInstance) {
     endViewing,
     syncViewingStorage,
     instanceTarget: (s: Parameters<typeof instanceTarget>[0], server: string, id: number) =>
-      instanceTarget(s, server, id, connection),
-    connection,
+      instanceTarget(s, server, id, instance()),
+    get connection(): ViewingInstance {
+      return instance()
+    },
   }
 }
-export const defaultViewing = createViewing(home)
+// The home session shares viewing choices with the standalone widget and historical hooks.
+export const defaultViewing = createViewing(() => client.homeInstance())
 export const {
   useViewing,
   leaveAppVisit,

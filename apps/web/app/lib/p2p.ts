@@ -1,14 +1,13 @@
 import Peer, { type DataConnection, type MediaConnection } from 'peerjs'
 import { backoffDelay } from './backoff'
 import { fromBase64, fromBase64Url, randomHex, toBase64 } from './bytes'
-import { home, readLocal, writeLocal, type InstanceConnection } from './instances'
-import { ice, type IceCache } from './ice'
+import { readLocal, writeLocal, type InstanceConnection } from './instances'
+import type { IceCache } from './ice'
 import {
   AUTO,
   DENIED_DOWNLOAD,
   failedText,
   hidesIp,
-  relayBook,
   type RelayBook,
   type RelayChoice,
   type Resolved,
@@ -505,12 +504,10 @@ export class P2pManager {
   onChange: () => void = () => {}
   onError: (message: string) => void = () => {}
 
-  constructor()
-  constructor(conn: InstanceConnection, iceCache: IceCache, relays: RelayBook)
   constructor(
-    private conn: InstanceConnection = home,
-    private iceCache = ice,
-    private relays = relayBook
+    private readonly conn: InstanceConnection,
+    private readonly iceCache: IceCache,
+    private readonly relays: RelayBook
   ) {
     this.detector.onSpeak = (id, speaking) => {
       if (id === 'local') this.localSpeaking = speaking
@@ -1964,9 +1961,3 @@ export class P2pManager {
     this.onChange()
   }
 }
-
-export const p2p = new P2pManager()
-
-export const previewUrl = (messageId: number) => p2p.previewUrl(messageId)
-export const keepPreview = (messageId: number, preview: Preview) =>
-  p2p.keepPreview(messageId, preview)

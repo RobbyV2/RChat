@@ -1,3 +1,4 @@
+import { shownPeer } from './shown_peer'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactElement } from 'react'
@@ -11,7 +12,7 @@ import { Banners } from '../../components/banners'
 import { ConfirmDialog } from '../../components/server_settings'
 import { P2pHome } from '../../components/p2p/p2p_home'
 import { P2pSection } from '../../components/p2p/p2p_settings'
-import { useP2p } from '../p2p/app'
+
 import type { P2pState } from '../p2p/app/store'
 import { offText } from '../p2p/blobs'
 import { uncheckable } from '../p2p/badge'
@@ -22,13 +23,13 @@ import { me, msg, user } from './fixtures'
 // Server rendering reads the store's initial state, so the test state goes there.
 const initial = useStore.getInitialState()
 const saved = { ...initial }
-const p2pInitial = useP2p.getInitialState()
-const p2pSaved = { ...p2pInitial }
+const p2pInitial = () => shownPeer().useP2p.getInitialState()
+const p2pSaved = { ...p2pInitial() }
 
 afterEach(() => {
   Object.assign(initial, saved)
-  Object.assign(p2pInitial, p2pSaved)
-  useP2p.setState(p2pSaved)
+  Object.assign(p2pInitial(), p2pSaved)
+  shownPeer().useP2p.setState(p2pSaved)
   resetSessionCaches()
 })
 
@@ -138,7 +139,7 @@ describe('the instance name in toasts, errors and status text', () => {
   const named = (over: Partial<RChatState> = {}) =>
     signedIn(true, { instance: ALPHA, instanceHost: 'chat.a.test', ...over })
   const running = (over: Partial<P2pState>) =>
-    Object.assign(p2pInitial, { enabled: true, loading: false, account: 'alice', ...over })
+    Object.assign(p2pInitial(), { enabled: true, loading: false, account: 'alice', ...over })
   const SPAN = '<span class="streamer">Alpha</span>'
   // The name shows only inside streamer spans.
   const hidden = (html: string) =>

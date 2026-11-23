@@ -1,4 +1,3 @@
-import { legacyScope } from './store'
 import { readLocal, writeLocal } from '../../instances'
 import {
   addToFolder,
@@ -16,23 +15,22 @@ import {
   type Layout,
   type RailEntry,
 } from '../../nav_layout'
-import * as storePart from './store'
 import type { IdentityScope, P2pParts } from './scope'
+
+// ----- Rail layout -----
+
+// P2P servers' order and folders in the rail, per account in this browser (the instance layout's
+// shape, only its server list used). { v: 2, servers, ... } as nav_layout parses it.
+export const p2pLayoutKey = (username: string) => `rchat_p2p_layout:${username}`
 
 export function createRailPart(parts: Pick<P2pParts, 'store'>, scope: IdentityScope) {
   const state = parts.store
   const { useP2p } = state
 
-  // ----- Rail layout -----
-
-  // P2P servers' order and folders in the rail, per account in this browser (the instance layout's
-  // shape, only its server list used). { v: 2, servers, ... } as nav_layout parses it.
-  const p2pLayoutKey = (username: string) => `rchat_p2p_layout:${username}`
-
   const readLayout = (username: string | null) => {
     if (!username) return state.initial.layout
     try {
-      const layout = parseLayout(readLocal(scope.scoped(p2pLayoutKey(username), username)))
+      const layout = parseLayout(readLocal(scope.scoped(p2pLayoutKey(username))))
       return layout === emptyLayout ? state.initial.layout : layout
     } catch {
       return state.initial.layout
@@ -43,7 +41,7 @@ export function createRailPart(parts: Pick<P2pParts, 'store'>, scope: IdentitySc
     const user = useP2p.getState().account
     if (!scope.current(user ?? undefined)) return
     useP2p.setState({ layout })
-    if (user) writeLocal(scope.scoped(p2pLayoutKey(user), user), JSON.stringify(layout))
+    if (user) writeLocal(scope.scoped(p2pLayoutKey(user)), JSON.stringify(layout))
   }
 
   const railRooms = () => Object.keys(useP2p.getState().servers).sort()
@@ -73,11 +71,3 @@ export function createRailPart(parts: Pick<P2pParts, 'store'>, scope: IdentitySc
   }
   return { p2pLayoutKey, readLayout, p2pRail }
 }
-
-export const legacyRail = createRailPart(
-  {
-    store: storePart,
-  },
-  legacyScope
-)
-export const { p2pLayoutKey, readLayout, p2pRail } = legacyRail

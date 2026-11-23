@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
-import { home } from '../instances'
+import { home } from './home_instance'
 import {
   addRequest,
   friendOrder,

@@ -28,37 +28,137 @@ function findings(file: string, source: string) {
   const record = (key: string) => {
     counts[key] = (counts[key] ?? 0) + 1
   }
-  const stores = new Map([
-    ['useStore', 'useStore'],
-    ['useP2p', 'useP2p'],
-  ])
+  type StoreValue = 'namespace' | 'useStore' | 'useP2p'
+  const bindings = new Map<ts.Declaration, StoreValue>()
+  // Resolve identifiers inside this file only. Import aliases stay distinct from
+  // parameters and local declarations with the same spelling.
+  const options: ts.CompilerOptions = { noResolve: true, noLib: true }
+  let checker: ts.TypeChecker | undefined
+  const declaration = (id: ts.Identifier) => {
+    checker ??= ts
+      .createProgram([file], options, {
+        ...ts.createCompilerHost(options),
+        getSourceFile: name => (name === file ? tree : undefined),
+      })
+      .getTypeChecker()
+    return checker.getSymbolAtLocation(id)?.declarations?.[0]
+  }
+  const storeModule = (path: string) =>
+    /(?:^|\/)(?:store|(?:client\/)?(?:react|p2p_react)|p2p\/app(?:\/index)?)$/.test(
+      path.replace(/\.[cm]?[jt]sx?$/, '')
+    )
+  const hook = (name: string) => name === 'useStore' || name === 'useP2p'
+  function loadedStore(expr: ts.Expression): boolean {
+    if (
+      ts.isAwaitExpression(expr) ||
+      ts.isParenthesizedExpression(expr) ||
+      ts.isAsExpression(expr) ||
+      ts.isNonNullExpression(expr)
+    )
+      return loadedStore(expr.expression)
+    if (!ts.isCallExpression(expr)) return false
+    const loader = expr.expression
+    const path = expr.arguments[0]
+    return (
+      (loader.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(loader) && loader.text === 'require' && !declaration(loader))) &&
+      !!path &&
+      ts.isStringLiteralLike(path) &&
+      storeModule(path.text)
+    )
+  }
+  function bindModule(binding: ts.VariableDeclaration | ts.ParameterDeclaration) {
+    if (ts.isIdentifier(binding.name)) bindings.set(binding, 'namespace')
+    if (!ts.isObjectBindingPattern(binding.name)) return
+    for (const element of binding.name.elements) {
+      const key = element.propertyName ?? element.name
+      if ((ts.isIdentifier(key) || ts.isStringLiteralLike(key)) && hook(key.text))
+        bindings.set(element, key.text)
+    }
+  }
+  function collectLoads(node: ts.Node) {
+    if (ts.isVariableDeclaration(node) && node.initializer && loadedStore(node.initializer))
+      bindModule(node)
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'then' &&
+      loadedStore(node.expression.expression)
+    ) {
+      const callback = node.arguments[0]
+      if (
+        callback &&
+        (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) &&
+        callback.parameters[0]
+      )
+        bindModule(callback.parameters[0])
+    }
+    ts.forEachChild(node, collectLoads)
+  }
+  collectLoads(tree)
   for (const stmt of tree.statements) {
     if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue
-    const bindings = stmt.importClause?.namedBindings
-    if (!bindings || stmt.importClause?.isTypeOnly) continue
+    const imported = stmt.importClause?.namedBindings
+    if (!imported || stmt.importClause?.isTypeOnly) continue
     const instances = /(?:^|\/)instances(?:\.[jt]s)?$/.test(stmt.moduleSpecifier.text)
-    if (ts.isNamespaceImport(bindings)) {
+    const fromStore = storeModule(stmt.moduleSpecifier.text)
+    if (ts.isNamespaceImport(imported)) {
+      if (fromStore) bindings.set(imported, 'namespace')
       if (instances) record('import *')
       continue
     }
-    for (const binding of bindings.elements) {
+    for (const binding of imported.elements) {
       if (binding.isTypeOnly) continue
       const name = (binding.propertyName ?? binding.name).text
       if (instances && ['home', 'api', 'registry'].includes(name)) record(`import ${name}`)
-      if (name === 'useStore' || name === 'useP2p') stores.set(binding.name.text, name)
+      if (fromStore && hook(name)) bindings.set(binding, name)
+    }
+  }
+  function member(node: ts.PropertyAccessExpression | ts.ElementAccessExpression) {
+    if (ts.isPropertyAccessExpression(node)) return node.name.text
+    return ts.isStringLiteralLike(node.argumentExpression)
+      ? node.argumentExpression.text
+      : undefined
+  }
+  function value(expr: ts.Expression, seen: Set<ts.Declaration>): StoreValue | undefined {
+    if (loadedStore(expr)) return 'namespace'
+    if (
+      ts.isParenthesizedExpression(expr) ||
+      ts.isAsExpression(expr) ||
+      ts.isNonNullExpression(expr)
+    )
+      return value(expr.expression, seen)
+    if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
+      const name = member(expr)
+      if (name && hook(name) && value(expr.expression, seen) === 'namespace') return name
+      return
+    }
+    if (!ts.isIdentifier(expr)) return
+    const decl = declaration(expr)
+    if (!decl || seen.has(decl)) return
+    const known = bindings.get(decl)
+    if (known) return known
+    seen.add(decl)
+    if (ts.isVariableDeclaration(decl) && decl.initializer) return value(decl.initializer, seen)
+    if (ts.isBindingElement(decl) && ts.isObjectBindingPattern(decl.parent)) {
+      const name = decl.propertyName ?? decl.name
+      const container = decl.parent.parent
+      if (
+        (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) &&
+        hook(name.text) &&
+        ts.isVariableDeclaration(container) &&
+        container.initializer &&
+        value(container.initializer, seen) === 'namespace'
+      )
+        return name.text
     }
   }
   function visit(node: ts.Node) {
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-      const key = ts.isPropertyAccessExpression(node) ? node.name : node.argumentExpression
-      const store = ts.isIdentifier(node.expression) && stores.get(node.expression.text)
-      if (store && (ts.isPropertyAccessExpression(node) || ts.isStringLiteralLike(key))) {
-        const method = (key as ts.Identifier | ts.StringLiteralLike).text
-        if (
-          method === 'getState' ||
-          method === 'setState' ||
-          (store === 'useStore' && method === 'subscribe')
-        )
+      const method = member(node)
+      if (method === 'getState' || method === 'setState' || method === 'subscribe') {
+        const store = value(node.expression, new Set())
+        if (store && store !== 'namespace' && (method !== 'subscribe' || store === 'useStore'))
           record(`${store}.${method}`)
       }
     }
@@ -114,6 +214,7 @@ function scan() {
 }
 
 test('singleton access and module state match their allowances', () => {
+  expect(allowances).toEqual({})
   expect(scan()).toEqual(allowances)
 }, 60_000)
 
@@ -121,6 +222,11 @@ test('the scan distinguishes module state from state created by a factory', () =
   const source = `
     import { api as accountApi, type home } from '../instances'
     import { useStore as account } from '../store'
+    import * as peer from '../p2p/app'
+    function scoped(account: any, peer: any) { account.getState(); peer.useP2p.setState({}) }
+    { const account = scopedStore(); account.getState() }
+    function make(scope: any) { const {useP2p} = scope; return useP2p.getState() }
+    peer.useP2p.setState({})
     export default new Map()
     export let counter = 0, names = new Set<string>()
     const cache = create<State>()(() => ({ local: new Map() }))
@@ -135,9 +241,41 @@ test('the scan distinguishes module state from state created by a factory', () =
     'new Set in names': 1,
     'create in cache': 1,
     'useStore.getState': 2,
+    'useP2p.setState': 1,
   })
   expect(findings('components/page.tsx', source)).toEqual({
     'import api': 1,
     'useStore.getState': 2,
+    'useP2p.setState': 1,
+  })
+})
+
+test('explicit extensions and deferred hook imports retain their owner', () => {
+  const source = `
+    import { useStore as chat } from '../store.js'
+    chat.getState()
+    import('../store').then(({ useStore }) => useStore.getState().logout())
+    import('../client/p2p_react.tsx').then(mod => mod.useP2p.getState())
+    async function open() {
+      const { useStore: current } = await import('../client/react.js')
+      current.setState({})
+      ;(await import('../p2p/app/index.js')).useP2p.getState()
+    }
+    const alias = chat
+    alias.getState()
+    const ns = require('../store')
+    const {useStore: another} = ns
+    another.subscribe(fn)
+    function local(require: any) {
+      const {useStore} = require('../store')
+      useStore.getState()
+    }
+    function handle(useStore: any) { useStore.getState() }
+  `
+  expect(findings('components/deferred.tsx', source)).toEqual({
+    'useStore.getState': 3,
+    'useStore.subscribe': 1,
+    'useStore.setState': 1,
+    'useP2p.getState': 2,
   })
 })

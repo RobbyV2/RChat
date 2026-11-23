@@ -108,7 +108,7 @@ describe('signaler contract', () => {
 
   test('the instance manager sends rtc_signal through the WS', () => {
     const sent: VoiceMsg[] = []
-    const m = new RtcManager({ send: msg => sent.push(msg) })
+    const m = new RtcManager({ send: msg => sent.push(msg), ice: () => ({ iceServers: [] }) })
     const s = (m as unknown as { signaler: Signaler }).signaler
     s.send('bob', { dmId: 3 }, { muted: true })
     expect(sent).toEqual([

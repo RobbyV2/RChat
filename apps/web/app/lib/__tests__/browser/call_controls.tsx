@@ -2,7 +2,6 @@ import { CallButtons } from '../../../components/call_buttons'
 import { P2pCallButtons } from '../../../components/p2p/p2p_call'
 import { client } from '../../client/client'
 import type { AccountSession } from '../../client/session'
-import { put } from '../../p2p/app/store'
 import { Calls } from '../../p2p/calls'
 import type { Session } from '../../p2p/session'
 
@@ -20,7 +19,7 @@ export function setupCallControls(owner: AccountSession) {
       throw new Error('Unexpected ring')
     },
   } as unknown as Session
-  put.calls(
+  owner.identities.get()!.put.calls(
     new Calls({
       me: () => 'local',
       sessions: () => [contact],

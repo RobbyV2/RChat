@@ -1,8 +1,9 @@
+import { shownPeer } from './shown_peer'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { CallBanner, VoiceDock } from '../../components/voice_grid'
 import { expect, test } from 'bun:test'
-import { useP2p, callRtc } from '../p2p/app'
+
 import { client } from '../client/client'
 import type { CallSource } from '../client/calls'
 import type { AccountSession } from '../client/session'
@@ -129,12 +130,12 @@ test('remote audio follows the contact call through an instance ring until the s
   const account = client.shown()
   const initial = account.store.getInitialState()
   const savedCall = initial.call
-  const contacts = useP2p.getInitialState()
+  const contacts = shownPeer().useP2p.getInitialState()
   const savedContact = contacts.call
   const rtcActive = account.rtc.active
   const streams = account.rtc.remoteStreams
-  const contactActive = callRtc.active
-  const contactStreams = callRtc.remoteStreams
+  const contactActive = shownPeer().callRtc.active
+  const contactStreams = shownPeer().callRtc.remoteStreams
   const audioCount = () =>
     renderToStaticMarkup(createElement(CallBanner)).split('data-remote-audio').length - 1
   let claim = await client.calls.request({ account, kind: 'p2p-call' }, () => {})
@@ -150,8 +151,8 @@ test('remote audio follows the contact call through an instance ring until the s
       since: 1,
       startedAt: 1,
     }
-    callRtc.active = () => true
-    callRtc.remoteStreams = () => [['bob', stream]]
+    shownPeer().callRtc.active = () => true
+    shownPeer().callRtc.remoteStreams = () => [['bob', stream]]
     account.rtc.active = () => false
     initial.call = null
     expect(audioCount()).toBe(1)
@@ -182,8 +183,8 @@ test('remote audio follows the contact call through an instance ring until the s
     claim?.release()
     contacts.call = savedContact
     initial.call = savedCall
-    callRtc.active = contactActive
-    callRtc.remoteStreams = contactStreams
+    shownPeer().callRtc.active = contactActive
+    shownPeer().callRtc.remoteStreams = contactStreams
     account.rtc.active = rtcActive
     account.rtc.remoteStreams = streams
   }

@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { configSourceOf, useStore, resetSessionCaches } from '../store'
-import { home, sessionStore } from '../instances'
+import { sessionStore } from '../instances'
+import { home } from './home_instance'
 import { emptyLayout, layoutKey } from '../nav_layout'
 import { EMPTY_NOTIFY, notifyKey, setLevel, setMute } from '../notify'
 import { EMPTY_PREFS, emojiKey, noteUse } from '../emoji'

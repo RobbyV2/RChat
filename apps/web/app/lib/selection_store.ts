@@ -453,7 +453,7 @@ export const selectionSlice = (d: SelectionDeps) => {
         const ext = format === 'json' ? 'json' : 'txt'
         if (sel.all || sel.authors.size) {
           const { blob, count } = await exportAll(sel, format)
-          sharing().saveBlob(fileName(sel.scope, ext), blob)
+          sharing(acct).saveBlob(fileName(sel.scope, ext), blob)
           d.toast(`Exported ${plural(count, 'message')}`)
           return
         }
@@ -467,7 +467,7 @@ export const selectionSlice = (d: SelectionDeps) => {
                 messages: picked.map(exported),
               })
             : plainText(picked, stamp)
-        sharing().saveFile(fileName(sel.scope, ext), text, mime(format))
+        sharing(acct).saveFile(fileName(sel.scope, ext), text, mime(format))
         d.toast(`Exported ${plural(picked.length, 'message')}`)
       }),
 

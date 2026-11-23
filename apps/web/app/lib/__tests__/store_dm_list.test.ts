@@ -7,7 +7,7 @@ import { paletteCommands } from '../actions/palette'
 import { dmView, useStore, resetSessionCaches } from '../store'
 import { emptyLayout, type Layout } from '../nav_layout'
 import { arrangeDms, dmListPrefs } from '../dm_list'
-import { home } from '../instances'
+import { home } from './home_instance'
 import type { DmSummary, WsEvent } from '../types'
 import { me, memoryStorage, msg, until, user } from './fixtures'
 

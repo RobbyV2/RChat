@@ -15,7 +15,7 @@ import { client } from '../../client/client'
 import { AccountProvider } from '../../client/react'
 import { AccountSession } from '../../client/session'
 import { endpointsFrom, InstanceConnection } from '../../instances'
-import { useP2p } from '../../p2p/app'
+import { createPeerFixture } from '../peer_fixture'
 import type { Me } from '../../types'
 
 const shown = client.shown()
@@ -41,7 +41,7 @@ shown.store.setState({ me, view: { kind: 'channel', server: 'garden', channelId:
 owner.store.setState({ me, view: { kind: 'channel', server: 'garden', channelId: 1 } })
 shown.api.setToken('shown-token')
 owner.api.setToken('owner-token')
-useP2p.setState({ account: 'reader', enabled: false })
+createPeerFixture(owner, me.username).useP2p.setState({ account: me.username, enabled: false })
 
 const events: string[] = []
 function record(event: string) {

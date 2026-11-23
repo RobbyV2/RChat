@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
-import { home } from '../instances'
+import { home } from './home_instance'
 import { resetSessionCaches, useStore } from '../store'
 import { advance, me, memoryStorage } from './fixtures'
 

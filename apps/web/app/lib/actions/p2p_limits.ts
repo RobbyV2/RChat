@@ -9,10 +9,8 @@ import type { Action, ActionCtx } from './types'
 export const LIMITS_RESET_TEXT = `P2P limits reset. ${LIMITS_LATER}`
 import { identityActions } from './identity'
 export const peerLimits = identityActions(identity => {
-  const { useP2p } = identity
-
   const p2pAccount = ({ s }: ActionCtx) => {
-    const { account, enabled } = useP2p.getState()
+    const { account, enabled } = identity().useP2p.getState()
     return account && enabled && signedIn(s) ? account : null
   }
 
@@ -43,13 +41,13 @@ export const peerLimits = identityActions(identity => {
         const account = p2pAccount(ctx)
         return (
           account !== null &&
-          Object.keys(readUserLimits(account, ctx.acct.conn, identity.localId)).length > 1
+          Object.keys(readUserLimits(account, ctx.acct.conn, identity().localId)).length > 1
         )
       },
       run: ctx => {
         const account = p2pAccount(ctx)
         if (!account) return
-        writeUserLimits(account, { v: 1 }, ctx.acct.conn, identity.localId)
+        writeUserLimits(account, { v: 1 }, ctx.acct.conn, identity().localId)
         ctx.acct.store.getState().showToast(LIMITS_RESET_TEXT)
       },
     },
@@ -57,4 +55,4 @@ export const peerLimits = identityActions(identity => {
 
   return { actions: p2pLimitActions }
 })
-export const { actions: p2pLimitActions } = peerLimits.defaults
+export const p2pLimitActions = peerLimits.actions

@@ -12,11 +12,13 @@ export function bindP2pHost(app: P2pApp, account: AccountSession, live: () => bo
   const state = account.store.getState
   const scopeKey = (key: string) => identityScopeKey(localId, key)
   const host = app.p2pHost
-  host.account = account
   host.prefs = () => (live() ? state().notifyPrefs : EMPTY_NOTIFY)
   host.typingOn = () => live() && state().typingOn
   host.following = scope =>
-    live() && client.shown() === account && state().atBottom[scopeKey(scope)] === true
+    live() &&
+    client.shown() === account &&
+    account.identities.viewed() === app &&
+    state().atBottom[scopeKey(scope)] === true
   host.textOnly = () => {
     if (!live()) return true
     const settings = state().settings
