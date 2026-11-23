@@ -1,3 +1,5 @@
+import { viewPath, type Nav } from '../view'
+import { accountHistoryState, routeOwnerFor } from './account_paths'
 import { createBookStore } from './book_store'
 import { createPaletteControls } from './palette_ui'
 import { CallGuard } from './calls'
@@ -23,6 +25,8 @@ function loadHome(): AccountSession {
 }
 
 function createClient() {
+  let foreground: AccountSession | null = null
+  let pageBlocked = false
   let nextKey = 0
   let live: readonly AccountSession[] = []
   const calls = new CallGuard()
@@ -76,6 +80,31 @@ function createClient() {
     palette: createPaletteControls(),
     device,
     shown: loadHome,
+    bindHome(home: () => AccountSession) {
+      this.shown = () => foreground ?? home()
+    },
+    canWritePage(account: AccountSession) {
+      return !pageBlocked && this.shown() === account
+    },
+    blockPage() {
+      pageBlocked = true
+    },
+    show(account: AccountSession, nav: Nav = 'push') {
+      if (!subscriptions.has(account)) return false
+      const changed = this.shown() !== account
+      pageBlocked = false
+      foreground = account
+      if (nav !== 'none' && typeof window !== 'undefined') {
+        const path = viewPath(account.store.getState().view, routeOwnerFor(account))
+        if (changed || window.location.pathname !== path) {
+          const state = accountHistoryState(account, null)
+          if (nav === 'push') window.history.pushState(state, '', path)
+          else window.history.replaceState(state, '', path)
+        }
+      }
+      if (changed) publish([...live])
+      return true
+    },
     live: () => live,
     overlayOwner: () => live.find(hasOverlay),
     subscribe(listener: () => void) {
@@ -105,6 +134,7 @@ function createClient() {
       calls.end(account)
       subscriptions.get(account)?.()
       subscriptions.delete(account)
+      if (foreground === account) foreground = null
       publish(live.filter(session => session !== account))
     },
     claimOverlay(id: AccountId) {

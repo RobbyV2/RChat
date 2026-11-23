@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { accountHistoryState, routeOwnerFor } from '../lib/client/account_paths'
+import { accountPath } from '../lib/view'
 import { client } from '../lib/client/client'
 import type { AccountSession } from '../lib/client/session'
 import { confirmGate, openDeepLink, type LinkEnv } from '../lib/deep_links'
@@ -27,13 +29,17 @@ const env = (
     canSwitch: () => current() && owner.lifetime.sessionMark() === mark,
     canLoad: origin => current() && owner.conn.origin === origin,
     appLinks: mobileOs() !== null,
-    signedIn: me !== null || guest || keptSession(owner.conn),
+    signedIn: me !== null || guest || keptSession(owner.conn, owner.credentialTarget),
     live: (me !== null || guest) && !window.location.pathname.startsWith('/login'),
     push: path => {
-      window.history.pushState(null, '', path)
+      window.history.pushState(
+        accountHistoryState(owner, null),
+        '',
+        accountPath(path, routeOwnerFor(owner))
+      )
       window.dispatchEvent(new PopStateEvent('popstate'))
     },
-    load: path => window.location.assign(path),
+    load: path => window.location.assign(accountPath(path, routeOwnerFor(owner))),
     confirmSwitch,
     switchTo: switchInstance,
     openOutside: url => void shell.openExternal(url).catch(() => {}),

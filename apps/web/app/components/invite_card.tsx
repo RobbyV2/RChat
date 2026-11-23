@@ -17,6 +17,9 @@ import { useRouter } from 'next/navigation'
 import { ExternalLink, Globe, Hash, Link2Off, Lock, Paperclip } from 'lucide-react'
 import { ApiError } from '../lib/api'
 import type { InviteAccess } from '../lib/remote_invite'
+import { accountPath } from '../lib/view'
+import { client } from '../lib/client/client'
+import { routeOwnerFor } from '../lib/client/account_paths'
 import { useAccount, useStoreApi } from '../lib/client/react'
 import { InstanceError, type InstanceConnection } from '../lib/instances'
 import { useForwardAccess } from '../lib/forward_access'
@@ -701,6 +704,7 @@ export function InviteCard({
   const router = useRouter()
   const root = useRef<HTMLDivElement>(null)
   const owner = useAccount()
+  const mark = owner.lifetime.sessionMark()
   const big = variant === 'page'
   const [unlocked, setUnlocked] = useState<string | null>(null)
   const given = code ?? unlocked ?? password
@@ -783,11 +787,13 @@ export function InviteCard({
     if (data) void owner.store.getState().openServer(data.server.name, undefined, nav)
   }
 
-  const logIn = () => {
+  const logIn = (reopen: boolean) => {
+    if (client.shown() !== owner || mark !== owner.lifetime.sessionMark()) return
     consume()
     const target = code ? { server: '', password: null, code } : { server, password }
-    stashInvite(target, owner.handoff)
-    router.push(`/login/?next=${encodeURIComponent(targetPath(target))}`)
+    if (reopen) stashInvite(target, owner.handoff)
+    const next = accountPath(reopen ? targetPath(target) : '/', routeOwnerFor(owner))
+    router.push(next === '/' ? '/login/' : '/login/?next=' + encodeURIComponent(next))
   }
 
   const continueAsGuest = async () => {
@@ -846,7 +852,7 @@ export function InviteCard({
               Enter password
             </button>
             {!authed && (
-              <button onClick={logIn} className={`${textBtn} ${btn}`}>
+              <button onClick={() => logIn(true)} className={`${textBtn} ${btn}`}>
                 Log in
               </button>
             )}
@@ -873,7 +879,7 @@ export function InviteCard({
         ),
         actions: big && (
           <button
-            onClick={() => (authed ? owner.store.getState().closeInvite() : router.push('/login'))}
+            onClick={() => (authed ? owner.store.getState().closeInvite() : logIn(false))}
             className={`${filledBtn} ${btn}`}
           >
             {authed ? 'Continue to RChat' : 'Log in'}
@@ -894,7 +900,7 @@ export function InviteCard({
         title: code ? label : <span className={`streamer min-w-0 ${fit}`}>{server}</span>,
         sub: <p className="text-xs text-on-surface-variant">Log in to see who&apos;s here.</p>,
         actions: (
-          <button onClick={logIn} className={`${filledBtn} ${btn}`}>
+          <button onClick={() => logIn(true)} className={`${filledBtn} ${btn}`}>
             Log in to join
           </button>
         ),
@@ -939,7 +945,7 @@ export function InviteCard({
       ),
       actions: !authed ? (
         <>
-          <button onClick={logIn} className={`${filledBtn} ${btn}`}>
+          <button onClick={() => logIn(true)} className={`${filledBtn} ${btn}`}>
             Log in to join
           </button>
           {guestsEnabled && (

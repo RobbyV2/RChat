@@ -1,6 +1,6 @@
 import { visibleLinks } from './invite'
 import type { Message, MessageLocation } from './types'
-import { messagePath, parsePath, type MessageTarget } from './view'
+import { messagePath, parseAccountPath, parsePath, type MessageTarget } from './view'
 
 // `{origin}/s/{server}/{channel}/{id}/`, `{origin}/s/{server}/{channel}/t/{root}/{id}/` for
 // thread replies and `{origin}/dm/{dm}/{id}/`. Null when the message's place isn't known.
@@ -26,7 +26,9 @@ export const parseMessageLink = (href: string, origins: string[]): MessageTarget
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
   if (url.username || url.password || !origins.includes(url.origin)) return null
-  const target = parsePath(url.pathname)
+  const route = parseAccountPath(url.pathname)
+  if (!route || route.owner) return null
+  const target = parsePath(route.path)
   return target?.kind === 'message' ? target : null
 }
 

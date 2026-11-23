@@ -1,3 +1,60 @@
+import { isHost, normalizeHost } from './qualified'
+
+export interface RouteOwner {
+  username: string | null
+  host: string
+}
+
+const routeUsername = (value: string) => {
+  const lower = value.toLowerCase()
+  return lower !== '' &&
+    lower.trim() === lower &&
+    !/[@\p{Cc}]/u.test(lower) &&
+    [...lower].length <= 100
+    ? lower
+    : null
+}
+
+const routeHost = (value: string) =>
+  value.trim() === value && !value.endsWith(':') && isHost(value) ? normalizeHost(value) : null
+
+// Only the first path segment names the account. Keep the query and fragment opaque.
+export function parseAccountPath(href: string): { owner: RouteOwner | null; path: string } | null {
+  const pathname = href.split(/[?#]/, 1)[0]
+  if (!pathname.startsWith('/') || pathname.startsWith('//') || /[\\\p{Cc}]/u.test(pathname))
+    return null
+  if (!pathname.startsWith('/@')) return { owner: null, path: href }
+  const end = pathname.indexOf('/', 2)
+  const prefix = pathname.slice(2, end < 0 ? undefined : end)
+  const at = prefix.indexOf('@')
+  const host = routeHost(prefix.slice(at + 1))
+  if (!host) return null
+  let username: string | null = null
+  if (at !== -1) {
+    try {
+      username = routeUsername(decodeURIComponent(prefix.slice(0, at)))
+    } catch {
+      return null
+    }
+    if (!username) return null
+  }
+  const path = end < 0 ? '/' + href.slice(pathname.length) : href.slice(end)
+  if (path.startsWith('//') || path.startsWith('/@')) return null
+  return { owner: { username, host }, path }
+}
+
+// An omitted owner denotes the primary account. Requalifying a local link replaces its prefix.
+export function accountPath(href: string, owner?: RouteOwner | null): string {
+  const route = parseAccountPath(href)
+  if (!route) throw new Error('Invalid local account path')
+  if (!owner) return route.path
+  const host = routeHost(owner.host)
+  const username = owner.username === null ? null : routeUsername(owner.username)
+  if (!host || (owner.username !== null && username === null))
+    throw new Error('Invalid route owner')
+  return '/@' + (username === null ? '' : encodeURIComponent(username) + '@') + host + route.path
+}
+
 export type View =
   { kind: 'channel'; server: string; channelId: number } | { kind: 'dm'; dmId: number }
 
@@ -34,11 +91,18 @@ export interface AdminTarget {
 
 const ADMIN_ITEMS: readonly AdminSection[] = ['users', 'servers']
 
-export const adminPath = (section: AdminSection | null, item: string | null = null) => {
-  if (section === null) return '/admin/'
-  return item !== null && ADMIN_ITEMS.includes(section)
-    ? `/admin/${section}/${encodeURIComponent(item)}/`
-    : `/admin/${section}/`
+export const adminPath = (
+  section: AdminSection | null,
+  item: string | null = null,
+  owner?: RouteOwner | null
+) => {
+  if (section === null) return accountPath('/admin/', owner)
+  return accountPath(
+    item !== null && ADMIN_ITEMS.includes(section)
+      ? `/admin/${section}/${encodeURIComponent(item)}/`
+      : `/admin/${section}/`,
+    owner
+  )
 }
 
 const parseAdmin = (pathname: string): AdminTarget | null => {
@@ -59,14 +123,19 @@ const parseAdmin = (pathname: string): AdminTarget | null => {
 
 export type PathTarget = View | { kind: 'server'; server: string } | MessageTarget | AdminTarget
 
-export const messagePath = ({ place, thread, id }: Omit<MessageTarget, 'kind'>) =>
-  `${viewPath(place)}${thread === null ? '' : `t/${thread}/`}${id}/`
+export const serverPath = (server: string, owner?: RouteOwner | null) =>
+  accountPath(`/s/${encodeURIComponent(server)}/`, owner)
 
-export const viewPath = (view: View | null) => {
-  if (view === null) return '/'
+export const messagePath = (
+  { place, thread, id }: Omit<MessageTarget, 'kind'>,
+  owner?: RouteOwner | null
+) => `${viewPath(place, owner)}${thread === null ? '' : `t/${thread}/`}${id}/`
+
+export const viewPath = (view: View | null, owner?: RouteOwner | null) => {
+  if (view === null) return accountPath('/', owner)
   return view.kind === 'channel'
-    ? `/s/${encodeURIComponent(view.server)}/${view.channelId}/`
-    : `/dm/${view.dmId}/`
+    ? `${serverPath(view.server, owner)}${view.channelId}/`
+    : accountPath(`/dm/${view.dmId}/`, owner)
 }
 
 const parseMessage = (pathname: string): MessageTarget | null => {
@@ -96,7 +165,10 @@ const parseMessage = (pathname: string): MessageTarget | null => {
     : null
 }
 
-export const parsePath = (pathname: string): PathTarget | null => {
+export const parsePath = (href: string): PathTarget | null => {
+  const route = parseAccountPath(href)
+  if (!route) return null
+  const pathname = route.path.split(/[?#]/, 1)[0]
   const message = parseMessage(pathname)
   if (message) return message
   const channel = pathname.match(/^\/s\/([^/]+)(?:\/(\d+))?\/?$/)

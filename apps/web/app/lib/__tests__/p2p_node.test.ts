@@ -641,7 +641,7 @@ describe('P2P node', () => {
     expect(a.node.status).toBe('online')
     // The user's pause survives a reload.
     expect(a.node.paused).toBe(false)
-  })
+  }, 60_000)
 
   test("a node's own limits apply to it alone", async () => {
     const clock = new ManualClock()

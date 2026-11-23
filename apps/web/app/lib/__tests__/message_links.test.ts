@@ -46,6 +46,8 @@ describe('parseMessageLink', () => {
   test('other instances, credentials and other pages do not', () => {
     for (const href of [
       'https://other.example/s/rchat/4/90/',
+      'https://chat.example/@alice@other.example/dm/3/90/',
+      'https://chat.example/@other.example/s/rchat/4/90/',
       'https://u:p@chat.example/s/rchat/4/90/',
       'https://chat.example/s/rchat/4/',
       'https://chat.example/invite/rchat/',

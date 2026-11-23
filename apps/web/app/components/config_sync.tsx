@@ -1,4 +1,6 @@
 'use client'
+import { routeOwnerFor } from '../lib/client/account_paths'
+import { accountPath } from '../lib/view'
 import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
 import type { P2pApp } from '../lib/p2p/app/runtime'
 
@@ -33,6 +35,7 @@ import {
   splitFile,
   buildConfig,
   configUrl,
+  configPath,
   decodeConfig,
   decodeLink,
   describeChanges,
@@ -1006,7 +1009,10 @@ function LinkCard({ id }: { id: string }) {
   const current = () =>
     mark === account.lifetime.sessionMark() && account.store.getState().configLink === id
   const logIn = () => {
-    if (current() && client.shown() === account) router.push('/login/')
+    if (current() && client.shown() === account)
+      router.push(
+        '/login/?next=' + encodeURIComponent(accountPath(configPath(id), routeOwnerFor(account)))
+      )
   }
 
   return (

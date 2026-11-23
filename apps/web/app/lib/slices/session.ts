@@ -1,3 +1,4 @@
+import { accountHistoryState, routeOwnerFor } from '../client/account_paths'
 import { BOOK_COORDINATION_ERROR } from '../client/book_store'
 import { accountAdmission, addInstance, setGuest } from '../client/book'
 import {
@@ -85,7 +86,17 @@ import type {
   UserRef,
   WsEvent,
 } from '../types'
-import { type Nav, type View, adminPath, parsePath, threadKey, viewKey, viewPath } from '../view'
+import {
+  type Nav,
+  type View,
+  accountPath,
+  adminPath,
+  parseAccountPath,
+  parsePath,
+  threadKey,
+  viewKey,
+  viewPath,
+} from '../view'
 import { SELF_AUDIO_IDLE } from '../voice_layout'
 import { trimWindow } from '../window'
 import {
@@ -1076,7 +1087,17 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     if (get().configLink) set({ configLink: null })
   }
 
-  const ownsPage = () => client.shown() === acct
+  const ownsPage = () => client.canWritePage(acct)
+  const localPage = (pathname = window.location.pathname ?? '/') => {
+    const route = parseAccountPath(pathname)
+    if (!route) return null
+    if (route.owner) {
+      const { me, guest } = get()
+      const user = me?.username ?? (guest || acct.credentialTarget === null ? null : undefined)
+      if (route.owner.host !== home.host || route.owner.username !== user) return null
+    }
+    return route.path
+  }
   // Session storage keeps Back and reload working in the same tab. Ending this login
   // retires its history entries, including when the next login has the same username.
   let inviteHistory: { key: string; nonce: string } | null = null
@@ -1093,7 +1114,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   const readConfigLink = () => {
     if (!ownsPage()) return false
-    const id = parseConfigPath(window.location.pathname)
+    const path = localPage()
+    if (path === null) return false
+    const id = parseConfigPath(path)
     if (get().configLink !== id) set({ configLink: id })
     return id !== null
   }
@@ -1111,16 +1134,32 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       )
         return
       const origin = shareOrigin(undefined, undefined, home)
-      const shown = parseInvite(pageHref(origin), origin)
+      const path = localPage()
+      if (path === null) return
+      const shown = parseInvite(pageHref(origin, path), origin)
       if (!shown || !sameInvite(shown, entry)) return
-      window.history.replaceState(entryState(entry, owner), '', targetPath(entry))
+      const clean = new URL(currentUrl)
+      clean.pathname = accountPath(targetPath(entry), routeOwnerFor(acct))
+      clean.searchParams.delete('password')
+      const fragment = new URLSearchParams(clean.hash.slice(1))
+      if (fragment.has('password')) {
+        fragment.delete('password')
+        clean.hash = fragment.toString()
+      }
+      window.history.replaceState(
+        accountHistoryState(acct, entryState(entry, owner)),
+        '',
+        clean.pathname + clean.search + clean.hash
+      )
     })
   }
 
   const readInvite = () => {
     if (!ownsPage()) return false
     const origin = shareOrigin(undefined, undefined, home)
-    const target = parseInvite(pageHref(origin), origin)
+    const path = localPage()
+    if (path === null) return false
+    const target = parseInvite(pageHref(origin, path), origin)
     const code = target?.code ?? null
     const handoff = takeStashedInvite(target?.server ?? null, code, acct.handoff)
     if (!target) {
@@ -1142,7 +1181,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     return true
   }
 
-  const atHome = () => window.location.pathname === viewPath(null)
+  const atHome = () => localPage() === '/'
 
   // The history entry of the open admin page: how many entries the page has pushed, and the
   // address it was opened over, when it was opened from inside the app.
@@ -1174,20 +1213,22 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       set({ adminPage: null })
     }
     if (nav === 'none' || !ownsPage()) return
-    const path = viewPath(view)
+    const path = viewPath(view, routeOwnerFor(acct))
     if (window.location.pathname === path) return
-    if (nav === 'push') window.history.pushState(null, '', path)
-    else window.history.replaceState(null, '', path)
+    if (nav === 'push') window.history.pushState(accountHistoryState(acct, null), '', path)
+    else window.history.replaceState(accountHistoryState(acct, null), '', path)
   }
 
   // `retrying`: a boot that tries again after a 429, so it must not fall back yet.
   const resolveUrl = async (nav: 'replace' | 'none', retrying = false) => {
     if (!ownsPage()) return
     const intent = beginNavigation()
+    const path = localPage()
+    if (path === null) return
     if (readInvite() || readConfigLink() || (!get().me && !get().guest)) return
     const at = sessionMark()
     const ended = () => !ownsPage() || at !== sessionMark() || navigation !== intent
-    const parsed = parsePath(window.location.pathname)
+    const parsed = parsePath(path)
     // Only the site admin has admin paths. For everyone else they are paths nobody knows.
     if (parsed?.kind === 'admin' && get().me?.is_site_admin === true) {
       set({ adminPage: { section: parsed.section, item: parsed.item, row: hashRow() } })
@@ -1324,6 +1365,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   const authenticate = async (path: string, body: LoginRequest | RegisterRequest) => {
     const mark = sessionMark()
+    if (
+      typeof acct.credentialTarget === 'string' &&
+      (path === '/auth/register' || body.username.toLowerCase() !== acct.credentialTarget)
+    )
+      throw new Error('Sign in with the saved username for this link.')
     const limit = accountAdmission(client.book.getState(), home.origin, body.username)
     if (limit) throw new Error(limit)
     const response = await authRequest(path, body)
@@ -1707,23 +1753,23 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       beginNavigation()
       const open = get().adminPage !== null
       const entry = ownsPage() ? adminEntry() : { depth: 0, from: null }
-      const path = adminPath(section, item)
+      const path = adminPath(section, item, routeOwnerFor(acct))
       const url = row === null ? path : `${path}#${encodeURIComponent(row)}`
       leaveInvite()
       if (ownsPage()) {
         if (open && window.location.pathname === path)
-          window.history.replaceState(window.history.state, '', url)
+          window.history.replaceState(accountHistoryState(acct, window.history.state), '', url)
         else if (open)
           window.history.pushState(
-            {
+            accountHistoryState(acct, {
               rchatAdmin: entry.from === null ? null : { depth: entry.depth + 1, from: entry.from },
-            },
+            }),
             '',
             url
           )
         else
           window.history.pushState(
-            { rchatAdmin: { depth: 1, from: window.location.pathname } },
+            accountHistoryState(acct, { rchatAdmin: { depth: 1, from: window.location.pathname } }),
             '',
             url
           )
@@ -1739,9 +1785,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       if (!get().adminPage) return
       const { depth, from } = ownsPage() ? adminEntry() : { depth: 0, from: null }
       const view = get().view
-      if (from !== null && from === viewPath(view)) return window.history.go(-depth)
+      if (from !== null && localPage(from) === viewPath(view)) return window.history.go(-depth)
       set({ adminPage: null })
-      if (ownsPage()) window.history.replaceState(null, '', viewPath(view))
+      if (ownsPage())
+        window.history.replaceState(
+          accountHistoryState(acct, null),
+          '',
+          viewPath(view, routeOwnerFor(acct))
+        )
       if (!view) set({ home: true })
     },
 
@@ -2003,14 +2054,22 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       const invite: OpenInvite = { ...target, join: false }
       set({ invite, contextMenu: null, profile: null, activeDialog: null })
       if (!ownsPage()) return
-      const path = targetPath(target)
+      const path = accountPath(targetPath(target), routeOwnerFor(acct))
       const owner = inviteHistoryOwner()
       if (window.location.pathname !== path)
-        window.history.pushState(entryState({ ...target, pushed: true }, owner), '', path)
+        window.history.pushState(
+          accountHistoryState(acct, entryState({ ...target, pushed: true }, owner)),
+          '',
+          path
+        )
       else {
         const pushed =
           inviteEntry(window.history.state, target.server, code, owner)?.pushed ?? false
-        window.history.replaceState(entryState({ ...target, pushed }, owner), '', path)
+        window.history.replaceState(
+          accountHistoryState(acct, entryState({ ...target, pushed }, owner)),
+          '',
+          path
+        )
       }
     },
 

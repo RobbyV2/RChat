@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import type { MessageLocation, WsEvent } from '../types'
-import { home } from './home_instance'
+import { home, installPrimaryAccount } from './home_instance'
 import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
 
 afterAll(resetSessionCaches)
@@ -17,6 +17,7 @@ let maxFlying = 0
 let hold: Promise<void> | null = null
 let pages: string[] = []
 let replaced: string[] = []
+let restoreBook: () => void
 let path = '/'
 
 const card = (over: Partial<MessageLocation> = {}): MessageLocation => ({
@@ -37,6 +38,7 @@ const card = (over: Partial<MessageLocation> = {}): MessageLocation => ({
 beforeEach(() => {
   memoryStorage.clear()
   Object.assign(globalThis, { localStorage: memoryStorage })
+  restoreBook = installPrimaryAccount('bob')
   readable = {}
   lookups = []
   batches = []
@@ -124,6 +126,7 @@ beforeEach(() => {
 const chan = { id: 77, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
 
 afterEach(() => {
+  restoreBook()
   globalThis.fetch = realFetch
   ;(globalThis as { window?: unknown }).window = realWindow
 })

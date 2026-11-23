@@ -5,6 +5,7 @@ import type { P2pApp } from '../lib/p2p/app/runtime'
 import { useAccount } from '../lib/client/react'
 
 import { useMemo, useState, type ReactNode } from 'react'
+import { logoutForLogin } from '../login/account_login'
 import { useRouter } from 'next/navigation'
 import {
   Bell,
@@ -1148,7 +1149,7 @@ function GetStarted({ className = '' }: { className?: string }) {
 function GuestHome() {
   const router = useRouter()
   const openDialog = useStore(s => s.openDialog)
-  const logout = useStore(s => s.logout)
+  const loginAccount = useAccount()
   const signup = useStore(s => passwordSignup(s.settings))
   const line = useStore(s => guestHomeLine(s.settings))
   const benefits = useStore(s => accountBenefits(s.settings))
@@ -1178,7 +1179,7 @@ function GuestHome() {
           <button
             type="button"
             onClick={() => {
-              logout()
+              logoutForLogin(loginAccount)
               router.replace(signup ? '/login?mode=register' : '/login')
             }}
             className={`${filledBtn} mx-2 mt-2 self-start`}

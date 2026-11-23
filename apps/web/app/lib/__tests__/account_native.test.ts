@@ -97,7 +97,10 @@ for (const switched of [false, true]) {
       ready.resolve(() => {})
       await listener
       await new Promise(resolve => setTimeout(resolve, 0))
-      expect(paths).toEqual(switched ? ['/dm/2/'] : ['/dm/1/', '/dm/2/'])
+      const prefix = '/@reader@instance.test'
+      expect(paths).toEqual(
+        (switched ? ['/dm/2/'] : ['/dm/1/', '/dm/2/']).map(path => prefix + path)
+      )
       expect(queue.size).toBe(0)
     } finally {
       client.shown = previous

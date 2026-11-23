@@ -184,7 +184,8 @@ describe('storage limits', () => {
     expect(rb.bytes ?? 0).toBeLessThanOrEqual(6000)
     expect((await bodies(b, a)).length).toBeLessThan(6)
     expect(a.dms.sync.peerFull(room)).toBe(true)
-    expect(a.dms.sync.linksOf(room)[0].inFlight).toEqual([])
+    // Each push already on the wire receives its own acknowledgement.
+    await waitFor(() => a.dms.sync.linksOf(room)[0].inFlight.length === 0, 'outstanding push acks')
     expect((await view(a, b)).some(m => m.pending)).toBe(true)
     expect(sessionOf(a, room).strikes + sessionOf(b, room).strikes).toBe(0)
     // Bob's own messages are refused with a clear reason.

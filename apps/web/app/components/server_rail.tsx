@@ -2,6 +2,7 @@
 import { useP2pApp, useP2p } from '../lib/client/p2p_react'
 
 import type { CSSProperties } from 'react'
+import { logoutForLogin } from '../login/account_login'
 import { useRouter } from 'next/navigation'
 import {
   Eye,
@@ -332,7 +333,7 @@ export function ServerRail() {
   const loadMoreServers = useStore(s => s.loadMoreServers)
   const openDialog = useStore(s => s.openDialog)
   const openAdmin = useStore(s => s.openAdmin)
-  const logout = useStore(s => s.logout)
+  const loginAccount = useAccount()
   const saved = useStore(s => s.layout.servers)
   const p2pHome = useP2p(s => s.home || s.server !== null)
   const p2pBeside = useP2p(s => s.home && s.dmList)
@@ -435,7 +436,7 @@ export function ServerRail() {
         <button
           title={me ? 'Log out' : 'Exit guest mode'}
           onClick={() => {
-            logout()
+            logoutForLogin(loginAccount)
             router.replace('/login')
           }}
           className="rounded-full p-2 text-on-surface-variant hover:bg-surface-container-high hover:text-error"

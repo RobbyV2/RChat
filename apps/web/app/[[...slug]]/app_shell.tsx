@@ -6,6 +6,10 @@ import { useRouter } from 'next/navigation'
 import { useStore } from '../lib/store'
 import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
 import { client } from '../lib/client/client'
+import { accountHistoryState, selectPageAccount, routeOwnerFor } from '../lib/client/account_paths'
+import { accountPath, parseAccountPath } from '../lib/view'
+import { loginHref, logoutForLogin, UnavailableAccount } from '../login/account_login'
+import type { AccountSession } from '../lib/client/session'
 import type { RChatState } from '../lib/store_types'
 import { historyKey } from '../lib/openapi'
 import { notifications } from '../lib/platform'
@@ -51,13 +55,93 @@ import { P2pChannelPane, P2pMemberList, P2pServerSidebar } from '../components/p
 import { P2pThreadPanel } from '../components/p2p/p2p_thread'
 import { P2pSearchPanel } from '../components/p2p/p2p_search'
 
+function markEntry(account: AccountSession) {
+  if (!client.canWritePage(account)) return
+  const previous = window.history.state
+  const marked = accountHistoryState(account, previous)
+  // Next strips the trailing slash from links whose final segment resembles a filename,
+  // including account roots ending in a dotted host. Keep the local route canonical.
+  const { pathname, search, hash } = window.location
+  const owner = routeOwnerFor(account)
+  if (owner && !pathname.startsWith('/@')) {
+    window.history.replaceState(marked, '', accountPath(pathname + search + hash, owner))
+    return
+  }
+  if (pathname.startsWith('/@') && !pathname.slice(1).includes('/')) {
+    window.history.replaceState(marked, '', pathname + '/' + search + hash)
+    return
+  }
+  if (
+    marked &&
+    typeof marked === 'object' &&
+    'acct' in marked &&
+    'rchatOrigin' in marked &&
+    (marked.acct !== previous?.acct || marked.rchatOrigin !== previous?.rchatOrigin)
+  )
+    window.history.replaceState(marked, '')
+}
+
 export default function AppShell() {
   const sessions = useLiveSessions()
   const shown = client.shown()
+  const router = useRouter()
+  const started = useRef(new WeakSet<AccountSession>())
+  const [route, setRoute] = useState<'pending' | 'chat' | 'login' | 'missing'>('pending')
+
+  const start = useCallback(
+    (account: AccountSession) => {
+      if (started.current.has(account)) return
+      started.current.add(account)
+      void startApp(() => {
+        if (!client.canWritePage(account)) return
+        const { pathname, search, hash } = window.location
+        router.replace(loginHref(pathname + search + hash, routeOwnerFor(account)))
+      }, account)
+    },
+    [router]
+  )
+
+  useEffect(() => {
+    const select = () => {
+      const account = selectPageAccount(window.location.pathname, window.history.state)
+      if (!account) {
+        setRoute('missing')
+        return
+      }
+      markEntry(account)
+      const local = parseAccountPath(window.location.pathname)?.path
+      if (local === '/login' || local === '/login/') {
+        setRoute('login')
+        router.replace(loginHref('/', parseAccountPath(window.location.pathname)?.owner))
+        return
+      }
+      setRoute('chat')
+      const state = account.store.getState()
+      if (started.current.has(account)) {
+        void state.syncFromUrl('none')
+        return
+      }
+      start(account)
+    }
+    select()
+    window.addEventListener('popstate', select)
+    return () => window.removeEventListener('popstate', select)
+  }, [router, start])
+
+  useEffect(() => {
+    if (route !== 'chat' || !client.canWritePage(shown)) return
+    start(shown)
+    markEntry(shown)
+    return shown.store.subscribe((state, before) => {
+      if ((state.me !== before.me && state.me) || (state.guest && !before.guest)) markEntry(shown)
+    })
+  }, [route, shown, start])
+
+  if (route === 'missing') return <UnavailableAccount />
+  if (route === 'login') return null
   return (
     <AccountProvider session={shown}>
-      <Startup />
-      <Chat key={shown.renderKey} />
+      {route === 'chat' ? <Chat key={shown.renderKey} /> : <div>Loading RChat</div>}
       <CallBanner />
       <ExpandedCallPane />
       {sessions.map(session => (
@@ -142,23 +226,12 @@ function OverlayLayer() {
   )
 }
 
-function Startup() {
-  const account = useAccount()
-  const router = useRouter()
-  const booted = useRef(false)
-  useEffect(() => {
-    if (booted.current) return
-    booted.current = true
-    void startApp(() => router.replace('/login'), account)
-  }, [account, router])
-  return null
-}
-
 function Chat() {
   const identity = useP2pApp()
   const p2p = identity?.p2p
 
-  const { store } = useAccount()
+  const account = useAccount()
+  const { store } = account
   const router = useRouter()
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
@@ -207,24 +280,21 @@ function Chat() {
   const guestBlocked = useStore(s => s.guest && !s.settings.guests_enabled)
   useEffect(() => {
     if (!guestBlocked) return
-    store.getState().logout()
+    logoutForLogin(account)
     store.getState().setError('Guest access is disabled')
-    router.replace('/login')
-  }, [guestBlocked, router, store])
+    if (client.canWritePage(account)) router.replace('/login')
+  }, [account, guestBlocked, router, store])
 
   const authExpired = useStore(s => s.authExpired)
   useEffect(() => {
     if (!authExpired) return
     store.setState({ authExpired: false })
     store.getState().setError('Your session has ended. Please sign in again.')
-    router.replace('/login')
-  }, [authExpired, router, store])
-
-  useEffect(() => {
-    const onPop = () => void store.getState().syncFromUrl('none')
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
-  }, [store])
+    if (client.canWritePage(account)) {
+      const { pathname, search, hash } = window.location
+      router.replace(loginHref(pathname + search + hash, routeOwnerFor(account)))
+    }
+  }, [account, authExpired, router, store])
 
   // The place the address restores on load keeps the P2P home open (it comes back from its
   // session key); a change of view after that closes it.

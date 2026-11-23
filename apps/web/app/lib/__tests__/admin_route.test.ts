@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { useStore, resetSessionCaches } from '../store'
 import { drain, me, memoryStorage, serverDetail } from './fixtures'
+import { installPrimaryAccount } from './home_instance'
 
 afterAll(resetSessionCaches)
 
@@ -9,6 +10,7 @@ const realFetch = globalThis.fetch
 const realWindow = (globalThis as { window?: unknown }).window
 const realDocument = (globalThis as { document?: unknown }).document
 const chan = { id: 78, name: 'general', kind: 'text' as const, slowmode_seconds: 0 }
+let restoreBook: () => void
 let path = '/'
 let hash = ''
 let entries: { state: unknown; url: string }[] = []
@@ -24,6 +26,7 @@ const at = (url: string) => {
 beforeEach(() => {
   memoryStorage.clear()
   Object.assign(globalThis, { localStorage: memoryStorage })
+  restoreBook = installPrimaryAccount('bob')
   asked = []
   went = []
   entries = [{ state: null, url: '/' }]
@@ -75,6 +78,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  restoreBook()
   globalThis.fetch = realFetch
   ;(globalThis as { window?: unknown }).window = realWindow
   ;(globalThis as { document?: unknown }).document = realDocument

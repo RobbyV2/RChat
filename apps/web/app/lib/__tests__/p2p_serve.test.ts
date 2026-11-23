@@ -554,31 +554,24 @@ describe('p2p transfer', () => {
   test('the hoster serves a few transfers at once and a limited number per peer', async () => {
     const { m, x } = manager()
     await m.storeFile('f', new File([bytes(10)], 'f.bin'), null)
-    const answers: string[] = []
-    for (let i = 0; i < ASKS_PER_MIN + 2; i += 1) {
-      const { client, host } = pipe(`greedy-${i}`)
-      client.on('data', d => answers.push((d as { type: string }).type))
+    const replyTo = async (peer: string, requester = peer) => {
+      const { client, host } = pipe(peer)
+      const firstFrame = Promise.withResolvers<string>()
+      client.on('data', frame => firstFrame.resolve((frame as { type: string }).type))
       x.serve(host)
-      await ask(x, host, { id: 'f', chunked: true }, 'greedy')
-      await new Promise(r => setTimeout(r, 5))
+      await ask(x, host, { id: 'f', chunked: true }, requester)
+      const response = await firstFrame.promise
+      host.close()
+      return response
     }
+    const answers: string[] = []
+    for (let i = 0; i < ASKS_PER_MIN + 2; i += 1)
+      answers.push(await replyTo(`greedy-${i}`, 'greedy'))
     expect(answers.filter(t => t === 'busy').length).toBe(2)
-    const { client, host } = pipe('polite')
-    const other: string[] = []
-    client.on('data', d => other.push((d as { type: string }).type))
-    x.serve(host)
-    await ask(x, host, { id: 'f', chunked: true })
-    await new Promise(r => setTimeout(r, 5))
-    expect(other[0]).toBe('meta')
+    expect(await replyTo('polite')).toBe('meta')
     const busy = m as unknown as { serving: number }
     busy.serving = SERVE_MAX
-    const late: string[] = []
-    const extra = pipe('late')
-    extra.client.on('data', d => late.push((d as { type: string }).type))
-    x.serve(extra.host)
-    await ask(x, extra.host, { id: 'f', chunked: true })
-    await new Promise(r => setTimeout(r, 5))
-    expect(late).toEqual(['busy'])
+    expect(await replyTo('late')).toBe('busy')
   })
 
   test('the hoster serves only requests with a token for this file, this tab and this peer', async () => {

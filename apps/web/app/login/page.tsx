@@ -1,6 +1,6 @@
 'use client'
 
-import { useAccount } from '../lib/client/react'
+import { AccountProvider, useAccount } from '../lib/client/react'
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Globe } from 'lucide-react'
@@ -10,6 +10,11 @@ import { useStore } from '../lib/store'
 import { keptSession, restoreStreamer } from '../lib/start'
 import { shellInfo } from '../lib/platform'
 import { safeNext } from '../lib/invite'
+import { client } from '../lib/client/client'
+import { routeOwnerFor, selectPageAccount } from '../lib/client/account_paths'
+import type { AccountSession } from '../lib/client/session'
+import { accountPath, parseAccountPath, type RouteOwner } from '../lib/view'
+import { UnavailableAccount } from './account_login'
 import { passwordSignup } from '../lib/features'
 import { NAME_MAX, charCount } from '../lib/rules'
 import type { AvatarKind } from '../lib/types'
@@ -45,7 +50,9 @@ function blurHosts(text: string, hosts: (string | null)[]): ReactNode {
 function InstancePicker({
   onSwitched,
   onMissing,
+  pinned,
 }: {
+  pinned: boolean
   onSwitched: () => void
   onMissing: (missing: boolean) => void
 }) {
@@ -73,7 +80,7 @@ function InstancePicker({
         void store.getState().loadSettings()
         return
       }
-      setOpen(true)
+      setOpen(!pinned)
       setError(
         shellInfo() && home.isDefault ? (
           'Enter the instance to use.'
@@ -90,7 +97,7 @@ function InstancePicker({
       mounted.current = false
       live = false
     }
-  }, [home, store, loadInstance, onMissing])
+  }, [home, store, loadInstance, onMissing, pinned])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -128,16 +135,18 @@ function InstancePicker({
             {host && <span className="streamer ml-1.5 text-on-surface-variant">{host}</span>}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setOpen(true)
-            setError(null)
-          }}
-          className="shrink-0 rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-high"
-        >
-          Change
-        </button>
+        {!pinned && (
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(true)
+              setError(null)
+            }}
+            className="shrink-0 rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-high"
+          >
+            Change
+          </button>
+        )}
       </div>
     )
   return (
@@ -203,11 +212,48 @@ function InstancePicker({
 }
 
 export default function LoginPage() {
-  const account = useAccount()
-  return <LoginForm key={account.renderKey} />
+  const [destination, setDestination] = useState<
+    | {
+        account: AccountSession
+        next: string
+        owner: RouteOwner | null
+      }
+    | null
+    | undefined
+  >(undefined)
+  useEffect(() => {
+    const resolve = () => {
+      const requested = safeNext(new URLSearchParams(window.location.search).get('next'))
+      const next = requested ?? '/'
+      const route = parseAccountPath(next)
+      const account = requested
+        ? selectPageAccount(next.split(/[?#]/, 1)[0], window.history.state)
+        : client.shown()
+      if (account && !requested) client.show(account, 'none')
+      const pin =
+        requested && typeof account?.credentialTarget === 'string'
+          ? { username: account.credentialTarget, host: account.conn.host }
+          : null
+      setDestination(account && route ? { account, next, owner: route.owner ?? pin } : null)
+    }
+    resolve()
+    window.addEventListener('popstate', resolve)
+    return () => window.removeEventListener('popstate', resolve)
+  }, [])
+  if (destination === undefined) return null
+  if (!destination) return <UnavailableAccount />
+  return (
+    <AccountProvider session={destination.account}>
+      <LoginForm
+        key={destination.account.renderKey}
+        next={destination.next}
+        owner={destination.owner}
+      />
+    </AccountProvider>
+  )
 }
 
-function LoginForm() {
+function LoginForm({ next, owner }: { next: string; owner: RouteOwner | null }) {
   const account = useAccount()
   const { api } = account
   const router = useRouter()
@@ -224,7 +270,7 @@ function LoginForm() {
   const [picked, setMode] = useState<Mode>('login')
   const signup = useStore(s => passwordSignup(s.settings))
   const mode: Mode = signup ? picked : 'login'
-  const [username, setUsername] = useState('')
+  const [username, setUsername] = useState(owner?.username ?? '')
   const [passKind, setPassKind] = useState<PassKind>('text')
   const [password, setPassword] = useState('')
   const [words, setWords] = useState<string[]>([])
@@ -237,13 +283,14 @@ function LoginForm() {
 
   useEffect(() => {
     restoreStreamer(account)
-    if (new URLSearchParams(window.location.search).get('mode') === 'register') setMode('register')
-  }, [account])
+    if (!owner && new URLSearchParams(window.location.search).get('mode') === 'register')
+      setMode('register')
+  }, [account, owner])
 
   useEffect(() => {
-    if (!authed) return
-    router.replace(safeNext(new URLSearchParams(window.location.search).get('next')) ?? '/')
-  }, [authed, router])
+    if (!authed || !client.canWritePage(account)) return
+    router.replace(accountPath(next, parseAccountPath(next)?.owner ?? routeOwnerFor(account)))
+  }, [account, authed, next, owner, router])
 
   useEffect(() => {
     if (passKind !== 'words') return
@@ -279,6 +326,7 @@ function LoginForm() {
     setError(null)
     setNameError(null)
     const name = username.trim()
+    if (owner && owner.username !== name.toLowerCase()) return
     if (!name) {
       setNameError('Enter a username')
       return
@@ -345,78 +393,85 @@ function LoginForm() {
           <img src="/rchat_logo.png" alt="RChat" className="h-16 w-auto" />
         </h1>
         <InstancePicker
+          pinned={!!owner}
           onMissing={setMissing}
-          onSwitched={() =>
-            router.replace(safeNext(new URLSearchParams(window.location.search).get('next')) ?? '/')
-          }
+          onSwitched={() => {
+            if (client.canWritePage(account))
+              router.replace(
+                accountPath(next, parseAccountPath(next)?.owner ?? routeOwnerFor(account))
+              )
+          }}
         />
-        {signup && (
+        {signup && !owner && (
           <div className="flex gap-1 rounded-full bg-surface-container p-1">
             {tab('login', 'Log in')}
             {tab('register', 'Create account')}
           </div>
         )}
-        <form onSubmit={submit} className="flex flex-col gap-4">
-          <div className="flex flex-col">
-            <label className="flex flex-col gap-1">
-              <span className="text-sm text-on-surface-variant">Username</span>
-              <input
-                value={username}
-                onChange={e => {
-                  setUsername(e.target.value)
-                  setNameError(null)
-                }}
-                autoFocus
-                autoComplete="username"
-                aria-invalid={nameError !== null}
-                aria-describedby={nameError ? nameId : undefined}
-                className={nameError ? `${inputBase} border-error` : inputCls}
+        {(!owner || owner.username !== null) && (
+          <form onSubmit={submit} className="flex flex-col gap-4">
+            <div className="flex flex-col">
+              <label className="flex flex-col gap-1">
+                <span className="text-sm text-on-surface-variant">Username</span>
+                <input
+                  readOnly={!!owner}
+                  value={username}
+                  onChange={e => {
+                    setUsername(e.target.value)
+                    setNameError(null)
+                  }}
+                  autoFocus
+                  autoComplete="username"
+                  aria-invalid={nameError !== null}
+                  aria-describedby={nameError ? nameId : undefined}
+                  className={nameError ? `${inputBase} border-error` : inputCls}
+                />
+              </label>
+              <FieldError id={nameId} message={nameError} />
+            </div>
+            <PassSwitch value={passKind} onChange={setPassKind} />
+            {passKind === 'text' ? (
+              <label className="flex flex-col gap-1">
+                <span className="text-sm text-on-surface-variant">Password</span>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                  className={inputCls}
+                />
+              </label>
+            ) : words.length ? (
+              <WordGrid words={words} selected={selected} onChange={setSelected} />
+            ) : (
+              <p className="text-sm text-on-surface-variant">
+                Type a username to see its 20 words, then pick 7 in order.
+              </p>
+            )}
+            {mode === 'register' && (
+              <AvatarPicker
+                username={username}
+                kind={avatarKind}
+                color={avatarColor}
+                onKind={setAvatarKind}
+                onColor={setAvatarColor}
               />
-            </label>
-            <FieldError id={nameId} message={nameError} />
-          </div>
-          <PassSwitch value={passKind} onChange={setPassKind} />
-          {passKind === 'text' ? (
-            <label className="flex flex-col gap-1">
-              <span className="text-sm text-on-surface-variant">Password</span>
-              <input
-                type="password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                className={inputCls}
-              />
-            </label>
-          ) : words.length ? (
-            <WordGrid words={words} selected={selected} onChange={setSelected} />
-          ) : (
-            <p className="text-sm text-on-surface-variant">
-              Type a username to see its 20 words, then pick 7 in order.
-            </p>
-          )}
-          {mode === 'register' && (
-            <AvatarPicker
-              username={username}
-              kind={avatarKind}
-              color={avatarColor}
-              onKind={setAvatarKind}
-              onColor={setAvatarColor}
-            />
-          )}
-          {error && (
-            <p className="rounded-lg bg-error-container px-3 py-2 text-sm text-on-error-container">
-              {error}
-            </p>
-          )}
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded-full bg-primary py-2.5 text-sm font-medium text-on-primary transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            {mode === 'login' ? 'Log in' : 'Create account'}
-          </button>
-        </form>
-        {guestsEnabled && !missing && (
+            )}
+            {error && (
+              <p className="rounded-lg bg-error-container px-3 py-2 text-sm text-on-error-container">
+                {error}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={busy}
+              className="rounded-full bg-primary py-2.5 text-sm font-medium text-on-primary transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {mode === 'login' ? 'Log in' : 'Create account'}
+            </button>
+          </form>
+        )}
+        {(!owner || owner.username === null) && guestsEnabled && !missing && (
           <button
             type="button"
             onClick={() => void enterGuest()}

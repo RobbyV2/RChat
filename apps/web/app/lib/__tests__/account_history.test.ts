@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test'
 import { ApiError } from '../api'
 import { me } from './fixtures'
+import { accountPath } from '../view'
+import { routeOwnerFor } from '../client/account_paths'
 import { client } from '../client/client'
 import { stashInvite } from '../invite'
 import { testAccount } from './test_account'
@@ -12,6 +14,7 @@ function historyFixture() {
   const original = client.shown
   const location = new URL('https://client.test/')
   const storage = new Map<string, string>()
+  const previous: { state: unknown; href: string }[] = []
   const history = {
     state: null as unknown,
     replaceState(state: unknown, _: string, path: string) {
@@ -19,7 +22,15 @@ function historyFixture() {
       location.href = new URL(path, location).href
     },
     pushState(state: unknown, title: string, path: string) {
+      previous.push({ state: history.state, href: location.href })
       history.replaceState(state, title, path)
+    },
+    go(delta: number) {
+      for (let i = 0; i > delta; i--) history.back()
+    },
+    back() {
+      const entry = previous.pop()
+      if (entry) history.replaceState(entry.state, '', entry.href)
     },
   }
   Object.defineProperty(globalThis, 'window', {
@@ -78,6 +89,8 @@ test('an invite password follows its browser history entry only within the ownin
 
     client.shown = () => a
     a.store.resetSessionCaches()
+    expect(a.store.getState().syncInvite()).toBe(false)
+    a.store.setState({ me: me('reader') })
     a.store.getState().syncInvite()
     expect(a.store.getState().invite?.password).toBeNull()
   } finally {
@@ -160,8 +173,89 @@ test('a later invite stays open when an older message lookup finishes on the sam
     a.store.getState().openInvite('club')
     result.resolve({ server: null, channel_id: null, dm_id: 1, thread_root_id: null })
     await first
-    expect(location.pathname).toBe('/invite/club/')
+    expect(location.pathname).toBe(accountPath('/invite/club/', routeOwnerFor(a)))
     expect(a.store.getState().invite?.server).toBe('club')
+  } finally {
+    restore()
+  }
+})
+
+test('account invite opens above its own home and Back returns to that history entry', () => {
+  const { b, history, location, restore } = historyFixture()
+  try {
+    client.shown = () => b
+    b.store.setState({ view: { kind: 'dm', dmId: 4 } })
+    b.store.getState().goHome()
+    const prefix = '/@reader@second.test'
+    expect(location.pathname).toBe(prefix + '/')
+    expect(history.state).toMatchObject({ acct: b.id, rchatOrigin: b.conn.origin })
+    b.store.getState().openInvite('club', 'ticket')
+    expect(location.pathname).toBe(prefix + '/invite/club/')
+    expect(history.state).toMatchObject({ acct: b.id, rchatOrigin: b.conn.origin })
+    b.store.getState().closeInvite()
+    expect(location.pathname).toBe(prefix + '/')
+    expect(history.state).toMatchObject({ acct: b.id, rchatOrigin: b.conn.origin })
+  } finally {
+    restore()
+  }
+})
+
+test('only the addressed account consumes a prefixed invite or config link', async () => {
+  const { a, b, history, location, restore } = historyFixture()
+  try {
+    const prefix = '/@reader@second.test'
+    location.href = location.origin + prefix + '/invite/club/?ref=nav&password=ticket#row'
+    expect(a.store.getState().syncInvite()).toBe(false)
+    client.shown = () => b
+    b.store.setState({ me: null })
+    expect(b.store.getState().syncInvite()).toBe(false)
+    b.store.setState({ me: me('reader') })
+    expect(b.store.getState().syncInvite()).toBe(true)
+    expect(b.store.getState().invite?.password).toBe('ticket')
+    await Promise.resolve()
+    expect(location.href).toBe(location.origin + prefix + '/invite/club/?ref=nav#row')
+    expect(history.state).toMatchObject({ acct: b.id, rchatOrigin: b.conn.origin })
+    location.pathname = prefix + '/config/aB1234567890/'
+    expect(b.store.getState().syncConfigLink()).toBe(true)
+    expect(b.store.getState().configLink).toBe('aB1234567890')
+    client.shown = () => a
+    expect(a.store.getState().syncConfigLink()).toBe(false)
+    location.pathname = '/@second.test/i/acde23/'
+    client.shown = () => b
+    expect(b.store.getState().syncInvite()).toBe(false)
+    b.store.setState({ me: null, guest: true })
+    expect(b.store.getState().syncInvite()).toBe(true)
+    expect(b.store.getState().invite?.code).toBe('acde23')
+    client.shown = () => a
+    for (const malformed of ['/@reader@/invite/club/', '/@reader@/config/aB1234567890/']) {
+      location.pathname = malformed
+      expect(a.store.getState().syncInvite()).toBe(false)
+      expect(a.store.getState().syncConfigLink()).toBe(false)
+    }
+  } finally {
+    restore()
+  }
+})
+
+test('an admin row updates its scoped history entry and closing returns to the underlying DM', () => {
+  const { b, history, location, restore } = historyFixture()
+  try {
+    client.shown = () => b
+    b.store.setState({ me: me('reader', { is_site_admin: true }), view: { kind: 'dm', dmId: 4 } })
+    location.pathname = '/@reader@second.test/dm/4/'
+    b.store.getState().openAdmin('users', 'reader')
+    b.store.getState().openAdmin('users', 'reader', 'row one')
+    expect(location.pathname + location.hash).toBe(
+      '/@reader@second.test/admin/users/reader/#row%20one'
+    )
+    expect(history.state).toMatchObject({
+      acct: b.id,
+      rchatOrigin: b.conn.origin,
+      rchatAdmin: { depth: 1, from: '/@reader@second.test/dm/4/' },
+    })
+    b.store.getState().closeAdmin()
+    expect(location.pathname).toBe('/@reader@second.test/dm/4/')
+    expect(location.hash).toBe('')
   } finally {
     restore()
   }

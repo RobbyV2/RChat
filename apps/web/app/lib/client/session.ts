@@ -26,7 +26,6 @@ import { KeyScope } from './keys'
 export type AccountId = string
 
 export class AccountSession {
-  credentialTarget: string | null | undefined
   readonly identities = new P2pIdentities(this)
   readonly channelEdit = createChannelEdit()
   readonly adminConfig = createStore<{ config: AdminConfig | null }>(() => ({ config: null }))
@@ -52,7 +51,8 @@ export class AccountSession {
   constructor(
     readonly conn: InstanceConnection,
     readonly viewing = createViewing(conn),
-    readonly discovery = lookup()
+    readonly discovery = lookup(),
+    public credentialTarget?: string | null
   ) {
     // Signed-out links can finish signing in during a handoff. Keep the slot that wrote
     // each pending value until it is consumed, even if the username has changed.

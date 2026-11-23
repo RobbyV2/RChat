@@ -642,7 +642,7 @@ export const getHomeSession = (() => {
     return session
   }
 })()
-client.shown = getHomeSession
+client.bindHome(getHomeSession)
 export {
   confirmBan,
   noteMemberTimeouts,

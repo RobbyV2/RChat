@@ -582,8 +582,8 @@ export function shareOrigin(
 }
 
 // The current page's address on the share origin, so app-only origins parse like web ones.
-export const pageHref = (origin: string) =>
-  `${origin}${window.location.pathname}${window.location.search}${window.location.hash}`
+export const pageHref = (origin: string, pathname = window.location.pathname) =>
+  `${origin}${pathname}${window.location.search}${window.location.hash}`
 
 export function localOrigins(
   connection: InstanceConnection,
