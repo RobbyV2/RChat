@@ -8286,3 +8286,30 @@ async fn brand_images_are_added_to_an_old_database() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn announcement_tables_are_added_and_dismissals_survive_restart() {
+    on_each_database("announcement_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        for stmt in [
+            "DROP TABLE announcement_dismissals",
+            "DROP TABLE announcements",
+            "UPDATE settings SET value='40' WHERE key='schema_version'",
+            "INSERT INTO users(username,display_name,password_hash,password_kind,avatar_kind,created_at) VALUES('alice','Alice','hash','text','identicon',5)"
+        ] {
+            sqlx::query(stmt).execute(&db).await.expect(stmt);
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(count(&db,"SELECT COUNT(*) FROM users WHERE username='alice' AND created_at=5").await,1);
+            assert_eq!(count(&db,"SELECT COUNT(*) FROM announcement_dismissals").await,round);
+            if round == 0 {
+                sqlx::query("INSERT INTO announcements VALUES('notice','Welcome',1,99)").execute(&db).await.expect("publish");
+                sqlx::query("INSERT INTO announcement_dismissals VALUES('alice','notice')").execute(&db).await.expect("dismiss");
+            }
+            close(&db).await;
+        }
+    }).await;
+}

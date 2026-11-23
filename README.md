@@ -65,7 +65,7 @@ Open http://localhost:3000. The first account you register is the site admin.
 - Docker Compose with nginx, many copies: put hex passwords (`openssl rand -hex 24`) for `POSTGRES_PASSWORD` and `VALKEY_PASSWORD` in `deploy/.env`, then `docker compose -f deploy/compose.scale.yml up -d` (serves on port 8080).
 - Kubernetes: copy `deploy/k8s/secrets.env.example` to `deploy/k8s/secrets.env` and fill it in, replace the `REPLACE` values in `deploy/k8s/config.yaml` and `chat.example.com` in `deploy/k8s/ingress.yaml`, then `kubectl apply -k deploy/k8s`.
 
-Set the instance name and upload images under Site administration → Branding. In `APP_MODE=full`, the server uses the brand for page titles, tab icons and the installable app's manifest.
+Set the instance name, upload images and schedule announcements under Site administration → Branding. In `APP_MODE=full`, the server uses the brand for page titles, tab icons and the installable app's manifest.
 
 Accounts from the command line, also while the server runs: `server user create <name>` makes an account with a temporary password (the first account is the site admin, also with sign-up closed), and `server user reset-password <name>` gives one a new temporary password. From source it is `cargo run --bin server -- user create <name>`, in Docker `docker exec <container> /app/server user create <name>`.
 

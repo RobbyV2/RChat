@@ -142,5 +142,21 @@
   {
     "route": "delete /api/v1/admin/brand/{kind}",
     "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "get /api/v1/admin/announcements",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "post /api/v1/admin/announcements",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "delete /api/v1/admin/announcements/{id}",
+    "reason": "site-admin only and left out of the API document (the hidden admin)"
+  },
+  {
+    "route": "put /api/v1/announcements/{id}/dismiss",
+    "reason": "takes an instance announcement ID and records a dismissal for the caller; it names no account, server, channel, or message"
   }
 ]

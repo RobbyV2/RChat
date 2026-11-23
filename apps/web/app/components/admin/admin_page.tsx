@@ -85,6 +85,13 @@ function Page() {
                   keywords: r.keywords,
                   env: r.env,
                 })),
+                {
+                  section: 'branding',
+                  id: 'announcements',
+                  label: 'Announcements',
+                  line: 'Publish or schedule an instance announcement.',
+                  keywords: ['banner', 'schedule'],
+                },
                 ...BRAND_IMAGE_ROWS.map(r => ({ section: 'branding', ...r })),
               ]
             : id === 'servers'

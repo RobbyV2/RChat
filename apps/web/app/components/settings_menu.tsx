@@ -1,5 +1,6 @@
 'use client'
 
+import { AnnouncementSetting } from './announcements'
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { Globe, UserRound, X } from 'lucide-react'
@@ -754,6 +755,7 @@ function GeneralSection() {
       <RelaySection />
       <section>
         <p className={sectionCls}>Appearance</p>
+        <AnnouncementSetting />
         <SettingSwitch
           label="Light theme"
           value={theme === 'light'}

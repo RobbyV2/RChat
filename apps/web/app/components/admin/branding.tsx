@@ -1,6 +1,7 @@
 'use client'
 
 import { useId, useRef, useState, type ReactNode } from 'react'
+import { AnnouncementEditor } from './announcements'
 import { Lock, X } from 'lucide-react'
 import {
   BRAND_LINKS_MAX,
@@ -567,6 +568,7 @@ export function BrandingSection() {
           <LinksControl />
         </PageRow>
       </PageGroup>
+      <AnnouncementEditor />
       <PageGroup label="Other instances">
         <PageRow id="instance_suggestions">
           <SuggestionsControl />

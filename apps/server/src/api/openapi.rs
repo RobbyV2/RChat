@@ -254,6 +254,8 @@ impl Modify for Bearer {
         super::media::delete_media,
         super::admin::get_settings,
         super::brand::get_brand,
+        super::announcements::active,
+        super::announcements::dismiss,
         super::brand::get_asset,
         super::reports::forms::get_forms,
         super::reports::create_report,
@@ -412,7 +414,7 @@ pub(crate) mod tests {
         ),
     ];
 
-    const ADMIN_ROUTES: [(&str, &str); 30] = [
+    const ADMIN_ROUTES: [(&str, &str); 33] = [
         ("patch", "/api/v1/admin/settings"),
         ("get", "/api/v1/admin/report_forms"),
         ("put", "/api/v1/admin/report_forms"),
@@ -441,6 +443,9 @@ pub(crate) mod tests {
         ("post", "/api/v1/admin/users/{username}/servers"),
         ("delete", "/api/v1/admin/messages/{id}"),
         ("post", "/api/v1/admin/ban"),
+        ("get", "/api/v1/admin/announcements"),
+        ("post", "/api/v1/admin/announcements"),
+        ("delete", "/api/v1/admin/announcements/{id}"),
         ("put", "/api/v1/admin/brand/{kind}"),
         ("delete", "/api/v1/admin/brand/{kind}"),
     ];

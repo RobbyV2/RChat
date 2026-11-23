@@ -85,7 +85,7 @@ test('the branding section has a place in the page and its address', () => {
   expect(parsePath('/admin/branding/logo/')).toBeNull()
   const html = page(config())
   expect(html).toContain('>Branding<')
-  for (const group of ['Names', 'Pictures', 'Texts', 'Other instances'])
+  for (const group of ['Names', 'Pictures', 'Texts', 'Announcements', 'Other instances'])
     expect(html).toContain(`aria-label="${group}"`)
 })
 

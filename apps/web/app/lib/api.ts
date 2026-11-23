@@ -1,3 +1,4 @@
+import type { Announcement, AnnouncementFeed } from './announcements'
 import { apiRoot, versionedBase, type ApiPrefix } from './api_version'
 import { localUntil, type TimeoutWire } from './timeouts'
 import { DEFAULT_DM_QUERY, queryParams, type DmQuery } from './dm_list'
@@ -845,6 +846,14 @@ export const endpoints = (c: ApiClient) => ({
     c.req<unknown>('PUT', `/admin/brand/${seg(kind)}`, image),
   adminDeleteBrandAsset: (kind: BrandAsset) =>
     c.req<unknown>('DELETE', `/admin/brand/${seg(kind)}`),
+  announcements: () =>
+    c.req<AnnouncementFeed>('GET', '/announcements', undefined, BACKGROUND, false, 10000),
+  dismissAnnouncement: (id: string) => c.req('PUT', `/announcements/${seg(id)}/dismiss`),
+  adminAnnouncements: () =>
+    c.req<Announcement[]>('GET', '/admin/announcements', undefined, BACKGROUND, false, 10000),
+  scheduleAnnouncement: (body: Omit<Announcement, 'id'>) =>
+    c.req<Announcement>('POST', '/admin/announcements', body),
+  removeAnnouncement: (id: string) => c.req('DELETE', `/admin/announcements/${seg(id)}`),
   adminOverview: () => c.req<AdminOverview>('GET', '/admin/overview'),
   adminConfig: () => c.req<AdminConfig>('GET', '/admin/config'),
   adminUsers: (cursor: string | null, q: string, filter: AccountFilter = 'all') =>

@@ -35,6 +35,7 @@ import { PaletteHost } from '../components/palette'
 import { reloadPalettePrefs, usePaletteUi } from '../lib/palette_store'
 import { PollVotersDialog } from '../components/poll_card'
 import { CallBanner } from '../components/voice_grid'
+import { AnnouncementBanner } from '../components/announcements'
 import { Banners } from '../components/banners'
 import { DrawerClose } from '../components/drawer'
 import { InvitePage } from '../components/invite_card'
@@ -235,8 +236,9 @@ export default function AppShell() {
   }
 
   return (
-    <>
-      <div className="flex h-app overflow-hidden px-safe">
+    <div className="flex h-app flex-col overflow-hidden">
+      <AnnouncementBanner />
+      <div className="flex min-h-0 flex-1 overflow-hidden px-safe">
         <div className="hidden h-full md:flex">
           <ServerRail />
           {p2pServer ? <P2pServerSidebar /> : (!p2pHome || p2pBeside) && <ChannelSidebar />}
@@ -342,6 +344,6 @@ export default function AppShell() {
       </div>
       <InvitePage />
       <ConfigLinkPage />
-    </>
+    </div>
   )
 }

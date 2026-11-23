@@ -239,7 +239,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 39: temporary passwords (`temp_passwords`), the mark of an account whose password was issued
 /// for it and that its owner has not replaced.
 /// 40: brand images (`brand_assets`), the logo and the mark an instance uploads.
-pub const SCHEMA_VERSION: i64 = 40;
+/// 41: scheduled announcements and account dismissals.
+pub const SCHEMA_VERSION: i64 = 41;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 17] {

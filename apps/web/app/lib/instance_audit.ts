@@ -92,6 +92,16 @@ const BRAND_PARTS: Record<string, string> = {
 // A change to the brand: which part, never its text.
 const brandLine = (e: InstanceAuditEntry): AuditPart[] => {
   const { key } = detailOf(e)
+  if (key === 'announcements') {
+    return [
+      {
+        text:
+          detailOf(e).action === 'remove'
+            ? ' removed an announcement'
+            : ' scheduled an announcement',
+      },
+    ]
+  }
   const part = typeof key === 'string' ? key : (e.target ?? '')
   const named = Object.hasOwn(BRAND_PARTS, part)
     ? BRAND_PARTS[part]

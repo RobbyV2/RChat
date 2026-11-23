@@ -2,6 +2,7 @@ pub mod access;
 pub mod admin;
 pub mod admin_cli;
 pub mod admin_users;
+pub mod announcements;
 pub mod audit;
 pub mod auth;
 pub mod blocks;
@@ -2466,6 +2467,13 @@ fn api_routes(
         .route("/read/batch", post(messages::mark_read_batch))
         .route("/settings", get(admin::get_settings))
         .route("/brand", get(brand::get_brand))
+        .route("/announcements", get(announcements::active))
+        .route("/announcements/{id}/dismiss", put(announcements::dismiss))
+        .route(
+            "/admin/announcements",
+            get(announcements::list).post(announcements::schedule),
+        )
+        .route("/admin/announcements/{id}", delete(announcements::remove))
         .route("/admin/brand/{kind}", delete(brand::delete_asset))
         .route("/instance", get(instance::instance))
         .route("/identity/assertion", post(instance::assertion))
