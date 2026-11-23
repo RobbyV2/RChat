@@ -1,3 +1,4 @@
+import { richMessage, textOnlyChannel } from '../acl/rules'
 import { getEvents } from '../dag'
 import { serverWire, type ChanCounts, type EventRecord } from '../db'
 import { fitContent, LIMITS as EV, type Attachment, type Fwd, type MsgContent } from '../content'
@@ -37,6 +38,9 @@ export function content(cx: ServerCtx, room: string, t: string, c: Record<string
   const ch = c.ch
   if (t !== 'msg' || typeof ch !== 'string') return cx.emit(room, t, () => c, { L: 'c' })
   return cx.locked(room, async () => {
+    const sum = cx.sumOf(room)
+    if (textOnlyChannel(sum.rules, sum.channels[ch]) && richMessage(c))
+      throw new ServerError('This channel only accepts text.')
     const wait = await cx.slowLeft(room, ch)
     if (wait > 0) throw new ServerError(slowText(wait))
     return cx.emitNow(room, t, () => c, { L: 'c' })

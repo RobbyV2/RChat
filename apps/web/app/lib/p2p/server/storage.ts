@@ -1,5 +1,5 @@
 import { signDeviceCert2 } from '../acl/binding'
-import { RULES_VERSION } from '../acl/rules'
+import { knownRules } from '../acl/rules'
 import type { Plan } from '../acl_room'
 import {
   dropServer,
@@ -51,7 +51,7 @@ export function tick(cx: ServerCtx, r: RoomRecord, rt: Rt, now: number) {
 // What the state and the held content let storage do now: drop what the ACL core names, purge
 // bodies whose cause is stable, ask for bodies that show again, and look for proofs to post.
 export async function storePass(cx: ServerCtx, room: string) {
-  if (!cx.rooms.has(room) || cx.sumOf(room).rules !== RULES_VERSION) return
+  if (!cx.rooms.has(room) || !knownRules(cx.sumOf(room).rules)) return
   await cx.dropPass(room)
   await cx.purgePass(room, false)
   await cx.wantPass(room)

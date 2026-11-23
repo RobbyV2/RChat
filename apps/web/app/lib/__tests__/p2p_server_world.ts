@@ -1,6 +1,6 @@
 import { genesisBundle, signDeviceCert2 } from '../p2p/acl/binding'
 import { CHANNEL_CONTENT } from '../p2p/event_v2'
-import { RULES_VERSION, type EvalLimits } from '../p2p/acl/rules'
+import { knownRules, RULES_VERSION, type EvalLimits } from '../p2p/acl/rules'
 import type { ContentEv } from '../p2p/acl/visibility'
 import { AclRoom, type AclItem, type Plan, type Received } from '../p2p/acl_room'
 import { b64u, randomBytes } from '../p2p/canonical'
@@ -84,8 +84,9 @@ export class ServerWorld {
       name: 'Test',
       ...extra,
     }
-    const content =
-      bare.rules === RULES_VERSION ? { ...bare, owners: [genesisBundle(o.ik, o.dev, bare)] } : bare
+    const content = knownRules(bare.rules)
+      ? { ...bare, owners: [genesisBundle(o.ik, o.dev, bare)] }
+      : bare
     const g = buildEvent2(o, null, 'genesis', 'a', content, { seq: 0 }, w.now)
     w.srv = g.id
     w.room = new AclRoom(g.id, { agreed, local })

@@ -174,6 +174,8 @@ export interface RoomRecord {
 // through `serverWire`, with `layer`, the signing device and its seq, and for an admitted ACL event
 // its admission order and record.
 export interface EventRecord {
+  // Rules under which this content was admitted, when the room supports text-only channels.
+  contentRules?: number
   id: string
   room: string
   type: Core['type']

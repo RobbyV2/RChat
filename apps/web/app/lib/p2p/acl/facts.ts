@@ -1,6 +1,7 @@
 import { addS, EMPTY, firstTrue, Ix, type BitW } from './reach'
 import { LOCAL } from '../limits'
 import {
+  RULES_VERSION,
   ALL,
   BOT,
   cmp,
@@ -719,6 +720,11 @@ export abstract class View {
     const out: AclContent = { ...this.ix.ev[r.win].c }
     for (const f of ['restrict_view', 'restrict_send', 'gone', 'sensitive'])
       if (cs.some(c => c[f] === true)) out[f] = true
+    if (
+      this.ix.ev[this.ix.genesis]?.c.rules === RULES_VERSION &&
+      cs.some(c => c.text_only === true)
+    )
+      out.text_only = true
     const slow = Math.max(
       0,
       ...cs.map(c => (Number.isSafeInteger(c.slow) ? (c.slow as number) : 0))

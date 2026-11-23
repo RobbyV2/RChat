@@ -1,6 +1,6 @@
 import { isRecord } from '../../bytes'
 import { genesisBundle } from '../acl/binding'
-import { RULES_VERSION } from '../acl/rules'
+import { knownRules, RULES_VERSION } from '../acl/rules'
 import { emptySummary } from '../acl/summary'
 import type { Carried } from '../acl_room'
 import { b64u, canonical, randomBytes } from '../canonical'
@@ -40,8 +40,18 @@ export function transferAsks(cx: ServerCtx) {
 // goes out. This copy becomes read-only; everyone follows to the new one.
 export async function transfer(cx: ServerCtx, room: string, to: string) {
   const s = cx.sumOf(room)
-  if (!s.owners.includes(cx.me) || to === cx.me || membershipOf(s, to) !== 'join')
+  const upgrade = to === cx.me
+  if (
+    !s.owners.includes(cx.me) ||
+    membershipOf(s, to) !== 'join' ||
+    (upgrade && (s.rules !== 2 || s.owners.length !== 1))
+  )
     throw new ServerError(CANT_TEXT)
+  if (upgrade) {
+    const g = await cx.successorOf(room)
+    await cx.emit(room, 'upgrade', () => ({ g, sigs: {} }))
+    return
+  }
   const ses = await cx.sessionTo(room, to)
   if (!ses) throw new ServerError('They must be online to take it')
   const reply = await cx.request(ses, { t: 'gxfer', room }, cx.local.server.coOwnerMs)
@@ -99,7 +109,8 @@ export function successorOk(cx: ServerCtx, room: string, g: unknown, to?: string
   const v = validate2(g, null)
   if (!v.ok || v.wire.ev.t !== 'genesis') return null
   const c = v.wire.c as { rules?: unknown; from?: { srv?: unknown } } | null
-  if (c?.rules !== RULES_VERSION || c.from?.srv !== room) return null
+  if (!knownRules(c?.rules) || c?.from?.srv !== room) return null
+  if (cx.sumOf(room).rules === RULES_VERSION && c.rules !== RULES_VERSION) return null
   if (to !== undefined && v.wire.ev.a !== to) return null
   return v.wire
 }
@@ -298,7 +309,10 @@ export async function carryOver(cx: ServerCtx, to: string) {
             if (now !== 'join' && now !== 'ban') cx.prefer(to, ik)
           },
         ])
-    for (const c of channelsOf({ ...emptySummary(), channels: s.channels }, cx.local.display))
+    for (const c of channelsOf(
+      { ...emptySummary(), rules: cx.sumOf(from).rules, channels: s.channels },
+      cx.local.display
+    ))
       steps.push([
         `c:${c.id}`,
         async () => {

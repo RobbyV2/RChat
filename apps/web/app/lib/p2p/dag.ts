@@ -354,6 +354,7 @@ export const chainKey = (room: string, dev: string) => `chain2\n${room}\n${dev}`
 export const cacheKey = (room: string) => `cache\n${room}`
 
 export interface ServerInsert {
+  contentRules?: number
   me: string
   // An admitted ACL event: its admission order and record (absent: content, or a server of
   // unknown rules, whose events are stored unchecked).
@@ -593,6 +594,7 @@ export const insertServer = async (
     dev: ev.dev,
     dseq: ev.seq,
   }
+  if (!acl && ctx.contentRules !== undefined) rec.contentRules = ctx.contentRules
   if (acl && ctx.aseq !== undefined) rec.aseq = ctx.aseq
   if (acl && ctx.acl) rec.acl = ctx.acl
   if (!acl && typeof c?.ch === 'string') rec.chan = c.ch

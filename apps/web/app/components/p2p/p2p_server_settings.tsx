@@ -24,6 +24,7 @@ import { CodeList } from './p2p_invite_dialog'
 import { ServerNotices } from './p2p_server_flows'
 import { openChoiceMenu } from '../../lib/actions/menu'
 import { withdrawRequest } from '../../lib/actions/p2p_server'
+import { SettingSwitch } from '../settings_fields'
 import { ChannelAccess, MemberCard, roleMenuItems, RolesTab } from './p2p_server_roles'
 import { slowTitle } from '../../lib/slowmode'
 import { hex, nameColor } from '../../lib/p2p/roles'
@@ -106,6 +107,7 @@ function Overview({ v }: { v: ServerView }) {
 
 function Channels({ v }: { v: ServerView }) {
   const edit = can(v, P.ManageChannels)
+  const me = useP2p(s => s.me)
   const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
   const [names, setNames] = useState<Record<string, string>>({})
   const [topics, setTopics] = useState<Record<string, string>>({})
@@ -116,6 +118,34 @@ function Channels({ v }: { v: ServerView }) {
   const shown = v.channels.filter(c => c.kind === 'text' || c.kind === 'voice')
   return (
     <div className="flex flex-col gap-3">
+      {edit && !v.textOnlyChannels && !v.readOnly && (
+        <div className="flex flex-col items-start gap-2">
+          <Note>
+            Text-only channels require an upgraded server. Members need an updated app to use the
+            new copy.
+          </Note>
+          {me && v.owners.length === 1 && v.owner === me && !v.upgraded ? (
+            <button
+              className={textBtn}
+              onClick={() =>
+                useStore.getState().askConfirm({
+                  title: 'Upgrade server?',
+                  body: 'This creates a new copy with the same owner. The old copy becomes read-only and keeps its message history.',
+                  confirm: 'Upgrade',
+                  action: () => void p2pServer.transfer(v.id, me),
+                })
+              }
+            >
+              Upgrade server
+            </button>
+          ) : (
+            <Note>
+              An owner can transfer the server to a member with an updated app. Every co-owner must
+              approve.
+            </Note>
+          )}
+        </div>
+      )}
       {shown.map(c => {
         const voice = c.kind === 'voice'
         const label = voice ? c.name : `#${c.name}`
@@ -212,6 +242,14 @@ function Channels({ v }: { v: ServerView }) {
                 </button>
               )}
             </div>
+            {edit && !voice && v.textOnlyChannels && (
+              <SettingSwitch
+                label="Text-only channel"
+                hint="Allow messages and links. Block files and rich forwards."
+                value={c.text_only === true}
+                onChange={value => void p2pServer.editChannel(v.id, c.id, { text_only: value })}
+              />
+            )}
             {edit && open === c.id && <ChannelAccess v={v} c={c} />}
           </div>
         )

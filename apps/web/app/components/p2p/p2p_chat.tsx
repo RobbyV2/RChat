@@ -555,12 +555,14 @@ const shownRow = (
 
 export function P2pComposer({
   draftKey: key,
+  channelTextOnly = false,
   scope,
   title,
   placeholder,
   nameOf,
   disabled,
 }: {
+  channelTextOnly?: boolean
   // Where the draft, files, reply and sends go (a conversation, channel or thread).
   draftKey: string
   scope: string
@@ -572,7 +574,7 @@ export function P2pComposer({
   const text = useP2p(s => s.drafts[key] ?? '')
   const replying = useP2p(s => (s.replying?.room === key ? s.replying.id : null))
   const replyTo = useP2p(s => shownRow(s, replying))
-  const forwarding = useForwardClip() !== null
+  const forwardClip = useForwardClip()
   const streamer = useStore(s => s.streamer)
   const sheet = useMedia(SHEET_QUERY)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -583,7 +585,8 @@ export function P2pComposer({
   const files = useP2p(s => s.attaching[key]?.length ?? 0)
   // A thread's replies count in its channel's slow mode: the channel's countdown.
   const slowLeft = useCountdown(useP2p(s => s.slowUntil[key.split('#')[0]] ?? 0))
-  const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
+  const siteTextOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
+  const textOnly = channelTextOnly || siteTextOnly
   const sel = useRef({ start: 0, end: 0 })
   const typedAt = useRef(0)
   const getText = () => useP2p.getState().drafts[key] ?? ''
@@ -617,7 +620,8 @@ export function P2pComposer({
   const count = charCount(text)
   const tooLong = count > BODY_MAX || bodyTooLong(text)
   const send = () => {
-    if ((!text.trim() && !files) || tooLong || slowLeft > 0) return
+    if ((channelTextOnly && files > 0) || (!text.trim() && !files) || tooLong || slowLeft > 0)
+      return
     const sent = text
     void p2pDm.send(key, sent).then(ok => {
       if (ok && getText() === sent) setText('')
@@ -632,7 +636,11 @@ export function P2pComposer({
         <Masked text={nameOf(replyTo.sender)} by={replyTo.sender} />
       </span>
     </ComposerBar>
-  ) : forwarding ? (
+  ) : channelTextOnly && (forwardClip?.has_media || forwardClip?.has_poll) ? (
+    <ComposerBar onClose={() => useStore.getState().clearForward()} closeLabel="Discard forward">
+      This channel only accepts text.
+    </ComposerBar>
+  ) : forwardClip ? (
     <ForwardBar
       draftKey={scope}
       onSend={() => {
@@ -673,7 +681,7 @@ export function P2pComposer({
           }}
         />
       )}
-      {!textOnly && <PendingFiles room={key} />}
+      {(!textOnly || files > 0) && <PendingFiles room={key} />}
       {slowLeft > 0 && (
         <p
           role="status"
@@ -810,7 +818,7 @@ export function P2pComposer({
           }
           aria-label="Send"
           onClick={send}
-          disabled={tooLong || slowLeft > 0}
+          disabled={tooLong || slowLeft > 0 || (channelTextOnly && files > 0)}
           className="shrink-0 rounded-full bg-primary p-2 text-on-primary hover:opacity-90 disabled:opacity-40"
         >
           <SendHorizontal size={16} />
@@ -1011,6 +1019,7 @@ export function useP2pList({
 }
 
 export interface ChatBodyProps {
+  channelTextOnly?: boolean
   chat: P2pChat
   // The header row, and what goes between it and the list (call bars, the stage).
   header: ReactNode
@@ -1055,7 +1064,8 @@ export function P2pChatBody(props: ChatBodyProps) {
   const storageFull = useP2p(s => s.storageFull)
   const listRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
+  const siteTextOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
+  const textOnly = props.channelTextOnly || siteTextOnly
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
 
@@ -1268,6 +1278,7 @@ export function P2pChatBody(props: ChatBodyProps) {
           )}
           <P2pComposer
             draftKey={key}
+            channelTextOnly={props.channelTextOnly}
             scope={scope}
             title={props.title}
             placeholder={props.placeholder}

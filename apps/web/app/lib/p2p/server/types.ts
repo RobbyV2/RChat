@@ -238,6 +238,7 @@ export const ownsP2pServer = (
 ) => !!v && !!me && (v.owner === me || v.owners.includes(me))
 
 export interface ServerView {
+  textOnlyChannels?: boolean
   id: string
   name: string
   color: number | null
@@ -441,6 +442,7 @@ export type ChannelPatch = {
   gone?: true
   restrict_view?: boolean
   sensitive?: boolean
+  text_only?: boolean
   restrict_send?: boolean
   slow?: number
 }

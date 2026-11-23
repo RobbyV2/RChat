@@ -451,3 +451,42 @@ describe('the page’s summary (incremental)', () => {
     expect(events).toBeGreaterThan(10_000)
   }, 600_000)
 })
+
+test('signed messages use the text-only setting at their ACL parents', () => {
+  for (const rules of [2, 4]) {
+    const w = ServerWorld.create('O', { rules })
+    const ch = w.channel('O')
+    w.join('O', 'B')
+    const att = [{ h: 'A'.repeat(43), size: 10, blocks: 1, name: 'a.txt', mime: 'text/plain' }]
+    const history = w.ok('B', 'msg', { body: 'before', att, ch })
+    const late = w.build('B', 'msg', { body: 'previous ACL', att, ch })
+    const channel = { id: ch, name: 'general', kind: 'text', text_only: true }
+    expect(w.post('B', 'channel', channel).out.s).toBe('R')
+    const malformed = w.build('O', 'channel', { ...channel, text_only: 'true' })
+    expect(w.receive(malformed.id, malformed.wire).s).toBe(rules === 2 ? 'A' : 'M')
+    if (rules === 4) {
+      const stored = [...w.acl, { id: malformed.id, w: malformed.wire, rec: w.acl.at(-1)?.rec }]
+      expect(new AclRoom(w.srv).restore(stored, []).refused).toContain(malformed.id)
+    }
+    w.ok('O', 'channel', channel)
+    expect(w.receive(late.id, late.wire).s).toBe('C')
+    for (const fields of [
+      { att },
+      { fwd: { name: 'B', ts: 1, body: 'file', att } },
+      { poll: { question: 'Choose' } },
+    ]) {
+      const result = w.post('B', 'msg', { ch, thread: history.id, body: 'new', ...fields }).out
+      expect(result.s).toBe(rules === 2 ? 'C' : 'R')
+    }
+    if (rules === 4) {
+      const rich = w.build('B', 'msg', { ch, body: 'with file', att })
+      expect(w.receive(rich.id, { ...rich.wire, c: null }).s).toBe('C')
+      w.room.bodies([rich.id], false)
+      expect(w.receive(rich.id, rich.wire)).toEqual({ s: 'R', why: 'text-only' })
+    }
+    w.ok('B', 'msg', { ch, body: 'https://example.test', thread: history.id })
+    w.ok('O', 'msg', { ch, body: '', fwd: { name: 'B', ts: 1, body: 'text' } })
+    w.ok('O', 'channel', { ...channel, text_only: false })
+    w.ok('B', 'msg', { ch, body: 'allowed again', att })
+  }
+})

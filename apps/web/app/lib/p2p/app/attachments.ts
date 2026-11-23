@@ -20,6 +20,11 @@ import { p2p } from './account'
 
 // ----- Attachments -----
 
+function channelTextOnly(key: string) {
+  const [room, ch] = key.split('#')[0].split('/')
+  return !!ch && useP2p.getState().servers[room]?.channels.some(c => c.id === ch && c.text_only)
+}
+
 const sizes = new Map<string, number>()
 
 const fileTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -157,7 +162,7 @@ export const p2pFiles = {
   },
 
   add(room: string, files: File[]) {
-    if (p2pHost.textOnly() || files.length === 0) return
+    if (p2pHost.textOnly() || channelTextOnly(room) || files.length === 0) return
     const have = useP2p.getState().attaching[room]?.length ?? 0
     const take = files.slice(0, Math.max(0, EV.att - have))
     if (take.length < files.length) p2pHost.toast(FILES_MAX_TEXT)
@@ -193,6 +198,10 @@ export const p2pFiles = {
     const list = useP2p.getState().attaching[room] ?? []
     const d = dms
     if (!list.length || !d) return []
+    if (channelTextOnly(room)) {
+      p2pHost.toast('Remove the files to send text in this channel.')
+      return null
+    }
     if (p2pHost.textOnly()) {
       p2pHost.toast(offText(homeLabel()))
       return null

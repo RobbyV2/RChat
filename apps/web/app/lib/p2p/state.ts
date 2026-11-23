@@ -1,6 +1,7 @@
 import { bytesOf } from './canonical'
 import {
   channelPerms,
+  textOnlyChannel,
   cmp,
   EVERYONE,
   P as ACL_P,
@@ -39,6 +40,7 @@ export interface ChannelContent {
   topic?: string
   gone?: true
   restrict_view?: true
+  text_only?: true
   sensitive?: true
   restrict_send?: true
   // Slow mode, in seconds.
@@ -70,6 +72,7 @@ const CHANNEL_FIELDS = [
   'restrict_view',
   'restrict_send',
   'sensitive',
+  'text_only',
   'slow',
 ]
 export const knownChannel = (c: object) => pick(c as Record<string, unknown>, CHANNEL_FIELDS)
@@ -130,6 +133,7 @@ export const channelsOf = (s: Summary, lim: Pick<DisplayLimits, 'name' | 'topic'
     const ch: { id: string } & ChannelContent = { id, name, kind, pos: int(c.pos) ?? 0 }
     const topic = text(c.topic, lim.topic)
     if (topic) ch.topic = topic
+    if (textOnlyChannel(s.rules, c)) ch.text_only = true
     if (c.sensitive === true) ch.sensitive = true
     if (c.restrict_view === true) ch.restrict_view = true
     if (c.restrict_send === true) ch.restrict_send = true

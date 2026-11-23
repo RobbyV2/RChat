@@ -41,7 +41,21 @@ export const VIEW = P.ViewChannel
 export const ALL = 0x7fffffff
 export const MODBITS = KICK | BAN | ROLES | CHANNELS | SERVER | MESSAGES
 export const EVERYONE = 'everyone'
-export const RULES_VERSION = 2
+export const RULES_VERSION = 4
+export const knownRules = (rules: unknown) => rules === 2 || rules === RULES_VERSION
+export function textOnlyChannel(rules: unknown, channel: AclContent | undefined) {
+  return (
+    rules === RULES_VERSION && (channel?.kind ?? 'text') === 'text' && channel?.text_only === true
+  )
+}
+
+export function richMessage(c: Record<string, unknown>) {
+  return (
+    c.att !== undefined ||
+    c.poll !== undefined ||
+    (isRecord(c.fwd) && (c.fwd.att !== undefined || c.fwd.poll !== undefined))
+  )
+}
 
 // Production values (ts in ms).
 export const PRODUCTION_LIMITS: Readonly<Agreed> = AGREED
@@ -655,12 +669,19 @@ export const NONCE_LEN = 16
 
 // The fields an ACL type reads have their types; fields a newer version adds are kept, unread. A
 // genesis of another rules version needs only an integer `rules` (shown read-only).
-export function aclContentOk(t: string, c: unknown): c is AclContent {
+export function aclContentOk(t: string, c: unknown, rules?: number | null): c is AclContent {
   if (!isRecord(c)) return false
+  if (
+    t === 'channel' &&
+    rules === RULES_VERSION &&
+    c.text_only !== undefined &&
+    typeof c.text_only !== 'boolean'
+  )
+    return false
   if (t === 'genesis')
     return (
       isInt(c.rules, -Infinity) &&
-      (c.rules !== RULES_VERSION ||
+      (!knownRules(c.rules) ||
         (bytesOf(c.nonce, NONCE_LEN) !== null &&
           Array.isArray(c.owners) &&
           c.owners.length > 0 &&

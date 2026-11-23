@@ -18,7 +18,9 @@ import {
   ownersOf,
   perms,
   rank,
-  RULES_VERSION,
+  knownRules,
+  textOnlyChannel,
+  richMessage,
   SERVER,
   TOP,
   type AclEv,
@@ -479,6 +481,8 @@ export function decideContent(
     if (typeof ch !== 'string') return { ok: false, why: 'channel' }
     const c = F.channels.get(ch)
     if (!c || c.gone === true) return { ok: false, why: 'channel' }
+    if (m.t === 'msg' && m.c && textOnlyChannel(ix.ev[ix.genesis]?.c.rules, c) && richMessage(m.c))
+      return { ok: false, why: 'text-only' }
     if (!canSend(F, m.a, ch)) return { ok: false, why: 'send' }
   }
   return ok(m, F)
@@ -486,11 +490,11 @@ export function decideContent(
 
 const ok = (m: ContentHead, F: EvalResult['facts']) => ({ ok: true as const, k: rank(F, m.a) })
 
-// A genesis: seq 0, no parents, the author among the owners, rules version 2.
+// A genesis: seq 0, no parents, the author among the owners, and a known rules version.
 export const genesisOk = (e: AclEv) =>
   e.seq === 0 &&
   e.ap.length === 0 &&
-  e.c.rules === RULES_VERSION &&
+  knownRules(e.c.rules) &&
   ownersOf(e.c).includes(e.a) &&
   !e.aprev &&
   !e.iprev
@@ -527,6 +531,10 @@ export class AclReplica implements Ctx {
   }
 
   // The rules version of an unknown-rules genesis received.
+  get rules() {
+    const ix = this.acl.ix
+    return this.unknownRules ?? ix.ev[ix.genesis]?.c.rules
+  }
   unknownRules?: number
 
   receive(e: AclEv): Verdict {
@@ -536,8 +544,8 @@ export class AclReplica implements Ctx {
       this.evs.set(e.id, e)
       return this.set(e.id, { s: 'U', rules: this.unknownRules })
     }
-    if (!aclContentOk(e.t, e.c)) return { s: 'M', why: 'content' }
-    if (e.t === 'genesis' && e.c.rules !== RULES_VERSION && !this.order.length) {
+    if (!aclContentOk(e.t, e.c, this.rules)) return { s: 'M', why: 'content' }
+    if (e.t === 'genesis' && !knownRules(e.c.rules) && !this.order.length) {
       this.unknownRules = e.c.rules
       this.evs.set(e.id, e)
       return this.set(e.id, { s: 'U', rules: e.c.rules as number })
@@ -554,7 +562,7 @@ export class AclReplica implements Ctx {
     const known = this.status.get(e.id)
     if (known && known.s !== 'P') return known
     if (this.unknownRules !== undefined) return { s: 'U', rules: this.unknownRules }
-    if (!aclContentOk(e.t, e.c)) return { s: 'M', why: 'content' }
+    if (!aclContentOk(e.t, e.c, this.rules)) return { s: 'M', why: 'content' }
     if (e.t === 'genesis' || !e.ap.length) return this.receive(e)
     for (const p of e.ap) {
       const st = this.status.get(p)
@@ -685,6 +693,8 @@ export class AclReplica implements Ctx {
       }
       return this.set(e.id, { s: 'P', missing })
     }
+    if (e.t === 'channel' && !aclContentOk(e.t, e.c, this.rules))
+      return this.set(e.id, { s: 'M', why: 'content' })
     const ix = this.acl.ix
     const S = this.acl.stateOf(e.ap)
     const d = decide(e, pastOf(ix, e.ap), S, this.opts)

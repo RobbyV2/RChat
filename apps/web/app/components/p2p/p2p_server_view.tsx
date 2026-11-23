@@ -882,6 +882,7 @@ export function P2pChannelPane({
   return (
     <P2pChatBody
       chat={chat}
+      channelTextOnly={channel.text_only}
       header={header}
       above={<ServerNotices v={v} />}
       intro={<ServerIntro />}

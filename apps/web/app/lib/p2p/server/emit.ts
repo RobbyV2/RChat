@@ -1,6 +1,6 @@
 import { isRecord } from '../../bytes'
 import { deviceCertOk, genesisBundle, genesisSrv } from '../acl/binding'
-import { aclContentOk, RULES_VERSION } from '../acl/rules'
+import { aclContentOk, knownRules, RULES_VERSION } from '../acl/rules'
 import type { Plan, Received } from '../acl_room'
 import { b64u, bytesOf, randomBytes } from '../canonical'
 import { blankRoom, chainKey, insertServer, type DevChain } from '../dag'
@@ -153,6 +153,9 @@ export async function emitOne(
   try {
     res = await insertServer(cx.db, room, id, wire, now, {
       me: cx.me,
+      ...(out.s === 'C' && cx.sumOf(room).rules === RULES_VERSION
+        ? { contentRules: RULES_VERSION }
+        : {}),
       chain,
       ...(out.s === 'A' ? { aseq: out.aseq, acl: out.rec } : {}),
       lim: cx.storeLimits(),
@@ -287,7 +290,7 @@ export function onBundle(cx: ServerCtx, m: Message, s: Session) {
     !!author &&
     cx.deps.node.contact(from)?.state === 'mutual' &&
     m.room === g.nonce &&
-    g.rules === RULES_VERSION &&
+    knownRules(g.rules) &&
     aclContentOk('genesis', g) &&
     sizeOf(g) <= LIMITS2.aclContent &&
     owners.every(o => isRecord(o) && o.dcert === undefined) &&
@@ -387,7 +390,11 @@ export function addChannel(
 export function editChannel(cx: ServerCtx, room: string, id: string, patch: ChannelPatch) {
   const cur = channelOf(cx.sumOf(room), id)
   if (!cur) throw new ServerError('Unknown channel')
+  const supports = cx.sumOf(room).rules === RULES_VERSION && (cur.kind ?? 'text') === 'text'
+  if (patch.text_only !== undefined && !supports)
+    throw new ServerError('Text-only mode is unavailable in this channel.')
   const next: Record<string, unknown> = { ...knownChannel(cur), ...patch, id }
+  if (!supports || next.text_only !== true) delete next.text_only
   if (patch.name !== undefined) next.name = clip(patch.name.trim(), cx.local.server.nameMax)
   if (next.topic === '') delete next.topic
   for (const k of ['restrict_view', 'restrict_send', 'sensitive'])

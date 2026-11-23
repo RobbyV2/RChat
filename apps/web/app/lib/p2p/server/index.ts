@@ -1,4 +1,4 @@
-import { RULES_VERSION } from '../acl/rules'
+import { knownRules } from '../acl/rules'
 import { emptySummary, type SumDelta, type Summary } from '../acl/summary'
 import type { Carried, PackedRec, Plan } from '../acl_room'
 import { capped, refitFull, type DevChain, type Inserted, type StoreLimits } from '../dag'
@@ -319,7 +319,7 @@ export class Servers {
     }
     // Rooms that filled under lower limits than these take events again; one whose rules this
     // build doesn't run (or doesn't know yet) only within what it stores of it.
-    const unknown = (r: RoomRecord) => this.sumOf(r.id).rules !== RULES_VERSION
+    const unknown = (r: RoomRecord) => !knownRules(this.sumOf(r.id).rules)
     for (const id of await refitFull(this.db, 'server', this.storeLimits().dag, unknown)) {
       const r = this.rooms.get(id)
       if (r) this.rooms.set(id, { ...r, full: false })
@@ -558,7 +558,7 @@ export class Servers {
     const r = this.rooms.get(room)
     if (r?.legacy) return LEGACY_TEXT
     const rules = this.sumOf(room).rules
-    return rules !== null && rules !== RULES_VERSION ? UPDATE_TEXT : null
+    return rules !== null && !knownRules(rules) ? UPDATE_TEXT : null
   }
 
   // Nothing more can be signed here: read-only, or transferred to a new copy (only a leave).

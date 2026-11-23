@@ -8,7 +8,11 @@ import {
   UNBAN_TEXT,
   VOUCH_WAIT_TEXT,
 } from '../p2p/flows'
-import { signDeviceCert2 } from '../p2p/acl/binding'
+import { b64u, randomBytes } from '../p2p/canonical'
+import { blankRoom } from '../p2p/dag'
+import type { RoomRecord } from '../p2p/db'
+import type { WireV2 } from '../p2p/event_v2'
+import { genesisBundle, signDeviceCert2 } from '../p2p/acl/binding'
 import { EVERYONE, P } from '../p2p/acl/rules'
 import { buildEvent2, signUpgrade } from '../p2p/event_v2'
 import { keyId, newKeyPair } from '../p2p/keys'
@@ -2217,4 +2221,60 @@ describe('transfer', () => {
     )
     expect([r1, r2].length).toBe(2)
   }, 240_000)
+})
+
+test('a sole owner upgrades a signed server and keeps channel history', async () => {
+  const clock = new ManualClock()
+  const a = await makeMember(new Hub(), 'Alice', clock)
+  const author = a.node.author()!
+  const dk = keyId(author.dk.pk)
+  const owner = { ik: a.node.ik, dk }
+  const bare = {
+    rules: 2,
+    nonce: b64u(randomBytes(16)),
+    owners: [owner],
+    everyone_bits: 768,
+    name: 'Club',
+  }
+  const { id: room, wire } = buildEvent2(
+    author,
+    null,
+    'genesis',
+    'a',
+    { ...bare, owners: [genesisBundle(author.ik, dk, bare)] },
+    { seq: 0 },
+    clock.now()
+  )
+  await (a.servers as unknown as { putRoom(r: RoomRecord): Promise<void> }).putRoom({
+    ...blankRoom(room, '', clock.now()),
+    kind: 'server',
+    name: 'Club',
+    chans: {},
+    since: clock.now(),
+  })
+  const stored = await (
+    a.servers as unknown as {
+      take(r: string, id: string, w: WireV2, now: number): Promise<{ status: string }>
+    }
+  ).take(room, room, wire, clock.now())
+  expect(stored.status).toBe('new')
+  const ch = await a.servers.addChannel(room, 'general')
+  const att = [{ h: 'A'.repeat(43), size: 10, blocks: 1, name: 'log.txt', mime: 'text/plain' }]
+  await a.servers.send(room, { ch, body: 'Old file', att })
+  expect(() => a.servers.editChannel(room, ch, { text_only: true })).toThrow('unavailable')
+  await a.servers.transfer(room, a.node.ik)
+  await pump(clock, () => !!a.servers.view(room)?.next, 'signed successor')
+  const next = a.servers.view(room)!.next!
+  await pump(
+    clock,
+    () => !!a.servers.view(next)?.channels.some(c => c.id === ch),
+    'channel carried'
+  )
+  expect(a.servers.view(next)?.owner).toBe(a.node.ik)
+  await a.servers.editChannel(next, ch, { text_only: true })
+  expect(a.servers.view(next)?.channels.find(c => c.id === ch)?.text_only).toBe(true)
+  expect(await failure(a.servers.send(next, { ch, body: 'new file', att }))).toContain(
+    'only accepts text'
+  )
+  expect(await bodies(a, next, ch)).toContain('Old file')
 })

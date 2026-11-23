@@ -1,16 +1,6 @@
 import type { EvalResult } from './facts'
 import type { Ix } from './reach'
-import {
-  EVERYONE,
-  gt,
-  permsQ,
-  poster,
-  rank,
-  RULES_VERSION,
-  evalLimits,
-  type AclContent,
-  type Rank,
-} from './rules'
+import { EVERYONE, gt, permsQ, poster, rank, evalLimits, type AclContent, type Rank } from './rules'
 
 // The page's summary of one P2P server's current state: its types, its codec (stored form, diff,
 // apply) and its builder. The page loads this without the evaluator; the evaluator's room
@@ -74,7 +64,7 @@ export interface CodeSum {
 }
 
 export interface Summary {
-  // null: no genesis held yet; another number than RULES_VERSION: unknown rules (read-only).
+  // null: no genesis held yet; unrecognized versions are read-only.
   rules: number | null
   owners: string[]
   creator: string | null
@@ -333,7 +323,7 @@ export function buildSummary(
   const gone = src.gone
   return {
     summary: {
-      rules: RULES_VERSION,
+      rules: ix.ev[ix.genesis].c.rules ?? null,
       owners: [...F.owners],
       creator: ix.ev[ix.genesis].a,
       members,

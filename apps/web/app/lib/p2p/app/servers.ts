@@ -788,6 +788,11 @@ export const p2pServer = {
   retryCarry: (room: string) => servers?.retryCarry(room),
   // Transfer by upgrade.
   async transfer(room: string, ik: string) {
+    if (ik === useP2p.getState().me) {
+      const ok = await withServers(s => s.transfer(room, ik).then(() => true))
+      if (ok) p2pHost.toast('Server upgraded. Open the new copy to enable text-only channels.')
+      return
+    }
     const co = (useP2p.getState().servers[room]?.owners.length ?? 1) > 1
     p2pHost.toast(
       co

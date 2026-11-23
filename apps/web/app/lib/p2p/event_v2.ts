@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../bytes'
 import { b64u, bytesOf, canonicalBytes, concat, hasKeys, utf8, isInt } from './canonical'
 import type { ProofHeader } from './acl/admit'
-import { aclContentOk, RULES_VERSION, type AclContent, type AclEv } from './acl/rules'
+import { aclContentOk, knownRules, RULES_VERSION, type AclContent, type AclEv } from './acl/rules'
 import type { ContentEv } from './acl/visibility'
 import { AGREED } from './limits'
 import { isKeyId, keyBytes, keyId, sign, verify, type KeyPair } from './keys'
@@ -273,10 +273,10 @@ const signedBy = (ik: unknown, msg: () => Uint8Array, sig: unknown) => {
 }
 
 const contentOk2 = (ev: CoreV2, c: Record<string, unknown>, rules: number) => {
-  if (rules !== RULES_VERSION) return true
+  if (!knownRules(rules)) return true
   if (ev.L === 'c') return checkContent(ev.t, c)
   if (!KNOWN_ACL.includes(ev.t)) return true
-  if (!aclContentOk(ev.t, c)) return false
+  if (!aclContentOk(ev.t, c, rules)) return false
   const srv = ev.srv ?? null
   if (ev.t === 'device_revoke')
     return (

@@ -55,6 +55,7 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
   const evicted: string[] = []
   const held = new Set<string>()
   const imported: string[] = []
+  const checkedContent = new Set<string>()
   const bodies = new Map<string, number>()
   let old = false
   // One record at a time: content goes to the evaluator trimmed to what it reads.
@@ -79,8 +80,12 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
         (bodies.get(x.sender) ?? 0) + storedSize(x.wire) + indexEstimate(x, cx.local.search)
       )
     const w = serverWire(x)
-    if (x.imp) {
+    const content = w.ev.L === 'c'
+    const unchecked =
+      x.imp || (rules === RULES_VERSION && (content ? x.contentRules !== rules : !x.acl))
+    if (unchecked) {
       imported.push(x.id)
+      if (content && rules === RULES_VERSION) checkedContent.add(x.id)
       const v = x.id === r.id ? validate2(w, null) : validate2(w, r.id, rules)
       if (!v.ok || v.id !== x.id) {
         bad.push(x.id)
@@ -88,7 +93,7 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
       }
     }
     if (x.layer === 'c' || w.ev.L === 'c') {
-      if (x.imp) check.push({ id: x.id, w })
+      if (unchecked) check.push({ id: x.id, w })
       else {
         // Without its body, it keeps its channel and target (the record's).
         const m = contentEvOf(x.id, w)
@@ -188,9 +193,9 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
       const tx = cx.db.transaction('events', 'readwrite')
       for (const id of imported) {
         const e = await tx.store.get(id)
-        if (e?.imp) {
+        if (e) {
           const { imp: _i, ...rest } = e
-          await tx.store.put(rest)
+          await tx.store.put(checkedContent.has(id) ? { ...rest, contentRules: rules } : rest)
         }
       }
       await tx.done

@@ -27,7 +27,8 @@ import {
   poster,
   rank,
   rkey,
-  RULES_VERSION,
+  knownRules,
+  aclContentOk,
   type AclContent,
   type AclEv,
   type Cls,
@@ -489,10 +490,14 @@ export class AclRoom {
         else lost.push(e.id)
         continue
       }
-      if (this.r.unknownRules !== undefined || (e.t === 'genesis' && e.c.rules !== RULES_VERSION)) {
+      if (this.r.unknownRules !== undefined || (e.t === 'genesis' && !knownRules(e.c.rules))) {
         this.r.restoreUnknown(e, this.r.unknownRules ?? (e.c.rules as number))
         this.r.forget(e.id)
         this.unknownCount++
+        continue
+      }
+      if (e.t === 'channel' && !aclContentOk(e.t, e.c, this.r.rules)) {
+        refused.push(e.id)
         continue
       }
       if (records && recOk(it.rec) && refsOk(e.ap, it.rec) && e.ap.every(p => this.r.indexed(p))) {
@@ -742,7 +747,8 @@ export class AclRoom {
   receiveContent(id: string, w: WireV2, now: number): Received {
     if (this.r.unknownRules !== undefined) return { s: 'U', rules: this.r.unknownRules }
     const m = contentEvOf(id, w)
-    if (this.contents.has(id)) return { s: 'C' }
+    const known = this.contents.has(id)
+    if (known && !this.bodiless.has(id)) return { s: 'C' }
     const missing = m.ap.filter(p => !this.r.indexed(p))
     if (missing.some(p => this.r.status.get(p)?.s === 'R')) return { s: 'R', why: 'parent' }
     if (missing.length) return { s: 'P', missing }
@@ -750,6 +756,7 @@ export class AclRoom {
     const d = decideContent(m, pastOf(ix, m.ap), this.r.acl.contentStateOf(m.ap))
     if (!d.ok) return { s: 'R', why: d.why }
     if (m.ts > now + this.r.local.acl.holdMs) return { s: 'H' }
+    if (known) return { s: 'C' }
     this.noteContent(trimContent(m))
     this.cv?.add(this.contents.get(id)!)
     this.dirty.add(m.dev)

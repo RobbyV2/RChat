@@ -76,7 +76,7 @@ export const copyForP2p = (p: P2pMessage, m: Message, author: string, draftKey: 
     id: 1 + Math.floor(Math.random() * 2 ** 40),
     author: p.fwd ? (m.forward?.author ?? null) : p2pUser(p.sender, author),
     snippet: plainLine(p.fwd ? p.fwd.body : p.body),
-    has_media: false,
+    has_media: !!(p.att?.length || p.fwd?.att?.length),
     created_at: p.fwd ? seconds(p.fwd.ts) : m.created_at,
     body: p.fwd ? p.fwd.body : p.body,
     p2p: true,

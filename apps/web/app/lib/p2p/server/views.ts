@@ -1,4 +1,4 @@
-import { gt, restricts, type Rank } from '../acl/rules'
+import { RULES_VERSION, gt, restricts, type Rank } from '../acl/rules'
 import type { Summary } from '../acl/summary'
 import type { Shown } from '../acl_room'
 import { getEvents } from '../dag'
@@ -114,6 +114,7 @@ export function serverView(
   const me = readOnly ? null : membershipOf(s, env.me)
   return {
     id: room,
+    textOnlyChannels: s.rules === RULES_VERSION,
     name: n?.name ?? r.name ?? 'P2P server',
     color: n?.color ?? null,
     me,
