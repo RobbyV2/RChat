@@ -1,4 +1,5 @@
-import { defaultEndpoints, endpointsFrom, InstanceConnection, readKnown } from '../instances'
+import { defaultEndpoints } from '../instances'
+import { createSavedSession } from './saved_session'
 import { hostOf } from '../qualified'
 import { parseAccountPath, parsePath, type RouteOwner } from '../view'
 import { client } from './client'
@@ -29,21 +30,6 @@ export function accountHistoryState(account: AccountSession, previous: unknown) 
     acct: (username ?? '~guest') + '@' + account.conn.host,
     rchatOrigin: account.conn.origin,
   }
-}
-
-function createPageSession(origin: string, username?: string | null) {
-  const defaults = defaultEndpoints()
-  const info = readKnown()[origin] ?? null
-  const isDefault = origin === defaults.origin
-  const conn = new InstanceConnection(
-    isDefault ? defaults : endpointsFrom(origin, info),
-    info,
-    isDefault
-  )
-  // Loading the client registry alone does not initialize the chat store.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { AccountSession } = require('./session') as typeof import('./session')
-  return new AccountSession(conn, undefined, undefined, username)
 }
 
 // A prefix can represent multiple origins with the same authority. Only this
@@ -104,7 +90,7 @@ function resolvePageAccount(pathname: string, historyState: unknown): AccountSes
           client
             .live()
             .find(session => session.conn.origin === own && usernameOf(session) === undefined) ??
-          createPageSession(own)
+          createSavedSession(own)
         )
       }
       return home
@@ -131,7 +117,7 @@ function resolvePageAccount(pathname: string, historyState: unknown): AccountSes
       next = home
       next.credentialTarget = username
     } else {
-      next = createPageSession(origin, username)
+      next = createSavedSession(origin, username)
     }
   } else {
     next.credentialTarget = username

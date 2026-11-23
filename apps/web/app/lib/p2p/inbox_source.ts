@@ -50,12 +50,18 @@ type Checked = Map<string, { seq: number; ok: boolean }>
 export const listedPings = async (
   checked: Checked = new Map(),
   app: P2pApp
-): Promise<Map<string, number>> => {
+): Promise<Map<string, number> | null> => {
   const { p2pPings, useP2p } = app
   const snap = await p2pPings.read()
   const st = useP2p.getState()
-  if (!snap || !st.enabled) return new Map()
+  if (!snap || !st.enabled) return null
   const w = worldOf(st, snap.readSeq)
+  if (
+    snap.list.some(
+      p => p.ch !== null && st.servers[p.room]?.awaitingAcl && pingUnread(p, w.readSeq)
+    )
+  )
+    return null
   const rows = snap.list.filter(p => pingUnread(p, w.readSeq) && pingVisible(p, w))
   const seqOf = (room: string) => st.rooms[room]?.seq ?? st.servers[room]?.seq ?? -1
   const next = new Map<string, { seq: number; ok: boolean }>()
@@ -74,7 +80,8 @@ export const listedPings = async (
 }
 
 const createListedPings = () =>
-  create<{ by: ReadonlyMap<string, number> }>(() => ({
+  create<{ by: ReadonlyMap<string, number>; loaded: object | null }>(() => ({
+    loaded: null,
     by: new Map(),
   }))
 
@@ -116,7 +123,9 @@ const inputsOf = {
     Object.values(st.servers)
       .map(
         v =>
-          `${v.id}:${v.me}:${v.seq}:${v.channels.map(c => c.id).join('/')}:${Object.entries(v.chans)
+          `${v.id}:${v.me}:${v.awaitingAcl}:${v.seq}:${v.channels.map(c => c.id).join('/')}:${Object.entries(
+            v.chans
+          )
             .map(([ch, c]) => `${ch}=${c.pings}/${c.readSeq}`)
             .join('/')}`
       )
@@ -127,6 +136,7 @@ const inputsOf = {
 // What the listed pings depend on changed: the log, read positions, counters, stored content,
 // places or contacts (not typing or presence).
 export const pingInputsChanged = (st: P2pState, prev: P2pState) =>
+  st.countsLoaded !== prev.countsLoaded ||
   st.enabled !== prev.enabled ||
   st.me !== prev.me ||
   st.pingLog !== prev.pingLog ||
@@ -153,9 +163,15 @@ export const startP2pPings = (account: AccountSession, app: P2pApp, delay?: numb
       mark = account.lifetime.sessionMark()
     }
     const current = mark
+    const loaded = useP2p.getState().countsLoaded
     void listedPings(checked, app).then(
       by => {
-        if (mine === run && current === account.lifetime.sessionMark()) listed.setState({ by })
+        if (
+          mine === run &&
+          current === account.lifetime.sessionMark() &&
+          loaded === useP2p.getState().countsLoaded
+        )
+          listed.setState({ by: by ?? new Map(), loaded: by ? loaded : null })
       },
       () => {}
     )
@@ -242,6 +258,10 @@ export const createP2pInbox = (
       account.identities.show(app)
       return p2pOpenAt(p.room, p.ch, p.kind === 'reaction' ? (p.target ?? p.id) : p.id)
     },
+    countReady: () => {
+      const loaded = useP2p.getState().countsLoaded
+      return active() && !!loaded && listed.getState().loaded === loaded
+    },
     count: () =>
       active()
         ? p2pPingCount(
@@ -252,7 +272,13 @@ export const createP2pInbox = (
         : 0,
     subscribe: onChange => {
       const offP2p = useP2p.subscribe((st, prev) => {
-        if (st.rooms !== prev.rooms || st.servers !== prev.servers) onChange()
+        if (
+          st.rooms !== prev.rooms ||
+          st.servers !== prev.servers ||
+          st.countsLoaded !== prev.countsLoaded ||
+          st.enabled !== prev.enabled
+        )
+          onChange()
       })
       const offListed = listed.subscribe(onChange)
       const offPrefs = account.store.subscribe((st, prev) => {

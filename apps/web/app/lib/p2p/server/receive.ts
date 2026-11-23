@@ -354,7 +354,6 @@ export async function applyDelta(cx: ServerCtx, room: string, delta: SumDelta) {
   // Only removals of the last day, and not from an empty copy (a start without a cache).
   const reached = before.count ? reachedBy(before, rt.sum, cx.me, cx.clock.now()) : []
   if (reached.length) cx.noteReached(rt, reached)
-  cx.saveSoon(room)
   await cx.afterState(room, before, [
     ...Object.keys(delta.put?.members ?? {}),
     ...(delta.del?.members ?? []),

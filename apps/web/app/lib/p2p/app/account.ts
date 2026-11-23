@@ -215,6 +215,9 @@ export function createAccountPart(
       put.limits(state.identityLimits(username))
       put.reader({ store: s, me: keyId(self.ik.pk) })
       const ch = dataChannel(username)
+      const rooms = parts.dms.refreshRooms()
+      // Apply broadcasts after the initial snapshot and in arrival order.
+      let roomUpdates = rooms.catch(() => {})
       if (ch) {
         ch.onmessage = e => {
           const msg = e.data as {
@@ -238,7 +241,11 @@ export function createAccountPart(
             )
           const room = msg?.room
           if (typeof room !== 'string') return
-          void parts.dms.refreshRoom(room)
+          roomUpdates = roomUpdates
+            .then(async () => {
+              if (state.reader?.store === s) await parts.dms.refreshRoom(room)
+            })
+            .catch(() => {})
           void s.contacts().then(
             contacts => state.reader?.store === s && useP2p.setState({ contacts }),
             () => {}
@@ -261,8 +268,9 @@ export function createAccountPart(
       const slots = await readSlots(s)
       if (!live() || state.reader?.store !== s) return
       parts.badge.mirrorBadges(Object.fromEntries(slots))
-      await parts.dms.refreshRooms()
+      await rooms
       if (!live() || state.reader?.store !== s) return
+      useP2p.setState({ countsLoaded: {} })
       const chat = useP2p.getState().chat
       if (chat) await parts.dms.loadChat(chat.room, chat.peer)
     } catch {
@@ -536,6 +544,7 @@ export function createAccountPart(
       await parts.dms.refreshRooms()
       if (!live() || state.node !== n) return
       parts.servers.refreshServers()
+      useP2p.setState({ countsLoaded: {} })
       const chat = useP2p.getState().chat
       if (chat) await parts.dms.loadChat(chat.room, chat.peer)
       // The instance's PeerJS address, on a first visit (later ones keep it).
@@ -561,6 +570,15 @@ export function createAccountPart(
     if (state.node === n) useP2p.setState({ addressHidden: seen === 'hidden' })
   }
 
+  // Stop the transport and invalidate pending node opens. This app is pinned to one
+  // account lifetime, so its drafts can stay in memory until reactivation or signout.
+  const park = () => {
+    if (!scope.current()) return
+    put.gen(state.gen + 1)
+    shutdown()
+    useP2p.setState({ ...initial, drafts: useP2p.getState().drafts })
+  }
+
   // Called on every sign in and out (null): one node per account, none for guests.
   const p2pAccount = async (username: string | null) => {
     if (scope.disposed || (username !== null && !scope.current(username))) return
@@ -579,6 +597,7 @@ export function createAccountPart(
     useP2p.setState({
       ...initial,
       account: username,
+      drafts: username === null ? initial.drafts : was.drafts,
       home: keepHome,
       layout: parts.rail.readLayout(username),
     })
@@ -649,6 +668,7 @@ export function createAccountPart(
           error,
         })
       else if (error) useP2p.setState({ error })
+      if (ok) owner.counts.peerRemoved(username, scope.localId)
       return ok
     },
 
@@ -734,6 +754,7 @@ export function createAccountPart(
     startParts,
     boot,
     p2pAccount,
+    park,
     p2p,
   }
 }

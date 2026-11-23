@@ -104,6 +104,8 @@ export interface P2pSearch {
 }
 
 export interface P2pState {
+  // A fresh token after this runtime has loaded its persisted room and channel counters.
+  countsLoaded: object | null
   account: string | null
   // P2P is turned on for this account on this browser.
   enabled: boolean
@@ -324,6 +326,7 @@ export const chatScope = (room: string, ch?: string | null) =>
 export const threadScope = (t: { room: string; ch: string; root: string }) => `p2p:${threadKey(t)}`
 
 export const initialPeerState = (): P2pState => ({
+  countsLoaded: null,
   account: null,
   enabled: false,
   loading: false,

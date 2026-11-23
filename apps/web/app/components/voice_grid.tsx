@@ -831,6 +831,7 @@ function VoiceDockBody() {
                 }
                 account.identities.show(identity)
               }
+              if ((voice || call) && account !== client.shown()) client.show(account, 'none')
               if (voice) void openChannel(voice.server, voice.channelId)
               else if (roomVoice) p2pServer?.open(roomVoice.room, roomVoice.ch)
               else if (roomCall) {
@@ -1432,7 +1433,10 @@ function CallBannerBody() {
   )
   if (!call) return <ContactCallBanners />
   if (!ringing || !other || (!incoming && watching)) return null
-  const go = () => void openDm(call.dmId, shown ? 'push' : 'none')
+  const go = () => {
+    if (account !== client.shown()) client.show(account, 'none')
+    void openDm(call.dmId)
+  }
   const p2pCall = call.kind === 'p2p'
   const dm = dms.find(d => d.id === call.dmId)
   const avatar = (size: number) => <RingAvatar user={other} size={size} streamer={streamer} />

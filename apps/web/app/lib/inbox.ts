@@ -62,6 +62,8 @@ export interface InboxAdapter {
   open: (entry: InboxEntry) => void | Promise<void>
   // Its notifications that badge, when the store doesn't count them, and how to hear that the
   // count may have changed: the bell counts them and the list reloads when the count moves.
+  // A suspended source can still be registered while its local counters reload.
+  countReady?: () => boolean
   count?: () => number
   subscribe?: (onChange: () => void) => () => void
 }

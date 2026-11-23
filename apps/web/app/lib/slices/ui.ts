@@ -1,4 +1,7 @@
-import { shownMenu } from '../client/client'
+import { openAccountNotice } from '../client/notice_owner'
+import { accountNoticeLabel } from '../instance_label'
+import { accountNoticeTag } from '../client/tab_lock'
+import { client, shownMenu } from '../client/client'
 import type { AccountSession } from '../client/session'
 // The store's interface state: errors, toasts and notices, menus, dialogs and panels, the
 // per-account display preferences, and the confirm builders.
@@ -442,18 +445,43 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   // background. It shows what the toast shows (see `desktopText`), so streamer mode leaves out
   // names and message text.
   const desktopAlert = (notice: Notice) => {
-    const system = notifications()
-    if (!get().notifyPrefs.desktop || system.permission() !== 'granted') return
-    if (typeof document === 'undefined') return
-    if (document.visibilityState === 'visible' && document.hasFocus()) return
-    const { title, body } = desktopText(notice, get().streamer)
-    system.show({
-      title: maskProfanity(title),
-      body: notice.file ? maskFileName(body) : maskOutsideCode(body, maskProfanity),
-      tag: acct.isHome ? notice.key : JSON.stringify([acct.id, notice.key]),
-      renotify: true,
-      onClick: acct.lifetime.inSession(notice.go),
-    })
+    const username = get().me?.username ?? (get().guest ? null : acct.credentialTarget)
+    if (username === undefined || !get().notifyPrefs.desktop || typeof document === 'undefined')
+      return
+    const origin = acct.conn.origin
+    const lock = notice.key === 'parked-inbox' ? acct.tabLock : acct.deliveryLock
+    lock.whenHolder(
+      origin,
+      username,
+      acct.lifetime.inSession(() => {
+        const system = notifications()
+        if (!get().notifyPrefs.desktop || system.permission() !== 'granted') return
+        if (document.visibilityState === 'visible' && document.hasFocus()) return
+        const { title, body } = desktopText(notice, get().streamer)
+        system.show({
+          title: maskProfanity(
+            client.live().length > 1 && !get().streamer
+              ? accountNoticeLabel(username, get().instance ?? acct.conn.info, acct.conn.host) +
+                  ' · ' +
+                  title
+              : title
+          ),
+          body: notice.file ? maskFileName(body) : maskOutsideCode(body, maskProfanity),
+          tag: accountNoticeTag(acct, notice.key),
+          renotify: true,
+          onClick: acct.lifetime.inSession(() => {
+            const { me, guest } = get()
+            if (
+              acct.conn.origin !== origin ||
+              (me?.username ?? (guest ? null : acct.credentialTarget)) !== username ||
+              !client.live().includes(acct)
+            )
+              return
+            openAccountNotice(acct, notice.go)
+          }),
+        })
+      })
+    )
   }
 
   const alertUser = (alert: AlertInput) => {

@@ -1,19 +1,25 @@
 'use client'
 import { useP2pApp, useP2p } from '../lib/client/p2p_react'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Activity, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '../lib/store'
 import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
 import { client } from '../lib/client/client'
 import { accountHistoryState, selectPageAccount, routeOwnerFor } from '../lib/client/account_paths'
-import { accountPath, parseAccountPath } from '../lib/view'
-import { loginHref, logoutForLogin, UnavailableAccount } from '../login/account_login'
+import { accountPath, parseAccountPath, viewKey } from '../lib/view'
+import {
+  loginHref,
+  logoutForLogin,
+  SignedOutAccount,
+  UnavailableAccount,
+} from '../login/account_login'
 import type { AccountSession } from '../lib/client/session'
 import type { RChatState } from '../lib/store_types'
 import { historyKey } from '../lib/openapi'
 import { notifications } from '../lib/platform'
 import { useGuestPostingCheck } from '../components/use_guest_posting_check'
+import { pollAccountCounts, startAccountCounts } from '../lib/client/account_counts'
 import { startApp } from '../lib/start'
 import { ContextMenu } from '../components/context_menu'
 import { ReactionPickerHost } from '../components/reactions'
@@ -38,7 +44,7 @@ import SettingsMenu from '../components/settings_menu'
 import ThreadPanel from '../components/thread_panel'
 import SearchPanel from '../components/search_panel'
 import FriendsPanel, { AddFriendsDialog } from '../components/friends'
-import { InboxHost, useInboxCount } from '../components/inbox'
+import { InboxHost, useTotalInboxCount } from '../components/inbox'
 import { PaletteHost } from '../components/palette'
 import { usePaletteUi } from '../lib/palette_store'
 import { PollVotersDialog } from '../components/poll_card'
@@ -56,7 +62,7 @@ import { P2pThreadPanel } from '../components/p2p/p2p_thread'
 import { P2pSearchPanel } from '../components/p2p/p2p_search'
 
 function markEntry(account: AccountSession) {
-  if (!client.canWritePage(account)) return
+  if (!client.ownsHistoryEntry(account)) return
   const previous = window.history.state
   const marked = accountHistoryState(account, previous)
   // Next strips the trailing slash from links whose final segment resembles a filename,
@@ -84,6 +90,7 @@ function markEntry(account: AccountSession) {
 export default function AppShell() {
   const sessions = useLiveSessions()
   const shown = client.shown()
+  const pendingNotice = client.noticePending(shown)
   const router = useRouter()
   const started = useRef(new WeakSet<AccountSession>())
   const [route, setRoute] = useState<'pending' | 'chat' | 'login' | 'missing'>('pending')
@@ -93,7 +100,7 @@ export default function AppShell() {
       if (started.current.has(account)) return
       started.current.add(account)
       void startApp(() => {
-        if (!client.canWritePage(account)) return
+        if (!client.ownsHistoryEntry(account)) return
         const { pathname, search, hash } = window.location
         router.replace(loginHref(pathname + search + hash, routeOwnerFor(account)))
       }, account)
@@ -129,19 +136,25 @@ export default function AppShell() {
   }, [router, start])
 
   useEffect(() => {
-    if (route !== 'chat' || !client.canWritePage(shown)) return
+    if (route !== 'chat' || pendingNotice || !client.canWritePage(shown)) return
     start(shown)
     markEntry(shown)
     return shown.store.subscribe((state, before) => {
       if ((state.me !== before.me && state.me) || (state.guest && !before.guest)) markEntry(shown)
     })
-  }, [route, shown, start])
+  }, [route, shown, start, pendingNotice])
+
+  const ready = route === 'chat'
+  useEffect(() => {
+    if (ready) return client.accounts.start(pollAccountCounts)
+  }, [ready])
 
   if (route === 'missing') return <UnavailableAccount />
   if (route === 'login') return null
   return (
     <AccountProvider session={shown}>
-      {route === 'chat' ? <Chat key={shown.renderKey} /> : <div>Loading RChat</div>}
+      {ready ? <RecentChats shown={shown} sessions={sessions} /> : <div>Loading RChat</div>}
+      <DeviceBadge />
       <CallBanner />
       <ExpandedCallPane />
       {sessions.map(session => (
@@ -156,6 +169,58 @@ export default function AppShell() {
   )
 }
 
+function DeviceBadge() {
+  const pings = useTotalInboxCount()
+  useEffect(() => {
+    notifications().setBadge(pings)
+  }, [pings])
+  return null
+}
+
+function RecentChats({
+  shown,
+  sessions,
+}: {
+  shown: AccountSession
+  sessions: readonly AccountSession[]
+}) {
+  const [recent, setRecent] = useState([shown])
+  if (recent[0] !== shown)
+    setRecent([shown, ...recent.filter(a => a !== shown && sessions.includes(a))].slice(0, 3))
+  return recent
+    .filter(a => sessions.includes(a))
+    .map(account => (
+      <Activity key={account.renderKey} mode={account === shown ? 'visible' : 'hidden'}>
+        <AccountProvider session={account}>
+          <AccountChat />
+        </AccountProvider>
+      </Activity>
+    ))
+}
+
+function AccountChat() {
+  const lastInput = useRef<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    if (document.activeElement === document.body && lastInput.current?.isConnected)
+      lastInput.current.focus({ preventScroll: true })
+  }, [])
+  return (
+    <div
+      className="contents"
+      onFocusCapture={event => {
+        const target = event.target
+        if (
+          target instanceof HTMLElement &&
+          target.matches('textarea, input, [contenteditable="true"]')
+        )
+          lastInput.current = target
+      }}
+    >
+      <Chat />
+    </div>
+  )
+}
+
 function ShellBanners({ multiple }: { multiple: boolean }) {
   const ready = useStore(s => !!s.me || s.guest)
   return ready || multiple ? <Banners /> : null
@@ -164,6 +229,7 @@ function ShellBanners({ multiple }: { multiple: boolean }) {
 export function SessionServices() {
   const account = useAccount()
   useEffect(() => {
+    const stopCounts = startAccountCounts(account)
     const stopHome = account.home.startSync()
     const ownerOf = (s: RChatState) => s.me?.username ?? (s.guest ? 'guest' : null)
     const reloadHistory = () => account.apiDoc.loadApiHistory(ownerOf(account.store.getState()))
@@ -194,6 +260,7 @@ export function SessionServices() {
       document.removeEventListener('visibilitychange', onWake)
       window.removeEventListener('storage', reload)
       stopHistory()
+      stopCounts()
       stopIndex()
       stopHome()
     }
@@ -248,7 +315,7 @@ function Chat() {
   useGuestPostingCheck(server, channel)
   useGuestPostingCheck(server, threadChannel !== channel ? threadChannel : null)
   const bootError = useStore(s => s.bootError)
-  const pings = useInboxCount()
+  const signedOut = useStore(s => s.signedOut)
   const p2pHome = useP2p(s => s.home) && me !== null
   // A P2P conversation opened from the DM list shows beside it, not in the P2P home.
   const p2pBeside = useP2p(s => s.home && s.dmList && s.chat !== null) && me !== null
@@ -268,10 +335,6 @@ function Chat() {
     setRightOpen(false)
   }, 'panel')
 
-  useEffect(() => {
-    notifications().setBadge(pings)
-  }, [pings])
-
   const appName = useStore(s => s.brand?.app_name ?? null)
   useEffect(() => {
     if (appName !== null) notifications().setTitle(appName)
@@ -282,7 +345,7 @@ function Chat() {
     if (!guestBlocked) return
     logoutForLogin(account)
     store.getState().setError('Guest access is disabled')
-    if (client.canWritePage(account)) router.replace('/login')
+    if (client.ownsHistoryEntry(account)) router.replace('/login')
   }, [account, guestBlocked, router, store])
 
   const authExpired = useStore(s => s.authExpired)
@@ -290,7 +353,7 @@ function Chat() {
     if (!authExpired) return
     store.setState({ authExpired: false })
     store.getState().setError('Your session has ended. Please sign in again.')
-    if (client.canWritePage(account)) {
+    if (client.ownsHistoryEntry(account)) {
       const { pathname, search, hash } = window.location
       router.replace(loginHref(pathname + search + hash, routeOwnerFor(account)))
     }
@@ -299,12 +362,16 @@ function Chat() {
   // The place the address restores on load keeps the P2P home open (it comes back from its
   // session key); a change of view after that closes it.
   const settled = useRef(false)
+  const place = view ? viewKey(view) : null
+  const lastView = useRef(place)
   useEffect(() => {
+    if (lastView.current === place) return
+    lastView.current = place
     setLeftOpen(false)
     setRightOpen(false)
     if (store.getState().panel?.kind === 'thread') store.getState().closePanel()
     if (settled.current) p2p?.closeHome()
-  }, [view, store])
+  }, [place, store])
   useEffect(() => {
     if (view !== null || atHome) settled.current = true
   }, [view, atHome])
@@ -336,6 +403,7 @@ function Chat() {
   }, [dialog, confirming, paletteOpen, adminOpen])
 
   if (!me && !guest) {
+    if (signedOut) return <SignedOutAccount account={account} />
     return (
       <>
         {!invite && !configLink && (

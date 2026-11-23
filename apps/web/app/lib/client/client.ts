@@ -1,3 +1,4 @@
+import { AccountManager } from './account_manager'
 import { viewPath, type Nav } from '../view'
 import { accountHistoryState, routeOwnerFor } from './account_paths'
 import { createBookStore } from './book_store'
@@ -26,6 +27,7 @@ function loadHome(): AccountSession {
 
 function createClient() {
   let foreground: AccountSession | null = null
+  let noticeOwner: AccountSession | null = null
   let pageBlocked = false
   let nextKey = 0
   let live: readonly AccountSession[] = []
@@ -72,8 +74,26 @@ function createClient() {
     },
   }
 
+  const books = createBookStore()
+  const accounts = new AccountManager({
+    book: books.book.getState,
+    shown: (): AccountSession => client.shown(),
+    live: () => live,
+    protected: () => calls.current()?.account,
+    protectedIdentity: () => calls.current()?.identity,
+    watch: fn => {
+      const off = books.book.subscribe(fn)
+      const offCalls = calls.subscribe(fn)
+      return () => {
+        off()
+        offCalls()
+      }
+    },
+    publish: () => publish([...live]),
+  })
   return {
-    ...createBookStore(),
+    ...books,
+    accounts,
     calls,
     homeInstance: () => instances.home,
     selectHome: instances.selectHome.bind(instances),
@@ -86,23 +106,40 @@ function createClient() {
     canWritePage(account: AccountSession) {
       return !pageBlocked && this.shown() === account
     },
+    ownsHistoryEntry(account: AccountSession) {
+      return this.canWritePage(account) && noticeOwner !== account
+    },
+    noticePending(account: AccountSession) {
+      return noticeOwner === account
+    },
+    commitNotice(account: AccountSession) {
+      if (noticeOwner !== account) return
+      noticeOwner = null
+      publish([...live])
+    },
     blockPage() {
+      noticeOwner?.store.cancelNavigation()
+      noticeOwner = null
       pageBlocked = true
     },
-    show(account: AccountSession, nav: Nav = 'push') {
+    show(account: AccountSession, nav: Nav | 'notice' = 'push') {
       if (!subscriptions.has(account)) return false
+      const wasPending = noticeOwner !== null
+      noticeOwner?.store.cancelNavigation()
+      noticeOwner = nav === 'notice' ? account : null
       const changed = this.shown() !== account
       pageBlocked = false
       foreground = account
-      if (nav !== 'none' && typeof window !== 'undefined') {
+      if (nav !== 'notice' && nav !== 'none' && typeof window !== 'undefined') {
         const path = viewPath(account.store.getState().view, routeOwnerFor(account))
-        if (changed || window.location.pathname !== path) {
+        if (changed || wasPending || window.location.pathname !== path) {
           const state = accountHistoryState(account, null)
           if (nav === 'push') window.history.pushState(state, '', path)
           else window.history.replaceState(state, '', path)
         }
       }
-      if (changed) publish([...live])
+      if (changed) accounts.reconcile()
+      if (changed || wasPending) publish([...live])
       return true
     },
     live: () => live,
@@ -119,6 +156,12 @@ function createClient() {
       subscriptions.set(
         account,
         account.store.subscribe((state, previous) => {
+          if (
+            state.me !== previous.me ||
+            state.guest !== previous.guest ||
+            state.token !== previous.token
+          )
+            accounts.schedule()
           if (origin !== account.conn.origin) {
             origin = account.conn.origin
             publish([...live])
@@ -128,14 +171,17 @@ function createClient() {
         })
       )
       publish([...live, account])
+      accounts.schedule()
     },
     detach(account: AccountSession) {
       if (!subscriptions.has(account)) return
       calls.end(account)
       subscriptions.get(account)?.()
       subscriptions.delete(account)
+      if (noticeOwner === account) noticeOwner = null
       if (foreground === account) foreground = null
       publish(live.filter(session => session !== account))
+      accounts.schedule()
     },
     claimOverlay(id: AccountId) {
       const owner = live.find(account => account.id === id)

@@ -72,7 +72,7 @@ export const pageVisible = () =>
 
 // The instance view on screen: none while P2P shows in its place.
 export const shownView = (acct: AccountSession, view: View | null) =>
-  view && !acct.identities.coversView() ? view : null
+  view && acct.mode === 'shown' && !acct.identities.coversView() ? view : null
 
 export const shownKey = (acct: AccountSession, view: View | null) => {
   const v = shownView(acct, view)

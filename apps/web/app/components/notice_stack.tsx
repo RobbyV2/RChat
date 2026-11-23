@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState, type FocusEvent } from 'react'
 import { User, X } from 'lucide-react'
+import { openAccountNotice } from '../lib/client/notice_owner'
 import { client } from '../lib/client/client'
-import { AccountProvider } from '../lib/client/react'
+import { AccountProvider, useAccount } from '../lib/client/react'
 import type { AccountSession } from '../lib/client/session'
 import { AccountLabel } from './instance_badge'
 import { useStore } from '../lib/store'
@@ -53,6 +54,7 @@ function NoticeCard({
   paused: boolean
   labelled: boolean
 }) {
+  const owner = useAccount()
   const streamer = useStore(s => s.streamer)
   const dismiss = useStore(s => s.dismissNotice)
   const where = context(notice)
@@ -82,7 +84,7 @@ function NoticeCard({
           if (card.current?.contains(document.activeElement))
             (document.activeElement as HTMLElement).blur()
           dismiss(notice.id)
-          notice.go()
+          openAccountNotice(owner, notice.go)
         }}
         className="flex w-full items-start gap-3 p-3 pr-9 text-left focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
       >
@@ -99,7 +101,7 @@ function NoticeCard({
           </span>
         )}
         <span className="min-w-0 flex-1">
-          {labelled && <AccountLabel />}
+          {labelled && <AccountLabel notice />}
           <span className="block truncate text-sm font-medium">
             <Pieces pieces={headline(notice)} />
           </span>

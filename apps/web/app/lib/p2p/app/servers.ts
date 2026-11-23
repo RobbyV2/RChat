@@ -1,6 +1,10 @@
 import { resolve as resolveNotify } from '../../notify'
 import type { ConfirmRequest } from '../../store_types'
-import type { RoomRecord } from '../db'
+import type { P2pStore, RoomRecord, ServerCache } from '../db'
+import { cacheKey } from '../dag'
+import { knownRules } from '../acl/rules'
+import { cachedSummary } from '../server/load'
+import { channelViews } from '../server/views'
 import { keyId } from '../keys'
 import { displayName } from '../contacts'
 import type { WireV2 } from '../event_v2'
@@ -16,7 +20,7 @@ import {
   type ServerView,
 } from '../server'
 import { unsentText, WIPE_TEXT } from '../flows'
-import { P, type HistoryVis } from '../state'
+import { membershipOf, P, type HistoryVis } from '../state'
 import type { IdentityScope, P2pParts } from './scope'
 
 // Messages stored here that match (search panel). `from` is matched against member names.
@@ -59,43 +63,50 @@ export function createServersPart(
 
   const { canView, cancelViewing, leaveVisit, requestViewing, useViewing } = scope.owner.viewing
 
-  const readerView = (r: RoomRecord): ServerView => ({
-    id: r.id,
-    name: r.name ?? 'P2P server',
-    color: null,
-    me: null,
-    joining: false,
-    owner: null,
-    owners: [],
-    perms: 0,
-    rank: [-Infinity, ''],
-    history: 'shared',
-    system: { ch: null, join: true, leave: true },
-    channels: [],
-    roles: [],
-    everyone: 0,
-    members: [],
-    online: 0,
-    joined: 0,
-    chans: r.chans ?? {},
-    seq: r.lastSeq,
-    gap: false,
-    full: r.full,
-    readOnly: null,
-    voice: {},
-    mods: [],
-    reached: [],
-    reapply: [],
-    joinWait: null,
-    conflict: false,
-    syncing: null,
-    upgraded: false,
-    disputed: false,
-    next: null,
-    prev: null,
-    carry: null,
-    migrateDiff: null,
-  })
+  const readerView = async (s: P2pStore, r: RoomRecord, ik: string): Promise<ServerView> => {
+    const sum = r.legacy
+      ? null
+      : cachedSummary((await s.meta<ServerCache>(cacheKey(r.id))) ?? r.server)
+    const me = sum && knownRules(sum.rules) ? membershipOf(sum, ik) : null
+    return {
+      id: r.id,
+      name: r.name ?? 'P2P server',
+      color: null,
+      awaitingAcl: !r.legacy && sum?.rules == null,
+      me,
+      joining: false,
+      owner: null,
+      owners: [],
+      perms: 0,
+      rank: [-Infinity, ''],
+      history: 'shared',
+      system: { ch: null, join: true, leave: true },
+      channels: sum && me === 'join' ? channelViews(sum, ik, me, state.limits.display) : [],
+      roles: [],
+      everyone: 0,
+      members: [],
+      online: 0,
+      joined: 0,
+      chans: r.chans ?? {},
+      seq: r.lastSeq,
+      gap: false,
+      full: r.full,
+      readOnly: null,
+      voice: {},
+      mods: [],
+      reached: [],
+      reapply: [],
+      joinWait: null,
+      conflict: false,
+      syncing: null,
+      upgraded: false,
+      disputed: false,
+      next: null,
+      prev: null,
+      carry: null,
+      migrateDiff: null,
+    }
+  }
 
   const refreshServers = () => {
     const sv = state.servers

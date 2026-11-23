@@ -784,7 +784,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     } catch (e) {
       if (at === sessionMark()) retryMe(e)
     } finally {
-      recovering = false
+      if (at === sessionMark()) recovering = false
     }
   }
 
@@ -795,6 +795,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   }
 
   const refreshView = async () => {
+    if (acct.mode === 'lite' || acct.mode === 'parked') return
     const { view } = get()
     if (!view) return
     try {
@@ -948,7 +949,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
           readQueue.flush()
           return
         }
+        if (!acct.socketAllowed) return
         home.ws.ensureConnected()
+        if (acct.mode !== 'shown') return
         const { atBottom, messages, reads, unreadAnchor, panel } = get()
         const view = shownView(acct, get().view)
         if (panel?.kind === 'thread') {
@@ -971,6 +974,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   }
 
   const startWs = () => {
+    if (!acct.socketAllowed) return
     let connected = false
     downSince = null
     stopCatchUp()
@@ -1212,16 +1216,18 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       if (nav !== 'push') return
       set({ adminPage: null })
     }
-    if (nav === 'none' || !ownsPage()) return
+    if (nav === 'none' || !ownsPage() || (nav !== 'push' && client.noticePending(acct))) return
     const path = viewPath(view, routeOwnerFor(acct))
-    if (window.location.pathname === path) return
-    if (nav === 'push') window.history.pushState(accountHistoryState(acct, null), '', path)
-    else window.history.replaceState(accountHistoryState(acct, null), '', path)
+    if (window.location.pathname !== path || client.noticePending(acct)) {
+      if (nav === 'push') window.history.pushState(accountHistoryState(acct, null), '', path)
+      else window.history.replaceState(accountHistoryState(acct, null), '', path)
+    }
+    client.commitNotice(acct)
   }
 
   // `retrying`: a boot that tries again after a 429, so it must not fall back yet.
   const resolveUrl = async (nav: 'replace' | 'none', retrying = false) => {
-    if (!ownsPage()) return
+    if (!client.ownsHistoryEntry(acct)) return
     const intent = beginNavigation()
     const path = localPage()
     if (path === null) return
@@ -1357,6 +1363,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     set({
       token: res.token,
       guest: false,
+      signedOut: false,
       authExpired: false,
       bootError: null,
     })
@@ -1413,13 +1420,15 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     channelId: number,
     threadRootId: number | null,
     id: number,
-    nav: Nav = 'push'
+    nav: Nav = 'push',
+    switching = false
   ) => {
     const v = shownView(acct, get().view)
     const here = v?.kind === 'channel' && v.channelId === channelId
     const at = threadRootId ?? id
     const mark = sessionMark()
-    if (here) {
+    if (switching) await get().openChannel(server, channelId, nav, at)
+    else if (here) {
       set({ panel: null })
       await get().jumpTo(viewKey({ kind: 'channel', server, channelId }), at)
     } else await get().openServer(server, channelId, nav, at)
@@ -1438,6 +1447,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   // Drops the timers, queues and caches of the signed-in session.
   const forgetSession = () => {
+    restoring = null
+    recovering = false
     p2pGate.account(null)
     sessionStore.removeItem(inviteHistoryKey())
     if (inviteHistory && sessionStore.getItem(inviteHistory.key) === inviteHistory.nonce)
@@ -1710,7 +1721,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
           me = await api.me()
           if (mark !== sessionMark()) return
         } catch (e) {
-          if (mark !== sessionMark()) return
+          if (mark !== sessionMark() || !restoring || readLocal(restoring.key) !== token) return
           if (endsSession(e)) {
             fail(e)
             expireSession()
@@ -1773,6 +1784,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
             '',
             url
           )
+        client.commitNotice(acct)
       }
       set(
         open
@@ -1837,7 +1849,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       rtc.leave()
       p2p.signOut()
       if (forgetCredential(home, username, localToken)) setMediaCookie(home, null)
-      restoring = null
       if (!guest && readLocal(LS.guest) !== '1') writeLocal(LS.guestGrants, null)
       if (guest) {
         writeLocal(LS.guest, null)
@@ -2071,6 +2082,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
           path
         )
       }
+      client.commitNotice(acct)
     },
 
     closeInvite: () => {
@@ -2232,6 +2244,8 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     lockedOut,
     noteBlocked,
     noteUnblocked,
+    navigationMark: () => navigation,
+    cancelNavigation: beginNavigation,
     navigationIntent: () => {
       const intent = beginNavigation()
       return () => intent === navigation
@@ -2245,6 +2259,27 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     syncUrl,
     forgetSession,
     bindSessionMedia,
+    setSocket(allowed: boolean) {
+      if (acct.socketAllowed === allowed) return
+      acct.socketAllowed = allowed
+      if (allowed) {
+        if (get().token || get().guest) {
+          startWs()
+          resync()
+        }
+      } else {
+        stopCatchUp()
+        clearTimeout(resyncTimer ?? undefined)
+        resyncTimer = null
+        home.ws.stop()
+        set({ wsStatus: 'red' })
+      }
+    },
+    resumeView() {
+      const panel = get().panel
+      if (panel?.kind === 'thread') void get().openThread(panel.root)
+      resync()
+    },
     tapWs,
     p2pGate,
     dispose: () => {

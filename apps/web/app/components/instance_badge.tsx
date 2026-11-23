@@ -3,7 +3,7 @@
 import { Globe } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { useAccount, useConn } from '../lib/client/react'
-import { instanceLabel, labelParts } from '../lib/instance_label'
+import { accountNoticeLabel, instanceLabel, labelParts } from '../lib/instance_label'
 import { openActionMenu } from '../lib/actions/menu'
 import { longPress } from './context_menu'
 
@@ -33,12 +33,15 @@ export function LabelText({ text, name }: { text: string; name?: string }) {
   )
 }
 
-export function AccountLabel() {
+export function AccountLabel({ notice = false }: { notice?: boolean }) {
   const account = useAccount()
-  const username = useStore(s => s.me?.username ?? '~guest')
+  const username = useStore(s => s.me?.username ?? account.credentialTarget)
+  const info = useStore(s => s.instance) ?? account.conn.info
   return (
     <span className="streamer block truncate text-xs">
-      {username}@{account.conn.host}
+      {notice
+        ? accountNoticeLabel(username, info, account.conn.host)
+        : (username ?? '~guest') + '@' + account.conn.host}
     </span>
   )
 }

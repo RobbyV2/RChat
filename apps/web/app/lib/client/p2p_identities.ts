@@ -76,6 +76,38 @@ export class P2pIdentities {
     if (covered && !this.coversView()) instanceUncovered(this.account)
     this.changed()
   }
+  private running: ReadonlySet<string> | null = null
+
+  // The manifest also lists identities which are currently parked or disabled.
+  enabledIds(username: string) {
+    const ids = new Set([
+      'main',
+      ...savedIds(this.account.keys.local('rchat_p2p_identities')),
+      ...this.entries.keys(),
+    ])
+    return [...ids].filter(id =>
+      parseOn(readLocal(peerStorage(this.account.conn, username, id).scoped(p2pKey(username))))
+    )
+  }
+
+  setRunning(ids: ReadonlySet<string>) {
+    const before = this.running
+    this.running = ids
+    if (!this.username) return
+    for (const [id, { app }] of this.entries) {
+      const enabled = parseOn(
+        readLocal(peerStorage(this.account.conn, this.username, id).scoped(p2pKey(this.username)))
+      )
+      const admitted = ids.has(id)
+      if (
+        !enabled ||
+        ((before?.has(id) ?? true) === admitted && (admitted || !app.useP2p.getState().enabled))
+      )
+        continue
+      if (admitted) void app.p2pAccount(this.username)
+      else app.park()
+    }
+  }
   private username: string | null = null
   private generation = 0
   private disposed = false
@@ -136,7 +168,10 @@ export class P2pIdentities {
             claimed = true
             try {
               await removeP2pDb(db)
-              return readLocal(flag) !== deleting || writeLocal(flag, null)
+              if (readLocal(flag) !== deleting) return true
+              if (!writeLocal(flag, null)) return false
+              if (current()) account.counts.peerRemoved(username, id)
+              return true
             } catch {
               if (readLocal(flag) === deleting) writeLocal(flag, enabled)
               return false
@@ -155,6 +190,7 @@ export class P2pIdentities {
     const live = () => attached && state().me?.username === username
     const offView = app.useP2p.subscribe((now, before) => {
       if (!live()) return
+      if (now.enabled !== before.enabled) this.changed()
       if (now.servers !== before.servers) clearHiddenForward(account)
       if (this.viewed() === app && coversInstance(before) && !coversInstance(now))
         instanceUncovered(account)
@@ -172,7 +208,10 @@ export class P2pIdentities {
       account.inbox.removeInboxAdapter(inbox.id)
     }
     this.entries.set(localId, { app, detach })
-    void app.p2pAccount(username)
+    const enabled = parseOn(
+      readLocal(peerStorage(account.conn, username, localId).scoped(p2pKey(username)))
+    )
+    if (!enabled || !this.running || this.running.has(localId)) void app.p2pAccount(username)
     account.inbox.addInboxAdapter(inbox)
     this.changed()
     return app

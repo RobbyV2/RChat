@@ -1,3 +1,4 @@
+import { createAccountCounts } from './account_counts'
 import { createStore } from 'zustand/vanilla'
 import type { AdminConfig } from '../types'
 import { createChannelEdit } from '../channel_edit'
@@ -21,16 +22,27 @@ import { sessionLifetime } from '../slices/ctx'
 import { lookup, shareOrigin, type InstanceConnection } from '../instances'
 import { client } from './client'
 import { P2pIdentities } from './p2p_identities'
+import { AccountTabLock } from './tab_lock'
 import { KeyScope } from './keys'
 
 export type AccountId = string
 
+export type AccountMode = 'shown' | 'live' | 'lite' | 'parked'
 export class AccountSession {
+  mode: AccountMode = 'shown'
+  socketAllowed = true
+  readonly counts = createAccountCounts(this)
   readonly identities = new P2pIdentities(this)
   readonly channelEdit = createChannelEdit()
   readonly adminConfig = createStore<{ config: AdminConfig | null }>(() => ({ config: null }))
   readonly renderKey = client.nextSessionKey()
   readonly textPreviews = createTextPreviews()
+  readonly tabLock = new AccountTabLock(() => client.shown() === this)
+  readonly deliveryLock = new AccountTabLock(
+    () => client.shown() === this,
+    undefined,
+    'rchat-delivery:'
+  )
   readonly keys: KeyScope
   readonly lifetime = sessionLifetime()
   readonly store: ReturnType<typeof createChatStore>
@@ -97,6 +109,8 @@ export class AccountSession {
   }
 
   disposeSideStores() {
+    this.deliveryLock.stop()
+    this.tabLock.stop()
     this.identities.dispose()
     this.indexer.dispose()
     this.palettePrefs.dispose()

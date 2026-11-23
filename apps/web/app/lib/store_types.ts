@@ -329,6 +329,7 @@ export interface RChatState {
   groupPings: GroupPings
   unreadAnchor: Record<string, number>
   atBottom: Record<string, boolean>
+  signedOut: boolean
   authExpired: boolean
   bootError: string | null
   wsStatus: WsStatus
@@ -564,7 +565,7 @@ export interface RChatState {
   dismissUnread: (key: string) => void
   clearFocus: (key: string) => void
   openResult: (result: SearchResult) => Promise<void>
-  openPing: (ping: Ping) => Promise<void>
+  openPing: (ping: Ping, switching?: boolean) => Promise<void>
   uploadFile: (key: string, file: File | null) => void
   toggleSpoiler: (key: string) => void
   toggleUploadMode: (key: string) => void

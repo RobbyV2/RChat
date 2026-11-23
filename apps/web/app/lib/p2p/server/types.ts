@@ -238,6 +238,8 @@ export const ownsP2pServer = (
 ) => !!v && !!me && (v.owner === me || v.owners.includes(me))
 
 export interface ServerView {
+  // The tab reading this room is still waiting for its resolved ACL on disk.
+  awaitingAcl?: boolean
   textOnlyChannels?: boolean
   id: string
   name: string

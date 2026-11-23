@@ -143,7 +143,8 @@ export interface MessagesDeps {
     channelId: number,
     threadRootId: number | null,
     id: number,
-    nav?: Nav
+    nav?: Nav,
+    switching?: boolean
   ) => Promise<void>
   persistGuestServers: (list: string[]) => void
   pinSelf: () => void
@@ -428,7 +429,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     mine.set(key, (mine.get(key) ?? 0) + 1)
     if (get().messages[key]?.length) set(s => ({ stale: { ...s.stale, [key]: true } }))
     try {
-      return await run()
+      const page = await run()
+      if (mine !== heads) throw new Ended()
+      return page
     } catch (e) {
       if (mine !== heads) throw e
       if (heads.get(key) === 1) {
@@ -1435,16 +1438,23 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     })
   }
 
-  const forget = () => {
+  const trimWindows = () => {
     searching?.abort()
     searching = null
     heads = new Map()
-    dmPager.reset(null)
-    closedDms.clear()
     historyGen.clear()
     tails.clear()
     views.clear()
     reactorCache.clear()
+    linkQueue.clear()
+    linkLoads.clear()
+    linkOrder.clear()
+    linkGen++
+  }
+  const forget = () => {
+    trimWindows()
+    dmPager.reset(null)
+    closedDms.clear()
     quotes.clear()
     quoteReads.clear()
     rereads.clear()
@@ -1455,10 +1465,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     answering = new Set()
     reactionQueue = new Map()
     pendingEmbeds.clear()
-    linkQueue.clear()
-    linkLoads.clear()
     linkFlights = 0
-    linkGen += 1
   }
 
   const actions: Pick<
@@ -1983,16 +1990,24 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         await openChannelAt(server, channel_id, thread_root_id, id)
       }),
 
-    openPing: ping =>
+    openPing: (ping, switching) =>
       act(async () => {
         const id = Number(ping.scope.slice(1))
         if (ping.scope[0] === 'c') {
           if (ping.server !== null)
-            await openChannelAt(ping.server, id, ping.thread_root_id, ping.message_id)
+            await openChannelAt(
+              ping.server,
+              id,
+              ping.thread_root_id,
+              ping.message_id,
+              'push',
+              switching
+            )
           return
         }
         const v = shownView(acct, get().view)
-        if (v?.kind === 'dm' && v.dmId === id) await get().jumpTo(ping.scope, ping.message_id)
+        if (!switching && v?.kind === 'dm' && v.dmId === id)
+          await get().jumpTo(ping.scope, ping.message_id)
         else await get().openDm(id, 'push', ping.message_id)
       }),
 
@@ -2342,9 +2357,9 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         name: nameWithUsername(m.author),
         generic: 'New message',
         go: () => {
-          if (dm_id !== null) void get().openDm(dm_id, 'push', m.id)
+          if (dm_id !== null) return get().openDm(dm_id, 'push', m.id)
           else if (ev.server !== null && channel_id !== null)
-            void get().openChannel(ev.server, channel_id, 'push', m.id)
+            return get().openChannel(ev.server, channel_id, 'push', m.id)
         },
       })
     },
@@ -2443,6 +2458,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     firstPage,
     forgetPending,
     forgetViews,
+    trimWindows,
     headLoad,
     historyGen,
     liveKey,

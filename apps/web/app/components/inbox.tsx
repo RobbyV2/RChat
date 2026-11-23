@@ -16,6 +16,7 @@ import { openActionMenu } from '../lib/actions/menu'
 import { useMask, useStore } from '../lib/store'
 import { PreviewFilename, PreviewRow, RevealChannelPreview } from './preview_reveal'
 import { SpoilerLine } from './replies'
+import { totalInboxCount } from '../lib/client/account_counts'
 import { allPings } from '../lib/selectors'
 import {
   DEFAULT_VIEW,
@@ -37,7 +38,7 @@ import {
   type InboxView,
   type SourceState,
 } from '../lib/inbox'
-import { useAccount, useStoreApi } from '../lib/client/react'
+import { useAccount, useStoreApi, useLiveSessions } from '../lib/client/react'
 import { PingBadge, pingLabel } from './ping_badge'
 import { UserAvatar } from './user_avatar'
 import { WebhookBadge } from './webhooks'
@@ -76,6 +77,19 @@ const freshSources = (adapters: InboxAdapter[]): Record<string, SourceState> =>
 export const useInboxCount = () => {
   const { subscribeCounts, adapterCounts } = useAccount().inbox
   return useStore(allPings) + useSyncExternalStore(subscribeCounts, adapterCounts, adapterCounts)
+}
+
+export function useTotalInboxCount() {
+  const sessions = useLiveSessions()
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const remove = sessions.map(s => s.counts.subscribe(listener))
+      return () => remove.forEach(off => off())
+    },
+    [sessions]
+  )
+  const count = useCallback(() => totalInboxCount(sessions), [sessions])
+  return useSyncExternalStore(subscribe, count, count)
 }
 
 // Loads the inbox for a view from every source, merged by time. When the badge count changes it

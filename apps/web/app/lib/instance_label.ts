@@ -15,6 +15,12 @@ export const instanceLabel = (
   return shared ? host || name : name
 }
 
+export const accountNoticeLabel = (
+  username: string | null | undefined,
+  info: { name?: string | null } | null,
+  host: string
+) => (username ?? 'Guest') + ' · ' + instanceLabel(info, host)
+
 // Text cut where it names the instance, so the name can be hidden in streamer mode.
 export const labelParts = (text: string, label: string): { text: string; label: boolean }[] => {
   if (!label) return text ? [{ text, label: false }] : []

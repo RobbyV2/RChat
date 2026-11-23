@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { openAccountNotice } from '../client/notice_owner'
 import { ApiError } from '../api'
 import { me } from './fixtures'
 import { accountPath } from '../view'
@@ -256,6 +257,45 @@ test('an admin row updates its scoped history entry and closing returns to the u
     b.store.getState().closeAdmin()
     expect(location.pathname).toBe('/@reader@second.test/dm/4/')
     expect(location.hash).toBe('')
+  } finally {
+    restore()
+  }
+})
+
+test('denied, expired and superseded channel notices preserve the current history entry', async () => {
+  const { a, b, history, location, restore } = historyFixture()
+  try {
+    client.bindHome(() => a)
+    client.show(a, 'none')
+    const source = '/@reader@first.test/dm/5/'
+    history.replaceState({ source: true }, '', source)
+    b.store.setState({ view: { kind: 'dm', dmId: 2 } })
+    const open = () => openAccountNotice(b, () => b.store.getState().openChannel('club', 9))
+    b.store.setState({ discoverChannels: async () => {} })
+    await open()
+    expect(location.pathname).toBe(source)
+    expect(history.state).toEqual({ source: true })
+    expect(client.shown()).toBe(a)
+    b.store.setState({ authExpired: true })
+    await openAccountNotice(b, () => {
+      throw Error('Expired notice ran')
+    })
+    expect(client.shown()).toBe(a)
+    b.store.setState({ authExpired: false })
+    const response = Promise.withResolvers<void>()
+    b.store.setState({ discoverChannels: () => response.promise })
+    const pending = open()
+    expect(client.noticePending(b)).toBe(true)
+    b.store.getState().goHome()
+    const current = location.pathname
+    expect(current).toBe('/@reader@second.test/')
+    response.resolve()
+    await pending
+    expect(client.noticePending(b)).toBe(false)
+    expect(client.shown()).toBe(b)
+    expect(location.pathname).toBe(current)
+    history.back()
+    expect(location.pathname).toBe(source)
   } finally {
     restore()
   }

@@ -71,6 +71,7 @@ export function createChatStore(acct: AccountSession) {
   // The handler tables `applyWsEvent` routes through, after the friends, polls and selection hooks.
   const eventTables = () => routed
 
+  let trimMessageWindows!: () => void
   let forgetChannelViews: (keys: string[]) => void = () => {}
 
   let sessionHub!: ReturnType<typeof sessionSlice>
@@ -344,6 +345,7 @@ export function createChatStore(acct: AccountSession) {
       views,
     })
     forgetChannelViews = messagesHub.forgetViews
+    trimMessageWindows = messagesHub.trimWindows
 
     const tables = [
       presenceHub.handlers,
@@ -430,6 +432,7 @@ export function createChatStore(acct: AccountSession) {
       groupPings: NO_GROUP_PINGS,
       unreadAnchor: {},
       atBottom: {},
+      signedOut: false,
       authExpired: false,
       bootError: null,
       wsStatus: 'red',
@@ -516,11 +519,22 @@ export function createChatStore(acct: AccountSession) {
     }
   })
 
-  const pristine = { ...chatStore.getInitialState() }
-
-  // Test files share one store; each one calls this when it ends, so no state, queued read or
-  // cached window reaches the next file. The app never calls it.
+  const bootstrap = chatStore.getState().bootstrap
+  let boot: Promise<void> | undefined
+  chatStore.setState({
+    bootstrap() {
+      if (!boot) {
+        const pending = bootstrap().finally(() => {
+          if (boot === pending) boot = undefined
+        })
+        boot = pending
+      }
+      return boot
+    },
+  })
+  const pristine = { ...chatStore.getState() }
   const resetSessionCaches = () => {
+    boot = undefined
     sessionHub.forgetSession()
     Object.assign(chatStore.getInitialState(), pristine)
     chatStore.setState({ ...pristine }, true)
@@ -600,12 +614,56 @@ export function createChatStore(acct: AccountSession) {
   const unsubscribeViewing = useViewing.subscribe((s, prev) => {
     if (s.revision !== prev.revision) hideClosedRoom(chatStore.getState())
   })
+  const trimWindows = () => {
+    chatStore.setState({
+      messages: {},
+      older: {},
+      newer: {},
+      stale: {},
+      focus: {},
+      members: {},
+      memberInfo: {},
+      memberInfoTrim: {},
+      typing: {},
+      linkCards: {},
+      search: emptySearch(),
+    })
+  }
   const unsubscribeStore = chatStore.subscribe((s, prev) => {
     if (s.servers !== prev.servers) hideClosedRoom(s)
     if (s.settings !== prev.settings) sessionHub.p2pGate.settings(s.settings)
+    if (
+      (acct.mode === 'lite' || acct.mode === 'parked') &&
+      ((s.messages !== prev.messages && Object.keys(s.messages).length) ||
+        (s.members !== prev.members && Object.keys(s.members).length) ||
+        (s.memberInfo !== prev.memberInfo && Object.keys(s.memberInfo).length) ||
+        (s.linkCards !== prev.linkCards && Object.keys(s.linkCards).length) ||
+        (s.typing !== prev.typing && Object.keys(s.typing).length) ||
+        (s.search !== prev.search && s.search.results.length))
+    )
+      trimWindows()
   })
-
   return Object.assign(chatStore, {
+    setSocket: (on: boolean) => sessionHub.setSocket(on),
+    navigationMark: () => sessionHub.navigationMark(),
+    cancelNavigation: () => sessionHub.cancelNavigation(),
+    resumeView: () => sessionHub.resumeView(),
+    trimWindows() {
+      trimMessageWindows()
+      trimWindows()
+    },
+    retireCredentials() {
+      const expired = chatStore.getState().authExpired
+      home.ws.stop()
+      home.api.setToken(null)
+      home.api.setGrants({})
+      home.ws.setGrants({})
+      acct.rtc.leave()
+      acct.files.setAccount(null)
+      acct.identities.setAccount(null)
+      resetSessionCaches()
+      chatStore.setState({ signedOut: true, authExpired: expired })
+    },
     menu: menuActions(chatStore, acct.lifetime.inSession),
     eventTables,
     resetSessionCaches,

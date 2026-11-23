@@ -95,7 +95,10 @@ export function useChatScroll(opts: {
     live.current = { ...opts, positioned }
   })
 
+  const initializedScope = useRef<string | null | undefined>(undefined)
   useLayoutEffect(() => {
+    if (initializedScope.current === scope) return
+    initializedScope.current = scope
     follow.current = FOLLOWING
     anchor.current = null
     if (scope) setAtBottom(scope, true)

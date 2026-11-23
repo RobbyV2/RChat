@@ -1,3 +1,4 @@
+import { routeOwnerFor } from '../lib/client/account_paths'
 import type { AccountSession } from '../lib/client/session'
 import { accountPath, type RouteOwner } from '../lib/view'
 
@@ -11,6 +12,21 @@ export function logoutForLogin(account: AccountSession) {
 export function loginHref(next = '/', owner?: RouteOwner | null) {
   const target = accountPath(next, owner)
   return target === '/' ? '/login' : '/login?next=' + encodeURIComponent(target)
+}
+
+export function SignedOutAccount({ account }: { account: AccountSession }) {
+  const { pathname, search, hash } = window.location
+  return (
+    <main className="flex h-app flex-col items-center justify-center gap-3 px-6 text-center">
+      <p>You’re signed out of this account.</p>
+      <a
+        className="text-primary underline"
+        href={loginHref(pathname + search + hash, routeOwnerFor(account))}
+      >
+        Sign in again
+      </a>
+    </main>
+  )
 }
 
 export function UnavailableAccount() {

@@ -271,7 +271,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
       message: true,
       name: nameWithUsername(m.author),
       generic: 'New notification',
-      go: () => void get().openChannel(server, channelId, 'push', m.id),
+      go: () => get().openChannel(server, channelId, 'push', m.id),
     })
     return true
   }
@@ -297,6 +297,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
     | 'askMarkAllRead'
   > = {
     markRead: (scope, messageId) => {
+      if (acct.mode !== 'shown') return
       const cur = get().reads[scope]
       if (cur && messageId <= cur.lastRead) {
         seePings(scope)
@@ -321,7 +322,9 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
       if (get().token && !previewed) readQueue.mark(scope, messageId)
     },
 
-    seeThread: rootId => seePings(`t${rootId}`),
+    seeThread: rootId => {
+      if (acct.mode === 'shown') seePings(`t${rootId}`)
+    },
 
     markScopesRead: async scopes => {
       const s = get()
@@ -450,7 +453,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
         message: ping.kind !== 'reaction',
         name: ping.actor.display_name,
         generic: 'New notification',
-        go: () => void get().openPing(ping),
+        go: switching => get().openPing(ping, switching),
       })
     },
     group_pings_seen: ev => {

@@ -1,3 +1,7 @@
+import { client } from '../client/client'
+import type { AccountSession } from '../client/session'
+import { testAccount } from './test_account'
+import { AccountTabLock, accountNoticeTag } from '../client/tab_lock'
 import { shownPeer } from './shown_peer'
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
@@ -660,11 +664,13 @@ describe('desktop notifications', () => {
   beforeEach(() => {
     fake = fakeNotifier('granted')
     setNotifier(fake)
+    client.shown().deliveryLock.start(home.origin, 'bob')
     g.document = { visibilityState: 'hidden', hasFocus: () => false }
     useStore.setState({ streamer: false })
     st().setDesktopNotify(true)
   })
   afterEach(() => {
+    client.shown().deliveryLock.stop()
     st().setDesktopNotify(false)
     setNotifier(webNotifier)
     g.document = realDocument
@@ -675,9 +681,84 @@ describe('desktop notifications', () => {
     dispatch(pinged(ping()))
     dispatch(pinged(ping({ id: 2, excerpt: 'again @bob' })))
     expect(fake.shown.map(n => [n.title, n.body, n.tag, n.renotify])).toEqual([
-      ['Alice mentioned you in #general', 'hi @bob', 'c1', true],
-      ['2 new messages from Alice in #general', 'again @bob', 'c1', true],
+      ['Alice mentioned you in #general', 'hi @bob', accountNoticeTag(client.shown(), 'c1'), true],
+      [
+        '2 new messages from Alice in #general',
+        'again @bob',
+        accountNoticeTag(client.shown(), 'c1'),
+        true,
+      ],
     ])
+  })
+
+  test('only one tab alerts per account, and clicking a background account opens its own DM', () => {
+    const holder = testAccount('bob', 'http://localhost:8888')
+    const follower = testAccount('bob', holder.conn.origin)
+    const https = testAccount('bob', 'https://localhost:8888')
+    const sibling = testAccount('sam', holder.conn.origin)
+    const accounts = [holder, follower, https, sibling]
+    const shown = client.shown
+    const show = Object.getOwnPropertyDescriptor(client, 'show')
+    const navigations: string[] = []
+    try {
+      for (const account of accounts) {
+        account.store.setState({
+          dms: st().dms,
+          openDm: async id => {
+            expect(client.shown()).toBe(account)
+            navigations.push(account.conn.origin + '/' + id)
+          },
+        })
+        account.store.getState().setDesktopNotify(true)
+        account.deliveryLock.start(account.conn.origin, account.store.getState().me!.username)
+        account.store.getState().applyWsEvent(inDm(75))
+        expect(account.store.getState().notices.length).toBe(1)
+      }
+      expect(fake.shown.map(n => n.tag)).toEqual(
+        [holder, https, sibling].map(account => accountNoticeTag(account, 'd4'))
+      )
+      expect(new Set(fake.shown.map(n => n.tag)).size).toBe(3)
+      Object.assign(client, {
+        show: (account: AccountSession) => {
+          client.shown = () => account
+          return true
+        },
+      })
+      fake.shown[1].onClick()
+      expect(navigations).toEqual([https.conn.origin + '/4'])
+    } finally {
+      client.shown = shown
+      if (show) Object.defineProperty(client, 'show', show)
+      else Reflect.deleteProperty(client, 'show')
+      for (const account of accounts) account.store.dispose()
+    }
+  })
+
+  test('storage-restricted browsers can notify for their shown account', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+    let shown = true
+    const restricted = new AccountTabLock(
+      () => shown,
+      () => undefined
+    )
+    const events: number[] = []
+    try {
+      Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        get() {
+          throw new DOMException('Denied', 'SecurityError')
+        },
+      })
+      restricted.start(home.origin, 'bob')
+      restricted.whenHolder(home.origin, 'bob', () => events.push(1))
+      shown = false
+      restricted.whenHolder(home.origin, 'bob', () => events.push(2))
+      expect(events).toEqual([1])
+    } finally {
+      restricted.stop()
+      if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor)
+      else Reflect.deleteProperty(globalThis, 'localStorage')
+    }
   })
 
   test('an outstanding notification cannot navigate a replacement session', () => {
@@ -700,7 +781,9 @@ describe('desktop notifications', () => {
   test('streamer mode leaves out names and text; muted scopes stay quiet', () => {
     useStore.setState({ streamer: true })
     dispatch(inDm(11))
-    expect(fake.shown.map(n => [n.title, n.body, n.tag])).toEqual([['New message', '', 'd4']])
+    expect(fake.shown.map(n => [n.title, n.body, n.tag])).toEqual([
+      ['New message', '', accountNoticeTag(client.shown(), 'd4')],
+    ])
     st().muteScope(dm, 'forever')
     dispatch(inDm(12))
     expect(fake.shown.length).toBe(1)

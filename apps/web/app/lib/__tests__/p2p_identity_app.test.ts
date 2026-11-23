@@ -111,7 +111,16 @@ test('removing a sibling preserves the historical main identity across sign-in',
     expect(main.p2p.hasData(user)).toBe(true)
     expect(hub.online(main.node!.peerId)).toBe(true)
 
+    main.p2pDm.setDraft('room', 'unfinished')
+    const peer = main.node!.peerId
+    main.park()
+    expect(main.node).toBeNull()
+    expect(hub.online(peer)).toBe(false)
+    await main.p2pAccount(user)
+    await waitFor(() => main.node?.status === 'online', 'main identity to resume')
+    expect(main.useP2p.getState().drafts).toEqual({ room: 'unfinished' })
     await main.p2pAccount(null)
+    expect(main.useP2p.getState().drafts).toEqual({})
     await main.p2pAccount(user)
     await waitFor(() => main.node?.status === 'online', 'main identity to reopen')
     expect(main.node!.ik).toBe(original)
@@ -401,5 +410,45 @@ test('a previous reader finishing startup leaves the new account’s older chat 
       writeLocal(key, raw)
       await removeP2pDb(db)
     }
+  }
+})
+
+test('parking a managed identity keeps only its own drafts until signout', async () => {
+  const user = 'sam'
+  const owner = testAccount(user, 'https://draft-owner.test')
+  const other = testAccount(user, 'https://draft-other.test')
+  const db = owner.keys.db()!
+  try {
+    for (const a of [owner, other]) {
+      a.identities.setAccount(user)
+      a.identities.get()!.p2pDm.setDraft('same-room', a.conn.host)
+    }
+    const app = owner.identities.get()!
+    app.writeOn(user, true)
+    owner.identities.setRunning(new Set())
+    expect(app.useP2p.getState().account).toBeNull()
+    expect(app.useP2p.getState().drafts).toEqual({ 'same-room': owner.conn.host })
+    owner.identities.setRunning(new Set(['main']))
+    expect(app.useP2p.getState()).toMatchObject({
+      enabled: true,
+      account: user,
+      drafts: { 'same-room': owner.conn.host },
+    })
+    // Sign out while a resumed database open is still in flight.
+    owner.identities.setRunning(new Set())
+    owner.store.getState().logout()
+    await drain()
+    expect(app.node).toBeNull()
+    expect(app.useP2p.getState().drafts).toEqual({})
+    await app.p2pAccount(user)
+    expect(app.useP2p.getState().account).toBeNull()
+    expect(other.identities.get()!.useP2p.getState().drafts).toEqual({
+      'same-room': other.conn.host,
+    })
+  } finally {
+    owner.store.dispose()
+    other.store.dispose()
+    memoryStorage.removeItem(peerStorage(owner.conn, user).scoped('rchat_p2p:sam'))
+    await removeP2pDb(db)
   }
 })

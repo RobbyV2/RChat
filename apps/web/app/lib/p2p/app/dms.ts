@@ -18,7 +18,7 @@ import {
 } from '../dm'
 import type { Fwd } from '../content'
 import type { PageOpts } from '../jump'
-import { Servers, type ServerView } from '../server'
+import { Servers } from '../server'
 import { typingResendMs } from '../sync'
 import type { RoomSummary, P2pChat } from './store'
 import type { IdentityScope, P2pParts } from './scope'
@@ -62,17 +62,19 @@ export function createDmsPart(
     const current = currentSession()
     const s = dbNow()
     if (!s) return
-    const list = await s.rooms().catch(() => [])
+    const list = await s.rooms()
     if (!current()) return
     useP2p.setState({
       rooms: Object.fromEntries(list.filter(r => r.kind !== 'server').map(r => [r.id, summary(r)])),
     })
-    if (current() && !state.servers) {
-      // A tab that only reads lists the servers stored here by name.
-      const names: Record<string, ServerView> = {}
-      for (const r of list)
-        if (r.kind === 'server' && !r.invite) names[r.id] = parts.servers.readerView(r)
-      useP2p.setState({ servers: names })
+    const reader = state.reader
+    if (reader?.store === s) {
+      const views = await Promise.all(
+        list
+          .filter(r => r.kind === 'server' && !r.invite)
+          .map(r => parts.servers.readerView(s, r, reader.me))
+      )
+      if (current()) useP2p.setState({ servers: Object.fromEntries(views.map(v => [v.id, v])) })
     }
   }
 
@@ -143,14 +145,22 @@ export function createDmsPart(
     const s = dbNow()
     if (!s) return
     if (state.servers?.isServer(room)) return parts.servers.refreshServer(room)
-    const r = await s.room(room).catch(() => undefined)
-    if (!current()) return
-    // A tab that only reads gets the leader's server updates too: listed by name, never as DMs.
-    if (r?.kind === 'server') {
-      if (!state.servers && !r.invite)
-        useP2p.setState(st => ({ servers: { ...st.servers, [room]: parts.servers.readerView(r) } }))
+    const r = await s.room(room).catch(() => null)
+    if (!current() || r === null) return
+    const reader = state.reader
+    if (reader?.store === s && (r?.kind === 'server' || useP2p.getState().servers[room])) {
+      const view =
+        r?.kind === 'server' && !r.invite ? await parts.servers.readerView(s, r, reader.me) : null
+      if (!current()) return
+      useP2p.setState(st => {
+        const servers = { ...st.servers }
+        if (view) servers[room] = view
+        else delete servers[room]
+        return { servers }
+      })
       return
     }
+    if (r?.kind === 'server') return
     if (r) useP2p.setState(st => ({ rooms: { ...st.rooms, [room]: summary(r) } }))
     if (state.dms && useP2p.getState().storageFull !== state.dms.storageFull)
       useP2p.setState({ storageFull: state.dms.storageFull })

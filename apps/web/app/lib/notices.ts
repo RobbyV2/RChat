@@ -35,7 +35,8 @@ export interface AlertInput {
   name: string
   // Desktop title in streamer mode.
   generic: string
-  go: () => void
+  // Routed clicks resolve after navigation. Panel clicks complete in place.
+  go: ((switching?: boolean) => void) | ((switching?: boolean) => Promise<void> | false)
 }
 
 export interface Notice extends AlertInput {

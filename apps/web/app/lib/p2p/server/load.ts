@@ -27,6 +27,9 @@ import { indexEstimate } from '../search'
 import type { ServerCtx } from './context'
 import { heldBare, storeDue } from './storage'
 
+export const cachedSummary = (kept: ServerCache | null | undefined) =>
+  kept?.impl === IMPL && kept.shape === SUM_SHAPE ? fromStored(kept.sum) : null
+
 // A room on start: what the cache says at once (when it is current), while the evaluator
 // rebuilds from the stored events and their admission records (no event is decided again
 // unless its record is missing).
@@ -40,7 +43,7 @@ export async function load(cx: ServerCtx, r: RoomRecord, records = true): Promis
   if (r.legacy) return legacy()
   // Older builds kept the cache in the room record.
   const kept = ((await cx.db.get('meta', cacheKey(r.id))) as ServerCache | undefined) ?? r.server
-  const cached = kept?.impl === IMPL && kept.shape === SUM_SHAPE ? fromStored(kept.sum) : null
+  const cached = cachedSummary(kept)
   if (cached && records) rt.sum = cached
   // Imported rows: the wire checks first (an import is trusted no more than a peer).
   const g = await cx.db.get('events', r.id)
@@ -266,8 +269,20 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
       c => channelPermsOf(s, cx.me, c.id, F) & P.ViewChannel
     )
   }
-  const had = new Set(seen(before).map(c => c.id))
-  const opened = seen(cx.sumOf(room)).filter(c => !had.has(c.id))
+  const previous = seen(before)
+  const visible = seen(cx.sumOf(room))
+  // Readers use the resolved ACL on disk. Publish visibility changes before notifying them.
+  if (changed) {
+    if (
+      was !== now ||
+      before.rules !== cx.sumOf(room).rules ||
+      JSON.stringify(previous) !== JSON.stringify(visible)
+    )
+      await cx.saveCache(room)
+    else cx.saveSoon(room)
+  }
+  const had = new Set(previous.map(c => c.id))
+  const opened = visible.filter(c => !had.has(c.id))
   if (now === 'join' && opened.length) cx.sync.retryGaps(room)
   // Its history that comes now isn't new to us: counted from here (stored).
   if (now === 'join' && was === 'join' && opened.length) {
