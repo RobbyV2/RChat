@@ -1,18 +1,14 @@
 'use client'
+import { identityScopeKey } from '../../lib/p2p/app/host'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
+
 import { useAccount } from '../../lib/client/react'
 
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useStore } from '../../lib/store'
-import {
-  memberName,
-  p2pDm,
-  p2pThread,
-  profileName,
-  threadKey,
-  threadScope,
-  useP2p,
-  type P2pThread,
-} from '../../lib/p2p/app'
+import { threadKey, threadScope, type P2pThread } from '../../lib/p2p/app'
 import type { P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
 import type { ServerView } from '../../lib/p2p/server'
@@ -34,7 +30,7 @@ import {
   useP2pList,
   type Mentionable,
 } from './p2p_chat'
-import { sendBlock } from './p2p_server_view'
+import { sendBlockFor } from './p2p_server_view'
 import { groupPlaces, p2pCue, type GroupPlace } from '../../lib/message_groups'
 
 // The thread of a P2P server channel beside it (full screen on phones): its root, the replies
@@ -44,7 +40,7 @@ const EMPTY: P2pMessage[] = []
 const NONE: string[] = []
 const ALONE: GroupPlace = { first: true, last: true }
 
-export function P2pThreadPanel() {
+function P2pThreadPanelBody() {
   const t = useP2p(s => s.thread)
   const v = useP2p(s => (s.thread ? s.servers[s.thread.room] : undefined))
   if (!t || !v) return null
@@ -52,6 +48,9 @@ export function P2pThreadPanel() {
 }
 
 function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
+  const identity = useP2pApp()!
+  const { memberName, profileName, p2pThread, p2pDm } = identity
+
   const acct = useAccount()
   const me = useP2p(s => s.me)
   const reader = useP2p(s => s.reader)
@@ -60,7 +59,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
   const movedAt = useP2p(s => s.movedAt)
   const movingAt = useP2p(s => s.movingAt)
   const key = threadKey(t)
-  const scope = threadScope(t)
+  const scope = identityScopeKey(identity.localId, threadScope(t))
   const focus = useP2p(s => (s.focus?.room === key ? s.focus : null))
   const typers = useP2p(s => s.serverTyping[key] ?? NONE)
   const unseen = (v.chans[t.ch]?.threads?.[t.root] ?? 0) > 0
@@ -78,7 +77,12 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
   const moderator = v.me === 'join' && (v.perms & P.ManageMessages) !== 0
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
   const channel = v.channels.find(c => c.id === t.ch)
-  const disabled = sendBlock(v, { reader, elsewhere, status, movedAt, movingAt }, channel, acct)
+  const disabled = sendBlockFor(identity)(
+    v,
+    { reader, elsewhere, status, movedAt, movingAt },
+    channel,
+    acct
+  )
   const canAct = !disabled
   const replies = t.messages ?? EMPTY
   const all = useMemo(() => (t.head ? [t.head, ...replies] : replies), [t.head, replies])
@@ -236,3 +240,5 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
     </ChatSourceProvider>
   )
 }
+
+export const P2pThreadPanel = withP2pIdentity(P2pThreadPanelBody)

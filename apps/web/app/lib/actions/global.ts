@@ -9,7 +9,6 @@ import {
   Phone,
   Plus,
 } from 'lucide-react'
-import { p2pMarkAll } from '../p2p/app'
 import { openPalette } from '../palette_store'
 import { allMarkTargets } from '../store'
 import type { RChatState } from '../store_types'
@@ -93,9 +92,9 @@ export const globalActions: Action[] = [
     icon: CheckCheck,
     hint: 'Shift+Escape',
     targets: ['home'],
-    disabled: ({ acct, s }) => !allMarkTargets(s).length && !(acct.isHome && p2pMarkAll().pending),
+    disabled: ({ identity, s }) => !allMarkTargets(s).length && !identity?.p2pMarkAll().pending,
     available: ({ s }) => signedIn(s),
-    run: ({ acct }) => acct.store.getState().askMarkAllRead(acct.isHome ? p2pMarkAll() : undefined),
+    run: ({ acct, identity }) => acct.store.getState().askMarkAllRead(identity?.p2pMarkAll()),
   },
   {
     id: 'mark_dms_read',

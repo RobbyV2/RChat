@@ -1,3 +1,4 @@
+import { peerStorage } from '../client/keys'
 import { legacyScope } from '../p2p/app/store'
 import { expect, test } from 'bun:test'
 import { client } from '../client/client'
@@ -12,7 +13,8 @@ import { testAccount } from './test_account'
 
 test('the main identity reads historical storage and a sibling writes its own settings', async () => {
   const user = 'sam'
-  const account = testAccount(user, 'https://identity-storage.test')
+  memoryStorage.setItem('rchat_p2p:sam@8.8.8.8', '{"v":1,"on":true}')
+  const account = testAccount(user, 'https://8.8.8.8')
   const main = createP2pApp(account, 'main')
   const sibling = createP2pApp(account, 'work')
   const scoped = (key: string) => account.conn.scoped(key)
@@ -29,8 +31,8 @@ test('the main identity reads historical storage and a sibling writes its own se
     },
   })
   try {
-    expect(main.dbFor(user)).toBe('rchat-p2p:identity-storage.test:sam')
-    expect(sibling.dbFor(user)).toBe('rchat-p2p:identity-storage.test:sam~work')
+    expect(main.dbFor(user)).toBe('rchat-p2p:8.8.8.8:sam')
+    expect(sibling.dbFor(user)).toBe('rchat-p2p:https://8.8.8.8:sam~work')
     // Set the signed-in views without booting a node for the already-enabled main identity.
     for (const app of [main, sibling]) app.useP2p.setState({ account: user })
     memoryStorage.setItem(scoped('rchat_p2p:sam'), '{"v":1,"on":true}')
@@ -71,17 +73,18 @@ test('the main identity reads historical storage and a sibling writes its own se
     account.store.dispose()
     for (let i = memoryStorage.length - 1; i >= 0; i--) {
       const key = memoryStorage.key(i)
-      if (key?.includes('@identity-storage.test')) memoryStorage.removeItem(key)
+      if (key?.includes('@8.8.8.8')) memoryStorage.removeItem(key)
     }
   }
 })
 
 test('removing a sibling preserves the historical main identity across sign-in', async () => {
   const user = 'sam'
-  const account = testAccount(user, 'https://identity-upgrade.test')
+  memoryStorage.setItem('rchat_p2p:sam@8.8.4.4', '{"v":1,"on":true}')
+  const account = testAccount(user, 'https://8.8.4.4')
   account.discovery.done()
   const hub = new Hub()
-  const historicalDb = 'rchat-p2p:identity-upgrade.test:sam'
+  const historicalDb = 'rchat-p2p:8.8.4.4:sam'
   const seed = await makeNode(hub, 'Before upgrade', { db: historicalDb, host: account.conn.host })
   const original = seed.node.ik
   seed.node.stop()
@@ -223,8 +226,8 @@ test('two factories exchange a DM and disposing the sender releases only its res
     await b.dispose()
     alice.store.dispose()
     bob.store.dispose()
-    memoryStorage.removeItem(alice.conn.scoped('rchat_p2p:alice'))
-    memoryStorage.removeItem(bob.conn.scoped('rchat_p2p:bob~work'))
+    memoryStorage.removeItem(peerStorage(alice.conn, 'alice').scoped('rchat_p2p:alice'))
+    memoryStorage.removeItem(peerStorage(bob.conn, 'bob', 'work').scoped('rchat_p2p:bob'))
     await Promise.all([removeP2pDb(aDb), removeP2pDb(bDb)])
   }
 }, 60_000)
@@ -234,8 +237,8 @@ test('a retained identity cannot delete data after disposal or retargeting', asy
   const account = testAccount(user, 'https://identity-original.test')
   const app = createP2pApp(account, 'main')
   const original = app.dbFor(user)
-  const originalKey = account.conn.scoped(app.p2pKey(user))
-  const journal = account.conn.scoped(app.importsKey(user))
+  const originalKey = peerStorage(account.conn, user).scoped(app.p2pKey(user))
+  const journal = peerStorage(account.conn, user).scoped(app.importsKey(user))
   app.rememberImport(user, 'original-import')
   await app.p2pAccount(user)
   app.writeOn(user, true)
@@ -264,7 +267,7 @@ test('a retained identity cannot delete data after disposal or retargeting', asy
     replacement.dispose()
     memoryStorage.removeItem(originalKey)
     memoryStorage.removeItem(journal)
-    memoryStorage.removeItem(account.conn.scoped(app.p2pKey(user)))
+    memoryStorage.removeItem(peerStorage(account.conn, user).scoped(app.p2pKey(user)))
     await Promise.all([removeP2pDb(original), removeP2pDb(next)])
     account.store.dispose()
   }
@@ -334,9 +337,10 @@ test('a previous reader finishing startup leaves the new account’s older chat 
   const waiting = Promise.withResolvers<void>()
   const resume = Promise.withResolvers<void>()
   const refreshed = Promise.withResolvers<void>()
-  const enabled = [alice, bob].map(name => app.readOn(name))
   const previousOwner = app.p2pHost.account
   const owner = testAccount(alice)
+  app.p2pHost.account = owner
+  const enabled = [alice, bob].map(name => app.readOn(name))
   const hub = new Hub()
   try {
     for (const name of [alice, bob]) {
@@ -385,11 +389,11 @@ test('a previous reader finishing startup leaves the new account’s older chat 
     P2pStore.prototype.rooms = before
     options.leaderDeps = deps
     await app.p2pAccount(null)
-    app.p2pHost.account = previousOwner
-    owner.store.dispose()
     for (const [i, name] of [alice, bob].entries()) {
       app.writeOn(name, enabled[i])
       await removeP2pDb(app.dbFor(name))
     }
+    app.p2pHost.account = previousOwner
+    owner.store.dispose()
   }
 })

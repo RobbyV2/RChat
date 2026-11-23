@@ -20,7 +20,8 @@ import { capabilities } from '../platform'
 import { filterSwitch } from '../profanity'
 import type { RChatState } from '../store_types'
 import { canEditDisplayName } from '../display_name'
-import { p2p, useP2p } from '../p2p/app'
+import type { AccountSession } from '../client/session'
+import type { P2pApp } from '../p2p/app/runtime'
 import { settingsSections, type SettingsSection } from '../settings_sections'
 import { signedIn } from './global'
 import { p2pLimitActions } from './p2p_limits'
@@ -33,12 +34,12 @@ const filterNow = (s: RChatState) =>
   filterSwitch(capabilities().wasm, s.profanityOn, s.profanityFailed)
 
 // The entries the settings nav shows for this account.
-export const shownSections = (s: RChatState, hasP2p = true) =>
+export const shownSections = (s: RChatState, acct: AccountSession, identity?: P2pApp | null) =>
   settingsSections({
     signedIn: signedIn(s),
     p2p:
-      hasP2p &&
-      (useP2p.getState().account !== null || (s.me !== null && p2p.hasData(s.me.username))),
+      (s.settings.p2p && !!identity?.useP2p.getState().account) ||
+      acct.identities.offlineData().length > 0,
   })
 
 const KEYWORDS: Partial<Record<SettingsSection, string[]>> = {
@@ -54,7 +55,7 @@ const section = (id: SettingsSection, title: string, icon: LucideIcon): Action =
   group: 'settings',
   icon,
   keywords: KEYWORDS[id] ?? ['preferences'],
-  available: ({ acct, s }) => shownSections(s, acct.isHome).includes(id),
+  available: ({ acct, identity, s }) => shownSections(s, acct, identity).includes(id),
   run: ({ acct }) => acct.store.getState().openDialog({ kind: 'settings', section: id }),
 })
 

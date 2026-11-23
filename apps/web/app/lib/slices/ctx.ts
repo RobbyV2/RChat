@@ -8,7 +8,7 @@ import type { Key, Page } from '../lists'
 import type { Paged, RChatState, SearchState } from '../store_types'
 import type { ServerSummary, WsEvent } from '../types'
 import { viewKey, type View } from '../view'
-import { coversInstance, useP2p } from '../p2p/app/store'
+import type { AccountSession } from '../client/session'
 
 export type SetState = StoreApi<RChatState>['setState']
 export type GetState = StoreApi<RChatState>['getState']
@@ -71,11 +71,11 @@ export const pageVisible = () =>
   typeof document === 'undefined' || document.visibilityState === 'visible'
 
 // The instance view on screen: none while P2P shows in its place.
-export const shownView = (view: View | null) =>
-  view && !coversInstance(useP2p.getState()) ? view : null
+export const shownView = (acct: AccountSession, view: View | null) =>
+  view && !acct.identities.coversView() ? view : null
 
-export const shownKey = (view: View | null) => {
-  const v = shownView(view)
+export const shownKey = (acct: AccountSession, view: View | null) => {
+  const v = shownView(acct, view)
   return v ? viewKey(v) : null
 }
 

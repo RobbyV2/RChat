@@ -3,9 +3,9 @@ import type { ForwardRef, Message, UserRef } from './types'
 
 // The forward clipboard: one copied message per account, kept until it is sent or dismissed.
 export type ForwardSource =
-  | { kind: 'direct' }
+  | { kind: 'direct'; identity?: string }
   | { kind: 'channel'; id: number; server?: string }
-  | { kind: 'p2p'; room: string; ch: string }
+  | { kind: 'p2p'; room: string; ch: string; identity?: string }
 
 export interface ForwardClip {
   source?: ForwardSource
@@ -56,6 +56,11 @@ const isUser = (u: unknown): u is UserRef => {
 
 const isSource = (value: unknown): value is ForwardSource => {
   if (!value || typeof value !== 'object' || !('kind' in value)) return false
+  if (
+    'identity' in value &&
+    (typeof value.identity !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(value.identity))
+  )
+    return false
   if (value.kind === 'direct') return true
   if (value.kind === 'channel')
     return (

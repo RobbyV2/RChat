@@ -1,9 +1,13 @@
 'use client'
+import { client } from '../../lib/client/client'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
 
-import { useStoreApi } from '../../lib/client/react'
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
+import type { P2pApp } from '../../lib/p2p/app/runtime'
+
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { CircleAlert, RefreshCw, ShieldCheck, X } from 'lucide-react'
-import { memberName, p2p, p2pDevices, p2pServer, useP2p, type P2pDialog } from '../../lib/p2p/app'
+import { type P2pDialog } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
 import {
   actParts,
@@ -45,6 +49,9 @@ const noteCls =
 
 // A member's name in a line, blurred in streamer mode.
 function Who({ room, ik }: { room: string; ik: string }) {
+  const identity = useP2pApp()!
+  const { memberName } = identity
+
   const own = useP2p(s => s.me === ik)
   return (
     <span className="streamer font-medium text-on-surface">
@@ -123,6 +130,9 @@ const withNames = (text: string, name: ReactNode) => {
 }
 
 function ModNote({ v, m }: { v: ServerView; m: ServerView['mods'][number] }) {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   return (
     <div role="status" data-p2p-mod className={noteCls}>
       <RefreshCw size={16} className="shrink-0 animate-spin text-tertiary" aria-hidden />
@@ -151,6 +161,9 @@ function ModNote({ v, m }: { v: ServerView; m: ServerView['mods'][number] }) {
 }
 
 function ReachedNote({ v, r }: { v: ServerView; r: ServerView['reached'][number] }) {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   return (
     <div role="status" data-p2p-reached className={noteCls}>
       <span className="min-w-48 flex-1">
@@ -175,6 +188,9 @@ function ReachedNote({ v, r }: { v: ServerView; r: ServerView['reached'][number]
 }
 
 function ReapplyNote({ v }: { v: ServerView }) {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   const own = useP2p(s => ownsP2pServer(v, s.me))
   return (
     <div role="status" data-p2p-reapply className={noteCls}>
@@ -212,6 +228,9 @@ function ReapplyNote({ v }: { v: ServerView }) {
 }
 
 function ConflictNote() {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   return (
     <div
       role="alert"
@@ -229,6 +248,9 @@ function ConflictNote() {
 
 // More than one upgrade: the user picks the copy to follow.
 function DisputedNote({ v }: { v: ServerView }) {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   const [list, setList] = useState<Successor[] | null>(null)
   useEffect(() => {
     let live = true
@@ -265,11 +287,14 @@ type Successor = {
   id: string
   owner: string
   by: string
-  g: Parameters<typeof p2pServer.followTo>[1]
+  g: Parameters<P2pApp['p2pServer']['followTo']>[1]
 }
 
 // The new owner's carry-over of the old copy: waiting for members, or stopped.
 function CarryNote({ v }: { v: ServerView }) {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   const c = v.carry
   if (!c || c.state === 'running') return null
   return (
@@ -305,7 +330,7 @@ function MigrateDiffNote({ v }: { v: ServerView }) {
 }
 
 // Between a server channel's header and its messages.
-export function ServerNotices({ v }: { v: ServerView }) {
+function ServerNoticesBody({ v }: { v: ServerView }) {
   const reapply = v.reapply.length > 0 && v.me === 'join'
   const asks = useP2p(s => s.transferAsks.filter(a => a.room === v.id).length)
   if (
@@ -347,7 +372,10 @@ export function ServerNotices({ v }: { v: ServerView }) {
 // ----- Transfer -----
 
 // Owners asking us to take a server over, or (co-owners) to approve its transfer.
-export function TransferAsks({ room }: { room?: string }) {
+function TransferAsksBody({ room }: { room?: string }) {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   const all = useP2p(s => s.transferAsks)
   const asks = room ? all.filter(a => a.room === room) : all
   if (!asks.length) return null
@@ -400,7 +428,10 @@ export function TransferAsks({ room }: { room?: string }) {
 // ----- Co-owners -----
 
 // Contacts creating a server who want us as a co-owner: agree or decline while they wait.
-export function CoOwnerAsks() {
+function CoOwnerAsksBody() {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   const asks = useP2p(s => s.coOwnerAsks)
   const contacts = useP2p(s => s.contacts)
   if (!asks.length) return null
@@ -446,7 +477,7 @@ export function CoOwnerAsks() {
 }
 
 // Online mutual contacts the creator may list as co-owners.
-export function CoOwnerPicker({
+function CoOwnerPickerBody({
   value,
   onChange,
 }: {
@@ -506,20 +537,27 @@ const when = (ms: number) =>
   ms ? new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Unknown'
 
 const useDevices = () => {
+  const identity = useP2pApp()!
+  const { p2pDevices } = identity
+
   const servers = useP2p(s => s.servers)
   const me = useP2p(s => s.ik)
   return useMemo(() => (servers && me ? p2pDevices.list() : []), [servers, me])
 }
 
 // From the settings dialog: it closes, so the P2P dialog shows.
-const openOver = (store: ReturnType<typeof useStoreApi>, d: P2pDialog) => {
-  store.getState().closeDialog()
+const openOver = (identity: P2pApp) => (d: P2pDialog) => {
+  const { p2p } = identity
+
+  ;(identity.owner ?? client.shown()).store.getState().closeDialog()
   p2p.openDialog(d)
 }
 
 // P2P settings: our devices in P2P servers, a lost or stolen one, and recovery.
-export function DevicesSection() {
-  const store = useStoreApi()
+function DevicesSectionBody() {
+  const identity = useP2pApp()!
+  const { p2pDevices } = identity
+
   const list = useDevices()
   const mine = p2pDevices.current()
   if (!list.length) return null
@@ -549,7 +587,7 @@ export function DevicesSection() {
             </div>
             {d.dk !== mine && (
               <button
-                onClick={() => openOver(store, { kind: 'lost_device', dk: d.dk })}
+                onClick={() => openOver(identity)({ kind: 'lost_device', dk: d.dk })}
                 className="rounded-full px-3 py-1.5 text-sm font-medium text-error hover:bg-surface-container-highest"
               >
                 Lost or stolen
@@ -560,7 +598,7 @@ export function DevicesSection() {
       </ul>
       {others.length > 0 && (
         <button
-          onClick={() => openOver(store, { kind: 'recover' })}
+          onClick={() => openOver(identity)({ kind: 'recover' })}
           className={`${textBtn} flex items-center gap-1.5 self-start`}
         >
           <ShieldCheck size={16} />
@@ -571,7 +609,7 @@ export function DevicesSection() {
   )
 }
 
-type Preview = Awaited<ReturnType<typeof p2pDevices.preview>>
+type Preview = Awaited<ReturnType<P2pApp['p2pDevices']['preview']>>
 
 // A time as a datetime-local input shows it (local time, to the second).
 const localInput = (ms: number) => {
@@ -580,7 +618,10 @@ const localInput = (ms: number) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
-export function LostDeviceDialog({ dk }: { dk: string }) {
+function LostDeviceDialogBody({ dk }: { dk: string }) {
+  const identity = useP2pApp()!
+  const { p2p, p2pDevices } = identity
+
   const [at] = useState(() => Date.now())
   const times = lostTimes(p2p.limits().misc)
   const [t, setT] = useState(() => at - times[0].ms)
@@ -737,7 +778,10 @@ export function LostDeviceDialog({ dk }: { dk: string }) {
   )
 }
 
-export function RecoverDialog() {
+function RecoverDialogBody() {
+  const identity = useP2pApp()!
+  const { p2pDevices, p2p } = identity
+
   const list = useDevices()
   const mine = p2pDevices.current()
   const others = list.filter(d => d.dk !== mine)
@@ -787,3 +831,11 @@ export function RecoverDialog() {
     </Dialog>
   )
 }
+
+export const ServerNotices = withP2pIdentity(ServerNoticesBody)
+export const TransferAsks = withP2pIdentity(TransferAsksBody)
+export const CoOwnerAsks = withP2pIdentity(CoOwnerAsksBody)
+export const CoOwnerPicker = withP2pIdentity(CoOwnerPickerBody)
+export const DevicesSection = withP2pIdentity(DevicesSectionBody)
+export const LostDeviceDialog = withP2pIdentity(LostDeviceDialogBody)
+export const RecoverDialog = withP2pIdentity(RecoverDialogBody)

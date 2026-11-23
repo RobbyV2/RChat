@@ -7,7 +7,7 @@ import type { RChatState } from '../store_types'
 import { client } from './client'
 import type { AccountSession } from './session'
 
-const AccountContext = createContext<AccountSession | null>(null)
+export const AccountContext = createContext<AccountSession | null>(null)
 
 export function AccountProvider({
   session,

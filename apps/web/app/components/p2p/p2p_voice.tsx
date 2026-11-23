@@ -1,16 +1,19 @@
 'use client'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { HeadphoneOff, Lock, MicOff, Volume2 } from 'lucide-react'
 import { useStore } from '../../lib/store'
-import { callRtc, p2pServer, p2pVoice, useP2p } from '../../lib/p2p/app'
+
 import type { MemberView, ServerView } from '../../lib/p2p/server'
 import type { VoiceUser } from '../../lib/p2p/voice'
 import { longPress } from '../context_menu'
 import { Masked } from '../ui'
 import { LiveBadge } from '../voice_grid'
 import { KeyAvatar } from './p2p_badge'
-import { peerTarget } from '../../lib/p2p/app/viewing'
-import { canView, useViewing } from '../../lib/viewing'
+
+import { useAccount } from '../../lib/client/react'
 
 // Voice channels of a P2P server in its sidebar: the row joins (and opens the stage), and who is
 // in the channel shows under it with identicons, as in instance servers.
@@ -28,6 +31,9 @@ function VoiceMember({
   inRoom: boolean
   menu: (m: MemberView) => (x: number, y: number) => void
 }) {
+  const identity = useP2pApp()!
+  const { callRtc } = identity
+
   useStore(s => s.rtcTick)
   const selfAudio = useStore(s => s.selfAudio)
   const me = useP2p(s => s.me)
@@ -85,7 +91,7 @@ function VoiceMember({
   )
 }
 
-export function P2pVoiceRow({
+function P2pVoiceRowBody({
   v,
   c,
   active,
@@ -98,9 +104,13 @@ export function P2pVoiceRow({
   menu: (x: number, y: number) => void
   memberMenu: (m: MemberView) => (x: number, y: number) => void
 }) {
+  const identity = useP2pApp()!
+  const { peerTarget, p2pServer, p2pVoice } = identity
+
   const here = useP2p(s => s.voice?.room === v.id && s.voice.ch === c.id)
   const instance = useStore(s => s.voice !== null || s.call !== null)
   const connected = here && !instance
+  const { useViewing, canView } = useAccount().viewing
   useViewing(s => s.revision)
   const closed = useP2p(s => {
     const target = peerTarget(s, v.id, c.id)
@@ -156,3 +166,5 @@ export function P2pVoiceRow({
     </div>
   )
 }
+
+export const P2pVoiceRow = withP2pIdentity(P2pVoiceRowBody)

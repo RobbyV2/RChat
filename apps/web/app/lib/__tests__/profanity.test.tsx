@@ -564,6 +564,8 @@ describe('in messages', () => {
           { id: 'R2', name: 'shit squad', below: true },
         ],
         members: people,
+        channels: [],
+        chans: {},
       }) as unknown as ServerView
     const none = { allow: 0, deny: 0 }
     const channel = {

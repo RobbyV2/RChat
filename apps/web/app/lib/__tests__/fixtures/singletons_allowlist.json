@@ -1,16 +1,4 @@
 {
-  "components/channel_sidebar.tsx": {
-    "useP2p.getState": 1
-  },
-  "components/p2p/add_contact.tsx": {
-    "useP2p.getState": 1
-  },
-  "components/p2p/p2p_chat.tsx": {
-    "useP2p.getState": 3
-  },
-  "components/p2p/p2p_home.tsx": {
-    "useP2p.getState": 2
-  },
   "lib/actions/folder.ts": {
     "useP2p.getState": 1
   },
@@ -26,12 +14,8 @@
   "lib/actions/p2p_server.ts": {
     "useP2p.getState": 5
   },
-  "lib/actions/settings.ts": {
-    "useP2p.getState": 1
-  },
   "lib/forward_viewing.ts": {
-    "import api": 1,
-    "useP2p.getState": 1
+    "import api": 1
   },
   "lib/ice.ts": {
     "import home": 1
@@ -40,7 +24,6 @@
     "import home": 1
   },
   "lib/p2p/app/account.ts": {
-    "import home": 1,
     "useP2p.getState": 16,
     "useP2p.setState": 34
   },
@@ -49,7 +32,6 @@
     "useP2p.setState": 3
   },
   "lib/p2p/app/badge.ts": {
-    "import home": 1,
     "useP2p.getState": 2,
     "useP2p.setState": 8
   },
@@ -79,7 +61,6 @@
     "useP2p.setState": 24
   },
   "lib/p2p/app/store.ts": {
-    "import home": 1,
     "let badges": 1,
     "let calls": 1,
     "let data": 1,
@@ -101,9 +82,6 @@
   "lib/p2p/palette_source.ts": {
     "useP2p.getState": 7
   },
-  "lib/p2p/transport.ts": {
-    "import home": 1
-  },
   "lib/p2p/user_limits.ts": {
     "import home": 1
   },
@@ -115,9 +93,6 @@
   },
   "lib/rtc.ts": {
     "import home": 1
-  },
-  "lib/slices/ctx.ts": {
-    "useP2p.getState": 1
   },
   "lib/store.ts": {
     "import home": 1

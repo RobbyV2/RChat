@@ -1,9 +1,12 @@
 'use client'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useMemo, useState } from 'react'
 import { Eye } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
-import { p2p, useP2p } from '../../lib/p2p/app'
+
 import { displayName, shieldOf, warningText } from '../../lib/p2p/contacts'
 import { fingerprint } from '../../lib/p2p/keys'
 import { safetyGroups } from '../../lib/p2p/safety'
@@ -14,7 +17,10 @@ import { QrScan } from './qr_scan'
 
 type Mode = 'number' | 'show' | 'scan'
 
-export function VerifyDialog({ ik }: { ik: string }) {
+function VerifyDialogBody({ ik }: { ik: string }) {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const contact = useP2p(s => s.contacts.find(c => c.ik === ik))
   const me = useP2p(s => s.ik)
   const all = useP2p(s => s.contacts)
@@ -178,3 +184,5 @@ export function VerifyDialog({ ik }: { ik: string }) {
     </Dialog>
   )
 }
+
+export const VerifyDialog = withP2pIdentity(VerifyDialogBody)

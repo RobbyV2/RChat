@@ -55,6 +55,8 @@ import { P } from '../p2p/state'
 import { setSharing, sharing } from '../platform'
 import { resetSessionCaches, useStore, type ConfirmRequest, type ContextMenuItem } from '../store'
 import type { Message } from '../types'
+import { me } from './fixtures'
+import { client } from '../client/client'
 
 const initial = useStore.getState()
 const p2pInitial = useP2p.getState()
@@ -163,7 +165,15 @@ const server = (over: Partial<ServerView> = {}): ServerView =>
 const MOD = P.Kick | P.Ban | P.ManageRoles | P.ManageMessages
 
 const state = (o: { notify?: NotifyPrefs; streamer?: boolean } = {}) => {
-  useStore.setState({ notifyPrefs: o.notify ?? EMPTY_NOTIFY, streamer: !!o.streamer })
+  const owner = client.shown()
+  owner.store.setState(s => ({
+    me: me('reader'),
+    guest: false,
+    settings: { ...s.settings, p2p: true },
+    notifyPrefs: o.notify ?? EMPTY_NOTIFY,
+    streamer: !!o.streamer,
+  }))
+  owner.identities.setAccount('reader')
   useP2p.setState({
     enabled: true,
     me: ME,
@@ -774,6 +784,7 @@ describe("a P2P message's menu", () => {
   })
 
   test('forwarding sends to a contact under the sender’s own name, or copies it', async () => {
+    useStore.setState({ me: me('reader') })
     chatState()
     const forward = row(onMessage(msg()), 'Forward')!.submenu!
     expect(await run(forward[0])).toEqual([

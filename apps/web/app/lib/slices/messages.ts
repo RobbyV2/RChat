@@ -1197,7 +1197,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
     if (!current()) return true
     if (!loc) return false
     if (loc.dm_id !== null) {
-      const v = shownView(get().view)
+      const v = shownView(acct, get().view)
       if (v?.kind === 'dm' && v.dmId === loc.dm_id) await get().jumpTo(`d${loc.dm_id}`, id)
       else await get().openDm(loc.dm_id, nav, id)
       return true
@@ -1310,7 +1310,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
   // The scope is the view on screen, following its newest message.
   const watching = (scope: string) => {
-    const view = shownView(get().view)
+    const view = shownView(acct, get().view)
     return (
       view !== null && viewKey(view) === scope && get().atBottom[scope] === true && pageVisible()
     )
@@ -1628,8 +1628,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const stage = (quoted?: ForwardClip['source']) => {
         if (
           get().me?.username !== me.username ||
-          sourceAccess(get(), clip.source, undefined, acct.viewing) === 'hidden' ||
-          (quoted && sourceAccess(get(), quoted, undefined, acct.viewing) !== 'open')
+          sourceAccess(get(), clip.source, undefined, acct) === 'hidden' ||
+          (quoted && sourceAccess(get(), quoted, undefined, acct) !== 'open')
         )
           return
         saveForward(quoted ? { ...clip, quoted } : clip)
@@ -1654,7 +1654,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
 
     copyForwardClip: clip => {
       const { me, guest } = get()
-      if (!me || guest) return
+      if (!me || guest || !clipAllowed(get(), clip, acct)) return
       saveForward(clip)
       toast('Message copied for forwarding')
     },
@@ -1701,7 +1701,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         !me ||
         guest ||
         !clip ||
-        !clipAllowed(get(), clip, acct.viewing) ||
+        !clipAllowed(get(), clip, acct) ||
         (textOnlyDestination(get(), key) && !clip.p2p && (clip.has_media || clip.has_poll)) ||
         forwardPending(get().outbox[key], clip.id)
       )
@@ -1991,7 +1991,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
             await openChannelAt(ping.server, id, ping.thread_root_id, ping.message_id)
           return
         }
-        const v = shownView(get().view)
+        const v = shownView(acct, get().view)
         if (v?.kind === 'dm' && v.dmId === id) await get().jumpTo(ping.scope, ping.message_id)
         else await get().openDm(id, 'push', ping.message_id)
       }),
@@ -2289,7 +2289,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       }
       if (rootId === null && ev.server !== null && groupAlert(m, ev.server)) return
       const me = get().me
-      const view = shownView(get().view)
+      const view = shownView(acct, get().view)
       if (!me || m.author.username === me.username || (rootId !== null && m.dm_id === null)) return
       if (get().blocked[m.author.username]) return
       const scope = messageKey(m.channel_id, m.dm_id)
@@ -2318,7 +2318,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           source?.kind === 'channel' && source.id === m.forward.origin_channel_id
             ? m.forward.origin_sensitive === true
             : undefined,
-          acct.viewing
+          acct
         ) !== 'open'
       const file =
         !closedCopy && m.kind !== 'pin' && !isSystem(m) && !m.content && !m.media?.spoiler

@@ -1,4 +1,5 @@
 'use client'
+import { useP2pApp, useP2p } from '../lib/client/p2p_react'
 
 import type { CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
@@ -44,7 +45,6 @@ import { RailPingBadge, pingLabel } from './ping_badge'
 import { MutedIcon } from './notify_menu'
 import { P2pRailTile } from './p2p/p2p_home'
 import { P2pJoinTile, P2pServerRail } from './p2p/p2p_server_view'
-import { p2p as p2pView, useP2p } from '../lib/p2p/app'
 
 const tile = 'flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-colors'
 const idle =
@@ -318,6 +318,9 @@ function DmTile({ active }: { active: boolean }) {
 }
 
 export function ServerRail() {
+  const identity = useP2pApp()
+  const p2pView = identity?.p2p
+
   const router = useRouter()
   const me = useStore(s => s.me)
   const guestServers = useStore(s => s.guestServers)
@@ -355,7 +358,7 @@ export function ServerRail() {
         onClickCapture={e => {
           // Opening a DM, server or folder leaves the P2P home.
           const t = e.target as HTMLElement
-          if (t.closest('button') && !t.closest('[data-p2p-tile]')) p2pView.closeHome()
+          if (t.closest('button') && !t.closest('[data-p2p-tile]')) p2pView?.closeHome()
         }}
         className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pt-2 pb-2"
       >

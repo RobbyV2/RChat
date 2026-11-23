@@ -1,4 +1,6 @@
 'use client'
+import { useP2pApp } from '../lib/client/p2p_react'
+
 import { useAccount, useStoreApi } from '../lib/client/react'
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -101,7 +103,6 @@ import {
   openSelectionMenu,
   useSelectionKeys,
 } from './selection'
-import { p2pMarkAll } from '../lib/p2p/app'
 
 export { groupPadCls } from './grouped_row'
 
@@ -727,6 +728,9 @@ export function HeaderMore({ scope, search }: { scope: string | null; search: bo
 }
 
 export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembers: () => void }) {
+  const identity = useP2pApp()
+  const p2pMarkAll = identity?.p2pMarkAll
+
   const acct = useAccount()
 
   const me = useStore(s => s.me)
@@ -842,7 +846,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
       return
     }
     if (guest || !escapeMarksRead(e)) return
-    if (e.shiftKey) askMarkAllRead(p2pMarkAll())
+    if (e.shiftKey) askMarkAllRead(p2pMarkAll?.())
     else if (scope) dismissUnread(scope)
   }, 'stage')
 

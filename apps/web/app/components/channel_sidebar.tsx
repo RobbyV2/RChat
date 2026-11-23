@@ -1,4 +1,5 @@
 'use client'
+import { useP2pApp, useP2p } from '../lib/client/p2p_react'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -68,7 +69,7 @@ import { PingBadge } from './ping_badge'
 import { scopePings } from '../lib/pings'
 import { MutedIcon } from './notify_menu'
 import { shownMedia } from '../lib/timeouts'
-import { p2p, useP2p } from '../lib/p2p/app'
+
 import { addsContacts, p2pDmSection } from '../lib/p2p/conversations'
 import { ContactRow, lastTsOf } from './p2p/p2p_home'
 import { P2pBadge } from './p2p/p2p_badge'
@@ -90,6 +91,9 @@ export function DmRow({
   // The rows as the list shows them, for a drop.
   shown?: () => DmSections<number>
 }) {
+  const identity = useP2pApp()
+  const p2p = identity?.p2p
+
   const acct = useAccount()
 
   const openDm = useStore(s => s.openDm)
@@ -102,7 +106,7 @@ export function DmRow({
       aria-current={active ? 'page' : undefined}
       onClick={() => {
         // A P2P conversation open beside the list gives way.
-        if (useP2p.getState().dmList) p2p.closeHome()
+        if (identity?.useP2p.getState().dmList) p2p?.closeHome()
         void openDm(id)
       }}
       {...longPress(
@@ -352,6 +356,9 @@ function useHeldOrder(
 // scroll, so loading more DMs never moves them. A conversation opens beside this list; message
 // requests open the P2P home on its contacts.
 function P2pDms() {
+  const identity = useP2pApp()
+  const p2p = identity?.p2p
+
   const account = useP2p(s => s.account)
   const enabled = useP2p(s => s.enabled)
   const contacts = useP2p(s => s.contacts)
@@ -376,7 +383,7 @@ function P2pDms() {
           <button
             title="Add contact"
             aria-label="Add contact"
-            onClick={() => p2p.openDialog({ kind: 'add' })}
+            onClick={() => p2p?.openDialog({ kind: 'add' })}
             className="rounded-full p-1 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
           >
             <UserPlus size={16} />
@@ -397,7 +404,7 @@ function P2pDms() {
       {section.requests > 0 && (
         <button
           data-p2p-requests
-          onClick={p2p.openRequests}
+          onClick={p2p?.openRequests}
           className="mx-2 shrink-0 rounded-lg px-2 py-1.5 text-left text-sm font-medium text-primary hover:bg-surface-container"
         >
           Message requests ({section.requests})

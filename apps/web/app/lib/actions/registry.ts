@@ -3,6 +3,14 @@
 
 import type { Action, ActionCtx, Args, Scope } from './types'
 
+const identities = new WeakMap<Action, (identity: NonNullable<ActionCtx['identity']>) => Action>()
+export const bindIdentityAction = (
+  action: Action,
+  resolve: (identity: NonNullable<ActionCtx['identity']>) => Action
+) => identities.set(action, resolve)
+export const onIdentity = (action: Action, ctx: ActionCtx) =>
+  ctx.identity ? (identities.get(action)?.(ctx.identity) ?? action) : action
+
 interface Host {
   refresh(ctx: ActionCtx): ActionCtx | null
   gone(ctx: ActionCtx): void
@@ -86,7 +94,10 @@ export const isolateActions = (): (() => void) => {
   return () => put(kept)
 }
 
-export const actionById = (id: string): Action | undefined => entries.get(qualifiedId(id))?.action
+export const actionById = (id: string, ctx?: ActionCtx): Action | undefined => {
+  const action = entries.get(qualifiedId(id))?.action
+  return ctx && action ? onIdentity(action, ctx) : action
+}
 
 export const allActions = (): readonly Action[] =>
   (listed ??= [...entries.values()].map(e => e.action))
@@ -107,7 +118,7 @@ export const guardAction = <T>(a: Action, f: () => T, fallback: T): T => {
 }
 
 export const isAvailable = (a: Action, ctx: ActionCtx) =>
-  guardAction(a, () => (a.scope !== 'p2p' || ctx.acct.isHome) && a.available(ctx), false)
+  guardAction(a, () => (a.scope !== 'p2p' || !!ctx.identity) && a.available(ctx), false)
 
 const orderOf = (a: Action, ctx: ActionCtx) =>
   a.orderFor ? guardAction(a, () => a.orderFor!(ctx), a.order ?? 500) : (a.order ?? 500)
@@ -120,14 +131,18 @@ const byOrder = (list: Action[], ctx: ActionCtx) => {
 export const actionsFor = (ctx: ActionCtx, scopes?: Scope | readonly Scope[]): Action[] => {
   const want = scopes === undefined ? null : typeof scopes === 'string' ? [scopes] : scopes
   return byOrder(
-    allActions().filter(a => (!want || want.includes(a.scope)) && isAvailable(a, ctx)),
+    allActions()
+      .map(a => onIdentity(a, ctx))
+      .filter(a => (!want || want.includes(a.scope)) && isAvailable(a, ctx)),
     ctx
   )
 }
 
 export const targetActions = (ctx: ActionCtx): Action[] =>
   byOrder(
-    allActions().filter(a => a.targets?.includes(ctx.target.kind) && isAvailable(a, ctx)),
+    allActions()
+      .map(a => onIdentity(a, ctx))
+      .filter(a => a.targets?.includes(ctx.target.kind) && isAvailable(a, ctx)),
     ctx
   )
 
@@ -139,7 +154,7 @@ export const recheckAction = (
   id: string,
   ctx: ActionCtx
 ): { action: Action; ctx: ActionCtx } | null => {
-  const action = actionById(id)
+  const action = actionById(id, ctx)
   const fresh = action ? host.refresh(ctx) : null
   if (action && fresh && isAvailable(action, fresh)) return { action, ctx: fresh }
   host.gone(ctx)

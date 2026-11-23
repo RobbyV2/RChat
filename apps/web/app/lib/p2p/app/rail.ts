@@ -32,7 +32,7 @@ export function createRailPart(parts: Pick<P2pParts, 'store'>, scope: IdentitySc
   const readLayout = (username: string | null) => {
     if (!username) return state.initial.layout
     try {
-      const layout = parseLayout(readLocal(scope.scoped(p2pLayoutKey(username))))
+      const layout = parseLayout(readLocal(scope.scoped(p2pLayoutKey(username), username)))
       return layout === emptyLayout ? state.initial.layout : layout
     } catch {
       return state.initial.layout
@@ -43,7 +43,7 @@ export function createRailPart(parts: Pick<P2pParts, 'store'>, scope: IdentitySc
     const user = useP2p.getState().account
     if (!scope.current(user ?? undefined)) return
     useP2p.setState({ layout })
-    if (user) writeLocal(scope.scoped(p2pLayoutKey(user)), JSON.stringify(layout))
+    if (user) writeLocal(scope.scoped(p2pLayoutKey(user), user), JSON.stringify(layout))
   }
 
   const railRooms = () => Object.keys(useP2p.getState().servers).sort()

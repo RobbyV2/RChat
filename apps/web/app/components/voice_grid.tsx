@@ -1,4 +1,5 @@
 'use client'
+import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
 
 import {
   useEffect,
@@ -33,16 +34,7 @@ import {
 } from 'lucide-react'
 import { client } from '../lib/client/client'
 import { AccountProvider, useAccount, useLiveSessions, useStoreApi } from '../lib/client/react'
-import {
-  p2p as p2pApp,
-  p2pCall,
-  p2pDm,
-  p2pHost,
-  p2pUser,
-  useP2p,
-  type P2pState,
-} from '../lib/p2p/app'
-import { legacyP2pApp } from '../lib/p2p/app/runtime'
+import { type P2pState } from '../lib/p2p/app'
 import { pastFit, voiceNotice, type VoiceUser } from '../lib/p2p/voice'
 import { displayName } from '../lib/p2p/contacts'
 import { AccountLabel } from './instance_badge'
@@ -102,23 +94,15 @@ export const contactNameOf = (s: P2pState, ik: string) => {
   return c ? displayName(c) : 'Contact'
 }
 
-function useCallIdentity() {
-  const account = useAccount()
-  const claim = useCallClaim()
-  const id = claim?.account === account ? claim.identity : undefined
-  return account.identities.get(id) ?? legacyP2pApp
-}
-
 function useCallMedia() {
-  const identity = useCallIdentity()
-  const { useP2p, callRtc } = identity
+  const identity = useP2pApp()
+
+  const callRtc = identity?.callRtc
+
   const account = useAccount()
   const { rtc, files: p2p } = account
   const claim = useCallClaim()
-  const kind =
-    claim?.account === account && (!claim.identity || claim.identity === identity.localId)
-      ? claim.kind
-      : null
+  const kind = claim?.account === account ? claim.kind : null
   useStore(s => s.rtcTick)
   const voice = useStore(s => (kind === 'voice' ? s.voice : null))
   const call = useStore(s => (kind === 'dm' ? s.call : null))
@@ -128,19 +112,18 @@ function useCallMedia() {
   const own = roomCall !== null || roomVoice !== null
   const p2pCall = call?.kind === 'p2p'
   const connected = own
-    ? callRtc.active()
+    ? !!callRtc?.active()
     : p2pCall
       ? p2p.mediaActive()
       : (voice !== null || call !== null) && rtc.active()
   const quality: LinkQuality = own
-    ? callRtc.quality()
+    ? (callRtc?.quality() ?? 'connecting')
     : p2pCall
       ? p2p.remote
         ? 'good'
         : 'connecting'
       : rtc.quality()
   return {
-    identity,
     voice,
     call,
     roomCall,
@@ -149,19 +132,21 @@ function useCallMedia() {
     connected,
     deafened,
     muted,
-    camera: own ? callRtc.videoTrack !== null : p2pCall ? p2p.camOn : rtc.videoTrack !== null,
-    sharing: own ? callRtc.sharing : p2pCall ? p2p.shareOn : rtc.sharing,
-    audioNote: own ? callRtc.audioNote : p2pCall ? p2p.audioNote : rtc.audioNote,
+    camera: own ? callRtc?.videoTrack !== null : p2pCall ? p2p.camOn : rtc.videoTrack !== null,
+    sharing: own ? callRtc?.sharing : p2pCall ? p2p.shareOn : rtc.sharing,
+    audioNote: own ? callRtc?.audioNote : p2pCall ? p2p.audioNote : rtc.audioNote,
     quality,
   }
 }
 
 // Whether a share is on in the P2P conversation's call, which then gets a taller stage.
 export function useRoomCallShare(room: string) {
-  const { useP2p, callRtc } = useCallIdentity()
+  const identity = useP2pApp()
+  const callRtc = identity?.callRtc
+
   useStore(s => s.rtcTick)
   const c = useP2p(s => s.call)
-  return c?.room === room && c.state === 'active' && callRtc.anyShare()
+  return c?.room === room && c.state === 'active' && callRtc?.anyShare()
 }
 
 // Whether a share is on in the DM call shown, which then gets a taller stage.
@@ -259,16 +244,12 @@ function useStaffMuted(): boolean {
 }
 
 function VoiceAudio() {
+  const identity = useP2pApp()
+
+  const callRtc = identity?.callRtc
+
   const { rtc, files: p2p } = useAccount()
-  const {
-    identity: { callRtc },
-    connected,
-    p2pCall,
-    roomCall,
-    roomVoice,
-    deafened,
-    voice,
-  } = useCallMedia()
+  const { connected, p2pCall, roomCall, roomVoice, deafened, voice } = useCallMedia()
   const silenced = useStore(s => voiceMutedIn(s, voice?.channelId ?? null))
   const hushed = useStore(s => voiceHushedIn(s, voice?.channelId ?? null))
   useEffect(() => {
@@ -277,7 +258,7 @@ function VoiceAudio() {
   if (!connected) return null
   const streams: [string, MediaStream][] =
     roomCall || roomVoice
-      ? callRtc.remoteStreams()
+      ? (callRtc?.remoteStreams() ?? [])
       : p2pCall
         ? [
             ...(p2p.remote ? [['remote', p2p.remote] as [string, MediaStream]] : []),
@@ -538,8 +519,11 @@ const ctlBase =
   'flex shrink-0 items-center justify-center rounded-full outline-offset-2 transition-colors focus-visible:outline-2 focus-visible:outline-primary'
 
 function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
+  const identity = useP2pApp()
+  const p2pVoice = identity?.p2pVoice
+  const peerCall = identity?.p2pCall
+
   const {
-    identity: { p2pCall, p2pVoice },
     voice,
     roomCall,
     roomVoice,
@@ -571,7 +555,13 @@ function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
   const btn = (state: 'idle' | 'on' | 'off') =>
     `${ctlBase} ${dim} ${lg ? tone(state) : smallTone(state)}`
   const leave = () =>
-    voice ? leaveVoice() : roomVoice ? p2pVoice.leave() : roomCall ? p2pCall.hangup() : hangupCall()
+    voice
+      ? leaveVoice()
+      : roomVoice
+        ? p2pVoice?.leave()
+        : roomCall
+          ? peerCall?.hangup()
+          : hangupCall()
   const inVoice = voice !== null || roomVoice !== null
   return (
     <div className={`flex items-center ${lg ? 'gap-2 sm:gap-3' : 'w-full gap-1.5'}`}>
@@ -689,7 +679,11 @@ const QUALITY: Record<LinkQuality, { label: string; cls: string; Icon: typeof Si
 // How far a P2P voice mesh goes, past `voice.fitAudio` people (`fitVideo` with video). Joining
 // is never blocked.
 export function MeshNotice({ users, className }: { users: VoiceUser[]; className?: string }) {
-  const fit = useCallIdentity().p2p.limits().voice
+  const identity = useP2pApp()
+  const p2pApp = identity?.p2p
+
+  const fit = p2pApp?.limits().voice
+  if (!fit) return null
   if (
     !pastFit(
       users.length,
@@ -718,8 +712,25 @@ export function DockPlace({ place, peer }: { place: string; peer?: UserRef }) {
 
 function CallOwner({ children }: { children: ReactNode }) {
   const shown = useAccount()
-  const call = useCallClaim()
-  return <AccountProvider session={call?.account ?? shown}>{children}</AccountProvider>
+  const call = useSyncExternalStore(
+    client.calls.subscribe,
+    client.calls.current,
+    client.calls.current
+  )
+  const session = call?.account ?? shown
+  const peer = call?.kind === 'p2p-call' || call?.kind === 'p2p-voice'
+  const identity = peer ? session.identities.get(call.identity ?? 'main') : undefined
+  const content =
+    peer && (identity || call.identity) ? (
+      <P2pProvider identity={identity ?? null}>{children}</P2pProvider>
+    ) : (
+      children
+    )
+  return shown === session ? (
+    content
+  ) : (
+    <AccountProvider session={session}>{content}</AccountProvider>
+  )
 }
 
 export function VoiceDock() {
@@ -763,16 +774,15 @@ function PeerCallPane() {
 
 function VoiceDockBody() {
   const claim = useCallClaim()
+  const identity = useP2pApp()
+  const p2pServer = identity?.p2pServer
+  const p2pApp = identity?.p2p
+  const p2pDm = identity?.p2pDm
+  const p2pVoice = identity?.p2pVoice
+  const peerCall = identity?.p2pCall
+
   const account = useAccount()
-  const {
-    identity: { useP2p, p2p: p2pApp, p2pServer, p2pDm, p2pVoice, p2pCall },
-    voice,
-    call,
-    roomCall,
-    roomVoice,
-    connected,
-    quality,
-  } = useCallMedia()
+  const { voice, call, roomCall, roomVoice, connected, quality } = useCallMedia()
   const contactName = useP2p(s => (roomCall ? contactNameOf(s, roomCall.peer) : ''))
   const sv = useP2p(s => (roomVoice ? s.servers[roomVoice.room] : undefined))
   const ownSv = useP2p(s => ownsP2pServer(sv, s.me))
@@ -815,19 +825,18 @@ function VoiceDockBody() {
           <button
             title={`Go to ${inVoice ? 'voice channel' : 'call'}`}
             onClick={() => {
-              if (
-                (roomCall || roomVoice) &&
-                claim?.identity &&
-                (claim.identity !== 'main' || !account.isHome)
-              ) {
-                client.calls.expand(claim)
-                return
+              if (identity && (roomVoice || roomCall)) {
+                if (claim && account !== client.shown()) {
+                  client.calls.expand(claim)
+                  return
+                }
+                account.identities.show(identity)
               }
               if (voice) void openChannel(voice.server, voice.channelId)
-              else if (roomVoice) p2pServer.open(roomVoice.room, roomVoice.ch)
+              else if (roomVoice) p2pServer?.open(roomVoice.room, roomVoice.ch)
               else if (roomCall) {
-                p2pApp.openHome()
-                void p2pDm.openDm(roomCall.peer)
+                p2pApp?.openHome()
+                void p2pDm?.openDm(roomCall.peer)
               } else if (call) void openDm(call.dmId)
             }}
             className="flex max-w-full min-w-0 items-center gap-1 rounded-sm text-left text-xs leading-tight text-on-surface-variant outline-offset-2 hover:text-on-surface hover:underline focus-visible:outline-2 focus-visible:outline-primary"
@@ -862,9 +871,9 @@ function VoiceDockBody() {
             voice
               ? leaveVoice()
               : roomVoice
-                ? p2pVoice.leave()
+                ? p2pVoice?.leave()
                 : roomCall
-                  ? p2pCall.hangup()
+                  ? peerCall?.hangup()
                   : hangupCall()
           }
           className={`${ctlBase} h-8 w-8 text-on-surface-variant hover:bg-error/15 hover:text-error`}
@@ -990,7 +999,12 @@ export function VoiceGrid({
   // A voice channel of the P2P server `p2pRoom`.
   p2pCh?: string
 }) {
-  const { useP2p, callRtc, p2pUser, memberName, p2pVoice } = useCallIdentity()
+  const identity = useP2pApp()
+  const callRtc = identity?.callRtc
+  const p2pUser = identity?.p2pUser
+  const memberName = identity?.memberName
+  const p2pVoice = identity?.p2pVoice
+
   const { rtc, files: p2p, store, lifetime } = useAccount()
   useStore(s => s.rtcTick)
   useStore(s => s.members)
@@ -1036,7 +1050,7 @@ export function VoiceGrid({
       : null
   const forDm = dmId !== undefined && call?.dmId === dmId ? call : null
   const p2pKind = forDm?.kind === 'p2p'
-  const mgr = forRoom || forVoice ? callRtc : rtc
+  const mgr = (forRoom || forVoice ? callRtc : null) ?? rtc
   const self = forRoom || forVoice ? (myIk ?? '') : (mine ?? undefined)
   const joined =
     channelId !== undefined
@@ -1046,9 +1060,9 @@ export function VoiceGrid({
           !call &&
           serverVoice?.room === forVoice.room &&
           serverVoice.ch === forVoice.ch &&
-          callRtc.active()
+          !!callRtc?.active()
         : forRoom
-          ? callRtc.active() && (forRoom.dir === 'out' || forRoom.state === 'active')
+          ? !!callRtc?.active() && (forRoom.dir === 'out' || forRoom.state === 'active')
           : (p2pKind ? p2p.mediaActive() : rtc.active()) && call?.dmId === dmId && !voice
   const users =
     channelId !== undefined
@@ -1075,9 +1089,9 @@ export function VoiceGrid({
       : undefined
   const state = store.getState()
   const refFor = (u: string): UserRef =>
-    forVoice
+    forVoice && p2pUser && memberName
       ? p2pUser(u, u === self ? myP2pName || 'You' : memberName(forVoice.room, u))
-      : forRoom
+      : forRoom && p2pUser
         ? p2pUser(u, u === self ? myP2pName || 'You' : peerName)
         : userRefFor(state, u)
 
@@ -1347,7 +1361,7 @@ export function VoiceGrid({
             !p2pElsewhere && (
               <button
                 data-p2p-voice-join
-                onClick={() => void p2pVoice.join(forVoice.room, forVoice.ch)}
+                onClick={() => void p2pVoice?.join(forVoice.room, forVoice.ch)}
                 className={`${ctlBase} h-11 gap-2 bg-status-green px-6 text-sm font-semibold text-surface hover:brightness-110`}
               >
                 <Phone size={18} />
@@ -1417,10 +1431,7 @@ function CallBannerBody() {
   const other = useStore(s =>
     call && me ? userRefFor(s, call.dmUsers.find(u => u !== me.username) ?? me.username) : null
   )
-  if (!call) {
-    const hostsP2p = p2pHost.account ? account === p2pHost.account : account.isHome
-    return hostsP2p ? <ContactCallBanner /> : null
-  }
+  if (!call) return <ContactCallBanners />
   if (!ringing || !other || (!incoming && watching)) return null
   const go = () => void openDm(call.dmId, shown ? 'push' : 'none')
   const p2pCall = call.kind === 'p2p'
@@ -1538,11 +1549,38 @@ function RingAvatar({ user, size, streamer }: { user: UserRef; size: number; str
   )
 }
 
+function ContactCallBanners() {
+  const { identities } = useAccount()
+  const snapshot = () =>
+    identities
+      .list()
+      .map(app => app.localId)
+      .join(',')
+  const ids = useSyncExternalStore(identities.subscribe, snapshot, snapshot)
+  return ids
+    .split(',')
+    .filter(Boolean)
+    .map(id => (
+      <P2pProvider key={id} identity={identities.get(id) ?? null}>
+        <ContactCallBanner />
+      </P2pProvider>
+    ))
+}
+
 // The ringing card of a call with a P2P contact: the same card as an instance call, with the P2P
 // chip. A quiet call (the conversation is set to "Nothing" or muted) rings only in the
 // conversation itself.
 function ContactCallBanner() {
-  const shown = useAccount() === client.shown()
+  const identity = useP2pApp()
+  const p2pUser = identity?.p2pUser
+  const p2pApp = identity?.p2p
+  const p2pDm = identity?.p2pDm
+  const peerCall = identity?.p2pCall
+
+  const account = useAccount()
+  const viewed = () => account.identities.viewed()
+  const selected = useSyncExternalStore(account.identities.subscribe, viewed, viewed)
+  const shown = account === client.shown() && selected === identity
   const c = useP2p(s => s.call)
   const quiet = useP2p(s => s.callQuiet)
   const accepting = useP2p(s => s.callAccepting)
@@ -1553,11 +1591,13 @@ function ContactCallBanner() {
   if (!c || c.state !== 'ringing' || voice) return null
   const incoming = c.dir === 'in'
   if (incoming ? quiet : shown && watching) return null
+  if (!p2pUser) return null
   const user = p2pUser(c.peer, name)
   const avatar = (size: number) => <RingAvatar user={user} size={size} streamer={streamer} />
   const go = () => {
-    p2pApp.openHome()
-    void p2pDm.openDm(c.peer)
+    if (identity) account.identities.show(identity)
+    p2pApp?.openHome()
+    void p2pDm?.openDm(c.peer)
   }
   if (!incoming)
     return (
@@ -1585,7 +1625,7 @@ function ContactCallBanner() {
         <button
           title="Cancel call"
           aria-label="Cancel call"
-          onClick={() => p2pCall.hangup()}
+          onClick={() => peerCall?.hangup()}
           className={`${ctlBase} h-9 w-9 bg-danger text-on-danger hover:brightness-110`}
         >
           <PhoneOff size={16} />
@@ -1622,7 +1662,7 @@ function ContactCallBanner() {
         <button
           title="Decline"
           aria-label="Decline"
-          onClick={() => p2pCall.decline()}
+          onClick={() => peerCall?.decline()}
           className={`${ctlBase} h-12 w-12 bg-danger text-on-danger hover:brightness-110 max-sm:h-11 max-sm:w-11`}
         >
           <PhoneOff size={20} />
@@ -1633,7 +1673,7 @@ function ContactCallBanner() {
           disabled={accepting}
           onClick={() => {
             go()
-            void p2pCall.accept()
+            void peerCall?.accept()
           }}
           className={`${ctlBase} h-12 w-12 bg-status-green text-surface hover:brightness-110 disabled:opacity-60 max-sm:h-11 max-sm:w-11`}
         >

@@ -103,7 +103,7 @@ const menuRows = (ctx: ActionCtx) =>
 export const menuItems = (ctx: ActionCtx): ContextMenuItem[] => menuRows(ctx).map(r => r.item)
 
 export const itemFor = (id: string, ctx: ActionCtx): ContextMenuItem | null => {
-  const a = actionById(id)
+  const a = actionById(id, ctx)
   return a && isAvailable(a, ctx) ? (guardAction(a, () => rows(a, ctx), [])[0]?.item ?? null) : null
 }
 
@@ -137,10 +137,12 @@ export const openActionMenu = (
   y: number,
   target: Target,
   opts: ContextMenuOptions = {},
-  acct = client.shown()
+  acct = client.shown(),
+  identity?: ActionCtx['identity']
 ) => {
+  if (identity) acct.identities.show(identity)
   const st = acct.store.getState()
-  const ctx = ctxFor(st, target, 'menu', acct)
+  const ctx = ctxFor(st, target, 'menu', acct, identity)
   const built = menuRows(ctx)
   if (!built.length) return
   const items = built.map(r => r.item)
@@ -179,10 +181,12 @@ export const openChoiceMenu = (
   id: string,
   target: Target,
   opts: ContextMenuOptions = {},
-  acct = client.shown()
+  acct = client.shown(),
+  identity?: ActionCtx['identity']
 ) => {
+  if (identity) acct.identities.show(identity)
   const st = acct.store.getState()
-  const ctx = ctxFor(st, target, 'menu', acct)
+  const ctx = ctxFor(st, target, 'menu', acct, identity)
   const items = itemFor(id, ctx)?.submenu
   if (items?.length) st.openContextMenu(x, y, items, opts)
 }

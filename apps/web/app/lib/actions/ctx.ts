@@ -1,3 +1,4 @@
+import { legacyP2pApp, type P2pApp } from '../p2p/app/runtime'
 import { actionElement } from '../masked_reveal'
 import { memberState, messageServer } from '../selectors'
 import { OPT_BASE } from '../slices/messages'
@@ -177,9 +178,11 @@ const ctxWith = (
   s: RChatState,
   target: Target,
   via: Via,
-  element: Element | null | undefined
+  element: Element | null | undefined,
+  identity: P2pApp | null
 ): ActionCtx => ({
   acct,
+  identity,
   mark: acct.lifetime.sessionMark(),
   s,
   via,
@@ -192,8 +195,14 @@ const ctxWith = (
 })
 
 // A context made while a menu opens or a palette key runs carries the element it is for.
-export const ctxFor = (s: RChatState, target: Target, via: Via, acct = client.shown()): ActionCtx =>
-  ctxWith(acct, s, target, via, actionElement())
+export const ctxFor = (
+  s: RChatState,
+  target: Target,
+  via: Via,
+  acct = client.shown(),
+  identity: P2pApp | null = acct.identities.viewed() ??
+    (acct.isHome && s.me && !s.guest ? legacyP2pApp : null)
+): ActionCtx => ctxWith(acct, s, target, via, actionElement(), identity)
 
 export const paletteCtx = (s: RChatState, acct = client.shown()) =>
   ctxFor(s, { kind: 'none' }, 'palette', acct)
@@ -277,10 +286,23 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
 // stays only while it is still on the page.
 export const refreshCtx = (ctx: ActionCtx): ActionCtx | null => {
   if (ctx.mark !== ctx.acct.lifetime.sessionMark()) return null
+  if (
+    ctx.identity &&
+    ctx.acct.identities.get(ctx.identity.localId) !== ctx.identity &&
+    !(ctx.identity === legacyP2pApp && ctx.acct.isHome && !ctx.acct.identities.get())
+  )
+    return null
   const s = ctx.acct.store.getState()
   const t = freshTarget(s, ctx.target)
   if (!t) return null
-  return ctxWith(ctx.acct, s, t, ctx.via, ctx.element?.isConnected ? ctx.element : null)
+  return ctxWith(
+    ctx.acct,
+    s,
+    t,
+    ctx.via,
+    ctx.element?.isConnected ? ctx.element : null,
+    ctx.identity ?? null
+  )
 }
 
 bindActionHost({

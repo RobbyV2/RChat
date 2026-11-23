@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import type { ConfigDoc } from '../config_transfer'
 import { client } from '../client/client'
 import { identityScopeKey } from '../p2p/app/host'
 import type { AlertInput } from '../notices'
@@ -123,5 +124,39 @@ test('sibling notices, clicks, RTC updates and controls target their originating
     a.store.dispose()
     b.store.dispose()
     memoryStorage.removeItem(key)
+  }
+})
+
+test('deferred rail import keeps its selected identity and rejects a re-registered slot', async () => {
+  const account = testAccount('bob')
+  try {
+    account.identities.setAccount('bob')
+    const work = account.identities.add('work')
+    const main = account.identities.get()!
+    const doc: ConfigDoc = {
+      v: 1,
+      layout: { servers: [], dmOrder: [], dmPinned: [], selfPin: 'auto', p2p: ['imported'] },
+    }
+    const wait = Promise.withResolvers<void>()
+    account.store.setState({ ensureServers: () => wait.promise, ensureDms: async () => {} })
+    account.identities.show(work)
+    const apply = account.store.getState().applyConfig(doc, ['layout'])
+    account.identities.show(main)
+    wait.resolve()
+    expect(await apply).toBeNull()
+    expect(work.useP2p.getState().layout.servers).toEqual(['imported'])
+    expect(main.useP2p.getState().layout.servers).toEqual([])
+    const next = Promise.withResolvers<void>()
+    account.store.setState({ ensureServers: () => next.promise })
+    const pending = account.store.getState().applyConfig(doc, ['layout'], work)
+    account.identities.unregister('work')
+    const replacement = account.identities.add('work')
+    replacement.p2pRail.apply(['replacement'])
+    next.resolve()
+    expect(await pending).toContain('no longer available')
+    expect(replacement.useP2p.getState().layout.servers).toEqual(['replacement'])
+    expect(main.useP2p.getState().layout.servers).toEqual([])
+  } finally {
+    account.store.dispose()
   }
 })

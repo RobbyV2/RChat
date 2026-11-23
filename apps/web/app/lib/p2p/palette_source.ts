@@ -148,7 +148,9 @@ const createIndexSource = (app?: P2pApp): IndexSource => ({
   },
   open: d => {
     const at = bucketPlace(d.bucket, app)
-    if (at) void (app ?? legacyP2pApp).p2pOpenAt(at.room, at.ch, d.id.slice(docPrefix(app).length))
+    if (!at) return
+    if (app) app.owner?.identities.show(app)
+    void (app ?? legacyP2pApp).p2pOpenAt(at.room, at.ch, d.id.slice(docPrefix(app).length))
   },
   place: d => {
     const { useP2p } = app ?? legacyP2pApp

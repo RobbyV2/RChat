@@ -1,3 +1,4 @@
+import { onIdentity } from './registry'
 import type { ArgSpec, PaletteCommand } from '../palette'
 import { actionById, allActions, guardAction, isAvailable, labelOf } from './registry'
 import {
@@ -72,6 +73,7 @@ const rowsOf = (a: Action, ctx: ActionCtx): PaletteCommand[] =>
 export const paletteCommands = (ctx: ActionCtx): PaletteCommand[] => {
   const seen = new Set<string>()
   return allActions()
+    .map(a => onIdentity(a, ctx))
     .flatMap(a => (isAvailable(a, ctx) ? guardAction(a, () => rowsOf(a, ctx), []) : []))
     .filter(r => {
       if (seen.has(r.id)) return false

@@ -1,7 +1,10 @@
 'use client'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useCallback, useMemo } from 'react'
-import { memberName, p2pSearch, useP2p } from '../../lib/p2p/app'
+
 import { SearchView, type SearchFilters, type SearchHitView } from '../search_panel'
 import { Masked } from '../ui'
 import { ownsP2pServer } from '../../lib/p2p/server/types'
@@ -9,7 +12,10 @@ import { KeyAvatar } from './p2p_badge'
 
 // Search over the P2P servers stored on this device, in the instance's search panel.
 
-export function P2pSearchPanel() {
+function P2pSearchPanelBody() {
+  const identity = useP2pApp()!
+  const { memberName, p2pSearch } = identity
+
   const search = useP2p(s => s.search)
   const servers = useP2p(s => s.servers)
   const room = useP2p(s => s.server?.room ?? null)
@@ -82,3 +88,5 @@ export function P2pSearchPanel() {
     </div>
   )
 }
+
+export const P2pSearchPanel = withP2pIdentity(P2pSearchPanelBody)

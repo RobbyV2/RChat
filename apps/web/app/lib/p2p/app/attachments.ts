@@ -280,7 +280,10 @@ export function createAttachmentsPart(
     writeAuto(patch: Partial<{ dm: number; server: number; daily: number }>) {
       const user = useP2p.getState().account
       if (!user || !scope.current(user)) return
-      writeLocal(scope.scoped(autoKey(user)), JSON.stringify({ v: 1, ...readAuto(user), ...patch }))
+      writeLocal(
+        scope.scoped(autoKey(user), user),
+        JSON.stringify({ v: 1, ...readAuto(user), ...patch })
+      )
     },
   }
 

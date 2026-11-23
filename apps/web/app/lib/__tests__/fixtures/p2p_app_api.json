@@ -4,6 +4,7 @@
     "ELSEWHERE_IMPORT",
     "FILES_MAX_TEXT",
     "NEEDS_INVITER",
+    "P2pProvider",
     "PREPARING_TEXT",
     "ServerError",
     "TOO_MANY_FILES",
@@ -54,7 +55,8 @@
     "threadKey",
     "threadScope",
     "threadsSig",
-    "useP2p"
+    "useP2p",
+    "useP2pApp"
   ],
   "types": [
     "FileView",

@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   allPings,
+  getHomeSession,
   dmPingCount,
   dmsUnread,
   scopePingCount,
@@ -225,11 +226,13 @@ describe('an instance view under P2P', () => {
   }
 
   beforeEach(() => {
+    getHomeSession().identities.setAccount('bob')
     put.reader({ store: { room: async () => undefined } as never, me: BOB })
     useP2p.setState({ ...p2pSaved, enabled: true, account: 'bob' })
   })
   afterEach(() => {
     put.reader(null)
+    getHomeSession().identities.setAccount(null)
     useP2p.setState(p2pSaved)
   })
 

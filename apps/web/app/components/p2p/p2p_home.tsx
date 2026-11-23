@@ -1,10 +1,15 @@
 'use client'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
+import { legacyP2pApp, type P2pApp } from '../../lib/p2p/app/runtime'
+
 import { useAccount } from '../../lib/client/react'
 
 import { useLayoutEffect, useRef, useState } from 'react'
 import { Ban, Check, Menu, QrCode as QrIcon, UserPlus, Waypoints, X } from 'lucide-react'
 import { useStore, type RChatState } from '../../lib/store'
-import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
+
 import { p2pTileCount } from '../../lib/p2p/alerts'
 import { dmRoomId, movedText, MOVING_TEXT, RESUME_TEXT } from '../../lib/p2p/dm'
 import { levelOf, mutedOf } from '../../lib/notify'
@@ -61,7 +66,7 @@ import {
 import { badgeState } from '../../lib/p2p/badge'
 import { ctxFor } from '../../lib/actions/ctx'
 import { menuItems, openActionMenu } from '../../lib/actions/menu'
-import { openContactMenu } from '../../lib/actions/p2p_contact'
+import { peerContact } from '../../lib/actions/p2p_contact'
 import { LabelText, useInstanceLabel } from '../instance_badge'
 import { useDrawerClose } from '../drawer'
 
@@ -77,7 +82,10 @@ const count = (n: number, one: string, many: string) => (n ? `${n} ${n === 1 ? o
 // The P2P tile in the rail's P2P frame: opens the contacts. What waits for an answer (message
 // requests, server invites, co-owner and transfer asks) shows as its badge; conversation pings
 // count on the DM tile.
-export function P2pRailTile() {
+function P2pRailTileBody() {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const acct = useAccount()
 
   const open = useP2p(s => s.home && !s.dmList)
@@ -102,7 +110,7 @@ export function P2pRailTile() {
       aria-pressed={open}
       onClick={() => (open ? p2p.closeHome() : p2p.openHome())}
       {...(enabled
-        ? longPress((x, y) => openActionMenu(x, y, { kind: 'p2p_home' }, undefined, acct))
+        ? longPress((x, y) => openActionMenu(x, y, { kind: 'p2p_home' }, undefined, acct, identity))
         : {})}
       className={`${tile} relative ${
         open
@@ -120,7 +128,10 @@ const ENABLE_COPY =
   'Stored only on your devices. Delivered only when the other side is online. The instance can see when you connect, not what you send. Not filtered or moderated by the instance.'
 
 // Another tab runs P2P for this account; only one tab may at a time.
-export function ElsewhereNotice() {
+function ElsewhereNoticeBody() {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   return (
     <div role="status" className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
       <p>P2P is open in another tab.</p>
@@ -138,16 +149,21 @@ export const RESET_BODY =
 const RESET_MOVED_BODY =
   'You get a new key. This browser no longer has the old one, so contacts get a request from the new key and have to accept and verify you again.'
 
-export const confirmReset = (ask: RChatState['askConfirm']) =>
-  ask({
+export const confirmResetFor = (identity: P2pApp) => (ask: RChatState['askConfirm']) => {
+  const { p2p } = identity
+  return ask({
     title: 'Reset your P2P identity?',
-    body: useP2p.getState().movedAt === null ? RESET_BODY : RESET_MOVED_BODY,
+    body: identity.useP2p.getState().movedAt === null ? RESET_BODY : RESET_MOVED_BODY,
     confirm: 'Reset',
     action: () => void p2p.resetIdentity(),
   })
+}
 
 // Contacts showed us signs of another copy of this identity, or it moved without an export here.
-export function IdentityAlert() {
+function IdentityAlertBody() {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const alertAt = useP2p(s => s.alertAt)
   const ask = useStore(s => s.askConfirm)
   if (alertAt === null) return null
@@ -159,7 +175,7 @@ export function IdentityAlert() {
     >
       <p className="text-sm">{ALERT_TEXT}</p>
       <div className="flex flex-wrap gap-2">
-        <button onClick={() => confirmReset(ask)} className={dangerBtn}>
+        <button onClick={() => confirmResetFor(identity)(ask)} className={dangerBtn}>
           Reset identity
         </button>
         <button onClick={() => void p2p.clearAlert()} className={textBtn}>
@@ -171,11 +187,14 @@ export function IdentityAlert() {
 }
 
 // A P2P export was made here: sending waits, so nothing written here misses the new device.
-export function MovingBanner({
+function MovingBannerBody({
   className = 'flex flex-col items-start gap-3 rounded-2xl bg-surface-container-high p-4',
 }: {
   className?: string
 }) {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const movingAt = useP2p(s => s.movingAt)
   const moved = useP2p(s => s.status === 'moved')
   const ask = useStore(s => s.askConfirm)
@@ -201,7 +220,10 @@ export function MovingBanner({
 }
 
 // The PeerJS server didn't answer: the node keeps trying, and Retry tries now.
-export function UnreachableNotice() {
+function UnreachableNoticeBody() {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   return (
     <div
       role="status"
@@ -229,7 +251,10 @@ export function UnsupportedNotice() {
   )
 }
 
-export function AddressNotice() {
+function AddressNoticeBody() {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   return (
     <div
       role="status"
@@ -245,7 +270,10 @@ export function AddressNotice() {
 }
 
 // This browser's identity moved to another device: it can only read, or remove its copy.
-export function MovedBanner() {
+function MovedBannerBody() {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const movedAt = useP2p(s => s.movedAt)
   const ask = useStore(s => s.askConfirm)
   return (
@@ -272,7 +300,10 @@ export function MovedBanner() {
   )
 }
 
-export function EnableDialog() {
+function EnableDialogBody() {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const frame = useRef<HTMLDialogElement>(null)
   const backdrop = useBackdrop(p2p.closeDialog)
   useLayoutEffect(() => {
@@ -343,6 +374,9 @@ export function EnableDialog() {
 }
 
 function DroppedNote({ n }: { n: number }) {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   return (
     <p className="flex items-center gap-2 px-3 pb-2 text-xs text-on-surface-variant">
       {n === 1 ? '1 request was' : `${n} requests were`} dropped to limit spam.
@@ -362,7 +396,7 @@ const noticeText = (c: Contact) =>
 
 // A contact: opens the conversation (in the P2P home, or beside the instance's DM list with
 // `where="dms"`), or the contact's card while it isn't mutual.
-export function ContactRow({
+function ContactRowBody({
   c,
   presence,
   active = false,
@@ -373,6 +407,9 @@ export function ContactRow({
   active?: boolean
   where?: 'home' | 'dms'
 }) {
+  const identity = useP2pApp()!
+  const { p2p, p2pDm } = identity
+
   const acct = useAccount()
 
   const me = useP2p(s => s.me)
@@ -397,7 +434,9 @@ export function ContactRow({
           closeDrawer()
           void p2pDm.openDm(c.ik, where)
         }}
-        {...longPress((x, y) => openContactMenu(x, y, c, me, acct))}
+        {...longPress((x, y) =>
+          peerContact.forIdentity(identity).openContactMenu(x, y, c, me, acct)
+        )}
         className={
           where === 'dms'
             ? `flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm ${
@@ -450,6 +489,9 @@ export function ContactRow({
 }
 
 function RequestRow({ c }: { c: Contact }) {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const shield = shieldOf(c)
   const chip = useHasChip(c.ik)
   return (
@@ -510,6 +552,9 @@ function RequestRow({ c }: { c: Contact }) {
 }
 
 function Off() {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const error = useP2p(s => s.error)
   return (
     <div className="mx-auto flex max-w-md flex-col items-start gap-4 px-6 py-10">
@@ -530,6 +575,9 @@ function Off() {
 
 // Conversations on the left (desktop), the open one on the right.
 function DmList() {
+  const identity = useP2pApp()!
+  const { p2pDm } = identity
+
   const contacts = useP2p(s => s.contacts)
   const presence = useP2p(s => s.presence)
   const rooms = useP2p(s => s.rooms)
@@ -559,7 +607,10 @@ function DmList() {
   )
 }
 
-export function P2pHome({ onMenu }: { onMenu: () => void }) {
+function P2pHomeBody({ onMenu }: { onMenu: () => void }) {
+  const identity = useP2pApp()!
+  const { p2pDm } = identity
+
   const chatOpen = useP2p(s => s.chat !== null)
   if (chatOpen)
     return (
@@ -572,6 +623,9 @@ export function P2pHome({ onMenu }: { onMenu: () => void }) {
 }
 
 function P2pContacts({ onMenu }: { onMenu: () => void }) {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const { label } = useInstanceLabel()
   const enabled = useP2p(s => s.enabled)
   const loading = useP2p(s => s.loading)
@@ -720,6 +774,9 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
 }
 
 function ContactDialog({ ik }: { ik: string }) {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const acct = useAccount()
 
   const c = useP2p(s => s.contacts.find(x => x.ik === ik))
@@ -780,9 +837,10 @@ function ContactDialog({ ik }: { ik: string }) {
           {menuItems(
             ctxFor(
               acct.store.getState(),
-              { kind: 'p2p_contact', c, me: useP2p.getState().me },
+              { kind: 'p2p_contact', c, me: identity.useP2p.getState().me },
               'menu',
-              acct
+              acct,
+              identity
             )
           )
             .filter(item => item.action && !item.submenu)
@@ -828,6 +886,9 @@ function BadgeRow({ ik }: { ik: string }) {
 }
 
 function RenameDialog({ ik }: { ik: string }) {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const c = useP2p(s => s.contacts.find(x => x.ik === ik))
   const [name, setName] = useState(c?.petname ?? '')
   if (!c) return null
@@ -864,7 +925,7 @@ function RenameDialog({ ik }: { ik: string }) {
   )
 }
 
-export function P2pDialogs() {
+function P2pDialogsBody() {
   const dialog = useP2p(s => s.dialog)
   const me = useStore(s => s.me !== null)
   if (!dialog || !me) return null
@@ -895,3 +956,17 @@ export function P2pDialogs() {
       return <RecoverDialog />
   }
 }
+
+export const confirmReset = confirmResetFor(legacyP2pApp)
+
+export const P2pRailTile = withP2pIdentity(P2pRailTileBody)
+export const ElsewhereNotice = withP2pIdentity(ElsewhereNoticeBody)
+export const IdentityAlert = withP2pIdentity(IdentityAlertBody)
+export const MovingBanner = withP2pIdentity(MovingBannerBody)
+export const UnreachableNotice = withP2pIdentity(UnreachableNoticeBody)
+export const AddressNotice = withP2pIdentity(AddressNoticeBody)
+export const MovedBanner = withP2pIdentity(MovedBannerBody)
+export const EnableDialog = withP2pIdentity(EnableDialogBody)
+export const ContactRow = withP2pIdentity(ContactRowBody)
+export const P2pHome = withP2pIdentity(P2pHomeBody)
+export const P2pDialogs = withP2pIdentity(P2pDialogsBody)

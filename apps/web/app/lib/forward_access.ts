@@ -12,7 +12,8 @@ export function useForwardAccess(
   m: Pick<Message, 'forward' | 'channel_id'> | null | undefined,
   { server, active = true }: { server?: string; active?: boolean } = {}
 ) {
-  const { store, conn, api, viewing } = useAccount()
+  const owner = useAccount()
+  const { store, conn, api, viewing } = owner
   viewing.useViewing(s => s.revision)
   const account = useStore(s => s.me?.username ?? null)
   const servers = useStore(s => s.servers)
@@ -27,7 +28,7 @@ export function useForwardAccess(
       ? fwd.origin_sensitive === true
       : undefined
   const sourceName = source?.kind === 'channel' ? source.server : undefined
-  const access = useStore(s => (fwd ? sourceAccess(s, source, label, viewing) : 'open'))
+  const access = useStore(s => (fwd ? sourceAccess(s, source, label, owner) : 'open'))
   const lookup = active && !!fwd && !known && !!id
   useEffect(() => {
     if (!lookup || !id) return
@@ -46,6 +47,6 @@ export function useForwardAccess(
         .discoverChannels(sourceName)
         .catch(() => {})
   }, [store, active, sourceName, access, servers])
-  const target = access === 'open' ? null : sourceTarget(store.getState(), source, label, viewing)
+  const target = access === 'open' ? null : sourceTarget(store.getState(), source, label, owner)
   return { access, target }
 }

@@ -120,6 +120,7 @@ test('the shell uses the P2P owner for alerts, quiet calls and runtime preferenc
   const previous = client.shown
   const previousHost = { ...legacyHost }
   b.store.setState(s => ({ me: me('reader'), settings: { ...s.settings, p2p: true } }))
+  Object.assign(b.store.getInitialState(), b.store.getState())
   b.identities.setAccount('reader')
   const { p2pHost, useP2p, ringing } = b.identities.get()!
   const quiet = useP2p.getState().callQuiet

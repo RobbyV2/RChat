@@ -1,4 +1,7 @@
 'use client'
+import { useP2pApp, useP2p } from '../lib/client/p2p_react'
+import type { P2pApp } from '../lib/p2p/app/runtime'
+
 import { useAccount } from '../lib/client/react'
 
 import { useMemo, useState, type ReactNode } from 'react'
@@ -63,7 +66,7 @@ import { ServerGlyph } from './server_rail'
 import StatusClock from './status_clock'
 import { UserAvatar } from './user_avatar'
 import { Masked, SkeletonRows, fieldCls, filledBtn, textBtn, useOwnServer } from './ui'
-import { p2p, p2pDm, p2pMarkAll, p2pServer, useP2p, type P2pState } from '../lib/p2p/app'
+import { type P2pState } from '../lib/p2p/app'
 import type { P2pDialog } from '../lib/p2p/app/store'
 import { cardRows, homeCard, onlineText, p2pEntry, type CardState } from '../lib/p2p/home_card'
 import { p2pUnread, type P2pUnreadRow } from '../lib/p2p/alerts'
@@ -231,13 +234,17 @@ const useP2pCard = () => {
   )
 }
 
-const p2pAct = (state: CardState, dialog: P2pDialog) => {
+const p2pAct = (identity: P2pApp) => (state: CardState, dialog: P2pDialog) => {
+  const { p2p } = identity
+
   const entry = p2pEntry(state)
   if (entry === 'home') p2p.openHome()
   else p2p.openDialog(entry === 'enable' ? { kind: 'enable' } : dialog)
 }
 
 function QuickActions() {
+  const identity = useP2pApp()
+
   const acct = useAccount()
   const openDialog = useStore(s => s.openDialog)
   const startDm = useStore(s => s.startDm)
@@ -297,7 +304,7 @@ function QuickActions() {
             <button
               type="button"
               data-p2p-action="contact"
-              onClick={() => p2pAct(p2pState, { kind: 'add' })}
+              onClick={() => identity && p2pAct(identity)(p2pState, { kind: 'add' })}
               className={p2pActionCls}
             >
               <UserPlus size={18} className="shrink-0 text-tertiary" />
@@ -306,7 +313,9 @@ function QuickActions() {
             <button
               type="button"
               data-p2p-action="join"
-              onClick={() => p2pAct(p2pState, { kind: 'server_new', tab: 'join' })}
+              onClick={() =>
+                identity && p2pAct(identity)(p2pState, { kind: 'server_new', tab: 'join' })
+              }
               className={p2pActionCls}
             >
               <Waypoints size={18} className="shrink-0 text-tertiary" />
@@ -503,6 +512,11 @@ function RecentRow({ recent }: { recent: Exclude<Recent, { kind: 'p2p' }> }) {
 
 // A P2P conversation or channel visited: names, counts and actions come from P2P.
 function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) {
+  const identity = useP2pApp()
+  const p2pServer = identity?.p2pServer
+  const p2p = identity?.p2p
+  const p2pDm = identity?.p2pDm
+
   const acct = useAccount()
   const key = recentKey(recent)
   const { room, ch } = recent
@@ -526,10 +540,10 @@ function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) 
         : ''
       : (server?.channels.find(c => c.id === ch)?.name ?? '')
   const open = () => {
-    if (ch !== null) return p2pServer.open(room, ch)
+    if (ch !== null) return p2pServer?.open(room, ch)
     if (!peer) return
-    p2p.openHome()
-    void p2pDm.openDm(peer.ik)
+    p2p?.openHome()
+    void p2pDm?.openDm(peer.ik)
   }
   return (
     <RecentItem
@@ -561,7 +575,7 @@ function P2pRecentRow({ recent }: { recent: Extract<Recent, { kind: 'p2p' }> }) 
       open={open}
       card={() => ({
         read: unread || pings ? [key] : [],
-        markRead: () => p2pDm.markRead(ch === null ? room : `${room}/${ch}`),
+        markRead: () => p2pDm?.markRead(ch === null ? room : `${room}/${ch}`),
         forget: acct.lifetime.inSession(() => acct.home.forgetRecent(key)),
       })}
     />
@@ -764,6 +778,10 @@ const useP2pUnread = () => {
 }
 
 function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {
+  const identity = useP2pApp()
+
+  const p2pServer = identity?.p2pServer
+
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const shown = useMask(own)(v.name)
   return (
@@ -779,15 +797,19 @@ function P2pServerUnreadRow({ v, pings, channels }: P2pUnreadRow) {
       p2p
       detail={serverDetail(channels, pings)}
       pings={pings}
-      open={() => p2pServer.open(v.id)}
-      mark={() => p2pServer.markAllRead(v.id)}
+      open={() => p2pServer?.open(v.id)}
+      mark={() => p2pServer?.markAllRead(v.id)}
       markLabel={`Mark ${shown} as read`}
-      card={() => ({ read: [v.id], markRead: () => p2pServer.markAllRead(v.id) })}
+      card={() => ({ read: [v.id], markRead: () => p2pServer?.markAllRead(v.id) })}
     />
   )
 }
 
 function P2pDmUnreadRow({ pings }: { pings: number }) {
+  const identity = useP2pApp()
+  const p2p = identity?.p2p
+  const p2pDm = identity?.p2pDm
+
   return (
     <UnreadRow
       id="p2p_dms"
@@ -800,10 +822,10 @@ function P2pDmUnreadRow({ pings }: { pings: number }) {
       p2p
       detail={pings > 0 ? pingLabel(pings) : 'Unread messages'}
       pings={pings}
-      open={p2p.openHome}
-      mark={p2pDm.markAllRead}
+      open={() => p2p?.openHome()}
+      mark={() => p2pDm?.markAllRead()}
       markLabel="Mark P2P direct messages as read"
-      card={() => ({ read: ['p2p_dms'], markRead: p2pDm.markAllRead })}
+      card={() => ({ read: ['p2p_dms'], markRead: () => p2pDm?.markAllRead() })}
     />
   )
 }
@@ -811,6 +833,9 @@ function P2pDmUnreadRow({ pings }: { pings: number }) {
 const UNREAD_SHOWN = 6
 
 function UnreadSummary() {
+  const identity = useP2pApp()
+  const p2pMarkAll = identity?.p2pMarkAll
+
   const acct = useAccount()
   const ready = useStore(s => s.readsReady)
   const key = useStore(acct.home.unreadSummaryKey)
@@ -836,7 +861,7 @@ function UnreadSummary() {
             type="button"
             title="Mark all as read"
             aria-label="Mark all as read"
-            onClick={() => askMarkAllRead(p2pMarkAll())}
+            onClick={() => askMarkAllRead(p2pMarkAll?.())}
             className="rounded-full p-1.5 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
           >
             <CheckCheck size={18} />
@@ -944,6 +969,10 @@ function PinnedDms() {
 const P2P_ROW_ICONS = { requests: MessageCircle, invites: Compass, asks: Users } as const
 
 function P2pCard() {
+  const identity = useP2pApp()
+  const p2p = identity?.p2p
+  const p2pDm = identity?.p2pDm
+
   const acct = useAccount()
 
   const card = useP2pCard()
@@ -965,7 +994,7 @@ function P2pCard() {
         <P2pBadge />
         <button
           type="button"
-          onClick={() => p2p.openHome()}
+          onClick={() => p2p?.openHome()}
           className={`${textBtn} ml-auto shrink-0`}
         >
           Open
@@ -983,7 +1012,7 @@ function P2pCard() {
           )}
           <button
             type="button"
-            onClick={() => p2p.openDialog({ kind: 'enable' })}
+            onClick={() => p2p?.openDialog({ kind: 'enable' })}
             className={`${filledBtn} mx-2 mt-2 self-start`}
           >
             Turn on P2P
@@ -1014,7 +1043,7 @@ function P2pCard() {
                 key={row.id}
                 type="button"
                 data-p2p-home-row={row.id}
-                onClick={() => p2p.openHome()}
+                onClick={() => p2p?.openHome()}
                 className={rowCls}
               >
                 <PlaceGlyph p2p>
@@ -1037,9 +1066,9 @@ function P2pCard() {
                       data-p2p-home-contact={c.ik}
                       title={label}
                       aria-label={label}
-                      onClick={() => void p2pDm.openDm(c.ik)}
+                      onClick={() => void p2pDm?.openDm(c.ik)}
                       {...longPress((x, y) =>
-                        openActionMenu(x, y, { kind: 'p2p_contact', c, me }, {}, acct)
+                        openActionMenu(x, y, { kind: 'p2p_contact', c, me }, {}, acct, identity)
                       )}
                       className="relative flex rounded-full focus-visible:outline-2 focus-visible:outline-primary"
                     >
@@ -1055,7 +1084,7 @@ function P2pCard() {
             <div className="flex flex-wrap gap-2 px-2 pt-2">
               <button
                 type="button"
-                onClick={() => p2p.openDialog({ kind: 'add' })}
+                onClick={() => p2p?.openDialog({ kind: 'add' })}
                 className={`${textBtn} flex items-center gap-1.5`}
               >
                 <UserPlus size={16} />
@@ -1063,7 +1092,7 @@ function P2pCard() {
               </button>
               <button
                 type="button"
-                onClick={() => p2p.openDialog({ kind: 'add', tab: 'mine' })}
+                onClick={() => p2p?.openDialog({ kind: 'add', tab: 'mine' })}
                 className={`${textBtn} flex items-center gap-1.5`}
               >
                 <QrCode size={16} />
@@ -1071,7 +1100,7 @@ function P2pCard() {
               </button>
               <button
                 type="button"
-                onClick={() => p2p.openDialog({ kind: 'server_new', tab: 'join' })}
+                onClick={() => p2p?.openDialog({ kind: 'server_new', tab: 'join' })}
                 className={`${textBtn} flex items-center gap-1.5`}
               >
                 <Waypoints size={16} />

@@ -1,4 +1,8 @@
 'use client'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
+
 import { useAccount } from '../../lib/client/react'
 
 import { useEffect, useState } from 'react'
@@ -16,10 +20,10 @@ import {
   X,
 } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
-import { startDownload } from '../../lib/actions/p2p_chat'
+import { peerChat } from '../../lib/actions/p2p_chat'
 import { fmtSize } from '../../lib/bytes'
 import { downloadName, kindOf } from '../../lib/sniff'
-import { p2pFiles, useP2p, type FileView, type PendingFile } from '../../lib/p2p/app'
+import { type FileView, type PendingFile } from '../../lib/p2p/app'
 import type { Attachment } from '../../lib/p2p/content'
 import { AUTO_PAUSED_TEXT } from '../../lib/p2p/dm'
 import { SpoilerCover } from '../markdown_message'
@@ -70,6 +74,9 @@ export const statusText = (v: FileView | undefined) => {
 }
 
 function useThumb(thumb: string | undefined) {
+  const identity = useP2pApp()!
+  const { p2pFiles } = identity
+
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
     let live = true
@@ -82,6 +89,9 @@ function useThumb(thumb: string | undefined) {
 }
 
 function useFileUrl(h: string, ready: boolean) {
+  const identity = useP2pApp()!
+  const { p2pFiles } = identity
+
   const [url, setUrl] = useState<string | null>(null)
   useEffect(() => {
     if (!ready) return setUrl(null)
@@ -96,6 +106,9 @@ function useFileUrl(h: string, ready: boolean) {
 }
 
 function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own: boolean }) {
+  const identity = useP2pApp()!
+  const { p2pFiles } = identity
+
   const acct = useAccount()
 
   // Shown cleaned like the saved name: no direction overrides or control characters.
@@ -141,7 +154,7 @@ function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own:
           title={`Download ${fmtSize(att.size)}`}
           aria-label="Download"
           disabled={!v || v.holders === 0}
-          onClick={() => startDownload(att, acct)}
+          onClick={() => peerChat.forIdentity(identity).startDownload(att, acct)}
           className={iconBtn}
         >
           {kind === null && claimKind(att) === 'video' ? (
@@ -315,6 +328,9 @@ export function AttachmentList({
 }
 
 function PendingChip({ room, p }: { room: string; p: PendingFile }) {
+  const identity = useP2pApp()!
+  const { p2pFiles } = identity
+
   const ready = p.hashed !== null && p.preview !== null
   const thumb = useThumb(p.preview?.thumb)
   return (
@@ -371,7 +387,7 @@ function PendingChip({ room, p }: { room: string; p: PendingFile }) {
   )
 }
 
-export function PendingFiles({ room }: { room: string }) {
+function PendingFilesBody({ room }: { room: string }) {
   const list = useP2p(s => s.attaching[room])
   if (!list?.length) return null
   return (
@@ -389,3 +405,5 @@ export function PendingFiles({ room }: { room: string }) {
     </div>
   )
 }
+
+export const PendingFiles = withP2pIdentity(PendingFilesBody)

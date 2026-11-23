@@ -5,7 +5,6 @@ export {
   emptySearch,
   chatKey,
   threadKey,
-  useP2p,
   p2pKey,
   parseOn,
   importsKey,
@@ -62,3 +61,5 @@ export { ELSEWHERE_IMPORT, p2pTransfer } from './move'
 export type { Unlocked, FilesPart } from './move'
 
 export { createP2pApp, type P2pApp } from './runtime'
+
+export { useP2p, useP2pApp, P2pProvider } from '../../client/p2p_react'

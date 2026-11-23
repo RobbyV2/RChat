@@ -1,3 +1,4 @@
+import { peerStorage } from '../client/keys'
 import { fmtSize, plural } from '../bytes'
 import { home, readLocal, writeLocal, type InstanceConnection } from '../instances'
 import { fit, localDefaults, RANGES, type Local } from './limits'
@@ -93,10 +94,10 @@ export const instanceLocal = (info: HasLimits = home.info): Local =>
 export const accountLimits = (info: HasLimits, raw: string | null): Local =>
   applyUser(instanceLocal(info), parseUserLimits(raw))
 
-type LimitConnection = Pick<InstanceConnection, 'info' | 'scoped'>
+type LimitConnection = InstanceConnection
 
 const storageKey = (username: string, conn: LimitConnection, local: string) =>
-  conn.scoped(userLimitsKey(username) + (local === 'main' ? '' : `~${local}`))
+  peerStorage(conn, username, local).scoped(userLimitsKey(username))
 
 export const readUserLimits = (username: string, conn: LimitConnection = home, local = 'main') =>
   parseUserLimits(readLocal(storageKey(username, conn, local)))

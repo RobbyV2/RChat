@@ -249,7 +249,9 @@ export const presenceSlice = (set: SetState, get: GetState, { acct }: { acct: Ac
   const noteTyping = (scope: string, active: boolean) => {
     const { typingOn, me, guest } = get()
     if (!typingOn || !me || guest) return
-    const { next, send } = nextTyping(outgoing, scope, active, Date.now())
+    // The instance thread panel can remain open alongside the peer conversation.
+    const visible = scope.startsWith('t') || !acct.identities.coversView()
+    const { next, send } = nextTyping(outgoing, scope, active && visible, Date.now())
     outgoing = next
     sendTyping(send)
   }

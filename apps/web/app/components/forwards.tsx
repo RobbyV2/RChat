@@ -1,12 +1,14 @@
 'use client'
+import type { ForwardSource } from '../lib/forward'
+import type { AccountSession } from '../lib/client/session'
+
 import { useAccount, useStoreApi } from '../lib/client/react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Forward, Image as ImageIcon, SendHorizontal } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { textOnlyDestination } from '../lib/channel_content'
 import { clipAllowed, sourceAccess } from '../lib/forward_viewing'
 import { useForwardAccess } from '../lib/forward_access'
-import { useP2p } from '../lib/p2p/app/store'
 import { forwardOrigin, forwardPending } from '../lib/forward'
 import type { Message } from '../lib/types'
 import type { ToolbarAction } from './message_toolbar'
@@ -35,19 +37,31 @@ export const forwardAction = (onClick: () => void): ToolbarAction => ({
   onClick,
 })
 
+const noSubscription = () => () => {}
+
+function usePeerSource(account: AccountSession, source?: ForwardSource) {
+  const peer = () =>
+    source?.kind === 'p2p' || (source?.kind === 'direct' && source.identity)
+      ? account.identities.get(source.identity)
+      : undefined
+  const app = useSyncExternalStore(account.identities.subscribe, peer, peer)
+  const servers = () => app?.useP2p.getState().servers
+  useSyncExternalStore(app?.useP2p.subscribe ?? noSubscription, servers, servers)
+}
+
 export const useForwardClip = () => {
   const ownerSession = useAccount()
   ownerSession.viewing.useViewing(s => s.revision)
-  useP2p(s => s.servers)
   const clip = useStore(s => s.forwardClip)
-  const allowed = useStore(s => !!clip && clipAllowed(s, clip, ownerSession.viewing))
+  usePeerSource(ownerSession, clip?.source)
+  usePeerSource(ownerSession, clip?.quoted)
+  const allowed = useStore(s => !!clip && clipAllowed(s, clip, ownerSession))
   useEffect(() => {
     for (const origin of [clip?.source, clip?.quoted])
       if (
         origin?.kind === 'channel' &&
         origin.server &&
-        sourceAccess(ownerSession.store.getState(), origin, undefined, ownerSession.viewing) ===
-          'unknown'
+        sourceAccess(ownerSession.store.getState(), origin, undefined, ownerSession) === 'unknown'
       )
         void ownerSession.store
           .getState()
@@ -81,7 +95,9 @@ export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: ()
             title: 'Forward',
             body: `This copies the message to ${instance}.`,
             confirm: 'Copy',
-            action: () => sendForward(draftKey),
+            action: () => {
+              if (store.getState().forwardClip === clip) sendForward(draftKey)
+            },
           })
         : sendForward(draftKey)
   return (

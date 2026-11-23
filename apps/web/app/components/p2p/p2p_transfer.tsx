@@ -1,8 +1,11 @@
 'use client'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../../lib/store'
-import { p2p, p2pTransfer, useP2p, type FilesPart, type Unlocked } from '../../lib/p2p/app'
+import { type FilesPart, type Unlocked } from '../../lib/p2p/app'
 import {
   Cancelled,
   fastKdf,
@@ -29,6 +32,9 @@ export interface PassState {
 
 // Off by default, with the size shown. Any size: the files are streamed into the file.
 function FilesOption({ value, onChange }: { value: boolean; onChange: (on: boolean) => void }) {
+  const identity = useP2pApp()!
+  const { p2pTransfer } = identity
+
   const [size, setSize] = useState<number | null>(null)
   useEffect(() => {
     let live = true
@@ -76,7 +82,7 @@ export const SlowNote = () => (
 
 const strengthCls = ['text-error', 'text-error', 'text-tertiary', 'text-primary']
 
-export function P2pExportOption({
+function P2pExportOptionBody({
   on,
   onToggle,
   value,
@@ -87,6 +93,9 @@ export function P2pExportOption({
   value: PassState
   onChange: (v: PassState) => void
 }) {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const strength = passStrength(value.pass, p2p.limits().transfer)
   const problem = value.again ? passProblem(value.pass, value.again, p2p.limits().transfer) : null
   usePreloadKdf(on)
@@ -147,13 +156,16 @@ const caseText = {
     'This browser has a different P2P identity. Replacing it deletes that identity, its contacts and its history from this browser for good. Export it first if you still need it.',
 }
 
-export function P2pImport({
+function P2pImportBody({
   section,
   files = null,
 }: {
   section: P2pSection
   files?: FilesPart | null
 }) {
+  const identity = useP2pApp()!
+  const { p2pTransfer, p2p } = identity
+
   const signedIn = useStore(s => s.me !== null)
   const ask = useStore(s => s.askConfirm)
   const closeDialog = useStore(s => s.closeDialog)
@@ -331,3 +343,6 @@ export function P2pImport({
     </section>
   )
 }
+
+export const P2pExportOption = withP2pIdentity(P2pExportOptionBody)
+export const P2pImport = withP2pIdentity(P2pImportBody)

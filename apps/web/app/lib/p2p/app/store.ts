@@ -1,7 +1,9 @@
+import { peerStorage } from '../../client/keys'
+import { client } from '../../client/client'
 import { resetHandlers } from '../identity_scope'
 import type { AccountSession } from '../../client/session'
 import { create } from 'zustand'
-import { home, readLocal, sessionStore, writeLocal } from '../../instances'
+import { readLocal, sessionStore, writeLocal } from '../../instances'
 import { emptyLayout, type Layout } from '../../nav_layout'
 import type { AlertInput } from '../../notices'
 import { EMPTY_NOTIFY, type NotifyPrefs } from '../../notify'
@@ -328,7 +330,7 @@ export function createStorePart(scope: IdentityScope) {
 
   const readOn = (username: string) => {
     try {
-      return parseOn(readLocal(scope.scoped(p2pKey(username))))
+      return parseOn(readLocal(scope.scoped(p2pKey(username), username)))
     } catch {
       return false
     }
@@ -336,7 +338,10 @@ export function createStorePart(scope: IdentityScope) {
 
   const writeOn = (username: string, on: boolean) =>
     scope.current(username) &&
-    writeLocal(scope.scoped(p2pKey(username)), on ? JSON.stringify({ v: 1, on: true }) : null)
+    writeLocal(
+      scope.scoped(p2pKey(username), username),
+      on ? JSON.stringify({ v: 1, on: true }) : null
+    )
 
   // Transfer files imported in this browser, kept even when its P2P data is removed: importing
   // one again as a new device would make a second device of the identity. { v: 1, ids }.
@@ -360,13 +365,13 @@ export function createStorePart(scope: IdentityScope) {
 
   const identityLimits = (username: string) =>
     accountLimits(
-      (scope.owner?.conn ?? home).info,
-      readLocal(scope.scoped(userLimitsKey(username)))
+      (scope.owner?.conn ?? client.shown().conn).info,
+      readLocal(scope.scoped(userLimitsKey(username), username))
     )
 
   const readImports = (username: string) => {
     try {
-      const raw = readLocal(scope.scoped(importsKey(username)))
+      const raw = readLocal(scope.scoped(importsKey(username), username))
       return parseImports(raw, identityLimits(username).transfer)
     } catch {
       return []
@@ -376,7 +381,7 @@ export function createStorePart(scope: IdentityScope) {
   const rememberImport = (username: string, id: string) =>
     scope.current(username) &&
     writeLocal(
-      scope.scoped(importsKey(username)),
+      scope.scoped(importsKey(username), username),
       JSON.stringify({
         v: 1,
         ids: [...readImports(username).filter(x => x !== id), id].slice(
@@ -533,10 +538,10 @@ export function createStorePart(scope: IdentityScope) {
   }
 
   const readAuto = (username: string | null) => {
-    const l = instanceLocal((scope.owner?.conn ?? home).info)
+    const l = instanceLocal((scope.owner ?? client.shown()).conn.info)
     if (!username) return parseAuto(null, l)
     try {
-      return parseAuto(readLocal(scope.scoped(autoKey(username))), l)
+      return parseAuto(readLocal(scope.scoped(autoKey(username), username)), l)
     } catch {
       return parseAuto(null, l)
     }
@@ -549,11 +554,12 @@ export function createStorePart(scope: IdentityScope) {
   // The open P2P home survives a reload of this tab.
   const HOME_KEY = 'rchat_p2p_home'
 
-  const readHome = (username: string) => sessionStore.getItem(scope.scoped(HOME_KEY)) === username
+  const readHome = (username: string) =>
+    sessionStore.getItem(scope.scoped(HOME_KEY, username)) === username
 
   const writeHome = (username: string | null) => {
     if (!scope.current(username ?? undefined)) return
-    if (username) sessionStore.setItem(scope.scoped(HOME_KEY), username)
+    if (username) sessionStore.setItem(scope.scoped(HOME_KEY, username), username)
     else sessionStore.removeItem(scope.scoped(HOME_KEY))
   }
   return {
@@ -631,12 +637,16 @@ export function createStorePart(scope: IdentityScope) {
 export const legacyScope: IdentityScope = {
   ...resetHandlers(),
   localId: 'main',
-  get host() {
-    return home.host
-  },
+  dbHost: username =>
+    peerStorage((legacyStore.p2pHost.account ?? client.shown()).conn, username).host,
   current: () => true,
   options: {},
-  scoped: key => home.scoped(key),
+  scoped: (key, username) => {
+    const owner = legacyStore.p2pHost.account ?? client.shown()
+    return peerStorage(owner.conn, username ?? owner.store.getState().me?.username ?? null).scoped(
+      key
+    )
+  },
   onDispose: () => {},
 }
 

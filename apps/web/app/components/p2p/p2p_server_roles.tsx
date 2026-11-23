@@ -1,16 +1,21 @@
 'use client'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
+import { legacyP2pApp, type P2pApp } from '../../lib/p2p/app/runtime'
+
 import { useAccount } from '../../lib/client/react'
 import { client } from '../../lib/client/client'
 
 import { useState, type ReactNode, type SyntheticEvent } from 'react'
 import { Crown, GripVertical, Trash2, X } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
-import { memberName, p2p, p2pServer, useP2p } from '../../lib/p2p/app'
+
 import { ownsP2pServer } from '../../lib/p2p/server/types'
 import { registerAppActions } from '../../lib/actions'
 import { ctxFor } from '../../lib/actions/ctx'
 import { itemFor, menuItems, openActionMenu } from '../../lib/actions/menu'
-import { deleteRole, moveRoles, takeRole } from '../../lib/actions/p2p_server'
+import { peerServer } from '../../lib/actions/p2p_server'
 import type { Target } from '../../lib/actions/types'
 import {
   ALLOW_BOTH,
@@ -65,25 +70,39 @@ const stop = (e: SyntheticEvent) => e.stopPropagation()
 const keepPress = { onPointerDown: stop, onTouchStart: stop, onContextMenu: stop }
 
 // Toggles of a role's bits: a turned-on bit needs it ourselves (role_bits).
-const bitChecks = (v: ServerView, role: string, value: number) => ({
-  value,
-  allowed: (next: number) => (next & ~value & ~v.perms) === 0,
-  onChange: (next: number) => {
-    const bit = next ^ value
-    void p2pServer.setRoleBit(v.id, role, bit, (next & bit) !== 0)
-  },
-})
+const bitChecks = (identity: P2pApp) => (v: ServerView, role: string, value: number) => {
+  const { p2pServer } = identity
+  return {
+    value,
+    allowed: (next: number) => (next & ~value & ~v.perms) === 0,
+    onChange: (next: number) => {
+      const bit = next ^ value
+      void p2pServer.setRoleBit(v.id, role, bit, (next & bit) !== 0)
+    },
+  }
+}
 
-const rows = (target: Target, acct = client.shown()) => {
+const rows = (
+  target: Target,
+  acct = client.shown(),
+  identity = acct.identities.get() ?? legacyP2pApp
+) => {
   registerAppActions()
-  return menuItems(ctxFor(acct.store.getState(), target, 'menu', acct))
+  return menuItems(ctxFor(acct.store.getState(), target, 'menu', acct, identity))
 }
 
 // A role's menu (right-click, long-press): move it a step, or delete it.
-export const roleItems = (v: ServerView, r: RoleView, acct = client.shown()) =>
-  rows({ kind: 'p2p_role', v, r }, acct)
+export const roleItems = (
+  v: ServerView,
+  r: RoleView,
+  acct = client.shown(),
+  identity = acct.identities.get() ?? legacyP2pApp
+) => rows({ kind: 'p2p_role', v, r }, acct, identity)
 
 function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
+  const identity = useP2pApp()!
+  const { p2p, p2pServer } = identity
+
   const acct = useAccount()
 
   const own = useP2p(s => ownsP2pServer(v, s.me))
@@ -92,14 +111,20 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
   const locked = !can(v, P.ManageRoles) ? 'Needs Manage roles' : r.below ? null : ROLE_LOCKED
   const fixed = v.roles.filter(x => !x.below).length
   const menu = (x: number, y: number) =>
-    openActionMenu(x, y, { kind: 'p2p_role', v, r }, undefined, acct)
+    openActionMenu(x, y, { kind: 'p2p_role', v, r }, undefined, acct, identity)
   const handle = edit
     ? longPress(menu, {
         group: 'p2p-roles',
         key: r.id,
         zones: z => z === 'p2p-roles',
         onDrop: ({ index }) =>
-          moveRoles(v, placeRole(v.roles, r.id, fixed + index, v.rank, p2p.limits().server), acct),
+          peerServer
+            .forIdentity(identity)
+            .moveRoles(
+              v,
+              placeRole(v.roles, r.id, fixed + index, v.rank, p2p.limits().server),
+              acct
+            ),
       })
     : longPress(menu)
   return (
@@ -142,7 +167,7 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
         )}
         {edit && (!r.held || can(v, P.ManageChannels)) && (
           <button
-            onClick={() => deleteRole(v, r, acct)}
+            onClick={() => peerServer.forIdentity(identity).deleteRole(v, r, acct)}
             aria-label={`Delete ${mask(r.name)}`}
             title={`Delete ${mask(r.name)}`}
             className={dangerBtn}
@@ -154,13 +179,16 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
       <p className="text-xs text-on-surface-variant">
         {r.holders} {r.holders === 1 ? 'member' : 'members'}
       </p>
-      <PermChecks items={PERM_ITEMS} locked={locked} {...bitChecks(v, r.id, r.bits)} />
+      <PermChecks items={PERM_ITEMS} locked={locked} {...bitChecks(identity)(v, r.id, r.bits)} />
       {locked && can(v, P.ManageRoles) && <Note>{locked}</Note>}
     </div>
   )
 }
 
-export function RolesTab({ v }: { v: ServerView }) {
+function RolesTabBody({ v }: { v: ServerView }) {
+  const identity = useP2pApp()!
+  const { p2p, p2pServer } = identity
+
   const edit = can(v, P.ManageRoles)
   const fixed = v.roles.filter(r => !edit || !r.below)
   const movable = edit ? v.roles.filter(r => r.below) : []
@@ -186,7 +214,7 @@ export function RolesTab({ v }: { v: ServerView }) {
         <PermChecks
           items={EVERYONE_ITEMS}
           locked={everyoneLocked}
-          {...bitChecks(v, EVERYONE, v.everyone)}
+          {...bitChecks(identity)(v, EVERYONE, v.everyone)}
         />
       </div>
       {edit && (
@@ -210,14 +238,21 @@ export function RolesTab({ v }: { v: ServerView }) {
 // ----- A member's roles -----
 
 // The roles we may give or take, as the member menu's Roles submenu lists them.
-export const roleMenuItems = (v: ServerView, m: MemberView, acct = client.shown()) => {
+export const roleMenuItems = (
+  v: ServerView,
+  m: MemberView,
+  acct = client.shown(),
+  identity = acct.identities.get() ?? legacyP2pApp
+) => {
   registerAppActions()
-  const ctx = ctxFor(acct.store.getState(), { kind: 'p2p_member', v, m }, 'menu', acct)
+  const ctx = ctxFor(acct.store.getState(), { kind: 'p2p_member', v, m }, 'menu', acct, identity)
   return itemFor('p2p_member_roles', ctx)?.submenu ?? []
 }
 
 // The card on top of a member's menu: who they are and their roles, each removable where we may.
-export function MemberCard({ room, ik }: { room: string; ik: string }) {
+function MemberCardBody({ room, ik }: { room: string; ik: string }) {
+  const identity = useP2pApp()!
+
   const acct = useAccount()
 
   const v = useP2p(s => s.servers[room])
@@ -262,7 +297,7 @@ export function MemberCard({ room, ik }: { room: string; ik: string }) {
                 <button
                   onClick={e => {
                     e.stopPropagation()
-                    takeRole(v, m, r, acct)
+                    peerServer.forIdentity(identity).takeRole(v, m, r, acct)
                   }}
                   title={`Remove ${mask(r.name)}`}
                   aria-label={`Remove ${mask(r.name)}`}
@@ -287,25 +322,32 @@ const mayWrite = mayWriteRow
 
 // A subject's name as text (labels): @everyone, the role's (`maskRole`) or the member's (`mask`,
 // never your own).
-const subjectText = (
-  streamer: boolean,
-  v: ServerView,
-  subj: string,
-  me: string | null,
-  maskRole: (t: string) => string,
-  mask: (t: string) => string
-) =>
-  subj === `r:${EVERYONE}`
-    ? '@everyone'
-    : subj.startsWith('r:')
-      ? maskRole(v.roles.find(x => `r:${x.id}` === subj)?.name ?? 'Deleted role')
-      : streamer
-        ? 'this member'
-        : subj === `u:${me}`
-          ? memberName(v.id, subj.slice(2))
-          : mask(memberName(v.id, subj.slice(2)))
+const subjectText =
+  (identity: P2pApp) =>
+  (
+    streamer: boolean,
+    v: ServerView,
+    subj: string,
+    me: string | null,
+    maskRole: (t: string) => string,
+    mask: (t: string) => string
+  ) => {
+    const { memberName } = identity
+    return subj === `r:${EVERYONE}`
+      ? '@everyone'
+      : subj.startsWith('r:')
+        ? maskRole(v.roles.find(x => `r:${x.id}` === subj)?.name ?? 'Deleted role')
+        : streamer
+          ? 'this member'
+          : subj === `u:${me}`
+            ? memberName(v.id, subj.slice(2))
+            : mask(memberName(v.id, subj.slice(2)))
+  }
 
 function SubjectName({ v, subj }: { v: ServerView; subj: string }) {
+  const identity = useP2pApp()!
+  const { memberName } = identity
+
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const me = useP2p(s => s.me)
   if (subj === `r:${EVERYONE}`)
@@ -337,7 +379,7 @@ function SubjectName({ v, subj }: { v: ServerView; subj: string }) {
 }
 
 // Members to add to an allow list: searched by name, 50 at a time.
-export function MemberPicker({
+function MemberPickerBody({
   people,
   onPick,
 }: {
@@ -391,7 +433,10 @@ export function MemberPicker({
   )
 }
 
-export function ChannelAccess({ v, c }: { v: ServerView; c: ChannelView }) {
+function ChannelAccessBody({ v, c }: { v: ServerView; c: ChannelView }) {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   const [role, setRole] = useState('')
   const streamer = useStore(s => s.streamer)
   const [picking, setPicking] = useState(false)
@@ -433,7 +478,7 @@ export function ChannelAccess({ v, c }: { v: ServerView; c: ChannelView }) {
         const off = !mayWrite(v, subj)
         const set = (view: boolean, send: boolean) =>
           void p2pServer.setOverwrite(v.id, c.id, subj, overBits(view, send))
-        const name = subjectText(streamer, v, subj, me, maskRole, mask)
+        const name = subjectText(identity)(streamer, v, subj, me, maskRole, mask)
         return (
           <div
             key={subj}
@@ -529,3 +574,8 @@ export function ChannelAccess({ v, c }: { v: ServerView; c: ChannelView }) {
     </div>
   )
 }
+
+export const RolesTab = withP2pIdentity(RolesTabBody)
+export const MemberCard = withP2pIdentity(MemberCardBody)
+export const MemberPicker = withP2pIdentity(MemberPickerBody)
+export const ChannelAccess = withP2pIdentity(ChannelAccessBody)

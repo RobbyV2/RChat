@@ -1,3 +1,4 @@
+import { peerStorage } from '../../client/keys'
 import type { AccountSession } from '../../client/session'
 import { resetHandlers, type IdentityOptions, type IdentityScope } from '../identity_scope'
 import type { P2pParts } from './scope'
@@ -49,6 +50,13 @@ function application(parts: P2pParts, scope: IdentityScope, cleanup: () => void)
       return scope.owner ?? parts.store.p2pHost.account
     },
     localId: scope.localId,
+    inIdentity<T extends unknown[], R>(fn: (...args: T) => R) {
+      const account = scope.owner ?? parts.store.p2pHost.account
+      const mark = account?.lifetime.sessionMark()
+      return (...args: T) => {
+        if (!scope.disposed && account?.lifetime.sessionMark() === mark) return fn(...args)
+      }
+    },
     dispose() {
       void parts.account.p2pAccount(null)
       cleanup()
@@ -69,9 +77,9 @@ export function createP2pApp(
 ) {
   let disposed = false
   const cleanups = new Set<() => void>()
-  const { origin, host } = owner.conn
-  const suffix = owner.conn.scoped('')
+  const { origin } = owner.conn
   const username = owner.store.getState().me?.username
+  const storage = peerStorage(owner.conn, username ?? null, localId)
   const session = owner.lifetime.sessionMark()
   const scope: IdentityScope = {
     ...resetHandlers(),
@@ -81,14 +89,14 @@ export function createP2pApp(
     get disposed() {
       return disposed
     },
-    host,
+    dbHost: () => storage.host,
     current: user =>
       !disposed &&
       owner.conn.origin === origin &&
       owner.lifetime.sessionMark() === session &&
       owner.store.getState().me?.username === username &&
       (user === undefined || user === username),
-    scoped: key => (localId === 'main' ? key : key + '~' + localId) + suffix,
+    scoped: storage.scoped,
     onDispose: fn => {
       cleanups.add(fn)
     },

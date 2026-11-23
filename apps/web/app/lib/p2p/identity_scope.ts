@@ -11,11 +11,11 @@ export interface IdentityScope {
   owner?: AccountSession
   localId: string
   readonly disposed?: boolean
-  readonly host: string
+  dbHost(username: string): string
   current(username?: string): boolean
   resetSignal(): AbortSignal
   options: IdentityOptions
-  scoped(key: string): string
+  scoped(key: string, username?: string): string
   reset(): void
   onReset(fn: () => void): void
   onDispose(fn: () => void): void

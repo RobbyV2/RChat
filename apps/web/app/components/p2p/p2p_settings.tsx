@@ -1,8 +1,12 @@
 'use client'
+import { useAccount } from '../../lib/client/react'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useEffect, useId, useRef, useState } from 'react'
 import { useStore } from '../../lib/store'
-import { autoChoices, p2p, p2pBadge, p2pFiles, useP2p } from '../../lib/p2p/app'
+import { autoChoices } from '../../lib/p2p/app'
 import { cleanName } from '../../lib/p2p/keys'
 import {
   applyUser,
@@ -22,10 +26,19 @@ import { dangerBtn, fieldCls, filledBtn, sectionCls, textBtn } from '../ui'
 import { DevicesSection } from './p2p_server_flows'
 import { MyCode } from './add_contact'
 import { badgeDate, P2pBadge } from './p2p_badge'
-import { confirmReset, ElsewhereNotice, IdentityAlert, MovedBanner, MovingBanner } from './p2p_home'
+import {
+  confirmResetFor,
+  ElsewhereNotice,
+  IdentityAlert,
+  MovedBanner,
+  MovingBanner,
+} from './p2p_home'
 import { LabelText, useInstanceLabel } from '../instance_badge'
 
 function NameField() {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const name = useP2p(s => s.name)
   const [value, setValue] = useState(name)
   useEffect(() => setValue(name), [name])
@@ -60,6 +73,9 @@ export const badgeOffBody = (until: number | null) =>
 
 // Settings > Peer-to-peer > Account badge (opt-in).
 function BadgeSetting() {
+  const identity = useP2pApp()!
+  const { p2pBadge } = identity
+
   const { label } = useInstanceLabel()
   const badge = useP2p(s => s.badge)
   const busy = useP2p(s => s.badgeBusy)
@@ -158,6 +174,9 @@ const CLEAR_DAYS = [7, 30, 90]
 // Settings > Peer-to-peer > Storage: how much one contact's files may download by themselves a
 // day.
 function DailySelect() {
+  const identity = useP2pApp()!
+  const { p2pFiles } = identity
+
   const info = useStore(s => s.instance)
   const [daily, setDaily] = useState(() => p2pFiles.readAuto().daily)
   return (
@@ -183,6 +202,9 @@ function DailySelect() {
 // Settings > Peer-to-peer > Attachments: what downloads by itself, what is stored here, and
 // clearing old downloads.
 function FilesSettings() {
+  const identity = useP2pApp()!
+  const { p2pFiles } = identity
+
   const { label } = useInstanceLabel()
   const usage = useP2p(s => s.fileUsage)
   const textOnly = useStore(s => !s.settings.asset_uploads && !s.settings.p2p_attachments)
@@ -262,6 +284,9 @@ const LIMIT_ROWS: [UserField, string][] = [
 // Settings > Peer-to-peer > Advanced: this account's storage budgets and background sync on this
 // device, on top of the instance's (the defaults). Read when P2P starts.
 function AdvancedLimits() {
+  const limitsOwner = useAccount()
+  const limitsIdentity = useP2pApp()!
+
   const account = useP2p(s => s.account)
   const info = useStore(s => s.instance)
   const focus = useStore(
@@ -273,11 +298,18 @@ function AdvancedLimits() {
     if (focus) ref.current?.scrollIntoView({ block: 'start' })
   }, [focus])
   if (!account) return null
-  const user = readUserLimits(account)
+  const user = readUserLimits(account, limitsOwner.conn, limitsIdentity.localId)
   const base = instanceLocal(info)
   const now = applyUser(base, user)
   const save = (f: UserField | null, n = 0) => {
-    writeUserLimits(account, f ? { ...readUserLimits(account), [f]: n } : { v: 1 })
+    writeUserLimits(
+      account,
+      f
+        ? { ...readUserLimits(account, limitsOwner.conn, limitsIdentity.localId), [f]: n }
+        : { v: 1 },
+      limitsOwner.conn,
+      limitsIdentity.localId
+    )
     bump(x => x + 1)
   }
   const select = (f: UserField, label: string) => {
@@ -321,20 +353,26 @@ const REMOVE_BODY =
 
 // Settings > Peer-to-peer while the instance has P2P off: only removing this browser's data.
 export function P2pOffSection() {
+  const account = useAccount()
+
   const { label } = useInstanceLabel()
   const username = useStore(s => s.me?.username ?? null)
   const off = useStore(s => !s.settings.p2p)
   const ask = useStore(s => s.askConfirm)
-  const [done, setDone] = useState<{ username: string; ok: boolean } | null>(null)
-  if (!off || username === null) return null
-  const result = done?.username === username ? done : null
-  if (!result && !p2p.hasData(username)) return null
-  const remove = () =>
+  const guest = useStore(s => s.guest)
+  const session = account.lifetime.sessionMark()
+  const [done, setDone] = useState<{ session: object; username: string; ok: boolean } | null>(null)
+  if (!off || guest || username === null) return null
+  const data = account.identities.offlineData()
+  const result = done?.session === session && done.username === username ? done : null
+  if (!result && !data.length) return null
+  const remove = (slot: (typeof data)[number]) =>
     ask({
-      title: REMOVE_TITLE,
+      title:
+        slot.id === 'main' ? REMOVE_TITLE : `Remove P2P data for ${slot.id} from this browser?`,
       body: REMOVE_BODY,
       confirm: 'Remove',
-      action: () => void p2p.removeData(username).then(ok => setDone({ username, ok })),
+      action: () => void slot.remove().then(ok => setDone({ session, username, ok })),
     })
   return (
     <section aria-label="Peer-to-peer">
@@ -344,29 +382,33 @@ export function P2pOffSection() {
           P2P is off on <span className="streamer">{label}</span>. Your P2P data stays on this
           device until you remove it.
         </p>
-        {result?.ok ? (
-          <p role="status" className="text-xs text-on-surface">
-            P2P data removed from this browser.
-          </p>
-        ) : (
-          <>
-            {result && (
-              <p role="alert" className="text-xs text-error">
-                Couldn&apos;t remove P2P data
-              </p>
-            )}
-            <button onClick={remove} className={dangerBtn}>
-              Remove P2P data from this browser
-            </button>
-          </>
-        )}
+        {result &&
+          (result.ok ? (
+            <p role="status" className="text-xs text-on-surface">
+              P2P data removed from this browser.
+            </p>
+          ) : (
+            <p role="alert" className="text-xs text-error">
+              Couldn&apos;t remove P2P data
+            </p>
+          ))}
+        {data.map(slot => (
+          <button key={slot.id} onClick={() => remove(slot)} className={dangerBtn}>
+            {slot.id === 'main'
+              ? 'Remove P2P data from this browser'
+              : `Remove P2P data for ${slot.id} from this browser`}
+          </button>
+        ))}
       </div>
     </section>
   )
 }
 
 // Settings > Peer-to-peer. Off until the user turns it on; only for signed-in accounts.
-export function P2pSection() {
+function P2pSectionBody() {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const signedIn = useStore(s => s.me !== null)
   const enabled = useP2p(s => s.enabled)
   const loading = useP2p(s => s.loading)
@@ -489,7 +531,7 @@ export function P2pSection() {
           <AdvancedLimits />
           <DevicesSection />
           <div className="flex flex-wrap gap-2 px-1">
-            <button onClick={() => confirmReset(ask)} className={textBtn}>
+            <button onClick={() => confirmResetFor(identity)(ask)} className={textBtn}>
               Reset identity
             </button>
             <button onClick={remove} className={dangerBtn}>
@@ -501,3 +543,5 @@ export function P2pSection() {
     </section>
   )
 }
+
+export const P2pSection = withP2pIdentity(P2pSectionBody)

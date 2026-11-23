@@ -8,6 +8,7 @@ import type { Selection } from './selection'
 import type { PendingUpload } from './attachments'
 import type { Decision, RelayChoice, RelayPrefs } from './relays'
 import type { CallRoute } from './call_choice'
+import type { P2pApp } from './p2p/app/runtime'
 import type { ConfigDoc, SectionKey } from './config_transfer'
 import type { EmojiPrefs } from './emoji'
 import type { ForwardClip } from './forward'
@@ -414,7 +415,11 @@ export interface RChatState {
   syncInvite: () => boolean
   syncConfigLink: () => boolean
   closeConfigLink: () => void
-  applyConfig: (doc: ConfigDoc, keys: SectionKey[]) => Promise<string | null>
+  applyConfig: (
+    doc: ConfigDoc,
+    keys: SectionKey[],
+    identity?: P2pApp | null
+  ) => Promise<string | null>
   showToast: (text: string, name?: string) => void
   consumeInviteJoin: () => void
   startDm: (username: string) => Promise<void>

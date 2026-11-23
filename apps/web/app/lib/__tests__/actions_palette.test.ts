@@ -1,3 +1,4 @@
+import { peerStorage } from '../client/keys'
 import { afterAll, afterEach, beforeAll, expect, test } from 'bun:test'
 import { Copy, Trash2 } from 'lucide-react'
 import { ctxFor, paletteCtx } from '../actions/ctx'
@@ -71,7 +72,9 @@ const bobby = user('bob', { display_name: 'Bobby' })
 // No P2P for alice, on or kept on this device: the rows that need it (Settings: P2P) stay out.
 const noP2p = () => {
   useP2p.setState({ account: null, enabled: false })
-  localStorage.removeItem('rchat_p2p:alice')
+  localStorage.removeItem(
+    peerStorage(paletteCtx(useStore.getState()).acct.conn, 'alice').scoped('rchat_p2p:alice')
+  )
 }
 
 const reset = (over: Partial<RChatState> = {}) => {

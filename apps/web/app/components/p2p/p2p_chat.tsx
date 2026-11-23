@@ -1,4 +1,9 @@
 'use client'
+import { identityScopeKey } from '../../lib/p2p/app/host'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
+
 import { useAccount, useStoreApi } from '../../lib/client/react'
 
 import {
@@ -29,20 +34,10 @@ import {
 } from 'lucide-react'
 import { useStore } from '../../lib/store'
 import { openActionMenu } from '../../lib/actions/menu'
-import { confirmDelete, copyForP2p, threadAct } from '../../lib/actions/p2p_chat'
+import { peerChat } from '../../lib/actions/p2p_chat'
 import { noticeOpen } from '../../lib/home'
 import { useHome } from '../../lib/home_store'
-import {
-  chatKey,
-  chatScope,
-  p2pDm,
-  p2pFiles,
-  p2pThread,
-  p2pUser,
-  profileName,
-  useP2p,
-  type P2pChat,
-} from '../../lib/p2p/app'
+import { chatKey, chatScope, type P2pChat } from '../../lib/p2p/app'
 import { hiddenRemovedText, SLOW_HIDDEN_TEXT } from '../../lib/p2p/flows'
 import {
   bodyTooLong,
@@ -166,7 +161,7 @@ export const noteBarCls =
 
 // The note at the top of a conversation. Once closed it stays closed for the account, in every
 // tab.
-export function P2pIntro({ id, children }: { id: string; children: ReactNode }) {
+function P2pIntroBody({ id, children }: { id: string; children: ReactNode }) {
   const acct = useAccount()
   const account = useP2p(s => s.account)
   const open = useHome(s => noticeOpen(s.owner, account, s.prefs, id))
@@ -233,13 +228,16 @@ export const P2pRow = memo(function P2pRow({
   onCopy,
   onJump,
 }: RowProps) {
+  const identity = useP2pApp()!
+  const { p2pDm, p2pThread } = identity
+
   const acct = useAccount()
 
   const actions: ToolbarAction[] = []
   // From the old copy: read-only here.
   const act = canAct && !p.archived
   const can = messageActs(p, act, mine)
-  const thread = threads ? threadAct(p, act) : null
+  const thread = threads ? peerChat.forIdentity(identity).threadAct(p, act) : null
   if (can.edit && !editing) actions.push(editAction(() => p2pDm.startEdit(draftKey, p.id)))
   if (can.reply)
     actions.push({
@@ -262,7 +260,7 @@ export const P2pRow = memo(function P2pRow({
       label: 'Delete message (hold Shift to skip confirmation)',
       icon: Trash2,
       danger: true,
-      onClick: e => confirmDelete(p.id, e.shiftKey, acct),
+      onClick: e => peerChat.forIdentity(identity).confirmDelete(p.id, e.shiftKey, acct),
     })
   const status = mine ? (
     p.failed ? (
@@ -275,7 +273,7 @@ export const P2pRow = memo(function P2pRow({
               Retry
             </button>
             <button
-              onClick={e => confirmDelete(p.id, e.shiftKey, acct)}
+              onClick={e => peerChat.forIdentity(identity).confirmDelete(p.id, e.shiftKey, acct)}
               className="font-medium hover:underline"
             >
               Delete
@@ -439,6 +437,9 @@ function P2pPinRow({
   place: 'conversation' | 'channel'
   onMenu: (p: P2pMessage, x: number, y: number) => void
 }) {
+  const identity = useP2pApp()!
+  const { p2pDm } = identity
+
   const target = p.system?.target ?? null
   return (
     <PinLine
@@ -479,6 +480,9 @@ export function useP2pFlash(
   shared: Message[],
   settle: Parameters<typeof useFocusMessage>[4]
 ) {
+  const identity = useP2pApp()!
+  const { p2pDm } = identity
+
   const focusNum = focus ? (num.get(focus.id) ?? null) : null
   const focusObj = useMemo(
     () => (focus && focusNum !== null ? { id: focusNum, flash: true } : undefined),
@@ -557,7 +561,7 @@ const shownRow = (
     : (s.chat?.messages.find(m => m.id === id) ??
       (s.thread?.head?.id === id ? s.thread.head : s.thread?.messages.find(m => m.id === id)))
 
-export function P2pComposer({
+function P2pComposerBody({
   draftKey: key,
   channelTextOnly = false,
   scope,
@@ -575,7 +579,11 @@ export function P2pComposer({
   nameOf: (ik: string) => string
   disabled: ReactNode
 }) {
-  const { store, viewing, lifetime } = useAccount()
+  const identity = useP2pApp()!
+  const { p2pDm, p2pFiles } = identity
+
+  const account = useAccount()
+  const { store } = account
   const text = useP2p(s => s.drafts[key] ?? '')
   const replying = useP2p(s => (s.replying?.room === key ? s.replying.id : null))
   const replyTo = useP2p(s => shownRow(s, replying))
@@ -594,7 +602,7 @@ export function P2pComposer({
   const textOnly = channelTextOnly || siteTextOnly
   const sel = useRef({ start: 0, end: 0 })
   const typedAt = useRef(0)
-  const getText = () => useP2p.getState().drafts[key] ?? ''
+  const getText = () => identity.useP2p.getState().drafts[key] ?? ''
   const setText = (v: string) => p2pDm.setDraft(key, v)
   const assist = useTextAssist({
     listKey: scope,
@@ -650,7 +658,7 @@ export function P2pComposer({
       draftKey={scope}
       onSend={() => {
         const clip = store.getState().forwardClip
-        if (!clip || !clipAllowed(store.getState(), clip, viewing)) return
+        if (clip !== forwardClip || !clipAllowed(store.getState(), clip, account)) return
         const author = clip.author?.display_name ?? 'Deleted user'
         void p2pDm
           .forward(key, {
@@ -659,9 +667,9 @@ export function P2pComposer({
             body: clip.body ?? clip.snippet,
           })
           .then(
-            lifetime.inSession(ok => {
+            identity.inIdentity(ok => {
               if (!ok) return
-              if (store.getState().forwardClip?.id === clip.id) store.getState().clearForward()
+              if (store.getState().forwardClip === clip) store.getState().clearForward()
               store.getState().showToast('Forwarded to', title)
             })
           )
@@ -866,6 +874,9 @@ export function useP2pList({
   forwardSkip,
   threads,
 }: ListOpts) {
+  const identity = useP2pApp()!
+  const { p2pUser, p2pDm } = identity
+
   const acct = useAccount()
   const { store } = acct
 
@@ -972,7 +983,7 @@ export function useP2pList({
             text: editingState.text,
             listKey: scope,
             focus: editingState.focus,
-            getText: () => useP2p.getState().editing?.text ?? '',
+            getText: () => identity.useP2p.getState().editing?.text ?? '',
             setText: p2pDm.setEditText,
             save: () => void p2pDm.saveEdit(),
             cancel: () => p2pDm.cancelEdit(),
@@ -983,7 +994,7 @@ export function useP2pList({
 
   const menu = (p: P2pMessage, m: Message, x: number, y: number) => {
     if (p.system?.kind === 'pin')
-      return openActionMenu(x, y, { kind: 'p2p_pin_line', p, m }, undefined, acct)
+      return openActionMenu(x, y, { kind: 'p2p_pin_line', p, m }, undefined, acct, identity)
     const chat = { draftKey, canAct, mayPin, mayDelete, forwardSkip, threads, ownName }
     openActionMenu(
       x,
@@ -998,7 +1009,8 @@ export function useP2pList({
             ),
           }
         : undefined,
-      acct
+      acct,
+      identity
     )
   }
   const menuRef = useRef(menu)
@@ -1010,8 +1022,9 @@ export function useP2pList({
     []
   )
   const copyRow = useCallback(
-    (p: P2pMessage, m: Message) => copyForP2p(p, m, ownName(p.sender), draftKey, acct),
-    [ownName, draftKey]
+    (p: P2pMessage, m: Message) =>
+      peerChat.forIdentity(identity).copyForP2p(p, m, ownName(p.sender), draftKey, acct),
+    [ownName, draftKey, identity, acct]
   )
   return {
     me,
@@ -1064,7 +1077,10 @@ export interface ChatBodyProps {
   dataAttr: Record<string, string>
 }
 
-export function P2pChatBody(props: ChatBodyProps) {
+function IdentityChatBody(props: ChatBodyProps) {
+  const identity = useP2pApp()!
+  const { profileName, p2pDm, p2pFiles } = identity
+
   const store = useStoreApi()
   const { chat, canAct, nameOf, people, mayDelete, mayPin, disabled, forwardSkip, typingNames } =
     props
@@ -1083,7 +1099,7 @@ export function P2pChatBody(props: ChatBodyProps) {
   const dragDepth = useRef(0)
 
   const messages = chat.messages ?? EMPTY
-  const scope = chatScope(chat.room, chat.ch)
+  const scope = identityScopeKey(identity.localId, chatScope(chat.room, chat.ch))
   const ownRoom = chat.ch ? chat.room : undefined
   const ownName = useCallback((ik: string) => profileName(ik, ownRoom), [ownRoom])
   const canDrop = canAct && !textOnly && movingAt === null
@@ -1131,7 +1147,7 @@ export function P2pChatBody(props: ChatBodyProps) {
       if (
         typeof document !== 'undefined' &&
         document.visibilityState === 'visible' &&
-        !useP2p.getState().chat?.newer
+        !identity.useP2p.getState().chat?.newer
       )
         p2pDm.markRead(key)
     },
@@ -1343,3 +1359,7 @@ export function P2pChatBody(props: ChatBodyProps) {
     </ChatSourceProvider>
   )
 }
+
+export const P2pIntro = withP2pIdentity(P2pIntroBody)
+export const P2pComposer = withP2pIdentity(P2pComposerBody)
+export const P2pChatBody = withP2pIdentity(IdentityChatBody)

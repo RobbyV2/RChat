@@ -1,3 +1,4 @@
+import { peerStorage } from '../client/keys'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { ctxFor, paletteCtx } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
@@ -170,7 +171,9 @@ describe('the folder color action', () => {
     pick(t, 'Teal')
     await settle()
     expect(p2pFolder()).toEqual(F('p1', { servers: ROOMS, color: '#2a9d9a' }))
-    expect(saved('rchat_p2p_layout:alice')?.servers).toEqual([
+    const { acct, identity } = ctxFor(st(), t, 'menu')
+    const owner = peerStorage(acct.conn, 'alice', identity!.localId)
+    expect(saved(owner.scoped('rchat_p2p_layout:alice'))?.servers).toEqual([
       F('p1', { servers: ROOMS, color: '#2a9d9a' }),
     ])
     expect(folder()).toEqual(F('f1'))

@@ -2,7 +2,7 @@ import { legacyScope } from './store'
 import { client } from '../../client/client'
 import type { AccountSession } from '../../client/session'
 import { instanceLabel } from '../../instance_label'
-import { home, homeLookup, sessionStore, shareOrigin } from '../../instances'
+import { sessionStore, shareOrigin } from '../../instances'
 import { probeAddress } from '../../ice'
 import { keepAsker } from '../keep'
 import { dbName, P2pStore, removeP2pDb } from '../db'
@@ -93,12 +93,13 @@ export function createAccountPart(
     )
   }
 
-  const connection = scope.owner?.conn ?? home
+  const owner = () => scope.owner ?? parts.store.p2pHost.account ?? client.shown()
+  const connection = () => owner().conn
 
-  const homeLabel = () => instanceLabel(connection.info, connection.host)
+  const homeLabel = () => instanceLabel(connection().info, connection().host)
 
   const dbFor = (username: string) => {
-    const name = dbName(scope.host, username)
+    const name = dbName(scope.dbHost(username), username)
     return scope.localId === 'main' ? name : `${name}~${scope.localId}`
   }
 
@@ -332,7 +333,7 @@ export function createAccountPart(
       calls: rt.calls,
       badge: rt.badge,
       inbox: rt.inbox,
-      node: { host: connection.host, visibility: pageVisibility, ...rt.node },
+      node: { host: connection().host, visibility: pageVisibility, ...rt.node },
       dms: {
         ...rt.dms,
         attachments: () => !p2pHost.textOnly(),
@@ -416,7 +417,7 @@ export function createAccountPart(
     const keeper = new BadgeKeeper({
       node: n,
       checkable: () =>
-        peersCanCheck(shareOrigin(null, undefined, connection), parts.badge.badgeLocal),
+        peersCanCheck(shareOrigin(null, undefined, connection()), parts.badge.badgeLocal),
       label: homeLabel,
       request: (ik, ts, proof) => account.api.p2pBinding(ik, ts, proof),
       sub: parts.badge.accountSub,
@@ -544,8 +545,7 @@ export function createAccountPart(
       const chat = useP2p.getState().chat
       if (chat) await parts.dms.loadChat(chat.room, chat.peer)
       // The instance's PeerJS address, on a first visit (later ones keep it).
-      if (!connection.info)
-        await (scope.owner?.discovery ?? homeLookup).settled(LOCAL.misc.infoWaitMs)
+      if (!connection().info) await owner().discovery.settled(LOCAL.misc.infoWaitMs)
       if (state.node !== n) return
       await n.start()
       if (state.node !== n) return

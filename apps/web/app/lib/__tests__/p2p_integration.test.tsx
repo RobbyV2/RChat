@@ -1,3 +1,4 @@
+import { peerStorage } from '../client/keys'
 import 'fake-indexeddb/auto'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { openDB } from 'idb'
@@ -30,7 +31,7 @@ import {
 } from '../p2p/app'
 import { blankRoom } from '../p2p/dag'
 import { refreshRoom, refreshRooms } from '../p2p/app/dms'
-import { dbName, P2pStore } from '../p2p/db'
+import { P2pStore } from '../p2p/db'
 import { createP2pApp } from '../p2p/app/runtime'
 import { home } from '../instances'
 import { P2pOffSection, P2pSection } from '../../components/p2p/p2p_settings'
@@ -97,6 +98,11 @@ import { CallBanner } from '../../components/voice_grid'
 import { markAllReadItem, registerAppActions } from '../actions'
 import { p2p, p2pDm, p2pHost, p2pMarkAll, p2pServer } from '../p2p/app'
 import { me, memoryStorage, user } from './fixtures'
+import { ForwardBar } from '../../components/forwards'
+import { P2pProvider } from '../client/p2p_react'
+import { AccountProvider } from '../client/react'
+import { parseForward, forwardValue } from '../forward'
+import { testAccount } from './test_account'
 import { readText } from './masked_text'
 
 beforeAll(registerAppActions)
@@ -484,7 +490,7 @@ describe('the P2P DM header', () => {
     header.match(/<button([^>]*)><span class="relative shrink-0"><img /)?.[1] ?? ''
 
   test('the avatar keeps its size and the name truncates, with the full name as its title', () => {
-    Object.assign(initial, { me: me('bob') })
+    Object.assign(initial, { me: me('bob'), streamer: false })
     const { long, header } = longChat()
     const avatar = header.match(/<span class="([^"]*)"><img [^>]*width="28" height="28"/)
     expect(avatar?.[1].split(' ')).toContain('shrink-0')
@@ -496,7 +502,7 @@ describe('the P2P DM header', () => {
   })
 
   test('below 360 px the contact shows only its avatar and shield, named by its title and label', () => {
-    Object.assign(initial, { me: me('bob') })
+    Object.assign(initial, { me: me('bob'), streamer: false })
     for (const [over, kind, label] of [
       [{}, 'unverified', 'Not verified'],
       [{ verified: true }, 'verified', 'Verified'],
@@ -577,16 +583,20 @@ describe('rail', () => {
 })
 
 describe('P2P switched off on the instance', () => {
-  const db = () => dbName(home.host, 'bob')
+  const db = () => peerStorage(home, 'bob').db!
   const stored = async () => (await indexedDB.databases()).some(d => d.name === db())
   const settings = (p2p: boolean) => ({ ...saved.settings, p2p })
 
   test('Settings removes P2P data from this browser, and the database is gone', async () => {
-    localStorage.setItem(home.scoped(p2pKey('bob')), JSON.stringify({ v: 1, on: true }))
+    localStorage.setItem(
+      peerStorage(home, 'bob').scoped(p2pKey('bob')),
+      JSON.stringify({ v: 1, on: true })
+    )
     ;(await openDB(db(), 1)).close()
     expect(await stored()).toBe(true)
     await p2pAccount(null)
     Object.assign(initial, { me: me('bob'), settings: settings(false) })
+    useStore.setState({ me: me('bob'), settings: settings(false) })
     const off = render(<P2pOffSection />)
     expect(off).toContain(`P2P is off on <span class="streamer">${home.host}</span>.`)
     expect(off).toContain('Remove P2P data from this browser')
@@ -594,17 +604,21 @@ describe('P2P switched off on the instance', () => {
     expect(render(<P2pOffSection />)).toBe('')
     expect(await p2p.removeData('bob')).toBe(true)
     expect(await stored()).toBe(false)
-    expect(localStorage.getItem(home.scoped(p2pKey('bob')))).toBeNull()
+    expect(localStorage.getItem(peerStorage(home, 'bob').scoped(p2pKey('bob')))).toBeNull()
     expect(useP2p.getState().account).toBeNull()
     Object.assign(initial, { settings: settings(false) })
     expect(render(<P2pOffSection />)).toBe('')
   })
 
   test('after a failed remove, Settings offers removing the data that is left', async () => {
-    localStorage.setItem(home.scoped(p2pKey('bob')), JSON.stringify({ v: 1, on: true }))
+    localStorage.setItem(
+      peerStorage(home, 'bob').scoped(p2pKey('bob')),
+      JSON.stringify({ v: 1, on: true })
+    )
     ;(await openDB(db(), 1)).close()
     await p2pAccount(null)
     Object.assign(initial, { me: me('bob'), settings: settings(false) })
+    useStore.setState({ me: me('bob'), settings: settings(false) })
     const del = indexedDB.deleteDatabase
     indexedDB.deleteDatabase = () => {
       throw new Error('denied')
@@ -630,11 +644,14 @@ describe('P2P switched off on the instance', () => {
 })
 
 describe('removing P2P data while P2P is on', () => {
-  const db = () => dbName(home.host, 'bob')
+  const db = () => peerStorage(home, 'bob').db!
   const stored = async () => (await indexedDB.databases()).some(d => d.name === db())
 
   test('a failed remove shows why and keeps P2P off until turned on', async () => {
-    localStorage.setItem(home.scoped(p2pKey('bob')), JSON.stringify({ v: 1, on: true }))
+    localStorage.setItem(
+      peerStorage(home, 'bob').scoped(p2pKey('bob')),
+      JSON.stringify({ v: 1, on: true })
+    )
     ;(await openDB(db(), 1)).close()
     Object.assign(initial, { me: me('bob') })
     useP2p.setState({ account: 'bob', enabled: true })
@@ -839,8 +856,8 @@ describe('personal filter on P2P names', () => {
     }
     p2pState({ enabled: true, account: 'bob', me: BOB, servers: { [SRV]: v } })
     await setMasking(true, () => Promise.resolve(stub))
-    Object.assign(initial, { profanityReady: true })
-    useStore.setState({ profanityReady: true })
+    Object.assign(initial, { profanityReady: true, streamer: false })
+    useStore.setState({ profanityReady: true, streamer: false })
     const labels = memberMenu(v, member).map(i => i.label)
     expect(labels).toContain('Kick ****lord')
     expect(labels).toContain('Ban ****lord')
@@ -861,14 +878,14 @@ describe('personal filter on P2P names', () => {
 describe('forwarding', () => {
   const stub = (t: string) => t.replace(/shit/gi, '****')
   let list: ReturnType<typeof useP2pList> | null = null
-  function Probe({ messages }: { messages: P2pMessage[] }) {
+  function Probe({ messages, draftKey = ROOM }: { messages: P2pMessage[]; draftKey?: string }) {
     list = useP2pList({
       messages,
       nameOf: ik => maskOf(useStore.getState())(ik === ALICE ? 'Mom' : 'Carol'),
       ownName: ik => profileName(ik),
       people: [],
-      draftKey: ROOM,
-      scope: `d:${ROOM}`,
+      draftKey,
+      scope: `d:${draftKey}`,
       canAct: true,
       mayPin: false,
       mayDelete: () => false,
@@ -878,27 +895,93 @@ describe('forwarding', () => {
     return null
   }
 
-  test('a forward carries the author’s own profile name, never a petname or a masked name', async () => {
-    const m: P2pMessage = {
-      id: 'm1',
-      sender: ALICE,
-      ts: NOW,
-      sentTs: NOW,
-      sortKey: 'm1',
-      seq: 1,
-      body: 'from alice',
-      reply: null,
-      mentions: [],
-      fwd: null,
-      att: [],
-      edited: null,
-      reactions: [],
-      pinned: null,
-      late: false,
-      pending: false,
-      failed: false,
-      call: null,
+  const message: P2pMessage = {
+    id: 'm1',
+    sender: ALICE,
+    ts: NOW,
+    sentTs: NOW,
+    sortKey: 'm1',
+    seq: 1,
+    body: 'from alice',
+    reply: null,
+    mentions: [],
+    fwd: null,
+    att: [],
+    edited: null,
+    reactions: [],
+    pinned: null,
+    late: false,
+    pending: false,
+    failed: false,
+    call: null,
+  }
+
+  test('copy and send use the source identity for colliding channels, threads and direct messages', () => {
+    const account = testAccount('bob', 'https://forward-owner.test')
+    const other = testAccount('bob', 'https://forward-other.test')
+    try {
+      for (const owner of [account, other]) owner.identities.setAccount('bob')
+      const main = account.identities.get()!
+      const work = account.identities.add('work')
+      const elsewhere = other.identities.add('work')
+      for (const app of [main, work, elsewhere])
+        app.useP2p.setState({ servers: { [SRV]: server() } })
+      const target = work.peerTarget(work.useP2p.getState(), SRV, CH)!
+      account.viewing.markPersonally(target, true)
+      const copy = (app: typeof work, key: string) => {
+        render(
+          <AccountProvider session={account}>
+            <P2pProvider identity={app}>
+              <Probe messages={[message]} draftKey={key} />
+            </P2pProvider>
+          </AccountProvider>
+        )
+        const row = list!.rows[0]
+        list!.copyRow(row.p, row.m)
+      }
+      const state = account.store.getState
+      const sent: string[] = []
+      account.store.setState({ sendThreadMessage: body => void sent.push(body) })
+      copy(work, `${SRV}/${CH}#root`)
+      expect(state().forwardClip).toBeNull()
+      copy(main, `${SRV}/${CH}`)
+      expect(state().forwardClip?.source).toEqual({ kind: 'p2p', room: SRV, ch: CH })
+      account.viewing.markPersonally(target, false)
+      copy(work, `${SRV}/${CH}#root`)
+      const clip = parseForward(forwardValue(state().forwardClip))!
+      expect(clip.source).toEqual({ kind: 'p2p', room: SRV, ch: CH, identity: 'work' })
+      account.viewing.markPersonally(target, true)
+      expect(state().forwardClip).toBeNull()
+      account.store.setState({ forwardClip: clip })
+      const bar = (owner: typeof account) => {
+        Object.assign(owner.store.getInitialState(), { forwardClip: clip })
+        return render(
+          <AccountProvider session={owner}>
+            <ForwardBar draftKey="t1" />
+          </AccountProvider>
+        )
+      }
+      expect(bar(account)).not.toContain(message.body)
+      expect(bar(other)).toContain(message.body)
+      state().sendForward('t1')
+      expect(sent).toEqual([])
+      account.viewing.markPersonally(target, false)
+      state().sendForward('t1')
+      expect(sent).toEqual([message.body])
+      copy(main, ROOM)
+      expect(state().forwardClip?.source).toEqual({ kind: 'direct' })
+      copy(work, ROOM)
+      expect(state().forwardClip?.source).toEqual({ kind: 'direct', identity: 'work' })
+      account.identities.unregister('work')
+      expect(state().forwardClip).toBeNull()
+    } finally {
+      account.store.dispose()
+      other.store.dispose()
     }
+  })
+
+  test('a forward carries the author’s own profile name, never a petname or a masked name', async () => {
+    const m = message
     p2pState({
       enabled: true,
       account: 'bob',

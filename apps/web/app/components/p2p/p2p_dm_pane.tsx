@@ -1,11 +1,14 @@
 'use client'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useCallback, useId, useMemo, type ReactNode } from 'react'
 import { ArrowLeft, Menu } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
 import { P2P_DM_INTRO } from '../../lib/home'
-import { p2p, p2pDm, useP2p } from '../../lib/p2p/app'
+
 import { displayName, shieldOf } from '../../lib/p2p/contacts'
 import { fullNote, movedText, withMissed, type P2pMessage } from '../../lib/p2p/dm'
 import { PinsButton } from '../pins'
@@ -44,7 +47,10 @@ const statusLine = (online: boolean, name: string): ReactNode =>
   )
 
 // The open conversation. Beside the instance's DM list it has no way back: the list is there.
-export function P2pDmPane({ onBack, onMenu }: { onBack?: () => void; onMenu: () => void }) {
+function P2pDmPaneBody({ onBack, onMenu }: { onBack?: () => void; onMenu: () => void }) {
+  const identity = useP2pApp()!
+  const { p2p, p2pDm } = identity
+
   const chat = useP2p(s => s.chat)
   const me = useP2p(s => s.me)
   const myName = useP2p(s => s.name)
@@ -278,3 +284,5 @@ export function P2pDmPane({ onBack, onMenu }: { onBack?: () => void; onMenu: () 
     />
   )
 }
+
+export const P2pDmPane = withP2pIdentity(P2pDmPaneBody)

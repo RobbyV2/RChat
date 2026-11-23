@@ -5,8 +5,7 @@ import { useStore } from './client/react'
 
 export { useStore }
 import { defaultViewing, channelTarget, cleanupRemoval, eventRoom } from './viewing'
-import { sourceAccess } from './forward_viewing'
-import { useP2p } from './p2p/app/store'
+import { clearHiddenForward } from './forward_viewing'
 import { home, homeLookup } from './instances'
 import { NO_PINGS } from './pings'
 import { NO_GROUP_PINGS } from './group_pings'
@@ -528,18 +527,6 @@ export function createChatStore(acct: AccountSession) {
     chatStore.setState({ ...pristine }, true)
   }
 
-  const clearHiddenForward = (s: RChatState) => {
-    const clip = s.forwardClip
-    if (
-      clip &&
-      (sourceAccess(s, clip.source, undefined, acct.viewing) === 'hidden' ||
-        (clip.quoted && sourceAccess(s, clip.quoted, undefined, acct.viewing) === 'hidden'))
-    )
-      s.clearForward()
-  }
-  const unsubscribeP2p = useP2p.subscribe((s, prev) => {
-    if (s.servers !== prev.servers) clearHiddenForward(chatStore.getState())
-  })
   // Without each other's people: rosters drop out while their room is closed here.
   const withoutRooms = (marks: Record<number, string[]>, hidden: Set<number>) => {
     const kept = Object.entries(marks).filter(([id]) => !hidden.has(Number(id)))
@@ -547,7 +534,7 @@ export function createChatStore(acct: AccountSession) {
   }
   let closedVoice = new Set<number>()
   const hideClosedRoom = (s: RChatState) => {
-    clearHiddenForward(s)
+    clearHiddenForward(acct, s)
     const hidden = new Set<number>()
     const voiceRooms = new Set<number>()
     for (const [server, detail] of Object.entries(s.servers)) {
@@ -638,7 +625,6 @@ export function createChatStore(acct: AccountSession) {
       unbindMedia?.()
       unbindMedia = undefined
       unsubscribeStore()
-      unsubscribeP2p()
       unsubscribeViewing()
       sessionHub.dispose()
       sessionHub.forgetSession()

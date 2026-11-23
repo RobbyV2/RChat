@@ -215,7 +215,7 @@ export function homeEndpoints(
   }
 }
 
-const defaultEndpoints = (): Endpoints =>
+export const defaultEndpoints = (): Endpoints =>
   homeEndpoints(
     () => (typeof window !== 'undefined' ? window.location : undefined),
     { api: bakedApi, ws: bakedWs },

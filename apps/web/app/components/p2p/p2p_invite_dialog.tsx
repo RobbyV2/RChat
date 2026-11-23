@@ -1,10 +1,13 @@
 'use client'
+import { useAccount } from '../../lib/client/react'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
 
-import { useStoreApi } from '../../lib/client/react'
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
+
 import { useEffect, useMemo, useState } from 'react'
 import { Eye, Waypoints } from 'lucide-react'
 import { useStore } from '../../lib/store'
-import { codeTtls, NEEDS_INVITER, p2p, p2pRail, p2pServer, useP2p } from '../../lib/p2p/app'
+import { codeTtls, NEEDS_INVITER } from '../../lib/p2p/app'
 import { displayName } from '../../lib/p2p/contacts'
 import { P } from '../../lib/p2p/state'
 import { fieldMax } from '../../lib/p2p/event_v2'
@@ -92,8 +95,12 @@ export function CodeBox({ text }: { text: string }) {
 }
 
 // The server's codes: active ones with their string (when made here) and revoke.
-export function CodeList({ room, version }: { room: string; version: number }) {
-  const store = useStoreApi()
+function CodeListBody({ room, version }: { room: string; version: number }) {
+  const ownerAccount = useAccount()
+
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   const v = useP2p(s => s.servers[room])
   const me = useP2p(s => s.me)
   const [list, setList] = useState<CodeRow[] | null>(null)
@@ -140,7 +147,7 @@ export function CodeList({ room, version }: { room: string; version: number }) {
               {live && (mine || manage) && (
                 <button
                   onClick={() =>
-                    store.getState().askConfirm({
+                    ownerAccount.store.getState().askConfirm({
                       title: 'Revoke Invite',
                       body: `Revoke this invite? ${CODE_REVOKE_TEXT}`,
                       confirm: 'Revoke',
@@ -173,7 +180,10 @@ export function CodeList({ room, version }: { room: string; version: number }) {
   )
 }
 
-export function ServerInviteDialog({ room }: { room: string }) {
+function ServerInviteDialogBody({ room }: { room: string }) {
+  const identity = useP2pApp()!
+  const { p2p, p2pServer } = identity
+
   const v = useP2p(s => s.servers[room])
   const contacts = useP2p(s => s.contacts)
   const ttls = codeTtls(p2p.limits().server)
@@ -295,14 +305,18 @@ export function ServerInviteDialog({ room }: { room: string }) {
 
 type NewTab = 'create' | 'join'
 
-export function ServerNewDialog({
+function ServerNewDialogBody({
   tab: first = 'create',
   code: given = '',
 }: {
   tab?: NewTab
   code?: string
 }) {
-  const store = useStoreApi()
+  const ownerAccount = useAccount()
+
+  const identity = useP2pApp()!
+  const { p2pServer, p2p } = identity
+
   const [tab, setTab] = useState<NewTab>(given ? 'join' : first)
   const [name, setName] = useState('')
   const [coOwners, setCoOwners] = useState<string[]>([])
@@ -318,14 +332,14 @@ export function ServerNewDialog({
     setError(null)
     const room = await p2pServer.create(name, coOwners)
     setBusy(false)
-    if (!room) setError(store.getState().toast?.text ?? "Couldn't create the server")
+    if (!room) setError(ownerAccount.store.getState().toast?.text ?? "Couldn't create the server")
   }
   const join = async () => {
     setBusy(true)
     setError(null)
     const room = await p2pServer.join(code)
     setBusy(false)
-    if (!room) setError(store.getState().toast?.text ?? "Couldn't join")
+    if (!room) setError(ownerAccount.store.getState().toast?.text ?? "Couldn't join")
   }
   return (
     <Dialog title="P2P server" onClose={p2p.closeDialog} full>
@@ -480,7 +494,10 @@ export function ServerNewDialog({
   )
 }
 
-export function P2pFolderDialog({ id, colorFirst = false }: { id: string; colorFirst?: boolean }) {
+function P2pFolderDialogBody({ id, colorFirst = false }: { id: string; colorFirst?: boolean }) {
+  const identity = useP2pApp()!
+  const { p2pRail, p2p } = identity
+
   const folder = useP2p(s => s.layout.servers.find(e => typeof e !== 'string' && e.id === id))
   const [name, setName] = useState(typeof folder === 'object' ? (folder.name ?? '') : '')
   const [color, setColor] = useState(typeof folder === 'object' ? (folder.color ?? null) : null)
@@ -516,3 +533,8 @@ export function P2pFolderDialog({ id, colorFirst = false }: { id: string; colorF
     </Dialog>
   )
 }
+
+export const CodeList = withP2pIdentity(CodeListBody)
+export const ServerInviteDialog = withP2pIdentity(ServerInviteDialogBody)
+export const ServerNewDialog = withP2pIdentity(ServerNewDialogBody)
+export const P2pFolderDialog = withP2pIdentity(P2pFolderDialogBody)

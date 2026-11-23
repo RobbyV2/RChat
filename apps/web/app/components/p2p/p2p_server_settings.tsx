@@ -1,10 +1,14 @@
 'use client'
-import { useAccount, useStoreApi } from '../../lib/client/react'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
+
+import { useAccount } from '../../lib/client/react'
 
 import { useCallback, useState, type ReactNode } from 'react'
 import { Clock, Crown, Hash, Lock, Trash2, Volume2 } from 'lucide-react'
 import { useMask, useStore } from '../../lib/store'
-import { banRequest, memberName, p2p, p2pServer, useP2p, type ServerTab } from '../../lib/p2p/app'
+import { type ServerTab } from '../../lib/p2p/app'
 import {
   EQUAL_ROLES_TEXT,
   HIGHER_ROLES_TEXT,
@@ -24,7 +28,7 @@ import { KeyAvatar } from './p2p_badge'
 import { CodeList } from './p2p_invite_dialog'
 import { ServerNotices } from './p2p_server_flows'
 import { openChoiceMenu } from '../../lib/actions/menu'
-import { withdrawRequest } from '../../lib/actions/p2p_server'
+import { peerServer } from '../../lib/actions/p2p_server'
 import { SettingSwitch } from '../settings_fields'
 import { ChannelAccess, MemberCard, roleMenuItems, RolesTab } from './p2p_server_roles'
 import { slowTitle } from '../../lib/slowmode'
@@ -54,6 +58,9 @@ const Note = ({ children }: { children: ReactNode }) => (
 )
 
 function Overview({ v }: { v: ServerView }) {
+  const identity = useP2pApp()!
+  const { p2p, p2pServer, memberName } = identity
+
   const me = useP2p(s => s.me)
   const [name, setName] = useState(v.name)
   const edit = can(v, P.ManageServer)
@@ -106,7 +113,11 @@ function Overview({ v }: { v: ServerView }) {
 }
 
 function Channels({ v }: { v: ServerView }) {
-  const store = useStoreApi()
+  const ownerAccount = useAccount()
+
+  const identity = useP2pApp()!
+  const { p2pServer, p2p } = identity
+
   const edit = can(v, P.ManageChannels)
   const me = useP2p(s => s.me)
   const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
@@ -129,7 +140,7 @@ function Channels({ v }: { v: ServerView }) {
             <button
               className={textBtn}
               onClick={() =>
-                store.getState().askConfirm({
+                ownerAccount.store.getState().askConfirm({
                   title: 'Upgrade server?',
                   body: 'This creates a new copy with the same owner. The old copy becomes read-only and keeps its message history.',
                   confirm: 'Upgrade',
@@ -198,7 +209,7 @@ function Channels({ v }: { v: ServerView }) {
                   title={`Delete ${voice ? mask(c.name) : `#${mask(c.name)}`}`}
                   aria-label={`Delete ${label}`}
                   onClick={() =>
-                    store.getState().askConfirm({
+                    ownerAccount.store.getState().askConfirm({
                       title: 'Delete Channel',
                       body: voice
                         ? `Delete ${c.name}?`
@@ -294,6 +305,9 @@ function Channels({ v }: { v: ServerView }) {
 }
 
 function System({ v }: { v: ServerView }) {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   const edit = can(v, P.ManageServer)
   const texts = v.channels.filter(c => c.kind === 'text')
   const mask = useMask(useP2p(s => ownsP2pServer(v, s.me)))
@@ -340,6 +354,9 @@ function System({ v }: { v: ServerView }) {
 }
 
 function History({ v }: { v: ServerView }) {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   const edit = can(v, P.ManageServer)
   return (
     <div className="flex flex-col gap-3">
@@ -403,6 +420,9 @@ function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children
 }
 
 function Members({ v }: { v: ServerView }) {
+  const identity = useP2pApp()!
+  const { p2pServer, banRequest } = identity
+
   const acct = useAccount()
   const who = (name: string) => (acct.store.getState().streamer ? 'this member' : name)
 
@@ -421,7 +441,7 @@ function Members({ v }: { v: ServerView }) {
       <ul data-p2p-members-tab className="flex flex-col">
         {paged.items.map(m => (
           <MemberLine key={m.ik} v={v} m={m}>
-            {m.m === 'join' && roleMenuItems(v, m, acct).length > 0 && (
+            {m.m === 'join' && roleMenuItems(v, m, acct, identity).length > 0 && (
               <button
                 onClick={e =>
                   openChoiceMenu(
@@ -430,7 +450,8 @@ function Members({ v }: { v: ServerView }) {
                     'p2p_member_roles',
                     { kind: 'p2p_member', v, m },
                     { header: <MemberCard room={v.id} ik={m.ik} /> },
-                    acct
+                    acct,
+                    identity
                   )
                 }
                 className={textBtn}
@@ -444,7 +465,10 @@ function Members({ v }: { v: ServerView }) {
               </span>
             )}
             {m.ik !== me && m.m === 'invite' && (kick || m.myInvite) && (
-              <button onClick={() => ask(withdrawRequest(v, m))} className={textBtn}>
+              <button
+                onClick={() => ask(peerServer.forIdentity(identity).withdrawRequest(v, m))}
+                className={textBtn}
+              >
                 Withdraw
               </button>
             )}
@@ -487,6 +511,9 @@ function Members({ v }: { v: ServerView }) {
 }
 
 function Bans({ v }: { v: ServerView }) {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   const lift = can(v, P.Ban)
   const list = v.members.filter(m => m.m === 'ban').sort((a, b) => a.name.localeCompare(b.name))
   const [shown, setShown] = useState(PAGE)
@@ -513,6 +540,9 @@ function Bans({ v }: { v: ServerView }) {
 }
 
 function Leave({ v }: { v: ServerView }) {
+  const identity = useP2pApp()!
+  const { p2pServer, p2p } = identity
+
   const ask = useStore(s => s.askConfirm)
   const me = useP2p(s => s.me)
   const owner = v.owner === me
@@ -568,7 +598,10 @@ function Leave({ v }: { v: ServerView }) {
   )
 }
 
-export function ServerSettingsDialog({ room, tab: first }: { room: string; tab?: ServerTab }) {
+function ServerSettingsDialogBody({ room, tab: first }: { room: string; tab?: ServerTab }) {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const v = useP2p(s => s.servers[room])
   const [tab, setTab] = useState<ServerTab>(first ?? 'overview')
   if (!v) return null
@@ -613,3 +646,5 @@ export function ServerSettingsDialog({ room, tab: first }: { room: string; tab?:
     </Dialog>
   )
 }
+
+export const ServerSettingsDialog = withP2pIdentity(ServerSettingsDialogBody)

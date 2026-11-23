@@ -31,7 +31,9 @@ export function bindP2pHost(app: P2pApp, account: AccountSession, live: () => bo
         ...alert,
         key: scopeKey(alert.key),
         go: account.lifetime.inSession(() => {
-          if (live()) alert.go()
+          if (!live()) return
+          account.identities.show(app)
+          alert.go()
         }),
       })
   }

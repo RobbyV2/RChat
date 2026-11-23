@@ -1,4 +1,5 @@
 'use client'
+import { useP2p } from '../lib/client/p2p_react'
 
 import { useAccount } from '../lib/client/react'
 
@@ -12,7 +13,7 @@ import { iceOffer } from '../lib/ice'
 import { ownTurn } from '../lib/relays'
 import { RelaySection } from './relay_settings'
 import { P2pOffSection, P2pSection } from './p2p/p2p_settings'
-import { p2p, useP2p } from '../lib/p2p/app'
+
 import {
   SECTION_LABELS,
   sectionFor,
@@ -937,12 +938,13 @@ function InformationSection() {
 }
 
 function Menu() {
+  const account = useAccount()
+
   const closeDialog = useStore(s => s.closeDialog)
   const signedIn = useStore(s => s.me !== null && !s.guest)
-  const username = useStore(s => s.me?.username ?? null)
   const p2pOn = useP2p(s => s.account !== null)
-  const [p2pKept] = useState(() => username !== null && p2p.hasData(username))
-  const shown = settingsSections({ signedIn, p2p: p2pOn || p2pKept })
+  const kept = useStore(s => !s.settings.p2p && account.identities.offlineData().length > 0)
+  const shown = settingsSections({ signedIn, p2p: p2pOn || kept })
   const asked = useStore(s =>
     s.activeDialog?.kind === 'settings' ? (s.activeDialog.section ?? null) : null
   )

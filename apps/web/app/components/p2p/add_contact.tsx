@@ -1,10 +1,13 @@
 'use client'
+import { useAccount } from '../../lib/client/react'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
 
-import { useStoreApi } from '../../lib/client/react'
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
+
 import { useEffect, useState } from 'react'
 import { Eye } from 'lucide-react'
 import { useStore } from '../../lib/store'
-import { p2p, useP2p } from '../../lib/p2p/app'
+
 import { looksLikeCard, type Card } from '../../lib/p2p/card'
 import { fingerprint } from '../../lib/p2p/keys'
 import { CopyButton, QrCode } from '../config_sync'
@@ -15,7 +18,7 @@ import { QrScan } from './qr_scan'
 const areaCls = `${fieldCls} w-full resize-none font-mono text-xs break-all md:text-xs`
 
 // Our contact code as a QR and a string. In streamer mode both stay hidden until asked for.
-export function MyCode() {
+function MyCodeBody() {
   const card = useP2p(s => s.card)
   const streamer = useStore(s => s.streamer)
   const [shown, setShown] = useState(false)
@@ -74,8 +77,12 @@ function Preview({ card }: { card: Card }) {
   )
 }
 
-export function AddContactDialog({ initial = 'paste' }: { initial?: Tab }) {
-  const store = useStoreApi()
+function AddContactDialogBody({ initial = 'paste' }: { initial?: Tab }) {
+  const ownerAccount = useAccount()
+
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const [tab, setTab] = useState<Tab>(initial)
   const [code, setCode] = useState('')
   const [intro, setIntro] = useState('')
@@ -116,9 +123,9 @@ export function AddContactDialog({ initial = 'paste' }: { initial?: Tab }) {
     setBusy(true)
     const res = await p2p.addContact(code, intro)
     setBusy(false)
-    if (!res) return setError(useP2p.getState().error ?? "Couldn't add that contact")
+    if (!res) return setError(identity.useP2p.getState().error ?? "Couldn't add that contact")
     if (!res.ok) return setError(res.error)
-    store
+    ownerAccount.store
       .getState()
       .showToast(res.contact.state === 'mutual' ? 'Contact added' : 'Contact request sent')
     p2p.openDialog({ kind: 'contact', ik: res.contact.ik })
@@ -204,3 +211,6 @@ export function AddContactDialog({ initial = 'paste' }: { initial?: Tab }) {
     </Dialog>
   )
 }
+
+export const MyCode = withP2pIdentity(MyCodeBody)
+export const AddContactDialog = withP2pIdentity(AddContactDialogBody)

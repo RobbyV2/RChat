@@ -1,4 +1,5 @@
 'use client'
+import { useP2pApp, useP2p } from '../lib/client/p2p_react'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -49,7 +50,6 @@ import { P2pDmPane } from '../components/p2p/p2p_dm_pane'
 import { P2pChannelPane, P2pMemberList, P2pServerSidebar } from '../components/p2p/p2p_server_view'
 import { P2pThreadPanel } from '../components/p2p/p2p_thread'
 import { P2pSearchPanel } from '../components/p2p/p2p_search'
-import { p2p, useP2p } from '../lib/p2p/app'
 
 export default function AppShell() {
   const sessions = useLiveSessions()
@@ -80,7 +80,7 @@ function ShellBanners({ multiple }: { multiple: boolean }) {
 export function SessionServices() {
   const account = useAccount()
   useEffect(() => {
-    const stopHome = account.home.startSync(account.isHome ? useP2p : undefined)
+    const stopHome = account.home.startSync()
     const ownerOf = (s: RChatState) => s.me?.username ?? (s.guest ? 'guest' : null)
     const reloadHistory = () => account.apiDoc.loadApiHistory(ownerOf(account.store.getState()))
     reloadHistory()
@@ -155,6 +155,9 @@ function Startup() {
 }
 
 function Chat() {
+  const identity = useP2pApp()
+  const p2p = identity?.p2p
+
   const { store } = useAccount()
   const router = useRouter()
   const me = useStore(s => s.me)
@@ -230,7 +233,7 @@ function Chat() {
     setLeftOpen(false)
     setRightOpen(false)
     if (store.getState().panel?.kind === 'thread') store.getState().closePanel()
-    if (settled.current) p2p.closeHome()
+    if (settled.current) p2p?.closeHome()
   }, [view, store])
   useEffect(() => {
     if (view !== null || atHome) settled.current = true

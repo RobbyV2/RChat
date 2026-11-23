@@ -1,4 +1,5 @@
 import { client } from '../client/client'
+import type { P2pApp } from '../p2p/app/runtime'
 import type { AccountSession } from '../client/session'
 // The signed-in session: sign-in and sign-out, the account and its settings, the URL and what
 // is open, guests, invites, the socket and catch-up after outages.
@@ -53,8 +54,6 @@ import { keyed, mergeHead, refreshTail, samePrefix } from '../lists'
 import { bootDms, emptyLayout, knownDms, layoutServers, pruneLayout } from '../nav_layout'
 import { EMPTY_NOTIFY, keepScopes } from '../notify'
 import { historyKey } from '../openapi'
-import { instanceUncovered } from '../client/p2p_identities'
-import { useP2p } from '../p2p/app/store'
 import { secretsKey } from '../passwords'
 import { NO_PINGS } from '../pings'
 import { clearProfiles } from '../profile'
@@ -308,12 +307,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     views,
   } = deps
 
-  // Once P2P stops showing in the view's place, the view counts as followed only when its pane is
-  // back on screen (the pane says so); what came in meanwhile is below the unread divider.
-  const unsubscribeP2p = acct.isHome
-    ? useP2p.subscribe((now, before) => instanceUncovered(acct, now, before))
-    : undefined
-
   let navigation = 0
   const beginNavigation = () => {
     navigation += 1
@@ -436,7 +429,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   // Applies the chosen sections of an imported config. Device sections (theme, streamer mode)
   // apply at once; logged out, the rest is stashed for the next login. Servers and DMs this
   // account doesn't have are dropped. Returns an error text, or null.
-  const applyConfigDoc = async (doc: ConfigDoc, keys: SectionKey[]): Promise<string | null> => {
+  const applyConfigDoc = async (
+    doc: ConfigDoc,
+    keys: SectionKey[],
+    identity: P2pApp | null = acct.identities.viewed() ?? null
+  ): Promise<string | null> => {
+    const ownsRail = () => !identity || acct.identities.get(identity.localId) === identity
+    if (keys.includes('layout') && doc.layout?.p2p && !ownsRail())
+      return 'The selected P2P identity is no longer available'
     const want = new Set(keys.filter(k => doc[k] !== undefined))
     if (want.has('theme') && doc.theme) get().setTheme(doc.theme)
     if (want.has('streamer') && doc.streamer !== undefined) get().setStreamer(doc.streamer)
@@ -475,7 +475,10 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         await get().ensureDms([...l.dmPinned, ...l.dmOrder])
         if (!still()) return SWITCHED
         const s = get()
-        if (l.p2p) acct.identities.get()?.p2pRail.apply(l.p2p)
+        if (l.p2p) {
+          if (!ownsRail()) return 'The selected P2P identity is no longer available'
+          identity?.p2pRail.apply(l.p2p)
+        }
         saveLayout(
           pruneLayout(
             {
@@ -889,7 +892,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         }
         home.ws.ensureConnected()
         const { atBottom, messages, reads, unreadAnchor, panel } = get()
-        const view = shownView(get().view)
+        const view = shownView(acct, get().view)
         if (panel?.kind === 'thread') {
           const thread = threadKey(panel.root.id)
           if (atBottom[thread] === true && !detached(thread)) get().seeThread(panel.root.id)
@@ -1312,7 +1315,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     id: number,
     nav: Nav = 'push'
   ) => {
-    const v = shownView(get().view)
+    const v = shownView(acct, get().view)
     const here = v?.kind === 'channel' && v.channelId === channelId
     const at = threadRootId ?? id
     const mark = sessionMark()
@@ -2115,7 +2118,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     tapWs,
     p2pGate,
     dispose: () => {
-      unsubscribeP2p?.()
       pageListeners?.abort()
       wsTaps.clear()
       home.ws.onEvent =

@@ -1,3 +1,4 @@
+import type { P2pApp } from '../p2p/app/runtime'
 import type { AccountSession } from '../client/session'
 import type { LucideIcon } from 'lucide-react'
 import type { InboxEntry } from '../inbox'
@@ -102,6 +103,7 @@ export type Target =
 
 export interface ActionCtx {
   acct: AccountSession
+  identity?: P2pApp | null
   mark: object
   s: RChatState
   via: Via

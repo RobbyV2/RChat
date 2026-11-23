@@ -1,4 +1,9 @@
 'use client'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
+import { legacyP2pApp, type P2pApp } from '../../lib/p2p/app/runtime'
+
 import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
 
@@ -21,18 +26,7 @@ import {
 import { useMask, useStore } from '../../lib/store'
 import { allPings } from '../../lib/selectors'
 import { P2P_SERVER_INTRO } from '../../lib/home'
-import {
-  channelScope,
-  chatKey,
-  memberName,
-  p2p,
-  p2pDm,
-  p2pRail,
-  p2pSearch,
-  p2pServer,
-  serverScope,
-  useP2p,
-} from '../../lib/p2p/app'
+import { channelScope, chatKey, serverScope } from '../../lib/p2p/app'
 import { displayName, shieldOf } from '../../lib/p2p/contacts'
 import { movedText, type P2pMessage } from '../../lib/p2p/dm'
 import { P } from '../../lib/p2p/state'
@@ -45,7 +39,7 @@ import { folderStyle } from '../../lib/folder_colors'
 import { ctxFor } from '../../lib/actions/ctx'
 import { registerAppActions } from '../../lib/actions'
 import { menuItems, openActionMenu } from '../../lib/actions/menu'
-import { confirmForget } from '../../lib/actions/p2p_server'
+import { peerServer } from '../../lib/actions/p2p_server'
 import type { DropTarget } from '../../lib/drag'
 import { serverInitial } from '../../lib/rules'
 import { longPress } from '../context_menu'
@@ -95,19 +89,26 @@ const P2P_ZONES = (zone: string) => zone === 'p2p' || zone.startsWith('p2p:')
 
 const zoneOfFolder = (id: string) => `p2p:${id}`
 
-const dropServer = (room: string, { zone, index, onto }: DropTarget) => {
-  const folder = strip(onto, P2P_FOLDER)
-  const target = strip(onto, P2P_SERVER)
-  const into = zone.startsWith('p2p:') ? zone.slice(4) : null
-  if (folder !== null) p2pRail.addToFolder(room, folder)
-  else if (target !== null) p2pRail.merge(room, target)
-  else if (into !== null) p2pRail.moveIntoFolder(room, into, index)
-  else p2pRail.move(room, index)
-}
+const dropServer =
+  (identity: P2pApp) =>
+  (room: string, { zone, index, onto }: DropTarget) => {
+    const { p2pRail } = identity
+
+    const folder = strip(onto, P2P_FOLDER)
+    const target = strip(onto, P2P_SERVER)
+    const into = zone.startsWith('p2p:') ? zone.slice(4) : null
+    if (folder !== null) p2pRail.addToFolder(room, folder)
+    else if (target !== null) p2pRail.merge(room, target)
+    else if (into !== null) p2pRail.moveIntoFolder(room, into, index)
+    else p2pRail.move(room, index)
+  }
 
 // The tile's ring is dashed and a Waypoints badge sits on it: this server lives on its members'
 // devices.
 function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null; at: number }) {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   const acct = useAccount()
 
   const active = useP2p(s => s.server?.room === v.id)
@@ -126,13 +127,14 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
       aria-current={active ? 'page' : undefined}
       onClick={() => p2pServer.open(v.id)}
       {...longPress(
-        (x, y) => openActionMenu(x, y, { kind: 'p2p_server', v, folder, at }, undefined, acct),
+        (x, y) =>
+          openActionMenu(x, y, { kind: 'p2p_server', v, folder, at }, undefined, acct, identity),
         {
           group: 'p2prail',
           key: serverKey(v.id),
           zones: P2P_ZONES,
           onto: key => key !== (parent ? folderKey(folder as string) : null),
-          onDrop: target => dropServer(v.id, target),
+          onDrop: target => dropServer(identity)(v.id, target),
         }
       )}
       data-drop-onto={folder === null ? 'Create folder' : undefined}
@@ -171,7 +173,7 @@ function P2pServerTile({ v, folder, at }: { v: ServerView; folder: string | null
   )
 }
 
-export function P2pFolderEntry({
+function P2pFolderEntryBody({
   folder,
   list,
   at,
@@ -180,6 +182,9 @@ export function P2pFolderEntry({
   list: ServerView[]
   at: number
 }) {
+  const identity = useP2pApp()!
+  const { p2pRail } = identity
+
   const acct = useAccount()
 
   const prefs = useStore(s => s.notifyPrefs)
@@ -198,7 +203,8 @@ export function P2pFolderEntry({
     'data-p2p-tile': '',
     onClick: () => p2pRail.toggleFolder(folder.id),
     ...longPress(
-      (x, y) => openActionMenu(x, y, { kind: 'folder', folder, p2p: true }, undefined, acct),
+      (x, y) =>
+        openActionMenu(x, y, { kind: 'folder', folder, p2p: true }, undefined, acct, identity),
       {
         group: 'p2prail',
         key: folderKey(folder.id),
@@ -269,7 +275,10 @@ export function P2pFolderEntry({
 }
 
 // Create or join a P2P server: the second tile of the rail's P2P frame.
-export function P2pJoinTile() {
+function P2pJoinTileBody() {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   return (
     <button
       data-p2p-tile
@@ -285,7 +294,7 @@ export function P2pJoinTile() {
 }
 
 // The P2P servers and folders, last in the rail under a dashed line.
-export function P2pServerRail() {
+function P2pServerRailBody() {
   const enabled = useP2p(s => s.enabled)
   const servers = useP2p(s => s.servers)
   const layout = useP2p(s => s.layout)
@@ -325,11 +334,14 @@ const useOpen = () => {
 }
 
 function ServerHead({ v }: { v: ServerView }) {
+  const identity = useP2pApp()!
+  const { p2p } = identity
+
   const acct = useAccount()
 
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const open = (x: number, y: number) =>
-    openActionMenu(x, y, { kind: 'p2p_server', v, folder: null, at: 0 }, undefined, acct)
+    openActionMenu(x, y, { kind: 'p2p_server', v, folder: null, at: 0 }, undefined, acct, identity)
   return (
     <div className="flex h-14 shrink-0 items-center gap-2 border-b border-outline-variant px-3">
       <button
@@ -364,7 +376,10 @@ function ServerHead({ v }: { v: ServerView }) {
   )
 }
 
-export function P2pServerSidebar() {
+function P2pServerSidebarBody() {
+  const identity = useP2pApp()!
+  const { p2pServer, p2p } = identity
+
   const acct = useAccount()
 
   const { v } = useOpen()
@@ -437,10 +452,10 @@ export function P2pServerSidebar() {
                 c={c}
                 active={active === c.id}
                 menu={(x, y) =>
-                  openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c }, undefined, acct)
+                  openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c }, undefined, acct, identity)
                 }
                 memberMenu={m => (x, y) =>
-                  openActionMenu(x, y, { kind: 'p2p_member', v, m }, undefined, acct)
+                  openActionMenu(x, y, { kind: 'p2p_member', v, m }, undefined, acct, identity)
                 }
               />
             )
@@ -456,7 +471,7 @@ export function P2pServerSidebar() {
               data-p2p-channel={c.name}
               onClick={() => p2pServer.openChannel(c.id)}
               {...longPress((x, y) =>
-                openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c }, undefined, acct)
+                openActionMenu(x, y, { kind: 'p2p_channel', v, ch: c }, undefined, acct, identity)
               )}
               className={`mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm ${
                 active === c.id
@@ -527,9 +542,16 @@ export function P2pServerSidebar() {
 }
 
 // A member's menu (the settings and tests read its rows).
-export const memberMenu = (v: ServerView, m: MemberView, acct = client.shown()) => {
+export const memberMenu = (
+  v: ServerView,
+  m: MemberView,
+  acct = client.shown(),
+  identity = acct.identities.get() ?? legacyP2pApp
+) => {
   registerAppActions()
-  return menuItems(ctxFor(acct.store.getState(), { kind: 'p2p_member', v, m }, 'menu', acct))
+  return menuItems(
+    ctxFor(acct.store.getState(), { kind: 'p2p_member', v, m }, 'menu', acct, identity)
+  )
 }
 
 // A member's menu with their card on top (roles, removable where we may).
@@ -538,7 +560,8 @@ export const openMemberMenu = (
   m: MemberView,
   x: number,
   y: number,
-  acct = client.shown()
+  acct = client.shown(),
+  identity = acct.identities.get() ?? legacyP2pApp
 ) =>
   openActionMenu(
     x,
@@ -547,10 +570,12 @@ export const openMemberMenu = (
     {
       header: <MemberCard room={v.id} ik={m.ik} />,
     },
-    acct
+    acct,
+    identity
   )
 
 function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
+  const identity = useP2pApp()!
   const acct = useAccount()
 
   const contact = useP2p(s => s.contacts.find(c => c.ik === m.ik))
@@ -559,10 +584,10 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
     <li>
       <button
         data-p2p-member={m.name}
-        {...longPress((x, y) => openMemberMenu(v, m, x, y, acct))}
+        {...longPress((x, y) => openMemberMenu(v, m, x, y, acct, identity))}
         onClick={e => {
           const r = e.currentTarget.getBoundingClientRect()
-          openMemberMenu(v, m, r.left + 24, r.bottom, acct)
+          openMemberMenu(v, m, r.left + 24, r.bottom, acct, identity)
         }}
         className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface-container ${m.online || m.ik === me ? '' : 'opacity-60'}`}
       >
@@ -600,7 +625,7 @@ function MemberRow({ v, m }: { v: ServerView; m: MemberView }) {
   )
 }
 
-export function P2pMemberList() {
+function P2pMemberListBody() {
   const { v } = useOpen()
   const me = useP2p(s => s.me)
   const [shown, setShown] = useState(PAGE)
@@ -658,73 +683,77 @@ const NONE: string[] = []
 const NO_SEND_TEXT = 'You do not have permission to send messages in this channel.'
 
 // Why this device can't send in a server's channels (in place of the composer), or null.
-export const sendBlock = (
-  v: ServerView,
-  st: {
-    reader: boolean
-    elsewhere: boolean
-    status: string
-    movedAt: number | null
-    movingAt: number | null
-  },
-  // The channel: may we send there?
-  channel?: { send: boolean },
-  acct = client.shown()
-): ReactNode => {
-  const out = v.readOnly
-    ? v.readOnly
-    : v.upgraded
-      ? TRANSFERRED_TEXT
-      : v.me === 'ban'
-        ? 'You are banned from this server.'
-        : v.me === 'leave'
-          ? 'You are no longer a member of this server.'
-          : v.me !== 'join'
-            ? (v.joinWait ?? 'Joining. You can write once a member has let you in.')
-            : null
-  return st.reader || st.elsewhere ? (
-    <div className={noteBarCls}>
-      <ElsewhereNotice />
-    </div>
-  ) : st.status === 'moved' ? (
-    <div className={noteBarCls}>{movedText(st.movedAt)}</div>
-  ) : st.movingAt !== null ? (
-    <MovingBanner className={noteBarCls} />
-  ) : out ? (
-    <div data-p2p-out className={noteBarCls}>
-      {v.joinWait && v.me !== 'join' ? <span data-p2p-join-wait>{out}</span> : out}
-      {v.upgraded && v.next && (
-        <button
-          onClick={() => p2pServer.open(v.next as string)}
-          className="font-medium text-primary hover:underline"
-        >
-          Open the new copy
-        </button>
-      )}
-      {v.me !== 'join' && v.me !== 'invite' && v.me !== null && (
-        <button
-          onClick={() => confirmForget(v, acct)}
-          className="font-medium text-primary hover:underline"
-        >
-          Remove from this device
-        </button>
-      )}
-    </div>
-  ) : channel && !channel.send ? (
-    <div data-no-send className={noteBarCls}>
-      <span className="flex min-w-0 items-center gap-2">
-        <Lock size={16} className="shrink-0" />
-        <span>{NO_SEND_TEXT}</span>
-      </span>
-    </div>
-  ) : v.full ? (
-    <div className={noteBarCls} role="status">
-      This server reached its storage limit on this device.
-    </div>
-  ) : null
-}
+export const sendBlockFor =
+  (identity: P2pApp) =>
+  (
+    v: ServerView,
+    st: {
+      reader: boolean
+      elsewhere: boolean
+      status: string
+      movedAt: number | null
+      movingAt: number | null
+    },
+    // The channel: may we send there?
+    channel?: { send: boolean },
+    acct = client.shown()
+  ): ReactNode => {
+    const { p2pServer } = identity
 
-export function P2pChannelPane({
+    const out = v.readOnly
+      ? v.readOnly
+      : v.upgraded
+        ? TRANSFERRED_TEXT
+        : v.me === 'ban'
+          ? 'You are banned from this server.'
+          : v.me === 'leave'
+            ? 'You are no longer a member of this server.'
+            : v.me !== 'join'
+              ? (v.joinWait ?? 'Joining. You can write once a member has let you in.')
+              : null
+    return st.reader || st.elsewhere ? (
+      <div className={noteBarCls}>
+        <ElsewhereNotice />
+      </div>
+    ) : st.status === 'moved' ? (
+      <div className={noteBarCls}>{movedText(st.movedAt)}</div>
+    ) : st.movingAt !== null ? (
+      <MovingBanner className={noteBarCls} />
+    ) : out ? (
+      <div data-p2p-out className={noteBarCls}>
+        {v.joinWait && v.me !== 'join' ? <span data-p2p-join-wait>{out}</span> : out}
+        {v.upgraded && v.next && (
+          <button
+            onClick={() => p2pServer.open(v.next as string)}
+            className="font-medium text-primary hover:underline"
+          >
+            Open the new copy
+          </button>
+        )}
+        {v.me !== 'join' && v.me !== 'invite' && v.me !== null && (
+          <button
+            onClick={() => peerServer.forIdentity(identity).confirmForget(v, acct)}
+            className="font-medium text-primary hover:underline"
+          >
+            Remove from this device
+          </button>
+        )}
+      </div>
+    ) : channel && !channel.send ? (
+      <div data-no-send className={noteBarCls}>
+        <span className="flex min-w-0 items-center gap-2">
+          <Lock size={16} className="shrink-0" />
+          <span>{NO_SEND_TEXT}</span>
+        </span>
+      </div>
+    ) : v.full ? (
+      <div className={noteBarCls} role="status">
+        This server reached its storage limit on this device.
+      </div>
+    ) : null
+  }
+
+function P2pChannelPaneBody({
   onMenu,
   onMembers,
   membersOpen,
@@ -733,6 +762,9 @@ export function P2pChannelPane({
   onMembers: () => void
   membersOpen: boolean
 }) {
+  const identity = useP2pApp()!
+  const { memberName, p2pDm, p2pSearch } = identity
+
   const acct = useAccount()
 
   const { v } = useOpen()
@@ -886,7 +918,7 @@ export function P2pChannelPane({
                 {v.readOnly}
               </span>
               <button
-                onClick={() => confirmForget(v, acct)}
+                onClick={() => peerServer.forIdentity(identity).confirmForget(v, acct)}
                 className="text-sm font-medium text-primary hover:underline"
               >
                 Remove from this device
@@ -911,7 +943,12 @@ export function P2pChannelPane({
     )
   }
 
-  const disabled = sendBlock(v, { reader, elsewhere, status, movedAt, movingAt }, channel, acct)
+  const disabled = sendBlockFor(identity)(
+    v,
+    { reader, elsewhere, status, movedAt, movingAt },
+    channel,
+    acct
+  )
 
   return (
     <P2pChatBody
@@ -953,7 +990,10 @@ export function P2pChannelPane({
 }
 
 // Invites from contacts, for the P2P home.
-export function ServerInviteRows() {
+function ServerInviteRowsBody() {
+  const identity = useP2pApp()!
+  const { p2pServer } = identity
+
   const invites = useP2p(s => s.serverInvites)
   const contacts = useP2p(s => s.contacts)
   const mask = useMask()
@@ -1006,3 +1046,13 @@ export function ServerInviteRows() {
     </section>
   )
 }
+
+export const sendBlock = sendBlockFor(legacyP2pApp)
+
+export const P2pFolderEntry = withP2pIdentity(P2pFolderEntryBody)
+export const P2pJoinTile = withP2pIdentity(P2pJoinTileBody)
+export const P2pServerRail = withP2pIdentity(P2pServerRailBody)
+export const P2pServerSidebar = withP2pIdentity(P2pServerSidebarBody)
+export const P2pMemberList = withP2pIdentity(P2pMemberListBody)
+export const P2pChannelPane = withP2pIdentity(P2pChannelPaneBody)
+export const ServerInviteRows = withP2pIdentity(ServerInviteRowsBody)

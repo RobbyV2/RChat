@@ -1,11 +1,14 @@
 'use client'
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 
 import { useState } from 'react'
 import { ChevronDown, Phone, PhoneOff, Video } from 'lucide-react'
 import { useAccount } from '../../lib/client/react'
 import { openActionMenu } from '../../lib/actions/menu'
 import { useStore } from '../../lib/store'
-import { CALL_ELSEWHERE, p2pCall, useP2p } from '../../lib/p2p/app'
+import { CALL_ELSEWHERE } from '../../lib/p2p/app'
 import type { P2pMessage } from '../../lib/p2p/dm'
 import type { CallLog } from '../../lib/types'
 import { CallLogLine } from '../message_pane'
@@ -43,6 +46,9 @@ export function P2pCallRow({ p, me }: { p: P2pMessage; me: string | null }) {
 // Call and Video for a P2P contact. A call with a contact is always direct; the chevron offers
 // a relay of the user's own for this call only, as in instance DMs.
 function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: string | null }) {
+  const identity = useP2pApp()!
+  const { p2pCall } = identity
+
   const account = useAccount()
   const [shown, setShown] = useState<object | null>(null)
   const open = useStore(s => shown !== null && s.contextMenu === shown)
@@ -62,7 +68,8 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
           </span>
         ),
       },
-      account
+      account,
+      identity
     )
     setShown(account.store.getState().contextMenu)
   }
@@ -105,7 +112,7 @@ function SplitCall({ peer, video, why }: { peer: string; video: boolean; why: st
 }
 
 // The header's call buttons, or why there are none right now.
-export function P2pCallButtons({
+function P2pCallButtonsBody({
   peer,
   name,
   online,
@@ -148,7 +155,10 @@ export function P2pCallButtons({
 }
 
 // An incoming call in the open conversation: always here, also when its ringing is quiet.
-export function IncomingCallBar({ room, name }: { room: string; name: string }) {
+function IncomingCallBarBody({ room, name }: { room: string; name: string }) {
+  const identity = useP2pApp()!
+  const { p2pCall } = identity
+
   const c = useP2p(s => (s.call?.room === room ? s.call : null))
   const accepting = useP2p(s => s.callAccepting)
   if (!c || c.dir !== 'in' || c.state !== 'ringing') return null
@@ -193,3 +203,6 @@ export function IncomingCallBar({ room, name }: { room: string; name: string }) 
     </div>
   )
 }
+
+export const P2pCallButtons = withP2pIdentity(P2pCallButtonsBody)
+export const IncomingCallBar = withP2pIdentity(IncomingCallBarBody)

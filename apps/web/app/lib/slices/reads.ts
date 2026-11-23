@@ -244,7 +244,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
     const alert = pingAlert(
       { scope, thread_root_id: null },
       {
-        view: shownKey(s.view),
+        view: shownKey(acct, s.view),
         thread: s.panel?.kind === 'thread' ? s.panel.root.id : null,
         following: key => s.atBottom[key] === true && !detached(key),
         visible: pageVisible(),
@@ -422,7 +422,7 @@ export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
       const alert = pingAlert(
         ping,
         {
-          view: shownKey(s.view),
+          view: shownKey(acct, s.view),
           thread: s.panel?.kind === 'thread' ? s.panel.root.id : null,
           following: key => s.atBottom[key] === true && !detached(key),
           visible: pageVisible(),

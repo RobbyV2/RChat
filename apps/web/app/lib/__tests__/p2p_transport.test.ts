@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import type Peer from 'peerjs'
 import { endpointsFrom, InstanceConnection } from '../instances'
 import { RelayBook } from '../relays'
@@ -23,11 +23,27 @@ class SilentPeer {
   }
 }
 
-const g = globalThis as { window?: unknown }
-const real = g.window
-afterEach(() => {
-  g.window = real
-})
+function transportOwner(host: string) {
+  const watchers = new Set<() => void>()
+  const relays = new RelayBook(() => ({
+    instance: [{ urls: `stun:${host}` }],
+    helpers: true,
+    relayOnly: false,
+    instanceTurn: false,
+    forced: null,
+  }))
+  return {
+    conn: new InstanceConnection(endpointsFrom(`https://${host}`, null)),
+    relays,
+    ice: {
+      onChange(fn: () => void) {
+        watchers.add(fn)
+        return () => void watchers.delete(fn)
+      },
+    },
+    watchers,
+  }
+}
 
 describe('PeerJS transport', () => {
   test('each listener uses its owner’s signaling endpoint, ICE and subscriptions', async () => {
@@ -45,29 +61,8 @@ describe('PeerJS transport', () => {
         return this
       }
     }
-    const owner = (host: string) => {
-      const watchers = new Set<() => void>()
-      const relays = new RelayBook(() => ({
-        instance: [{ urls: `stun:${host}` }],
-        helpers: true,
-        relayOnly: false,
-        instanceTurn: false,
-        forced: null,
-      }))
-      return {
-        conn: new InstanceConnection(endpointsFrom(`https://${host}`, null)),
-        relays,
-        ice: {
-          onChange(fn: () => void) {
-            watchers.add(fn)
-            return () => void watchers.delete(fn)
-          },
-        },
-        watchers,
-      }
-    }
-    const a = owner('one.example')
-    const b = owner('two.example')
+    const a = transportOwner('one.example')
+    const b = transportOwner('two.example')
     const listen = (account: typeof a) =>
       new PeerTransport({}, OpenPeer as unknown as typeof Peer, 1000, account).listen(
         'rcp-test',
@@ -95,7 +90,6 @@ describe('PeerJS transport', () => {
   })
 
   test('listening gives up when the signaling server never opens', async () => {
-    g.window = { location: { hostname: 'chat.example', protocol: 'https:' } }
     const made: SilentPeer[] = []
     class Made extends SilentPeer {
       constructor() {
@@ -103,7 +97,12 @@ describe('PeerJS transport', () => {
         made.push(this)
       }
     }
-    const t = new PeerTransport({}, Made as unknown as typeof Peer, 50)
+    const t = new PeerTransport(
+      {},
+      Made as unknown as typeof Peer,
+      50,
+      transportOwner('chat.example')
+    )
     const err = await t
       .listen(
         'rcp-x',
@@ -120,7 +119,6 @@ describe('PeerJS transport', () => {
   // PeerJS says so when there is no RTCPeerConnection (Firefox with media.peerconnection.enabled
   // off, Tor Browser): no server can help that.
   test('a browser without WebRTC is told apart from an unreachable server', async () => {
-    g.window = { location: { hostname: 'chat.example', protocol: 'https:' } }
     class NoWebRtc {
       destroyed = false
       options: Record<string, unknown> = {}
@@ -134,7 +132,12 @@ describe('PeerJS transport', () => {
         this.destroyed = true
       }
     }
-    const t = new PeerTransport({}, NoWebRtc as unknown as typeof Peer, 5000)
+    const t = new PeerTransport(
+      {},
+      NoWebRtc as unknown as typeof Peer,
+      5000,
+      transportOwner('chat.example')
+    )
     const err = await t
       .listen(
         'rcp-x',

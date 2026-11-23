@@ -1,4 +1,10 @@
 'use client'
+import { useP2pApp } from '../../lib/client/p2p_react'
+
+import { withP2pIdentity } from '../../lib/client/p2p_react'
+
+import { useP2p } from '../../lib/client/p2p_react'
+
 import { useAccount } from '../../lib/client/react'
 
 import { useMemo } from 'react'
@@ -15,7 +21,7 @@ import {
 import type { Shield as ShieldKind } from '../../lib/p2p/contacts'
 import type { Presence } from '../../lib/p2p/node'
 import { badgeState, type BadgeSlot, type BadgeState } from '../../lib/p2p/badge'
-import { useP2p } from '../../lib/p2p/app'
+
 import { openActionMenu } from '../../lib/actions/menu'
 import { useStore } from '../../lib/store'
 import { longPress } from '../context_menu'
@@ -190,13 +196,9 @@ export const useHasChip = (ik: string) => useP2p(s => badgeState(s.badges[ik], D
 // `short` leaves out "Confirmed as" (and says "Expired"), `icon` keeps only the icon (a phone's
 // DM header). Hover
 // shows the check date; long-press (or right-click) opens it with the account.
-export function AccountChip({
-  ik,
-  size = 'full',
-}: {
-  ik: string
-  size?: 'full' | 'short' | 'icon'
-}) {
+function AccountChipBody({ ik, size = 'full' }: { ik: string; size?: 'full' | 'short' | 'icon' }) {
+  const identity = useP2pApp()!
+
   const acct = useAccount()
 
   const slot = useP2p(s => s.badges[ik])
@@ -212,7 +214,8 @@ export function AccountChip({
       y,
       { kind: 'p2p_badge', ik, sub: sub ?? null, stale: state === 'unchecked' },
       { header: <BadgeSheet state={state} slot={slot} /> },
-      acct
+      acct,
+      identity
     )
   return (
     <span
@@ -246,3 +249,5 @@ export function AccountChip({
     </span>
   )
 }
+
+export const AccountChip = withP2pIdentity(AccountChipBody)

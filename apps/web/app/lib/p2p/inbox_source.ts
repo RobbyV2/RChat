@@ -255,6 +255,7 @@ export const createP2pInbox = (
     open: entry => {
       const p = entry.raw as PingRec
       if (!active() || !owns(entry)) return
+      if (app) account.identities.show(app)
       return p2pOpenAt(p.room, p.ch, p.kind === 'reaction' ? (p.target ?? p.id) : p.id)
     },
     count: () =>

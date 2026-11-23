@@ -1,10 +1,11 @@
 'use client'
+import { useP2p } from '../lib/client/p2p_react'
 
 import { useState, useSyncExternalStore } from 'react'
 import { useStore } from '../lib/store'
 import { notifications, type Permission } from '../lib/platform'
 import { ruleSummary, type NotifyScope, type Rule } from '../lib/notify'
-import { useP2p } from '../lib/p2p/app'
+
 import { p2pOverride } from '../lib/p2p/alerts'
 import { displayName } from '../lib/p2p/contacts'
 import { SettingSwitch } from './settings_fields'

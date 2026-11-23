@@ -1,8 +1,8 @@
 import Peer, { type DataConnection } from 'peerjs'
 import { randomHex } from '../bytes'
-import { home, type InstanceConnection } from '../instances'
-import { ice } from '../ice'
-import { declaredHosts, hidesIp, relayBook, unknownHosts, type RelayBook } from '../relays'
+import type { InstanceConnection } from '../instances'
+import type { IceCache } from '../ice'
+import { declaredHosts, hidesIp, unknownHosts, type RelayBook } from '../relays'
 import { LOCAL, type Local } from './limits'
 import { RateWindow } from './rate'
 import { TransportError, type Listener, type OfferGuard, type Transport } from './node'
@@ -33,7 +33,7 @@ const field = (meta: unknown, key: string): unknown =>
 
 // Without the hook every offer would be answered at once: then connections use relays only
 // while the user wants to be asked, so no relay of theirs sees this side's address.
-export const answerConfig = (hooked: boolean, book: RelayBook = relayBook): RTCConfiguration => {
+export const answerConfig = (hooked: boolean, book: RelayBook): RTCConfiguration => {
   const config = book.autoConfig()
   return hooked || !book.prefs.ask ? config : { ...config, iceTransportPolicy: 'relay' }
 }
@@ -156,7 +156,7 @@ const pipeOf = (conn: DataConnection, lowMark: number): Pipe => {
 
 interface TransportOwner {
   conn: Pick<InstanceConnection, 'peer'>
-  ice: Pick<typeof ice, 'onChange'>
+  ice: Pick<IceCache, 'onChange'>
   relays: RelayBook
 }
 
@@ -173,8 +173,8 @@ export class PeerTransport implements Transport {
     // PeerJS's Peer; tests pass a stand-in.
     private peerClass: typeof Peer = Peer,
     // How long the PeerJS server may take to accept our id: `dialMs` unless given.
-    listenMs?: number,
-    private owner: TransportOwner = { conn: home, ice, relays: relayBook }
+    listenMs: number | undefined,
+    private owner: TransportOwner
   ) {
     this.limits = { ...LOCAL.transport, ...limits }
     this.listenMs = listenMs ?? this.limits.dialMs

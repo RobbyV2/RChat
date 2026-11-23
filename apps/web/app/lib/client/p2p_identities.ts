@@ -1,8 +1,11 @@
+import { peerStorage } from './keys'
+import { clearHiddenForward } from '../forward_viewing'
 import { readLocal, writeLocal } from '../instances'
-import { coversInstance, type P2pState } from '../p2p/app/store'
+import { coversInstance, parseOn, p2pKey } from '../p2p/app/store'
 import { createP2pApp, legacyP2pApp, type P2pApp } from '../p2p/app/runtime'
 import { createP2pInbox, startP2pPings } from '../p2p/inbox_source'
 import { startP2pIndex } from '../p2p/palette_source'
+import { removeP2pDb } from '../p2p/db'
 import { viewKey } from '../view'
 import { bindP2pHost } from '../p2p/app/host'
 import type { AccountSession } from './session'
@@ -11,8 +14,7 @@ const MAX_IDENTITIES = 8
 const validId = (id: unknown): id is string =>
   typeof id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(id)
 
-export function instanceUncovered(account: AccountSession, now: P2pState, before: P2pState) {
-  if (coversInstance(now) || !coversInstance(before)) return
+function instanceUncovered(account: AccountSession) {
   const view = account.store.getState().view
   if (!view) return
   const key = viewKey(view)
@@ -42,7 +44,41 @@ function savedIds(key: string): string[] {
 
 export class P2pIdentities {
   private entries = new Map<string, { app: P2pApp; detach: () => void }>()
+  private listeners = new Set<() => void>()
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+  private changed() {
+    for (const listener of this.listeners) listener()
+  }
+  private viewedId = 'main'
+  viewed() {
+    return this.get(this.viewedId) ?? this.get()
+  }
+  coversView() {
+    const view = this.viewed()?.useP2p.getState()
+    const state = this.account.store.getState()
+    return (
+      !!view &&
+      !!state.me &&
+      !state.guest &&
+      state.settings.p2p &&
+      view.account === state.me.username &&
+      coversInstance(view)
+    )
+  }
+  show(app: P2pApp) {
+    if (this.get(app.localId) !== app || this.viewedId === app.localId) return
+    const covered = this.coversView()
+    this.viewedId = app.localId
+    if (covered && !this.coversView()) instanceUncovered(this.account)
+    this.changed()
+  }
   private username: string | null = null
+  private generation = 0
   private disposed = false
 
   constructor(private readonly account: AccountSession) {}
@@ -53,6 +89,63 @@ export class P2pIdentities {
 
   list() {
     return Array.from(this.entries.values(), entry => entry.app)
+  }
+
+  // Settings can remove a saved identity even when the operator prohibits running P2P.
+  offlineData() {
+    const { account } = this
+    const state = account.store.getState()
+    const username = state.me?.username
+    if (this.disposed || !username || state.guest || state.settings.p2p) return []
+    const generation = this.generation
+    const { origin } = account.conn
+    const mark = account.lifetime.sessionMark()
+    const current = () => {
+      const now = account.store.getState()
+      return (
+        !this.disposed &&
+        this.generation === generation &&
+        account.conn.origin === origin &&
+        account.lifetime.sessionMark() === mark &&
+        now.me?.username === username &&
+        !now.guest &&
+        !now.settings.p2p
+      )
+    }
+    const ids = ['main', ...savedIds(account.keys.local('rchat_p2p_identities'))]
+    return ids.flatMap(id => {
+      const storage = peerStorage(account.conn, username, id)
+      const flag = storage.scoped(p2pKey(username))
+      const db = storage.db
+      const enabled = readLocal(flag)
+      if (!db || !parseOn(enabled)) return []
+      let claimed = false
+      return [
+        {
+          id,
+          async remove() {
+            if (claimed || !current() || account.keys.db(id) !== db || readLocal(flag) !== enabled)
+              return false
+            // Claim the pinned flag before issuing the IndexedDB request. Later database
+            // opens queue behind deletion; a subsequent enable can replace this marker.
+            const deleting = JSON.stringify({
+              v: 1,
+              on: false,
+              deleting: Array.from(crypto.getRandomValues(new Uint32Array(4))),
+            })
+            if (!writeLocal(flag, deleting)) return false
+            claimed = true
+            try {
+              await removeP2pDb(db)
+              return readLocal(flag) !== deleting || writeLocal(flag, null)
+            } catch {
+              if (readLocal(flag) === deleting) writeLocal(flag, enabled)
+              return false
+            }
+          },
+        },
+      ]
+    })
   }
 
   private attach(localId: string, username: string) {
@@ -70,19 +163,19 @@ export class P2pIdentities {
         app.p2pVoice.videoChanged()
       }
     }
-    const offView =
-      !legacy &&
-      app.useP2p.subscribe((now, before) => {
-        if (!live()) return
-        instanceUncovered(account, now, before)
-        if (localId === 'main') account.home.noteP2pVisit(now, before)
-      })
+    const offView = app.useP2p.subscribe((now, before) => {
+      if (!live()) return
+      if (now.servers !== before.servers) clearHiddenForward(account)
+      if (this.viewed() === app && coversInstance(before) && !coversInstance(now))
+        instanceUncovered(account)
+      if (localId === 'main') account.home.noteP2pVisit(now, before)
+    })
     const inbox = createP2pInbox(account, app, live)
     const stopIndex = startP2pIndex(account, { app })
     const stopPings = startP2pPings(account, app)
     const detach = () => {
       attached = false
-      if (offView) offView()
+      offView()
       if (legacy) {
         app.callRtc.onChange = () => {}
         void app.p2pAccount(null, account)
@@ -94,6 +187,7 @@ export class P2pIdentities {
     this.entries.set(localId, { app, detach })
     void app.p2pAccount(username, account)
     account.inbox.addInboxAdapter(inbox)
+    this.changed()
     return app
   }
 
@@ -102,6 +196,15 @@ export class P2pIdentities {
     const state = this.account.store.getState()
     if (!state.settings.p2p || state.guest || state.me?.username !== username) username = null
     if (username === this.username) return
+    const before = this.viewed()?.useP2p.getState()
+    if (
+      before &&
+      !state.settings.p2p &&
+      !state.guest &&
+      before.account === state.me?.username &&
+      coversInstance(before)
+    )
+      instanceUncovered(this.account)
     this.clear()
     this.username = username
     if (username) {
@@ -139,19 +242,36 @@ export class P2pIdentities {
     const key = this.account.keys.local('rchat_p2p_identities')
     if (!writeLocal(key, JSON.stringify(savedIds(key).filter(id => id !== localId))))
       throw new Error('Unable to save P2P identities')
+    const covered = this.coversView()
+    if (this.viewedId === localId) this.viewedId = 'main'
+    const state = this.account.store.getState()
+    const clip = state.forwardClip
+    if (
+      clip &&
+      [clip.source, clip.quoted].some(
+        source => source && 'identity' in source && source.identity === localId
+      )
+    )
+      state.clearForward()
     this.entries.delete(localId)
     entry.detach()
+    if (covered && !this.coversView()) instanceUncovered(this.account)
+    this.changed()
     return true
   }
 
   private clear() {
+    this.generation++
     this.username = null
+    this.viewedId = 'main'
     for (const entry of this.entries.values()) entry.detach()
     this.entries.clear()
+    this.changed()
   }
 
   dispose() {
     this.disposed = true
     this.clear()
+    this.listeners.clear()
   }
 }

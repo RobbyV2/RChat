@@ -1,3 +1,4 @@
+import { peerStorage } from '../client/keys'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { ctxFor } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
@@ -227,7 +228,7 @@ describe('user P2P limits', () => {
   test('main retains its stored key while extra identities use their own overrides', () => {
     const conn = new InstanceConnection(endpointsFrom('https://two.example', null))
     memoryStorage.setItem(
-      conn.scoped(userLimitsKey('ann')),
+      peerStorage(conn, 'ann').scoped(userLimitsKey('ann')),
       JSON.stringify({ v: 1, roomBytes: 64 * MIB })
     )
     writeUserLimits('ann', { v: 1, roomBytes: GIB }, conn, 'work')
@@ -243,13 +244,18 @@ describe('user P2P limits', () => {
     writeUserLimits('ann', { v: 1, roomBytes: 64 * MIB, hiddenPauseMs: LOCAL.node.hiddenPauseMs })
     expect(readUserLimits('ann')).toEqual({ v: 1, roomBytes: 64 * MIB })
     expect(readUserLimits('bob')).toEqual({ v: 1 })
-    expect(JSON.parse(localStorage.getItem(home.scoped(userLimitsKey('ann'))) ?? '')).toEqual({
+    expect(
+      JSON.parse(localStorage.getItem(peerStorage(home, 'ann').scoped(userLimitsKey('ann'))) ?? '')
+    ).toEqual({
       v: 1,
       roomBytes: 64 * MIB,
     })
     writeUserLimits('ann', { v: 1 })
-    expect(localStorage.getItem(home.scoped(userLimitsKey('ann')))).toBeNull()
-    localStorage.setItem(home.scoped(userLimitsKey('ann')), '{"v":1,"roomBytes":')
+    expect(localStorage.getItem(peerStorage(home, 'ann').scoped(userLimitsKey('ann')))).toBeNull()
+    localStorage.setItem(
+      peerStorage(home, 'ann').scoped(userLimitsKey('ann')),
+      '{"v":1,"roomBytes":'
+    )
     expect(readUserLimits('ann')).toEqual({ v: 1 })
   })
 

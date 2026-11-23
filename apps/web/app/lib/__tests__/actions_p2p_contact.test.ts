@@ -1,4 +1,6 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, beforeAll, describe, expect, test } from 'bun:test'
+import { client } from '../client/client'
+import { me } from './fixtures'
 import { ctxFor } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { menuItems } from '../actions/menu'
@@ -14,6 +16,15 @@ const initial = useStore.getState()
 const p2pInitial = useP2p.getState()
 
 beforeAll(registerAppActions)
+beforeEach(() => {
+  const owner = client.shown()
+  owner.store.setState(s => ({
+    me: me('reader'),
+    guest: false,
+    settings: { ...s.settings, p2p: true },
+  }))
+  owner.identities.setAccount('reader')
+})
 
 afterEach(() => {
   useStore.setState(initial, true)

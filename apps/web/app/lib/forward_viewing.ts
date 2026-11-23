@@ -1,11 +1,10 @@
 import { ApiError } from './api'
 import { api } from './instances'
 import type { ForwardClip, ForwardSource } from './forward'
-import { peerTarget } from './p2p/app/viewing'
-import { useP2p } from './p2p/app/store'
+import type { AccountSession } from './client/session'
 import type { RChatState } from './store_types'
 import type { ForwardRef, Message } from './types'
-import { canView, channelTarget, defaultViewing, type ViewingTarget } from './viewing'
+import { canView, channelTarget, type ViewingTarget } from './viewing'
 
 export type SourceAccess = 'open' | 'hidden' | 'unknown'
 
@@ -51,10 +50,14 @@ export const frameCopyOpen = (...args: Parameters<typeof frameCopyTarget>) => {
 export const sourceTarget = (
   s: RChatState,
   source: ForwardSource | undefined,
-  label?: boolean,
-  viewing = defaultViewing
+  label: boolean | undefined,
+  account: AccountSession
 ): ViewingTarget | null => {
-  if (source?.kind === 'p2p') return peerTarget(useP2p.getState(), source.room, source.ch) ?? null
+  const { viewing } = account
+  if (source?.kind === 'p2p') {
+    const app = account.identities.get(source.identity)
+    return app?.peerTarget(app.useP2p.getState(), source.room, source.ch) ?? null
+  }
   if (source?.kind !== 'channel') return null
   const server = sourceServer(s, source.id) ?? source.server
   if (!server) return null
@@ -72,17 +75,29 @@ export const sourceTarget = (
 export const sourceAccess = (
   s: RChatState,
   source: ForwardSource | undefined,
-  label?: boolean,
-  viewing = defaultViewing
+  label: boolean | undefined,
+  account: AccountSession
 ): SourceAccess => {
-  if (source?.kind === 'direct') return 'open'
-  const target = sourceTarget(s, source, label, viewing)
-  return target ? (viewing.canView(target) ? 'open' : 'hidden') : 'unknown'
+  if (source?.kind === 'direct')
+    return !source.identity || account.identities.get(source.identity) ? 'open' : 'unknown'
+  const target = sourceTarget(s, source, label, account)
+  return target ? (account.viewing.canView(target) ? 'open' : 'hidden') : 'unknown'
 }
 
-export const clipAllowed = (s: RChatState, clip: ForwardClip, viewing = defaultViewing) =>
-  sourceAccess(s, clip.source, undefined, viewing) === 'open' &&
-  (!clip.quoted || sourceAccess(s, clip.quoted, undefined, viewing) === 'open')
+export const clipAllowed = (s: RChatState, clip: ForwardClip, account: AccountSession) =>
+  sourceAccess(s, clip.source, undefined, account) === 'open' &&
+  (!clip.quoted || sourceAccess(s, clip.quoted, undefined, account) === 'open')
+
+export function clearHiddenForward(account: AccountSession, s = account.store.getState()) {
+  const clip = s.forwardClip
+  if (
+    clip &&
+    [clip.source, clip.quoted].some(
+      source => sourceAccess(s, source, undefined, account) === 'hidden'
+    )
+  )
+    s.clearForward()
+}
 
 // Only same-server public origins carry a channel label. Other copies can locate their
 // original through the viewer's authorized metadata lookup.
