@@ -1,27 +1,42 @@
 import type { IndexDoc, PaletteIndex } from '../palette_index'
-import { peerVisible } from './app/viewing'
 import type { AccountSession } from '../client/session'
 import type { IndexSource } from '../palette_sync'
 import { replaceSpoilers } from '../spoilers'
-import { memberName, p2p, p2pOpenAt, p2pRecent, useP2p, type P2pState } from './app'
-import { p2pHost } from './app/store'
+import type { P2pState } from './app'
+import { legacyP2pApp, type P2pApp } from './app/runtime'
 import { displayName } from './contacts'
 import type { P2pMessage } from './dm'
 
 // P2P conversations and server channels in the palette's index: messages as this browser loads
 // them, and in "Full" mode the newest stored page of each conversation and channel. Documents
-// carry `source: 'p2p'` and a bucket per place (`p:{room}` or `p:{room}/{channel}`); they never
+// use a bucket per place and an identity-specific namespace when bound to an app. They never
 // name an instance server, so nothing about them reaches the instance. They show only while the
 // place is still open to the user, and go when P2P data is removed or the account changes.
 
 export const P2P_SOURCE = 'p2p'
 
-export const p2pBucket = (room: string, ch: string | null) =>
-  ch === null ? `p:${room}` : `p:${room}/${ch}`
+// Each account has its own palette index. Its main identity keeps the on-disk IDs.
+const sourceId = (app?: P2pApp) =>
+  app && app.localId !== 'main' ? `${P2P_SOURCE}:${encodeURIComponent(app.localId)}` : P2P_SOURCE
+const docPrefix = (app?: P2pApp) => {
+  const source = sourceId(app)
+  return source === P2P_SOURCE ? 'p' : source + ':'
+}
+const bucketPrefix = (app?: P2pApp) => {
+  const source = sourceId(app)
+  return source === P2P_SOURCE ? 'p:' : source + ':'
+}
 
-export const bucketPlace = (bucket: string): { room: string; ch: string | null } | null => {
-  if (!bucket.startsWith('p:')) return null
-  const rest = bucket.slice(2)
+export const p2pBucket = (room: string, ch: string | null, app?: P2pApp) =>
+  bucketPrefix(app) + (ch === null ? room : `${room}/${ch}`)
+
+export const bucketPlace = (
+  bucket: string,
+  app?: P2pApp
+): { room: string; ch: string | null } | null => {
+  const prefix = bucketPrefix(app)
+  if (!bucket.startsWith(prefix)) return null
+  const rest = bucket.slice(prefix.length)
   const i = rest.indexOf('/')
   if (!rest || i === 0) return null
   return i < 0 ? { room: rest, ch: null } : { room: rest.slice(0, i), ch: rest.slice(i + 1) }
@@ -34,17 +49,18 @@ export const p2pDoc = (
   room: string,
   ch: string | null,
   m: P2pMessage,
-  name: string
+  name: string,
+  app?: P2pApp
 ): IndexDoc | null => {
   if (m.system || m.call) return null
   // Spoiler text is never indexed, so a search can't confirm what a spoiler hides.
   const text = replaceSpoilers(m.fwd ? m.fwd.body : m.body, () => blank).trim()
   if (!text) return null
   return {
-    id: `p${m.id}`,
+    id: docPrefix(app) + m.id,
     kind: 'message',
-    bucket: p2pBucket(room, ch),
-    source: P2P_SOURCE,
+    bucket: p2pBucket(room, ch, app),
+    source: sourceId(app),
     server: null,
     channel: null,
     dm: null,
@@ -62,19 +78,19 @@ const blocked = (st: P2pState, ik: string) =>
 
 // Whether a document's place is open to the user now: a conversation with a contact who isn't
 // blocked, or a channel of a server they are still in. Nothing by blocked contacts.
-export const p2pDocVisible = (st: P2pState, d: IndexDoc) => {
-  const at = bucketPlace(d.bucket)
+export const p2pDocVisible = (st: P2pState, d: IndexDoc, app?: P2pApp) => {
+  const at = bucketPlace(d.bucket, app)
   if (!at || !st.enabled || blocked(st, d.author)) return false
   if (at.ch === null) {
     const peer = st.rooms[at.room]?.peer
     return !!peer && st.contacts.some(c => c.ik === peer) && !blocked(st, peer)
   }
   const v = st.servers[at.room]
-  return !!v && v.me === 'join' && peerVisible(st, at.room, at.ch)
+  return !!v && v.me === 'join' && (app ?? legacyP2pApp).peerVisible(st, at.room, at.ch)
 }
 
-export const p2pDocPlace = (st: P2pState, d: IndexDoc) => {
-  const at = bucketPlace(d.bucket)
+export const p2pDocPlace = (st: P2pState, d: IndexDoc, app?: P2pApp) => {
+  const at = bucketPlace(d.bucket, app)
   if (!at) return ''
   if (at.ch === null) return 'P2P direct message'
   const v = st.servers[at.room]
@@ -82,16 +98,24 @@ export const p2pDocPlace = (st: P2pState, d: IndexDoc) => {
   return `#${ch} · ${v?.name ?? 'P2P server'}`
 }
 
-const nameIn = (st: P2pState, room: string, ch: string | null, ik: string) => {
-  if (ch !== null) return memberName(room, ik)
+const nameIn = (st: P2pState, room: string, ch: string | null, ik: string, app?: P2pApp) => {
+  if (ch !== null) return (app ?? legacyP2pApp).memberName(room, ik)
   if (ik === st.me) return st.name || 'You'
   const c = st.contacts.find(x => x.ik === ik)
   return c ? displayName(c) : 'Contact'
 }
 
-const docsOf = (st: P2pState, room: string, ch: string | null, list: readonly P2pMessage[]) =>
+const docsOf = (
+  st: P2pState,
+  room: string,
+  ch: string | null,
+  list: readonly P2pMessage[],
+  app?: P2pApp
+) =>
   list.flatMap(m =>
-    blocked(st, m.sender) ? [] : (p2pDoc(room, ch, m, nameIn(st, room, ch, m.sender)) ?? [])
+    blocked(st, m.sender)
+      ? []
+      : (p2pDoc(room, ch, m, nameIn(st, room, ch, m.sender, app), app) ?? [])
   )
 
 // A run of a place's messages replaces what the index has in that time range: deleted messages,
@@ -101,10 +125,11 @@ const reconcilePlace = (
   st: P2pState,
   room: string,
   ch: string | null,
-  list: readonly P2pMessage[]
+  list: readonly P2pMessage[],
+  app?: P2pApp
 ) => {
-  const bucket = p2pBucket(room, ch)
-  const docs = docsOf(st, room, ch, list)
+  const bucket = p2pBucket(room, ch, app)
+  const docs = docsOf(st, room, ch, list, app)
   const shown = list.filter(m => !m.call && !m.system)
   if (shown.length) {
     const lo = Math.floor(shown[0].ts / 1000)
@@ -115,15 +140,23 @@ const reconcilePlace = (
   indexer.indexDocs(docs)
 }
 
-export const p2pIndexSource: IndexSource = {
-  id: P2P_SOURCE,
-  visible: d => p2pDocVisible(useP2p.getState(), d),
-  open: d => {
-    const at = bucketPlace(d.bucket)
-    if (at) void p2pOpenAt(at.room, at.ch, d.id.slice(1))
+const createIndexSource = (app?: P2pApp): IndexSource => ({
+  id: sourceId(app),
+  visible: d => {
+    const { useP2p } = app ?? legacyP2pApp
+    return p2pDocVisible(useP2p.getState(), d, app)
   },
-  place: d => p2pDocPlace(useP2p.getState(), d),
-}
+  open: d => {
+    const at = bucketPlace(d.bucket, app)
+    if (at) void (app ?? legacyP2pApp).p2pOpenAt(at.room, at.ch, d.id.slice(docPrefix(app).length))
+  },
+  place: d => {
+    const { useP2p } = app ?? legacyP2pApp
+    return p2pDocPlace(useP2p.getState(), d, app)
+  },
+})
+
+export const p2pIndexSource = createIndexSource()
 
 // The places to fill in "Full" mode: conversations with contacts and text channels of servers
 // the user is in.
@@ -164,9 +197,22 @@ export const changedRooms = (
 // apart, and changed places again `misc.paletteRefreshMs` after a change.
 export const startP2pIndex = (
   account: AccountSession,
-  { recent = p2pRecent, refreshMs }: { recent?: typeof p2pRecent; refreshMs?: number } = {}
+  {
+    app,
+    recent = (app ?? legacyP2pApp).p2pRecent,
+    refreshMs,
+  }: { app?: P2pApp; recent?: P2pApp['p2pRecent']; refreshMs?: number } = {}
 ) => {
-  const active = () => (p2pHost.account ? p2pHost.account === account : account.isHome)
+  if (app?.owner && app.owner !== account) throw new Error('P2P palette owner mismatch')
+  const { useP2p, p2p } = app ?? legacyP2pApp
+  const source = createIndexSource(app)
+  const bucket = (room: string, ch: string | null) => p2pBucket(room, ch, app)
+  let stopped = false
+  const active = () => {
+    if (stopped) return false
+    const owner = (app ?? legacyP2pApp).owner
+    return owner ? owner === account : account.isHome
+  }
   const { indexer } = account
   const { dropIndexBucket, dropIndexWhere, paletteIndex, registerIndexSource, useIndexStatus } =
     indexer
@@ -182,7 +228,7 @@ export const startP2pIndex = (
     const chat = st.chat
     if (!active() || !ix || !chat || chat.loading || chat.messages === seen) return
     seen = chat.messages
-    reconcilePlace(indexer, st, chat.room, chat.ch ?? null, chat.messages)
+    reconcilePlace(indexer, st, chat.room, chat.ch ?? null, chat.messages, app)
   }
 
   // Stored pages of places, one at a time.
@@ -193,7 +239,7 @@ export const startP2pIndex = (
       if (!active() || mine !== run || mark !== account.lifetime.sessionMark() || !ix) return
       const list = await recent(p.room, p.ch)
       if (!active() || mine !== run || mark !== account.lifetime.sessionMark() || !ix) return
-      if (list) reconcilePlace(indexer, useP2p.getState(), p.room, p.ch, list)
+      if (list) reconcilePlace(indexer, useP2p.getState(), p.room, p.ch, list, app)
       await wait(p2p.limits().misc.paletteGapMs)
     }
   }
@@ -202,8 +248,8 @@ export const startP2pIndex = (
   const backfill = () => {
     const st = useP2p.getState()
     if (!active() || !ix || useIndexStatus.getState().mode !== 'full' || !st.me) return
-    const todo = placesOf(st).filter(p => !filled.has(p2pBucket(p.room, p.ch)))
-    for (const p of todo) filled.add(p2pBucket(p.room, p.ch))
+    const todo = placesOf(st).filter(p => !filled.has(bucket(p.room, p.ch)))
+    for (const p of todo) filled.add(bucket(p.room, p.ch))
     if (todo.length) void fill(todo)
   }
 
@@ -213,9 +259,9 @@ export const startP2pIndex = (
     timer = null
     const have = new Set(paletteIndex()?.bucketNames() ?? [])
     const st = useP2p.getState()
-    const open = st.chat && p2pBucket(st.chat.room, st.chat.ch ?? null)
+    const open = st.chat && bucket(st.chat.room, st.chat.ch ?? null)
     const places = placesOf(st).filter(p => {
-      const b = p2pBucket(p.room, p.ch)
+      const b = bucket(p.room, p.ch)
       return dirty.has(p.room) && have.has(b) && b !== open
     })
     dirty.clear()
@@ -229,7 +275,7 @@ export const startP2pIndex = (
 
   const dropRoom = (room: string) => {
     for (const b of paletteIndex()?.bucketNames() ?? [])
-      if (b === p2pBucket(room, null) || b.startsWith(`p:${room}/`)) drop(b)
+      if (b === bucket(room, null) || b.startsWith(bucket(room, null) + '/')) drop(b)
   }
 
   const reset = () => {
@@ -256,7 +302,7 @@ export const startP2pIndex = (
       (prev.me !== null && st.me !== null && prev.me !== st.me)
     if (removed) {
       reset()
-      dropIndexWhere(d => d.source === P2P_SOURCE)
+      dropIndexWhere(d => d.source === source.id)
     }
     if (!active() || !ix) return
     // Left, removed, banned or forgotten here (not a tab handing P2P over).
@@ -266,19 +312,19 @@ export const startP2pIndex = (
       if (!now || (v.me === 'join' && (now.me === 'leave' || now.me === 'ban'))) dropRoom(room)
       else if (now.channels !== v.channels)
         for (const c of v.channels)
-          if (!now.channels.some(x => x.id === c.id)) drop(p2pBucket(room, c.id))
+          if (!now.channels.some(x => x.id === c.id)) drop(bucket(room, c.id))
     }
     if (st.contacts !== prev.contacts) {
       const rooms = Object.values({ ...prev.rooms, ...st.rooms })
       const dropDm = (ik: string) => {
-        for (const r of rooms) if (r.peer === ik) drop(p2pBucket(r.id, null))
+        for (const r of rooms) if (r.peer === ik) drop(bucket(r.id, null))
       }
       for (const c of st.contacts)
         if (
           c.state === 'blocked' &&
           !prev.contacts.some(x => x.ik === c.ik && x.state === 'blocked')
         ) {
-          dropIndexWhere(d => d.source === P2P_SOURCE && d.author === c.ik)
+          dropIndexWhere(d => d.source === source.id && d.author === c.ik)
           dropDm(c.ik)
         }
       for (const c of same ? prev.contacts : [])
@@ -293,20 +339,23 @@ export const startP2pIndex = (
   })
 
   const offSource = registerIndexSource({
-    ...p2pIndexSource,
-    visible: (doc, state) => active() && p2pIndexSource.visible(doc, state),
+    ...source,
+    visible: (doc, state) => active() && source.visible(doc, state),
     open: doc => {
-      if (active()) p2pIndexSource.open(doc)
+      if (active()) source.open(doc)
     },
   })
   ix = paletteIndex()
   if (ix) indexChat(useP2p.getState())
   backfill()
   return () => {
+    if (stopped) return
+    stopped = true
     reset()
     if (timer) clearTimeout(timer)
     offIndex()
     offP2p()
     offSource()
+    if (app) dropIndexWhere(d => d.source === source.id)
   }
 }

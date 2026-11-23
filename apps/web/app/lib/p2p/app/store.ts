@@ -1,3 +1,4 @@
+import { resetHandlers } from '../identity_scope'
 import type { AccountSession } from '../../client/session'
 import { create } from 'zustand'
 import { home, readLocal, sessionStore, writeLocal } from '../../instances'
@@ -12,12 +13,13 @@ import type { PingLog } from '../ping_log'
 import type { BlobView, Usage } from '../blobs'
 import type { Hashed } from '../hashing'
 import { LOCAL, type Local } from '../limits'
-import { instanceLocal, limitsFor, withChoice } from '../user_limits'
+import { accountLimits, instanceLocal, userLimitsKey, withChoice } from '../user_limits'
 import type { Preview } from '../files'
 import type { TabLeader } from '../leader'
 import type { P2pNode, Presence, Status } from '../node'
 import type { Calls, CallView } from '../calls'
 import type { SearchHit, ServerView, Servers } from '../server'
+import type { IdentityScope } from './scope'
 
 // The P2P view model. IndexedDB (through the node) is the source of truth; this store only
 // mirrors what the UI shows. One node per signed-in account; guests never get one.
@@ -102,13 +104,6 @@ export interface P2pSearch {
   // The index is still being built (results may be missing).
   indexing: boolean
 }
-
-export const emptySearch = (): P2pSearch => ({
-  hits: [],
-  next: null,
-  loading: false,
-  indexing: false,
-})
 
 export interface P2pState {
   account: string | null
@@ -206,13 +201,6 @@ export interface P2pState {
   pingLog: number
 }
 
-// Drafts and files being attached are kept per conversation, per server channel and per thread.
-export const chatKey = (c: { room: string; ch?: string | null }) =>
-  c.ch ? `${c.room}/${c.ch}` : c.room
-
-export const threadKey = (t: { room: string; ch: string; root: string }) =>
-  `${t.room}/${t.ch}#${t.root}`
-
 export interface PendingFile {
   id: number
   file: File
@@ -232,225 +220,6 @@ export interface FileView extends BlobView {
   tooBig?: boolean
 }
 
-export const initial: P2pState = {
-  account: null,
-  enabled: false,
-  loading: false,
-  status: 'off',
-  ik: null,
-  name: '',
-  fingerprint: '',
-  card: null,
-  contacts: [],
-  presence: {},
-  paused: false,
-  home: false,
-  dmList: false,
-  elsewhere: false,
-  dropped: 0,
-  addressHidden: false,
-  storage: null,
-  error: null,
-  dialog: null,
-  me: null,
-  reader: false,
-  rooms: {},
-  chat: null,
-  typing: {},
-  pins: null,
-  panel: null,
-  thread: null,
-  search: emptySearch(),
-  drafts: {},
-  slowUntil: {},
-  replying: null,
-  editing: null,
-  focus: null,
-  pulling: false,
-  storageFull: false,
-  movedAt: null,
-  movingAt: null,
-  alertAt: null,
-  attaching: {},
-  files: {},
-  fileUsage: null,
-  call: null,
-  callQuiet: false,
-  callAccepting: false,
-  callElsewhere: null,
-  voice: null,
-  servers: {},
-  serverInvites: [],
-  coOwnerAsks: [],
-  transferAsks: [],
-  server: null,
-  serverTyping: {},
-  layout: emptyLayout,
-  badges: {},
-  badge: null,
-  badgeBusy: false,
-  badgeError: null,
-  pingLog: 0,
-}
-
-export const useP2p = create<P2pState>()(() => initial)
-
-// Stored per account: { v: 1, on }. Anything unreadable means off.
-export const p2pKey = (username: string) => `rchat_p2p:${username}`
-
-// The P2P home (also a conversation of it beside the DM list) or a P2P server shows in place of
-// the instance's view.
-export const coversInstance = (s: Pick<P2pState, 'home' | 'server'>) => s.home || s.server !== null
-
-export const parseOn = (raw: string | null) => {
-  try {
-    const v = raw ? (JSON.parse(raw) as unknown) : null
-    return typeof v === 'object' && v !== null && (v as { v?: unknown; on?: unknown }).v === 1
-      ? (v as { on?: unknown }).on === true
-      : false
-  } catch {
-    return false
-  }
-}
-
-export const readOn = (username: string) => {
-  try {
-    return parseOn(readLocal(home.scoped(p2pKey(username))))
-  } catch {
-    return false
-  }
-}
-
-export const writeOn = (username: string, on: boolean) =>
-  writeLocal(home.scoped(p2pKey(username)), on ? JSON.stringify({ v: 1, on: true }) : null)
-
-// Transfer files imported in this browser, kept even when its P2P data is removed: importing
-// one again as a new device would make a second device of the identity. { v: 1, ids }.
-export const importsKey = (username: string) => `rchat_p2p_imports:${username}`
-
-// At most `transfer.browserImportsKept`, the newest.
-export const parseImports = (
-  raw: string | null,
-  lim: Pick<Local['transfer'], 'browserImportsKept'> = LOCAL.transfer
-): string[] => {
-  try {
-    const v = raw ? (JSON.parse(raw) as unknown) : null
-    const ids = (v as { v?: unknown; ids?: unknown } | null)?.ids
-    return (v as { v?: unknown } | null)?.v === 1 && Array.isArray(ids)
-      ? ids.filter((x): x is string => typeof x === 'string').slice(-lim.browserImportsKept)
-      : []
-  } catch {
-    return []
-  }
-}
-
-export const readImports = (username: string) => {
-  try {
-    const raw = readLocal(home.scoped(importsKey(username)))
-    return parseImports(raw, limitsFor(username).transfer)
-  } catch {
-    return []
-  }
-}
-
-export const rememberImport = (username: string, id: string) =>
-  writeLocal(
-    home.scoped(importsKey(username)),
-    JSON.stringify({
-      v: 1,
-      ids: [...readImports(username).filter(x => x !== id), id].slice(
-        -limitsFor(username).transfer.browserImportsKept
-      ),
-    })
-  )
-
-export let node: P2pNode | null = null
-
-export let store: P2pStore | null = null
-
-export let dms: Dms | null = null
-
-export let servers: Servers | null = null
-
-export let calls: Calls | null = null
-
-export let pingLog: PingLog | null = null
-
-export let badges: Badges | null = null
-
-export let keeper: BadgeKeeper | null = null
-
-export let leader: TabLeader | null = null
-
-export let unwatch: (() => void) | null = null
-
-// The limits this account's P2P started with (user_limits.ts).
-export let limits: Readonly<Local> = LOCAL
-
-export let gen = 0
-
-// Follower tabs read the database without running a node; the leader tells them what changed.
-export let reader: { store: P2pStore; me: string } | null = null
-
-export let data: {
-  postMessage: (m: unknown) => void
-  onmessage: ((e: { data: unknown }) => void) | null
-  close: () => void
-} | null = null
-
-// The node's parts above are assigned only by the account's lifecycle (account.ts), through
-// these; every other module reads them.
-export const put = {
-  node: (x: P2pNode | null) => {
-    node = x
-  },
-  store: (x: P2pStore | null) => {
-    store = x
-  },
-  dms: (x: Dms | null) => {
-    dms = x
-  },
-  servers: (x: Servers | null) => {
-    servers = x
-  },
-  calls: (x: Calls | null) => {
-    calls = x
-  },
-  pingLog: (x: PingLog | null) => {
-    pingLog = x
-  },
-  badges: (x: Badges | null) => {
-    badges = x
-  },
-  keeper: (x: BadgeKeeper | null) => {
-    keeper = x
-  },
-  leader: (x: TabLeader | null) => {
-    leader = x
-  },
-  unwatch: (x: (() => void) | null) => {
-    unwatch = x
-  },
-  limits: (x: Readonly<Local>) => {
-    limits = x
-  },
-  gen: (x: number) => {
-    gen = x
-  },
-  reader: (x: { store: P2pStore; me: string } | null) => {
-    reader = x
-  },
-  data: (
-    x: {
-      postMessage: (m: unknown) => void
-      onmessage: ((e: { data: unknown }) => void) | null
-      close: () => void
-    } | null
-  ) => {
-    data = x
-  },
-}
-
 // What the P2P view needs from the rest of the app, wired by the app shell: notification
 // settings, toasts and whether a conversation is being read right now.
 export interface P2pHost {
@@ -463,75 +232,455 @@ export interface P2pHost {
   textOnly: () => boolean
   account?: AccountSession
 }
+export function createStorePart(scope: IdentityScope) {
+  const emptySearch = (): P2pSearch => ({
+    hits: [],
+    next: null,
+    loading: false,
+    indexing: false,
+  })
 
-export const p2pHost: P2pHost = {
-  prefs: () => EMPTY_NOTIFY,
-  alert: () => {},
-  following: () => false,
-  typingOn: () => true,
-  toast: () => {},
-  textOnly: () => false,
-}
+  // Drafts and files being attached are kept per conversation, per server channel and per thread.
+  const chatKey = (c: { room: string; ch?: string | null }) => (c.ch ? `${c.room}/${c.ch}` : c.room)
 
-// Auto-download per account: files up to `dm` bytes in direct messages, images up to `server`
-// bytes in P2P servers, and at most `daily` bytes per contact per day. { v: 1, dm, server, daily }.
-export const autoKey = (username: string) => `rchat_p2p_auto:${username}`
+  const threadKey = (t: { room: string; ch: string; root: string }) => `${t.room}/${t.ch}#${t.root}`
 
-export const autoDefaults = (l: Readonly<Local> = LOCAL) => ({
-  dm: l.files.autoDm,
-  server: l.files.autoServer,
-  daily: l.dm.autoDaily,
-})
+  const initial: P2pState = {
+    account: null,
+    enabled: false,
+    loading: false,
+    status: 'off',
+    ik: null,
+    name: '',
+    fingerprint: '',
+    card: null,
+    contacts: [],
+    presence: {},
+    paused: false,
+    home: false,
+    dmList: false,
+    elsewhere: false,
+    dropped: 0,
+    addressHidden: false,
+    storage: null,
+    error: null,
+    dialog: null,
+    me: null,
+    reader: false,
+    rooms: {},
+    chat: null,
+    typing: {},
+    pins: null,
+    panel: null,
+    thread: null,
+    search: emptySearch(),
+    drafts: {},
+    slowUntil: {},
+    replying: null,
+    editing: null,
+    focus: null,
+    pulling: false,
+    storageFull: false,
+    movedAt: null,
+    movingAt: null,
+    alertAt: null,
+    attaching: {},
+    files: {},
+    fileUsage: null,
+    call: null,
+    callQuiet: false,
+    callAccepting: false,
+    callElsewhere: null,
+    voice: null,
+    servers: {},
+    serverInvites: [],
+    coOwnerAsks: [],
+    transferAsks: [],
+    server: null,
+    serverTyping: {},
+    layout: structuredClone(emptyLayout),
+    badges: {},
+    badge: null,
+    badgeBusy: false,
+    badgeError: null,
+    pingLog: 0,
+  }
 
-// The choices, with the defaults the instance set among them.
-export const autoChoices = (l: Readonly<Local> = LOCAL) => ({
-  dm: withChoice(l.files.autoDmOptions, l.files.autoDm),
-  server: withChoice(l.files.autoServerOptions, l.files.autoServer),
-  daily: withChoice(l.files.autoDailyOptions, l.dm.autoDaily),
-})
+  const useP2p = create<P2pState>()(() => initial)
 
-export const parseAuto = (raw: string | null, l: Readonly<Local> = LOCAL) => {
-  const d = autoDefaults(l)
-  try {
-    const v = raw
-      ? (JSON.parse(raw) as { v?: unknown; dm?: unknown; server?: unknown; daily?: unknown })
-      : null
-    if (v?.v !== 1) return d
-    const c = autoChoices(l)
-    const pick = (x: unknown, list: number[], def: number) =>
-      list.includes(x as number) ? (x as number) : def
-    return {
-      dm: pick(v.dm, c.dm, d.dm),
-      server: pick(v.server, c.server, d.server),
-      daily: pick(v.daily, c.daily, d.daily),
+  // Stored per account: { v: 1, on }. Anything unreadable means off.
+  const p2pKey = (username: string) => `rchat_p2p:${username}`
+
+  // The P2P home (also a conversation of it beside the DM list) or a P2P server shows in place of
+  // the instance's view.
+  const coversInstance = (s: Pick<P2pState, 'home' | 'server'>) => s.home || s.server !== null
+
+  const parseOn = (raw: string | null) => {
+    try {
+      const v = raw ? (JSON.parse(raw) as unknown) : null
+      return typeof v === 'object' && v !== null && (v as { v?: unknown; on?: unknown }).v === 1
+        ? (v as { on?: unknown }).on === true
+        : false
+    } catch {
+      return false
     }
-  } catch {
-    return d
+  }
+
+  const readOn = (username: string) => {
+    try {
+      return parseOn(readLocal(scope.scoped(p2pKey(username))))
+    } catch {
+      return false
+    }
+  }
+
+  const writeOn = (username: string, on: boolean) =>
+    scope.current(username) &&
+    writeLocal(scope.scoped(p2pKey(username)), on ? JSON.stringify({ v: 1, on: true }) : null)
+
+  // Transfer files imported in this browser, kept even when its P2P data is removed: importing
+  // one again as a new device would make a second device of the identity. { v: 1, ids }.
+  const importsKey = (username: string) => `rchat_p2p_imports:${username}`
+
+  // At most `transfer.browserImportsKept`, the newest.
+  const parseImports = (
+    raw: string | null,
+    lim: Pick<Local['transfer'], 'browserImportsKept'> = LOCAL.transfer
+  ): string[] => {
+    try {
+      const v = raw ? (JSON.parse(raw) as unknown) : null
+      const ids = (v as { v?: unknown; ids?: unknown } | null)?.ids
+      return (v as { v?: unknown } | null)?.v === 1 && Array.isArray(ids)
+        ? ids.filter((x): x is string => typeof x === 'string').slice(-lim.browserImportsKept)
+        : []
+    } catch {
+      return []
+    }
+  }
+
+  const identityLimits = (username: string) =>
+    accountLimits(
+      (scope.owner?.conn ?? home).info,
+      readLocal(scope.scoped(userLimitsKey(username)))
+    )
+
+  const readImports = (username: string) => {
+    try {
+      const raw = readLocal(scope.scoped(importsKey(username)))
+      return parseImports(raw, identityLimits(username).transfer)
+    } catch {
+      return []
+    }
+  }
+
+  const rememberImport = (username: string, id: string) =>
+    scope.current(username) &&
+    writeLocal(
+      scope.scoped(importsKey(username)),
+      JSON.stringify({
+        v: 1,
+        ids: [...readImports(username).filter(x => x !== id), id].slice(
+          -identityLimits(username).transfer.browserImportsKept
+        ),
+      })
+    )
+
+  let currentNode: P2pNode | null = null
+
+  let currentStore: P2pStore | null = null
+
+  let currentDms: Dms | null = null
+
+  let currentServers: Servers | null = null
+
+  let currentCalls: Calls | null = null
+
+  let currentPingLog: PingLog | null = null
+
+  let currentBadges: Badges | null = null
+
+  let currentKeeper: BadgeKeeper | null = null
+
+  let currentLeader: TabLeader | null = null
+
+  let currentUnwatch: (() => void) | null = null
+
+  // The limits this account's P2P started with (user_limits.ts).
+  let currentLimits: Readonly<Local> = instanceLocal(scope.owner?.conn.info ?? null)
+
+  let currentGen = 0
+
+  // Follower tabs read the database without running a node; the leader tells them what changed.
+  let currentReader: { store: P2pStore; me: string } | null = null
+
+  let currentData: {
+    postMessage: (m: unknown) => void
+    onmessage: ((e: { data: unknown }) => void) | null
+    close: () => void
+  } | null = null
+
+  // The node's parts above are assigned only by the account's lifecycle (account.ts), through
+  // these; every other module reads them.
+  const put = {
+    node: (x: P2pNode | null) => {
+      currentNode = x
+      if (scope === legacyScope) node = x
+    },
+    store: (x: P2pStore | null) => {
+      currentStore = x
+      if (scope === legacyScope) store = x
+    },
+    dms: (x: Dms | null) => {
+      currentDms = x
+      if (scope === legacyScope) dms = x
+    },
+    servers: (x: Servers | null) => {
+      currentServers = x
+      if (scope === legacyScope) servers = x
+    },
+    calls: (x: Calls | null) => {
+      currentCalls = x
+      if (scope === legacyScope) calls = x
+    },
+    pingLog: (x: PingLog | null) => {
+      currentPingLog = x
+      if (scope === legacyScope) pingLog = x
+    },
+    badges: (x: Badges | null) => {
+      currentBadges = x
+      if (scope === legacyScope) badges = x
+    },
+    keeper: (x: BadgeKeeper | null) => {
+      currentKeeper = x
+      if (scope === legacyScope) keeper = x
+    },
+    leader: (x: TabLeader | null) => {
+      currentLeader = x
+      if (scope === legacyScope) leader = x
+    },
+    unwatch: (x: (() => void) | null) => {
+      currentUnwatch = x
+      if (scope === legacyScope) unwatch = x
+    },
+    limits: (x: Readonly<Local>) => {
+      currentLimits = x
+      if (scope === legacyScope) limits = x
+    },
+    gen: (x: number) => {
+      currentGen = x
+      if (scope === legacyScope) gen = x
+    },
+    reader: (x: { store: P2pStore; me: string } | null) => {
+      currentReader = x
+      if (scope === legacyScope) reader = x
+    },
+    data: (
+      x: {
+        postMessage: (m: unknown) => void
+        onmessage: ((e: { data: unknown }) => void) | null
+        close: () => void
+      } | null
+    ) => {
+      currentData = x
+      if (scope === legacyScope) data = x
+    },
+  }
+
+  const p2pHost: P2pHost = {
+    prefs: () => EMPTY_NOTIFY,
+    alert: () => {},
+    following: () => false,
+    typingOn: () => true,
+    toast: () => {},
+    textOnly: () => false,
+  }
+
+  // Auto-download per account: files up to `dm` bytes in direct messages, images up to `server`
+  // bytes in P2P servers, and at most `daily` bytes per contact per day. { v: 1, dm, server, daily }.
+  const autoKey = (username: string) => `rchat_p2p_auto:${username}`
+
+  const autoDefaults = (l: Readonly<Local> = LOCAL) => ({
+    dm: l.files.autoDm,
+    server: l.files.autoServer,
+    daily: l.dm.autoDaily,
+  })
+
+  // The choices, with the defaults the instance set among them.
+  const autoChoices = (l: Readonly<Local> = LOCAL) => ({
+    dm: withChoice(l.files.autoDmOptions, l.files.autoDm),
+    server: withChoice(l.files.autoServerOptions, l.files.autoServer),
+    daily: withChoice(l.files.autoDailyOptions, l.dm.autoDaily),
+  })
+
+  const parseAuto = (raw: string | null, l: Readonly<Local> = LOCAL) => {
+    const d = autoDefaults(l)
+    try {
+      const v = raw
+        ? (JSON.parse(raw) as { v?: unknown; dm?: unknown; server?: unknown; daily?: unknown })
+        : null
+      if (v?.v !== 1) return d
+      const c = autoChoices(l)
+      const pick = (x: unknown, list: number[], def: number) =>
+        list.includes(x as number) ? (x as number) : def
+      return {
+        dm: pick(v.dm, c.dm, d.dm),
+        server: pick(v.server, c.server, d.server),
+        daily: pick(v.daily, c.daily, d.daily),
+      }
+    } catch {
+      return d
+    }
+  }
+
+  const readAuto = (username: string | null) => {
+    const l = instanceLocal((scope.owner?.conn ?? home).info)
+    if (!username) return parseAuto(null, l)
+    try {
+      return parseAuto(readLocal(scope.scoped(autoKey(username))), l)
+    } catch {
+      return parseAuto(null, l)
+    }
+  }
+
+  const chatScope = (room: string, ch?: string | null) => (ch ? `p2p:${room}/${ch}` : `p2p:${room}`)
+
+  const threadScope = (t: { room: string; ch: string; root: string }) => `p2p:${threadKey(t)}`
+
+  // The open P2P home survives a reload of this tab.
+  const HOME_KEY = 'rchat_p2p_home'
+
+  const readHome = (username: string) => sessionStore.getItem(scope.scoped(HOME_KEY)) === username
+
+  const writeHome = (username: string | null) => {
+    if (!scope.current(username ?? undefined)) return
+    if (username) sessionStore.setItem(scope.scoped(HOME_KEY), username)
+    else sessionStore.removeItem(scope.scoped(HOME_KEY))
+  }
+  return {
+    emptySearch,
+    chatKey,
+    threadKey,
+    initial,
+    useP2p,
+    p2pKey,
+    coversInstance,
+    parseOn,
+    readOn,
+    writeOn,
+    identityLimits,
+    importsKey,
+    parseImports,
+    readImports,
+    rememberImport,
+    put,
+    p2pHost,
+    autoKey,
+    autoDefaults,
+    autoChoices,
+    parseAuto,
+    readAuto,
+    chatScope,
+    threadScope,
+    readHome,
+    writeHome,
+    get node() {
+      return currentNode
+    },
+    get store() {
+      return currentStore
+    },
+    get dms() {
+      return currentDms
+    },
+    get servers() {
+      return currentServers
+    },
+    get calls() {
+      return currentCalls
+    },
+    get pingLog() {
+      return currentPingLog
+    },
+    get badges() {
+      return currentBadges
+    },
+    get keeper() {
+      return currentKeeper
+    },
+    get leader() {
+      return currentLeader
+    },
+    get unwatch() {
+      return currentUnwatch
+    },
+    get limits() {
+      return currentLimits
+    },
+    get gen() {
+      return currentGen
+    },
+    get reader() {
+      return currentReader
+    },
+    get data() {
+      return currentData
+    },
   }
 }
 
-export const readAuto = (username: string | null) => {
-  const l = instanceLocal()
-  if (!username) return parseAuto(null, l)
-  try {
-    return parseAuto(readLocal(home.scoped(autoKey(username))), l)
-  } catch {
-    return parseAuto(null, l)
-  }
+export const legacyScope: IdentityScope = {
+  ...resetHandlers(),
+  localId: 'main',
+  get host() {
+    return home.host
+  },
+  current: () => true,
+  options: {},
+  scoped: key => home.scoped(key),
+  onDispose: () => {},
 }
 
-export const chatScope = (room: string, ch?: string | null) =>
-  ch ? `p2p:${room}/${ch}` : `p2p:${room}`
-
-export const threadScope = (t: { room: string; ch: string; root: string }) => `p2p:${threadKey(t)}`
-
-// The open P2P home survives a reload of this tab.
-const HOME_KEY = 'rchat_p2p_home'
-
-export const readHome = (username: string) =>
-  sessionStore.getItem(home.scoped(HOME_KEY)) === username
-
-export const writeHome = (username: string | null) => {
-  if (username) sessionStore.setItem(home.scoped(HOME_KEY), username)
-  else sessionStore.removeItem(home.scoped(HOME_KEY))
-}
+export const legacyStore = createStorePart(legacyScope)
+export const {
+  emptySearch,
+  chatKey,
+  threadKey,
+  initial,
+  useP2p,
+  p2pKey,
+  coversInstance,
+  parseOn,
+  readOn,
+  writeOn,
+  identityLimits,
+  importsKey,
+  parseImports,
+  readImports,
+  rememberImport,
+  put,
+  p2pHost,
+  autoKey,
+  autoDefaults,
+  autoChoices,
+  parseAuto,
+  readAuto,
+  chatScope,
+  threadScope,
+  readHome,
+  writeHome,
+} = legacyStore
+// These live exports remain available to direct callers of the home-main facade.
+export let node: (typeof legacyStore)['node'] = legacyStore.node
+export let store: (typeof legacyStore)['store'] = legacyStore.store
+export let dms: (typeof legacyStore)['dms'] = legacyStore.dms
+export let servers: (typeof legacyStore)['servers'] = legacyStore.servers
+export let calls: (typeof legacyStore)['calls'] = legacyStore.calls
+export let pingLog: (typeof legacyStore)['pingLog'] = legacyStore.pingLog
+export let badges: (typeof legacyStore)['badges'] = legacyStore.badges
+export let keeper: (typeof legacyStore)['keeper'] = legacyStore.keeper
+export let leader: (typeof legacyStore)['leader'] = legacyStore.leader
+export let unwatch: (typeof legacyStore)['unwatch'] = legacyStore.unwatch
+export let limits: (typeof legacyStore)['limits'] = legacyStore.limits
+export let gen: (typeof legacyStore)['gen'] = legacyStore.gen
+export let reader: (typeof legacyStore)['reader'] = legacyStore.reader
+export let data: (typeof legacyStore)['data'] = legacyStore.data

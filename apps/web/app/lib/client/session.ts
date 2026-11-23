@@ -20,11 +20,13 @@ import { createChatStore } from '../store'
 import { sessionLifetime } from '../slices/ctx'
 import { lookup, shareOrigin, type InstanceConnection } from '../instances'
 import { client } from './client'
+import { P2pIdentities } from './p2p_identities'
 import { KeyScope } from './keys'
 
 export type AccountId = string
 
 export class AccountSession {
+  readonly identities = new P2pIdentities(this)
   readonly channelEdit = createChannelEdit()
   readonly adminConfig = createStore<{ config: AdminConfig | null }>(() => ({ config: null }))
   readonly renderKey = client.nextSessionKey()
@@ -94,6 +96,7 @@ export class AccountSession {
   }
 
   disposeSideStores() {
+    this.identities.dispose()
     this.indexer.dispose()
     this.palettePrefs.dispose()
     this.home.dispose()

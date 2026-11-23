@@ -34,18 +34,15 @@ import {
 import { client } from '../lib/client/client'
 import { AccountProvider, useAccount, useLiveSessions, useStoreApi } from '../lib/client/react'
 import {
-  callRtc,
-  memberName,
   p2p as p2pApp,
   p2pCall,
   p2pDm,
   p2pHost,
-  p2pServer,
   p2pUser,
-  p2pVoice,
   useP2p,
   type P2pState,
 } from '../lib/p2p/app'
+import { legacyP2pApp } from '../lib/p2p/app/runtime'
 import { pastFit, voiceNotice, type VoiceUser } from '../lib/p2p/voice'
 import { displayName } from '../lib/p2p/contacts'
 import { AccountLabel } from './instance_badge'
@@ -78,7 +75,7 @@ import { UserAvatar } from './user_avatar'
 import { profileTrigger } from './profile_card'
 import { CallDuration, CallType, DirectBadge } from './call_buttons'
 import { COARSE_QUERY, longPress, useMedia } from './context_menu'
-import { Masked, useEscape, useOwn } from './ui'
+import { Dialog, Masked, useEscape, useOwn } from './ui'
 import { NameWithUsername } from './display_name'
 import { tileName } from '../lib/display_name'
 import { ownsP2pServer } from '../lib/p2p/server/types'
@@ -105,11 +102,23 @@ export const contactNameOf = (s: P2pState, ik: string) => {
   return c ? displayName(c) : 'Contact'
 }
 
+function useCallIdentity() {
+  const account = useAccount()
+  const claim = useCallClaim()
+  const id = claim?.account === account ? claim.identity : undefined
+  return account.identities.get(id) ?? legacyP2pApp
+}
+
 function useCallMedia() {
+  const identity = useCallIdentity()
+  const { useP2p, callRtc } = identity
   const account = useAccount()
   const { rtc, files: p2p } = account
   const claim = useCallClaim()
-  const kind = claim?.account === account ? claim.kind : null
+  const kind =
+    claim?.account === account && (!claim.identity || claim.identity === identity.localId)
+      ? claim.kind
+      : null
   useStore(s => s.rtcTick)
   const voice = useStore(s => (kind === 'voice' ? s.voice : null))
   const call = useStore(s => (kind === 'dm' ? s.call : null))
@@ -131,6 +140,7 @@ function useCallMedia() {
         : 'connecting'
       : rtc.quality()
   return {
+    identity,
     voice,
     call,
     roomCall,
@@ -148,6 +158,7 @@ function useCallMedia() {
 
 // Whether a share is on in the P2P conversation's call, which then gets a taller stage.
 export function useRoomCallShare(room: string) {
+  const { useP2p, callRtc } = useCallIdentity()
   useStore(s => s.rtcTick)
   const c = useP2p(s => s.call)
   return c?.room === room && c.state === 'active' && callRtc.anyShare()
@@ -249,7 +260,15 @@ function useStaffMuted(): boolean {
 
 function VoiceAudio() {
   const { rtc, files: p2p } = useAccount()
-  const { connected, p2pCall, roomCall, roomVoice, deafened, voice } = useCallMedia()
+  const {
+    identity: { callRtc },
+    connected,
+    p2pCall,
+    roomCall,
+    roomVoice,
+    deafened,
+    voice,
+  } = useCallMedia()
   const silenced = useStore(s => voiceMutedIn(s, voice?.channelId ?? null))
   const hushed = useStore(s => voiceHushedIn(s, voice?.channelId ?? null))
   useEffect(() => {
@@ -520,6 +539,7 @@ const ctlBase =
 
 function CallControls({ size = 'lg' }: { size?: 'lg' | 'sm' }) {
   const {
+    identity: { p2pCall, p2pVoice },
     voice,
     roomCall,
     roomVoice,
@@ -669,7 +689,7 @@ const QUALITY: Record<LinkQuality, { label: string; cls: string; Icon: typeof Si
 // How far a P2P voice mesh goes, past `voice.fitAudio` people (`fitVideo` with video). Joining
 // is never blocked.
 export function MeshNotice({ users, className }: { users: VoiceUser[]; className?: string }) {
-  const fit = p2pApp.limits().voice
+  const fit = useCallIdentity().p2p.limits().voice
   if (
     !pastFit(
       users.length,
@@ -710,9 +730,49 @@ export function VoiceDock() {
   )
 }
 
+export function ExpandedCallPane() {
+  const call = useSyncExternalStore(
+    client.calls.subscribe,
+    client.calls.expandedCall,
+    client.calls.expandedCall
+  )
+  if (!call) return null
+  return (
+    <Dialog
+      layer="page"
+      full
+      title={call.kind === 'p2p-voice' ? 'Voice channel' : 'Call'}
+      onClose={client.calls.collapse}
+    >
+      <CallOwner>
+        <PeerCallPane />
+      </CallOwner>
+    </Dialog>
+  )
+}
+
+function PeerCallPane() {
+  const { roomCall, roomVoice } = useCallMedia()
+  if (!roomCall && !roomVoice) return null
+  return (
+    <div className="flex h-[60dvh] min-h-52">
+      <VoiceGrid p2pRoom={roomVoice?.room ?? roomCall?.room} p2pCh={roomVoice?.ch} />
+    </div>
+  )
+}
+
 function VoiceDockBody() {
+  const claim = useCallClaim()
   const account = useAccount()
-  const { voice, call, roomCall, roomVoice, connected, quality } = useCallMedia()
+  const {
+    identity: { useP2p, p2p: p2pApp, p2pServer, p2pDm, p2pVoice, p2pCall },
+    voice,
+    call,
+    roomCall,
+    roomVoice,
+    connected,
+    quality,
+  } = useCallMedia()
   const contactName = useP2p(s => (roomCall ? contactNameOf(s, roomCall.peer) : ''))
   const sv = useP2p(s => (roomVoice ? s.servers[roomVoice.room] : undefined))
   const ownSv = useP2p(s => ownsP2pServer(sv, s.me))
@@ -755,6 +815,14 @@ function VoiceDockBody() {
           <button
             title={`Go to ${inVoice ? 'voice channel' : 'call'}`}
             onClick={() => {
+              if (
+                (roomCall || roomVoice) &&
+                claim?.identity &&
+                (claim.identity !== 'main' || !account.isHome)
+              ) {
+                client.calls.expand(claim)
+                return
+              }
               if (voice) void openChannel(voice.server, voice.channelId)
               else if (roomVoice) p2pServer.open(roomVoice.room, roomVoice.ch)
               else if (roomCall) {
@@ -922,6 +990,7 @@ export function VoiceGrid({
   // A voice channel of the P2P server `p2pRoom`.
   p2pCh?: string
 }) {
+  const { useP2p, callRtc, p2pUser, memberName, p2pVoice } = useCallIdentity()
   const { rtc, files: p2p, store, lifetime } = useAccount()
   useStore(s => s.rtcTick)
   useStore(s => s.members)

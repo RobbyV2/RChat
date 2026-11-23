@@ -3,7 +3,7 @@ import { ctxFor } from '../actions/ctx'
 import { registerAppActions } from '../actions/index'
 import { itemFor } from '../actions/menu'
 import { actionsFor, runAction } from '../actions/registry'
-import { home } from '../instances'
+import { endpointsFrom, home, InstanceConnection } from '../instances'
 import { autoDefaults, parseAuto, autoChoices } from '../p2p/app'
 import { LOCAL, localDefaults, RANGES, type Local } from '../p2p/limits'
 import {
@@ -11,6 +11,7 @@ import {
   applyUser,
   instanceLimits,
   limitChoices,
+  limitsFor,
   limitText,
   parseUserLimits,
   readUserLimits,
@@ -221,6 +222,21 @@ describe('user P2P limits', () => {
     )
     writeUserLimits('ann', { v: 1, roomBytes: 64 * MIB + 0.5, totalBytes: 4 * GIB })
     expect(readUserLimits('ann')).toEqual({ v: 1, totalBytes: 4 * GIB })
+  })
+
+  test('main retains its stored key while extra identities use their own overrides', () => {
+    const conn = new InstanceConnection(endpointsFrom('https://two.example', null))
+    memoryStorage.setItem(
+      conn.scoped(userLimitsKey('ann')),
+      JSON.stringify({ v: 1, roomBytes: 64 * MIB })
+    )
+    writeUserLimits('ann', { v: 1, roomBytes: GIB }, conn, 'work')
+    expect(limitsFor('ann', conn).dag.roomBytes).toBe(64 * MIB)
+    expect(limitsFor('ann', conn, 'work').dag.roomBytes).toBe(GIB)
+    expect(readUserLimits('ann', home, 'work')).toEqual({ v: 1 })
+    writeUserLimits('ann', { v: 1 }, conn, 'work')
+    expect(readUserLimits('ann', conn, 'work')).toEqual({ v: 1 })
+    expect(readUserLimits('ann', conn)).toEqual({ v: 1, roomBytes: 64 * MIB })
   })
 
   test('overrides are kept per account and only when they differ', () => {

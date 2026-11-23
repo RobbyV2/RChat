@@ -28,7 +28,10 @@ import {
   useP2p,
   type P2pState,
 } from '../p2p/app'
-import { dbName } from '../p2p/db'
+import { blankRoom } from '../p2p/dag'
+import { refreshRoom, refreshRooms } from '../p2p/app/dms'
+import { dbName, P2pStore } from '../p2p/db'
+import { createP2pApp } from '../p2p/app/runtime'
 import { home } from '../instances'
 import { P2pOffSection, P2pSection } from '../../components/p2p/p2p_settings'
 import type { Fwd } from '../p2p/content'
@@ -64,6 +67,7 @@ import {
   pingInputsChanged,
   pingNotifies,
   createP2pInbox,
+  startP2pPings,
   p2pPingCount,
   worldOf,
 } from '../p2p/inbox_source'
@@ -1229,6 +1233,28 @@ describe('P2P conversations in the DM list', () => {
 })
 
 describe('a tab that only reads', () => {
+  test('delayed room reads cannot reopen Alice’s conversation on Bob’s home app', async () => {
+    const alice = await P2pStore.open(crypto.randomUUID())
+    const room = blankRoom(dmRoomId(ALICE, CAROL), CAROL, NOW)
+    const delayed = Promise.withResolvers<RoomRecord>()
+    alice.room = () => delayed.promise
+    alice.rooms = async () => [await delayed.promise]
+    try {
+      await p2pAccount('alice')
+      put.reader({ store: alice, me: ALICE })
+      const reads = [refreshRooms(), refreshRoom(room.id), p2pDm.openDm(CAROL)]
+      await p2pAccount('bob')
+      const bob = useP2p.getState()
+      delayed.resolve(room)
+      await Promise.all(reads)
+      expect(useP2p.getState()).toBe(bob)
+      expect(bob.account).toBe('bob')
+    } finally {
+      await p2pAccount(null)
+      alice.close()
+    }
+  })
+
   test('a send that fails keeps what it replied to; Mark all as read says where it can be done', async () => {
     p2pState({
       enabled: true,
@@ -1428,6 +1454,129 @@ describe('P2P in the palette index', () => {
     failed: false,
     call: null,
     ...over,
+  })
+
+  test('two identities index, count and open coincident messages independently', async () => {
+    Object.assign(globalThis, { localStorage: memoryStorage })
+    memoryStorage.setItem('rchat_palette:bob', JSON.stringify({ v: 1, used: {}, index: 'loaded' }))
+    useStore.setState({ me: me('bob') })
+    __sync.switchOwner('bob', false)
+    const account = getHomeSession()
+    const bind = (id: string) => {
+      const app = createP2pApp(account, id)
+      app.useP2p.setState({
+        enabled: true,
+        me: BOB,
+        rooms: {
+          [ROOM]: {
+            id: ROOM,
+            peer: ALICE,
+            seq: 10,
+            unread: 1,
+            pings: 1,
+            lastTs: NOW,
+            count: 1,
+            bytes: 10,
+            full: false,
+            fullWhy: undefined,
+            peerFull: false,
+            gap: false,
+          },
+        },
+        contacts: [contact(ALICE, id)],
+        chat: {
+          room: ROOM,
+          peer: ALICE,
+          messages: [msg('same', id)],
+          readSeq: 0,
+          more: false,
+          loading: false,
+          missed: [],
+        },
+      })
+      const opened: string[] = []
+      const marked: string[] = []
+      app.p2pOpenAt = async (_room, _ch, message) => {
+        opened.push(message)
+      }
+      app.p2pPings.read = async () => ({ list: [ping('same')], readSeq: new Map() })
+      app.p2pPings.text = async () => ({ content: id, media: null, mediaSpoiler: false })
+      app.p2pPings.alive = async () => true
+      app.p2pPings.mark = async ids => {
+        marked.push(...ids)
+      }
+      const inbox = createP2pInbox(account, app)
+      const stopPings = startP2pPings(account, app)
+      const stopIndex = startP2pIndex(account, { app })
+      return { app, inbox, opened, marked, stopPings, stopIndex }
+    }
+    // A Full index written by the single-identity client already contains this message.
+    const historical = p2pDoc(ROOM, null, msg('same', 'old text'), 'Alice')!
+    indexDocs([historical])
+    const a = bind('main')
+    const b = bind('second')
+    try {
+      const [first, second] = await Promise.all(
+        [a, b].map(async x => (await x.inbox.load(DEFAULT_VIEW, null)).entries[0])
+      )
+      expect(first.content).toBe('main')
+      expect(second.content).toBe('second')
+      expect(first.adapter).not.toBe(second.adapter)
+      expect(first.key).not.toBe(second.key)
+      expect(a.inbox.count!()).toBe(1)
+      expect(b.inbox.count!()).toBe(1)
+      const docs = (app: typeof a.app) => paletteIndex()!.docsIn(p2pBucket(ROOM, null, app))
+      const [da] = docs(a.app)
+      const [db] = docs(b.app)
+      expect(da).toMatchObject({ id: 'psame', source: 'p2p', bucket: `p:${ROOM}` })
+      expect(paletteIndex()!.docsIn(historical.bucket)).toEqual([da])
+      expect(da.id).not.toBe(db.id)
+      expect(da.source).not.toBe(db.source)
+      expect(da.bucket).not.toBe(db.bucket)
+      expect(da.text).toBe('main')
+      expect(db.text).toBe('second')
+      account.indexer.indexSource(db.source)!.open(db)
+      await b.inbox.open(second)
+      await a.inbox.markRead(first)
+      expect(b.opened).toEqual(['same', 'same'])
+      expect(a.opened).toEqual([])
+      expect(a.marked).toEqual(['same'])
+      expect(b.marked).toEqual([])
+      // An old registration can outlive its username while the account and app are reused.
+      let live = true
+      const old = createP2pInbox(account, a.app, () => live)
+      const pending = old.load(DEFAULT_VIEW, null)
+      const pendingMark = old.markAll(DEFAULT_VIEW, [first])
+      live = false
+      expect(await pending).toEqual({ entries: [], next: null })
+      await pendingMark
+      await old.markRead(first)
+      await old.open(first)
+      expect(old.canPreview!(first)).toBe(false)
+      expect(old.count!()).toBe(0)
+      expect(a.opened).toEqual([])
+      expect(a.marked).toEqual(['same'])
+      expect(a.inbox.count!()).toBe(1)
+      a.stopPings()
+      b.stopIndex()
+      expect(a.inbox.count!()).toBe(0)
+      expect(b.inbox.count!()).toBe(1)
+      expect(account.indexer.indexSource(db.source)).toBeUndefined()
+      expect(account.indexer.indexSource(da.source)).not.toBeUndefined()
+      expect(docs(b.app)).toEqual([])
+      expect(docs(a.app)).toEqual([da])
+      a.stopIndex()
+      expect(docs(a.app)).toEqual([])
+    } finally {
+      a.stopPings()
+      a.stopIndex()
+      b.stopPings()
+      b.stopIndex()
+      a.app.dispose()
+      b.app.dispose()
+      __sync.switchOwner(null, false)
+      memoryStorage.clear()
+    }
   })
 
   test('documents name no instance server and keep spoilers out', () => {

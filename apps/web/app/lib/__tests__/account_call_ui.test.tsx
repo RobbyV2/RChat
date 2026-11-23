@@ -2,13 +2,13 @@ import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import AppShell from '../../[[...slug]]/app_shell'
-import { CallBanner } from '../../components/voice_grid'
+import { CallBanner, VoiceDock } from '../../components/voice_grid'
 import { ChannelSidebar } from '../../components/channel_sidebar'
 import { client } from '../client/client'
-import { p2pHost, useP2p } from '../p2p/app'
-import { ringing } from '../p2p/app/calls'
+import { getHomeSession } from '../store'
+import { p2pHost as legacyHost } from '../p2p/app'
 import { AccountProvider } from '../client/react'
-import { member, serverDetail, textChannel } from './fixtures'
+import { me, member, memoryStorage, serverDetail, textChannel } from './fixtures'
 import { testAccount } from './test_account'
 
 const router = {
@@ -115,15 +115,18 @@ test('the channel sidebar uses the provider’s identity and RTC for a colliding
 
 test('the shell uses the P2P owner for alerts, quiet calls and runtime preferences', () => {
   const a = testAccount('reader', 'https://a.test')
-  const b = testAccount('reader', 'https://b.test')
+  // The initial page identity backs the legacy call card during the W8 transition.
+  const b = getHomeSession()
   const previous = client.shown
-  const previousOwner = p2pHost.account
+  const previousHost = { ...legacyHost }
+  b.store.setState(s => ({ me: me('reader'), settings: { ...s.settings, p2p: true } }))
+  b.identities.setAccount('reader')
+  const { p2pHost, useP2p, ringing } = b.identities.get()!
   const quiet = useP2p.getState().callQuiet
   const initial = useP2p.getInitialState()
   const initialCall = { call: initial.call, callQuiet: initial.callQuiet }
   try {
     client.shown = () => a
-    p2pHost.account = b
     const toasts: string[] = []
     b.store.setState(s => ({
       notifyPrefs: { ...s.notifyPrefs, p2p: { room: { level: 'nothing' } } },
@@ -177,18 +180,96 @@ test('the shell uses the P2P owner for alerts, quiet calls and runtime preferenc
     const [notice] = b.store.getState().notices
     notice.go()
     expect(clicks).toBe(1)
-    p2pHost.account = a
-    notice.go()
-    p2pHost.account = b
     b.lifetime.endSession()
+    notice.go()
+    b.identities.setAccount(null)
     notice.go()
     expect(clicks).toBe(1)
   } finally {
     Object.assign(initial, initialCall)
     useP2p.setState({ callQuiet: quiet })
-    p2pHost.account = previousOwner
     client.shown = previous
     a.store.dispose()
-    b.store.dispose()
+    b.identities.setAccount(null)
+    b.store.resetSessionCaches()
+    Object.assign(legacyHost, previousHost, { account: previousHost.account })
+  }
+})
+
+test('contact call and server voice audio and controls follow the claimed sibling identity', async () => {
+  const account = testAccount('reader', 'https://sibling-call.test')
+  const key = account.keys.local('rchat_p2p_identities')
+  try {
+    account.identities.setAccount('reader')
+    const main = account.identities.get()!
+    const work = account.identities.add('work')
+    expect(main.useP2p).not.toBe(work.useP2p)
+    const mutes: boolean[] = []
+    work.callRtc.active = () => true
+    work.callRtc.setMuted = muted => void mutes.push(muted)
+    work.callRtc.remoteStreams = () => [['peer', {} as MediaStream]]
+    for (const kind of ['p2p-call', 'p2p-voice'] as const) {
+      const call =
+        kind === 'p2p-call'
+          ? ({
+              id: 'call',
+              room: 'room',
+              peer: 'peer',
+              dir: 'out',
+              state: 'active',
+              video: false,
+              since: 1,
+              startedAt: 1,
+            } as const)
+          : null
+      const voice = kind === 'p2p-voice' ? { room: 'server', ch: 'voice' } : null
+      work.useP2p.setState({ call, voice })
+      Object.assign(work.useP2p.getInitialState(), { call, voice })
+      const claim = await client.calls.request({ account, identity: work.localId, kind }, () => {})
+      try {
+        expect(claim?.current()).toBe(true)
+        const html = renderToStaticMarkup(
+          <>
+            <CallBanner />
+            <VoiceDock />
+          </>
+        )
+        expect(html.match(/data-remote-audio/g)).toHaveLength(1)
+        expect(html).toContain(
+          kind === 'p2p-call' ? 'aria-label="Leave call"' : 'aria-label="Disconnect"'
+        )
+        expect(html).toContain('aria-label="Mute"')
+        const shell = () =>
+          renderToStaticMarkup(
+            <AppRouterContext.Provider value={router}>
+              <AppShell />
+            </AppRouterContext.Provider>
+          )
+        const title = kind === 'p2p-voice' ? 'Voice channel' : 'Call'
+        const heading = new RegExp('<h2[^>]*>' + title + '</h2>')
+        expect(heading.test(shell())).toBe(false)
+        if (!claim) throw new Error('Expected an active call')
+        client.calls.expand(claim)
+        const expanded = shell()
+        expect(heading.test(expanded)).toBe(true)
+        expect(expanded).toContain('stage relative flex')
+        expect(expanded.match(/data-remote-audio/g)).toHaveLength(1)
+        client.calls.collapse()
+        expect(heading.test(shell())).toBe(false)
+        expect(claim.current()).toBe(true)
+        client.calls.expand(claim)
+        expect(main.useP2p.getState().call).toBeNull()
+        expect(main.useP2p.getState().voice).toBeNull()
+        account.store.getState().toggleMute()
+        expect(mutes.at(-1)).toBe(true)
+        account.store.getState().toggleMute()
+      } finally {
+        claim?.release()
+        expect(client.calls.expandedCall()).toBeNull()
+      }
+    }
+  } finally {
+    account.store.dispose()
+    memoryStorage.removeItem(key)
   }
 })

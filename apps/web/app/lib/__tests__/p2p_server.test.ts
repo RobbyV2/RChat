@@ -26,6 +26,50 @@ const failure = (p: Promise<unknown>) =>
 afterEach(stopAll)
 
 describe('P2P servers', () => {
+  test('a stopped startup cannot restart timers after a later valid start', async () => {
+    const { servers, store } = await makeMember(new Hub(), 'Alice', new ManualClock())
+    await servers.indexing
+    servers.stop()
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const rooms = store.rooms
+    store.rooms = async () => {
+      store.rooms = rooms
+      entered.resolve()
+      await release.promise
+      return []
+    }
+    const gossip = servers.gossip.start
+    const voice = servers.voice.start
+    let gossipStarts = 0
+    let voiceStarts = 0
+    servers.gossip.start = () => {
+      gossipStarts++
+      gossip.call(servers.gossip)
+    }
+    servers.voice.start = () => {
+      voiceStarts++
+      voice.call(servers.voice)
+    }
+    try {
+      const stale = servers.start()
+      await entered.promise
+      servers.stop()
+      await servers.start()
+      expect(gossipStarts).toBe(1)
+      expect(voiceStarts).toBe(1)
+      release.resolve()
+      await stale
+      expect(gossipStarts).toBe(1)
+      expect(voiceStarts).toBe(1)
+    } finally {
+      release.resolve()
+      store.rooms = rooms
+      servers.gossip.start = gossip
+      servers.voice.start = voice
+    }
+  })
+
   test('create, join with a code, a join line, and messages both ways', async () => {
     const clock = new ManualClock()
     const hub = new Hub()

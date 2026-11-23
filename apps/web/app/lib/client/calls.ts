@@ -16,6 +16,21 @@ export type ClaimMedia = (leave: () => void, valid: () => boolean) => Promise<Ca
 
 export class CallGuard {
   private active: (CallClaim & { leave(): void }) | null = null
+  private expanded: CallClaim | null = null
+  expandedCall = () => this.expanded
+
+  expand(call: CallClaim) {
+    if (call !== this.active || this.expanded === call) return
+    this.expanded = call
+    this.publish()
+  }
+
+  collapse = () => {
+    if (!this.expanded) return
+    this.expanded = null
+    this.publish()
+  }
+
   private listeners = new Set<() => void>()
   private pending: { account: AccountSession; cancel(): void } | null = null
 
@@ -53,6 +68,7 @@ export class CallGuard {
         current: () => this.active === next,
         release: () => {
           if (this.active !== next) return
+          this.expanded = null
           this.active = null
           this.publish()
         },

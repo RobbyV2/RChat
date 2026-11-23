@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import type Peer from 'peerjs'
+import { endpointsFrom, InstanceConnection } from '../instances'
+import { RelayBook } from '../relays'
 import { TransportError } from '../p2p/node'
 import { PeerTransport } from '../p2p/transport'
 
@@ -28,6 +30,70 @@ afterEach(() => {
 })
 
 describe('PeerJS transport', () => {
+  test('each listener uses its owner’s signaling endpoint, ICE and subscriptions', async () => {
+    const peers: OpenPeer[] = []
+    class OpenPeer extends SilentPeer {
+      constructor(
+        _id: string,
+        public options: Record<string, unknown>
+      ) {
+        super()
+        peers.push(this)
+      }
+      on(event?: string, fn?: () => void) {
+        if (event === 'open') queueMicrotask(() => fn?.())
+        return this
+      }
+    }
+    const owner = (host: string) => {
+      const watchers = new Set<() => void>()
+      const relays = new RelayBook(() => ({
+        instance: [{ urls: `stun:${host}` }],
+        helpers: true,
+        relayOnly: false,
+        instanceTurn: false,
+        forced: null,
+      }))
+      return {
+        conn: new InstanceConnection(endpointsFrom(`https://${host}`, null)),
+        relays,
+        ice: {
+          onChange(fn: () => void) {
+            watchers.add(fn)
+            return () => void watchers.delete(fn)
+          },
+        },
+        watchers,
+      }
+    }
+    const a = owner('one.example')
+    const b = owner('two.example')
+    const listen = (account: typeof a) =>
+      new PeerTransport({}, OpenPeer as unknown as typeof Peer, 1000, account).listen(
+        'rcp-test',
+        () => {},
+        () => {}
+      )
+    const left = await listen(a)
+    const right = await listen(b)
+    try {
+      expect(peers.map(p => p.options.host)).toEqual(['one.example', 'two.example'])
+      expect(peers.map(p => p.options.config)).toEqual([
+        a.relays.autoConfig(),
+        b.relays.autoConfig(),
+      ])
+      expect(a.relays.autoConfig()).not.toEqual(b.relays.autoConfig())
+      left.close()
+      expect(a.watchers.size).toBe(0)
+      expect(b.watchers.size).toBe(1)
+      expect(peers[1].destroyed).toBe(false)
+    } finally {
+      left.close()
+      right.close()
+    }
+    expect(b.watchers.size).toBe(0)
+  })
+
   test('listening gives up when the signaling server never opens', async () => {
     g.window = { location: { hostname: 'chat.example', protocol: 'https:' } }
     const made: SilentPeer[] = []

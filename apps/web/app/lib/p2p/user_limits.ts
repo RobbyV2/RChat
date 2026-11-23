@@ -1,5 +1,5 @@
 import { fmtSize, plural } from '../bytes'
-import { home, readLocal, writeLocal } from '../instances'
+import { home, readLocal, writeLocal, type InstanceConnection } from '../instances'
 import { fit, localDefaults, RANGES, type Local } from './limits'
 
 // What one account runs P2P with: the instance's P2P_LIMITS (its `local.` names), then the
@@ -93,22 +93,32 @@ export const instanceLocal = (info: HasLimits = home.info): Local =>
 export const accountLimits = (info: HasLimits, raw: string | null): Local =>
   applyUser(instanceLocal(info), parseUserLimits(raw))
 
-const readRaw = (username: string) => readLocal(home.scoped(userLimitsKey(username)))
+type LimitConnection = Pick<InstanceConnection, 'info' | 'scoped'>
 
-export const readUserLimits = (username: string) => parseUserLimits(readRaw(username))
+const storageKey = (username: string, conn: LimitConnection, local: string) =>
+  conn.scoped(userLimitsKey(username) + (local === 'main' ? '' : `~${local}`))
 
-export const limitsFor = (username: string) => accountLimits(home.info, readRaw(username))
+export const readUserLimits = (username: string, conn: LimitConnection = home, local = 'main') =>
+  parseUserLimits(readLocal(storageKey(username, conn, local)))
+
+export const limitsFor = (username: string, conn: LimitConnection = home, local = 'main') =>
+  applyUser(instanceLocal(conn.info), readUserLimits(username, conn, local))
 
 // Keeps only the values that differ from the instance's (clamped); none left clears the key.
-export const writeUserLimits = (username: string, u: UserLimits) => {
-  const base = instanceLocal()
+export const writeUserLimits = (
+  username: string,
+  u: UserLimits,
+  conn: LimitConnection = home,
+  local = 'main'
+) => {
+  const base = instanceLocal(conn.info)
   const out: UserLimits = { v: 1 }
   for (const f of FIELDS) {
     const v = fit(USER_LIMITS[f], u[f])
     if (v !== null && v !== valueOf(base, f)) out[f] = v
   }
   return writeLocal(
-    home.scoped(userLimitsKey(username)),
+    storageKey(username, conn, local),
     Object.keys(out).length > 1 ? JSON.stringify(out) : null
   )
 }

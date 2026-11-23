@@ -60,3 +60,5 @@ export { p2pUser, p2pDm } from './dms'
 export { p2pPings, p2pMarkAll, p2pOpenAt, p2pRecent } from './inbox'
 export { ELSEWHERE_IMPORT, p2pTransfer } from './move'
 export type { Unlocked, FilesPart } from './move'
+
+export { createP2pApp, type P2pApp } from './runtime'

@@ -8,7 +8,6 @@ import { guestVoiceOff, voiceSelf } from '../guest_voice'
 import { JoinTracker } from '../negotiation'
 import { client } from '../client/client'
 import type { CallClaim } from '../client/calls'
-import { callRtc, p2pCall, p2pVoice } from '../p2p/app'
 import { DENIED_CALL, hidesIp } from '../relays'
 import { JoinAborted } from '../rtc'
 import { myTimeoutEnds, voiceHushedIn, voiceMutedIn } from '../selectors'
@@ -277,12 +276,18 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   }
 
   // Also stops your camera and screen share while a timeout mutes you in voice.
+  const peerMedia = () => {
+    const claim = client.calls.current()
+    if (claim?.account === acct && (claim.kind === 'p2p-voice' || claim.kind === 'p2p-call'))
+      return acct.identities.get(claim.identity)
+  }
   const applyMic = () => {
     const forced = forcedMute()
     const muted = get().selfAudio.muted || forced || staffMuted()
     if (rtc.active() && rtc.muted !== muted) rtc.setMuted(muted)
     if (p2p.mediaActive() && p2p.muted !== muted) p2p.setMuted(muted)
-    if (acct.isHome && callRtc.active() && callRtc.muted !== muted) callRtc.setMuted(muted)
+    const callRtc = peerMedia()?.callRtc
+    if (callRtc?.active() && callRtc.muted !== muted) callRtc.setMuted(muted)
     if (forced && rtc.active()) {
       if (rtc.videoTrack) void rtc.camera(false)
       if (rtc.sharing) void rtc.share(false)
@@ -389,16 +394,10 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   let voiceListed = false
   const bindMedia = () => {
     rtc.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
-    if (acct.isHome)
-      callRtc.onChange = () => {
-        set(s => ({ rtcTick: s.rtcTick + 1 }))
-        p2pVoice.videoChanged()
-      }
     p2p.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
     p2p.onError = message => fail(new Error(message))
     return () => {
       rtc.onChange = p2p.onChange = p2p.onError = () => {}
-      if (acct.isHome) callRtc.onChange = () => {}
     }
   }
   const actions: Pick<
@@ -466,8 +465,12 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     toggleCamera: () =>
       act(async () => {
         const owner = client.calls.current()
-        if (owner?.account === acct && owner.kind === 'p2p-voice') return await p2pVoice.camera()
-        if (owner?.account === acct && owner.kind === 'p2p-call') return await p2pCall.camera()
+        if (owner?.account === acct) {
+          if (owner.kind === 'p2p-voice')
+            return await acct.identities.get(owner.identity)?.p2pVoice.camera()
+          if (owner.kind === 'p2p-call')
+            return await acct.identities.get(owner.identity)?.p2pCall.camera()
+        }
         if (attempt?.kind === 'p2p') return await p2p.toggleCamera()
         const on = rtc.videoTrack === null
         if (on && forcedMute()) throw new Error(TIMED_OUT_CAMERA)
@@ -476,8 +479,12 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     toggleShare: () =>
       act(async () => {
         const owner = client.calls.current()
-        if (owner?.account === acct && owner.kind === 'p2p-voice') return await p2pVoice.share()
-        if (owner?.account === acct && owner.kind === 'p2p-call') return await p2pCall.share()
+        if (owner?.account === acct) {
+          if (owner.kind === 'p2p-voice')
+            return await acct.identities.get(owner.identity)?.p2pVoice.share()
+          if (owner.kind === 'p2p-call')
+            return await acct.identities.get(owner.identity)?.p2pCall.share()
+        }
         if (attempt?.kind === 'p2p') return await p2p.toggleShare()
         const on = !rtc.sharing
         if (on && forcedMute()) throw new Error(TIMED_OUT_SHARE)

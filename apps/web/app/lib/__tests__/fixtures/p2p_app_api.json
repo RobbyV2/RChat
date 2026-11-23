@@ -17,6 +17,7 @@
     "chatKey",
     "chatScope",
     "codeTtls",
+    "createP2pApp",
     "emptySearch",
     "fitAttachments",
     "importsKey",
@@ -58,6 +59,7 @@
   "types": [
     "FileView",
     "FilesPart",
+    "P2pApp",
     "P2pChat",
     "P2pDialog",
     "P2pHost",

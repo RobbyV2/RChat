@@ -1,6 +1,6 @@
 import Peer, { type DataConnection } from 'peerjs'
 import { randomHex } from '../bytes'
-import { home } from '../instances'
+import { home, type InstanceConnection } from '../instances'
 import { ice } from '../ice'
 import { declaredHosts, hidesIp, relayBook, unknownHosts, type RelayBook } from '../relays'
 import { LOCAL, type Local } from './limits'
@@ -154,6 +154,12 @@ const pipeOf = (conn: DataConnection, lowMark: number): Pipe => {
   }
 }
 
+interface TransportOwner {
+  conn: Pick<InstanceConnection, 'peer'>
+  ice: Pick<typeof ice, 'onChange'>
+  relays: RelayBook
+}
+
 export class PeerTransport implements Transport {
   private peer: Peer | null = null
   private unwatch: (() => void)[] = []
@@ -167,11 +173,12 @@ export class PeerTransport implements Transport {
     // PeerJS's Peer; tests pass a stand-in.
     private peerClass: typeof Peer = Peer,
     // How long the PeerJS server may take to accept our id: `dialMs` unless given.
-    listenMs?: number
+    listenMs?: number,
+    private owner: TransportOwner = { conn: home, ice, relays: relayBook }
   ) {
     this.limits = { ...LOCAL.transport, ...limits }
     this.listenMs = listenMs ?? this.limits.dialMs
-    this.gate = new OfferGate(relayBook, () => this.offers, undefined, this.limits)
+    this.gate = new OfferGate(owner.relays, () => this.offers, undefined, this.limits)
   }
 
   guard(g: OfferGuard) {
@@ -184,18 +191,18 @@ export class PeerTransport implements Transport {
     return new Promise((resolve, reject) => {
       // A fresh token each time, so an old registration never blocks the new one.
       const peer = new Peer(id, {
-        ...home.peer(),
+        ...this.owner.conn.peer(),
         token: randomHex(8),
-        config: answerConfig(false),
+        config: answerConfig(false, this.owner.relays),
       })
       this.peer = peer
       const hooked = this.hookOffers(peer)
       if (!hooked) console.error('P2P offers cannot be checked: connecting through relays only')
       const refresh = () => {
-        if (!peer.destroyed) peer.options.config = answerConfig(hooked)
+        if (!peer.destroyed) peer.options.config = answerConfig(hooked, this.owner.relays)
       }
       refresh()
-      this.unwatch = [ice.onChange(refresh), relayBook.onChange(refresh)]
+      this.unwatch = [this.owner.ice.onChange(refresh), this.owner.relays.onChange(refresh)]
       let opened = false
       const timer = setTimeout(() => {
         this.close(peer)
@@ -272,7 +279,7 @@ export class PeerTransport implements Transport {
   dial(from: string, to: string, kind?: 'bulk'): Promise<Pipe> {
     const peer = this.peer
     if (!peer || peer.destroyed) return Promise.reject(new TransportError('network'))
-    const plan = relayBook.resolve()
+    const plan = this.owner.relays.resolve()
     const relays = plan.ok ? plan.declared : []
     const ask = relays.length ? this.offers?.vouch(from, to, relays) : null
     const conn = peer.connect(to, {

@@ -94,7 +94,7 @@ describe('ICE config', () => {
     // The P2P media manager passes the plan of the voice channel it is in, else the call's;
     // relays.ts resolved both (relay only, manual relays). Without either there is no path.
     expect(
-      /ice:\s*\(\)\s*=>\s*servers\?\.voice\.current\(\)\s*\?\s*servers\.voice\.config\(\)\s*:\s*\(calls\?\.config\(\)/.test(
+      /ice:\s*\(\)\s*=>\s*state\.servers\?\.voice\.current\(\)\s*\?\s*state\.servers\.voice\.config\(\)\s*:\s*\(state\.calls\?\.config\(\)/.test(
         app
       )
     ).toBe(true)

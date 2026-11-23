@@ -311,16 +311,25 @@ export class Servers {
   // ----- Lifecycle -----
 
   async start() {
-    for (const r of await this.db.getAll('idents')) this.idents.set(r.ik, r)
-    for (const r of await this.deps.store.rooms()) {
+    const generation = ++this.generation
+    this.stopped = false
+    const idents = await this.db.getAll('idents')
+    if (generation !== this.generation) return
+    for (const r of idents) this.idents.set(r.ik, r)
+    const rooms = await this.deps.store.rooms()
+    if (generation !== this.generation) return
+    for (const r of rooms) {
       if (r.kind !== 'server') continue
       this.rooms.set(r.id, r)
       await this.load(r)
+      if (generation !== this.generation) return
     }
     // Rooms that filled under lower limits than these take events again; one whose rules this
     // build doesn't run (or doesn't know yet) only within what it stores of it.
     const unknown = (r: RoomRecord) => !knownRules(this.sumOf(r.id).rules)
-    for (const id of await refitFull(this.db, 'server', this.storeLimits().dag, unknown)) {
+    const refitted = await refitFull(this.db, 'server', this.storeLimits().dag, unknown)
+    if (generation !== this.generation) return
+    for (const id of refitted) {
       const r = this.rooms.get(id)
       if (r) this.rooms.set(id, { ...r, full: false })
     }
@@ -328,7 +337,7 @@ export class Servers {
     this.gossip.start()
     this.voice.start()
     for (const id of this.rooms.keys()) void this.refreshMe(id).catch(() => {})
-    this.indexing = this.indexPass()
+    this.indexing = this.indexPass(generation)
     // A new copy loaded before its old one is checked and carried again now.
     for (const r of this.rooms.values()) {
       if (r.prev) void this.checkMigrated(r.id, r.prev).catch(() => {})
@@ -344,14 +353,15 @@ export class Servers {
   // first start on this schema, after an import).
   indexed = false
   indexing: Promise<void> = Promise.resolve()
+  private generation = 0
   private stopped = false
 
-  private async indexPass() {
+  private async indexPass(generation: number) {
     try {
-      while (!this.stopped && !this.deps.store.closed) {
+      while (generation === this.generation && !this.deps.store.closed) {
         const skip = (room: string) => this.readOnly(room) !== null
         if (await rebuildStep(this.db, this.local.search, skip)) {
-          this.indexed = true
+          if (generation === this.generation) this.indexed = true
           return
         }
         await new Promise(r => setTimeout(r, 0))
@@ -362,6 +372,8 @@ export class Servers {
   }
 
   stop() {
+    ++this.generation
+    this.started = false
     this.stopped = true
     this.voice.leave()
     this.voice.stop()

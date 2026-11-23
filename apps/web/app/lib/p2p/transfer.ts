@@ -1229,14 +1229,30 @@ export const applyImport = async (
   db: P2pDatabase,
   dump: Dump,
   kind: ImportKind,
-  opts: { now?: number; label?: string; lim?: TransferLimits } = {}
+  opts: {
+    now?: number
+    label?: string
+    lim?: TransferLimits
+    signal?: AbortSignal
+    check?: () => void
+  } = {}
 ): Promise<Imported> => {
   const now = opts.now ?? Date.now()
   const lim = opts.lim ?? LOCAL
   const names = storeNames(db)
   const tx = db.transaction(names as StoreName[], 'readwrite') as unknown as LooseTx
   tx.done.catch(() => {})
+  const abort = () => {
+    try {
+      tx.abort()
+    } catch {
+      // Already finished.
+    }
+  }
+  opts.signal?.addEventListener('abort', abort)
   try {
+    if (opts.signal?.aborted) throw new Cancelled()
+    opts.check?.()
     const local = (await tx.objectStore('self').get('me')) as SelfRecord | undefined
     if (importKind(local, dump) !== kind) throw new TransferError(CHANGED)
     if (alreadyImported(local, dump)) {
@@ -1251,16 +1267,17 @@ export const applyImport = async (
             kind,
           }
     // The search index is built again from the events now stored (server.ts start).
+    opts.check?.()
     await tx.objectStore('meta').put(SEARCH_STALE, SEARCH_META)
+    opts.check?.()
     await tx.done
     return res
   } catch (e) {
-    try {
-      tx.abort()
-    } catch {
-      // Already finished.
-    }
+    abort()
+    if (opts.signal?.aborted) throw new Cancelled()
     throw e
+  } finally {
+    opts.signal?.removeEventListener('abort', abort)
   }
 }
 

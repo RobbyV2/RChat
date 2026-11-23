@@ -40,24 +40,16 @@
     "import home": 1
   },
   "lib/p2p/app/account.ts": {
-    "import api": 1,
     "import home": 1,
     "useP2p.getState": 16,
     "useP2p.setState": 34
   },
   "lib/p2p/app/attachments.ts": {
-    "import home": 1,
-    "let pendingSeq": 1,
-    "new Map in fileTimers": 1,
-    "new Map in sizes": 1,
-    "new Set in big": 1,
     "useP2p.getState": 7,
     "useP2p.setState": 3
   },
   "lib/p2p/app/badge.ts": {
     "import home": 1,
-    "let badgeTimer": 1,
-    "let expiryTimer": 1,
     "useP2p.getState": 2,
     "useP2p.setState": 8
   },
@@ -67,7 +59,6 @@
   },
   "lib/p2p/app/dms.ts": {
     "let jumpGen": 1,
-    "new Map in timers": 1,
     "useP2p.getState": 33,
     "useP2p.setState": 33
   },
@@ -76,25 +67,18 @@
     "useP2p.setState": 1
   },
   "lib/p2p/app/move.ts": {
-    "useP2p.getState": 9,
+    "useP2p.getState": 7,
     "useP2p.setState": 2
   },
   "lib/p2p/app/rail.ts": {
-    "import home": 1,
     "useP2p.getState": 13,
     "useP2p.setState": 2
   },
   "lib/p2p/app/servers.ts": {
-    "let searchAccess": 1,
-    "let searchGen": 1,
-    "new Map in lastChannel": 1,
-    "new Map in serverTimers": 1,
-    "new Map in threadsChecked": 1,
     "useP2p.getState": 39,
     "useP2p.setState": 24
   },
   "lib/p2p/app/store.ts": {
-    "create in useP2p": 1,
     "import home": 1,
     "let badges": 1,
     "let calls": 1,

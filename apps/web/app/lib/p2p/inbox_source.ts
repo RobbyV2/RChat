@@ -1,10 +1,9 @@
-import { peerTarget, peerVisible } from './app/viewing'
 import { create } from 'zustand'
-import type { InboxAdapter, InboxView } from '../inbox'
+import type { InboxAdapter, InboxEntry, InboxView } from '../inbox'
 import { levelOf, type NotifyPrefs } from '../notify'
 import type { AccountSession } from '../client/session'
-import { memberName, p2p, p2pOpenAt, p2pPings, useP2p, type P2pState } from './app'
-import { p2pHost } from './app/store'
+import type { P2pState } from './app'
+import { legacyP2pApp, type P2pApp } from './app/runtime'
 import { displayName } from './contacts'
 import {
   byCounter,
@@ -48,7 +47,11 @@ export const listedIn =
 type Checked = Map<string, { seq: number; ok: boolean }>
 
 // Unread pings the list can show, by counter (`{room}` or `{room}/{channel}`).
-export const listedPings = async (checked: Checked = new Map()): Promise<Map<string, number>> => {
+export const listedPings = async (
+  checked: Checked = new Map(),
+  app?: P2pApp
+): Promise<Map<string, number>> => {
+  const { p2pPings, useP2p } = app ?? legacyP2pApp
   const snap = await p2pPings.read()
   const st = useP2p.getState()
   if (!snap || !st.enabled) return new Map()
@@ -70,9 +73,22 @@ export const listedPings = async (checked: Checked = new Map()): Promise<Map<str
   return byCounter(rows.filter((_, i) => ok[i]))
 }
 
-export const useListedPings = create<{ by: ReadonlyMap<string, number> }>(() => ({
-  by: new Map(),
-}))
+const createListedPings = () =>
+  create<{ by: ReadonlyMap<string, number> }>(() => ({
+    by: new Map(),
+  }))
+
+export const useListedPings = createListedPings()
+const listedByApp = new WeakMap<P2pApp, typeof useListedPings>()
+
+const listedStore = (app?: P2pApp) => {
+  if (!app) return useListedPings
+  const existing = listedByApp.get(app)
+  if (existing) return existing
+  const store = createListedPings()
+  listedByApp.set(app, store)
+  return store
+}
 
 // What the bell and the tab title count of P2P: each counter that badges, but no more than the
 // unread pings the list can show there (pings by blocked people, on deleted messages, in servers
@@ -122,7 +138,17 @@ export const pingInputsChanged = (st: P2pState, prev: P2pState) =>
 
 // Keeps the listed pings up to date (counted again `inbox.recountMs` after a change); returns
 // the cleanup.
-export const startP2pPings = (account: AccountSession, recountMs?: number) => {
+export const startP2pPings = (
+  account: AccountSession,
+  appOrDelay?: P2pApp | number,
+  recountMs?: number
+) => {
+  const app = typeof appOrDelay === 'number' ? undefined : appOrDelay
+  const delay = typeof appOrDelay === 'number' ? appOrDelay : recountMs
+  if (app?.owner && app.owner !== account) throw new Error('P2P inbox owner mismatch')
+  const { useP2p, p2p } = app ?? legacyP2pApp
+  const listed = listedStore(app)
+  let stopped = false
   let checked: Checked = new Map()
   let mark = account.lifetime.sessionMark()
   let run = 0
@@ -135,45 +161,65 @@ export const startP2pPings = (account: AccountSession, recountMs?: number) => {
       mark = account.lifetime.sessionMark()
     }
     const current = mark
-    void listedPings(checked).then(
+    void listedPings(checked, app).then(
       by => {
-        if (mine === run && current === account.lifetime.sessionMark())
-          useListedPings.setState({ by })
+        if (mine === run && current === account.lifetime.sessionMark()) listed.setState({ by })
       },
       () => {}
     )
   }
   const off = useP2p.subscribe((st, prev) => {
     if (!timer && pingInputsChanged(st, prev))
-      timer = setTimeout(recount, recountMs ?? p2p.limits().inbox.recountMs)
+      timer = setTimeout(recount, delay ?? p2p.limits().inbox.recountMs)
   })
   recount()
   return () => {
+    if (stopped) return
+    stopped = true
     off()
     if (timer) clearTimeout(timer)
     run += 1
-    useListedPings.setState({ by: new Map() })
+    listed.setState({ by: new Map() })
   }
 }
 
-const actorName = (st: P2pState, p: PingRec) => {
-  if (p.ch !== null) return memberName(p.room, p.actor)
+const actorName = (st: P2pState, p: PingRec, app?: P2pApp) => {
+  if (p.ch !== null) return (app ?? legacyP2pApp).memberName(p.room, p.actor)
   const c = st.contacts.find(x => x.ik === p.actor)
   return c ? displayName(c) : 'Someone'
 }
 
 // P2P mentions, @everyone, replies and reactions, from the pings this browser noted.
-export const createP2pInbox = (account: AccountSession): InboxAdapter => {
-  const active = () => (p2pHost.account ? p2pHost.account === account : account.isHome)
+export const createP2pInbox = (
+  account: AccountSession,
+  app?: P2pApp,
+  live: () => boolean = () => true
+): InboxAdapter => {
+  if (app?.owner && app.owner !== account) throw new Error('P2P inbox owner mismatch')
+  const { useP2p, p2pPings, p2pOpenAt, p2p } = app ?? legacyP2pApp
+  const listed = listedStore(app)
+  const id = app ? `${P2P_INBOX}:${encodeURIComponent(app.localId)}` : P2P_INBOX
+  const active = () => {
+    if (!live()) return false
+    const owner = (app ?? legacyP2pApp).owner
+    return owner ? owner === account : account.isHome
+  }
+  const owns = (entry: InboxEntry) => !app || entry.adapter === id
   return {
-    id: P2P_INBOX,
+    id,
     canPreview: entry => {
       const p = entry.raw as PingRec
-      return active() && (!p.ch || peerVisible(useP2p.getState(), p.room, p.ch))
+      return (
+        active() &&
+        owns(entry) &&
+        (!p.ch || (app ?? legacyP2pApp).peerVisible(useP2p.getState(), p.room, p.ch))
+      )
     },
     previewTarget: entry => {
       const p = entry.raw as PingRec
-      return active() && p.ch ? (peerTarget(useP2p.getState(), p.room, p.ch) ?? null) : null
+      return active() && owns(entry) && p.ch
+        ? ((app ?? legacyP2pApp).peerTarget(useP2p.getState(), p.room, p.ch) ?? null)
+        : null
     },
     load: async (view, cursor) => {
       const mark = account.lifetime.sessionMark()
@@ -189,12 +235,13 @@ export const createP2pInbox = (account: AccountSession): InboxAdapter => {
       if (!active() || mark !== account.lifetime.sessionMark()) return { entries: [], next: null }
       const entries = page.flatMap((p, i) => {
         const t = texts[i]
-        return t ? [pingEntry(p, w, actorName(st, p), t)] : []
+        if (!t) return []
+        return [{ ...pingEntry(p, w, actorName(st, p, app), t), adapter: id, key: `${id}:${p.id}` }]
       })
       return { entries, next }
     },
     markRead: async entry => {
-      if (active()) await p2pPings.mark([(entry.raw as PingRec).id])
+      if (active() && owns(entry)) await p2pPings.mark([(entry.raw as PingRec).id])
     },
     markAll: async (view, shown) => {
       const mark = account.lifetime.sessionMark()
@@ -202,12 +249,12 @@ export const createP2pInbox = (account: AccountSession): InboxAdapter => {
       if (!active() || mark !== account.lifetime.sessionMark() || !snap) return
       const w = worldOf(useP2p.getState(), snap.readSeq)
       const list = snap.list.filter(listedIn(view, w, account.store.getState().notifyPrefs))
-      const recs = shown.map(e => e.raw as PingRec)
+      const recs = shown.filter(owns).map(e => e.raw as PingRec)
       await p2pPings.mark(markAllTargets(list, view, recs, snap.readSeq).map(p => p.id))
     },
     open: entry => {
       const p = entry.raw as PingRec
-      if (!active()) return
+      if (!active() || !owns(entry)) return
       return p2pOpenAt(p.room, p.ch, p.kind === 'reaction' ? (p.target ?? p.id) : p.id)
     },
     count: () =>
@@ -215,14 +262,14 @@ export const createP2pInbox = (account: AccountSession): InboxAdapter => {
         ? p2pPingCount(
             useP2p.getState(),
             account.store.getState().notifyPrefs,
-            useListedPings.getState().by
+            listed.getState().by
           )
         : 0,
     subscribe: onChange => {
       const offP2p = useP2p.subscribe((st, prev) => {
         if (st.rooms !== prev.rooms || st.servers !== prev.servers) onChange()
       })
-      const offListed = useListedPings.subscribe(onChange)
+      const offListed = listed.subscribe(onChange)
       const offPrefs = account.store.subscribe((st, prev) => {
         if (st.notifyPrefs !== prev.notifyPrefs) onChange()
       })

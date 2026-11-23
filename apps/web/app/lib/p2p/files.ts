@@ -328,6 +328,11 @@ export class UrlCache {
     void u.then(x => x && this.revoke(x))
   }
 
+  clear() {
+    for (const h of this.urls.keys()) this.drop(h)
+    this.refs.clear()
+  }
+
   private trim() {
     for (const h of [...this.urls.keys()]) {
       if (this.urls.size <= this.max) return

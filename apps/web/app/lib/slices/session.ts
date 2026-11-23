@@ -53,8 +53,8 @@ import { keyed, mergeHead, refreshTail, samePrefix } from '../lists'
 import { bootDms, emptyLayout, knownDms, layoutServers, pruneLayout } from '../nav_layout'
 import { EMPTY_NOTIFY, keepScopes } from '../notify'
 import { historyKey } from '../openapi'
-import { p2pAccount, p2pRail } from '../p2p/app'
-import { coversInstance, useP2p } from '../p2p/app/store'
+import { instanceUncovered } from '../client/p2p_identities'
+import { useP2p } from '../p2p/app/store'
 import { secretsKey } from '../passwords'
 import { NO_PINGS } from '../pings'
 import { clearProfiles } from '../profile'
@@ -310,20 +310,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   // Once P2P stops showing in the view's place, the view counts as followed only when its pane is
   // back on screen (the pane says so); what came in meanwhile is below the unread divider.
-  const unsubscribeP2p = useP2p.subscribe((now, before) => {
-    if (coversInstance(now) || !coversInstance(before)) return
-    const view = get().view
-    if (!view) return
-    const key = viewKey(view)
-    set(s => {
-      const mark = s.reads[key]
-      const anchor = mark && mark.latest > mark.lastRead && !(s.unreadAnchor[key] > 0)
-      return {
-        atBottom: { ...s.atBottom, [key]: false },
-        ...(anchor ? { unreadAnchor: { ...s.unreadAnchor, [key]: mark.lastRead } } : {}),
-      }
-    })
-  })
+  const unsubscribeP2p = acct.isHome
+    ? useP2p.subscribe((now, before) => instanceUncovered(acct, now, before))
+    : undefined
 
   let navigation = 0
   const beginNavigation = () => {
@@ -369,7 +358,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     answer?.(decision)
   }
   const bindSessionMedia = () => {
-    if (acct.isHome) openP2p = username => void p2pAccount(username, acct)
+    openP2p = username => acct.identities.setAccount(username)
     relayBook.prompt = host =>
       new Promise<Decision>(resolve => {
         relayAnswer?.('deny')
@@ -486,7 +475,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         await get().ensureDms([...l.dmPinned, ...l.dmOrder])
         if (!still()) return SWITCHED
         const s = get()
-        if (l.p2p) p2pRail.apply(l.p2p)
+        if (l.p2p) acct.identities.get()?.p2pRail.apply(l.p2p)
         saveLayout(
           pruneLayout(
             {
@@ -643,6 +632,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       dms: dmHead.resume && same,
     }
     set({
+      guest: false,
       me: {
         ...fresh,
         servers:
@@ -1345,6 +1335,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   // Drops the timers, queues and caches of the signed-in session.
   const forgetSession = () => {
+    p2pGate.account(null)
     sessionStore.removeItem(inviteHistoryKey())
     if (inviteHistory && sessionStore.getItem(inviteHistory.key) === inviteHistory.nonce)
       sessionStore.removeItem(inviteHistory.key)
@@ -2124,7 +2115,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     tapWs,
     p2pGate,
     dispose: () => {
-      unsubscribeP2p()
+      unsubscribeP2p?.()
       pageListeners?.abort()
       wsTaps.clear()
       home.ws.onEvent =
