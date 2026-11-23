@@ -1,5 +1,5 @@
 'use client'
-
+import { useStoreApi } from '../lib/client/react'
 import {
   memo,
   useEffect,
@@ -306,12 +306,13 @@ const PickerBody = memo(function PickerBody({
   onPick: (emoji: string, opts: PickOptions) => void
   onClose: () => void
 }) {
+  const store = useStoreApi()
   const uid = useId()
   const { data, failed, retry } = useEmojiData()
   const tone = useStore(s => s.emoji.tone)
   const noteEmoji = useStore(s => s.noteEmoji)
   const setSkinTone = useStore(s => s.setSkinTone)
-  const [opened] = useState(() => ({ prefs: useStore.getState().emoji, now: Date.now() }))
+  const [opened] = useState(() => ({ prefs: store.getState().emoji, now: Date.now() }))
   const [query, setQuery] = useState('')
   const [hover, setHover] = useState<Emoji | null>(null)
   const [active, setActive] = useState<GridPos | null>(null)

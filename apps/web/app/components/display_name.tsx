@@ -1,5 +1,5 @@
 'use client'
-
+import { useStoreApi } from '../lib/client/react'
 import { useEffect, useId, useRef, useState, type HTMLAttributes } from 'react'
 import { displayNameError, maskedName, showsUsername } from '../lib/display_name'
 import { isGuestName } from '../lib/guest_voice'
@@ -91,6 +91,7 @@ function FitNameSpan({ user, ...span }: FitNameProps) {
 }
 
 export function DisplayNameField({ focus }: { focus: boolean }) {
+  const store = useStoreApi()
   const saved = useStore(s => s.me?.display_name ?? '')
   const username = useStore(s => s.me?.username ?? '')
   const setDisplayName = useStore(s => s.setDisplayName)
@@ -126,7 +127,7 @@ export function DisplayNameField({ focus }: { focus: boolean }) {
     setError(err)
     if (err) return
     setDone(true)
-    setText(useStore.getState().me?.display_name ?? '')
+    setText(store.getState().me?.display_name ?? '')
   }
 
   return (

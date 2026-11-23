@@ -1,7 +1,8 @@
 'use client'
 
+import { useAccount } from '../lib/client/react'
 import { useEffect, useId, useRef, useState, type HTMLAttributes, type ReactNode } from 'react'
-import { requestViewing, type ViewingTarget } from '../lib/viewing'
+import type { ViewingTarget } from '../lib/viewing'
 import { Masked } from './ui'
 
 // The row opens its destination. Buttons in its preview have their own focus and click targets.
@@ -100,6 +101,7 @@ export function PreviewFilename({
 }
 
 export function RevealChannelPreview({ target }: { target: ViewingTarget }) {
+  const { requestViewing } = useAccount().viewing
   return (
     <button
       type="button"

@@ -1,5 +1,5 @@
 'use client'
-
+import { useStoreApi } from '../lib/client/react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Pencil } from 'lucide-react'
 import { useStore } from '../lib/store'
@@ -53,6 +53,7 @@ export interface EditBinding {
 }
 
 export function MessageEditor({ binding }: { binding?: EditBinding }) {
+  const store = useStoreApi()
   const storeText = useStore(s => s.editing?.text ?? '')
   const storeKey = useStore(s => s.editing?.key ?? null)
   const storeFocus = useStore(s => s.editing?.focus ?? 0)
@@ -80,7 +81,7 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
   const assist = useTextAssist({
     listKey,
     text,
-    getText: binding ? binding.getText : () => useStore.getState().editing?.text ?? '',
+    getText: binding ? binding.getText : () => store.getState().editing?.text ?? '',
     setText: setEditText,
     inputRef,
     paused: false,
@@ -90,7 +91,7 @@ export function MessageEditor({ binding }: { binding?: EditBinding }) {
   const { trackCaret } = assist
   const formatting = useFormatting({
     inputRef,
-    getText: () => useStore.getState().editing?.text ?? '',
+    getText: () => store.getState().editing?.text ?? '',
     setText: setEditText,
   })
 

@@ -1,5 +1,5 @@
 'use client'
-
+import { useAccount } from '../../lib/client/react'
 import { useId, useRef, useState, type ReactNode } from 'react'
 import { AnnouncementEditor } from './announcements'
 import { Lock, X } from 'lucide-react'
@@ -25,8 +25,8 @@ import {
   sizeError,
   type MarkSize,
 } from '../../lib/brand_images'
-import { api } from '../../lib/instances'
-import { errorText, inSession, useStore } from '../../lib/store'
+
+import { errorText, useStore } from '../../lib/store'
 import type { BrandAsset, BrandLink, InstanceSuggestion, SiteSettingsPatch } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
 import { Chips, FieldError, iconBtn } from '../ui'
@@ -410,6 +410,7 @@ function ImageControl({
   make: (picture: ImageBitmap) => Promise<{ kind: BrandAsset; image: Blob }[] | string>
   kinds: BrandAsset[]
 }) {
+  const ownerSession = useAccount()
   const path = useStore(s => s.brand?.assets[preview] ?? null)
   const setBrand = useStore(s => s.setBrand)
   const [busy, setBusy] = useState(false)
@@ -419,24 +420,32 @@ function ImageControl({
     setBusy(true)
     setError(null)
     void work()
-      .catch(inSession((e: unknown) => setError(errorText(e))))
+      .catch(ownerSession.lifetime.inSession((e: unknown) => setError(errorText(e))))
       .finally(() => setBusy(false))
   }
   const upload = (file: File) =>
     run(async () => {
+      const mark = ownerSession.lifetime.sessionMark()
       const picture = await readImage(file)
+      if (mark !== ownerSession.lifetime.sessionMark()) {
+        picture?.close()
+        return
+      }
       if (!picture) return setError("That file can't be read as an image.")
       const made = await make(picture)
       picture.close()
+      if (mark !== ownerSession.lifetime.sessionMark()) return
       if (typeof made === 'string') return setError(made)
       let last: unknown = null
-      for (const { kind, image } of made) last = await api.adminPutBrandAsset(kind, image)
+      for (const { kind, image } of made)
+        last = await ownerSession.lifetime.live(ownerSession.api.adminPutBrandAsset(kind, image))
       setBrand(last)
     })
   const remove = () =>
     run(async () => {
-      for (const kind of kinds) await api.adminDeleteBrandAsset(kind)
-      setBrand(await api.brand())
+      for (const kind of kinds)
+        await ownerSession.lifetime.live(ownerSession.api.adminDeleteBrandAsset(kind))
+      setBrand(await ownerSession.lifetime.live(ownerSession.api.brand()))
     })
   return (
     <PageRow id={id} className={rowCls}>
@@ -453,7 +462,7 @@ function ImageControl({
             <span className="text-xs text-on-surface-variant">None</span>
           ) : (
             <img
-              src={assetUrl(api.origin(), path)}
+              src={assetUrl(ownerSession.api.origin(), path)}
               alt={`${label} uploaded now`}
               className={round ? 'h-16 w-16 object-cover' : 'max-h-12 w-auto max-w-48'}
             />

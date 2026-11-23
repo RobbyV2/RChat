@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useStoreApi } from '../../lib/client/react'
 import { useStore } from '../../lib/store'
 import { textBtn } from '../ui'
 
@@ -9,14 +10,15 @@ import { textBtn } from '../ui'
 export const SECRET = 'streamer-secret'
 
 export function useReveal() {
+  const store = useStoreApi()
   const streamer = useStore(s => s.streamer)
   const [shown, setShown] = useState(false)
   useEffect(
     () =>
-      useStore.subscribe((s, prev) => {
+      store.subscribe((s, prev) => {
         if (s.streamer && !prev.streamer) setShown(false)
       }),
-    []
+    [store]
   )
   return {
     streamer,

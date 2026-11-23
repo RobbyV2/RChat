@@ -1,5 +1,5 @@
 'use client'
-
+import { useAccount, useStoreApi } from '../lib/client/react'
 import { useEffect, useState } from 'react'
 import { Forward, Image as ImageIcon, SendHorizontal } from 'lucide-react'
 import { useStore } from '../lib/store'
@@ -7,7 +7,6 @@ import { textOnlyDestination } from '../lib/channel_content'
 import { clipAllowed, sourceAccess } from '../lib/forward_viewing'
 import { useForwardAccess } from '../lib/forward_access'
 import { useP2p } from '../lib/p2p/app/store'
-import { useViewing } from '../lib/viewing'
 import { forwardOrigin, forwardPending } from '../lib/forward'
 import type { Message } from '../lib/types'
 import type { ToolbarAction } from './message_toolbar'
@@ -37,22 +36,24 @@ export const forwardAction = (onClick: () => void): ToolbarAction => ({
 })
 
 export const useForwardClip = () => {
-  useViewing(s => s.revision)
+  const ownerSession = useAccount()
+  ownerSession.viewing.useViewing(s => s.revision)
   useP2p(s => s.servers)
   const clip = useStore(s => s.forwardClip)
-  const allowed = useStore(s => !!clip && clipAllowed(s, clip))
+  const allowed = useStore(s => !!clip && clipAllowed(s, clip, ownerSession.viewing))
   useEffect(() => {
     for (const origin of [clip?.source, clip?.quoted])
       if (
         origin?.kind === 'channel' &&
         origin.server &&
-        sourceAccess(useStore.getState(), origin) === 'unknown'
+        sourceAccess(ownerSession.store.getState(), origin, undefined, ownerSession.viewing) ===
+          'unknown'
       )
-        void useStore
+        void ownerSession.store
           .getState()
           .discoverChannels(origin.server)
           .catch(() => {})
-  }, [clip, allowed])
+  }, [ownerSession, clip, allowed])
   return allowed ? clip : null
 }
 
@@ -60,6 +61,7 @@ export const useForwardClip = () => {
 // clears the clipboard.
 // `onSend` sends it somewhere other than an instance conversation (a P2P one).
 export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: () => void }) {
+  const store = useStoreApi()
   const clip = useForwardClip()
   const textOnly = useStore(s => !onSend && textOnlyDestination(s, draftKey))
   const blocked = textOnly && !clip?.p2p && (clip?.has_media || clip?.has_poll)
@@ -75,7 +77,7 @@ export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: ()
     onSend
       ? onSend()
       : clip.p2p
-        ? useStore.getState().askConfirm({
+        ? store.getState().askConfirm({
             title: 'Forward',
             body: `This copies the message to ${instance}.`,
             confirm: 'Copy',

@@ -1,5 +1,5 @@
 'use client'
-
+import { useStoreApi } from '../lib/client/react'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Hash, Volume2 } from 'lucide-react'
@@ -101,6 +101,7 @@ function TopicWindow({
   anchor: React.RefObject<HTMLButtonElement | null>
   onClose: () => void
 }) {
+  const store = useStoreApi()
   const sheet = useMedia(SHEET_QUERY)
   const ownServer = useOwnServer(useStore(s => (s.view?.kind === 'channel' ? s.view.server : null)))
   const rootRef = useRef<HTMLDivElement>(null)
@@ -130,7 +131,7 @@ function TopicWindow({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return
-      const s = useStore.getState()
+      const s = store.getState()
       if (s.confirm || s.contextMenu || s.profile) return
       const modal = document.querySelector('[aria-modal="true"]')
       if (modal && !rootRef.current?.contains(modal)) return
@@ -150,7 +151,7 @@ function TopicWindow({
       window.removeEventListener('keydown', onKey)
       document.removeEventListener('pointerdown', onDown, true)
     }
-  }, [anchor])
+  }, [store, anchor])
 
   // Focus moves into the window once it is shown and back to the topic when it closes, unless
   // the user moved it elsewhere (a link, the composer).
@@ -170,11 +171,11 @@ function TopicWindow({
 
   useEffect(() => {
     const id = channel.id
-    const unsub = useStore.subscribe(s => {
+    const unsub = store.subscribe(s => {
       if (s.view?.kind !== 'channel' || s.view.channelId !== id) closeRef.current()
     })
     return unsub
-  }, [channel.id])
+  }, [store, channel.id])
 
   const Icon = channel.kind === 'voice' ? Volume2 : Hash
   const body = (

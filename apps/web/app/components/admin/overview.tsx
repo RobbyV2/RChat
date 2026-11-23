@@ -1,9 +1,8 @@
 'use client'
-
+import { useConn } from '../../lib/client/react'
 import { useEffect, type ReactNode } from 'react'
 import { summaryLine } from '../../lib/admin_config'
 import { adminRow } from '../../lib/admin_rows'
-import { home } from '../../lib/instances'
 import { useStore } from '../../lib/store'
 import type { RelayStatus } from '../../lib/types'
 import { useConfigStore } from './config_state'
@@ -77,12 +76,13 @@ const relayRows = (relay: RelayStatus): [string, string][] =>
     : [['Relay', 'Off']]
 
 export function OverviewSection() {
+  const conn = useConn()
   const signUp = useSignUp()
   const overview = useCounts()
   const sfu = useStore(s => s.settings.sfu)
   const openAdmin = useStore(s => s.openAdmin)
   const config = useConfigStore(s => s.config)
-  const info = home.info
+  const info = conn.info
   const facts: [string, string][] = [
     ...(info
       ? ([

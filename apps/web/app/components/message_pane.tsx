@@ -1,6 +1,5 @@
 'use client'
-import { useAccount } from '../lib/client/react'
-
+import { useAccount, useStoreApi } from '../lib/client/react'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
@@ -124,6 +123,7 @@ const callIcon = (tone: CallTone, video: boolean, incoming: boolean): LucideIcon
 }
 
 function CallLogRow({ message }: { message: Message }) {
+  const store = useStoreApi()
   const me = useStore(s => s.me)
   const dms = useStore(s => s.dms)
   const acceptCall = useStore(s => s.acceptCall)
@@ -133,7 +133,7 @@ function CallLogRow({ message }: { message: Message }) {
   if (!call) return null
   const tone = callTone(call)
   const incoming = me !== null && me.username !== call.from
-  const caller = userRefFor(useStore.getState(), call.from)
+  const caller = userRefFor(store.getState(), call.from)
   const other = dms.find(d => d.id === message.dm_id)?.other
   const name = (u: UserRef | undefined) => (
     <span className="streamer font-medium text-on-surface">

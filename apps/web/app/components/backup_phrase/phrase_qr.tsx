@@ -11,7 +11,7 @@ import {
   sheetAction,
   sheetHtml,
 } from '../../lib/backup_qr'
-import { shareOrigin } from '../../lib/instances'
+import { useAccount } from '../../lib/client/react'
 import { sharing } from '../../lib/platform'
 import { useStore } from '../../lib/store'
 import { textBtn } from '../ui'
@@ -163,6 +163,7 @@ export function PhraseExport({
   kind: 'account' | 'p2p'
   name?: string
 }) {
+  const { shareOrigin } = useAccount()
   const username = useStore(s => s.me?.username ?? '')
   const action = sheetAction(
     useSyncExternalStore<boolean | null>(
@@ -189,7 +190,7 @@ export function PhraseExport({
       words,
       kind,
       account: name ?? (kind === 'account' ? username : ''),
-      host: kind === 'account' ? hostOf(shareOrigin()) : '',
+      host: kind === 'account' ? hostOf(shareOrigin) : '',
       date: today(),
       svg: qrSvg(words, await logoDataUri()),
     })

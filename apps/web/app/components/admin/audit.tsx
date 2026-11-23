@@ -1,7 +1,6 @@
 'use client'
-
+import { useAccount } from '../../lib/client/react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { api } from '../../lib/instances'
 import {
   AUDIT_KINDS,
   auditFiltered,
@@ -11,7 +10,7 @@ import {
   quietPages,
   type AuditKind,
 } from '../../lib/instance_audit'
-import { errorText, inSession, useStore } from '../../lib/store'
+import { errorText, useStore } from '../../lib/store'
 import type { InstanceAuditEntry } from '../../lib/types'
 import { Chips, Sentinel } from '../ui'
 import { fieldCls, textBtn } from './touch'
@@ -19,6 +18,7 @@ import { fieldCls, textBtn } from './touch'
 // What the site admin and the server config changed, newest first. With a filter on, the list
 // stops loading by itself after a few pages without a match.
 export function AuditSection() {
+  const ownerSession = useAccount()
   const setError = useStore(s => s.setError)
   const [pages, setPages] = useState<InstanceAuditEntry[][] | null>(null)
   const [next, setNext] = useState<string | null>(null)
@@ -29,7 +29,7 @@ export function AuditSection() {
     (cursor: string | null) => {
       if (busy.current) return
       busy.current = true
-      api
+      ownerSession.api
         .adminAudit(cursor)
         .then(page => {
           setPages(cur => {
@@ -39,12 +39,12 @@ export function AuditSection() {
           })
           setNext(page.next)
         })
-        .catch(inSession((e: unknown) => setError(errorText(e))))
+        .catch(ownerSession.lifetime.inSession((e: unknown) => setError(errorText(e))))
         .finally(() => {
           busy.current = false
         })
     },
-    [setError]
+    [ownerSession, setError]
   )
   useEffect(() => {
     fetchFrom(null)

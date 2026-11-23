@@ -1,5 +1,5 @@
 'use client'
-
+import { useAccount } from '../../lib/client/react'
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown, ChevronRight, ChevronUp, X } from 'lucide-react'
 import { controlOf } from '../../lib/admin_config'
@@ -17,19 +17,18 @@ import {
   type CreateServerForm,
 } from '../../lib/admin_servers'
 import { ApiError } from '../../lib/api'
-import { api } from '../../lib/instances'
-import { errorText, inSession, useStore } from '../../lib/store'
+import { errorText, useStore } from '../../lib/store'
 import type { ServerSummaryLite } from '../../lib/types'
 import { PageGroup, PageRow } from '../settings_page'
 import { FieldError, Sentinel } from '../ui'
-import { useConfigStore, useControl } from './config_state'
+import { useControl } from './config_state'
 import { ServerManage } from './server_manage'
 import { SourceNote } from './source'
 import { dangerBtn, fieldCls, filledBtn, textBtn } from './touch'
 import { rowBtnCls } from './users'
 
 // Whether a server has the key `key`.
-const serverExists = (key: string) =>
+const serverExists = (api: ReturnType<typeof useAccount>['api'], key: string) =>
   api.getServer(key).then(
     () => true,
     (e: unknown) => {
@@ -38,8 +37,8 @@ const serverExists = (key: string) =>
     }
   )
 
-const storedDefaults = () =>
-  listOf(controlOf(useConfigStore.getState().config, 'default_servers')?.value)
+const defaultControl = (account: ReturnType<typeof useAccount>) =>
+  controlOf(account.adminConfig.getState().config, 'default_servers')
 
 const stepBtn =
   'flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-on-surface-variant enabled:hover:bg-surface-container-high disabled:opacity-40 md:h-9 md:w-9'
@@ -92,6 +91,7 @@ export function ServerPage({ name }: { name: string }) {
 
 // The servers every new account joins, in order.
 function DefaultServers() {
+  const ownerSession = useAccount()
   const row = adminRow('default_servers')
   const control = useControl('default_servers')
   const updateSettings = useStore(s => s.updateSettings)
@@ -107,18 +107,18 @@ function DefaultServers() {
     let live = true
     const t = setTimeout(() => {
       if (text === '') return setFound([])
-      api
+      ownerSession.api
         .adminServers(null, text)
         .then(page => {
           if (live) setFound(page.items.slice(0, 8))
         })
-        .catch(inSession((e: unknown) => setError(errorText(e))))
+        .catch(ownerSession.lifetime.inSession((e: unknown) => setError(errorText(e))))
     }, 300)
     return () => {
       live = false
       clearTimeout(t)
     }
-  }, [q, setError])
+  }, [ownerSession, q, setError])
   const save = (next: string[]) => {
     setWrong(null)
     void updateSettings({ default_servers: next })
@@ -184,17 +184,29 @@ function DefaultServers() {
             ))}
           </ol>
           <form
+            key={ownerSession.renderKey}
             onSubmit={e => {
               e.preventDefault()
+              const form = e.currentTarget
+              const mark = ownerSession.lifetime.sessionMark()
+              const active = () => form.isConnected && mark === ownerSession.lifetime.sessionMark()
               const typed = q
-              void addTypedServer(storedDefaults, typed, serverExists)
+              void addTypedServer(
+                () => listOf(defaultControl(ownerSession)?.value),
+                typed,
+                key => serverExists(ownerSession.api, key)
+              )
                 .then(edit => {
+                  const current = defaultControl(ownerSession)
+                  if (!active() || !current || current.pinned) return
                   setWrong(edit.error)
                   if (edit.error !== null) return
                   setQ(now => (now === typed ? '' : now))
                   save(edit.list)
                 })
-                .catch(inSession((e: unknown) => setError(errorText(e))))
+                .catch((error: unknown) => {
+                  if (active()) setError(errorText(error))
+                })
             }}
             className="flex gap-2"
           >
@@ -247,6 +259,7 @@ const EMPTY_FORM: CreateServerForm = { name: '', owner: '', password: '' }
 
 // Makes a server for an account, whatever "Who can create servers" says.
 function CreateServer({ onCreated }: { onCreated: () => void }) {
+  const ownerSession = useAccount()
   const showToast = useStore(s => s.showToast)
   const [form, setForm] = useState(EMPTY_FORM)
   const [wrong, setWrong] = useState<string | null>(null)
@@ -262,7 +275,7 @@ function CreateServer({ onCreated }: { onCreated: () => void }) {
           setWrong(error)
           if (error !== null || busy) return
           setBusy(true)
-          api
+          ownerSession.api
             .adminCreateServer({
               name: form.name.trim(),
               owner: form.owner.trim().replace(/^@+/, ''),
@@ -273,7 +286,7 @@ function CreateServer({ onCreated }: { onCreated: () => void }) {
               showToast('Server created:', detail.display_name)
               onCreated()
             })
-            .catch(inSession((e: unknown) => setWrong(errorText(e))))
+            .catch(ownerSession.lifetime.inSession((e: unknown) => setWrong(errorText(e))))
             .finally(() => setBusy(false))
         }}
         className="flex flex-col gap-2"

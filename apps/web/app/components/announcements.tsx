@@ -1,8 +1,7 @@
 'use client'
-
+import { useAccount, useStoreApi, useConn } from '../lib/client/react'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { X } from 'lucide-react'
-import { api, home } from '../lib/instances'
 import { device } from '../lib/platform'
 import { ApiError } from '../lib/api'
 import {
@@ -12,7 +11,7 @@ import {
   type Announcement,
   type AnnouncementFeed,
 } from '../lib/announcements'
-import { errorText, sessionMark, useStore } from '../lib/store'
+import { errorText, useStore } from '../lib/store'
 import { SettingSwitch } from './settings_fields'
 
 const preference = 'rchat_announcements_off_v1'
@@ -30,6 +29,7 @@ const enabled = () => device().read(preference) !== '1'
 const initial = () => true
 
 export function AnnouncementSetting() {
+  const store = useStoreApi()
   const on = useSyncExternalStore(subscribe, enabled, initial)
   return (
     <SettingSwitch
@@ -37,7 +37,7 @@ export function AnnouncementSetting() {
       value={on}
       onChange={v => {
         if (!device().write(preference, v ? null : '1'))
-          useStore.getState().setError('Could not save the setting.')
+          store.getState().setError('Could not save the setting.')
         changed()
       }}
     />
@@ -45,20 +45,22 @@ export function AnnouncementSetting() {
 }
 
 export function AnnouncementBanner() {
+  const conn = useConn()
   const on = useSyncExternalStore(subscribe, enabled, initial)
   const user = useStore(s => s.me?.username)
   const guest = useStore(s => s.guest && !s.token && !s.me)
-  const origin = useStore(() => home.origin)
+  const origin = useStore(() => conn.origin)
   return on && (guest || user) ? (
     <Feed
       key={JSON.stringify([origin, user])}
       guest={guest}
-      storageKey={home.scoped('rchat_announcement_dismissals_v1')}
+      storageKey={conn.scoped('rchat_announcement_dismissals_v1')}
     />
   ) : null
 }
 
 function Feed({ guest, storageKey }: { guest: boolean; storageKey: string }) {
+  const ownerSession = useAccount()
   const brand = useStore(s => s.brand)
   const [feed, setFeed] = useState<(AnnouncementFeed & { received: number }) | null>(null)
   useEffect(() => {
@@ -85,15 +87,15 @@ function Feed({ guest, storageKey }: { guest: boolean; storageKey: string }) {
   useEffect(() => {
     let generation = 0
     let timer: ReturnType<typeof setTimeout>
-    const mark = sessionMark()
+    const mark = ownerSession.lifetime.sessionMark()
     async function load() {
       const id = ++generation
       clearTimeout(timer)
-      const current = () => id === generation && mark === sessionMark()
+      const current = () => id === generation && mark === ownerSession.lifetime.sessionMark()
       if (!current()) return
       try {
         const received = performance.now()
-        const data = await api.announcements()
+        const data = await ownerSession.api.announcements()
         const elapsed = performance.now() - received
         if (!current()) return
         const hidden = guest ? guestDismissals(device().read(storageKey), data.server_time) : {}
@@ -121,21 +123,22 @@ function Feed({ guest, storageKey }: { guest: boolean; storageKey: string }) {
       stop?.()
       for (const event of [refresh, 'online', 'focus']) window.removeEventListener(event, load)
     }
-  }, [brand, guest, storageKey])
+  }, [ownerSession, brand, guest, storageKey])
 
   async function dismiss(a: Announcement) {
-    const mark = sessionMark()
+    const mark = ownerSession.lifetime.sessionMark()
     try {
       if (guest) {
         const hidden = guestDismissals(device().read(storageKey), feed?.server_time ?? 0)
         if (!device().write(storageKey, JSON.stringify({ ...hidden, [a.id]: a.ends_at })))
           throw new Error('Could not save the dismissal.')
-      } else await api.dismissAnnouncement(a.id)
-      if (mark !== sessionMark()) return
+      } else await ownerSession.api.dismissAnnouncement(a.id)
+      if (mark !== ownerSession.lifetime.sessionMark()) return
       setFeed(f => f && { ...f, announcements: f.announcements.filter(item => item.id !== a.id) })
       changed()
     } catch (error) {
-      if (mark === sessionMark()) useStore.getState().setError(errorText(error))
+      if (mark === ownerSession.lifetime.sessionMark())
+        ownerSession.store.getState().setError(errorText(error))
     }
   }
   if (!feed?.announcements.length) return null

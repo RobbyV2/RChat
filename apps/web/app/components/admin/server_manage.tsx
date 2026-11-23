@@ -1,10 +1,9 @@
 'use client'
-
+import { useAccount } from '../../lib/client/react'
 import { useCallback, useEffect, useState } from 'react'
 import { Trash2 } from 'lucide-react'
-import { api } from '../../lib/instances'
 import type { ServerDetail } from '../../lib/types'
-import { confirmKick, errorText, inSession, revokeAdminFor, useStore } from '../../lib/store'
+import { errorText, useStore } from '../../lib/store'
 import { isBuiltin } from '../../lib/admin_servers'
 import { canDeleteChannel } from '../../lib/rules'
 import { UserAvatar } from '../user_avatar'
@@ -60,6 +59,7 @@ function NameForm({
 
 // Everything a server's managers can change, for the site admin.
 export function ServerManage({ name, onCollapse }: { name: string; onCollapse: () => void }) {
+  const ownerSession = useAccount()
   const setError = useStore(s => s.setError)
   const renameServer = useStore(s => s.renameServer)
   const createChannel = useStore(s => s.createChannel)
@@ -80,11 +80,11 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
 
   const refresh = useCallback(
     () =>
-      api
+      ownerSession.api
         .getServer(name)
         .then(setDetail)
-        .catch(inSession((e: unknown) => setError(errorText(e)))),
-    [name, setError]
+        .catch(ownerSession.lifetime.inSession((e: unknown) => setError(errorText(e)))),
+    [ownerSession, name, setError]
   )
   useEffect(() => {
     void refresh()
@@ -98,7 +98,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
   }, [name, loadMembers, reloadSearch])
 
   if (!detail) return null
-  const run = (fn: () => Promise<void>) => void fn().then(inSession(refresh))
+  const run = (fn: () => Promise<void>) => void fn().then(ownerSession.lifetime.inSession(refresh))
 
   return (
     <div className="space-y-2 px-3 py-3">
@@ -110,7 +110,7 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
         onSubmit={v =>
           renameServer(name, v).then(
             onCollapse,
-            inSession((e: unknown) => setError(errorText(e)))
+            ownerSession.lifetime.inSession((e: unknown) => setError(errorText(e)))
           )
         }
       />
@@ -216,8 +216,10 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
             <button
               onClick={() =>
                 m.is_admin
-                  ? revokeAdminFor(name, m.username, reloadMembers)
-                  : void grantAdmin(name, m.username).then(inSession(reloadMembers))
+                  ? ownerSession.store.menu.revokeAdminFor(name, m.username, reloadMembers)
+                  : void grantAdmin(name, m.username).then(
+                      ownerSession.lifetime.inSession(reloadMembers)
+                    )
               }
               className={textBtn}
             >
@@ -231,7 +233,11 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
                 <button
                   onClick={() => {
                     setBanning(null)
-                    run(() => banMember(name, m.username).then(inSession(reloadMembers)))
+                    run(() =>
+                      banMember(name, m.username).then(
+                        ownerSession.lifetime.inSession(reloadMembers)
+                      )
+                    )
                   }}
                   className={dangerBtn}
                 >
@@ -241,7 +247,9 @@ export function ServerManage({ name, onCollapse }: { name: string; onCollapse: (
             ) : (
               <>
                 <button
-                  onClick={() => confirmKick(name, m.username, reloadMembers)}
+                  onClick={() =>
+                    ownerSession.store.menu.confirmKick(name, m.username, reloadMembers)
+                  }
                   className={dangerBtn}
                 >
                   Kick

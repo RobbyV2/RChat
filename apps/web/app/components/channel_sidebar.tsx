@@ -42,7 +42,7 @@ import {
   type DmRows,
 } from '../lib/dm_list'
 import { enterKey } from '../lib/keys'
-import { useAccount } from '../lib/client/react'
+import { useAccount, useStoreApi } from '../lib/client/react'
 import { Perm, hasPerm, type Category, type Channel, type DmSummary } from '../lib/types'
 import {
   CATEGORIES_ZONE,
@@ -72,7 +72,7 @@ import { p2p, useP2p } from '../lib/p2p/app'
 import { addsContacts, p2pDmSection } from '../lib/p2p/conversations'
 import { ContactRow, lastTsOf } from './p2p/p2p_home'
 import { P2pBadge } from './p2p/p2p_badge'
-import { canView, channelTarget, useViewing } from '../lib/viewing'
+import { channelTarget } from '../lib/viewing'
 
 const base = 'flex h-full w-60 shrink-0 flex-col bg-surface-container-low'
 
@@ -154,12 +154,15 @@ function PrivateIcon() {
 const NO_ROSTER: string[] = []
 // People in a room closed by a local viewing choice stay unnamed and uncounted.
 const rosterOf = (
+  owner: ReturnType<typeof useAccount>,
   account: string | null,
   rosters: Record<number, string[]>,
   server: string,
   c: Channel
 ) =>
-  canView(channelTarget(account, 'instance', server, c)) ? (rosters[c.id] ?? NO_ROSTER) : NO_ROSTER
+  owner.viewing.canView(channelTarget(account, 'instance', server, c, owner.conn))
+    ? (rosters[c.id] ?? NO_ROSTER)
+    : NO_ROSTER
 
 function VoiceChannelRow({
   channel,
@@ -400,6 +403,7 @@ function P2pDms() {
 }
 
 function DmSidebar({ dmId }: { dmId: number }) {
+  const store = useStoreApi()
   // While a P2P conversation is open beside the list, no instance DM is the current one.
   const beside = useP2p(s => s.home && s.dmList)
   const dms = useStore(s => s.dms)
@@ -418,7 +422,7 @@ function DmSidebar({ dmId }: { dmId: number }) {
   const unreadsCut = useStore(s => s.unreadsCut)
   useStore(s => s.notifyPrefs)
   const pings = useStore(badgePings)
-  const unread = (scope: string) => scopeUnread(useStore.getState(), scope)
+  const unread = (scope: string) => scopeUnread(store.getState(), scope)
   const pingsOf = (scope: string) => scopePings(pings, scope)
   const [dmInput, setDmInput] = useState<string | null>(null)
   const settled = useRef(false)
@@ -607,7 +611,7 @@ export function ChannelSidebar() {
   useStore(s => s.reads)
   useStore(s => s.notifyPrefs)
   const pings = useStore(badgePings)
-  const unread = (scope: string) => scopeUnread(useStore.getState(), scope)
+  const unread = (scope: string) => scopeUnread(acct.store.getState(), scope)
   const pingsOf = (scope: string) => scopePings(pings, scope)
   useStore(s => s.rtcTick)
   useStore(s => s.members)
@@ -616,14 +620,16 @@ export function ChannelSidebar() {
   const editing = useChannelEdit(e => e.editing)
   const name = useChannelEdit(e => e.name)
   const voiceServer = view?.kind === 'channel' ? view.server : null
-  useViewing(s => s.revision)
+  acct.viewing.useViewing(s => s.revision)
   const account = useStore(s => s.me?.username ?? null)
   const voiceKey = useStore(s => {
     const channels = voiceServer ? s.servers[voiceServer]?.channels : undefined
     if (!channels || !voiceServer) return ''
     const names = channels
       .flatMap(c =>
-        c.kind === 'voice' ? rosterOf(s.me?.username ?? null, s.voiceUsers, voiceServer, c) : []
+        c.kind === 'voice'
+          ? rosterOf(acct, s.me?.username ?? null, s.voiceUsers, voiceServer, c)
+          : []
       )
       .filter(u => !isGuestName(u))
     return [...new Set(names)].sort().join('\n')
@@ -801,7 +807,7 @@ export function ChannelSidebar() {
         activeId === c.id
           ? 'bg-secondary-container text-on-secondary-container'
           : `text-on-surface-variant hover:bg-surface-container hover:text-on-surface ${
-              scopeMuted(useStore.getState(), { kind: 'channel', id: c.id, server })
+              scopeMuted(acct.store.getState(), { kind: 'channel', id: c.id, server })
                 ? 'opacity-60'
                 : ''
             }`
@@ -828,7 +834,7 @@ export function ChannelSidebar() {
   )
 
   const voiceRow = (c: Channel) => {
-    const roster = rosterOf(account, voiceUsers, server, c)
+    const roster = rosterOf(acct, account, voiceUsers, server, c)
     return (
       <div key={c.id} data-drag-box className="flex flex-col rounded-lg">
         <VoiceChannelRow

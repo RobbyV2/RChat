@@ -1,7 +1,7 @@
 'use client'
-
+import { useAccount } from '../lib/client/react'
 import { createContext, useContext, useEffect, useState } from 'react'
-import { canView, instanceTarget, useViewing, type ViewingTarget } from '../lib/viewing'
+import { type ViewingTarget } from '../lib/viewing'
 import { ChartColumn, CornerDownRight, Forward, Phone, Pin } from 'lucide-react'
 import { useStore } from '../lib/store'
 import { useForwardAccess } from '../lib/forward_access'
@@ -53,20 +53,22 @@ export function WidgetMessageLinkCard({
 // A pasted link to a message on this instance. Shown only once the gated lookup says the viewer
 // can read the message; otherwise the link stays a plain link.
 export function MessageLinkCard({ link }: { link: MessageTarget }) {
+  const ownerSession = useAccount()
   const { id } = link
   const card = useStore(s => s.linkCards[id])
-  useViewing(s => s.revision)
+  ownerSession.viewing.useViewing(s => s.revision)
   const target = link.place
   const access = useStore(s => {
     if (target.kind === 'dm') return 'open'
-    const t = instanceTarget(s, target.server, target.channelId)
-    return t ? (canView(t) ? 'open' : 'hidden') : 'unknown'
+    const t = ownerSession.viewing.instanceTarget(s, target.server, target.channelId)
+    return t ? (ownerSession.viewing.canView(t) ? 'open' : 'hidden') : 'unknown'
   })
   const allowed = access === 'open'
   const sourceVisible = useStore(s => {
     if (!card || card.dm_id !== null) return true
-    const t = card.server && instanceTarget(s, card.server, card.channel_id ?? -1)
-    return !!t && canView(t)
+    const t =
+      card.server && ownerSession.viewing.instanceTarget(s, card.server, card.channel_id ?? -1)
+    return !!t && ownerSession.viewing.canView(t)
   })
   const known = useStore(s => id in s.linkCards)
   const forward = useForwardAccess(card, {
@@ -77,14 +79,18 @@ export function MessageLinkCard({ link }: { link: MessageTarget }) {
   const openMessage = useStore(s => s.openMessage)
   useEffect(() => {
     if (target.kind === 'channel' && access === 'unknown')
-      void useStore
+      void ownerSession.store
         .getState()
         .discoverChannels(target.server)
         .catch(() => {})
     if (allowed && !known) resolveLinkCard(id, target)
-  }, [id, known, resolveLinkCard, target, access, allowed])
+  }, [ownerSession, id, known, resolveLinkCard, target, access, allowed])
   if (access === 'hidden' && target.kind === 'channel' && (!known || card)) {
-    const channel = instanceTarget(useStore.getState(), target.server, target.channelId)
+    const channel = ownerSession.viewing.instanceTarget(
+      ownerSession.store.getState(),
+      target.server,
+      target.channelId
+    )
     return channel && <RevealChannelPreview target={channel} />
   }
   return allowed && sourceVisible && card ? (

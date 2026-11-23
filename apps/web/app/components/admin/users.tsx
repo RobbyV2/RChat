@@ -1,12 +1,10 @@
 'use client'
 import { useAccount } from '../../lib/client/react'
-
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { ACCOUNT_FILTERS, signInLine } from '../../lib/admin_accounts'
 import { ApiError } from '../../lib/api'
-import { api } from '../../lib/instances'
-import { errorText, inSession, useStore } from '../../lib/store'
+import { errorText, useStore } from '../../lib/store'
 import type { AccountFilter, AdminAccount, ServerSummaryLite, UserRef } from '../../lib/types'
 import { openActionMenu } from '../../lib/actions/menu'
 import { longPress } from '../context_menu'
@@ -20,6 +18,7 @@ export const rowBtnCls =
   'flex min-h-11 w-full min-w-0 items-center gap-3 rounded-xl bg-surface-container px-3 py-2 text-left hover:bg-surface-container-high'
 
 function UserServers({ username }: { username: string }) {
+  const ownerSession = useAccount()
   const setError = useStore(s => s.setError)
   const openServer = useStore(s => s.openServer)
   const openAdmin = useStore(s => s.openAdmin)
@@ -32,7 +31,7 @@ function UserServers({ username }: { username: string }) {
       if (busy.current && cursor !== null) return Promise.resolve()
       busy.current = true
       setLoading(true)
-      return api
+      return ownerSession.api
         .adminUserServers(username, cursor)
         .then(page => {
           setList(cur => {
@@ -42,13 +41,13 @@ function UserServers({ username }: { username: string }) {
           })
           setNext(page.next)
         })
-        .catch(inSession((e: unknown) => setError(errorText(e))))
+        .catch(ownerSession.lifetime.inSession((e: unknown) => setError(errorText(e))))
         .finally(() => {
           busy.current = false
           setLoading(false)
         })
     },
-    [username, setError]
+    [ownerSession, username, setError]
   )
   useEffect(() => {
     void fetchFrom(null)
@@ -107,6 +106,7 @@ function AccountFacts({ account }: { account: AdminAccount }) {
 
 // One account: how it signs in, the account actions and the servers it created.
 export function UserPage({ username }: { username: string }) {
+  const ownerSession = useAccount()
   const openDialog = useStore(s => s.openDialog)
   const openAdmin = useStore(s => s.openAdmin)
   const setError = useStore(s => s.setError)
@@ -117,13 +117,13 @@ export function UserPage({ username }: { username: string }) {
   useEffect(() => {
     let live = true
     const load = () =>
-      api
+      ownerSession.api
         .adminAccount(username)
         .then(found => {
           if (live) setAccount(found)
         })
         .catch(
-          inSession((e: unknown) => {
+          ownerSession.lifetime.inSession((e: unknown) => {
             if (!live) return
             if (e instanceof ApiError && e.status === 404) return setAccount(null)
             setError(errorText(e))
@@ -140,7 +140,7 @@ export function UserPage({ username }: { username: string }) {
       window.removeEventListener('focus', again)
       document.removeEventListener('visibilitychange', again)
     }
-  }, [username, rev, setError])
+  }, [ownerSession, username, rev, setError])
   const user = account?.user ?? listed
   return (
     <div>
@@ -234,6 +234,7 @@ export function UserPage({ username }: { username: string }) {
 // The accounts whose password is temporary or expired, a page at a time. The whole list of
 // accounts is the store's.
 const useFiltered = (q: string, filter: AccountFilter, rev: number) => {
+  const ownerSession = useAccount()
   const setError = useStore(s => s.setError)
   const [page, setPage] = useState<{ list: UserRef[]; next: string | null }>({
     list: [],
@@ -244,7 +245,7 @@ const useFiltered = (q: string, filter: AccountFilter, rev: number) => {
     (cursor: string | null) => {
       if (filter === 'all' || (busy.current && cursor !== null)) return
       busy.current = true
-      api
+      ownerSession.api
         .adminUsers(cursor, q, filter)
         .then(found =>
           setPage(cur => {
@@ -256,12 +257,12 @@ const useFiltered = (q: string, filter: AccountFilter, rev: number) => {
             }
           })
         )
-        .catch(inSession((e: unknown) => setError(errorText(e))))
+        .catch(ownerSession.lifetime.inSession((e: unknown) => setError(errorText(e))))
         .finally(() => {
           busy.current = false
         })
     },
-    [q, filter, setError]
+    [ownerSession, q, filter, setError]
   )
   useEffect(() => {
     const t = setTimeout(() => fetchFrom(null), 300)

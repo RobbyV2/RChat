@@ -3,68 +3,8 @@
     "useStore.getState": 14,
     "useStore.setState": 1
   },
-  "components/admin/announcements.tsx": {
-    "import api": 1,
-    "import home": 1
-  },
-  "components/admin/audit.tsx": {
-    "import api": 1
-  },
-  "components/admin/branding.tsx": {
-    "import api": 1
-  },
-  "components/admin/config_state.ts": {
-    "import api": 1,
-    "useStore.getState": 1
-  },
-  "components/admin/overview.tsx": {
-    "import home": 1
-  },
-  "components/admin/server_manage.tsx": {
-    "import api": 1
-  },
-  "components/admin/servers.tsx": {
-    "import api": 1
-  },
-  "components/admin/users.tsx": {
-    "import api": 1
-  },
-  "components/announcements.tsx": {
-    "import api": 1,
-    "import home": 1,
-    "useStore.getState": 2
-  },
-  "components/backup_phrase/reveal.tsx": {
-    "useStore.subscribe": 1
-  },
   "components/channel_sidebar.tsx": {
-    "useP2p.getState": 1,
-    "useStore.getState": 3
-  },
-  "components/channel_topic.tsx": {
-    "useStore.getState": 1,
-    "useStore.subscribe": 1
-  },
-  "components/code_block.tsx": {
-    "useStore.getState": 1
-  },
-  "components/display_name.tsx": {
-    "useStore.getState": 1
-  },
-  "components/emoji_picker.tsx": {
-    "useStore.getState": 1
-  },
-  "components/forwards.tsx": {
-    "useStore.getState": 3
-  },
-  "components/message_editor.tsx": {
-    "useStore.getState": 2
-  },
-  "components/message_link_card.tsx": {
-    "useStore.getState": 2
-  },
-  "components/message_pane.tsx": {
-    "useStore.getState": 1
+    "useP2p.getState": 1
   },
   "components/p2p/add_contact.tsx": {
     "useP2p.getState": 1,
@@ -143,9 +83,6 @@
   },
   "lib/actions/settings.ts": {
     "useP2p.getState": 1
-  },
-  "lib/forward_access.ts": {
-    "useStore.getState": 3
   },
   "lib/forward_viewing.ts": {
     "import api": 1,

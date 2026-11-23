@@ -1,19 +1,20 @@
 'use client'
-
+import { useAccount, useConn } from '../../lib/client/react'
 import { useEffect, useRef, useState } from 'react'
-import { api, home } from '../../lib/instances'
 import { ApiError } from '../../lib/api'
-import { errorText, sessionMark, useStore } from '../../lib/store'
+import { errorText, useStore } from '../../lib/store'
 import type { Announcement } from '../../lib/announcements'
 import { PageGroup, PageRow } from '../settings_page'
 import { dangerBtn, fieldCls, filledBtn } from './touch'
 
 export function AnnouncementEditor() {
-  const scope = useStore(s => JSON.stringify([home.origin, s.me?.username]))
+  const conn = useConn()
+  const scope = useStore(s => JSON.stringify([conn.origin, s.me?.username]))
   return <Editor key={scope} />
 }
 
 function Editor() {
+  const ownerSession = useAccount()
   const [rows, setRows] = useState<Announcement[]>([])
   const [message, setMessage] = useState('')
   const [start, setStart] = useState('')
@@ -27,17 +28,17 @@ function Editor() {
   useEffect(() => {
     mounted.current = true
     let generation = 0
-    const mark = sessionMark()
+    const mark = ownerSession.lifetime.sessionMark()
     const load = async () => {
       const id = ++generation
       try {
-        const next = await api.adminAnnouncements()
-        if (id === generation && mark === sessionMark()) {
+        const next = await ownerSession.api.adminAnnouncements()
+        if (id === generation && mark === ownerSession.lifetime.sessionMark()) {
           setRows(next)
           setLoadError('')
         }
       } catch (e) {
-        if (id !== generation || mark !== sessionMark()) return
+        if (id !== generation || mark !== ownerSession.lifetime.sessionMark()) return
         if (e instanceof ApiError && e.status === 404) setAvailable(false)
         else setLoadError(errorText(e))
       }
@@ -54,21 +55,21 @@ function Editor() {
       window.removeEventListener('online', load)
       clearInterval(timer)
     }
-  }, [brand, available])
+  }, [ownerSession, brand, available])
   async function save(id?: string) {
     if (busy) return
-    const mark = sessionMark()
-    const current = () => mounted.current && mark === sessionMark()
+    const mark = ownerSession.lifetime.sessionMark()
+    const current = () => mounted.current && mark === ownerSession.lifetime.sessionMark()
     setBusy(true)
     setError('')
     try {
-      if (id) await api.removeAnnouncement(id)
+      if (id) await ownerSession.api.removeAnnouncement(id)
       else {
         const starts_at = start ? new Date(start).getTime() / 1000 : 0
         const ends_at = new Date(end).getTime() / 1000
         if (!Number.isFinite(ends_at) || ends_at <= starts_at)
           throw new Error('Choose an end time after the start.')
-        await api.scheduleAnnouncement({ message, starts_at, ends_at })
+        await ownerSession.api.scheduleAnnouncement({ message, starts_at, ends_at })
         if (current()) {
           setMessage('')
           setStart('')

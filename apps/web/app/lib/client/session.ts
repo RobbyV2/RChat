@@ -1,3 +1,5 @@
+import { createStore } from 'zustand/vanilla'
+import type { AdminConfig } from '../types'
 import { createChannelEdit } from '../channel_edit'
 import { createApiDoc } from '../api_console'
 import { createTextPreviews } from '../code'
@@ -24,6 +26,7 @@ export type AccountId = string
 
 export class AccountSession {
   readonly channelEdit = createChannelEdit()
+  readonly adminConfig = createStore<{ config: AdminConfig | null }>(() => ({ config: null }))
   readonly renderKey = client.nextSessionKey()
   readonly textPreviews = createTextPreviews()
   readonly keys: KeyScope

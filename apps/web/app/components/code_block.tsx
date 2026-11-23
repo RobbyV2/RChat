@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { Check, Copy, FileCode, ShieldAlert } from 'lucide-react'
-import { useAccount } from '../lib/client/react'
+import { useAccount, useStoreApi } from '../lib/client/react'
 import { fmtSize } from '../lib/bytes'
 import {
   decodeText,
@@ -16,7 +16,6 @@ import {
 } from '../lib/code'
 import { useHighlight, type CodeNode } from '../lib/highlight'
 import { sharing } from '../lib/platform'
-import { useStore } from '../lib/store'
 import { useChatSource } from './chat_source'
 
 const CLASS = /^[a-z][\w-]*$/i
@@ -37,6 +36,7 @@ const toReact = (n: CodeNode, key: number): ReactNode => {
 }
 
 function CopyButton({ text }: { text: string }) {
+  const store = useStoreApi()
   const [copied, setCopied] = useState(false)
   useEffect(() => {
     if (!copied) return
@@ -53,7 +53,7 @@ function CopyButton({ text }: { text: string }) {
         void sharing()
           .copyText(text)
           .then(ok =>
-            ok ? setCopied(true) : useStore.getState().setError('Could not copy to the clipboard')
+            ok ? setCopied(true) : store.getState().setError('Could not copy to the clipboard')
           )
       }
       className="shrink-0 rounded-full p-1 text-on-surface-variant hover:bg-surface-container-highest hover:text-primary"
