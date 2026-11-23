@@ -19,7 +19,8 @@ export function TypingIndicator({
 }) {
   const on = useStore(s => s.typingOn)
   const here = useStore(s => (scope ? s.typing[scope] : undefined))
-  const parts = on ? typingParts(names ?? typerNames(here)) : []
+  const blocked = useStore(s => s.blocked)
+  const parts = on ? typingParts(names ?? typerNames(here, blocked)) : []
   if (!parts.length) return null
   return (
     <div

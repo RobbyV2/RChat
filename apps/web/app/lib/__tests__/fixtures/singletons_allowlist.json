@@ -321,9 +321,6 @@
     "import api": 1,
     "useP2p.getState": 1
   },
-  "lib/friends_store.ts": {
-    "import api": 1
-  },
   "lib/home_store.ts": {
     "create in useHome": 1,
     "import home": 1,
@@ -471,9 +468,6 @@
   "lib/platform/index.ts": {
     "useStore.getState": 1
   },
-  "lib/polls_store.ts": {
-    "import api": 1
-  },
   "lib/remote_invite.ts": {
     "import home": 1,
     "import registry": 1,
@@ -484,46 +478,8 @@
   "lib/rtc.ts": {
     "import home": 1
   },
-  "lib/selection_store.ts": {
-    "import api": 1
-  },
   "lib/slices/ctx.ts": {
-    "import home": 1,
-    "let session": 1,
     "useP2p.getState": 1
-  },
-  "lib/slices/messages.ts": {
-    "import api": 1,
-    "import home": 1,
-    "let draining": 1,
-    "let optSeq": 1,
-    "let reactionQueue": 1,
-    "new Map in pendingEmbeds": 1,
-    "new Map in reactionQueue": 1,
-    "new Map in reactorCache": 1,
-    "new Set in draining": 1
-  },
-  "lib/slices/presence.ts": {
-    "import home": 1
-  },
-  "lib/slices/reads.ts": {
-    "import api": 1
-  },
-  "lib/slices/rtc.ts": {
-    "import home": 1
-  },
-  "lib/slices/servers.ts": {
-    "import api": 1,
-    "import home": 1
-  },
-  "lib/slices/session.ts": {
-    "import api": 1,
-    "import home": 1,
-    "new Set in wsTaps": 1
-  },
-  "lib/slices/ui.ts": {
-    "import home": 1,
-    "let bound": 1
   },
   "lib/start.ts": {
     "import home": 1,

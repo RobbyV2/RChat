@@ -1,9 +1,10 @@
+import type { AccountSession } from '../client/session'
 // Voice channels and calls: the media for them, self audio, and their events.
 
 import type { CallRoute } from '../call_choice'
 import { accountPrompt } from '../features'
 import { guestVoiceOff, voiceSelf } from '../guest_voice'
-import { home } from '../instances'
+
 import { JoinTracker } from '../negotiation'
 import { p2p } from '../p2p'
 import { callRtc, p2pCall, p2pVoice } from '../p2p/app'
@@ -14,10 +15,11 @@ import type { RChatState } from '../store_types'
 import { TIMED_OUT_CAMERA, TIMED_OUT_SHARE, timedOutLine } from '../timeouts'
 import type { CallKind, VoiceMsg, WsEvent } from '../types'
 import { SELF_AUDIO_IDLE, type SelfAudio, toggleDeafenAudio, toggleMicAudio } from '../voice_layout'
-import { canView, instanceTarget } from '../viewing'
-import { sessionMark, type GetState, type Handlers, type SetState } from './ctx'
+import { defaultViewing } from '../viewing'
+import { type GetState, type Handlers, type SetState } from './ctx'
 
 export interface RtcDeps {
+  acct: AccountSession
   act: (fn: () => Promise<void>) => Promise<void>
   fail: (e: unknown) => void
   saveCallRoute: (route: CallRoute) => void
@@ -47,9 +49,14 @@ const keptFor = (marks: MuteMarks, channelId: number, users: string[]): MuteMark
 }
 
 // A room closed by a local viewing choice keeps its people out of this client.
-export const rosterClosed = (s: RChatState, server: string, channelId: number) => {
-  const target = instanceTarget(s, server, channelId)
-  return !!target && !canView(target)
+export const rosterClosed = (
+  s: RChatState,
+  server: string,
+  channelId: number,
+  viewing = defaultViewing
+) => {
+  const target = viewing.instanceTarget(s, server, channelId)
+  return !!target && !viewing.canView(target)
 }
 
 // A channel's voice members, replaced by the server's list; muted marks go with members who left.
@@ -99,6 +106,9 @@ export const applyCallState = (
 }
 
 export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
+  const { acct } = deps
+  const home = acct.conn
+  const { sessionMark } = acct.lifetime
   const { act, fail, saveCallRoute } = deps
 
   // The P2P call whose relays the caller is asking about, so a repeated state asks once.
@@ -241,14 +251,18 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   // Whether the server has listed us in the room we last joined. Until it has,
   // a voice_state without us predates our join and is not a removal.
   let voiceListed = false
-  rtc.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
-  callRtc.onChange = () => {
-    set(s => ({ rtcTick: s.rtcTick + 1 }))
-    p2pVoice.videoChanged()
+  const bindMedia = () => {
+    rtc.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
+    callRtc.onChange = () => {
+      set(s => ({ rtcTick: s.rtcTick + 1 }))
+      p2pVoice.videoChanged()
+    }
+    p2p.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
+    p2p.onError = message => fail(new Error(message))
+    return () => {
+      rtc.onChange = callRtc.onChange = p2p.onChange = p2p.onError = () => {}
+    }
   }
-  p2p.onChange = () => set(s => ({ rtcTick: s.rtcTick + 1 }))
-  p2p.onError = message => fail(new Error(message))
-
   const actions: Pick<
     RChatState,
     | 'joinVoice'
@@ -448,7 +462,10 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   const handlers = {
     voice_state: ev => {
       set(s =>
-        applyVoiceState(s, rosterClosed(s, ev.server, ev.channel_id) ? { ...ev, users: [] } : ev)
+        applyVoiceState(
+          s,
+          rosterClosed(s, ev.server, ev.channel_id, acct.viewing) ? { ...ev, users: [] } : ev
+        )
       )
       const { voice } = get()
       const self = voiceSelf(get())
@@ -466,7 +483,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
     },
 
     voice_muted: ev => {
-      if (!rosterClosed(get(), ev.server, ev.channel_id))
+      if (!rosterClosed(get(), ev.server, ev.channel_id, acct.viewing))
         set(s =>
           ev.staff === true
             ? { voiceHushed: marked(s.voiceHushed, ev.channel_id, ev.username, ev.muted) }
@@ -533,6 +550,7 @@ export const rtcSlice = (set: SetState, get: GetState, deps: RtcDeps) => {
   } satisfies Handlers
 
   return {
+    bindMedia,
     handlers,
     actions,
     applyMic,

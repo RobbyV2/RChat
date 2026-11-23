@@ -1,7 +1,6 @@
+import type { AccountSession } from '../client/session'
 // Reads and pings: the read marks and their queue, ping badges, group pings and the unread list.
 
-import { canView, instanceTarget } from '../viewing'
-import { api } from '../instances'
 import {
   addGroupPing,
   forgetGroupPings,
@@ -42,16 +41,10 @@ import {
 import type { RChatState } from '../store_types'
 import type { Message, Unread, WsEvent } from '../types'
 import { viewKey } from '../view'
-import {
-  pageVisible,
-  sessionMark,
-  shownKey,
-  type GetState,
-  type Handlers,
-  type SetState,
-} from './ctx'
+import { pageVisible, shownKey, type GetState, type Handlers, type SetState } from './ctx'
 
 export interface ReadsDeps {
+  acct: AccountSession
   alertUser: (alert: AlertInput) => void
   detached: (key: string) => boolean
   friendsHub: Pick<ReturnType<typeof friendsSlice>, 'onPing'>
@@ -88,6 +81,10 @@ export const applyPingCount = (
 }
 
 export const readsSlice = (set: SetState, get: GetState, deps: ReadsDeps) => {
+  const { acct } = deps
+  const { canView, instanceTarget } = acct.viewing
+  const api = acct.api
+  const { sessionMark } = acct.lifetime
   const { alertUser, detached, friendsHub } = deps
 
   // Highest ping id cleared here per key, sent as `pings_until` so the server only marks pings

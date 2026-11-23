@@ -1,16 +1,8 @@
+import type { AccountSession } from '../client/session'
 // The signed-in session: sign-in and sign-out, the account and its settings, the URL and what
 // is open, guests, invites, the socket and catch-up after outages.
 
-import {
-  cancelViewing,
-  canView,
-  endViewing,
-  instanceTarget,
-  leaveVisit,
-  requestViewing,
-  eventRoom,
-  cleanupRemoval,
-} from '../viewing'
+import { eventRoom, cleanupRemoval } from '../viewing'
 import { ApiError, type LoginRequest, type RegisterRequest } from '../api'
 import { catchUpDelay, due } from '../backoff'
 import { type Blocked, blockedSet, matchesBlockQuery, withoutTypers } from '../blocks'
@@ -33,11 +25,9 @@ import { NO_GROUP_PINGS } from '../group_pings'
 import { ice, iceKey, iceValue, parseIce } from '../ice'
 import { limitsOf } from '../instance_limits'
 import {
-  api,
   fitsHome,
-  home,
+  setMediaCookie,
   noteHomeInfo,
-  homeLookup,
   pageHref,
   readLocal,
   resolveInstance,
@@ -88,7 +78,6 @@ import type {
   UserRef,
   WsEvent,
 } from '../types'
-import { hideTypers } from '../typing'
 import { type Nav, type View, adminPath, parsePath, threadKey, viewKey, viewPath } from '../view'
 import { SELF_AUDIO_IDLE } from '../voice_layout'
 import { trimWindow } from '../window'
@@ -101,15 +90,11 @@ import {
   type SetState,
   emptyPage,
   emptySearch,
-  endSession,
   errorText,
-  inSession,
-  live,
   serverKey,
-  sessionMark,
   shownView,
 } from './ctx'
-import { applyEmbeds, dmKey, type messagesSlice } from './messages'
+import { dmKey, type messagesSlice } from './messages'
 import type { presenceSlice } from './presence'
 import type { readsSlice } from './reads'
 import type { rtcSlice } from './rtc'
@@ -121,29 +106,6 @@ import type { uiSlice } from './ui'
 export const BOOT_RETRY_MS = [1000, 3000, 10_000]
 
 const SWITCHED = 'You switched accounts'
-
-const LS = {
-  get token() {
-    return home.scoped('rchat_token')
-  },
-  get guest() {
-    return home.scoped('rchat_guest')
-  },
-  get guestServers() {
-    return home.scoped('rchat_guest_servers')
-  },
-  get guestGrants() {
-    return home.scoped('rchat_guest_grants')
-  },
-  get guestNames() {
-    return home.scoped('rchat_guest_names')
-  },
-  theme: 'rchat_theme',
-  streamer: 'rchat_streamer',
-  get lastDm() {
-    return home.scoped('rchat_last_dm')
-  },
-}
 
 const THEME_COLORS: Record<Theme, string> = { dark: '#141218', light: '#fef7ff' }
 
@@ -158,25 +120,12 @@ const readJson = <T>(key: string, fallback: T): T => {
 
 const POLL_EVERY = 60_000
 
-// P2P for the signed-in account, once the instance's settings say it is on. store.ts feeds it
-// every new settings object.
-export const p2pGate = createP2pGate(username => void p2pAccount(username))
-
-// Called with every live event after the store applied it (the palette index drops what the
-// viewer lost access to).
-const wsTaps = new Set<(ev: WsEvent) => void>()
-
-export const tapWs = (tap: (ev: WsEvent) => void) => {
-  wsTaps.add(tap)
-  return () => void wsTaps.delete(tap)
-}
-
 type Ui = ReturnType<typeof uiSlice>
 type Messages = ReturnType<typeof messagesSlice>
 type Reads = ReturnType<typeof readsSlice>
 type Servers = ReturnType<typeof serversSlice>
 
-export type SessionDeps = Pick<
+export type SessionDeps = { acct: AccountSession } & Pick<
   Ui,
   | 'act'
   | 'armExpiry'
@@ -244,12 +193,55 @@ export type SessionDeps = Pick<
     uiHub: Pick<Ui, 'forget'>
     presenceHub: Pick<ReturnType<typeof presenceSlice>, 'forget'>
     readsHub: Pick<Reads, 'forget' | 'ready'>
-    messagesHub: Pick<Messages, 'forget'>
+    messagesHub: Pick<Messages, 'forget' | 'applyEmbeds'>
     serversHub: Pick<Servers, 'forget'>
     pollsHub: { forget: () => void }
   }
 
 export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) => {
+  const { acct } = deps
+  const { cancelViewing, canView, endViewing, instanceTarget, leaveVisit, requestViewing } =
+    acct.viewing
+  const home = acct.conn
+  const api = acct.api
+  const { endSession, inSession, live, sessionMark } = acct.lifetime
+  const LS = {
+    get token() {
+      return home.scoped('rchat_token')
+    },
+    get guest() {
+      return home.scoped('rchat_guest')
+    },
+    get guestServers() {
+      return home.scoped('rchat_guest_servers')
+    },
+    get guestGrants() {
+      return home.scoped('rchat_guest_grants')
+    },
+    get guestNames() {
+      return home.scoped('rchat_guest_names')
+    },
+    theme: 'rchat_theme',
+    streamer: 'rchat_streamer',
+    get lastDm() {
+      return home.scoped('rchat_last_dm')
+    },
+  }
+
+  // P2P for the signed-in account, once the instance's settings say it is on. store.ts feeds it
+  // every new settings object.
+  let openP2p: (username: string | null) => void = () => {}
+  const p2pGate = createP2pGate(username => openP2p(username))
+
+  // Called with every live event after the store applied it (the palette index drops what the
+  // viewer lost access to).
+  const wsTaps = new Set<(ev: WsEvent) => void>()
+
+  const tapWs = (tap: (ev: WsEvent) => void) => {
+    wsTaps.add(tap)
+    return () => void wsTaps.delete(tap)
+  }
+
   const {
     act,
     armExpiry,
@@ -321,7 +313,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   // Once P2P stops showing in the view's place, the view counts as followed only when its pane is
   // back on screen (the pane says so); what came in meanwhile is below the unread divider.
-  useP2p.subscribe((now, before) => {
+  const unsubscribeP2p = useP2p.subscribe((now, before) => {
     if (coversInstance(now) || !coversInstance(before)) return
     const view = get().view
     if (!view) return
@@ -379,14 +371,22 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     set({ relayPrompt: null })
     answer?.(decision)
   }
-  relayBook.prompt = host =>
-    new Promise<Decision>(resolve => {
-      relayAnswer?.('deny')
-      relayAnswer = resolve
-      set({ relayPrompt: host })
-    })
-  relayBook.onChange(() => set({ relayPrefs: relayBook.prefs }))
-
+  const bindHomeMedia = () => {
+    openP2p = username => void p2pAccount(username)
+    relayBook.prompt = host =>
+      new Promise<Decision>(resolve => {
+        relayAnswer?.('deny')
+        relayAnswer = resolve
+        set({ relayPrompt: host })
+      })
+    const unsubscribe = relayBook.onChange(() => set({ relayPrefs: relayBook.prefs }))
+    return () => {
+      unsubscribe()
+      openP2p = () => {}
+      relayBook.prompt = async () => 'deny'
+      if (relayAnswer) settleRelayPrompt('deny')
+    }
+  }
   const armIce = (username: string | null, signedIn: boolean) => {
     const { on, relay } = parseIce(readLocal(home.scoped(iceKey(username))))
     ice.setHelpers(on)
@@ -594,7 +594,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   }
 
   const setBlocked = (blocked: Blocked) => {
-    hideTypers(Object.keys(blocked))
     set(s => ({ blocked, typing: withoutTypers(s.typing, blocked) }))
   }
 
@@ -779,7 +778,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       const replaced = bounded.list[0]?.id !== prev[0]?.id
       if (replaced) newHistory(key)
       set(s => ({
-        messages: { ...s.messages, [key]: applyEmbeds(bounded.list) },
+        messages: { ...s.messages, [key]: messagesHub.applyEmbeds(bounded.list) },
         older: {
           ...s.older,
           [key]: {
@@ -890,33 +889,37 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     )
   }
 
-  let listening = false
+  let pageListeners: AbortController | undefined
   const listenPage = () => {
-    if (listening || typeof document === 'undefined' || typeof window === 'undefined') return
-    listening = true
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState !== 'visible') {
-        readQueue.flush()
-        return
-      }
-      home.ws.ensureConnected()
-      const { atBottom, messages, reads, unreadAnchor, panel } = get()
-      const view = shownView(get().view)
-      if (panel?.kind === 'thread') {
-        const thread = threadKey(panel.root.id)
-        if (atBottom[thread] === true && !detached(thread)) get().seeThread(panel.root.id)
-      }
-      if (!view) return
-      const key = viewKey(view)
-      if (atBottom[key] !== true || detached(key)) return
-      const mark = reads[key]
-      if (mark && mark.latest > mark.lastRead && !(unreadAnchor[key] > 0))
-        set(s => ({ unreadAnchor: { ...s.unreadAnchor, [key]: mark.lastRead } }))
-      const list = messages[key] ?? []
-      const last = list[list.length - 1]
-      if (last) get().markRead(key, last.id)
-    })
-    window.addEventListener('pagehide', () => readQueue.flush())
+    if (pageListeners || typeof document === 'undefined' || typeof window === 'undefined') return
+    pageListeners = new AbortController()
+    document.addEventListener(
+      'visibilitychange',
+      () => {
+        if (document.visibilityState !== 'visible') {
+          readQueue.flush()
+          return
+        }
+        home.ws.ensureConnected()
+        const { atBottom, messages, reads, unreadAnchor, panel } = get()
+        const view = shownView(get().view)
+        if (panel?.kind === 'thread') {
+          const thread = threadKey(panel.root.id)
+          if (atBottom[thread] === true && !detached(thread)) get().seeThread(panel.root.id)
+        }
+        if (!view) return
+        const key = viewKey(view)
+        if (atBottom[key] !== true || detached(key)) return
+        const mark = reads[key]
+        if (mark && mark.latest > mark.lastRead && !(unreadAnchor[key] > 0))
+          set(s => ({ unreadAnchor: { ...s.unreadAnchor, [key]: mark.lastRead } }))
+        const list = messages[key] ?? []
+        const last = list[list.length - 1]
+        if (last) get().markRead(key, last.id)
+      },
+      { signal: pageListeners.signal }
+    )
+    window.addEventListener('pagehide', () => readQueue.flush(), { signal: pageListeners.signal })
   }
 
   const startWs = () => {
@@ -1031,14 +1034,6 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     persistGrants(grants)
   }
 
-  const setTokenCookie = (value: string | null) => {
-    const token = home.isDefault ? value : null
-    const attrs = `path=/; SameSite=Strict${window.location.protocol === 'https:' ? '; Secure' : ''}`
-    document.cookie = token
-      ? `rchat_token=${token}; ${attrs}; max-age=31536000`
-      : `rchat_token=; ${attrs}; max-age=0`
-  }
-
   const leaveInvite = () => {
     if (get().invite) set({ invite: null })
     if (get().configLink) set({ configLink: null })
@@ -1052,13 +1047,15 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   const rememberInvite = (entry: InviteEntry) =>
     queueMicrotask(() => {
-      const shown = parseInvite(pageHref(), shareOrigin())
+      const origin = shareOrigin(undefined, undefined, home)
+      const shown = parseInvite(pageHref(origin), origin)
       if (!shown || !sameInvite(shown, entry)) return
       window.history.replaceState(entryState(entry), '', targetPath(entry))
     })
 
   const readInvite = () => {
-    const target = parseInvite(pageHref(), shareOrigin())
+    const origin = shareOrigin(undefined, undefined, home)
+    const target = parseInvite(pageHref(origin), origin)
     const code = target?.code ?? null
     const handoff = takeStashedInvite(target?.server ?? null, code)
     if (!target) {
@@ -1216,14 +1213,18 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   // Opens what the URL asks for at load. Rate limited requests (many tabs or a busy network) can
   // leave nothing open; then it tries again a few times, unless the user went somewhere else.
+  let bootRetry: ReturnType<typeof setTimeout> | undefined
   const bootUrl = async (attempt = 0): Promise<void> => {
     const started = Date.now()
+    const at = sessionMark()
     await resolveUrl('replace', attempt < BOOT_RETRY_MS.length)
+    if (at !== sessionMark()) return
     const s = get()
     const stuck = !s.view && !s.home && !s.invite && !s.configLink && (!!s.me || s.guest)
     if (!stuck || limitedAt() < started || attempt >= BOOT_RETRY_MS.length) return
     const path = window.location.pathname
-    setTimeout(() => {
+    clearTimeout(bootRetry)
+    bootRetry = setTimeout(() => {
       const now = get()
       if (window.location.pathname === path && !now.view && !now.home) void bootUrl(attempt + 1)
     }, BOOT_RETRY_MS[attempt])
@@ -1232,7 +1233,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   const enter = (res: AuthResponse) => {
     dropLinkCards()
     writeLocal(LS.token, res.token)
-    setTokenCookie(res.token)
+    setMediaCookie(home, res.token)
     writeLocal(LS.guest, null)
     api.setToken(res.token)
     applyMe(res.user, false)
@@ -1243,6 +1244,13 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       bootError: null,
     })
     startWs()
+  }
+
+  const authenticate = async (path: string, body: LoginRequest | RegisterRequest) => {
+    const mark = sessionMark()
+    const response = await authRequest(path, body)
+    if (mark !== sessionMark()) throw new Ended('The session ended')
+    enter(response)
   }
 
   // Leaves the current view for none (home); a previewed server is forgotten on the way out.
@@ -1309,8 +1317,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     beginNavigation()
     endViewing(get().guest)
     endSession()
+    clearTimeout(bootRetry)
+    if (resyncTimer) clearTimeout(resyncTimer)
+    resyncTimer = null
+    downSince = polledMe = polledSettings = null
     dropLinkCards()
-    hideTypers([])
     uiHub.forget()
     if (meRetry) clearTimeout(meRetry)
     meRetry = null
@@ -1374,30 +1385,38 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     | 'setViewing'
   > = {
     loadInstance: async () => {
+      const mark = sessionMark()
       set({ instance: home.info, instanceHost: home.host })
       try {
         const info = await api.instance()
-        if (!fitsHome(info)) throw new Error('instance endpoints moved to another site')
-        noteHomeInfo(info)
+        if (mark !== sessionMark()) return null
+        if (!fitsHome(info, home)) throw new Error('instance endpoints moved to another site')
+        noteHomeInfo(info, home)
         set({ instance: info, instanceHost: home.host })
         void ice.refresh()
         return true
       } catch {
+        if (mark !== sessionMark()) return null
         set({ instanceHost: home.host })
         return false
       } finally {
-        homeLookup.done()
+        if (mark === sessionMark()) acct.discovery.done()
       }
     },
 
     switchInstance: async address => {
       if (get().token || get().guest) return 'Log out before switching instances'
+      const mark = sessionMark()
       try {
         const { origin, info } = await resolveInstance(address)
+        if (get().token || get().guest) return 'Log out before switching instances'
+        if (mark !== sessionMark()) return 'Instance selection changed'
         if (origin !== home.origin || home.info?.id !== info.id) {
+          forgetSession()
           home.ws.stop()
-          selectHome(origin, info)
-        } else noteHomeInfo(info)
+          selectHome(origin, info, home)
+        } else noteHomeInfo(info, home)
+        acct.discovery.done()
         set({ instance: info, instanceHost: home.host, error: null })
         void ice.refresh()
         await get().loadSettings()
@@ -1408,12 +1427,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     },
 
     loadSettings: async (background = false) => {
+      const mark = sessionMark()
       try {
-        set({ settings: siteSettings(await api.getSettings(background)) })
+        const settings = await api.getSettings(background)
+        if (mark === sessionMark()) set({ settings: siteSettings(settings) })
       } catch (e) {
-        fail(e)
+        if (mark === sessionMark()) fail(e)
       }
-      void get().loadBrand()
+      if (mark === sessionMark()) void get().loadBrand()
     },
 
     // An instance that sends no brand, or can't be reached, leaves the one the app has.
@@ -1464,7 +1485,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     patchMe: (avatar_kind, avatar_color, banner_color) =>
       act(async () => {
-        const user = await live(api.patchMe(avatar_kind, avatar_color, banner_color))
+        const mark = sessionMark()
+        const user = await api.patchMe(avatar_kind, avatar_color, banner_color)
+        if (mark !== sessionMark()) return
         set(s => (s.me ? { me: { ...s.me, ...user } } : {}))
       }),
 
@@ -1472,7 +1495,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       const { me, settings } = get()
       if (!me) return `${accountPrompt(settings)} to add a description`
       try {
+        const mark = sessionMark()
         const user = await api.setBio(cleanBio(bio) ? bio : null)
+        if (mark !== sessionMark()) return null
         set(s => (s.me?.username === me.username ? { me: { ...s.me, ...user } } : {}))
         return null
       } catch (e) {
@@ -1486,7 +1511,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       const invalid = displayNameError(name)
       if (invalid) return invalid
       try {
+        const mark = sessionMark()
         const user = await api.setDisplayName(name.trim())
+        if (mark !== sessionMark()) return null
         set(s => (s.me?.username === me.username ? { me: { ...s.me, ...user } } : {}))
         return null
       } catch (e) {
@@ -1496,14 +1523,17 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     setAppearOffline: appearOffline =>
       act(async () => {
-        await live(api.setAppearOffline(appearOffline))
+        const mark = sessionMark()
+        await api.setAppearOffline(appearOffline)
+        if (mark !== sessionMark()) return
         set(s => (s.me ? { me: { ...s.me, appear_offline: appearOffline } } : {}))
       }),
 
     refreshAccount: async () => {
       if (!get().token || !get().me) return
+      const mark = sessionMark()
       const fresh = await api.me().catch(() => null)
-      if (fresh)
+      if (mark === sessionMark() && fresh)
         set(s =>
           s.me?.username === fresh.username
             ? {
@@ -1536,7 +1566,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         await bootUrl()
         return
       }
+      const mark = sessionMark()
       await get().loadInstance()
+      if (mark !== sessionMark()) return
       void get().loadSettings()
       const token = readLocal(LS.token)
       const guest = readLocal(LS.guest) === '1'
@@ -1550,20 +1582,22 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         let me: Me
         try {
           me = await api.me()
+          if (mark !== sessionMark()) return
         } catch (e) {
+          if (mark !== sessionMark()) return
           if (endsSession(e)) {
             fail(e)
             expireSession()
             return
           }
-          setTokenCookie(token)
+          setMediaCookie(home, token)
           set({ token, guest: false })
           startWs()
           meAttempt = 0
           retryMe(e)
           return
         }
-        setTokenCookie(token)
+        setMediaCookie(home, token)
         applyMe(me, false)
         set({ token, guest: false, bootError: null })
         startWs()
@@ -1624,13 +1658,13 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     register: async body => {
       try {
-        enter(await authRequest('/auth/register', body))
+        await authenticate('/auth/register', body)
         return null
       } catch (e) {
         return signupFailure(e)
       }
     },
-    login: body => act(async () => enter(await authRequest('/auth/login', body))),
+    login: body => act(() => authenticate('/auth/login', body)),
 
     logout: () => {
       const token = get().authExpired ? null : get().token
@@ -1657,7 +1691,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       rtc.leave()
       p2p.signOut()
       writeLocal(LS.token, null)
-      setTokenCookie(null)
+      setMediaCookie(home, null)
       writeLocal(LS.guest, null)
       writeLocal(LS.guestGrants, null)
       forgetMedia()
@@ -2039,5 +2073,18 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     rememberGuestName,
     syncUrl,
     forgetSession,
+    bindHomeMedia,
+    tapWs,
+    p2pGate,
+    dispose: () => {
+      unsubscribeP2p()
+      pageListeners?.abort()
+      wsTaps.clear()
+      home.ws.onEvent =
+        home.ws.onStatus =
+        home.ws.onPoll =
+        home.ws.onPasswordChangeRequired =
+          () => {}
+    },
   }
 }

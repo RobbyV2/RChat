@@ -1,9 +1,9 @@
+import type { AccountSession } from './client/session'
 // The store's friends actions and events, kept apart from store.ts. `friendsSlice` gets the
 // store's helpers and returns the actions plus the hooks the store calls on sign-in, resync,
 // pings and WS events.
 
-import { api } from './instances'
-import { Ended, live, sessionMark } from './slices/ctx'
+import { Ended } from './slices/ctx'
 import { addPing, clearPings, pingUntil, setScopePings } from './pings'
 import {
   FRIENDS_SCOPE,
@@ -26,6 +26,7 @@ import { setDmFriend } from './dm_list'
 type SetState = (partial: Partial<RChatState> | ((s: RChatState) => Partial<RChatState>)) => void
 
 export interface FriendsDeps {
+  acct: AccountSession
   set: SetState
   get: () => RChatState
   act: (fn: () => Promise<void>) => Promise<void>
@@ -57,6 +58,9 @@ export const friendsInitial = () => ({
 const byName = (r: FriendRequest | Friend) => r.user.username
 
 export const friendsSlice = (d: FriendsDeps) => {
+  const { acct } = d
+  const api = acct.api
+  const { live, sessionMark } = acct.lifetime
   const { set, get, act } = d
   const signedIn = () => !!get().me && !get().guest
   const mine = (username: string) => get().me?.username === username

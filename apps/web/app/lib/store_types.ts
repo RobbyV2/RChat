@@ -370,7 +370,7 @@ export interface RChatState {
   brand: Brand | null
   instance: InstanceInfo | null
   instanceHost: string
-  loadInstance: () => Promise<boolean>
+  loadInstance: () => Promise<boolean | null>
   switchInstance: (address: string) => Promise<string | null>
   bootstrap: () => Promise<void>
   // `background`: the app polls on its own (see `BACKGROUND` in api.ts).

@@ -1,11 +1,11 @@
+import type { AccountSession } from './client/session'
 // The store's message selection actions, bulk delete jobs and their events, kept apart from
 // store.ts. The rules of what is picked live in `selection.ts`.
 
 import type { BulkDeleteReq } from './api'
 import { ApiError } from './api'
-import { api } from './instances'
-import { canView, instanceTarget } from './viewing'
-import { Ended, live, sessionMark } from './slices/ctx'
+
+import { Ended } from './slices/ctx'
 import { canForward } from './forward'
 import { messageLinkUrl } from './message_links'
 import { canPin, isPinned } from './pins'
@@ -38,6 +38,7 @@ import { Perm, hasPerm, type BulkJob, type Message, type WsEvent } from './types
 type SetState = (partial: Partial<RChatState> | ((s: RChatState) => Partial<RChatState>)) => void
 
 export interface SelectionDeps {
+  acct: AccountSession
   set: SetState
   get: () => RChatState
   toast: (text: string, name?: string) => void
@@ -127,35 +128,39 @@ const day = () => new Date().toISOString().slice(0, 10)
 
 const fileName = (scope: string, ext: string) => `messages-${scope}-${day()}.${ext}`
 
-const fetchPage = (scope: string, after: number) => {
-  const id = Number(scope.slice(1))
-  const page = { after, limit: EXPORT_PAGE }
-  if (scope.startsWith('c')) return api.channelMessages(id, page)
-  if (scope.startsWith('t')) return api.threadMessages(id, page)
-  return api.dmMessages(id, page)
-}
-
 // Waits before trying a page again after a 429.
 export const exportBackoff = { ms: 1000 }
-
-// One export page, tried again (up to 5 times, waiting longer each time) when rate limited.
-// Nothing is asked once the session `at` ended.
-const fetchAfter = async (scope: string, after: number, at: object, visible: () => boolean) => {
-  for (let tries = 0; ; tries++) {
-    if (at !== sessionMark() || !visible()) throw new Ended('The view ended')
-    try {
-      return await live(fetchPage(scope, after))
-    } catch (e) {
-      if (!(e instanceof ApiError) || e.status !== 429 || tries >= 5) throw e
-      await new Promise(r => setTimeout(r, exportBackoff.ms * 2 ** tries))
-    }
-  }
-}
 
 const plural = (n: number, word: string) =>
   `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`
 
 export const selectionSlice = (d: SelectionDeps) => {
+  const { acct } = d
+  const { canView, instanceTarget } = acct.viewing
+  const api = acct.api
+  const { live, sessionMark } = acct.lifetime
+  const fetchPage = (scope: string, after: number) => {
+    const id = Number(scope.slice(1))
+    const page = { after, limit: EXPORT_PAGE }
+    if (scope.startsWith('c')) return api.channelMessages(id, page)
+    if (scope.startsWith('t')) return api.threadMessages(id, page)
+    return api.dmMessages(id, page)
+  }
+
+  // One export page, tried again (up to 5 times, waiting longer each time) when rate limited.
+  // Nothing is asked once the session `at` ended.
+  const fetchAfter = async (scope: string, after: number, at: object, visible: () => boolean) => {
+    for (let tries = 0; ; tries++) {
+      if (at !== sessionMark() || !visible()) throw new Ended('The view ended')
+      try {
+        return await live(fetchPage(scope, after))
+      } catch (e) {
+        if (!(e instanceof ApiError) || e.status !== 429 || tries >= 5) throw e
+        await new Promise(r => setTimeout(r, exportBackoff.ms * 2 ** tries))
+      }
+    }
+  }
+
   const { set, get } = d
 
   const update = (scope: string, fn: (sel: Selection) => Selection) =>

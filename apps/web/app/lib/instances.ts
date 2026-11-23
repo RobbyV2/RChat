@@ -560,12 +560,26 @@ export const homeLabel = () => instanceLabel(home.info, home.host)
 
 export const api = home.api
 
-export function selectHome(origin: string, info: InstanceInfo) {
+export function selectHome(origin: string, info: InstanceInfo, connection = home) {
+  if (connection !== home) {
+    connection.retarget(endpointsFrom(origin, info), info, false)
+    rememberInstance(origin, info)
+    return connection
+  }
   const conn = registry.setHome(origin, info)
   const store = storage()
   write(() => store, HOME_KEY, conn.isDefault ? null : conn.origin)
   rememberInstance(conn.origin, info, store)
   return conn
+}
+
+// Same-origin private media loads with the home connection's cookie.
+export function setMediaCookie(connection: InstanceConnection, token: string | null) {
+  if (connection !== home || !connection.isDefault) return
+  const attrs = `path=/; SameSite=Strict${window.location.protocol === 'https:' ? '; Secure' : ''}`
+  document.cookie = token
+    ? `rchat_token=${token}; ${attrs}; max-age=31536000`
+    : `rchat_token=; ${attrs}; max-age=0`
 }
 
 export const fitsHome = (info: InstanceInfo, conn: InstanceConnection = home) =>
@@ -587,9 +601,9 @@ export const lookup = () => {
 // This page's first one, so P2P registers at the PeerJS address it gives (homePeer).
 export const homeLookup = lookup()
 
-export function noteHomeInfo(info: InstanceInfo) {
-  home.info = info
-  rememberInstance(home.origin, info)
+export function noteHomeInfo(info: InstanceInfo, connection = home) {
+  connection.info = info
+  rememberInstance(connection.origin, info)
 }
 
 export const knownInstances = () =>
@@ -601,15 +615,16 @@ export function shareOrigin(
   page: Pick<Location, 'protocol' | 'origin'> | null = typeof window === 'undefined'
     ? null
     : window.location,
-  app = shellInfo() !== null
+  app = shellInfo() !== null,
+  connection = home
 ): string {
   if (page && !app && (page.protocol === 'http:' || page.protocol === 'https:')) return page.origin
-  return normalizeOrigin(home.info?.public_url ?? '') ?? home.origin
+  return normalizeOrigin(connection.info?.public_url ?? '') ?? connection.origin
 }
 
 // The current page's address on the share origin, so app-only origins parse like web ones.
-export const pageHref = () =>
-  `${shareOrigin()}${window.location.pathname}${window.location.search}${window.location.hash}`
+export const pageHref = (origin = shareOrigin()) =>
+  `${origin}${window.location.pathname}${window.location.search}${window.location.hash}`
 
 export function localOrigins(homePublic: string | null = home.info?.public_url ?? null) {
   const page = typeof window === 'undefined' ? null : window.location.origin

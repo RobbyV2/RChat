@@ -63,7 +63,7 @@ function InstancePicker({
   useEffect(() => {
     let live = true
     void loadInstance().then(found => {
-      if (!live) return
+      if (!live || found === null) return
       onMissing(!found)
       if (found) {
         void useStore.getState().loadSettings()

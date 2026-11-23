@@ -1,3 +1,5 @@
+import { shownMenu } from '../client/client'
+import type { AccountSession } from '../client/session'
 // The store's interface state: errors, toasts and notices, menus, dialogs and panels, the
 // per-account display preferences, and the confirm builders.
 
@@ -11,7 +13,7 @@ import {
 } from '../call_choice'
 import { EMPTY_PREFS, type EmojiPrefs, emojiKey, noteUse, parseEmojiPrefs, setTone } from '../emoji'
 import { type ForwardClip, forwardKey, forwardValue, parseForward } from '../forward'
-import { home, readLocal, writeLocal } from '../instances'
+import { readLocal, writeLocal } from '../instances'
 import {
   type Layout,
   addToFolder as addIn,
@@ -83,128 +85,150 @@ import {
   type SetState,
   emptySearch,
   errorText,
-  inSession,
-  readScoped,
-  sessionMark,
+  readScoped as scopedReader,
 } from './ctx'
 import { isSelfDm } from './messages'
 import type { StoreApi } from 'zustand'
 
-let bound: StoreApi<RChatState> | null = null
-
-// The store, for the builders below; store.ts binds it once it exists.
-export const bindStore = (created: StoreApi<RChatState>) => {
-  bound = created
-}
-
-const store = () => {
-  if (!bound) throw new Error('The store is not bound yet: import store.ts first')
-  return bound
-}
-
-export const confirmBan = (server: string, username: string) =>
-  store()
-    .getState()
-    .askConfirm({
+export function menuActions(
+  store: Pick<StoreApi<RChatState>, 'getState' | 'setState'>,
+  inSession: AccountSession['lifetime']['inSession']
+) {
+  const confirmBan = (server: string, username: string) =>
+    store.getState().askConfirm({
       title: 'Ban from Server',
       body: "Ban this user? They are removed from the server and can't join again until unbanned.",
       confirm: 'Ban',
-      action: () => void store().getState().banMember(server, username),
+      action: () => void store.getState().banMember(server, username),
     })
 
-// Records the running timeouts (or none) of members of `server`, as a moderator sees them.
-export const noteMemberTimeouts = (
-  server: string,
-  members: { username: string; timeout?: TimeoutWire }[]
-) =>
-  store().setState(s => {
-    const was = s.timeouts[server] ?? {}
-    const changed = members.filter(m => m.timeout || was[m.username])
-    if (!changed.length) return {}
-    const list = { ...was }
-    for (const m of changed) {
-      if (m.timeout) list[m.username] = fromWire(m.timeout)
-      else delete list[m.username]
-    }
-    return { timeouts: { ...s.timeouts, [server]: list } }
-  })
+  // Records the running timeouts (or none) of members of `server`, as a moderator sees them.
+  const noteMemberTimeouts = (
+    server: string,
+    members: { username: string; timeout?: TimeoutWire }[]
+  ) =>
+    store.setState(s => {
+      const was = s.timeouts[server] ?? {}
+      const changed = members.filter(m => m.timeout || was[m.username])
+      if (!changed.length) return {}
+      const list = { ...was }
+      for (const m of changed) {
+        if (m.timeout) list[m.username] = fromWire(m.timeout)
+        else delete list[m.username]
+      }
+      return { timeouts: { ...s.timeouts, [server]: list } }
+    })
 
-export const noteTimeout = (server: string, username: string, timeout: TimeoutWire | undefined) =>
-  noteMemberTimeouts(server, [{ username, timeout }])
+  const noteTimeout = (server: string, username: string, timeout: TimeoutWire | undefined) =>
+    noteMemberTimeouts(server, [{ username, timeout }])
 
-export const confirmKick = (server: string, username: string, after?: () => void) =>
-  store()
-    .getState()
-    .askConfirm({
+  const confirmKick = (server: string, username: string, after?: () => void) =>
+    store.getState().askConfirm({
       title: 'Kick Member',
       body: 'Kick this member? They are removed from the server but can join again.',
       confirm: 'Kick',
       action: () =>
-        void store()
+        void store
           .getState()
           .kickMember(server, username)
           .then(after && inSession(after)),
     })
 
-export const confirmTransfer = (server: string, username: string) =>
-  store()
-    .getState()
-    .askConfirm({
+  const confirmTransfer = (server: string, username: string) =>
+    store.getState().askConfirm({
       title: 'Transfer Admin',
       body: "Make this member the server admin? You lose your admin rights and can't take them back.",
       confirm: 'Transfer',
-      action: () => void store().getState().transferAdmin(server, username),
+      action: () => void store.getState().transferAdmin(server, username),
     })
 
-export const revokeAdminFor = (server: string, username: string, after?: () => void) => {
-  const s = store().getState()
-  const revoke = () =>
-    void store()
-      .getState()
-      .revokeAdmin(server, username)
-      .then(after && inSession(after))
-  if (s.me?.username !== username) {
-    revoke()
-    return
+  const revokeAdminFor = (server: string, username: string, after?: () => void) => {
+    const s = store.getState()
+    const revoke = () =>
+      void store
+        .getState()
+        .revokeAdmin(server, username)
+        .then(after && inSession(after))
+    if (s.me?.username !== username) {
+      revoke()
+      return
+    }
+    s.askConfirm({
+      title: 'Revoke Admin',
+      body: 'Remove your own admin rights? Another admin has to give them back.',
+      confirm: 'Revoke',
+      action: revoke,
+    })
   }
-  s.askConfirm({
-    title: 'Revoke Admin',
-    body: 'Remove your own admin rights? Another admin has to give them back.',
-    confirm: 'Revoke',
-    action: revoke,
-  })
+
+  const confirmDeleteMessage = (id: number, now = false) => {
+    const s = store.getState()
+    if (now) {
+      void s.deleteMessage(id)
+      return
+    }
+    s.askConfirm({
+      title: 'Delete Message',
+      body: 'Delete this message for everyone? Hold Shift while clicking the trash icon to skip this.',
+      confirm: 'Delete',
+      action: () => void store.getState().deleteMessage(id),
+    })
+  }
+
+  return {
+    confirmBan,
+    noteMemberTimeouts,
+    noteTimeout,
+    confirmKick,
+    confirmTransfer,
+    revokeAdminFor,
+    confirmDeleteMessage,
+  }
 }
 
-export const confirmDeleteMessage = (id: number, now = false) => {
-  const s = store().getState()
-  if (now) {
-    void s.deleteMessage(id)
-    return
-  }
-  s.askConfirm({
-    title: 'Delete Message',
-    body: 'Delete this message for everyone? Hold Shift while clicking the trash icon to skip this.',
-    confirm: 'Delete',
-    action: () => void store().getState().deleteMessage(id),
-  })
-}
+export const confirmBan = (...args: Parameters<ReturnType<typeof menuActions>['confirmBan']>) =>
+  shownMenu().confirmBan(...args)
+export const noteMemberTimeouts = (
+  ...args: Parameters<ReturnType<typeof menuActions>['noteMemberTimeouts']>
+) => shownMenu().noteMemberTimeouts(...args)
+export const noteTimeout = (...args: Parameters<ReturnType<typeof menuActions>['noteTimeout']>) =>
+  shownMenu().noteTimeout(...args)
+export const confirmKick = (...args: Parameters<ReturnType<typeof menuActions>['confirmKick']>) =>
+  shownMenu().confirmKick(...args)
+export const confirmTransfer = (
+  ...args: Parameters<ReturnType<typeof menuActions>['confirmTransfer']>
+) => shownMenu().confirmTransfer(...args)
+export const revokeAdminFor = (
+  ...args: Parameters<ReturnType<typeof menuActions>['revokeAdminFor']>
+) => shownMenu().revokeAdminFor(...args)
+export const confirmDeleteMessage = (
+  ...args: Parameters<ReturnType<typeof menuActions>['confirmDeleteMessage']>
+) => shownMenu().confirmDeleteMessage(...args)
 
 export interface UiDeps {
+  acct: AccountSession
   forgetTyping: (sendStop: boolean) => void
 }
 
 export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
+  const { acct } = deps
+  const home = acct.conn
+  const { sessionMark } = acct.lifetime
+  const readScoped = scopedReader(acct.conn)
   const { forgetTyping } = deps
 
   // When the last 429 was seen; a boot that hit one and opened nothing is retried.
   let limitedAt = 0
 
+  let errorTimer: ReturnType<typeof setTimeout> | undefined
+  let toastTimer: ReturnType<typeof setTimeout> | undefined
   const fail = (e: unknown) => {
     if (e instanceof Banned || e instanceof Ended) return
     if (e instanceof ApiError && e.status === 429) limitedAt = Date.now()
     const message = errorText(e)
     set({ error: message })
-    setTimeout(() => {
+    clearTimeout(errorTimer)
+    errorTimer = setTimeout(() => {
       if (get().error === message) set({ error: null })
     }, 5000)
   }
@@ -346,7 +370,8 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     toastSeq += 1
     const id = toastSeq
     set({ toast: { id, text, name } })
-    setTimeout(() => {
+    clearTimeout(toastTimer)
+    toastTimer = setTimeout(() => {
       if (get().toast?.id === id) set({ toast: null })
     }, 4000)
   }
@@ -437,6 +462,9 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
   }
 
   const forget = () => {
+    clearTimeout(errorTimer)
+    clearTimeout(toastTimer)
+    limitedAt = 0
     if (noticeTimer !== null) clearTimeout(noticeTimer)
     noticeTimer = null
     if (expiryTimer !== null) clearTimeout(expiryTimer)

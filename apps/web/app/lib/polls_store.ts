@@ -1,9 +1,10 @@
+import type { AccountSession } from './client/session'
 // The store's poll actions and the `poll_updated` event, kept apart from store.ts.
 
 import type { PollReq } from './api'
-import { api } from './instances'
+
 import { mergePoll } from './polls'
-import { live, sessionMark } from './slices/ctx'
+
 import type { RChatState } from './store_types'
 import type { Message, Poll, WsEvent } from './types'
 
@@ -12,6 +13,7 @@ export type PollTarget =
   { kind: 'channel'; id: number } | { kind: 'dm'; id: number } | { kind: 'thread'; id: number }
 
 export interface PollsDeps {
+  acct: AccountSession
   get: () => RChatState
   act: (fn: () => Promise<void>) => Promise<void>
   // Patches the message wherever the store holds it (lists, thread root).
@@ -26,6 +28,9 @@ export interface PollsDeps {
 export const POLL_FETCH_MS = 1000
 
 export const pollsSlice = (d: PollsDeps) => {
+  const { acct } = d
+  const api = acct.api
+  const { live, sessionMark } = acct.lifetime
   const { act, patch } = d
   const setPoll = (id: number, poll: Poll) =>
     patch(id, m => (m.kind === 'poll' ? { ...m, poll } : m))

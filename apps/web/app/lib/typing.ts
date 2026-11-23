@@ -1,3 +1,4 @@
+import { client } from './client/client'
 // Typing indicators. Scopes are message keys: `c{channel}`, `t{thread root}`, `d{dm}`.
 // The setting is per account in this browser (`rchat_typing:{username|guest}`); off means
 // yours are never sent and others' are never shown.
@@ -95,19 +96,14 @@ export const nextExpiry = (map: TypingMap): number | null => {
   return next
 }
 
-// Single place to hide typers: blocked users.
-const hidden = new Set<string>()
-export const typerShown = (username: string) => !hidden.has(username)
-export const hideTypers = (names: Iterable<string>) => {
-  hidden.clear()
-  for (const n of names) hidden.add(n)
-}
-
 // Display names of who is typing, in the order they started. Expired entries are pruned by
 // the store.
-export const typerNames = (here: Record<string, Typer> | undefined): string[] =>
+export const typerNames = (
+  here: Record<string, Typer> | undefined,
+  blocked = client.shown().store.getState().blocked
+): string[] =>
   Object.entries(here ?? {})
-    .filter(([username]) => typerShown(username))
+    .filter(([username]) => !blocked[username])
     .map(([, t]) => t.name)
 
 export type TypingPart = { text: string; name: boolean }

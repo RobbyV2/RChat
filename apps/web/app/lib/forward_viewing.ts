@@ -5,7 +5,7 @@ import { peerTarget } from './p2p/app/viewing'
 import { useP2p } from './p2p/app/store'
 import type { RChatState } from './store_types'
 import type { ForwardRef, Message } from './types'
-import { canView, channelTarget, instanceTarget, type ViewingTarget } from './viewing'
+import { canView, channelTarget, defaultViewing, type ViewingTarget } from './viewing'
 
 export type SourceAccess = 'open' | 'hidden' | 'unknown'
 
@@ -51,30 +51,38 @@ export const frameCopyOpen = (...args: Parameters<typeof frameCopyTarget>) => {
 export const sourceTarget = (
   s: RChatState,
   source: ForwardSource | undefined,
-  label?: boolean
+  label?: boolean,
+  viewing = defaultViewing
 ): ViewingTarget | null => {
   if (source?.kind === 'p2p') return peerTarget(useP2p.getState(), source.room, source.ch) ?? null
   if (source?.kind !== 'channel') return null
   const server = sourceServer(s, source.id) ?? source.server
   if (!server) return null
   return !s.servers[server] && label !== undefined
-    ? channelTarget(s.me?.username ?? null, 'instance', server, { id: source.id, sensitive: label })
-    : instanceTarget(s, server, source.id)
+    ? channelTarget(
+        s.me?.username ?? null,
+        'instance',
+        server,
+        { id: source.id, sensitive: label },
+        viewing.connection
+      )
+    : viewing.instanceTarget(s, server, source.id)
 }
 
 export const sourceAccess = (
   s: RChatState,
   source: ForwardSource | undefined,
-  label?: boolean
+  label?: boolean,
+  viewing = defaultViewing
 ): SourceAccess => {
   if (source?.kind === 'direct') return 'open'
-  const target = sourceTarget(s, source, label)
-  return target ? (canView(target) ? 'open' : 'hidden') : 'unknown'
+  const target = sourceTarget(s, source, label, viewing)
+  return target ? (viewing.canView(target) ? 'open' : 'hidden') : 'unknown'
 }
 
-export const clipAllowed = (s: RChatState, clip: ForwardClip) =>
-  sourceAccess(s, clip.source) === 'open' &&
-  (!clip.quoted || sourceAccess(s, clip.quoted) === 'open')
+export const clipAllowed = (s: RChatState, clip: ForwardClip, viewing = defaultViewing) =>
+  sourceAccess(s, clip.source, undefined, viewing) === 'open' &&
+  (!clip.quoted || sourceAccess(s, clip.quoted, undefined, viewing) === 'open')
 
 // Only same-server public origins carry a channel label. Other copies can locate their
 // original through the viewer's authorized metadata lookup.
@@ -93,9 +101,12 @@ export const quoteSource = (
   return channel ? { kind: 'channel', server, id: channel.id } : undefined
 }
 
-export const locateQuote = async (id: number): Promise<ForwardSource | undefined> => {
+export const locateQuote = async (
+  id: number,
+  accountApi = api
+): Promise<ForwardSource | undefined> => {
   try {
-    const place = await api.messagePlace(id)
+    const place = await accountApi.messagePlace(id)
     if (place.server && place.channel_id != null)
       return { kind: 'channel', server: place.server, id: place.channel_id }
     if (place.dm_id != null) return { kind: 'direct' }

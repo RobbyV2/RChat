@@ -1,8 +1,9 @@
+import type { AccountSession } from '../client/session'
 // Messages and DMs: the loaded windows with their tails and heads, live appends, quotes and
 // edits, pins, link cards, the outbox, embeds, P2P availability and the DM list.
 
 import { textOnlyDestination } from '../channel_content'
-import { canView, instanceTarget, requestViewing } from '../viewing'
+
 import { ApiError, type PageOpts, type SearchParams, type SendOpts } from '../api'
 import {
   type PendingUpload,
@@ -22,7 +23,7 @@ import {
 import { type ForwardClip, canForward, clipOf, forwardPending } from '../forward'
 import { dropGroupMessage } from '../group_pings'
 import { limitsOf, tooLargeText } from '../instance_limits'
-import { api, home, readLocal, writeLocal } from '../instances'
+import { readLocal, writeLocal } from '../instances'
 import { staleInvites } from '../invite'
 import {
   DEFAULT_DM_QUERY,
@@ -118,15 +119,13 @@ import {
   LIST_MAX,
   PAGE,
   type SetState,
-  inSession,
-  live,
   pageVisible,
-  sessionMark,
   settled,
   shownView,
 } from './ctx'
 
 export interface MessagesDeps {
+  acct: AccountSession
   act: (fn: () => Promise<void>) => Promise<void>
   alertUser: (alert: AlertInput) => void
   banCheck: (e: unknown, server: string | null | undefined) => unknown
@@ -165,33 +164,6 @@ const merge = mergeSorted<Message>
 
 // Ids of optimistic messages, far above any real id.
 export const OPT_BASE = 1e15
-let optSeq = 0
-const nextTempId = () => OPT_BASE + ++optSeq
-// Per session: a send or reaction that answers after the session ended lands nowhere, and one
-// still queued is never sent.
-let draining = new Set<string>()
-let reactionQueue = new Map<string, Promise<void>>()
-
-const pendingEmbeds = new Map<number, Embed[]>()
-const reactorCache = new Map<string, Promise<UserRef[]>>()
-const REACTOR_CACHE = 200
-const PENDING_EMBEDS_MAX = 256
-const VIEW_CACHE = 8
-const DETACH_AT = WINDOW_MAX * 2
-const rememberEmbeds = (id: number, embeds: Embed[]) => {
-  pendingEmbeds.delete(id)
-  pendingEmbeds.set(id, embeds)
-  if (pendingEmbeds.size > PENDING_EMBEDS_MAX)
-    pendingEmbeds.delete(pendingEmbeds.keys().next().value as number)
-}
-export const applyEmbeds = (list: Message[]) =>
-  pendingEmbeds.size === 0
-    ? list
-    : list.map(m => {
-        const e = pendingEmbeds.get(m.id)
-        return e && e !== m.embeds ? { ...m, embeds: e } : m
-      })
-
 const mapLists = (
   messages: Record<string, Message[]>,
   fn: (list: Message[], key: string) => Message[]
@@ -279,6 +251,38 @@ export const dropDeletedIn = (
 }
 
 export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) => {
+  const { acct } = deps
+  const { canView, instanceTarget, requestViewing } = acct.viewing
+  const home = acct.conn
+  const api = acct.api
+  const { inSession, live, sessionMark } = acct.lifetime
+  let optSeq = 0
+  const nextTempId = () => OPT_BASE + ++optSeq
+  // Per session: a send or reaction that answers after the session ended lands nowhere, and one
+  // still queued is never sent.
+  let draining = new Set<string>()
+  let reactionQueue = new Map<string, Promise<void>>()
+
+  const pendingEmbeds = new Map<number, Embed[]>()
+  const reactorCache = new Map<string, Promise<UserRef[]>>()
+  const REACTOR_CACHE = 200
+  const PENDING_EMBEDS_MAX = 256
+  const VIEW_CACHE = 8
+  const DETACH_AT = WINDOW_MAX * 2
+  const rememberEmbeds = (id: number, embeds: Embed[]) => {
+    pendingEmbeds.delete(id)
+    pendingEmbeds.set(id, embeds)
+    if (pendingEmbeds.size > PENDING_EMBEDS_MAX)
+      pendingEmbeds.delete(pendingEmbeds.keys().next().value as number)
+  }
+  const applyEmbeds = (list: Message[]) =>
+    pendingEmbeds.size === 0
+      ? list
+      : list.map(m => {
+          const e = pendingEmbeds.get(m.id)
+          return e && e !== m.embeds ? { ...m, embeds: e } : m
+        })
+
   const {
     act,
     alertUser,
@@ -1433,6 +1437,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   }
 
   const forget = () => {
+    searching?.abort()
+    searching = null
     heads = new Map()
     dmPager.reset(null)
     closedDms.clear()
@@ -1623,8 +1629,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const stage = (quoted?: ForwardClip['source']) => {
         if (
           get().me?.username !== me.username ||
-          sourceAccess(get(), clip.source) === 'hidden' ||
-          (quoted && sourceAccess(get(), quoted) !== 'open')
+          sourceAccess(get(), clip.source, undefined, acct.viewing) === 'hidden' ||
+          (quoted && sourceAccess(get(), quoted, undefined, acct.viewing) !== 'open')
         )
           return
         saveForward(quoted ? { ...clip, quoted } : clip)
@@ -1633,7 +1639,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const known = quoteSource(state, m)
       if (!m.forward || known) stage(known)
       else
-        void locateQuote(m.forward.source_id)
+        void locateQuote(m.forward.source_id, api)
           .then(
             inSession(async origin => {
               if (!origin) return
@@ -1696,7 +1702,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         !me ||
         guest ||
         !clip ||
-        !clipAllowed(get(), clip) ||
+        !clipAllowed(get(), clip, acct.viewing) ||
         (textOnlyDestination(get(), key) && !clip.p2p && (clip.has_media || clip.has_poll)) ||
         forwardPending(get().outbox[key], clip.id)
       )
@@ -2312,7 +2318,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           source,
           source?.kind === 'channel' && source.id === m.forward.origin_channel_id
             ? m.forward.origin_sensitive === true
-            : undefined
+            : undefined,
+          acct.viewing
         ) !== 'open'
       const file =
         !closedCopy && m.kind !== 'pin' && !isSystem(m) && !m.content && !m.media?.spoiler
@@ -2422,6 +2429,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
   } satisfies Handlers
 
   return {
+    applyEmbeds,
     handlers,
     actions,
     askP2p,

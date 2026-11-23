@@ -2,7 +2,8 @@
 // that runs one handler per event type.
 
 import type { StoreApi } from 'zustand'
-import { home, readLocal } from '../instances'
+import { client } from '../client/client'
+import { type InstanceConnection, readLocal } from '../instances'
 import type { Key, Page } from '../lists'
 import type { Paged, RChatState, SearchState } from '../store_types'
 import type { ServerSummary, WsEvent } from '../types'
@@ -27,36 +28,44 @@ export const routeEvent = (ev: WsEvent, tables: readonly Handlers[]): boolean =>
   return false
 }
 
-// Each session (an account or a guest) has its own mark, and ending it starts a new one. An
-// answer that comes back after its session ended sees another mark and is dropped.
-let session = {}
-export const sessionMark = () => session
-export const endSession = () => {
-  session = {}
-}
-
 // What a late answer throws: it stops what waited for it, and nothing shows it.
 export class Ended extends Error {}
 
-// Waits for `p`, but throws `Ended` instead when the session ended meanwhile.
-export const live = async <T>(p: Promise<T>): Promise<T> => {
-  const at = session
-  let out: T
-  try {
-    out = await p
-  } catch (e) {
-    if (at === session) throw e
-    throw new Ended('The session ended')
+// Each session (an account or a guest) has its own mark, and ending it starts a new one. An
+// answer that comes back after its session ended sees another mark and is dropped.
+export function sessionLifetime() {
+  let session = {}
+  const sessionMark = () => session
+  const endSession = () => {
+    session = {}
   }
-  if (at !== session) throw new Ended('The session ended')
-  return out
-}
 
-// `fn`, which does nothing once the session it was made in ended: for what runs after a request.
-export const inSession = <A extends unknown[], R>(fn: (...a: A) => R) => {
-  const at = session
-  return (...a: A): R | undefined => (at === session ? fn(...a) : undefined)
+  // Waits for `p`, but throws `Ended` instead when the session ended meanwhile.
+  const live = async <T>(p: Promise<T>): Promise<T> => {
+    const at = session
+    let out: T
+    try {
+      out = await p
+    } catch (e) {
+      if (at === session) throw e
+      throw new Ended('The session ended')
+    }
+    if (at !== session) throw new Ended('The session ended')
+    return out
+  }
+
+  // `fn`, which does nothing once the session it was made in ended: for what runs after a request.
+  const inSession = <A extends unknown[], R>(fn: (...a: A) => R) => {
+    const at = session
+    return (...a: A): R | undefined => (at === session ? fn(...a) : undefined)
+  }
+
+  return { sessionMark, endSession, live, inSession }
 }
+export const sessionMark = () => client.shown().lifetime.sessionMark()
+export const live = <T>(p: Promise<T>) => client.shown().lifetime.live(p)
+export const inSession = <A extends unknown[], R>(fn: (...args: A) => R) =>
+  client.shown().lifetime.inSession(fn)
 
 export const pageVisible = () =>
   typeof document === 'undefined' || document.visibilityState === 'visible'
@@ -96,17 +105,19 @@ export const serverKey = (x: ServerSummary) => x.name
 export const emptySearch = (): SearchState => ({ results: [], hasMore: false, loading: false })
 
 // Reads a per-account value; storage that throws (no window, privacy mode) gives the fallback.
-export const readScoped = <T>(key: string, parse: (raw: string | null) => T, fallback: T): T => {
-  try {
-    return parse(readLocal(home.scoped(key)))
-  } catch {
-    return fallback
+export const readScoped =
+  (conn: InstanceConnection) =>
+  <T>(key: string, parse: (raw: string | null) => T, fallback: T): T => {
+    try {
+      return parse(readLocal(conn.scoped(key)))
+    } catch {
+      return fallback
+    }
   }
-}
 
 // Loads a paged list; a page that arrives after the list was reset or searched again, or after
 // its session ended, is dropped.
-export const pageLoader = (epochs: Record<string, number>) => {
+export const pageLoader = (epochs: Record<string, number>, sessionMark: () => object) => {
   const pageKeys = new WeakMap<unknown[], Set<Key>>()
 
   const loadPage = async <T>(
@@ -123,8 +134,8 @@ export const pageLoader = (epochs: Record<string, number>) => {
     if (!fresh && (cur.loading || !cur.hasMore)) return
     if (fresh) epochs[id] = (epochs[id] ?? 0) + 1
     const epoch = epochs[id] ?? 0
-    const at = session
-    const current = () => (epochs[id] ?? 0) === epoch && at === session
+    const at = sessionMark()
+    const current = () => (epochs[id] ?? 0) === epoch && at === sessionMark()
     const base: Paged<T> = fresh
       ? { list: [], hasMore: true, loading: true, q, cursor: null }
       : { ...cur, loading: true }

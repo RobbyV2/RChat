@@ -1,7 +1,7 @@
+import type { AccountSession } from '../client/session'
 // Presence and typing: the queued presence changes and their flush, the snapshots and logs that
 // newer member pages are checked against, and who is typing where.
 
-import { home } from '../instances'
 import { nameWithUsername } from '../display_name'
 import {
   freshPresence,
@@ -94,7 +94,8 @@ export const applyPresence = (
   return { servers, members, memberInfo }
 }
 
-export const presenceSlice = (set: SetState, get: GetState) => {
+export const presenceSlice = (set: SetState, get: GetState, { acct }: { acct: AccountSession }) => {
+  const home = acct.conn
   const presence: PresenceChange[] = []
   const presenceLogs = new Map<string, PresenceLog>()
   const presenceSnaps = new Map<string, PresenceSnap>()

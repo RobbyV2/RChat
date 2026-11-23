@@ -1,3 +1,4 @@
+import type { AccountSession } from '../client/session'
 // Servers and their members: server details, the member lists and lookups, channel layout
 // sends, roles, bans, the admin lists, and leaving or losing a server.
 
@@ -13,7 +14,7 @@ import {
   orderLayout,
 } from '../categories'
 import type { FriendsDeps } from '../friends_store'
-import { api, home } from '../instances'
+
 import { staleInvites } from '../invite'
 import { deniedAccess, runJoinStep } from '../join_flow'
 import {
@@ -53,9 +54,7 @@ import {
   PAGE,
   emptyPage,
   errorText,
-  live,
   serverKey,
-  sessionMark,
   settled,
   type GetState,
   type Handlers,
@@ -64,6 +63,7 @@ import {
 import type { presenceSlice } from './presence'
 
 export interface ServersDeps {
+  acct: AccountSession
   act: (fn: () => Promise<void>) => Promise<void>
   noteMemberTimeouts: (
     server: string,
@@ -215,6 +215,10 @@ export const dropMemberRow = (
 }
 
 export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) => {
+  const { acct } = deps
+  const home = acct.conn
+  const api = acct.api
+  const { live, sessionMark } = acct.lifetime
   const {
     act,
     noteMemberTimeouts,

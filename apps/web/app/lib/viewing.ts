@@ -59,138 +59,176 @@ export const instanceTarget = (
     Pick<RChatState, 'servers'> &
     Partial<Pick<RChatState, 'channelLabelEpoch' | 'channelLabelEpochs'>>,
   server: string,
-  id: number
+  id: number,
+  connection: ViewingInstance = home
 ) => {
   if ((s.channelLabelEpochs?.[server] ?? 0) !== (s.channelLabelEpoch ?? 0)) return null
   const channel = s.servers[server]?.channels.find(c => c.id === id)
-  return channel ? channelTarget(s.me?.username ?? null, 'instance', server, channel) : null
+  return channel
+    ? channelTarget(s.me?.username ?? null, 'instance', server, channel, connection)
+    : null
 }
 
 type Choice = { personal: boolean; remember: boolean }
 const clean: Choice = { personal: false, remember: false }
-const memory = new Map<string, Choice>()
-const choice = (key: string): Choice => {
-  const cached = memory.get(key)
-  if (cached) return cached
-  let value = clean
-  try {
-    const saved = JSON.parse(readLocal(key) ?? 'null')
-    if (saved?.v === 1)
-      value = { personal: saved.personal === true, remember: saved.remember === true }
-  } catch {
-    /* Invalid choices use the defaults. */
+export function createViewing(connection: ViewingInstance) {
+  const memory = new Map<string, Choice>()
+  const choice = (key: string): Choice => {
+    const cached = memory.get(key)
+    if (cached) return cached
+    let value = clean
+    try {
+      const saved = JSON.parse(readLocal(key) ?? 'null')
+      if (saved?.v === 1)
+        value = { personal: saved.personal === true, remember: saved.remember === true }
+    } catch {
+      /* Invalid choices use the defaults. */
+    }
+    memory.set(key, value)
+    return value
   }
-  memory.set(key, value)
-  return value
-}
 
-interface Prompt {
-  target: ViewingTarget
-  answer(open: boolean, remember: boolean): void
-}
-export const useViewing = create<{ prompt: Prompt | null; revision: number }>(() => ({
-  prompt: null,
-  revision: 0,
-}))
-const changed = () => useViewing.setState(s => ({ revision: s.revision + 1 }))
-const save = (key: string, value: Choice) => {
-  memory.set(key, value)
-  writeLocal(key, value.personal || value.remember ? JSON.stringify({ v: 1, ...value }) : null)
-}
+  interface Prompt {
+    target: ViewingTarget
+    answer(open: boolean, remember: boolean): void
+  }
+  const useViewing = create<{ prompt: Prompt | null; revision: number }>(() => ({
+    prompt: null,
+    revision: 0,
+  }))
+  const changed = () => useViewing.setState(s => ({ revision: s.revision + 1 }))
+  const save = (key: string, value: Choice) => {
+    memory.set(key, value)
+    writeLocal(key, value.personal || value.remember ? JSON.stringify({ v: 1, ...value }) : null)
+  }
 
-const visits = new Set<string>()
-let appVisit: string | null = null
-export const leaveAppVisit = () => {
-  if (appVisit !== null) {
-    appVisit = null
+  const visits = new Set<string>()
+  let appVisit: string | null = null
+  const leaveAppVisit = () => {
+    if (appVisit !== null) {
+      appVisit = null
+      changed()
+    }
+  }
+  const personallyMarked = (t: ViewingTarget) => choice(t.key).personal
+  const needsWarning = (t: ViewingTarget) => t.kind === 'app' || t.sensitive || personallyMarked(t)
+  const canView = (t: ViewingTarget) =>
+    !needsWarning(t) ||
+    choice(t.key).remember ||
+    (t.kind === 'app' ? appVisit === t.key : visits.has(t.key))
+  const cancelViewing = () => useViewing.getState().prompt?.answer(false, false)
+  const leaveVisit = (next?: string) => {
+    const left = [...visits].filter(key => key !== next)
+    for (const key of left) visits.delete(key)
+    if (left.length) changed()
+  }
+
+  const forgetViewing = (t: ViewingTarget) => {
+    visits.delete(t.key)
+    if (appVisit === t.key) appVisit = null
+    save(t.key, { ...choice(t.key), remember: false })
     changed()
   }
-}
-export const personallyMarked = (t: ViewingTarget) => choice(t.key).personal
-export const needsWarning = (t: ViewingTarget) =>
-  t.kind === 'app' || t.sensitive || personallyMarked(t)
-export const canView = (t: ViewingTarget) =>
-  !needsWarning(t) ||
-  choice(t.key).remember ||
-  (t.kind === 'app' ? appVisit === t.key : visits.has(t.key))
-export const cancelViewing = () => useViewing.getState().prompt?.answer(false, false)
-export const leaveVisit = (next?: string) => {
-  const left = [...visits].filter(key => key !== next)
-  for (const key of left) visits.delete(key)
-  if (left.length) changed()
-}
 
-export const forgetViewing = (t: ViewingTarget) => {
-  visits.delete(t.key)
-  if (appVisit === t.key) appVisit = null
-  save(t.key, { ...choice(t.key), remember: false })
-  changed()
-}
-
-export const markPersonally = (t: ViewingTarget, personal: boolean) => {
-  visits.delete(t.key)
-  save(t.key, { personal, remember: false })
-  changed()
-}
-
-export const approveAppVisit = (target: ViewingTarget, remember: boolean) => {
-  appVisit = target.key
-  if (remember) save(target.key, { ...choice(target.key), remember: true })
-  changed()
-}
-
-export const requestViewing = (
-  target: ViewingTarget,
-  afterAppChoice?: (remember: boolean) => void
-): Promise<boolean> => {
-  cancelViewing()
-  if (canView(target)) return Promise.resolve(true)
-  return new Promise(resolve => {
-    const prompt: Prompt = {
-      target,
-      answer(open, remember) {
-        if (useViewing.getState().prompt !== prompt) return
-        if (open) {
-          if (target.kind === 'app' && afterAppChoice) {
-            appVisit = target.key
-            afterAppChoice(remember)
-          } else if (remember) save(target.key, { ...choice(target.key), remember: true })
-          else if (target.kind === 'app') appVisit = target.key
-          else visits.add(target.key)
-        }
-        useViewing.setState(s => ({ prompt: null, revision: s.revision + 1 }))
-        resolve(open)
-      },
-    }
-    useViewing.setState({ prompt })
-  })
-}
-
-export const endViewing = (endGuest = false) => {
-  cancelViewing()
-  leaveVisit()
-  leaveAppVisit()
-  memory.clear()
-  if (endGuest) {
-    writeLocal(guestKey(), null)
-    guestProfiles.delete(guestKey())
+  const markPersonally = (t: ViewingTarget, personal: boolean) => {
+    visits.delete(t.key)
+    save(t.key, { personal, remember: false })
+    changed()
   }
-}
 
-export const syncViewingStorage = (event: StorageEvent) => {
-  if (event.key !== null && !event.key.startsWith('rchat_viewing_')) return
-  if (event.key === null) {
+  const approveAppVisit = (target: ViewingTarget, remember: boolean) => {
+    appVisit = target.key
+    if (remember) save(target.key, { ...choice(target.key), remember: true })
+    changed()
+  }
+
+  const requestViewing = (
+    target: ViewingTarget,
+    afterAppChoice?: (remember: boolean) => void
+  ): Promise<boolean> => {
+    cancelViewing()
+    if (canView(target)) return Promise.resolve(true)
+    return new Promise(resolve => {
+      const prompt: Prompt = {
+        target,
+        answer(open, remember) {
+          if (useViewing.getState().prompt !== prompt) return
+          if (open) {
+            if (target.kind === 'app' && afterAppChoice) {
+              appVisit = target.key
+              afterAppChoice(remember)
+            } else if (remember) save(target.key, { ...choice(target.key), remember: true })
+            else if (target.kind === 'app') appVisit = target.key
+            else visits.add(target.key)
+          }
+          useViewing.setState(s => ({ prompt: null, revision: s.revision + 1 }))
+          resolve(open)
+        },
+      }
+      useViewing.setState({ prompt })
+    })
+  }
+
+  const endViewing = (endGuest = false) => {
+    cancelViewing()
+    leaveVisit()
+    leaveAppVisit()
     memory.clear()
-    visits.clear()
-    appVisit = null
-  } else {
-    memory.delete(event.key)
-    visits.delete(event.key)
-    if (appVisit === event.key) appVisit = null
+    if (endGuest) {
+      writeLocal(guestKey(connection), null)
+      guestProfiles.delete(guestKey(connection))
+    }
   }
-  changed()
-}
 
+  const syncViewingStorage = (event: StorageEvent) => {
+    if (event.key !== null && !event.key.startsWith('rchat_viewing_')) return
+    if (event.key === null) {
+      memory.clear()
+      visits.clear()
+      appVisit = null
+    } else {
+      memory.delete(event.key)
+      visits.delete(event.key)
+      if (appVisit === event.key) appVisit = null
+    }
+    changed()
+  }
+
+  return {
+    useViewing,
+    leaveAppVisit,
+    personallyMarked,
+    needsWarning,
+    canView,
+    cancelViewing,
+    leaveVisit,
+    forgetViewing,
+    markPersonally,
+    approveAppVisit,
+    requestViewing,
+    endViewing,
+    syncViewingStorage,
+    instanceTarget: (s: Parameters<typeof instanceTarget>[0], server: string, id: number) =>
+      instanceTarget(s, server, id, connection),
+    connection,
+  }
+}
+export const defaultViewing = createViewing(home)
+export const {
+  useViewing,
+  leaveAppVisit,
+  personallyMarked,
+  needsWarning,
+  canView,
+  cancelViewing,
+  leaveVisit,
+  forgetViewing,
+  markPersonally,
+  approveAppVisit,
+  requestViewing,
+  endViewing,
+  syncViewingStorage,
+} = defaultViewing
 export const eventRoom = (ev: WsEvent) => {
   if (ev.type === 'ping' && ev.ping.scope.startsWith('c') && ev.ping.server)
     return { server: ev.ping.server, id: Number(ev.ping.scope.slice(1)) }
