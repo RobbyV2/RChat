@@ -14,7 +14,11 @@ pub const MANAGE_WEBHOOKS: u32 = 256;
 pub const MANAGE_REPORTS: u32 = 512;
 pub const MOVE_MEMBERS: u32 = 1024;
 pub const MANAGE_AUTOMATIONS: u32 = 2048;
-pub const ALL_PERMS: u32 = 4095;
+pub const MANAGE_SERVER: u32 = 4096;
+pub const MANAGE_INVITES: u32 = 8192;
+pub const MANAGE_ROLES: u32 = 16384;
+pub const ASSIGN_ROLES: u32 = 32768;
+pub const ALL_PERMS: u32 = 65535;
 
 /// The bits a role may carry and still be handed out by a self-service path.
 pub const SELF_SERVICE_OK: u32 = MENTION_EVERYONE;
@@ -43,7 +47,7 @@ pub fn self_service(role_bits: u32, may_give: bool, owner_bits: u32) -> Option<R
 mod tests {
     use super::*;
 
-    const OWNER: u32 = 4095;
+    const OWNER: u32 = ALL_PERMS;
 
     #[test]
     fn roles_within_mention_everyone_are_given() {
@@ -65,6 +69,10 @@ mod tests {
             MANAGE_ADMINS,
             DELETE_SERVER,
             MANAGE_AUTOMATIONS,
+            MANAGE_SERVER,
+            MANAGE_INVITES,
+            MANAGE_ROLES,
+            ASSIGN_ROLES,
         ] {
             assert_eq!(
                 self_service(bit, false, OWNER),
@@ -109,9 +117,15 @@ mod tests {
                 MANAGE_REPORTS,
                 MOVE_MEMBERS,
                 MANAGE_AUTOMATIONS,
+                MANAGE_SERVER,
+                MANAGE_INVITES,
+                MANAGE_ROLES,
+                ASSIGN_ROLES,
             ],
-            [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
+            [
+                1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768
+            ]
         );
-        assert_eq!(ALL_PERMS, 4095);
+        assert_eq!(ALL_PERMS, 65535);
     }
 }

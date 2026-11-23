@@ -159,7 +159,10 @@ test('member list, moderator: kick, ban and time out after DM', () => {
 })
 
 test('member list, admin actions', () => {
-  state({ perms: Perm.ManageAdmins | Perm.Kick, bob: { is_admin: true, perms: Perm.Kick } })
+  state({
+    perms: Perm.ManageAdmins | Perm.AssignRoles | Perm.Kick,
+    bob: { is_admin: true, perms: Perm.Kick },
+  })
   expect(labels(at('bob'))).toEqual([
     DM,
     'Kick',
@@ -218,7 +221,7 @@ test('member list, yourself', () => {
   expect(labels(at('alice'))).toEqual([DM, COPY])
   state({ owner: true })
   expect(labels(at('alice'))).toEqual([DM, 'Revoke Admin', 'Assign Role', COPY])
-  state({ perms: Perm.ManageAdmins | Perm.Kick | Perm.TimeoutMembers })
+  state({ perms: Perm.ManageAdmins | Perm.AssignRoles | Perm.Kick | Perm.TimeoutMembers })
   expect(labels(at('alice'))).toEqual([DM, 'Assign Role', COPY])
 })
 
@@ -278,7 +281,10 @@ test('guests get no member menu; Ban site-wide only for the site admin', () => {
 
 test('interacted rows: DM, friend, block and copy, never moderation', () => {
   const zed = () => at('zed', 'interacted', null)
-  state({ perms: Perm.Kick | Perm.ManageAdmins | Perm.TimeoutMembers, siteAdmin: true })
+  state({
+    perms: Perm.Kick | Perm.ManageAdmins | Perm.AssignRoles | Perm.TimeoutMembers,
+    siteAdmin: true,
+  })
   expect(labels(zed())).toEqual([DM, 'Add friend', 'Block', COPY])
   state({ blocked: ['zed'] })
   expect(labels(zed())).toEqual([DM, 'Unblock', COPY])
@@ -789,7 +795,7 @@ test('a DM target carries its list key and its other person', () => {
 test("a message author's rows are the member rows", () => {
   const timeouts = (t: Target) => labels(t).filter(l => l.endsWith('Timeout') || l === 'Time Out')
   const person = (t: Target) => labels(t).filter(l => /^(Add friend|Block|Unblock)$/.test(l))
-  state({ perms: Perm.Kick | Perm.TimeoutMembers | Perm.ManageAdmins })
+  state({ perms: Perm.Kick | Perm.TimeoutMembers | Perm.ManageAdmins | Perm.AssignRoles })
   expect(row(said(), 'Ban from server')?.label).toBe('Ban from server')
   expect(timeouts(said())).toEqual(['Time Out'])
   const roles = row(said(), 'Assign Role')!.submenu!.map(i => i.label)

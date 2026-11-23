@@ -494,7 +494,7 @@ pub fn allowed_while_restricted(
 }
 
 pub const MENTION_EVERYONE: u32 = 32;
-pub const ALL_PERMS: u32 = 1023;
+pub const ALL_PERMS: u32 = 62463;
 pub const MOD_PERMS: u32 = ALL_PERMS & !MENTION_EVERYONE;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -80,7 +80,11 @@ pub fn timed_out_error() -> ApiError {
 
 /// When the timeout of `username` in `server` ends (unix seconds), if they are timed out right
 /// now. Expiry is time-based: a row whose `until` has passed counts as no timeout.
-pub async fn timed_out(db: &Db, server: &str, username: &str) -> Result<Option<i64>, ApiError> {
+pub async fn timed_out<'e, E: sqlx::Executor<'e, Database = sqlx::Any>>(
+    db: E,
+    server: &str,
+    username: &str,
+) -> Result<Option<i64>, ApiError> {
     Ok(sqlx::query(
         "SELECT until FROM member_timeouts WHERE server = $1 AND username = $2 AND until > $3",
     )
@@ -990,6 +994,44 @@ impl ServerAccess {
 
     pub async fn member_perms(&self, db: &Db, username: &str) -> Result<i64, ApiError> {
         Ok(member_perms(db, self.name(), username).await?)
+    }
+
+    pub async fn member_perms_in(
+        &self,
+        conn: &mut AnyConnection,
+        username: &str,
+    ) -> Result<Option<i64>, ApiError> {
+        Ok(rules::member_perms_in(conn, self.name(), username).await?)
+    }
+
+    pub async fn role_authority_in(
+        &self,
+        conn: &mut sqlx::AnyConnection,
+        perm: Perm,
+    ) -> Result<(i64, i64), ApiError> {
+        let user = self
+            .viewer()
+            .ok_or_else(|| forbidden("Missing permission"))?;
+        if self.via != Via::Staff
+            && timed_out(&mut *conn, self.name(), &user.username)
+                .await?
+                .is_some()
+        {
+            return Err(timed_out_error());
+        }
+        let own = self
+            .member_perms_in(conn, &user.username)
+            .await?
+            .unwrap_or(0);
+        let mine = if user.is_site_admin {
+            perms::ALL_PERMS
+        } else {
+            own
+        };
+        if mine & perm as i64 == 0 {
+            return Err(forbidden("Missing permission"));
+        }
+        Ok((mine, own))
     }
 
     pub async fn has_perm(&self, db: &Db, perm: Perm) -> bool {

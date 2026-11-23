@@ -500,10 +500,10 @@ pub struct Role {
     #[schema(example = "#e91e63")]
     pub color: String,
     /// Permission bits of the role: 1 Manage channels, 2 Manage messages (delete and pin messages
-    /// of others), 4 Kick (also bans), 8 Delete server (also edits the server), 16 Manage admins,
+    /// of others), 4 Kick (also bans), 8 Delete server, 16 Manage admins,
     /// 32 Mention everyone and roles (`@everyone`, `@here` and every role), 64 View audit log,
     /// 128 Timeout members, 256 Manage webhooks, 512 Manage reports (see and act on reports in the
-    /// server).
+    /// server), 4096 Manage server settings, 8192 Manage invites, 16384 Manage roles, 32768 Assign roles.
     #[schema(example = 6)]
     pub perms: i64,
     /// Anyone who can send in a channel may mention the role with `@name`. Otherwise only members
@@ -512,8 +512,8 @@ pub struct Role {
 }
 
 /// Roles the caller can't edit, delete or assign because of who holds them or of the channel
-/// permission rules that name them. Every list is empty unless the caller has the Manage admins
-/// permission.
+/// permission rules that name them. Every list is empty unless the caller has Manage roles or
+/// Assign roles.
 #[derive(Clone, Default, Serialize, ToSchema)]
 pub struct RoleLimits {
     /// Roles held by another member whose server permissions are not a strict subset of yours.
@@ -569,7 +569,7 @@ pub struct Member {
     /// Ids of the server roles assigned to the member.
     pub role_ids: Vec<i64>,
     /// The extra password the member joined with. Only in `GET /api/v1/servers/{name}/members`
-    /// for callers with the Delete server permission, and only for members who joined with an
+    /// for callers with the Manage invites permission, and only for members who joined with an
     /// extra password that is still listed; absent otherwise. It disappears once the password
     /// row is purged, 30 days after the password was revoked, expired or used up.
     #[serde(default, skip_serializing_if = "Option::is_none")]

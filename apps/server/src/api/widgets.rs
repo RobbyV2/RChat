@@ -200,7 +200,7 @@ fn origin(s: &str) -> Result<String, ApiError> {
 
 async fn manager(db: &Db, server: &str, user: &User) -> Result<ServerAccess, ApiError> {
     let access = resolve_server(db, server, Some(user), &Proof::none()).await?;
-    access.require_perm(db, Perm::DeleteServer).await?;
+    access.require_perm(db, Perm::ManageServer).await?;
     Ok(access)
 }
 
@@ -295,7 +295,7 @@ async fn save(
         return Err(bad("Widgets of this kind are turned off on this site"));
     }
     let server = access.name().to_string();
-    let actor = access.audit_actor(db, Perm::DeleteServer).await?;
+    let actor = access.audit_actor(db, Perm::ManageServer).await?;
     let lite = access.lite().clone();
     let channel = access.channel(db, config.channel_id).await?;
     if channel.kind() == ChannelKind::Voice && !matches!(config.mode, Mode::Voice | Mode::Members)

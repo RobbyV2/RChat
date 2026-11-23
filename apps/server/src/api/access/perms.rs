@@ -16,9 +16,20 @@ pub enum Perm {
     TimeoutMembers = 128,
     ManageWebhooks = 256,
     ManageReports = 512,
+    ManageServer = 4096,
+    ManageInvites = 8192,
+    ManageRoles = 16384,
+    AssignRoles = 32768,
 }
 
-pub const ALL_PERMS: i64 = 1023;
+pub const ALL_PERMS: i64 = 62463;
+pub const PRE_DELEGATION_PERMS: i64 = 1023;
+
+/// A client may echo newer bits it read without having controls for them.
+/// It can change a delegated permission only when its mask covers that bit.
+pub fn update_bits(current: i64, sent: i64, mask: i64) -> i64 {
+    ((current & !mask) | (sent & (mask | PRE_DELEGATION_PERMS))) & ALL_PERMS
+}
 /// Every permission before `ManageReports` existed.
 pub const PRE_REPORT_PERMS: i64 = 511;
 

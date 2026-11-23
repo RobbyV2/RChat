@@ -2,7 +2,7 @@
   "id": "self_roles",
   "name": "Self roles command",
   "summary": "Let members pick a role from a list with a command",
-  "needs": ["Manage admins"],
+  "needs": ["Assign roles"],
   "automations": [
     {
       "name": "Self roles",

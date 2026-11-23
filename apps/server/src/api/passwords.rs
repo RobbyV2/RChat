@@ -212,7 +212,7 @@ pub fn generate() -> String {
 async fn manage(state: &AppState, user: &User, name: &str) -> Result<ServerAccess, ApiError> {
     guard_rchat(&state.db, &name.to_lowercase()).await?;
     let access = resolve_server(&state.db, name, Some(user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::DeleteServer).await?;
+    access.require_perm(&state.db, Perm::ManageInvites).await?;
     Ok(access)
 }
 
@@ -256,7 +256,7 @@ async fn live_count(db: &Db, server: &str, t: i64) -> Result<i64, ApiError> {
 /// Returns the access settings of the server: whether it is protected, whether it has a
 /// permanent password, whether it is closed, and its extra passwords (temporary passwords and
 /// tickets) with their status. Hashes and the passwords themselves are never returned.
-/// Requires the Delete server permission. Not available on the rchat server. General rate-limit
+/// Requires Manage invites or Manage server settings. Only Manage invites includes the extra password rows. Not available on the rchat server. General rate-limit
 /// bucket.
 #[utoipa::path(
     get,
@@ -266,7 +266,7 @@ async fn live_count(db: &Db, server: &str, t: i64) -> Result<i64, ApiError> {
     responses(
         (status = 200, description = "The access settings and extra passwords", body = ServerPasswords),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission, or the rchat server", body = ApiErrorBody),
+        (status = 403, description = "Missing Manage invites and Manage server settings, or the rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
@@ -277,9 +277,22 @@ pub(crate) async fn list_passwords(
     Authed(user): Authed,
     Path(name): Path<String>,
 ) -> Result<Json<ServerPasswords>, ApiError> {
-    let access = manage(&state, &user, &name).await?;
+    guard_rchat(&state.db, &name.to_lowercase()).await?;
+    let access = resolve_server(&state.db, &name, Some(&user), &Proof::none()).await?;
+    let invites = access.has_perm(&state.db, Perm::ManageInvites).await;
     let db = &state.db;
     let t = now();
+    let protected = access.lite().has_password;
+    if !invites {
+        access.require_perm(db, Perm::ManageServer).await?;
+        let permanent = access.has_permanent_password(db).await?;
+        return Ok(Json(ServerPasswords {
+            protected,
+            permanent,
+            closed: protected && !permanent && live_count(db, access.name(), t).await? == 0,
+            passwords: Vec::new(),
+        }));
+    }
     let sql = format!(
         "SELECT {COLUMNS} FROM server_passwords WHERE server = $1 ORDER BY CASE WHEN {LIVE} THEN 0 ELSE 1 END, id DESC LIMIT $3"
     );
@@ -293,7 +306,6 @@ pub(crate) async fn list_passwords(
         .iter()
         .map(|r| password_row(r, t))
         .collect::<sqlx::Result<Vec<_>>>()?;
-    let protected = access.lite().has_password;
     let permanent = access.has_permanent_password(db).await?;
     let live = passwords.iter().any(|p| p.status == PasswordStatus::Live);
     Ok(Json(ServerPasswords {
@@ -330,7 +342,7 @@ fn expiry(
 /// invite previews do not. A blank `password` generates four random words. The response is the
 /// only time the password is returned. A chosen password needs at least 8 characters. A server
 /// has at most 50 live extra passwords and keeps at most 500 in all (dead ones are purged 30
-/// days after they stop working). Requires the Delete server permission. Not available on the
+/// days after they stop working). Requires the Manage invites permission. Not available on the
 /// rchat server. Strict and general rate-limit buckets.
 /// New server passwords (also a new permanent one through `PATCH /api/v1/servers/{name}`) are rare
 /// requests of one kind: at most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY`
@@ -346,7 +358,7 @@ fn expiry(
         (status = 200, description = "The new password, with the password itself", body = CreatedPassword),
         (status = 400, description = "The server is public, already has 50 live extra passwords or 500 stored ones, an invalid label, password (shorter than 8 characters or longer than 200), expiry or use limit, or a password the server already uses or used. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission, or the rchat server", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage invites permission, or the rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket, or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", body = ApiErrorBody)
@@ -431,7 +443,7 @@ pub(crate) async fn create_password(
         false => None,
     };
     rare::take(&state, Rare::ServerPassword, Some(&user))?;
-    let actor = access.audit_actor(db, Perm::DeleteServer).await?;
+    let actor = access.audit_actor(db, Perm::ManageInvites).await?;
     let created_by = match &actor {
         Actor::Staff => None,
         Actor::User(name) => Some(name.clone()),
@@ -661,7 +673,7 @@ pub(crate) async fn get_standing_invite(
 ///
 /// Gives the server a new invite link and revokes the one before: whoever joined with the old
 /// one stays, and the guest grants it gave end. A closed server opens to invites. Only for
-/// servers people join with an invite or a password. Requires the Delete server permission. Not
+/// servers people join with an invite or a password. Requires the Manage invites permission. Not
 /// available on the rchat server. Emits `server_updated` to the server. Strict and general
 /// rate-limit buckets. New invite links count with new server passwords as rare requests: at
 /// most `RARE_REQUESTS_PER_HOUR` (20) an hour and `RARE_REQUESTS_PER_DAY` (100) a day per
@@ -675,7 +687,7 @@ pub(crate) async fn get_standing_invite(
         (status = 200, description = "The new invite link", body = InviteLinkInfo),
         (status = 400, description = "`Anyone can join this server by its name` with reason `invalid` and field `join_mode`: a server without a password needs no link. Or the server already has 50 live extra passwords or 500 stored ones", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission, or the rchat server", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage invites permission, or the rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "`You've done this too often. Try again later.` (JSON, with `Retry-After`): past the rare requests of this kind. Too many requests in the strict or the general bucket, or `Too many attempts. Try again later` (JSON) while the server is busy checking passwords", body = ApiErrorBody)
     ),
@@ -697,7 +709,7 @@ pub(crate) async fn make_standing_invite(
     let db = &state.db;
     let link = NewLink::make(db, access.name()).await?;
     rare::take(&state, Rare::ServerPassword, Some(&user))?;
-    let actor = access.audit_actor(db, Perm::DeleteServer).await?;
+    let actor = access.audit_actor(db, Perm::ManageInvites).await?;
     let created_by = match &actor {
         Actor::Staff => None,
         Actor::User(name) => Some(name.clone()),
@@ -737,7 +749,7 @@ pub(crate) async fn make_standing_invite(
 /// Remove the invite link
 ///
 /// Revokes the server's invite link: whoever joined with it stays, and the guest grants it gave
-/// end. Removing it when there is none does nothing. Requires the Delete server permission. Not
+/// end. Removing it when there is none does nothing. Requires the Manage invites permission. Not
 /// available on the rchat server. Emits `server_updated` to the server. General rate-limit
 /// bucket.
 #[utoipa::path(
@@ -748,7 +760,7 @@ pub(crate) async fn make_standing_invite(
     responses(
         (status = 200, description = "Removed", body = OkResp),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission, or the rchat server", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage invites permission, or the rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
@@ -760,7 +772,7 @@ pub(crate) async fn delete_standing_invite(
     Path(name): Path<String>,
 ) -> Result<Json<OkResp>, ApiError> {
     let access = manage(&state, &user, &name).await?;
-    let actor = access.audit_actor(&state.db, Perm::DeleteServer).await?;
+    let actor = access.audit_actor(&state.db, Perm::ManageInvites).await?;
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, access.name()).await?;
     end_standing(&mut tx, access.name(), &actor, now()).await?;
@@ -788,7 +800,7 @@ async fn open_closed(conn: &mut sqlx::AnyConnection, server: &str) -> sqlx::Resu
 ///
 /// Stops an extra password from letting anyone new join. Members who joined with it stay;
 /// guest grants issued through it end now. The password stays listed as `revoked` until it is
-/// purged 30 days later. Revoking a revoked password does nothing. Requires the Delete server
+/// purged 30 days later. Revoking a revoked password does nothing. Requires the Manage invites
 /// permission. Not available on the rchat server. Emits `server_updated` to the server, so
 /// guests whose grant ended lose the server. General rate-limit bucket.
 #[utoipa::path(
@@ -802,7 +814,7 @@ async fn open_closed(conn: &mut sqlx::AnyConnection, server: &str) -> sqlx::Resu
     responses(
         (status = 200, description = "Revoked", body = OkResp),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission, or the rchat server", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage invites permission, or the rchat server", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses); or `Password not found`", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
@@ -814,7 +826,7 @@ pub(crate) async fn revoke_password(
     Path((name, id)): Path<(String, i64)>,
 ) -> Result<Json<OkResp>, ApiError> {
     let access = manage(&state, &user, &name).await?;
-    let actor = access.audit_actor(&state.db, Perm::DeleteServer).await?;
+    let actor = access.audit_actor(&state.db, Perm::ManageInvites).await?;
     let mut tx = state.db.begin().await?;
     lock_server(&mut tx, access.name()).await?;
     let found = sqlx::query("SELECT label FROM server_passwords WHERE id = $1 AND server = $2")

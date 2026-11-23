@@ -31,7 +31,8 @@ import {
   roleEditBlock,
   rolePerms,
 } from '../lib/rules'
-import { inviteUrl } from '../lib/invite'
+import { codeUrl, inviteUrl, sharedByCode } from '../lib/invite'
+import { sharing } from '../lib/platform'
 import { goingPublic, protectedDetail, publicDetail } from '../lib/joining'
 import { readableNow, type PublicRead } from '../lib/public_reading'
 import { parseMembersVisible } from '../lib/profile_choice'
@@ -908,6 +909,90 @@ export function ServerAppearance({
   )
 }
 
+function StandingInvite({ server, manage }: { server: string; manage: boolean }) {
+  const [link, setLink] = useState<string | null>()
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const askConfirm = useStore(s => s.askConfirm)
+  const mode = useStore(s => s.servers[server]?.join_mode)
+  useEffect(() => {
+    let active = true
+    api.standingInvite(server).then(
+      result => {
+        if (active) setLink(result ? codeUrl(result.code) : null)
+      },
+      (err: unknown) => {
+        if (active) setError(errorText(err))
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [server, mode])
+  const change = async (remove: boolean) => {
+    setBusy(true)
+    setError(null)
+    setCopied(false)
+    try {
+      if (remove) {
+        await api.revokeInvite(server)
+        setLink(null)
+      } else {
+        const invite = await api.renewInvite(server)
+        setLink(codeUrl(invite.code))
+      }
+    } catch (err) {
+      setError(errorText(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const request = (remove: boolean) => {
+    if (!link) return void change(false)
+    askConfirm({
+      title: remove ? 'Revoke invite link' : 'Replace invite link',
+      body: 'The current link will stop working. Members who used it stay.',
+      confirm: remove ? 'Revoke' : 'Replace',
+      action: () => void change(remove),
+    })
+  }
+  return (
+    <>
+      <p className={sectionCls}>Invite link</p>
+      {link && <input readOnly value={link} aria-label="Invite link" className={fieldCls} />}
+      <div className="flex flex-wrap gap-2">
+        {link && (
+          <button
+            className={textBtn}
+            onClick={() =>
+              void sharing()
+                .copyText(link)
+                .then(ok => {
+                  if (ok) setCopied(true)
+                  else setError("Couldn't copy the link.")
+                })
+            }
+          >
+            {copied ? 'Copied' : 'Copy link'}
+          </button>
+        )}
+        {manage && link !== undefined && (
+          <button className={textBtn} disabled={busy} onClick={() => request(false)}>
+            {link ? 'Replace link' : 'Create invite link'}
+          </button>
+        )}
+        {manage && link && (
+          <button className={dangerBtn} disabled={busy} onClick={() => request(true)}>
+            Revoke link
+          </button>
+        )}
+      </div>
+      <FieldError message={error} />
+    </>
+  )
+}
+
 function InviteLinkField({ server, hasPassword }: { server: string; hasPassword: boolean }) {
   const [password, setPassword] = useState('')
   const [copied, setCopied] = useState<string | null>(null)
@@ -1150,6 +1235,9 @@ function Settings({ server }: { server: string }) {
   const [renameError, setRenameError] = useState<string | null>(null)
   const [editingAdmin, setEditingAdmin] = useState<string | null>(null)
   const [q, setQ] = useState('')
+  const canSettings = hasPerm(perms, Perm.ManageServer)
+  const canInvites = hasPerm(perms, Perm.ManageInvites)
+  const canAssign = hasPerm(perms, Perm.AssignRoles)
   const canAdmin = hasPerm(perms, Perm.ManageAdmins)
   const siteAdmin = me?.is_site_admin ?? false
   const limit = siteAdmin ? undefined : perms
@@ -1178,11 +1266,10 @@ function Settings({ server }: { server: string }) {
   if (!detail || !me || perms === 0) return null
   const loaded = cache?.list ?? []
   const admins = adminList.list
-  const others = (found.active ? found.list : loaded).filter(m => !m.is_admin)
+  const others = (found.active ? found.list : loaded).filter(m => !canAdmin || !m.is_admin)
 
   const rolesButton = (m: Member) =>
-    hasPerm(perms, Perm.ManageAdmins) &&
-    changeableRoles(useStore.getState(), server, m.username).length > 0 ? (
+    canAssign && changeableRoles(useStore.getState(), server, m.username).length > 0 ? (
       <button
         onClick={e =>
           openChoiceMenu(e.clientX, e.clientY, 'member_roles', {
@@ -1226,11 +1313,14 @@ function Settings({ server }: { server: string }) {
 
   return (
     <Dialog full title="Server Settings" onClose={closeDialog}>
-      <InviteLinkField server={server} hasPassword={detail.has_password} />
-      {detail && hasPerm(perms, Perm.DeleteServer) && (
-        <WidgetSettings server={server} channels={detail.channels} />
+      {!sharedByCode(detail.join_mode) && (
+        <InviteLinkField server={server} hasPassword={detail.has_password} />
       )}
-      {server !== 'rchat' && hasPerm(perms, Perm.DeleteServer) && (
+      {(sharedByCode(detail.join_mode) || (canInvites && detail.has_password)) && (
+        <StandingInvite key={server} server={server} manage={canInvites} />
+      )}
+      {detail && canSettings && <WidgetSettings server={server} channels={detail.channels} />}
+      {server !== 'rchat' && canSettings && (
         <>
           <p className={sectionCls}>Rename Server</p>
           <form
@@ -1257,13 +1347,21 @@ function Settings({ server }: { server: string }) {
           <ServerAppearance server={server} />
           <ServerSystemMessages server={server} />
           <ServerUploadExpiry server={server} />
-          <ServerAccessSection
-            server={server}
-            hasPassword={detail.has_password}
-            canRemove={hasPerm(perms, Perm.Kick)}
-            publicRead={detail.public_read ?? null}
-            membersVisible={parseMembersVisible(detail.members_visible)}
-          />
+        </>
+      )}
+      {server !== 'rchat' && (canSettings || canInvites) && (
+        <ServerAccessSection
+          canSettings={canSettings}
+          canInvites={canInvites}
+          server={server}
+          hasPassword={detail.has_password}
+          canRemove={hasPerm(perms, Perm.Kick)}
+          publicRead={detail.public_read ?? null}
+          membersVisible={parseMembersVisible(detail.members_visible)}
+        />
+      )}
+      {server !== 'rchat' && hasPerm(perms, Perm.DeleteServer) && (
+        <>
           <p className={sectionCls}>Delete Server</p>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <p className="min-w-48 flex-1 text-xs text-on-surface-variant">
@@ -1289,7 +1387,7 @@ function Settings({ server }: { server: string }) {
           </div>
         </>
       )}
-      {server === 'rchat' && hasPerm(perms, Perm.DeleteServer) && (
+      {server === 'rchat' && canSettings && (
         <>
           <ServerAppearance server={server} />
           <ServerSystemMessages server={server} />
@@ -1298,7 +1396,7 @@ function Settings({ server }: { server: string }) {
           <GuestParticipation server={server} />
         </>
       )}
-      {hasPerm(perms, Perm.ManageAdmins) && (
+      {hasPerm(perms, Perm.ManageRoles) && (
         <>
           <p className={sectionCls}>Roles</p>
           <RolesEditor
@@ -1351,7 +1449,7 @@ function Settings({ server }: { server: string }) {
           </div>
         </>
       )}
-      {hasPerm(perms, Perm.ManageAdmins) && (
+      {canAdmin && (
         <>
           <p className={sectionCls}>Admins</p>
           <MemberSearchField value={q} onChange={setQ} />
@@ -1398,12 +1496,17 @@ function Settings({ server }: { server: string }) {
             )
           )}
           {adminList.hasMore && <Sentinel key={`a${admins.length}`} onVisible={adminList.more} />}
+        </>
+      )}
+      {(canAdmin || canAssign) && (
+        <>
           <p className={sectionCls}>Members</p>
+          {!canAdmin && <MemberSearchField value={q} onChange={setQ} />}
           {others.length ? (
             others.map(m =>
               memberRow(
                 m,
-                promote && (
+                canAdmin && promote && (
                   <button
                     onClick={() => void grantAdmin(server, m.username).then(inSession(reloadBoth))}
                     className={textBtn}
@@ -1419,7 +1522,9 @@ function Settings({ server }: { server: string }) {
                 ? found.loading
                   ? 'Searching…'
                   : 'No matching members.'
-                : 'Everyone here is an admin.'}
+                : canAdmin
+                  ? 'Everyone here is an admin.'
+                  : 'No members.'}
             </p>
           )}
         </>

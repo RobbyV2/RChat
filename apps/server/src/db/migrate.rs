@@ -7,7 +7,7 @@ use super::indexes::{ONLINE_INDEXES, build_inline, create_indexes};
 use super::schema::{POSTGRES_SCHEMA, POSTGRES_TRIGGERS, SQLITE_SCHEMA, SQLITE_TRIGGERS};
 use super::secrets::secret_key;
 use super::{BUILTIN_STATE, NO_EXTRA_HASH, now};
-use crate::api::access::perms::{ALL_PERMS, PRE_REPORT_PERMS, Perm};
+use crate::api::access::perms::{PRE_REPORT_PERMS, Perm};
 use crate::api::controls::{Control, ControlSeeds};
 
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -243,7 +243,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 40: brand images (`brand_assets`), the logo and the mark an instance uploads.
 /// 41: scheduled announcements and account dismissals.
 /// 42: text-only channels.
-pub const SCHEMA_VERSION: i64 = 42;
+/// 43: independent server management permissions.
+pub const SCHEMA_VERSION: i64 = 43;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 17] {
@@ -625,6 +626,29 @@ pub(super) async fn init_schema(
     if version < 18 {
         grant_manage_reports(conn).await?;
     }
+    if version < 43 {
+        for (previous, additional) in [
+            (
+                Perm::DeleteServer,
+                Perm::ManageServer as i64 | Perm::ManageInvites as i64,
+            ),
+            (
+                Perm::ManageAdmins,
+                Perm::ManageRoles as i64 | Perm::AssignRoles as i64,
+            ),
+        ] {
+            for sql in [
+                "UPDATE members SET perms = perms | $1 WHERE is_admin <> 0 AND (perms & $2) <> 0",
+                "UPDATE roles SET perms = perms | $1 WHERE (perms & $2) <> 0",
+            ] {
+                sqlx::query(sql)
+                    .bind(additional)
+                    .bind(previous as i64)
+                    .execute(&mut *conn)
+                    .await?;
+            }
+        }
+    }
     if stored_setting(conn, BUILTIN_STATE).await?.is_none() {
         let t = now();
         sqlx::query("INSERT INTO servers(name, display_name, creator, created_at) VALUES('rchat', 'RChat', NULL, $1) ON CONFLICT(name) DO NOTHING")
@@ -662,7 +686,7 @@ pub(super) async fn init_schema(
 async fn grant_manage_reports(conn: &mut AnyConnection) -> anyhow::Result<()> {
     let (reports, kick) = (Perm::ManageReports as i64, Perm::Kick as i64);
     let n = sqlx::query("UPDATE members SET perms = $1 WHERE is_admin <> 0 AND perms = $2")
-        .bind(ALL_PERMS)
+        .bind(1023_i64)
         .bind(PRE_REPORT_PERMS)
         .execute(&mut *conn)
         .await?

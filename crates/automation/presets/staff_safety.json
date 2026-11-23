@@ -4,7 +4,7 @@
   "summary": "Stop a moderator who bans or kicks many members in a short time",
   "offer_locked": true,
   "gated": true,
-  "needs": ["Kick", "Manage admins"],
+  "needs": ["Kick", "Assign roles"],
   "automations": [
     {
       "name": "Staff safety",

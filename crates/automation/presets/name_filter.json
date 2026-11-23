@@ -2,7 +2,7 @@
   "id": "name_filter",
   "name": "Name filter",
   "summary": "Hold members whose name matches your list",
-  "needs": ["Kick", "Manage admins"],
+  "needs": ["Kick", "Assign roles"],
   "automations": [
     {
       "name": "Name filter on join",

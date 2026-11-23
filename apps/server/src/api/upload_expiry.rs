@@ -632,7 +632,7 @@ pub(crate) async fn release(conn: &mut sqlx::AnyConnection, id: &str) -> sqlx::R
 
 async fn manage(state: &AppState, user: &User, name: &str) -> Result<ServerAccess, ApiError> {
     let access = resolve_server(&state.db, name, Some(user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::DeleteServer).await?;
+    access.require_perm(&state.db, Perm::ManageServer).await?;
     Ok(access)
 }
 
@@ -647,7 +647,7 @@ async fn manage(state: &AppState, user: &User, name: &str) -> Result<ServerAcces
 /// charged is whoever set the longer choice or lengthened it last; only that account reads its
 /// `bytes`, others with the permission read whether it is full, and nobody is told who it is.
 /// Members read the choice in the server detail, and whether such limits exist in
-/// `limits.upload_kept_limited` of `GET /api/v1/instance`. Requires the Delete server
+/// `limits.upload_kept_limited` of `GET /api/v1/instance`. Requires the Manage server settings
 /// permission. General rate-limit bucket.
 #[utoipa::path(
     get,
@@ -657,7 +657,7 @@ async fn manage(state: &AppState, user: &User, name: &str) -> Result<ServerAcces
     responses(
         (status = 200, description = "The setting", body = UploadExpiryState),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage server settings permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
@@ -708,7 +708,7 @@ pub(crate) async fn get_upload_expiry(
 /// later upload that does not fit is not refused: it stays for the instance default. Only the
 /// site operator changes the limits (`UPLOAD_SERVER_KEPT_MIB`, `UPLOAD_OWNER_KEPT_MIB`).
 ///
-/// Requires the Delete server permission. Emits `upload_expiry_changed` to the server's
+/// Requires the Manage server settings permission. Emits `upload_expiry_changed` to the server's
 /// members, who load the server again. General rate-limit bucket.
 #[utoipa::path(
     put,
@@ -720,7 +720,7 @@ pub(crate) async fn get_upload_expiry(
         (status = 200, description = "The setting after the change, with `extended`", body = UploadExpiryState),
         (status = 400, description = "`seconds` missing or outside 3600 to 31536000 for `custom`, or given for another mode; `This instance keeps files at most N days` for `never` or a longer time while the instance has a cap. Malformed JSON or a missing `Content-Type` give a plain-text 400 or 415", body = ApiErrorBody),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage server settings permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
@@ -740,7 +740,7 @@ pub(crate) async fn set_upload_expiry(
         return Err(bad(&problem));
     }
     let key = access.name().to_string();
-    let actor = access.audit_actor(&state.db, Perm::DeleteServer).await?;
+    let actor = access.audit_actor(&state.db, Perm::ManageServer).await?;
     let limits = KeptLimits::of(&state.limits);
     let mut tx = state.db.begin().await?;
     lock_kept(&mut tx, &key).await?;

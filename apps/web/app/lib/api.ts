@@ -542,6 +542,8 @@ export const endpoints = (c: ApiClient) => ({
   inviteByCode: (code: string) => c.req<Invite>('GET', `/invite_codes/${seg(code)}`),
   standingInvite: (name: string) =>
     c.req<InviteLinkInfo | null>('GET', `/servers/${seg(name)}/invite`),
+  renewInvite: (name: string) => c.req<InviteLinkInfo>('POST', `/servers/${seg(name)}/invite`),
+  revokeInvite: (name: string) => c.req<unknown>('DELETE', `/servers/${seg(name)}/invite`),
   searchServers: (q: string) => c.req<ServerMatch[]>('GET', `/server_search?q=${seg(q)}`),
   guestAccess: (name: string, password?: string) =>
     c.req<{ grant: string | null }>('POST', `/servers/${seg(name)}/guest_access`, { password }),
@@ -707,7 +709,7 @@ export const endpoints = (c: ApiClient) => ({
     server: string,
     id: number,
     patch: { name?: string; color?: string; perms?: number; mentionable?: boolean }
-  ) => c.req<Role>('PATCH', `/servers/${seg(server)}/roles/${id}`, patch),
+  ) => c.req<Role>('PATCH', `/servers/${seg(server)}/roles/${id}`, { ...patch, mask: ALL_PERMS }),
   deleteRole: (server: string, id: number) =>
     c.req<unknown>('DELETE', `/servers/${seg(server)}/roles/${id}`),
   assignRole: (server: string, id: number, username: string) =>

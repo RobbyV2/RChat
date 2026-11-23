@@ -8,10 +8,16 @@ use super::schema::*;
 use super::sweep::*;
 
 use super::*;
-use crate::api::access::perms::{ALL_PERMS, Restrict, fold_access, perm_row};
+use crate::api::access::perms::{ALL_PERMS, Perm, Restrict, fold_access, perm_row};
 use crate::api::controls::ControlSeeds;
 use crate::api::test_util::{add_member, done, temp_state};
 use crate::limits::Limits;
+
+// Pre-delegation roles holding both DeleteServer and ManageAdmins gain these rights in v43.
+const DELEGATED_RIGHTS: i64 = Perm::ManageServer as i64
+    | Perm::ManageInvites as i64
+    | Perm::ManageRoles as i64
+    | Perm::AssignRoles as i64;
 
 /// A server start with nothing set in the env, which is what these tests mean by opening a
 /// database. `super::open` is the tool's way in.
@@ -1517,7 +1523,7 @@ async fn group_mentions_are_added_to_an_old_database() {
         assert_eq!(
             count(
                 &db,
-                "SELECT COUNT(*) FROM roles WHERE name = 'old' AND perms = 543 AND mentionable = 0"
+                &format!("SELECT COUNT(*) FROM roles WHERE name = 'old' AND perms = {} AND mentionable = 0", 543 | DELEGATED_RIGHTS)
             )
             .await,
             1
@@ -1699,7 +1705,7 @@ async fn audit_log_is_added_to_an_old_database() {
         }
         assert_eq!(
             count(&db, "SELECT perms FROM roles WHERE name = 'old'").await,
-            575
+            575 | DELEGATED_RIGHTS
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_audit_log_%'").await,
@@ -1804,7 +1810,7 @@ async fn timeouts_are_added_to_an_old_database() {
         }
         assert_eq!(
             count(&db, "SELECT perms FROM roles WHERE name = 'old'").await,
-            639
+            639 | DELEGATED_RIGHTS
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_member_timeouts_until'").await,
@@ -1902,7 +1908,7 @@ async fn webhooks_are_added_to_an_old_database() {
         }
         assert_eq!(
             count(&db, "SELECT perms FROM roles WHERE name = 'old'").await,
-            767
+            767 | DELEGATED_RIGHTS
         );
         assert_eq!(
             count(&db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%webhook%'").await,
@@ -3373,6 +3379,8 @@ async fn old_report_perms(db: &Db) {
         "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('rchat', 'plain', 0, 511, 1)",
         "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'mod', '#ffffff', 4)",
         "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'chanrole', '#ffffff', 1)",
+        "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'settingsrole', '#ffffff', 8)",
+        "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'rolesadmin', '#ffffff', 16)",
         "INSERT INTO roles(server, name, color, perms) VALUES('rchat', 'full', '#ffffff', 511)",
         "INSERT INTO messages(channel_id, author, content, created_at) VALUES((SELECT id FROM channels WHERE server = 'rchat'), 'all', 'old', 7)",
     ] {
@@ -3386,7 +3394,7 @@ async fn upgraded_report_perms(db: &Db, mod_perms: i64) {
         1
     );
     for (name, perms) in [
-        ("all", 1023),
+        ("all", ALL_PERMS),
         ("zero", 0),
         ("kick", 516),
         ("chan", 1),
@@ -3402,7 +3410,13 @@ async fn upgraded_report_perms(db: &Db, mod_perms: i64) {
             "{name}"
         );
     }
-    for (name, perms) in [("mod", mod_perms), ("chanrole", 1), ("full", 1023)] {
+    for (name, perms) in [
+        ("mod", mod_perms),
+        ("chanrole", 1),
+        ("full", ALL_PERMS),
+        ("settingsrole", 8 | 4096 | 8192),
+        ("rolesadmin", 16 | 16384 | 32768),
+    ] {
         assert_eq!(
             count(
                 db,

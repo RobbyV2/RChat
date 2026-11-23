@@ -2,7 +2,7 @@
   "id": "role_panel",
   "name": "Role panel",
   "summary": "Post buttons that give and take roles",
-  "needs": ["Manage admins"],
+  "needs": ["Assign roles"],
   "automations": [
     {
       "name": "Role panel",

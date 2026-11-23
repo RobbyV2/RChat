@@ -1313,7 +1313,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       )
       if (
         get().me?.username === ev.username ||
-        hasPerm(myPerms(get(), ev.server), Perm.ManageAdmins)
+        (myPerms(get(), ev.server) & (Perm.ManageAdmins | Perm.ManageRoles | Perm.AssignRoles)) !==
+          0
       )
         refetchServer(ev.server)
     },

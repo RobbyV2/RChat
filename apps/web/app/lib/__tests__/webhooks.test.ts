@@ -43,7 +43,7 @@ describe('webhooks', () => {
 
   test('the permission bit follows timeouts', () => {
     expect(Perm.ManageWebhooks).toBe(256)
-    expect(ALL_PERMS).toBe(1023)
+    expect(ALL_PERMS).toBe(62463)
     expect(PERM_ITEMS.some(p => p.bit === Perm.ManageWebhooks)).toBe(true)
   })
 

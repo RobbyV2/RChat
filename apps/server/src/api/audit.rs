@@ -2250,7 +2250,7 @@ mod tests {
             &state.db,
             &format!(
                 "UPDATE members SET is_admin = 1, perms = {} WHERE username = 'bob'",
-                Perm::ManageAdmins as i64
+                Perm::ManageRoles as i64
             ),
         )
         .await;

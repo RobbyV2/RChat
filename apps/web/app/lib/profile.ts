@@ -180,7 +180,7 @@ export const profileActions = ({
 }
 
 export const canEditRoles = ({ signedIn, inServer, perms, member }: ActionInput) =>
-  signedIn && inServer && member !== null && hasPerm(perms, Perm.ManageAdmins)
+  signedIn && inServer && member !== null && hasPerm(perms, Perm.AssignRoles)
 
 export const roleEditable = (
   { self, siteAdmin, perms, targetPerms, channelLocked, channelDenies }: ActionInput,

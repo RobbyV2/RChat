@@ -58,7 +58,8 @@ afterEach(() => {
 afterAll(resetSessionCaches)
 
 const T0 = 1_700_000_000
-const MOD = Perm.Kick | Perm.TimeoutMembers | Perm.DeleteMessages | Perm.ManageAdmins
+const MOD =
+  Perm.Kick | Perm.TimeoutMembers | Perm.DeleteMessages | Perm.ManageAdmins | Perm.AssignRoles
 
 const poll = (over: Partial<Poll> = {}): Poll => ({
   kind: 'single',
@@ -351,7 +352,10 @@ test('admin rows on a message: never on your own, Revoke Admin is danger', () =>
     ['Transfer Admin', true],
     ['Assign Role', false],
   ])
-  state({ perms: Perm.ManageAdmins | Perm.Kick, bob: { is_admin: true, perms: Perm.Kick } })
+  state({
+    perms: Perm.ManageAdmins | Perm.AssignRoles | Perm.Kick,
+    bob: { is_admin: true, perms: Perm.Kick },
+  })
   expect(labels(at(bobs))).toEqual([
     'Reply',
     'Forward',

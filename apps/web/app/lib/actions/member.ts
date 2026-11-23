@@ -178,7 +178,7 @@ const notOwnMessage = (seat: Seat) => !seat.message || !seat.self
 // A role choice's value says what it does: `+<id>` assigns the role, `-<id>` removes it.
 const roleChoices = (ctx: ActionCtx) => {
   const seat = seatOf(ctx)
-  if (!seat || !hasPerm(seat.perms, Perm.ManageAdmins)) return []
+  if (!seat || !hasPerm(seat.perms, Perm.AssignRoles)) return []
   const held = seat.row?.role_ids ?? []
   return changeableRoles(ctx.s, seat.server, seat.user.username).map(r => {
     const remove = held.includes(r.id)

@@ -665,11 +665,15 @@ function MemberPrivacy({ server, visible }: { server: string; visible: boolean }
 export function ServerAccessSection({
   server,
   hasPassword,
+  canSettings,
+  canInvites,
   canRemove,
   publicRead,
   membersVisible,
 }: {
   server: string
+  canSettings: boolean
+  canInvites: boolean
   hasPassword: boolean
   canRemove: boolean
   publicRead: PublicRead
@@ -702,10 +706,10 @@ export function ServerAccessSection({
     return () => {
       live = false
     }
-  }, [server, rev, hasPassword])
+  }, [server, rev, hasPassword, canSettings, canInvites])
 
   useEffect(() => {
-    if (!data || !username) return
+    if (!canInvites || !data || !username) return
     const now = nowSeconds()
     const live = data.passwords.filter(p => statusAt(p, now) === 'live').map(p => p.id)
     setBook(prev => {
@@ -713,7 +717,7 @@ export function ServerAccessSection({
       if (next !== prev) saveBook(username, next)
       return next
     })
-  }, [data, server, username])
+  }, [data, server, username, canInvites])
 
   const soonest = (data?.passwords ?? [])
     .filter(p => p.status === 'live' && p.expires_at !== null)
@@ -757,7 +761,7 @@ export function ServerAccessSection({
     })
 
   const live = data?.passwords.filter(p => statusAt(p, now) === 'live').length ?? 0
-  const closed = data ? isClosed(data, now) : false
+  const closed = data && (canInvites ? isClosed(data, now) : data.closed)
 
   return (
     <>
@@ -770,24 +774,26 @@ export function ServerAccessSection({
         )
       ) : (
         <>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Radio
-              name={name}
-              checked={!data.protected}
-              onChange={() => setProtected(false)}
-              title="Public"
-              detail={publicDetail(settings, publicReadable)}
-              icon={<LockOpen size={14} />}
-            />
-            <Radio
-              name={name}
-              checked={data.protected}
-              onChange={() => setProtected(true)}
-              title="Password protected"
-              detail={protectedDetail(settings, readableNow(publicRead, true, settings))}
-              icon={<Lock size={14} />}
-            />
-          </div>
+          {canSettings && (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Radio
+                name={name}
+                checked={!data.protected}
+                onChange={() => setProtected(false)}
+                title="Public"
+                detail={publicDetail(settings, publicReadable)}
+                icon={<LockOpen size={14} />}
+              />
+              <Radio
+                name={name}
+                checked={data.protected}
+                onChange={() => setProtected(true)}
+                title="Password protected"
+                detail={protectedDetail(settings, readableNow(publicRead, true, settings))}
+                icon={<Lock size={14} />}
+              />
+            </div>
+          )}
           {data.protected && (
             <>
               {closed && (
@@ -801,53 +807,65 @@ export function ServerAccessSection({
                   </p>
                 </div>
               )}
-              <PermanentPassword
-                server={server}
-                has={data.permanent}
-                canRemove={canRemove}
-                refresh={refresh}
-              />
-              <div className="flex items-center gap-2 pt-4 pb-1.5">
-                <p className="flex-1 text-sm font-medium text-on-surface">
-                  Passwords{' '}
-                  <span className="text-xs font-normal text-on-surface-variant">
-                    {live}/{ACTIVE_MAX} active
-                  </span>
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setCreating(true)}
-                  disabled={live >= ACTIVE_MAX}
-                  className={`${textBtn} flex items-center gap-1 disabled:opacity-40`}
-                >
-                  <Plus size={16} />
-                  New password
-                </button>
-              </div>
-              {data.passwords.length ? (
-                data.passwords.map(p => (
-                  <PasswordRow
-                    key={p.id}
-                    server={server}
-                    password={p}
-                    now={now}
-                    secret={secretFor(book, server, p.id)}
-                    onRevoke={() => revoke(p)}
-                  />
-                ))
-              ) : (
-                <p className="px-2 text-sm text-on-surface-variant">
-                  No other passwords. Add temporary passwords or tickets with a use limit.
-                </p>
+              {canSettings && (
+                <PermanentPassword
+                  server={server}
+                  has={data.permanent}
+                  canRemove={canRemove}
+                  refresh={refresh}
+                />
               )}
-              <p className="pt-1.5 text-xs text-on-surface-variant">
-                Renaming the server revokes these passwords.
-              </p>
+              {canInvites && (
+                <>
+                  <div className="flex items-center gap-2 pt-4 pb-1.5">
+                    <p className="flex-1 text-sm font-medium text-on-surface">
+                      Passwords{' '}
+                      <span className="text-xs font-normal text-on-surface-variant">
+                        {live}/{ACTIVE_MAX} active
+                      </span>
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setCreating(true)}
+                      disabled={live >= ACTIVE_MAX}
+                      className={`${textBtn} flex items-center gap-1 disabled:opacity-40`}
+                    >
+                      <Plus size={16} />
+                      New password
+                    </button>
+                  </div>
+                  {data.passwords.length ? (
+                    data.passwords.map(p => (
+                      <PasswordRow
+                        key={p.id}
+                        server={server}
+                        password={p}
+                        now={now}
+                        secret={secretFor(book, server, p.id)}
+                        onRevoke={() => revoke(p)}
+                      />
+                    ))
+                  ) : (
+                    <p className="px-2 text-sm text-on-surface-variant">
+                      No other passwords. Add temporary passwords or tickets with a use limit.
+                    </p>
+                  )}
+                  <p className="pt-1.5 text-xs text-on-surface-variant">
+                    Renaming the server revokes these passwords.
+                  </p>
+                </>
+              )}
             </>
           )}
-          <PublicReading server={server} hasPassword={data.protected} option={publicRead} />
-          {membersVisible !== null && <MemberPrivacy server={server} visible={membersVisible} />}
-          <GuestParticipation server={server} />
+          {canSettings && (
+            <>
+              <PublicReading server={server} hasPassword={data.protected} option={publicRead} />
+              {membersVisible !== null && (
+                <MemberPrivacy server={server} visible={membersVisible} />
+              )}
+              <GuestParticipation server={server} />
+            </>
+          )}
           <FieldError message={error} />
         </>
       )}

@@ -691,11 +691,19 @@ fn all_moderation_permissions_need_codes() {
     assert_eq!(r.masked, MOD_PERMS);
     let some = Member {
         is_admin: true,
-        perms: 4 | 32 | 4096,
+        perms: 4 | 32 | 4096 | 65536,
         roles: roles(),
     };
-    assert_eq!(server_perms(&some, &rule(false, &[]), false).perms, 36);
-    assert_eq!(server_perms(&some, &rule(true, &[]), true).perms, 36);
+    assert_eq!(
+        server_perms(&some, &rule(false, &[]), false).perms,
+        36 | 4096
+    );
+    assert_eq!(server_perms(&some, &rule(true, &[]), true).perms, 36 | 4096);
+    assert_eq!(
+        server_perms(&some, &rule(true, &[]), false).masked,
+        4 | 4096
+    );
+    assert_eq!(ALL_PERMS, 62463);
 }
 
 #[test]

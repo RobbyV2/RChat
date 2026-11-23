@@ -1059,8 +1059,8 @@ mod tests {
         };
         assert_eq!(acting_bits(&admin, true), 0);
         assert_eq!(seeing_bits(&admin, true), 0);
-        assert_eq!(rank_bits(&admin), 4095);
-        assert_eq!(acting_bits(&admin, false), 4095);
+        assert_eq!(rank_bits(&admin), ALL_PERMS);
+        assert_eq!(acting_bits(&admin, false), ALL_PERMS);
         let held = Member {
             gate: Gate::Held,
             ..admin

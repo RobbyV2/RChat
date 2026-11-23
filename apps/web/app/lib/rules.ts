@@ -22,6 +22,10 @@ export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
   },
   { label: 'Kick', bit: Perm.Kick },
   { label: 'Delete server', bit: Perm.DeleteServer },
+  { label: 'Manage server settings', bit: Perm.ManageServer },
+  { label: 'Manage invites', bit: Perm.ManageInvites },
+  { label: 'Manage roles', bit: Perm.ManageRoles },
+  { label: 'Assign roles', bit: Perm.AssignRoles },
   { label: 'Manage admins', bit: Perm.ManageAdmins },
   {
     label: 'Mention everyone and roles',

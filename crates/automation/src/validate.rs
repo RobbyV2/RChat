@@ -3,7 +3,7 @@
 use crate::access::{Fired, Reach};
 use crate::budget::{self, Kind};
 use crate::grants::{
-    self, ALL_PERMS, DELETE_MESSAGES, KICK, MANAGE_ADMINS, MANAGE_AUTOMATIONS, MANAGE_CHANNELS,
+    self, ALL_PERMS, ASSIGN_ROLES, DELETE_MESSAGES, KICK, MANAGE_AUTOMATIONS, MANAGE_CHANNELS,
     MANAGE_WEBHOOKS, MENTION_EVERYONE, TIMEOUT_MEMBERS, self_service,
 };
 use crate::keywords::{self, KeywordSet};
@@ -242,7 +242,7 @@ impl Check {
 #[serde(transparent)]
 pub struct Needs(pub u32);
 
-const NAMES: [(u32, &str); 12] = [
+const NAMES: [(u32, &str); 16] = [
     (grants::MANAGE_CHANNELS, "Manage channels"),
     (grants::DELETE_MESSAGES, "Manage messages"),
     (grants::KICK, "Kick"),
@@ -255,6 +255,10 @@ const NAMES: [(u32, &str); 12] = [
     (grants::MANAGE_REPORTS, "Manage reports"),
     (grants::MOVE_MEMBERS, "Move members"),
     (grants::MANAGE_AUTOMATIONS, "Manage automations"),
+    (grants::MANAGE_SERVER, "Manage server settings"),
+    (grants::MANAGE_INVITES, "Manage invites"),
+    (grants::MANAGE_ROLES, "Manage roles"),
+    (grants::ASSIGN_ROLES, "Assign roles"),
 ];
 
 impl Needs {
@@ -325,12 +329,12 @@ pub fn needs_of(kind: &ActionKind) -> Needs {
         | ActionKind::Ban { .. }
         | ActionKind::PauseJoins { .. }
         | ActionKind::RequireApproval { .. } => KICK,
-        ActionKind::Hold { .. } | ActionKind::Quarantine { .. } => KICK | MANAGE_ADMINS,
+        ActionKind::Hold { .. } | ActionKind::Quarantine { .. } => KICK | ASSIGN_ROLES,
         ActionKind::StripRoles
         | ActionKind::AddRole { .. }
         | ActionKind::RemoveRole { .. }
         | ActionKind::ToggleRole { .. }
-        | ActionKind::PostPanel { .. } => MANAGE_ADMINS,
+        | ActionKind::PostPanel { .. } => ASSIGN_ROLES,
         ActionKind::CounterAdd { .. } | ActionKind::CounterSet { .. } => MANAGE_AUTOMATIONS,
         ActionKind::LockChannel { .. }
         | ActionKind::UnlockChannel { .. }
@@ -348,7 +352,7 @@ pub fn needs_of(kind: &ActionKind) -> Needs {
         } => {
             let roles = match component_roles(components).is_empty() {
                 true => 0,
-                false => MANAGE_ADMINS,
+                false => ASSIGN_ROLES,
             };
             everyone(text, *ping) | roles
         }
@@ -2116,24 +2120,24 @@ mod tests {
                 ActionKind::Hold {
                     reason: String::new(),
                 },
-                KICK | MANAGE_ADMINS,
+                KICK | ASSIGN_ROLES,
             ),
             (
                 ActionKind::Quarantine {
                     reason: String::new(),
                 },
-                KICK | MANAGE_ADMINS,
+                KICK | ASSIGN_ROLES,
             ),
-            (ActionKind::StripRoles, MANAGE_ADMINS),
+            (ActionKind::StripRoles, ASSIGN_ROLES),
             (
                 ActionKind::AddRole {
                     role: 5.into(),
                     for_seconds: 0,
                 },
-                MANAGE_ADMINS,
+                ASSIGN_ROLES,
             ),
-            (ActionKind::RemoveRole { role: 5.into() }, MANAGE_ADMINS),
-            (ActionKind::ToggleRole { role: 5.into() }, MANAGE_ADMINS),
+            (ActionKind::RemoveRole { role: 5.into() }, ASSIGN_ROLES),
+            (ActionKind::ToggleRole { role: 5.into() }, ASSIGN_ROLES),
             (
                 ActionKind::CounterAdd {
                     name: "xp".into(),
@@ -2245,7 +2249,7 @@ mod tests {
                     channel: 3,
                     text: String::new(),
                 },
-                MANAGE_ADMINS,
+                ASSIGN_ROLES,
             ),
             (ActionKind::OpenTicket, MANAGE_CHANNELS),
             (ActionKind::CreateRoom, MANAGE_CHANNELS),
@@ -2439,11 +2443,11 @@ mod tests {
         assert_eq!(plain.needs, Needs(0));
         assert_eq!(plain.roles, [] as [i64; 0]);
         let buttons = send(vec![vec![button("mc"), run.clone()]], "Hi");
-        assert_eq!(buttons.needs, Needs(MANAGE_ADMINS));
-        assert_eq!(buttons.action_needs, [Needs(MANAGE_ADMINS)]);
+        assert_eq!(buttons.needs, Needs(ASSIGN_ROLES));
+        assert_eq!(buttons.action_needs, [Needs(ASSIGN_ROLES)]);
         assert_eq!(buttons.roles, [5]);
         let menu = send(vec![vec![select("more", 2, 0, 2)]], "@everyone pick");
-        assert_eq!(menu.needs, Needs(MANAGE_ADMINS | MENTION_EVERYONE));
+        assert_eq!(menu.needs, Needs(ASSIGN_ROLES | MENTION_EVERYONE));
         assert_eq!(menu.roles, [5]);
         let mut no_roles = select("more", 2, 0, 2);
         if let Component::Select { options, .. } = &mut no_roles {
@@ -2925,7 +2929,7 @@ mod tests {
             ["conditions.0.perm"]
         );
         assert_eq!(
-            with(Condition::HasPerm { perm: 4096 }),
+            with(Condition::HasPerm { perm: 65536 }),
             ["conditions.0.perm"]
         );
         assert_eq!(
@@ -3339,7 +3343,7 @@ mod tests {
             roles: [
                 (5, 0),
                 (6, MENTION_EVERYONE),
-                (20, MANAGE_ADMINS),
+                (20, grants::MANAGE_ADMINS),
                 (21, DELETE_SERVER),
                 (22, MANAGE_AUTOMATIONS),
                 (23, KICK),
@@ -4252,9 +4256,9 @@ mod tests {
         }));
         for c in [&strip, &unreact] {
             assert_eq!(c.reach, [Reach::Revoke]);
-            assert_eq!(c.action_needs, [Needs(MANAGE_ADMINS)]);
+            assert_eq!(c.action_needs, [Needs(ASSIGN_ROLES)]);
             assert!(!runs(c, member(1, 0), Some((1, 0))));
-            assert!(runs(c, member(1, MANAGE_ADMINS), Some((1, MANAGE_ADMINS))));
+            assert!(runs(c, member(1, ASSIGN_ROLES), Some((1, ASSIGN_ROLES))));
             let taken = |role_bits: u32, widens: bool| {
                 may_run(
                     revoke_of(role_bits, CREATOR, widens),
@@ -4303,7 +4307,7 @@ mod tests {
             &mute,
             0,
             CREATOR,
-            member(1, MANAGE_ADMINS),
+            member(1, ASSIGN_ROLES),
             Some((2, 0))
         ));
         assert!(gives(&mute, 0, CREATOR, member(2, 0), Some((2, 0))));
@@ -4323,7 +4327,7 @@ mod tests {
         assert!(!gives(
             &mute,
             0,
-            KICK | MANAGE_ADMINS,
+            KICK | ASSIGN_ROLES,
             None,
             Some((2, CREATOR))
         ));
@@ -4338,7 +4342,7 @@ mod tests {
 
     #[test]
     fn a_role_change_on_the_member_skips_the_owners_rank_only_when_they_picked_it() {
-        let owner = KICK | TIMEOUT_MEMBERS | DELETE_MESSAGES | MANAGE_ADMINS | MANAGE_AUTOMATIONS;
+        let owner = KICK | TIMEOUT_MEMBERS | DELETE_MESSAGES | ASSIGN_ROLES | MANAGE_AUTOMATIONS;
         let staff = member(3, CREATOR);
         let on_staff = Some((3, CREATOR));
         let below = member(1, 0);

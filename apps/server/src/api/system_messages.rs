@@ -122,7 +122,7 @@ pub struct SystemMessagesPatch {
 
 async fn manage(state: &AppState, user: &User, name: &str) -> Result<ServerAccess, ApiError> {
     let access = resolve_server(&state.db, name, Some(user), &Proof::none()).await?;
-    access.require_perm(&state.db, Perm::DeleteServer).await?;
+    access.require_perm(&state.db, Perm::ManageServer).await?;
     Ok(access)
 }
 
@@ -162,7 +162,7 @@ async fn load(db: &Db, server: &str) -> Result<SystemMessages, ApiError> {
     responses(
         (status = 200, description = "The settings", body = SystemMessages),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage server settings permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password`: no such server, or a password-protected one you have no access to (identical responses)", body = ApiErrorBody),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
     ),
@@ -181,7 +181,7 @@ pub(crate) async fn get_system_messages(
 ///
 /// Picks the channel for join and leave messages and turns each kind on or off. `channel_id`
 /// must be a text channel of this server that you can see; `null` goes back to the default
-/// channel (the first text channel). Requires the Delete server permission. Emits no WebSocket
+/// channel (the first text channel). Requires the Manage server settings permission. Emits no WebSocket
 /// event. General rate-limit bucket.
 #[utoipa::path(
     patch,
@@ -193,7 +193,7 @@ pub(crate) async fn get_system_messages(
         (status = 200, description = "The settings after the update", body = SystemMessages),
         (status = 400, description = "Malformed JSON or a missing `Content-Type` (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 401, description = "Missing or unknown bearer token", body = ApiErrorBody),
-        (status = 403, description = "Missing the Delete server permission", body = ApiErrorBody),
+        (status = 403, description = "Missing the Manage server settings permission", body = ApiErrorBody),
         (status = 404, description = "`Server not found or wrong password` for a server you have no access to; `Not found` for a channel that does not exist, belongs to another server, is a voice channel or is hidden from you (identical responses)", body = ApiErrorBody),
         (status = 422, description = "The body is not valid for this schema (plain-text framework error)", content_type = "text/plain", body = String),
         (status = 429, description = "Too many requests in the general bucket", body = ApiErrorBody)
@@ -226,7 +226,7 @@ pub(crate) async fn update_system_messages(
         }
     }
     let actor = access
-        .audit_actor(&state.db, Perm::DeleteServer)
+        .audit_actor(&state.db, Perm::ManageServer)
         .await?
         .staff_if(bypassed);
     let was = load(&state.db, &key).await?;
@@ -373,7 +373,7 @@ mod tests {
         }
         exec(db, "INSERT INTO servers(name, display_name, creator, created_at) VALUES('club', 'Club', 'alice', 1)").await;
         add_member(db, "club", "alice", 1, 0, 1).await;
-        add_member(db, "club", "dora", 1, Perm::DeleteServer as i64, 1).await;
+        add_member(db, "club", "dora", 1, Perm::ManageServer as i64, 1).await;
         let voice = id_of(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'lounge', 'voice', 1) RETURNING id").await;
         let general = id_of(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'general', 'text', 1) RETURNING id").await;
         let random = id_of(db, "INSERT INTO channels(server, name, kind, created_at) VALUES('club', 'random', 'text', 1) RETURNING id").await;
@@ -633,7 +633,7 @@ mod tests {
         );
         let set = patch(&state, "dora", json!({ "channel_id": random }))
             .await
-            .expect("Delete server permission is enough");
+            .expect("Manage server settings permission is enough");
         assert_eq!(set.channel_id, Some(random));
         join(&state, "bob", "club").await.expect("join");
         assert_eq!(names(&rows(db, "club").await), ["join bob #random"]);

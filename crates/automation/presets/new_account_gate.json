@@ -2,7 +2,7 @@
   "id": "new_account_gate",
   "name": "New-account gate",
   "summary": "Hold members whose account is less than a day old",
-  "needs": ["Kick", "Manage admins"],
+  "needs": ["Kick", "Assign roles"],
   "automations": [
     {
       "name": "New-account gate",

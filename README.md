@@ -23,7 +23,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 
 ## Features
 
-- Servers with text channels, voice channels, threads, categories and roles
+- Servers with text channels, voice channels, threads, categories and roles. Hosted server owners can delegate settings, invites, role editing and role assignment independently.
 - Direct messages, friends and blocking
 - Voice, video and screen share, in channels and in DMs
 - P2P contacts, DMs, servers, calls and files, kept on the members' devices

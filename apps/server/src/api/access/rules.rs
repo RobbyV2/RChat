@@ -15,22 +15,33 @@ pub(super) async fn effective_perms(db: &Db, server: &str, user: &User) -> sqlx:
 }
 
 pub(super) async fn member_perms(db: &Db, server: &str, username: &str) -> sqlx::Result<i64> {
-    let Some((is_admin, perms)) = member_role(db, server, username).await? else {
-        return Ok(0);
+    let mut conn = db.acquire().await?;
+    Ok(member_perms_in(&mut conn, server, username)
+        .await?
+        .unwrap_or(0))
+}
+
+pub(super) async fn member_perms_in(
+    conn: &mut sqlx::AnyConnection,
+    server: &str,
+    username: &str,
+) -> sqlx::Result<Option<i64>> {
+    let Some((is_admin, perms)) = member_role(&mut *conn, server, username).await? else {
+        return Ok(None);
     };
     if is_admin {
-        return Ok(perm_bits(true, perms, 0));
+        return Ok(Some(perm_bits(true, perms, 0)));
     }
     let rows = sqlx::query("SELECT r.perms FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.server = $1 AND ur.username = $2")
         .bind(server)
         .bind(username)
-        .fetch_all(db)
+        .fetch_all(conn)
         .await?;
     let mut acc = 0i64;
     for r in &rows {
         acc |= r.try_get::<i64, _>(0)?;
     }
-    Ok(perm_bits(false, perms, acc))
+    Ok(Some(perm_bits(false, perms, acc)))
 }
 
 pub(super) async fn manages_channels(db: &Db, server: &str, user: &User) -> sqlx::Result<bool> {

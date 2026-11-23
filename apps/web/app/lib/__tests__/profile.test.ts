@@ -242,14 +242,15 @@ describe('roles and actions', () => {
   })
 
   test('role adds stay within your perms, removals need to moderate the member', () => {
-    const ma = { ...base, perms: Perm.ManageAdmins | Perm.Kick }
-    const higher = { ...ma, targetPerms: Perm.ManageAdmins | Perm.Kick }
+    const ma = { ...base, perms: Perm.AssignRoles | Perm.Kick }
+    const higher = { ...ma, targetPerms: Perm.AssignRoles | Perm.Kick }
     expect(canEditRoles(ma)).toBe(true)
+    expect(canEditRoles({ ...ma, perms: Perm.ManageAdmins | Perm.ManageRoles })).toBe(false)
     expect(canEditRoles({ ...ma, member: null })).toBe(false)
     expect(canEditRoles({ ...base, perms: Perm.Kick })).toBe(false)
     expect(canEditRoles(higher)).toBe(true)
     expect(roleEditable(ma, { perms: 0 }, false)).toBe(true)
-    expect(roleEditable(ma, { perms: Perm.Kick | Perm.ManageAdmins }, false)).toBe(true)
+    expect(roleEditable(ma, { perms: Perm.Kick | Perm.AssignRoles }, false)).toBe(true)
     expect(roleEditable(ma, { perms: Perm.DeleteServer }, false)).toBe(false)
     expect(roleEditable(higher, { perms: Perm.Kick }, false)).toBe(true)
     expect(roleEditable(higher, { perms: 0 }, true)).toBe(false)
