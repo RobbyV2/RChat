@@ -1,3 +1,4 @@
+import { createBookStore } from './book_store'
 import { createPaletteControls } from './palette_ui'
 import { CallGuard } from './calls'
 import { createInstanceRegistry } from './instance_registry'
@@ -68,6 +69,7 @@ function createClient() {
   }
 
   return {
+    ...createBookStore(),
     calls,
     homeInstance: () => instances.home,
     selectHome: instances.selectHome.bind(instances),

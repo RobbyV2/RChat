@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { api } from './home_instance'
+import { api, home } from './home_instance'
+import { client } from '../client/client'
 import { previewPath } from '../media_src'
 import { resetSessionCaches, useStore } from '../store'
 import { MarkdownMessage } from '../../components/markdown_message'
@@ -31,6 +32,8 @@ describe('link preview images', () => {
   const initial = useStore.getInitialState()
   const saved = { ...initial }
   const base = api.base
+  const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window')
   beforeEach(() => {
     Object.assign(initial, {
       me: me('alice'),
@@ -39,6 +42,10 @@ describe('link preview images', () => {
     api.setToken(null)
   })
   afterEach(() => {
+    if (documentDescriptor) Object.defineProperty(globalThis, 'document', documentDescriptor)
+    else Reflect.deleteProperty(globalThis, 'document')
+    if (windowDescriptor) Object.defineProperty(globalThis, 'window', windowDescriptor)
+    else Reflect.deleteProperty(globalThis, 'window')
     Object.assign(initial, saved)
     api.setBase(base)
     api.setToken(null)
@@ -92,6 +99,10 @@ describe('link preview images', () => {
   test("an account on the page's own API gets media and previews by address", () => {
     api.setBase('/api')
     api.setToken('tok')
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { cookie: 'rchat_token=tok' },
+    })
     expect(render('/api/messages/5/embeds/0/image?v=0123456789abcdef')).toContain(
       '<img src="/api/messages/5/embeds/0/image?v=0123456789abcdef"'
     )
@@ -99,6 +110,68 @@ describe('link preview images', () => {
     const html = attached('report.pdf')
     expect(html).toContain('<a href="/api/media/f1" download="report.pdf"')
     expect(html.includes('<button')).toBe(false)
+  })
+
+  test('home attachments, previews and absolute Markdown uploads use the active bearer after an alias swap', async () => {
+    const media = client.shown().media
+    const document = { cookie: 'rchat_token=alice-token' }
+    const page = Object.assign(new EventTarget(), {
+      location: new URL(home.origin),
+      setInterval,
+      clearInterval,
+    })
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: page })
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: document })
+    api.setBase('/api')
+    api.setToken('alice-token')
+    const md = (url: string) =>
+      renderToStaticMarkup(<MarkdownMessage message={msg(5, { content: `![pic](${url})` })} />)
+    const absolute = home.origin + '/api/v1/media/f1'
+    expect(md(absolute)).toContain('<img src="' + absolute + '"')
+    let mode = media.mediaModeFor(undefined)
+    const stop = media.subscribe(() => {
+      mode = media.mediaModeFor(undefined)
+    })
+    const originalFetch = globalThis.fetch
+    try {
+      document.cookie = 'rchat_token=bob-token'
+      page.dispatchEvent(new Event('storage'))
+      expect(mode).toBe('blob')
+      expect(md(absolute)).not.toContain('<img')
+      expect(md('/api/media/f1')).not.toContain('<img')
+      expect(attached('pic.png')).not.toContain('<img')
+      expect(attached('report.pdf')).toContain('<button title="Download report.pdf"')
+      expect(render('/api/messages/5/embeds/0/image?v=0123456789abcdef')).not.toContain('<img')
+      const requests: RequestInit[] = []
+      globalThis.fetch = (async (_input, init) => {
+        requests.push(init ?? {})
+        return new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]))
+      }) as typeof fetch
+      const file = media.acquire(absolute)
+      try {
+        expect((await file.url)?.startsWith('blob:')).toBe(true)
+      } finally {
+        file.release()
+      }
+      expect(new Headers(requests[0].headers).get('Authorization')).toBe('Bearer alice-token')
+      expect(requests[0].credentials).toBe('omit')
+      document.cookie = ''
+      expect(media.mediaModeFor(undefined)).toBe('blob')
+      Object.defineProperty(document, 'cookie', {
+        configurable: true,
+        get() {
+          throw new DOMException('Blocked', 'SecurityError')
+        },
+      })
+      expect(media.mediaModeFor(undefined)).toBe('blob')
+      // Anonymous widgets still render public same-origin Markdown images directly.
+      api.setToken(null)
+      expect(md(absolute)).toContain('<img src="' + absolute + '"')
+    } finally {
+      stop()
+      media.clear()
+      globalThis.fetch = originalFetch
+    }
   })
 
   test('an account on an API at another origin never loads them by address', () => {

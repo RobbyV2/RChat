@@ -9,6 +9,7 @@ import {
   rememberInstance,
   type Endpoints,
 } from '../instances'
+import { accountStorage } from './keys'
 import { normalizeHost } from '../qualified'
 import type { InstanceInfo } from '../types'
 
@@ -76,10 +77,12 @@ export class InstanceRegistry {
   selectHome(origin: string, info: InstanceInfo, connection: InstanceConnection) {
     if (connection !== this.home) {
       connection.retarget(endpointsFrom(origin, info), info, false)
+      accountStorage(connection)
       rememberInstance(origin, info)
       return connection
     }
     const selected = this.setHome(origin, info)
+    accountStorage(selected)
     rememberHome(selected, info)
     return selected
   }

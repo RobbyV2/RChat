@@ -253,6 +253,10 @@ export class ApiClient {
     return `${this.base}/media/${seg(id)}`
   }
 
+  hasToken(candidate: string) {
+    return this.token !== null && this.token === candidate
+  }
+
   signedIn() {
     return this.token !== null
   }
@@ -310,7 +314,7 @@ export class ApiClient {
     if (!this.below(url)) throw new ApiError('Could not load the file', 0)
     const headers = this.credentials(server)
     const res = await fetch(url, {
-      credentials: this.cookieMode,
+      credentials: this.token ? 'omit' : this.cookieMode,
       headers,
       signal,
       redirect: 'error',
@@ -328,7 +332,7 @@ export class ApiClient {
       headers,
       signal,
       redirect: 'error',
-      credentials: this.cookieMode,
+      credentials: this.token ? 'omit' : this.cookieMode,
     })
     if (!res.ok || !res.body) throw new ApiError('Could not load the file', res.status)
     const length = Number(res.headers.get('content-length'))

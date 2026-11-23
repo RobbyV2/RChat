@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { AccountSession } from './client/session'
-import type { InstanceConnection } from './instances'
+import { ownsMediaCookie, MEDIA_COOKIE_CHANGE, type InstanceConnection } from './instances'
 import { client } from './client/client'
 import { useAccount } from './client/react'
 import { headOf } from './p2p'
@@ -139,7 +139,48 @@ export function createMediaSrc(account: AccountSession) {
     // host could otherwise load with a different account's credential.
     if (!conn.isHome) return 'blob'
     const page = typeof window === 'undefined' ? 'http://localhost/' : window.location.href
+    if (api.signedIn() && !ownsMediaCookie(conn)) return 'blob'
     return mediaMode(api.origin(page), new URL(page).origin, api.signedIn(), api.guestMedia(server))
+  }
+
+  const listeners = new Set<() => void>()
+  let unwatch: (() => void) | undefined
+  function subscribe(listener: () => void) {
+    listeners.add(listener)
+    if (!unwatch && conn.isHome && typeof window !== 'undefined') {
+      let owned = ownsMediaCookie(conn)
+      const changed = () => {
+        owned = ownsMediaCookie(conn)
+        for (const cb of listeners) cb()
+      }
+      const stopStore = account.store.subscribe((state, old) => {
+        if (state.token !== old.token || state.guestGrants !== old.guestGrants) changed()
+      })
+      window.addEventListener('storage', changed)
+      window.addEventListener('focus', changed)
+      window.addEventListener(MEDIA_COOKIE_CHANGE, changed)
+      // Cookie replacement need not emit a CookieStore change event. Check once
+      // per mounted home session, including writes by tabs on other page ports.
+      const timer = window.setInterval(() => {
+        if (!api.signedIn()) return
+        const current = ownsMediaCookie(conn)
+        if (current !== owned) changed()
+      }, 1000)
+      unwatch = () => {
+        stopStore()
+        window.clearInterval(timer)
+        window.removeEventListener('storage', changed)
+        window.removeEventListener('focus', changed)
+        window.removeEventListener(MEDIA_COOKIE_CHANGE, changed)
+      }
+    }
+    return () => {
+      listeners.delete(listener)
+      if (!listeners.size) {
+        unwatch?.()
+        unwatch = undefined
+      }
+    }
   }
   function key(plain: string, server: string | undefined) {
     return JSON.stringify([generation, conn.origin, server, plain])
@@ -164,12 +205,17 @@ export function createMediaSrc(account: AccountSession) {
     for (const ctrl of saves) ctrl.abort()
     saves.clear()
   }
-  return { key, acquire, clear, saveMedia, mediaModeFor }
+  return { key, acquire, clear, saveMedia, mediaModeFor, subscribe }
 }
 
 export const mediaModeFor = (server: string | undefined) =>
   client.shown().media.mediaModeFor(server)
 export const forgetMedia = () => client.shown().media.clear()
+
+function useMediaMode(media: ReturnType<typeof createMediaSrc>, server: string | undefined) {
+  const mode = () => media.mediaModeFor(server)
+  return useSyncExternalStore(media.subscribe, mode, mode)
+}
 
 // The address to show an image from: plain where media loads by URL, else a blob URL.
 const useBlobSrc = (
@@ -177,7 +223,7 @@ const useBlobSrc = (
   plain: string,
   server: string | undefined,
   wanted: boolean,
-  fetched = media.mediaModeFor(server) === 'blob'
+  fetched: boolean
 ) => {
   const key = media.key(plain, server)
   const [blob, setBlob] = useState<{ media: typeof media; key: string; url: string | null } | null>(
@@ -202,7 +248,7 @@ const useBlobSrc = (
 
 export const useMediaSrc = (id: string, server: string | undefined, wanted: boolean) => {
   const { api, media } = useAccount()
-  return useBlobSrc(media, api.mediaUrl(id), server, wanted)
+  return useBlobSrc(media, api.mediaUrl(id), server, wanted, useMediaMode(media, server) === 'blob')
 }
 
 // Only the primary account on the page's API may display an arbitrary image URL.
@@ -237,12 +283,13 @@ export const useLinkedSrc = (
         )
       : null
   const id = link?.id ?? null
-  const fetched = !link?.direct || media.mediaModeFor(server) === 'blob'
+  const mode = useMediaMode(media, server)
+  const fetched = !link?.direct || mode === 'blob'
   const held = useBlobSrc(media, api.mediaUrl(id ?? ''), server, previews && id !== null, fetched)
   const href = link?.href ?? src
   if (!previews) return { href, shown: null }
   if (id !== null && fetched) return { href, shown: held }
-  return { href, shown: link?.direct ? href : null }
+  return { href, shown: link?.direct && (!api.signedIn() || mode === 'url') ? href : null }
 }
 
 // Link preview images are served by this instance, which fetched them; the page's image host
@@ -259,7 +306,14 @@ export const previewPath = (messageId: number, ord: number, imageUrl: string | n
 
 export const usePreviewSrc = (path: string | null, server: string | undefined) => {
   const { api, media } = useAccount()
-  const src = useBlobSrc(media, path === null ? '' : api.previewUrl(path), server, path !== null)
+  const fetched = useMediaMode(media, server) === 'blob'
+  const src = useBlobSrc(
+    media,
+    path === null ? '' : api.previewUrl(path),
+    server,
+    path !== null,
+    fetched
+  )
   return path === null ? null : src
 }
 

@@ -425,6 +425,17 @@ function write(store: () => StorageLike | null, key: string, value: string | nul
   }
 }
 
+export function canReadSharedStorage() {
+  try {
+    const store = local()
+    if (!store) return false
+    store.getItem('rchat_book')
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const readLocal = (key: string) => read(local, key)
 
 export const localKeys = (prefix: string): string[] => {
@@ -497,13 +508,34 @@ export function rememberHome(connection: InstanceConnection, info: InstanceInfo)
   rememberInstance(connection.origin, info, store)
 }
 
+export const MEDIA_COOKIE_CHANGE = 'rchat-media-cookie-change'
+
+export function ownsMediaCookie(connection: InstanceConnection): boolean {
+  if (!connection.isHome || !connection.isDefault || typeof document === 'undefined') return false
+  try {
+    // The media endpoint reads the first cookie with this name.
+    const pair = document.cookie
+      .split(';')
+      .map(part => part.trim())
+      .find(part => part.startsWith('rchat_token='))
+    return !!pair && connection.api.hasToken(pair.slice('rchat_token='.length))
+  } catch {
+    return false
+  }
+}
+
 // Same-origin private media loads with the home connection's cookie.
 export function setMediaCookie(connection: InstanceConnection, token: string | null) {
   if (!connection.isHome || !connection.isDefault) return
   const attrs = `path=/; SameSite=Strict${window.location.protocol === 'https:' ? '; Secure' : ''}`
-  document.cookie = token
-    ? `rchat_token=${token}; ${attrs}; max-age=31536000`
-    : `rchat_token=; ${attrs}; max-age=0`
+  try {
+    document.cookie = token
+      ? `rchat_token=${token}; ${attrs}; max-age=31536000`
+      : `rchat_token=; ${attrs}; max-age=0`
+  } catch {
+    // Header-authenticated media remains available when the browser blocks cookies.
+  }
+  window.dispatchEvent?.(new Event(MEDIA_COOKIE_CHANGE))
 }
 
 export const fitsHome = (info: InstanceInfo, conn: InstanceConnection) =>

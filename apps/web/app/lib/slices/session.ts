@@ -1,3 +1,14 @@
+import { BOOK_COORDINATION_ERROR } from '../client/book_store'
+import { accountAdmission, addInstance, setGuest } from '../client/book'
+import {
+  confirmCredential,
+  forgetCredential,
+  accountUpdate,
+  rememberLastDm,
+  instanceDescriptor,
+  storedCredential,
+} from '../client/credentials'
+import { accountStorage } from '../client/keys'
 import { client } from '../client/client'
 import type { P2pApp } from '../p2p/app/runtime'
 import type { AccountSession } from '../client/session'
@@ -201,23 +212,17 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   const api = acct.api
   const { endSession, inSession, live, sessionMark } = acct.lifetime
   const LS = {
-    get token() {
-      return home.scoped('rchat_token')
-    },
     get guest() {
-      return home.scoped('rchat_guest')
+      return accountStorage(home).key('rchat_guest')
     },
     get guestServers() {
-      return home.scoped('rchat_guest_servers')
+      return accountStorage(home).key('rchat_guest_servers')
     },
     get guestGrants() {
-      return home.scoped('rchat_guest_grants')
+      return accountStorage(home).key('rchat_guest_grants')
     },
     get guestNames() {
-      return home.scoped('rchat_guest_names')
-    },
-    get lastDm() {
-      return home.scoped('rchat_last_dm')
+      return accountStorage(home).key('rchat_guest_names')
     },
   }
 
@@ -621,6 +626,48 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     })
   }
 
+  const recordGuest = (guest: boolean) => {
+    const instance = instanceDescriptor(home)
+    client.updateBook(book => setGuest(addInstance(book, instance), instance.origin, guest))
+  }
+  let restoring: ReturnType<typeof storedCredential> = null
+  const authenticated = async (me: Me, token: string, restore: boolean) => {
+    const expected = acct.credentialTarget ?? (restore ? restoring?.username : undefined)
+    const mark = sessionMark()
+    const changed = () =>
+      (expected && expected !== me.username) ||
+      (restore && restoring && readLocal(restoring.key) !== token)
+    const save = accountUpdate(home, me)
+    let readOnly = false
+    const current = await client.updateBook(
+      book => (mark === sessionMark() && !changed() ? save(book) : book),
+      () => {
+        readOnly = true
+      }
+    )
+    if (mark !== sessionMark()) return false
+    const admitted = current.instances
+      .find(i => i.origin === home.origin)
+      ?.accounts.some(a => a.username === me.username)
+    if (!admitted || changed()) {
+      const message = changed()
+        ? 'Saved account session changed. Sign in again.'
+        : readOnly
+          ? BOOK_COORDINATION_ERROR
+          : (accountAdmission(current, home.origin, me.username) ??
+            'Could not add the saved account.')
+      home.ws.stop()
+      api.setToken(null)
+      set({ token: null, bootError: message, error: message })
+      if (!restore) {
+        void api.logout(token).catch(() => {})
+        throw new Error(message)
+      }
+      return false
+    }
+    confirmCredential(home, me, token, restore)
+    return true
+  }
   const applyMe = (fresh: Me, keep: boolean) => {
     const cur = get()
     const same = keep && cur.me?.username === fresh.username
@@ -716,6 +763,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     try {
       const me = await api.me()
       if (!get().token || at !== sessionMark()) return
+      if (!(await authenticated(me, get().token!, true)) || at !== sessionMark()) return
       meAttempt = 0
       applyMe(me, false)
       set({ bootError: null })
@@ -1249,11 +1297,16 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     }, BOOT_RETRY_MS[attempt])
   }
 
-  const enter = (res: AuthResponse) => {
+  const enter = async (res: AuthResponse) => {
+    const mark = sessionMark()
     dropLinkCards()
-    writeLocal(LS.token, res.token)
-    setMediaCookie(home, res.token)
-    writeLocal(LS.guest, null)
+    if (!(await authenticated(res.user, res.token, false)) || mark !== sessionMark()) return
+    if (readLocal(accountStorage(home).key('rchat_token')) === res.token)
+      setMediaCookie(home, res.token)
+    if (get().guest) {
+      writeLocal(LS.guest, null)
+      recordGuest(false)
+    }
     api.setToken(res.token)
     applyMe(res.user, false)
     // A fresh login gets fresh history even when the expired session ended
@@ -1271,9 +1324,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   const authenticate = async (path: string, body: LoginRequest | RegisterRequest) => {
     const mark = sessionMark()
+    const limit = accountAdmission(client.book.getState(), home.origin, body.username)
+    if (limit) throw new Error(limit)
     const response = await authRequest(path, body)
     if (mark !== sessionMark()) throw new Ended('The session ended')
-    enter(response)
+    await enter(response)
   }
 
   // Leaves the current view for none (home); a previewed server is forgotten on the way out.
@@ -1426,6 +1481,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         const info = await api.instance()
         if (mark !== sessionMark()) return null
         if (!fitsHome(info, home)) throw new Error('instance endpoints moved to another site')
+        accountStorage(home)
         noteHomeInfo(info, home)
         set({ instance: info, instanceHost: home.host })
         void ice.refresh()
@@ -1593,8 +1649,9 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       await get().loadInstance()
       if (mark !== sessionMark()) return
       void get().loadSettings()
-      const token = readLocal(LS.token)
-      const guest = readLocal(LS.guest) === '1'
+      restoring = storedCredential(home, client.book.getState(), acct.credentialTarget)
+      const token = restoring?.token
+      const guest = typeof acct.credentialTarget !== 'string' && readLocal(LS.guest) === '1'
       const stored = readJson<unknown>(LS.guestServers, null)
       const guestServers = Array.isArray(stored)
         ? stored.filter((n): n is string => typeof n === 'string')
@@ -1613,19 +1670,23 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
             expireSession()
             return
           }
-          setMediaCookie(home, token)
+          if (readLocal(accountStorage(home).key('rchat_token')) === token)
+            setMediaCookie(home, token)
           set({ token, guest: false })
           startWs()
           meAttempt = 0
           retryMe(e)
           return
         }
-        setMediaCookie(home, token)
+        if (!(await authenticated(me, token, true)) || mark !== sessionMark()) return
+        if (readLocal(accountStorage(home).key('rchat_token')) === token)
+          setMediaCookie(home, token)
         applyMe(me, false)
         set({ token, guest: false, bootError: null })
         startWs()
         await bootUrl()
       } else if (guest) {
+        recordGuest(true)
         persistGrants(readJson<Record<string, string>>(LS.guestGrants, {}))
         set({
           guest: true,
@@ -1696,8 +1757,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     logout: () => {
       const token = get().authExpired ? null : get().token
-      const username = get().me?.username
-      if (username) {
+      const username = get().me?.username ?? restoring?.username
+      const localToken = get().token ?? restoring?.token ?? null
+      const guest = get().guest
+      if (
+        username &&
+        (!readLocal(accountStorage(home).token(username)) ||
+          readLocal(accountStorage(home).token(username)) === localToken)
+      ) {
         writeLocal(home.scoped(secretsKey(username)), null)
         writeLocal(home.scoped(forwardKey(username)), null)
         writeLocal(home.scoped(historyKey(username)), null)
@@ -1718,10 +1785,14 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       useProfanity(false)
       rtc.leave()
       p2p.signOut()
-      writeLocal(LS.token, null)
-      setMediaCookie(home, null)
-      writeLocal(LS.guest, null)
-      writeLocal(LS.guestGrants, null)
+      if (forgetCredential(home, username, localToken)) setMediaCookie(home, null)
+      restoring = null
+      if (!guest && readLocal(LS.guest) !== '1') writeLocal(LS.guestGrants, null)
+      if (guest) {
+        writeLocal(LS.guest, null)
+        writeLocal(LS.guestGrants, null)
+        recordGuest(false)
+      }
       api.setToken(null)
       api.setGrants({})
       home.ws.setGrants({})
@@ -1817,6 +1888,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     enterGuest: () =>
       act(async () => {
+        recordGuest(true)
         writeLocal(LS.guest, '1')
         writeLocal(LS.guestServers, JSON.stringify(['rchat']))
         persistGrants({})
@@ -1910,7 +1982,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
         syncUrl(view, nav)
         get().setViewing(null)
         const username = get().me?.username
-        if (username) writeLocal(`${LS.lastDm}:${username}`, String(dmId))
+        if (username) rememberLastDm(home, username, get().token, dmId)
         if (username && !get().dms.some(d => d.id === dmId))
           void get()
             .ensureDms([dmId])
@@ -1979,7 +2051,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     openLastDm: () => {
       const { me } = get()
       if (!me) return
-      const stored = Number(readLocal(`${LS.lastDm}:${me.username}`))
+      const stored = Number(readLocal(accountStorage(home).lastDm(me.username)))
       const known = () => get().dms.some(d => d.id === stored)
       const at = sessionMark()
       const go = () => {

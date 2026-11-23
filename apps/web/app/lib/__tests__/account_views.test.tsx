@@ -1,3 +1,4 @@
+import { accountStorage } from '../client/keys'
 import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import SearchPanel from '../../components/search_panel'
@@ -53,7 +54,8 @@ test('startup restores the saved session for the requested instance', async () =
   const second = testAccount('reader', 'https://second.test')
   const started: string[] = []
   const shown = client.shown
-  const key = second.conn.scoped('rchat_token')
+  second.credentialTarget = 'reader'
+  const key = accountStorage(second.conn).token('reader')
   try {
     client.shown = () => first
     localStorage.setItem(key, 'saved')

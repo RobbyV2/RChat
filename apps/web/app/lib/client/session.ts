@@ -26,6 +26,7 @@ import { KeyScope } from './keys'
 export type AccountId = string
 
 export class AccountSession {
+  credentialTarget: string | null | undefined
   readonly identities = new P2pIdentities(this)
   readonly channelEdit = createChannelEdit()
   readonly adminConfig = createStore<{ config: AdminConfig | null }>(() => ({ config: null }))

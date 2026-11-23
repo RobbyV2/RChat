@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { AccountSession } from '../client/session'
-import { endpointsFrom, InstanceConnection } from '../instances'
+import { endpointsFrom, InstanceConnection, rememberInstance } from '../instances'
 import { removeP2pDb } from '../p2p/db'
 import { PeerTransport } from '../p2p/transport'
 import { scopePingCount } from '../store'
@@ -65,6 +65,7 @@ test('two instances bootstrap the same username and route messages, badges and p
       WebSocket: Socket,
       localStorage: memoryStorage,
       window: Object.assign(new EventTarget(), {
+        localStorage: memoryStorage,
         location: new URL('https://client.isolation.test/'),
         history: { state: null, replaceState() {}, pushState() {} },
       }),
@@ -105,8 +106,10 @@ test('two instances bootstrap the same username and route messages, badges and p
         return Response.json([])
       },
     })
-    for (const a of accounts)
+    for (const a of accounts) {
+      rememberInstance(a.conn.origin, await a.api.instance(), memoryStorage)
       memoryStorage.setItem(a.conn.scoped('rchat_token'), 'token-' + a.conn.host)
+    }
     await Promise.all(accounts.map(a => a.store.getState().bootstrap()))
     for (const a of accounts) {
       const socket = sockets.get(a.conn.host)!

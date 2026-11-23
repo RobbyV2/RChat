@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, jest, test } from 'bun:test'
-import { resetSessionCaches, useStore } from '../store'
+import { getHomeSession, resetSessionCaches, useStore } from '../store'
 import { advance, me, memoryStorage } from './fixtures'
 
 afterAll(resetSessionCaches)
@@ -67,6 +67,7 @@ beforeEach(() => {
 
 afterEach(() => {
   st().logout()
+  getHomeSession().credentialTarget = undefined
   jest.useRealTimers()
   globalThis.fetch = real.fetch
   g.window = real.window
@@ -83,6 +84,7 @@ describe('account load at boot', () => {
     expect(st().me).toBeNull()
     expect(st().bootError).not.toBeNull()
     expect(meCalls).toBe(1)
+    expect(memoryStorage.getItem('rchat_token:bob')).toBeNull()
     await advance(1000, () => meCalls > 1)
     expect(meCalls).toBe(2)
     await advance(120_000, () => !!st().me)
@@ -91,6 +93,21 @@ describe('account load at boot', () => {
     expect(st().bootError).toBeNull()
     expect(meCalls).toBe(5)
     expect(memoryStorage.getItem('rchat_token')).toBe('tok')
+    expect(memoryStorage.getItem('rchat_token:bob')).toBe('tok')
+  })
+
+  test('an explicit account never falls back to the legacy alias', async () => {
+    getHomeSession().credentialTarget = 'alice'
+    await st().bootstrap()
+    expect(meCalls).toBe(0)
+    expect(st().me).toBeNull()
+    memoryStorage.setItem('rchat_token:alice', 'alice-token')
+    answers = [200]
+    await st().bootstrap()
+    expect(meCalls).toBe(1)
+    expect(st().me).toBeNull()
+    expect(memoryStorage.getItem('rchat_token')).toBe('tok')
+    expect(memoryStorage.getItem('rchat_token:bob')).toBeNull()
   })
 
   test('a 401 signs out', async () => {

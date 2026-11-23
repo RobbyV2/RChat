@@ -2,6 +2,8 @@ import { dbName } from '../p2p/db'
 import {
   defaultEndpoints,
   readLocal,
+  readKnown,
+  localKeys,
   remoteAllowed,
   writeLocal,
   type InstanceConnection,
@@ -139,7 +141,45 @@ export class KeyScope {
 
   local(base: string) {
     const name = this.username()
+    if (name && (base === 'rchat_token' || base === 'rchat_last_dm'))
+      return accountStorage(this.conn).key(base + ':' + name)
     if (base === 'rchat_p2p_identities' && name) return manifestKey(this.conn, name)
     return this.conn.scoped(name ? `${base}:${name}` : base)
+  }
+}
+
+// Reserve the historical host namespace for one exact origin. On a collision
+// the second origin uses its full origin for credentials and DM pointers.
+export function accountStorage(conn: InstanceConnection) {
+  const binding = conn.scoped('rchat_auth_origin')
+  const origin = conn.origin
+  const modeKey = 'rchat_auth_scope:' + origin
+  let mode = readLocal(modeKey)
+  const owner = readLocal(binding)
+  if (mode === null) {
+    const others = Object.keys(readKnown()).filter(other => hostOf(other) === conn.host)
+    const selected = readLocal('rchat_home')
+    if (selected && hostOf(selected) === conn.host && !others.includes(selected))
+      others.push(selected)
+    const existing =
+      readLocal(conn.scoped('rchat_token')) !== null ||
+      readLocal(conn.scoped('rchat_guest')) !== null ||
+      localKeys('rchat_token:').some(key => key.endsWith('@' + conn.host))
+    const historical =
+      owner === origin ||
+      (owner === null &&
+        (conn.isDefault ||
+          (others.every(other => other === origin) && (!existing || others.includes(origin)))))
+    mode = historical ? 'host' : 'origin'
+    if (historical && owner !== origin) writeLocal(binding, origin)
+    if (historical && readLocal(binding) !== origin) mode = 'origin'
+    writeLocal(modeKey, mode)
+  }
+  const scoped = (base: string) =>
+    mode === 'host' && readLocal(binding) === origin ? conn.scoped(base) : base + '@' + origin
+  return {
+    key: scoped,
+    token: (username: string) => scoped('rchat_token:' + username),
+    lastDm: (username: string) => scoped('rchat_last_dm:' + username),
   }
 }

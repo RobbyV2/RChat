@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { endpointsFrom, setMediaCookie } from '../instances'
-import { me } from './fixtures'
+import { me, memoryStorage } from './fixtures'
+import { accountStorage } from '../client/keys'
 import { testAccount } from './test_account'
 import type { MeUpdated } from '../api'
 import type { InstanceInfo, Me, SiteSettings } from '../types'
@@ -32,12 +33,14 @@ test('bootstrap ignores a saved account response received after disposal', async
   const arrived = Promise.withResolvers<void>()
   const response = Promise.withResolvers<Me>()
   let starts = 0
+  account.credentialTarget = 'alice'
+  const key = accountStorage(account.conn).token('alice')
+  const previous = memoryStorage.getItem(key)
+  memoryStorage.setItem(key, 'saved')
   try {
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
-      value: {
-        getItem: (key: string) => (key === account.conn.scoped('rchat_token') ? 'saved' : null),
-      },
+      value: memoryStorage,
     })
     account.store.setState({
       me: null,
@@ -60,6 +63,8 @@ test('bootstrap ignores a saved account response received after disposal', async
     expect(account.store.getState().me).toBeNull()
     expect(account.store.getState().token).toBeNull()
   } finally {
+    if (previous === null) memoryStorage.removeItem(key)
+    else memoryStorage.setItem(key, previous)
     if (oldStorage) Object.defineProperty(globalThis, 'localStorage', oldStorage)
     else Reflect.deleteProperty(globalThis, 'localStorage')
   }
