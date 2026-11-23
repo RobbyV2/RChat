@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useStore } from '../lib/store'
+import { AccountProvider } from '../lib/client/react'
+import { client } from '../lib/client/client'
 import { notifications } from '../lib/platform'
 import { useGuestPostingCheck } from '../components/use_guest_posting_check'
 import { startApp } from '../lib/start'
@@ -77,6 +79,14 @@ p2pHost.muted = () => useStore.getState().selfAudio.muted
 addInboxAdapter(p2pInbox)
 
 export default function AppShell() {
+  return (
+    <AccountProvider session={client.shown()}>
+      <Chat />
+    </AccountProvider>
+  )
+}
+
+function Chat() {
   const router = useRouter()
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)

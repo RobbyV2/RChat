@@ -1,4 +1,8 @@
 import { create } from 'zustand'
+import { AccountSession } from './client/session'
+import { useStore } from './client/react'
+
+export { useStore }
 import {
   canView,
   channelTarget,
@@ -96,7 +100,7 @@ export const eventTables = () => routed
 let forgetStoreSession = () => {}
 let forgetChannelViews: (keys: string[]) => void = () => {}
 
-export const useStore = create<RChatState>()((set, get) => {
+const chatStore = create<RChatState>()((set, get) => {
   const epochs: Record<string, number> = {}
   const loadPage = pageLoader(epochs)
 
@@ -517,16 +521,18 @@ export const useStore = create<RChatState>()((set, get) => {
   }
 })
 
-bindStore(useStore)
+export const homeSession = new AccountSession(home, chatStore)
 
-const pristine = { ...useStore.getInitialState() }
+bindStore(chatStore)
+
+const pristine = { ...chatStore.getInitialState() }
 
 // Test files share one store; each one calls this when it ends, so no state, queued read or
 // cached window reaches the next file. The app never calls it.
 export const resetSessionCaches = () => {
   forgetStoreSession()
-  Object.assign(useStore.getInitialState(), pristine)
-  useStore.setState({ ...pristine }, true)
+  Object.assign(chatStore.getInitialState(), pristine)
+  chatStore.setState({ ...pristine }, true)
 }
 
 const clearHiddenForward = (s: RChatState) => {
@@ -539,7 +545,7 @@ const clearHiddenForward = (s: RChatState) => {
     s.clearForward()
 }
 useP2p.subscribe((s, prev) => {
-  if (s.servers !== prev.servers) clearHiddenForward(useStore.getState())
+  if (s.servers !== prev.servers) clearHiddenForward(chatStore.getState())
 })
 // Without each other's people: rosters drop out while their room is closed here.
 const withoutRooms = (marks: Record<number, string[]>, hidden: Set<number>) => {
@@ -569,7 +575,7 @@ const hideClosedRoom = (s: RChatState) => {
     voiceHushed: withoutRooms(s.voiceHushed, hidden),
   }
   const pruned = Object.fromEntries(Object.entries(rosters).filter(([, v]) => v !== null))
-  if (Object.keys(pruned).length) useStore.setState(pruned)
+  if (Object.keys(pruned).length) chatStore.setState(pruned)
   const keys = new Set<string>()
   for (const [key, list] of Object.entries(s.messages)) {
     if (key.startsWith('c') && hidden.has(Number(key.slice(1)))) {
@@ -587,7 +593,7 @@ const hideClosedRoom = (s: RChatState) => {
     s.panel.root.channel_id !== null &&
     hidden.has(s.panel.root.channel_id)
   )
-    useStore.setState({ panel: null })
+    chatStore.setState({ panel: null })
   const notices = s.notices.filter(
     n => !keys.has(n.key) && !(n.key.startsWith('c') && hidden.has(Number(n.key.slice(1))))
   )
@@ -595,13 +601,13 @@ const hideClosedRoom = (s: RChatState) => {
     ([, c]) => c?.channel_id == null || !hidden.has(c.channel_id)
   )
   if (notices.length !== s.notices.length || linkCards.length !== Object.keys(s.linkCards).length)
-    useStore.setState({ notices, linkCards: Object.fromEntries(linkCards) })
+    chatStore.setState({ notices, linkCards: Object.fromEntries(linkCards) })
   const { view, voice } = s
   const voiceTarget = voice && instanceTarget(s, voice.server, voice.channelId)
   if (voiceTarget && !canView(voiceTarget)) s.leaveVoice()
   const target = view?.kind === 'channel' && instanceTarget(s, view.server, view.channelId)
   if (target && !canView(target)) {
-    useStore.setState({
+    chatStore.setState({
       panel: null,
       pins: null,
       contextMenu: null,
@@ -613,9 +619,9 @@ const hideClosedRoom = (s: RChatState) => {
   }
 }
 useViewing.subscribe((s, prev) => {
-  if (s.revision !== prev.revision) hideClosedRoom(useStore.getState())
+  if (s.revision !== prev.revision) hideClosedRoom(chatStore.getState())
 })
-useStore.subscribe((s, prev) => {
+chatStore.subscribe((s, prev) => {
   if (s.servers !== prev.servers) hideClosedRoom(s)
   if (s.settings !== prev.settings) p2pGate.settings(s.settings)
 })

@@ -1,0 +1,546 @@
+{
+  "[[...slug]]/app_shell.tsx": {
+    "useStore.getState": 23,
+    "useStore.setState": 1
+  },
+  "components/admin/accounts.tsx": {
+    "import api": 1,
+    "import home": 1
+  },
+  "components/admin/announcements.tsx": {
+    "import api": 1,
+    "import home": 1
+  },
+  "components/admin/audit.tsx": {
+    "import api": 1
+  },
+  "components/admin/branding.tsx": {
+    "import api": 1
+  },
+  "components/admin/config_state.ts": {
+    "import api": 1,
+    "useStore.getState": 1
+  },
+  "components/admin/overview.tsx": {
+    "import home": 1
+  },
+  "components/admin/server_manage.tsx": {
+    "import api": 1
+  },
+  "components/admin/servers.tsx": {
+    "import api": 1
+  },
+  "components/admin/users.tsx": {
+    "import api": 1
+  },
+  "components/announcements.tsx": {
+    "import api": 1,
+    "import home": 1,
+    "useStore.getState": 2
+  },
+  "components/api_console.tsx": {
+    "import api": 1,
+    "useStore.getState": 2
+  },
+  "components/audit_log.tsx": {
+    "import api": 1
+  },
+  "components/backup_phrase/reveal.tsx": {
+    "useStore.subscribe": 1
+  },
+  "components/call_buttons.tsx": {
+    "useStore.getState": 1
+  },
+  "components/channel_sidebar.tsx": {
+    "useP2p.getState": 1,
+    "useStore.getState": 4
+  },
+  "components/channel_topic.tsx": {
+    "useStore.getState": 1,
+    "useStore.subscribe": 1
+  },
+  "components/code_block.tsx": {
+    "import api": 1,
+    "useStore.getState": 1
+  },
+  "components/config_sync.tsx": {
+    "import api": 1,
+    "useStore.getState": 1
+  },
+  "components/context_menu.tsx": {
+    "useStore.getState": 3,
+    "useStore.setState": 1
+  },
+  "components/desktop_bridge.tsx": {
+    "import home": 1,
+    "useStore.getState": 2
+  },
+  "components/display_name.tsx": {
+    "useStore.getState": 1
+  },
+  "components/emoji_picker.tsx": {
+    "useStore.getState": 1
+  },
+  "components/forwards.tsx": {
+    "useStore.getState": 3
+  },
+  "components/friends.tsx": {
+    "import api": 1,
+    "useStore.getState": 1
+  },
+  "components/home.tsx": {
+    "useStore.getState": 4
+  },
+  "components/inbox.tsx": {
+    "useStore.getState": 2
+  },
+  "components/instance_badge.tsx": {
+    "import home": 1
+  },
+  "components/invite_card.tsx": {
+    "import api": 1,
+    "import home": 1,
+    "import registry": 1,
+    "useStore.getState": 5
+  },
+  "components/markdown_message.tsx": {
+    "import api": 1,
+    "import home": 1,
+    "useStore.getState": 4
+  },
+  "components/message_composer.tsx": {
+    "import api": 1,
+    "useStore.getState": 3
+  },
+  "components/message_editor.tsx": {
+    "useStore.getState": 2
+  },
+  "components/message_link_card.tsx": {
+    "useStore.getState": 2
+  },
+  "components/message_pane.tsx": {
+    "useStore.getState": 4
+  },
+  "components/mobile_bridge.tsx": {
+    "useStore.getState": 1
+  },
+  "components/p2p/add_contact.tsx": {
+    "useP2p.getState": 1,
+    "useStore.getState": 1
+  },
+  "components/p2p/p2p_call.tsx": {
+    "useStore.getState": 1
+  },
+  "components/p2p/p2p_chat.tsx": {
+    "useP2p.getState": 3,
+    "useStore.getState": 7
+  },
+  "components/p2p/p2p_home.tsx": {
+    "useP2p.getState": 2,
+    "useStore.getState": 1
+  },
+  "components/p2p/p2p_invite_dialog.tsx": {
+    "useStore.getState": 3
+  },
+  "components/p2p/p2p_server_flows.tsx": {
+    "useStore.getState": 1
+  },
+  "components/p2p/p2p_server_roles.tsx": {
+    "useStore.getState": 3
+  },
+  "components/p2p/p2p_server_settings.tsx": {
+    "useStore.getState": 3
+  },
+  "components/p2p/p2p_server_view.tsx": {
+    "useStore.getState": 1
+  },
+  "components/palette.tsx": {
+    "useStore.getState": 3
+  },
+  "components/pins.tsx": {
+    "useStore.getState": 4
+  },
+  "components/poll_card.tsx": {
+    "import api": 1,
+    "useStore.getState": 2
+  },
+  "components/profile_card.tsx": {
+    "import api": 1,
+    "useStore.getState": 9,
+    "useStore.setState": 1
+  },
+  "components/search_panel.tsx": {
+    "useStore.getState": 2
+  },
+  "components/selection.tsx": {
+    "useStore.getState": 11
+  },
+  "components/server_access.tsx": {
+    "import api": 1,
+    "import home": 1
+  },
+  "components/server_dialogs.tsx": {
+    "import api": 1
+  },
+  "components/server_rail.tsx": {
+    "useStore.getState": 1
+  },
+  "components/server_settings.tsx": {
+    "import api": 1,
+    "useStore.getState": 3
+  },
+  "components/settings_menu.tsx": {
+    "import api": 1,
+    "useStore.getState": 1
+  },
+  "components/system_messages.tsx": {
+    "import api": 1
+  },
+  "components/text_assist.tsx": {
+    "import api": 1
+  },
+  "components/thread_panel.tsx": {
+    "useStore.getState": 3
+  },
+  "components/ui.tsx": {
+    "useStore.getState": 1
+  },
+  "components/upload_expiry.tsx": {
+    "import api": 1,
+    "useStore.setState": 1
+  },
+  "components/use_guest_posting_check.ts": {
+    "import api": 1,
+    "useStore.setState": 3
+  },
+  "components/voice_grid.tsx": {
+    "useStore.getState": 2
+  },
+  "components/webhooks_dialog.tsx": {
+    "import api": 1
+  },
+  "components/widget_settings.tsx": {
+    "import api": 1,
+    "import home": 1
+  },
+  "lib/actions/admin.ts": {
+    "useStore.getState": 8
+  },
+  "lib/actions/channel.ts": {
+    "useStore.getState": 1
+  },
+  "lib/actions/ctx.ts": {
+    "useStore.getState": 2
+  },
+  "lib/actions/dm.ts": {
+    "useStore.getState": 1
+  },
+  "lib/actions/folder.ts": {
+    "useP2p.getState": 1
+  },
+  "lib/actions/friends.ts": {
+    "useStore.getState": 1
+  },
+  "lib/actions/global.ts": {
+    "useStore.getState": 1
+  },
+  "lib/actions/guest_voice.ts": {
+    "useStore.getState": 1
+  },
+  "lib/actions/header.ts": {
+    "useStore.getState": 1
+  },
+  "lib/actions/index.ts": {
+    "useStore.getState": 1
+  },
+  "lib/actions/masked.ts": {
+    "useStore.getState": 1
+  },
+  "lib/actions/member.ts": {
+    "useStore.getState": 1
+  },
+  "lib/actions/menu.ts": {
+    "useStore.getState": 5,
+    "useStore.setState": 1,
+    "useStore.subscribe": 1
+  },
+  "lib/actions/message.ts": {
+    "import api": 1,
+    "useStore.getState": 1
+  },
+  "lib/actions/notify.ts": {
+    "useStore.getState": 1
+  },
+  "lib/actions/p2p_chat.ts": {
+    "useP2p.getState": 5,
+    "useStore.getState": 1
+  },
+  "lib/actions/p2p_contact.ts": {
+    "useP2p.getState": 1,
+    "useStore.getState": 1
+  },
+  "lib/actions/p2p_limits.ts": {
+    "useP2p.getState": 1,
+    "useStore.getState": 2
+  },
+  "lib/actions/p2p_server.ts": {
+    "useP2p.getState": 5,
+    "useStore.getState": 1
+  },
+  "lib/actions/place.ts": {
+    "import api": 1,
+    "useStore.getState": 1
+  },
+  "lib/actions/server.ts": {
+    "import api": 1,
+    "useStore.getState": 1
+  },
+  "lib/actions/settings.ts": {
+    "useP2p.getState": 1,
+    "useStore.getState": 1
+  },
+  "lib/actions/steps.ts": {
+    "useStore.getState": 1
+  },
+  "lib/actions/voice.ts": {
+    "useStore.getState": 1
+  },
+  "lib/api_console.ts": {
+    "create in useApiDoc": 1,
+    "import api": 1,
+    "import home": 1
+  },
+  "lib/apps/preview.ts": {
+    "useStore.getState": 7,
+    "useStore.subscribe": 1
+  },
+  "lib/forward_access.ts": {
+    "useStore.getState": 3
+  },
+  "lib/forward_viewing.ts": {
+    "import api": 1,
+    "useP2p.getState": 1
+  },
+  "lib/friends_store.ts": {
+    "import api": 1
+  },
+  "lib/home_store.ts": {
+    "create in useHome": 1,
+    "import home": 1,
+    "let summaryMemo": 1,
+    "useStore.getState": 2,
+    "useStore.subscribe": 1
+  },
+  "lib/ice.ts": {
+    "import api": 1,
+    "import home": 1
+  },
+  "lib/inbox_source.ts": {
+    "import api": 1,
+    "let adapters": 1,
+    "let bounds": 1,
+    "new Map in bounds": 1,
+    "useStore.getState": 5
+  },
+  "lib/media_src.ts": {
+    "import api": 1
+  },
+  "lib/p2p.ts": {
+    "import home": 1,
+    "new Map in previews": 1
+  },
+  "lib/p2p/app/account.ts": {
+    "import api": 1,
+    "import home": 1,
+    "useP2p.getState": 16,
+    "useP2p.setState": 34
+  },
+  "lib/p2p/app/attachments.ts": {
+    "import home": 1,
+    "let pendingSeq": 1,
+    "new Map in fileTimers": 1,
+    "new Map in sizes": 1,
+    "new Set in big": 1,
+    "useP2p.getState": 7,
+    "useP2p.setState": 3
+  },
+  "lib/p2p/app/badge.ts": {
+    "import home": 1,
+    "let badgeTimer": 1,
+    "let expiryTimer": 1,
+    "useP2p.getState": 2,
+    "useP2p.setState": 8
+  },
+  "lib/p2p/app/calls.ts": {
+    "useP2p.getState": 3,
+    "useP2p.setState": 4
+  },
+  "lib/p2p/app/dms.ts": {
+    "let jumpGen": 1,
+    "new Map in timers": 1,
+    "useP2p.getState": 33,
+    "useP2p.setState": 33
+  },
+  "lib/p2p/app/inbox.ts": {
+    "useP2p.getState": 10,
+    "useP2p.setState": 1
+  },
+  "lib/p2p/app/move.ts": {
+    "useP2p.getState": 9,
+    "useP2p.setState": 2
+  },
+  "lib/p2p/app/rail.ts": {
+    "import home": 1,
+    "useP2p.getState": 13,
+    "useP2p.setState": 2
+  },
+  "lib/p2p/app/servers.ts": {
+    "let searchAccess": 1,
+    "let searchGen": 1,
+    "new Map in lastChannel": 1,
+    "new Map in serverTimers": 1,
+    "new Map in threadsChecked": 1,
+    "useP2p.getState": 39,
+    "useP2p.setState": 24
+  },
+  "lib/p2p/app/store.ts": {
+    "create in useP2p": 1,
+    "import home": 1,
+    "let badges": 1,
+    "let calls": 1,
+    "let data": 1,
+    "let dms": 1,
+    "let gen": 1,
+    "let keeper": 1,
+    "let leader": 1,
+    "let limits": 1,
+    "let node": 1,
+    "let pingLog": 1,
+    "let reader": 1,
+    "let servers": 1,
+    "let store": 1,
+    "let unwatch": 1
+  },
+  "lib/p2p/inbox_source.ts": {
+    "useP2p.getState": 6,
+    "useStore.getState": 3,
+    "useStore.subscribe": 1
+  },
+  "lib/p2p/palette_source.ts": {
+    "useP2p.getState": 7
+  },
+  "lib/p2p/transport.ts": {
+    "import home": 1
+  },
+  "lib/p2p/user_limits.ts": {
+    "import home": 1
+  },
+  "lib/palette_results.ts": {
+    "useStore.getState": 1
+  },
+  "lib/palette_store.ts": {
+    "create in usePaletteUi": 1,
+    "import home": 1,
+    "let escapeHolder": 1,
+    "useStore.getState": 1
+  },
+  "lib/palette_sync.ts": {
+    "create in useIndexStatus": 1,
+    "import api": 1,
+    "import home": 1,
+    "let epoch": 1,
+    "let gen": 1,
+    "let index": 1,
+    "let mode": 1,
+    "let owner": 1,
+    "let ownerId": 1,
+    "let ownerPrefix": 1,
+    "let saveTimer": 1,
+    "let saving": 1,
+    "let seenMembers": 1,
+    "let seenMessages": 1,
+    "let wiping": 1,
+    "new Map in seenMembers": 1,
+    "new Map in seenMessages": 1,
+    "new Map in sources": 1,
+    "new Map in verified": 1,
+    "new Set in INDEXED_KINDS": 1,
+    "useStore.getState": 13,
+    "useStore.subscribe": 1
+  },
+  "lib/platform/index.ts": {
+    "useStore.getState": 1
+  },
+  "lib/polls_store.ts": {
+    "import api": 1
+  },
+  "lib/remote_invite.ts": {
+    "import home": 1,
+    "import registry": 1,
+    "new Map in connections": 1,
+    "new Map in invites": 1,
+    "new Set in requested": 1
+  },
+  "lib/rtc.ts": {
+    "import home": 1
+  },
+  "lib/selection_store.ts": {
+    "import api": 1
+  },
+  "lib/slices/ctx.ts": {
+    "import home": 1,
+    "let session": 1,
+    "useP2p.getState": 1
+  },
+  "lib/slices/messages.ts": {
+    "import api": 1,
+    "import home": 1,
+    "let draining": 1,
+    "let optSeq": 1,
+    "let reactionQueue": 1,
+    "new Map in pendingEmbeds": 1,
+    "new Map in reactionQueue": 1,
+    "new Map in reactorCache": 1,
+    "new Set in draining": 1
+  },
+  "lib/slices/presence.ts": {
+    "import home": 1
+  },
+  "lib/slices/reads.ts": {
+    "import api": 1
+  },
+  "lib/slices/rtc.ts": {
+    "import home": 1
+  },
+  "lib/slices/servers.ts": {
+    "import api": 1,
+    "import home": 1
+  },
+  "lib/slices/session.ts": {
+    "import api": 1,
+    "import home": 1,
+    "new Set in wsTaps": 1
+  },
+  "lib/slices/ui.ts": {
+    "import home": 1,
+    "let bound": 1
+  },
+  "lib/start.ts": {
+    "import home": 1,
+    "useStore.getState": 3
+  },
+  "lib/store.ts": {
+    "import home": 1
+  },
+  "lib/viewing.ts": {
+    "import home": 1
+  },
+  "login/page.tsx": {
+    "import api": 1,
+    "import home": 1,
+    "useStore.getState": 1
+  },
+  "widget/page.tsx": {
+    "useStore.getState": 1
+  }
+}
