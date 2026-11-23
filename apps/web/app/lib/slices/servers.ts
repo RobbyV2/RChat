@@ -15,7 +15,6 @@ import {
 } from '../categories'
 import type { FriendsDeps } from '../friends_store'
 
-import { staleInvites } from '../invite'
 import { deniedAccess, runJoinStep } from '../join_flow'
 import {
   type Pager,
@@ -690,7 +689,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
   const onServerChange = (ev: Extract<WsEvent, { type: 'server_renamed' | 'server_updated' }>) => {
     const { server } = ev
     const old_name = ev.type === 'server_renamed' ? ev.old_name : server.name
-    staleInvites(old_name)
+    acct.inviteUpdates.staleInvites(old_name)
     set(s => applyServerChange(s, ev))
     saveLayout(renameServer(get().layout, old_name, server.name))
     saveNotify(renameServerRule(get().notifyPrefs, old_name, server.name))
@@ -728,7 +727,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
   }
 
   const onMemberGone = (ev: Extract<WsEvent, { type: 'member_left' | 'member_kicked' }>) => {
-    staleInvites(ev.server)
+    acct.inviteUpdates.staleInvites(ev.server)
     const banned = ev.type === 'member_kicked' && ev.banned
     if (get().me?.username === ev.username) {
       if (ev.type === 'member_kicked') removedFrom(ev.server, banned)
@@ -1229,7 +1228,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     server_renamed: onServerChange,
     server_updated: onServerChange,
     server_deleted: ev => {
-      staleInvites(ev.name)
+      acct.inviteUpdates.staleInvites(ev.name)
       dropServer(ev.name)
       set(s => ({
         adminOverview: s.adminOverview
@@ -1242,13 +1241,13 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       }))
     },
     server_banned: ev => {
-      staleInvites(ev.server)
+      acct.inviteUpdates.staleInvites(ev.server)
       const { me, servers, view } = get()
       const here = view?.kind === 'channel' && view.server === ev.server
       if (me?.username === ev.username && (here || servers[ev.server])) bannedFrom(ev.server)
     },
     member_joined: ev => {
-      staleInvites(ev.server)
+      acct.inviteUpdates.staleInvites(ev.server)
       const self = get().me?.username === ev.member.username
       if (!self) patchServer(ev.server, d => ({ ...d, member_count: d.member_count + 1 }))
       patchMembers(ev.server, list => [
@@ -1405,7 +1404,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       reauthorLinkCards(u)
     },
     banned: ev => {
-      staleInvites(null)
+      acct.inviteUpdates.staleInvites(null)
       if (get().me?.username === ev.username) {
         expireSession()
         return

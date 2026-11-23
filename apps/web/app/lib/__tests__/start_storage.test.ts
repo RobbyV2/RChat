@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { api, home } from '../instances'
+import { api, home, sessionStore } from '../instances'
 import { dropStashedInvite, stashInvite, takeStashedInvite } from '../invite'
 import { hasStashedConfig, takeStashedConfig } from '../config_transfer'
 import { useStore, resetSessionCaches } from '../store'
@@ -144,11 +144,11 @@ for (const [browser, storage] of BROWSERS)
       ])
       expect(st().syncInvite()).toBe(false)
       expect(st().syncConfigLink()).toBe(false)
-      expect(takeStashedInvite('rchat')).toBeNull()
-      expect(takeStashedConfig()).toBeNull()
-      expect(hasStashedConfig()).toBe(false)
-      stashInvite({ server: 'rchat', password: null })
-      dropStashedInvite()
+      expect(takeStashedInvite('rchat', null, sessionStore)).toBeNull()
+      expect(takeStashedConfig(sessionStore)).toBeNull()
+      expect(hasStashedConfig(sessionStore)).toBe(false)
+      stashInvite({ server: 'rchat', password: null }, sessionStore)
+      dropStashedInvite(sessionStore)
     })
 
     test('an invite link opens signed out', async () => {

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useStore } from '../lib/store'
+import { getHomeSession, useStore } from '../lib/store'
 import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
 import { client } from '../lib/client/client'
 import type { RChatState } from '../lib/store_types'
@@ -50,17 +50,29 @@ import { P2pChannelPane, P2pMemberList, P2pServerSidebar } from '../components/p
 import { P2pThreadPanel } from '../components/p2p/p2p_thread'
 import { P2pSearchPanel } from '../components/p2p/p2p_search'
 import { p2p, p2pHost, useP2p } from '../lib/p2p/app'
-import { p2pInbox, startP2pPings } from '../lib/p2p/inbox_source'
+import { createP2pInbox, startP2pPings } from '../lib/p2p/inbox_source'
 import { startP2pIndex } from '../lib/p2p/palette_source'
 
 // P2P conversations notify through the same settings, toasts and read state as the rest.
-p2pHost.prefs = () => useStore.getState().notifyPrefs
-p2pHost.alert = a => useStore.getState().alertFrom(a)
-p2pHost.following = scope => useStore.getState().atBottom[scope] === true
-p2pHost.typingOn = () => useStore.getState().typingOn
-p2pHost.toast = (text, name) => useStore.getState().showToast(text, name)
+const p2pOwner = () => p2pHost.account ?? getHomeSession()
+p2pHost.prefs = () => p2pOwner().store.getState().notifyPrefs
+p2pHost.alert = alert => {
+  const owner = p2pOwner()
+  owner.store.getState().alertFrom({
+    ...alert,
+    go: owner.lifetime.inSession(() => {
+      if (owner === p2pOwner()) alert.go()
+    }),
+  })
+}
+p2pHost.following = scope => {
+  const owner = p2pOwner()
+  return owner === client.shown() && owner.store.getState().atBottom[scope] === true
+}
+p2pHost.typingOn = () => p2pOwner().store.getState().typingOn
+p2pHost.toast = (text, name) => p2pOwner().store.getState().showToast(text, name)
 p2pHost.textOnly = () => {
-  const s = useStore.getState().settings
+  const s = p2pOwner().store.getState().settings
   return !s.asset_uploads && !s.p2p_attachments
 }
 
@@ -98,9 +110,10 @@ export function SessionServices() {
       if (s.instanceHost !== prev.instanceHost || ownerOf(s) !== ownerOf(prev)) reloadHistory()
     })
     const stopIndex = account.indexer.startIndexSync()
-    if (account.isHome) account.inbox.addInboxAdapter(p2pInbox)
-    const stopP2pIndex = account.isHome ? startP2pIndex() : null
-    const stopP2pPings = account.isHome ? startP2pPings() : null
+    const p2pInbox = account.isHome ? createP2pInbox(account) : null
+    if (p2pInbox) account.inbox.addInboxAdapter(p2pInbox)
+    const stopP2pIndex = account.isHome ? startP2pIndex(account) : null
+    const stopP2pPings = account.isHome ? startP2pPings(account) : null
     const reload = (event: StorageEvent) => {
       const key = account.conn.scoped(historyKey(ownerOf(account.store.getState())))
       if (event.key === key || event.key === null) reloadHistory()
@@ -112,7 +125,7 @@ export function SessionServices() {
       window.removeEventListener('storage', reload)
       stopP2pPings?.()
       stopP2pIndex?.()
-      if (account.isHome) account.inbox.removeInboxAdapter(p2pInbox.id)
+      if (p2pInbox) account.inbox.removeInboxAdapter(p2pInbox.id)
       stopHistory()
       stopIndex()
       stopHome()

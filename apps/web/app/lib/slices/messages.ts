@@ -24,7 +24,6 @@ import { type ForwardClip, canForward, clipOf, forwardPending } from '../forward
 import { dropGroupMessage } from '../group_pings'
 import { limitsOf, tooLargeText } from '../instance_limits'
 import { readLocal, writeLocal } from '../instances'
-import { staleInvites } from '../invite'
 import {
   DEFAULT_DM_QUERY,
   NO_DM_EDGE,
@@ -787,7 +786,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const groupPings = dropGroupMessage(s.groupPings, id)
       return groupPings === s.groupPings ? {} : { groupPings }
     })
-    if (server !== null) staleInvites(server)
+    if (server !== null) acct.inviteUpdates.staleInvites(server)
     const rootOf = counted ? threadRootId : null
     unhost(id)
     setPinned(id, null)

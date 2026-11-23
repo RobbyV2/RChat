@@ -1,4 +1,5 @@
 'use client'
+import { useAccount } from '../lib/client/react'
 
 import { useEffect, useSyncExternalStore } from 'react'
 import { openActionMenu } from '../lib/actions/menu'
@@ -12,6 +13,8 @@ function useLiveNow(target: number | null) {
 }
 
 export function Stamp({ ms, style, token }: { ms: number; style: StampStyle; token: string }) {
+  const acct = useAccount()
+
   const clock = useLiveNow(style === 'R' ? ms : null)
   const full = fullTime(ms)
   const text = formatStamp(ms, style, style === 'R' ? clock : Date.now())
@@ -22,7 +25,8 @@ export function Stamp({ ms, style, token }: { ms: number; style: StampStyle; tok
           x,
           y,
           { kind: 'timestamp', ts: ms, token },
-          { header: <span className="text-sm text-on-surface">{full}</span> }
+          { header: <span className="text-sm text-on-surface">{full}</span> },
+          acct
         )
       )}
       data-stamp={style}

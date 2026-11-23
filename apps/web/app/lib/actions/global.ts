@@ -11,11 +11,9 @@ import {
 } from 'lucide-react'
 import { p2pMarkAll } from '../p2p/app'
 import { openPalette } from '../palette_store'
-import { allMarkTargets, useStore } from '../store'
+import { allMarkTargets } from '../store'
 import type { RChatState } from '../store_types'
 import type { Action, ArgStep } from './types'
-
-const get = () => useStore.getState()
 
 export const signedIn = (s: RChatState) => s.me !== null && !s.guest
 
@@ -39,7 +37,7 @@ export const goActions: Action[] = [
     group: 'navigation',
     icon: House,
     available: ({ s }) => s.view !== null || !s.home,
-    run: () => get().goHome(),
+    run: ({ acct }) => acct.store.getState().goHome(),
   },
   {
     id: 'inbox',
@@ -48,7 +46,7 @@ export const goActions: Action[] = [
     icon: Inbox,
     keywords: ['notifications', 'mentions', 'pings'],
     available: ({ s }) => signedIn(s),
-    run: () => get().setInboxOpen(true),
+    run: ({ acct }) => acct.store.getState().setInboxOpen(true),
   },
 ]
 
@@ -60,7 +58,7 @@ export const globalActions: Action[] = [
     icon: Phone,
     danger: true,
     available: ({ s }) => !!s.call,
-    run: () => get().hangupCall(),
+    run: ({ acct }) => acct.store.getState().hangupCall(),
   },
   {
     id: 'leave_voice',
@@ -69,7 +67,7 @@ export const globalActions: Action[] = [
     icon: Phone,
     danger: true,
     available: ({ s }) => !!s.voice,
-    run: () => get().leaveVoice(),
+    run: ({ acct }) => acct.store.getState().leaveVoice(),
   },
   {
     id: 'mute_mic',
@@ -77,7 +75,7 @@ export const globalActions: Action[] = [
     scope: 'voice',
     icon: Phone,
     available: ({ s }) => !!(s.voice || s.call),
-    run: () => get().toggleMute(),
+    run: ({ acct }) => acct.store.getState().toggleMute(),
   },
   {
     id: 'deafen',
@@ -85,7 +83,7 @@ export const globalActions: Action[] = [
     scope: 'voice',
     icon: Phone,
     available: ({ s }) => !!(s.voice || s.call),
-    run: () => get().toggleDeafen(),
+    run: ({ acct }) => acct.store.getState().toggleDeafen(),
   },
   {
     id: 'mark_all_read',
@@ -95,9 +93,9 @@ export const globalActions: Action[] = [
     icon: CheckCheck,
     hint: 'Shift+Escape',
     targets: ['home'],
-    disabled: ({ s }) => !allMarkTargets(s).length && !p2pMarkAll().pending,
+    disabled: ({ acct, s }) => !allMarkTargets(s).length && !(acct.isHome && p2pMarkAll().pending),
     available: ({ s }) => signedIn(s),
-    run: () => get().askMarkAllRead(p2pMarkAll()),
+    run: ({ acct }) => acct.store.getState().askMarkAllRead(acct.isHome ? p2pMarkAll() : undefined),
   },
   {
     id: 'mark_dms_read',
@@ -105,7 +103,7 @@ export const globalActions: Action[] = [
     scope: 'global',
     icon: Check,
     available: ({ s }) => signedIn(s),
-    run: () => void get().markDmsRead(),
+    run: ({ acct }) => void acct.store.getState().markDmsRead(),
   },
   {
     id: 'start_dm',
@@ -116,7 +114,7 @@ export const globalActions: Action[] = [
     args: [usernameStep],
     parse: t => /^\s*(?:dm|message|msg)\s+@?(\S+)\s*$/i.exec(t)?.[1] ?? null,
     available: ({ s }) => signedIn(s),
-    run: (_ctx, { value }) => void get().startDm(username(value)),
+    run: (_ctx, { value }) => void _ctx.acct.store.getState().startDm(username(value)),
   },
   {
     id: 'create_server',
@@ -124,7 +122,7 @@ export const globalActions: Action[] = [
     scope: 'global',
     icon: Plus,
     available: ({ s }) => signedIn(s),
-    run: () => get().openDialog({ kind: 'add_server', tab: 'create' }),
+    run: ({ acct }) => acct.store.getState().openDialog({ kind: 'add_server', tab: 'create' }),
   },
   {
     id: 'join_server',
@@ -137,7 +135,9 @@ export const globalActions: Action[] = [
     available: () => true,
     run: (_ctx, { value }) => {
       const name = value.trim().toLowerCase()
-      get().openDialog({ kind: 'add_server', tab: 'join', ...(name ? { join: name } : {}) })
+      _ctx.acct.store
+        .getState()
+        .openDialog({ kind: 'add_server', tab: 'join', ...(name ? { join: name } : {}) })
     },
   },
   {
@@ -149,7 +149,7 @@ export const globalActions: Action[] = [
     keywords: ['prefix', 'how'],
     keepOpen: true,
     available: () => true,
-    run: () => openPalette('?'),
+    run: ({ acct }) => openPalette('?', acct),
   },
   {
     id: 'logout',
@@ -167,6 +167,6 @@ export const globalActions: Action[] = [
       },
     ],
     available: ({ s }) => signedIn(s),
-    run: () => get().logout(),
+    run: ({ acct }) => acct.store.getState().logout(),
   },
 ]

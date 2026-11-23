@@ -1,3 +1,4 @@
+import { client } from '../client/client'
 // A person's menu: a member row, someone who interacted, a friend or request row, a sidebar DM's
 // other person, and a message's author.
 
@@ -15,16 +16,11 @@ import { sharing } from '../platform'
 import { canModerate, canPromote, canRevoke, canTransferTo, memberPerms, rolePerms } from '../rules'
 import {
   changeableRoles,
-  confirmBan,
-  confirmKick,
-  confirmTransfer,
   memberOf,
   memberState,
   memberTimeout,
   myPerms,
   myRolePerms,
-  revokeAdminFor,
-  useStore,
   type ContextMenuItem,
 } from '../store'
 import type { RChatState } from '../store_types'
@@ -37,8 +33,6 @@ import { itemFor } from './menu'
 import { copiesAll } from './message'
 import { noLongerAvailable } from './registry'
 import type { Action, ActionCtx, MemberWhere } from './types'
-
-const get = () => useStore.getState()
 
 // The person on a row of one of `where`; a sidebar DM counts as `dm`.
 const person = (ctx: ActionCtx, ...where: MemberWhere[]): UserRef | null => {
@@ -98,8 +92,8 @@ const blockable = (ctx: ActionCtx): boolean | null => {
 }
 
 // Opens the DM; on narrow screens the full screen panel closes so the DM shows.
-export const messageFriend = (user: UserRef) => {
-  const s = get()
+export const messageFriend = (user: UserRef, acct = client.shown()) => {
+  const s = acct.store.getState()
   if (window.matchMedia('(max-width: 767px)').matches) s.closePanel()
   void s.startDm(user.username)
 }
@@ -158,13 +152,13 @@ const moderates = (perm: number) => (ctx: ActionCtx) =>
   may(ctx, perm, seat => !seat.self && !seat.left && seat.over)
 
 // Runs `f` on the member a moderation row is about.
-const onSeat = (f: (seat: Seat) => void) => (ctx: ActionCtx) => {
+const onSeat = (f: (seat: Seat, ctx: ActionCtx) => void) => (ctx: ActionCtx) => {
   const seat = seatOf(ctx)
-  if (seat) f(seat)
+  if (seat) f(seat, ctx)
 }
 
-const openTimeout = onSeat(({ server, user }) =>
-  get().openDialog({ kind: 'timeout', server, user: userRef(user) })
+const openTimeout = onSeat(({ server, user }, ctx) =>
+  ctx.acct.store.getState().openDialog({ kind: 'timeout', server, user: userRef(user) })
 )
 
 const timedOut = (ctx: ActionCtx) => {
@@ -191,9 +185,15 @@ const roleChoices = (ctx: ActionCtx) => {
 }
 
 // The role choices for a server member, as their own menu (server settings' Roles button).
-export const roleItems = (server: string, user: UserRef): ContextMenuItem[] =>
-  itemFor('member_roles', ctxFor(get(), { kind: 'member', user, server, where: 'list' }, 'menu'))
-    ?.submenu ?? []
+export const roleItems = (
+  server: string,
+  user: UserRef,
+  acct = client.shown()
+): ContextMenuItem[] =>
+  itemFor(
+    'member_roles',
+    ctxFor(acct.store.getState(), { kind: 'member', user, server, where: 'list' }, 'menu', acct)
+  )?.submenu ?? []
 
 const onMember = { scope: 'member', targets: ['member'] } as const
 const onMemberOrAuthor = { scope: 'member', targets: ['member', 'message'] } as const
@@ -207,8 +207,8 @@ export const memberActions: Action[] = [
     order: 200,
     available: ctx =>
       signedIn(ctx.s) && (person(ctx, 'list', 'interacted') ?? author(ctx, 'c', 'd')) !== null,
-    run: ({ member }) => {
-      if (member) void get().startDm(member.username)
+    run: ({ acct, member }) => {
+      if (member) void acct.store.getState().startDm(member.username)
     },
   },
   {
@@ -221,8 +221,8 @@ export const memberActions: Action[] = [
       const u = someoneElse(ctx.s, person(ctx, 'friend'))
       return !!u && isFriend(ctx.s, u.username)
     },
-    run: ({ member }) => {
-      if (member) messageFriend(member)
+    run: ({ acct, member }) => {
+      if (member) messageFriend(member, acct)
     },
   },
   {
@@ -232,7 +232,7 @@ export const memberActions: Action[] = [
     ...onMemberOrAuthor,
     order: 400,
     available: moderates(Perm.Kick),
-    run: onSeat(({ server, user }) => confirmKick(server, user.username)),
+    run: onSeat(({ server, user }, ctx) => ctx.acct.store.menu.confirmKick(server, user.username)),
   },
   {
     id: 'member_ban',
@@ -241,7 +241,7 @@ export const memberActions: Action[] = [
     ...onMemberOrAuthor,
     order: 410,
     available: moderates(Perm.Kick),
-    run: onSeat(({ server, user }) => confirmBan(server, user.username)),
+    run: onSeat(({ server, user }, ctx) => ctx.acct.store.menu.confirmBan(server, user.username)),
   },
   {
     id: 'member_timeout',
@@ -261,7 +261,9 @@ export const memberActions: Action[] = [
     ...onMemberOrAuthor,
     order: 430,
     available: ctx => moderates(Perm.TimeoutMembers)(ctx) && timedOut(ctx),
-    run: onSeat(({ server, user }) => void get().removeTimeout(server, user.username)),
+    run: onSeat(
+      ({ server, user }, ctx) => void ctx.acct.store.getState().removeTimeout(server, user.username)
+    ),
   },
   {
     id: 'member_revoke_admin',
@@ -283,7 +285,9 @@ export const memberActions: Action[] = [
             rolePerms(seat.row, ctx.s.servers[seat.server]?.roles ?? [])
           )
       ),
-    run: onSeat(({ server, user }) => revokeAdminFor(server, user.username)),
+    run: onSeat(({ server, user }, ctx) =>
+      ctx.acct.store.menu.revokeAdminFor(server, user.username)
+    ),
   },
   {
     id: 'member_promote_admin',
@@ -296,7 +300,9 @@ export const memberActions: Action[] = [
         Perm.ManageAdmins,
         seat => notOwnMessage(seat) && !seat.row?.is_admin && canPromote(seat.perms, seat.siteAdmin)
       ),
-    run: onSeat(({ server, user }) => void get().grantAdmin(server, user.username)),
+    run: onSeat(
+      ({ server, user }, ctx) => void ctx.acct.store.getState().grantAdmin(server, user.username)
+    ),
   },
   {
     id: 'member_transfer_admin',
@@ -311,7 +317,9 @@ export const memberActions: Action[] = [
         ({ self, row, perms, siteAdmin, server }) =>
           !self && canTransferTo(perms, siteAdmin, row?.perms ?? 0, myRolePerms(ctx.s, server))
       ),
-    run: onSeat(({ server, user }) => confirmTransfer(server, user.username)),
+    run: onSeat(({ server, user }, ctx) =>
+      ctx.acct.store.menu.confirmTransfer(server, user.username)
+    ),
   },
   {
     id: 'member_roles',
@@ -324,7 +332,7 @@ export const memberActions: Action[] = [
       const seat = seatOf(ctx)
       const pick = /^([+-])(\d+)$/.exec(role ?? '')
       if (!seat || seat.left || !pick || !roleChoices(ctx).some(c => c.value === role)) {
-        noLongerAvailable()
+        noLongerAvailable(ctx)
         return
       }
       const { server, user } = seat
@@ -350,8 +358,8 @@ export const memberActions: Action[] = [
       )
       return !!u && !s.blocked[u.username] && !known(s, u.username)
     },
-    run: ({ member }) => {
-      if (member) get().askAddFriends([member.username])
+    run: ({ acct, member }) => {
+      if (member) acct.store.getState().askAddFriends([member.username])
     },
   },
   {
@@ -365,8 +373,8 @@ export const memberActions: Action[] = [
       const u = someoneElse(ctx.s, person(ctx, 'friend'))
       return !!u && isFriend(ctx.s, u.username)
     },
-    run: ({ member }) => {
-      if (member) get().askRemoveFriend(member)
+    run: ({ acct, member }) => {
+      if (member) acct.store.getState().askRemoveFriend(member)
     },
   },
   {
@@ -379,8 +387,8 @@ export const memberActions: Action[] = [
       const u = someoneElse(ctx.s, person(ctx, 'request'))
       return !!u && asking(ctx.s, u.username, true)
     },
-    run: ({ member }) => {
-      if (member) void get().acceptFriend(member)
+    run: ({ acct, member }) => {
+      if (member) void acct.store.getState().acceptFriend(member)
     },
   },
   {
@@ -393,8 +401,8 @@ export const memberActions: Action[] = [
       const u = someoneElse(ctx.s, person(ctx, 'request'))
       return !!u && asking(ctx.s, u.username, true)
     },
-    run: ({ member }) => {
-      if (member) void get().denyFriend(member.username)
+    run: ({ acct, member }) => {
+      if (member) void acct.store.getState().denyFriend(member.username)
     },
   },
   {
@@ -407,8 +415,8 @@ export const memberActions: Action[] = [
       const u = someoneElse(ctx.s, person(ctx, 'request'))
       return !!u && asking(ctx.s, u.username, false)
     },
-    run: ({ member }) => {
-      if (member) void get().cancelFriendRequest(member.username)
+    run: ({ acct, member }) => {
+      if (member) void acct.store.getState().cancelFriendRequest(member.username)
     },
   },
   {
@@ -421,8 +429,8 @@ export const memberActions: Action[] = [
     order: 480,
     orderFor: ctx => (inThread(ctx) ? 530 : 480),
     available: ctx => blockable(ctx) === false,
-    run: ({ member }) => {
-      if (member) get().askBlock(member)
+    run: ({ acct, member }) => {
+      if (member) acct.store.getState().askBlock(member)
     },
   },
   {
@@ -434,8 +442,8 @@ export const memberActions: Action[] = [
     order: 480,
     orderFor: ctx => (inThread(ctx) ? 530 : 480),
     available: ctx => blockable(ctx) === true,
-    run: ({ member }) => {
-      if (member) void get().unblockUser(member.username, member.display_name)
+    run: ({ acct, member }) => {
+      if (member) void acct.store.getState().unblockUser(member.username, member.display_name)
     },
   },
   {

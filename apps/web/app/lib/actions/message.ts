@@ -21,7 +21,6 @@ import {
   Trash2,
   Users,
 } from 'lucide-react'
-import { api } from '../instances'
 import { guestPostingStatus } from '../guest_chat'
 import { isGuestName } from '../guest_voice'
 import { canForward } from '../forward'
@@ -34,7 +33,7 @@ import { canQuote } from '../replies'
 import { canEdit as ownEditable } from '../sed'
 import { selectable } from '../selection'
 import { canDeleteIn } from '../selection_store'
-import { confirmDeleteMessage, messageServer, myPerms, myTimeoutEnds, useStore } from '../store'
+import { messageServer, myPerms, myTimeoutEnds } from '../store'
 import type { RChatState } from '../store_types'
 import { isNotice } from '../system_messages'
 import { messageStampToken } from '../timestamps'
@@ -42,8 +41,6 @@ import { Perm, hasPerm, type Message } from '../types'
 import { isWebhookMessage, webhookIdOf } from '../webhooks'
 import { signedIn } from './global'
 import type { Action, ActionCtx } from './types'
-
-const get = () => useStore.getState()
 
 const copy = (text: string) => void sharing().copyText(text)
 
@@ -126,7 +123,8 @@ export const copiesAll = (ctx: ActionCtx) => {
   return !!at && (!ctx.s.me || !isNotice(at.m))
 }
 
-const linkOf = (s: RChatState, m: Message) => messageLinkUrl(m, messageServer(s, m))
+const linkOf = (ctx: ActionCtx, m: Message) =>
+  messageLinkUrl(m, messageServer(ctx.s, m), ctx.acct.shareOrigin)
 
 // Runs `f` on the target message and its list.
 const withMessage = (f: (m: Message, list: string, ctx: ActionCtx) => void) => (ctx: ActionCtx) => {
@@ -150,15 +148,19 @@ export const messageActions: Action[] = [
       const name = messageServer(ctx.s, at.m)
       return name !== null && hasPerm(myPerms(ctx.s, name), Perm.TimeoutMembers)
     },
-    run: withMessage(m =>
-      get().askConfirm({
+    run: withMessage((m, _list, ctx) =>
+      ctx.acct.store.getState().askConfirm({
         title: 'Pause guest posting?',
         body: 'Stops this guest and new guest sessions from their address from posting here for 10 minutes.',
         confirm: 'Pause posting',
         action: () => {
-          void api
+          void ctx.acct.api
             .req('POST', `/messages/${m.id}/pause-guest`)
-            .catch((e: Error) => get().setError(e.message))
+            .catch(
+              ctx.acct.lifetime.inSession((e: Error) =>
+                ctx.acct.store.getState().setError(e.message)
+              )
+            )
         },
       })
     ),
@@ -170,7 +172,7 @@ export const messageActions: Action[] = [
     ...message,
     order: 100,
     available: ctx => !!rights(ctx)?.edit,
-    run: withMessage((m, list) => get().startEdit(list, m)),
+    run: withMessage((m, list, ctx) => ctx.acct.store.getState().startEdit(list, m)),
   },
   {
     id: 'message_reply',
@@ -179,7 +181,7 @@ export const messageActions: Action[] = [
     ...message,
     order: 110,
     available: ctx => !!rights(ctx)?.quote,
-    run: withMessage((m, list) => get().startReply(list, m)),
+    run: withMessage((m, list, ctx) => ctx.acct.store.getState().startReply(list, m)),
   },
   {
     id: 'message_forward',
@@ -188,7 +190,7 @@ export const messageActions: Action[] = [
     ...message,
     order: 120,
     available: ctx => !!rights(ctx)?.forward,
-    run: withMessage(m => get().copyForward(m)),
+    run: withMessage((m, _list, ctx) => ctx.acct.store.getState().copyForward(m)),
   },
   {
     id: 'message_thread',
@@ -197,7 +199,7 @@ export const messageActions: Action[] = [
     ...message,
     order: 130,
     available: ctx => !!rights(ctx)?.thread,
-    run: withMessage(m => void get().openThread(m)),
+    run: withMessage((m, _list, ctx) => void ctx.acct.store.getState().openThread(m)),
   },
   {
     id: 'message_pin',
@@ -206,7 +208,7 @@ export const messageActions: Action[] = [
     ...message,
     order: 300,
     available: ctx => !!rights(ctx)?.pin && !ctx.message?.pinned_at,
-    run: withMessage(m => void get().pinMessage(m.id)),
+    run: withMessage((m, _list, ctx) => void ctx.acct.store.getState().pinMessage(m.id)),
   },
   {
     id: 'message_unpin',
@@ -215,7 +217,7 @@ export const messageActions: Action[] = [
     ...message,
     order: 300,
     available: ctx => !!rights(ctx)?.pin && !!ctx.message?.pinned_at,
-    run: withMessage(m => void get().unpinMessage(m.id)),
+    run: withMessage((m, _list, ctx) => void ctx.acct.store.getState().unpinMessage(m.id)),
   },
   {
     id: 'poll_voters',
@@ -229,7 +231,9 @@ export const messageActions: Action[] = [
         !!at && at.m.kind === 'poll' && votersShown(at.m.poll) && (!!ctx.s.me || !!threadRow(ctx))
       )
     },
-    run: withMessage(m => get().openDialog({ kind: 'poll_voters', message: m })),
+    run: withMessage((m, _list, ctx) =>
+      ctx.acct.store.getState().openDialog({ kind: 'poll_voters', message: m })
+    ),
   },
   {
     id: 'poll_close',
@@ -241,7 +245,7 @@ export const messageActions: Action[] = [
       const at = onMessage(ctx)
       return !!at?.m.poll && managesPoll(ctx.s, at.m) && !pollClosed(at.m.poll)
     },
-    run: withMessage(m => void get().closePoll(m.id)),
+    run: withMessage((m, _list, ctx) => void ctx.acct.store.getState().closePoll(m.id)),
   },
   {
     id: 'poll_reopen',
@@ -253,7 +257,7 @@ export const messageActions: Action[] = [
       const at = onMessage(ctx)
       return !!at?.m.poll && managesPoll(ctx.s, at.m) && pollClosed(at.m.poll)
     },
-    run: withMessage(m => void get().reopenPoll(m.id)),
+    run: withMessage((m, _list, ctx) => void ctx.acct.store.getState().reopenPoll(m.id)),
   },
   {
     id: 'message_select',
@@ -270,7 +274,7 @@ export const messageActions: Action[] = [
         selectable(at.m, canDeleteIn(ctx.s, at.list, at.m))
       )
     },
-    run: withMessage((m, list) => get().startSelection(list, m)),
+    run: withMessage((m, list, ctx) => ctx.acct.store.getState().startSelection(list, m)),
   },
   {
     id: 'message_delete',
@@ -281,7 +285,7 @@ export const messageActions: Action[] = [
     order: 510,
     orderFor: ctx => (ctx.message && isNotice(ctx.message) ? 495 : 510),
     available: ctx => !!rights(ctx)?.delete && !threadRow(ctx)?.root,
-    run: withMessage(m => confirmDeleteMessage(m.id)),
+    run: withMessage((m, _list, ctx) => ctx.acct.store.menu.confirmDeleteMessage(m.id)),
   },
   {
     id: 'message_copy_text',
@@ -298,9 +302,9 @@ export const messageActions: Action[] = [
     icon: Link,
     ...message,
     order: 910,
-    available: ctx => copiesAll(ctx) && !!ctx.message && linkOf(ctx.s, ctx.message) !== null,
+    available: ctx => copiesAll(ctx) && !!ctx.message && linkOf(ctx, ctx.message) !== null,
     run: withMessage((m, _list, ctx) => {
-      const link = linkOf(ctx.s, m)
+      const link = linkOf(ctx, m)
       if (link) copy(link)
     }),
   },
@@ -352,7 +356,7 @@ export const embedActions: Action[] = [
     available: ctx => onEmbed(ctx) !== null,
     run: ctx => {
       const t = onEmbed(ctx)
-      if (t) void get().deleteEmbed(t.message.id, t.ord, false)
+      if (t) void ctx.acct.store.getState().deleteEmbed(t.message.id, t.ord, false)
     },
   },
   {
@@ -364,7 +368,7 @@ export const embedActions: Action[] = [
     available: ctx => !!onEmbed(ctx)?.banner,
     run: ctx => {
       const t = onEmbed(ctx)
-      if (t) void get().deleteEmbed(t.message.id, t.ord, true)
+      if (t) void ctx.acct.store.getState().deleteEmbed(t.message.id, t.ord, true)
     },
   },
   {
@@ -376,7 +380,9 @@ export const embedActions: Action[] = [
     available: ctx => onEmbed(ctx) !== null,
     run: ctx => {
       const t = onEmbed(ctx)
-      if (t) for (const e of t.message.embeds) void get().deleteEmbed(t.message.id, e.ord, false)
+      if (t)
+        for (const e of t.message.embeds)
+          void ctx.acct.store.getState().deleteEmbed(t.message.id, e.ord, false)
     },
   },
   {

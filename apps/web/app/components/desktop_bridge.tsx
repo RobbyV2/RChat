@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { home } from '../lib/instances'
+import { client } from '../lib/client/client'
+import type { AccountSession } from '../lib/client/session'
 import { confirmGate, openDeepLink, type LinkEnv } from '../lib/deep_links'
-import { useStore } from '../lib/store'
 import { keptSession } from '../lib/start'
 import { inShell, mobileOs } from '../lib/platform'
 import { listen, shell } from '../lib/platform/desktop'
@@ -14,12 +14,20 @@ interface Ask {
   answer: (yes: boolean) => void
 }
 
-const env = (confirmSwitch: LinkEnv['confirmSwitch']): LinkEnv => {
-  const { me, guest, switchInstance, setError } = useStore.getState()
+const env = (
+  owner: AccountSession,
+  confirmSwitch: LinkEnv['confirmSwitch'],
+  active: () => boolean
+): LinkEnv => {
+  const { me, guest, switchInstance, setError } = owner.store.getState()
+  const mark = owner.lifetime.sessionMark()
+  const current = () => active() && client.shown() === owner && client.live().includes(owner)
   return {
-    homeOrigin: home.origin,
+    homeOrigin: owner.conn.origin,
+    canSwitch: () => current() && owner.lifetime.sessionMark() === mark,
+    canLoad: origin => current() && owner.conn.origin === origin,
     appLinks: mobileOs() !== null,
-    signedIn: me !== null || guest || keptSession(),
+    signedIn: me !== null || guest || keptSession(owner.conn),
     live: (me !== null || guest) && !window.location.pathname.startsWith('/login'),
     push: path => {
       window.history.pushState(null, '', path)
@@ -29,8 +37,55 @@ const env = (confirmSwitch: LinkEnv['confirmSwitch']): LinkEnv => {
     confirmSwitch,
     switchTo: switchInstance,
     openOutside: url => void shell.openExternal(url).catch(() => {}),
-    fail: setError,
+    fail: message => {
+      if (current() && owner.lifetime.sessionMark() === mark) setError(message)
+    },
   }
+}
+
+export function listenForLinks(
+  confirmSwitch: LinkEnv['confirmSwitch'],
+  active: () => boolean,
+  register = listen,
+  takeLinks = shell.takeLinks
+) {
+  const deliver = async (owner: AccountSession, mark: object, links: string[]) => {
+    for (const link of links) {
+      if (!active() || client.shown() !== owner || owner.lifetime.sessionMark() !== mark) return
+      await openDeepLink(link, env(owner, confirmSwitch, active))
+    }
+  }
+  const owner = client.shown()
+  const mark = owner.lifetime.sessionMark()
+  const startup = Promise.withResolvers<void>()
+  let next = startup.promise
+  let registered = false
+  const reservations = new Set<Promise<string[]>>()
+  const listener = register('deep-link', batch => {
+    if (!active() || (!registered && typeof batch !== 'number')) return
+    const target = client.shown()
+    const at = target.lifetime.sessionMark()
+    // Take this event's links immediately, then open them in arrival order.
+    const links = takeLinks(typeof batch === 'number' ? batch : undefined).catch(() => [])
+    if (!registered) {
+      reservations.add(links)
+      void links.then(() => reservations.delete(links))
+    }
+    next = next.then(async () => deliver(target, at, await links)).catch(() => {})
+  })
+  void listener.then(
+    async () => {
+      registered = true
+      try {
+        await Promise.all(reservations)
+        if (active()) await deliver(owner, mark, await takeLinks().catch(() => []))
+      } finally {
+        startup.resolve()
+      }
+    },
+    () => startup.resolve()
+  )
+  return listener
 }
 
 // Hands `rchat://` links and update news from the desktop shell to the app. A link that would
@@ -53,15 +108,10 @@ export default function DesktopBridge() {
       }
       setAsk(pending)
     })
-    const drain = async () => {
-      const links = await shell.takeLinks().catch(() => [])
-      for (const link of links) if (live) await openDeepLink(link, env(confirmSwitch))
-    }
-    const offLink = listen('deep-link', () => void drain())
+    const offLink = listenForLinks(confirmSwitch, () => live)
     const offUpdate = listen('update', () =>
-      useStore.getState().showToast('An update is ready. Install it in Settings.')
+      client.shown().store.getState().showToast('An update is ready. Install it in Settings.')
     )
-    void offLink.then(() => drain())
     return () => {
       live = false
       pending?.answer(false)

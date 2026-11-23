@@ -5,7 +5,7 @@ import type { Action, ActionCtx, Args, Scope } from './types'
 
 interface Host {
   refresh(ctx: ActionCtx): ActionCtx | null
-  gone(ctx?: ActionCtx): void
+  gone(ctx: ActionCtx): void
 }
 
 let host: Host = { refresh: ctx => ctx, gone: () => {} }
@@ -107,7 +107,7 @@ export const guardAction = <T>(a: Action, f: () => T, fallback: T): T => {
 }
 
 export const isAvailable = (a: Action, ctx: ActionCtx) =>
-  guardAction(a, () => a.available(ctx), false)
+  guardAction(a, () => (a.scope !== 'p2p' || ctx.acct.isHome) && a.available(ctx), false)
 
 const orderOf = (a: Action, ctx: ActionCtx) =>
   a.orderFor ? guardAction(a, () => a.orderFor!(ctx), a.order ?? 500) : (a.order ?? 500)
@@ -147,7 +147,7 @@ export const recheckAction = (
 }
 
 // Says that what an action was opened on is gone.
-export const noLongerAvailable = () => host.gone()
+export const noLongerAvailable = (ctx: ActionCtx) => host.gone(ctx)
 
 export const runAction = async (id: string, ctx: ActionCtx, args: Args = {}): Promise<boolean> => {
   const hit = recheckAction(id, ctx)

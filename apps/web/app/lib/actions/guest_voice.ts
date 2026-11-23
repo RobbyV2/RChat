@@ -3,10 +3,7 @@
 import { Mic, MicOff, PhoneOff } from 'lucide-react'
 import { guestVoiceActions, isGuestName, type GuestVoiceAction } from '../guest_voice'
 import { myPerms } from '../selectors'
-import { useStore } from '../store'
 import type { Action, ActionCtx } from './types'
-
-const get = () => useStore.getState()
 
 const guestOf = ({ target }: ActionCtx) => (target.kind === 'voice_guest' ? target : null)
 
@@ -20,7 +17,7 @@ const may = (action: GuestVoiceAction) => (ctx: ActionCtx) => {
 
 const mute = (muted: boolean) => (ctx: ActionCtx) => {
   const at = guestOf(ctx)
-  if (at) void get().muteGuest(at.server, at.name, muted)
+  if (at) void ctx.acct.store.getState().muteGuest(at.server, at.name, muted)
 }
 
 const onGuest = { scope: 'voice', targets: ['voice_guest'] } as const
@@ -58,7 +55,7 @@ export const guestVoiceMenuActions: Action[] = [
     available: may('disconnect'),
     run: ctx => {
       const at = guestOf(ctx)
-      if (at) void get().disconnectGuest(at.server, at.name)
+      if (at) void ctx.acct.store.getState().disconnectGuest(at.server, at.name)
     },
   },
 ]

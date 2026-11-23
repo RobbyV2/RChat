@@ -1,3 +1,4 @@
+import { client } from '../client/client'
 // The menus of a P2P server: its rail tile and header, a P2P rail folder, its channels, its
 // members and its roles.
 
@@ -22,12 +23,10 @@ import { mayTakeRole, movesWarn, placeRole, type Move } from '../p2p/roles'
 import { ownsP2pServer, type MemberView, type RoleView, type ServerView } from '../p2p/server/types'
 import { P } from '../p2p/state'
 import { sharing } from '../platform'
-import { maskOf, useStore } from '../store'
+import { maskOf } from '../store'
 import type { ConfirmRequest } from '../store_types'
 import { muteStep, muteUntil, notifySettings } from './notify'
 import type { Action, ActionCtx, ArgChoice, Target } from './types'
-
-const get = () => useStore.getState()
 
 const copy = (text: string) => void sharing().copyText(text)
 
@@ -35,7 +34,8 @@ const can = (v: ServerView, bit: number) => v.me === 'join' && (v.perms & bit) !
 
 const me = () => useP2p.getState().me
 
-const who = (name: string) => (get().streamer ? 'this member' : name)
+const who = (name: string, acct = client.shown()) =>
+  acct.store.getState().streamer ? 'this member' : name
 
 const serverOf = ({ target }: ActionCtx) => (target.kind === 'p2p_server' ? target : null)
 const channelOf = ({ target }: ActionCtx) => (target.kind === 'p2p_channel' ? target : null)
@@ -80,7 +80,7 @@ const muteActions = (
       available: ctx => of(ctx) !== null && end(ctx, of(ctx)) === null,
       run: (ctx, { value }) => {
         const scope = of(ctx)
-        if (scope) get().muteScope(scope, muteUntil(value))
+        if (scope) ctx.acct.store.getState().muteScope(scope, muteUntil(value))
       },
     },
     {
@@ -97,7 +97,7 @@ const muteActions = (
       available: ctx => !!end(ctx, of(ctx)),
       run: ctx => {
         const scope = of(ctx)
-        if (scope) get().muteScope(scope, null)
+        if (scope) ctx.acct.store.getState().muteScope(scope, null)
       },
     },
   ]
@@ -112,44 +112,55 @@ export const withdrawRequest = (v: ServerView, m: MemberView): ConfirmRequest =>
 })
 
 // The member takes the new copy; every other owner must approve.
-export const transferRequest = (v: ServerView, m: MemberView): ConfirmRequest => ({
+export const transferRequest = (
+  v: ServerView,
+  m: MemberView,
+  acct = client.shown()
+): ConfirmRequest => ({
   title: 'Transfer Ownership',
-  body: `${transferText(who(m.name))}${v.owners.length > 1 ? ` ${TRANSFER_CO_OWNERS_TEXT}` : ''}`,
+  body: `${transferText(who(m.name, acct))}${v.owners.length > 1 ? ` ${TRANSFER_CO_OWNERS_TEXT}` : ''}`,
   confirm: 'Transfer',
   action: () => void p2pServer.transfer(v.id, m.ik),
 })
 
 // Removing a server we are no longer in, with everything of it, from this device.
-export const confirmForget = (v: ServerView) =>
-  get().askConfirm({
+export const confirmForget = (v: ServerView, acct = client.shown()) =>
+  acct.store.getState().askConfirm({
     title: 'Remove Server',
-    body: `Remove ${get().streamer ? 'this server' : v.name} and everything of it from this device? You aren't a member any more, so it can't come back.`,
+    body: `Remove ${acct.store.getState().streamer ? 'this server' : v.name} and everything of it from this device? You aren't a member any more, so it can't come back.`,
     confirm: 'Remove',
     action: () => void p2pServer.forget(v.id),
   })
 
-export const kickRequest = (v: ServerView, m: MemberView): ConfirmRequest => ({
+export const kickRequest = (
+  v: ServerView,
+  m: MemberView,
+  acct = client.shown()
+): ConfirmRequest => ({
   title: 'Kick Member',
-  body: `Kick ${who(m.name)}? They can come back with a new invite.`,
+  body: `Kick ${who(m.name, acct)}? They can come back with a new invite.`,
   confirm: 'Kick',
   action: () => void p2pServer.kick(v.id, m.ik),
 })
 
 // Role names in our own server are our own text, never masked.
-export const roleMask = (v: ServerView) => maskOf(get(), ownsP2pServer(v, me()))
+export const roleMask = (v: ServerView, acct = client.shown()) =>
+  maskOf(acct.store.getState(), ownsP2pServer(v, me()))
 
-export const moveRoles = (v: ServerView, moves: Move[]) => {
+export const moveRoles = (v: ServerView, moves: Move[], acct = client.shown()) => {
   if (!moves.length) return
   const go = () => void p2pServer.moveRoles(v.id, moves)
   if (movesWarn(v.roles, moves))
-    get().askConfirm({ title: 'Move Role Down', body: ROLE_DOWN_TEXT, confirm: 'Move', action: go })
+    acct.store
+      .getState()
+      .askConfirm({ title: 'Move Role Down', body: ROLE_DOWN_TEXT, confirm: 'Move', action: go })
   else go()
 }
 
-export const deleteRole = (v: ServerView, r: RoleView) =>
-  get().askConfirm({
+export const deleteRole = (v: ServerView, r: RoleView, acct = client.shown()) =>
+  acct.store.getState().askConfirm({
     title: 'Delete Role',
-    body: `Delete ${roleMask(v)(r.name)}? ${r.holders ? 'Members who have it lose it.' : ''}`.trim(),
+    body: `Delete ${roleMask(v, acct)(r.name)}? ${r.holders ? 'Members who have it lose it.' : ''}`.trim(),
     confirm: 'Delete',
     action: () => void p2pServer.deleteRole(v.id, r.id),
   })
@@ -160,11 +171,11 @@ const mayGive = (v: ServerView, m: MemberView, r: RoleView) =>
   can(v, P.ManageRoles) && r.below && m.m === 'join' && m.ik !== me() && m.below && !m.owner
 
 // Taking a role; one's own asks first (nobody can give themselves a role back).
-export const takeRole = (v: ServerView, m: MemberView, r: RoleView) => {
+export const takeRole = (v: ServerView, m: MemberView, r: RoleView, acct = client.shown()) => {
   if (m.ik !== me()) return void p2pServer.revokeRole(v.id, m.ik, r.id)
-  get().askConfirm({
+  acct.store.getState().askConfirm({
     title: 'Remove Role',
-    body: `Remove ${roleMask(v)(r.name)} from yourself? You can't give it back to yourself.`,
+    body: `Remove ${roleMask(v, acct)(r.name)} from yourself? You can't give it back to yourself.`,
     confirm: 'Remove',
     action: () => void p2pServer.revokeRole(v.id, m.ik, r.id),
   })
@@ -175,7 +186,7 @@ const roleChoices = (ctx: ActionCtx): ArgChoice[] => {
   const t = memberOf(ctx)
   if (!t || t.m.m !== 'join') return []
   const { v, m } = t
-  const mask = roleMask(v)
+  const mask = roleMask(v, ctx.acct)
   return v.roles.flatMap(r => {
     const holds = m.roles.includes(r.id)
     if (holds ? !mayTakeRole(v, m, r, me()) : !mayGive(v, m, r)) return []
@@ -288,9 +299,9 @@ const serverActions: Action[] = [
     run: ctx => {
       const t = serverOf(ctx)
       if (!t) return
-      get().askConfirm({
+      ctx.acct.store.getState().askConfirm({
         title: 'Leave Server',
-        body: `Leave ${get().streamer ? 'this server' : t.v.name}? Someone who can invite has to let you in again.`,
+        body: `Leave ${ctx.acct.store.getState().streamer ? 'this server' : t.v.name}? Someone who can invite has to let you in again.`,
         confirm: 'Leave',
         action: () => void p2pServer.leave(t.v.id),
       })
@@ -308,7 +319,7 @@ const serverActions: Action[] = [
     },
     run: ctx => {
       const t = serverOf(ctx)
-      if (t) confirmForget(t.v)
+      if (t) confirmForget(t.v, ctx.acct)
     },
   },
 ]
@@ -436,7 +447,7 @@ const channelActions: Action[] = [
       const t = managed(ctx)
       if (!t) return
       const { v, ch } = t
-      get().askConfirm({
+      ctx.acct.store.getState().askConfirm({
         title: 'Delete Channel',
         body:
           ch.kind === 'voice'
@@ -512,7 +523,7 @@ const memberActions: Action[] = [
       const t = memberOf(ctx)
       const r = t?.v.roles.find(x => x.id === role)
       if (!t || !r) return
-      if (t.m.roles.includes(r.id)) takeRole(t.v, t.m, r)
+      if (t.m.roles.includes(r.id)) takeRole(t.v, t.m, r, ctx.acct)
       else void p2pServer.assignRole(t.v.id, t.m.ik, r.id)
     },
   },
@@ -527,7 +538,7 @@ const memberActions: Action[] = [
     available: ctx => actsOn(ctx, P.Kick)?.m.m === 'join',
     run: ctx => {
       const t = memberOf(ctx)
-      if (t) get().askConfirm(kickRequest(t.v, t.m))
+      if (t) ctx.acct.store.getState().askConfirm(kickRequest(t.v, t.m, ctx.acct))
     },
   },
   {
@@ -544,7 +555,7 @@ const memberActions: Action[] = [
     },
     run: ctx => {
       const t = memberOf(ctx)
-      if (t) get().askConfirm(withdrawRequest(t.v, t.m))
+      if (t) ctx.acct.store.getState().askConfirm(withdrawRequest(t.v, t.m))
     },
   },
   {
@@ -569,7 +580,7 @@ const memberActions: Action[] = [
     },
     run: ctx => {
       const t = memberOf(ctx)
-      if (t) get().askConfirm(transferRequest(t.v, t.m))
+      if (t) ctx.acct.store.getState().askConfirm(transferRequest(t.v, t.m, ctx.acct))
     },
   },
   {
@@ -586,7 +597,7 @@ const memberActions: Action[] = [
     },
     run: ctx => {
       const t = memberOf(ctx)
-      if (t) get().askConfirm(banRequest(t.v, t.m.ik, who(t.m.name)))
+      if (t) ctx.acct.store.getState().askConfirm(banRequest(t.v, t.m.ik, who(t.m.name, ctx.acct)))
     },
   },
   {
@@ -614,7 +625,12 @@ const roleActions: Action[] = [
     },
     run: ctx => {
       const p = rolePlace(ctx)
-      if (p) moveRoles(p.v, placeRole(p.v.roles, p.r.id, p.at - 1, p.v.rank, p2p.limits().server))
+      if (p)
+        moveRoles(
+          p.v,
+          placeRole(p.v.roles, p.r.id, p.at - 1, p.v.rank, p2p.limits().server),
+          ctx.acct
+        )
     },
   },
   {
@@ -628,7 +644,12 @@ const roleActions: Action[] = [
     },
     run: ctx => {
       const p = rolePlace(ctx)
-      if (p) moveRoles(p.v, placeRole(p.v.roles, p.r.id, p.at + 1, p.v.rank, p2p.limits().server))
+      if (p)
+        moveRoles(
+          p.v,
+          placeRole(p.v.roles, p.r.id, p.at + 1, p.v.rank, p2p.limits().server),
+          ctx.acct
+        )
     },
   },
   {
@@ -644,7 +665,7 @@ const roleActions: Action[] = [
     },
     run: ctx => {
       const p = rolePlace(ctx)
-      if (p) deleteRole(p.v, p.r)
+      if (p) deleteRole(p.v, p.r, ctx.acct)
     },
   },
 ]

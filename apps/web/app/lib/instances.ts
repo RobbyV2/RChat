@@ -633,8 +633,8 @@ export function shareOrigin(
 export const pageHref = (origin = shareOrigin()) =>
   `${origin}${window.location.pathname}${window.location.search}${window.location.hash}`
 
-export function localOrigins(homePublic: string | null = home.info?.public_url ?? null) {
-  const page = typeof window === 'undefined' ? null : window.location.origin
-  const all = [page, home.origin, homePublic ? normalizeOrigin(homePublic) : null]
+export function localOrigins(connection = home, publicUrl = connection.info?.public_url) {
+  const page = connection === home && typeof window !== 'undefined' ? window.location.origin : null
+  const all = [page, connection.origin, publicUrl ? normalizeOrigin(publicUrl) : null]
   return all.filter((o, at): o is string => o !== null && all.indexOf(o) === at)
 }

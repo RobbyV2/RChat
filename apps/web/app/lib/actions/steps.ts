@@ -1,4 +1,3 @@
-import { useStore } from '../store'
 import { guardAction, noLongerAvailable, recheckAction, runAction } from './registry'
 import type { Action, ActionCtx, ArgStep, Args, Expansion } from './types'
 
@@ -26,7 +25,8 @@ export const confirmThenRun = async (a: Action, ctx: ActionCtx, args: Args): Pro
     await runAction(a.id, ctx, args)
     return
   }
-  useStore.getState().askConfirm({
+  if (!recheckAction(a.id, ctx)) return
+  ctx.acct.store.getState().askConfirm({
     title: step.title,
     body: guardAction(a, () => step.body(ctx, args), ''),
     confirm: step.confirm,
@@ -49,7 +49,7 @@ export const runExpansion = async (a: Action, ctx: ActionCtx, key: string): Prom
   if (!hit) return
   const entry = expansionsOf(hit.action, hit.ctx).find(x => x.key === key)
   if (!entry) {
-    noLongerAvailable()
+    noLongerAvailable(ctx)
     return
   }
   await confirmThenRun(hit.action, hit.ctx, entry.args ?? {})

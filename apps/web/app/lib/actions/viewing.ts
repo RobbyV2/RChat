@@ -1,11 +1,4 @@
-import {
-  canView,
-  forgetViewing,
-  markPersonally,
-  needsWarning,
-  personallyMarked,
-  type ViewingTarget,
-} from '../viewing'
+import type { ViewingTarget } from '../viewing'
 import type { Action, ActionCtx, Target } from './types'
 
 // Instance and peer channel menus use the same local choices.
@@ -24,11 +17,11 @@ export const viewingActions = (
       available: ctx => !!target(ctx),
       checked: ctx => {
         const t = target(ctx)
-        return !!t && personallyMarked(t)
+        return !!t && ctx.acct.viewing.personallyMarked(t)
       },
       run: ctx => {
         const t = target(ctx)
-        if (t) markPersonally(t, !personallyMarked(t))
+        if (t) ctx.acct.viewing.markPersonally(t, !ctx.acct.viewing.personallyMarked(t))
       },
     },
     {
@@ -37,11 +30,11 @@ export const viewingActions = (
       title: 'Hide channel again',
       available: ctx => {
         const t = target(ctx)
-        return !!t && needsWarning(t) && canView(t)
+        return !!t && ctx.acct.viewing.needsWarning(t) && ctx.acct.viewing.canView(t)
       },
       run: ctx => {
         const t = target(ctx)
-        if (t) forgetViewing(t)
+        if (t) ctx.acct.viewing.forgetViewing(t)
       },
     },
     {

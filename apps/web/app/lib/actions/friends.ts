@@ -1,11 +1,9 @@
 import { Ban, ShieldOff, UserMinus, UserPlus, Users } from 'lucide-react'
 import { parseAddCommand, parseNames } from '../friends'
-import { userRefFor, useStore } from '../store'
+import { userRefFor } from '../store'
 import type { UserRef } from '../types'
 import { signedIn, username, usernameStep } from './global'
 import type { Action, ActionCtx, Expansion } from './types'
-
-const get = () => useStore.getState()
 
 const member = ({ s }: ActionCtx) => signedIn(s)
 
@@ -26,7 +24,7 @@ export const friendActions: Action[] = [
     group: 'friends',
     icon: Users,
     available: member,
-    run: () => get().openFriends(),
+    run: ({ acct }) => acct.store.getState().openFriends(),
   },
   {
     id: 'add_friends',
@@ -45,7 +43,7 @@ export const friendActions: Action[] = [
     ],
     parse: t => parseAddCommand(t)?.join(' ') ?? null,
     available: member,
-    run: (_ctx, { value }) => get().askAddFriends(parseNames(value)),
+    run: (_ctx, { value }) => _ctx.acct.store.getState().askAddFriends(parseNames(value)),
   },
   {
     id: 'block',
@@ -57,7 +55,7 @@ export const friendActions: Action[] = [
     args: [usernameStep],
     parse: t => /^\s*block\s+@?(\S+)\s*$/i.exec(t)?.[1] ?? null,
     available: member,
-    run: ({ s }, { value }) => get().askBlock(userRefFor(s, username(value))),
+    run: ({ acct, s }, { value }) => acct.store.getState().askBlock(userRefFor(s, username(value))),
   },
   {
     id: 'accept',
@@ -70,9 +68,9 @@ export const friendActions: Action[] = [
       s.incomingRequests.list.map(r =>
         person(r.user, `Accept friend request: ${r.user.display_name}`)
       ),
-    run: ({ s }, { user }) => {
+    run: ({ acct, s }, { user }) => {
       const u = s.incomingRequests.list.find(r => r.user.username === user)?.user
-      if (u) void get().acceptFriend(u)
+      if (u) void acct.store.getState().acceptFriend(u)
     },
   },
   {
@@ -86,8 +84,9 @@ export const friendActions: Action[] = [
       s.incomingRequests.list.map(r =>
         person(r.user, `Deny friend request: ${r.user.display_name}`)
       ),
-    run: ({ s }, { user }) => {
-      if (s.incomingRequests.list.some(r => r.user.username === user)) void get().denyFriend(user)
+    run: ({ acct, s }, { user }) => {
+      if (s.incomingRequests.list.some(r => r.user.username === user))
+        void acct.store.getState().denyFriend(user)
     },
   },
   {
@@ -100,9 +99,9 @@ export const friendActions: Action[] = [
     available: member,
     expand: ({ s }) =>
       s.friends.list.map(f => person(f.user, `Remove friend: ${f.user.display_name}`)),
-    run: ({ s }, { user }) => {
+    run: ({ acct, s }, { user }) => {
       const u = s.friends.list.find(f => f.user.username === user)?.user
-      if (u) get().askRemoveFriend(u)
+      if (u) acct.store.getState().askRemoveFriend(u)
     },
   },
   {
@@ -113,9 +112,9 @@ export const friendActions: Action[] = [
     icon: ShieldOff,
     available: member,
     expand: ({ s }) => s.blockList.list.map(b => person(b.user, `Unblock ${b.user.display_name}`)),
-    run: ({ s }, { user }) => {
+    run: ({ acct, s }, { user }) => {
       const u = s.blockList.list.find(b => b.user.username === user)?.user
-      if (u) void get().unblockUser(u.username, u.display_name)
+      if (u) void acct.store.getState().unblockUser(u.username, u.display_name)
     },
   },
 ]

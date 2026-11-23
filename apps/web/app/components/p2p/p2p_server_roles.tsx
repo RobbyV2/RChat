@@ -1,4 +1,6 @@
 'use client'
+import { useAccount } from '../../lib/client/react'
+import { client } from '../../lib/client/client'
 
 import { useState, type ReactNode, type SyntheticEvent } from 'react'
 import { Crown, GripVertical, Trash2, X } from 'lucide-react'
@@ -72,28 +74,32 @@ const bitChecks = (v: ServerView, role: string, value: number) => ({
   },
 })
 
-const rows = (target: Target) => {
+const rows = (target: Target, acct = client.shown()) => {
   registerAppActions()
-  return menuItems(ctxFor(useStore.getState(), target, 'menu'))
+  return menuItems(ctxFor(acct.store.getState(), target, 'menu', acct))
 }
 
 // A role's menu (right-click, long-press): move it a step, or delete it.
-export const roleItems = (v: ServerView, r: RoleView) => rows({ kind: 'p2p_role', v, r })
+export const roleItems = (v: ServerView, r: RoleView, acct = client.shown()) =>
+  rows({ kind: 'p2p_role', v, r }, acct)
 
 function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
+  const acct = useAccount()
+
   const own = useP2p(s => ownsP2pServer(v, s.me))
   const mask = useMask(own)
   const edit = can(v, P.ManageRoles) && r.below
   const locked = !can(v, P.ManageRoles) ? 'Needs Manage roles' : r.below ? null : ROLE_LOCKED
   const fixed = v.roles.filter(x => !x.below).length
-  const menu = (x: number, y: number) => openActionMenu(x, y, { kind: 'p2p_role', v, r })
+  const menu = (x: number, y: number) =>
+    openActionMenu(x, y, { kind: 'p2p_role', v, r }, undefined, acct)
   const handle = edit
     ? longPress(menu, {
         group: 'p2p-roles',
         key: r.id,
         zones: z => z === 'p2p-roles',
         onDrop: ({ index }) =>
-          moveRoles(v, placeRole(v.roles, r.id, fixed + index, v.rank, p2p.limits().server)),
+          moveRoles(v, placeRole(v.roles, r.id, fixed + index, v.rank, p2p.limits().server), acct),
       })
     : longPress(menu)
   return (
@@ -136,7 +142,7 @@ function RoleRow({ v, r }: { v: ServerView; r: RoleView }) {
         )}
         {edit && (!r.held || can(v, P.ManageChannels)) && (
           <button
-            onClick={() => deleteRole(v, r)}
+            onClick={() => deleteRole(v, r, acct)}
             aria-label={`Delete ${mask(r.name)}`}
             title={`Delete ${mask(r.name)}`}
             className={dangerBtn}
@@ -204,14 +210,16 @@ export function RolesTab({ v }: { v: ServerView }) {
 // ----- A member's roles -----
 
 // The roles we may give or take, as the member menu's Roles submenu lists them.
-export const roleMenuItems = (v: ServerView, m: MemberView) => {
+export const roleMenuItems = (v: ServerView, m: MemberView, acct = client.shown()) => {
   registerAppActions()
-  const ctx = ctxFor(useStore.getState(), { kind: 'p2p_member', v, m }, 'menu')
+  const ctx = ctxFor(acct.store.getState(), { kind: 'p2p_member', v, m }, 'menu', acct)
   return itemFor('p2p_member_roles', ctx)?.submenu ?? []
 }
 
 // The card on top of a member's menu: who they are and their roles, each removable where we may.
 export function MemberCard({ room, ik }: { room: string; ik: string }) {
+  const acct = useAccount()
+
   const v = useP2p(s => s.servers[room])
   const me = useP2p(s => s.me)
   const own = useP2p(s => ownsP2pServer(v, s.me))
@@ -254,7 +262,7 @@ export function MemberCard({ room, ik }: { room: string; ik: string }) {
                 <button
                   onClick={e => {
                     e.stopPropagation()
-                    takeRole(v, m, r)
+                    takeRole(v, m, r, acct)
                   }}
                   title={`Remove ${mask(r.name)}`}
                   aria-label={`Remove ${mask(r.name)}`}

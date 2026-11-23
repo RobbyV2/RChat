@@ -1,14 +1,15 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useStore } from '../lib/store'
+import { client } from '../lib/client/client'
+import type { AccountSession } from '../lib/client/session'
 import { inShell, mobileOs } from '../lib/platform'
 import { onBack, pressEscape } from '../lib/platform/mobile'
 
 const LAYERS = '[role="dialog"], [role="menu"], [role="listbox"], [data-popover], [data-drawer]'
 
-const openLayers = () => {
-  const s = useStore.getState()
+const openLayers = (account: AccountSession) => {
+  const s = account.store.getState()
   const flags = [s.contextMenu, s.confirm, s.activeDialog, s.profile, s.invite, s.panel]
   const marks = flags.map(f => (f === null || f === undefined ? '0' : '1')).join('')
   const count = document.querySelectorAll(LAYERS).length
@@ -17,6 +18,31 @@ const openLayers = () => {
 
 const frames = () =>
   new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+
+export function handleAndroidBack(canGoBack: boolean, active: () => boolean, exit: () => void) {
+  const shown = client.shown()
+  const owner = client.overlayOwner() ?? shown
+  const shownMark = shown.lifetime.sessionMark()
+  const ownerMark = owner.lifetime.sessionMark()
+  const current = () =>
+    active() &&
+    client.shown() === shown &&
+    shown.lifetime.sessionMark() === shownMark &&
+    client.live().includes(owner) &&
+    owner.lifetime.sessionMark() === ownerMark
+  return onBack({
+    open: () => openLayers(owner),
+    escape: () => pressEscape(window),
+    settle: frames,
+    canGoBack,
+    back: () => {
+      if (current()) window.history.back()
+    },
+    exit: () => {
+      if (current()) exit()
+    },
+  })
+}
 
 // Android's back button, inside the mobile app only: closes what is open, then walks back.
 export default function MobileBridge() {
@@ -27,14 +53,11 @@ export default function MobileBridge() {
     const off = app.then(({ onBackButtonPress, exit }) =>
       onBackButtonPress(({ canGoBack }) => {
         if (!live) return
-        void onBack({
-          open: openLayers,
-          escape: () => pressEscape(window),
-          settle: frames,
+        void handleAndroidBack(
           canGoBack,
-          back: () => window.history.back(),
-          exit: () => void exit(0).catch(() => {}),
-        })
+          () => live,
+          () => void exit(0).catch(() => {})
+        )
       })
     )
     return () => {

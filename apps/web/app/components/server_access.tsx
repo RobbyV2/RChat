@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useState, type ReactNode } from 'react'
 import { Check, Copy, Lock, LockOpen, Plus } from 'lucide-react'
 import { api, home, readLocal, writeLocal } from '../lib/instances'
 import { errorText, useStore } from '../lib/store'
+import { useAccount } from '../lib/client/react'
 import { inviteUrl } from '../lib/invite'
 import { passwordDone, passwordPrompt } from '../lib/rules'
 import { goingPublic, protectedDetail, publicDetail } from '../lib/joining'
@@ -145,6 +146,7 @@ function PasswordRow({
   secret: string | null
   onRevoke: () => void
 }) {
+  const { shareOrigin } = useAccount()
   const status = statusAt(password, now)
   const live = status === 'live'
   const { label, expires_at, max_uses, uses, created_by } = password
@@ -159,7 +161,7 @@ function PasswordRow({
         <Chip status={status} />
         {live && (
           <CopyButton
-            text={secret ? inviteUrl(server, secret) : null}
+            text={secret ? inviteUrl(server, secret, shareOrigin) : null}
             label="Copy invite link"
             why="The password is only kept on the device that created it"
           />
@@ -335,6 +337,7 @@ function NewPasswordDialog({
   onClose: () => void
   onCreated: (created: CreatedPassword) => void
 }) {
+  const { shareOrigin } = useAccount()
   const ids = useId()
   const streamer = useStore(s => s.streamer)
   const [label, setLabel] = useState('')
@@ -410,7 +413,10 @@ function NewPasswordDialog({
               className={`${fieldCls} streamer font-mono`}
             />
             <CopyButton text={created.password} label="Copy password" />
-            <CopyButton text={inviteUrl(server, created.password)} label="Copy invite link" />
+            <CopyButton
+              text={inviteUrl(server, created.password, shareOrigin)}
+              label="Copy invite link"
+            />
           </div>
           <div className="mt-6 flex justify-end">
             <button autoFocus onClick={onClose} className={filledBtn}>

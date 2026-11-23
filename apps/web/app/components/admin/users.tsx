@@ -1,4 +1,5 @@
 'use client'
+import { useAccount } from '../../lib/client/react'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
@@ -270,6 +271,8 @@ const useFiltered = (q: string, filter: AccountFilter, rev: number) => {
 }
 
 export function UsersSection() {
+  const acct = useAccount()
+
   const overview = useStore(s => s.adminOverview)
   const adminUsers = useStore(s => s.adminUsers)
   const loadAdminUsers = useStore(s => s.loadAdminUsers)
@@ -336,7 +339,13 @@ export function UsersSection() {
             key={u.username}
             onClick={() => openAdmin('users', u.username)}
             {...longPress((x, y) =>
-              openActionMenu(x, y, { kind: 'member', user: u, server: null, where: 'admin' })
+              openActionMenu(
+                x,
+                y,
+                { kind: 'member', user: u, server: null, where: 'admin' },
+                undefined,
+                acct
+              )
             )}
             className={`${rowBtnCls} cursor-pointer`}
           >

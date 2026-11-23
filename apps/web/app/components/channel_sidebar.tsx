@@ -90,6 +90,8 @@ export function DmRow({
   // The rows as the list shows them, for a drop.
   shown?: () => DmSections<number>
 }) {
+  const acct = useAccount()
+
   const openDm = useStore(s => s.openDm)
   const placeDm = useStore(s => s.placeDm)
   const { id, other, is_self } = dm
@@ -103,12 +105,15 @@ export function DmRow({
         if (useP2p.getState().dmList) p2p.closeHome()
         void openDm(id)
       }}
-      {...longPress((x, y) => openActionMenu(x, y, { kind: 'dm', dm, where: 'sidebar' }), {
-        group: 'dm',
-        key: String(id),
-        onDrop: ({ zone, index }) =>
-          placeDm(id, zone === 'pinned' ? 'pinned' : 'recent', index, shown?.()),
-      })}
+      {...longPress(
+        (x, y) => openActionMenu(x, y, { kind: 'dm', dm, where: 'sidebar' }, undefined, acct),
+        {
+          group: 'dm',
+          key: String(id),
+          onDrop: ({ zone, index }) =>
+            placeDm(id, zone === 'pinned' ? 'pinned' : 'recent', index, shown?.()),
+        }
+      )}
       className={`mx-2 flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
         active
           ? 'bg-secondary-container text-on-secondary-container'
@@ -276,6 +281,8 @@ function VoiceMemberRow({
 const DM_LIST_MENU = 'dm-list'
 
 function DmListControl({ prefs }: { prefs: DmListPrefs }) {
+  const acct = useAccount()
+
   const open = useStore(s => s.contextMenu?.owner === DM_LIST_MENU)
   const on = filtersOn(prefs)
   const label = on
@@ -298,7 +305,8 @@ function DmListControl({ prefs }: { prefs: DmListPrefs }) {
             header: (
               <span className="text-xs font-medium text-on-surface-variant">Sort and filter</span>
             ),
-          }
+          },
+          acct
         )
       }}
       className={`relative rounded-full p-1 hover:bg-surface-container-high hover:text-on-surface ${
@@ -574,6 +582,8 @@ function DmSidebar({ dmId }: { dmId: number }) {
 }
 
 export function ChannelSidebar() {
+  const acct = useAccount()
+
   const view = useStore(s => s.view)
   const ownServer = useOwnServer(view?.kind === 'channel' ? view.server : null)
   const perms = useStore(s => (s.view?.kind === 'channel' ? myPerms(s, s.view.server) : 0))
@@ -636,7 +646,7 @@ export function ChannelSidebar() {
   const editingHere: Editing | null = editing?.server === server ? editing : null
 
   const submit = () => {
-    const edit = useChannelEdit.getState()
+    const edit = acct.channelEdit.getState()
     const current = edit.editing
     const trimmed = edit.name.trim()
     edit.stop()
@@ -659,16 +669,16 @@ export function ChannelSidebar() {
 
   const createIn = (category: number | null) => {
     if (category !== null) setCategoriesCollapsed(server, [category], false)
-    useChannelEdit.getState().start({ mode: 'create', server, kind: 'text', category }, '')
+    acct.channelEdit.getState().start({ mode: 'create', server, kind: 'text', category }, '')
   }
 
   const allCategories = groups.categories.map(g => g.category.id)
 
   const channelMenu = (channel: Channel) => (x: number, y: number) =>
-    openActionMenu(x, y, { kind: 'channel', server, channel })
+    openActionMenu(x, y, { kind: 'channel', server, channel }, undefined, acct)
 
   const categoryMenu = (category: Category) => (x: number, y: number) =>
-    openActionMenu(x, y, { kind: 'category', server, category })
+    openActionMenu(x, y, { kind: 'category', server, category }, undefined, acct)
 
   const keepShown = (c: Channel) => c.id === activeId || voice?.channelId === c.id
 
@@ -717,10 +727,10 @@ export function ChannelSidebar() {
     <input
       autoFocus
       value={name}
-      onChange={e => useChannelEdit.getState().setName(e.target.value)}
+      onChange={e => acct.channelEdit.getState().setName(e.target.value)}
       onKeyDown={e => {
         if (enterKey(e)) submit()
-        if (e.key === 'Escape') useChannelEdit.getState().stop()
+        if (e.key === 'Escape') acct.channelEdit.getState().stop()
       }}
       onBlur={editingHere?.mode === 'rename' ? submit : undefined}
       placeholder="channel name"
@@ -741,7 +751,7 @@ export function ChannelSidebar() {
             title="Text channel"
             aria-label="Text channel"
             onMouseDown={e => e.preventDefault()}
-            onClick={() => useChannelEdit.getState().setKind('text')}
+            onClick={() => acct.channelEdit.getState().setKind('text')}
             className={`rounded-lg p-1.5 ${
               editingHere.kind === 'text'
                 ? 'bg-secondary-container text-on-secondary-container'
@@ -754,7 +764,7 @@ export function ChannelSidebar() {
             title="Voice channel"
             aria-label="Voice channel"
             onMouseDown={e => e.preventDefault()}
-            onClick={() => useChannelEdit.getState().setKind('voice')}
+            onClick={() => acct.channelEdit.getState().setKind('voice')}
             className={`rounded-lg p-1.5 ${
               editingHere.kind === 'voice'
                 ? 'bg-secondary-container text-on-secondary-container'
@@ -774,7 +784,7 @@ export function ChannelSidebar() {
               type="checkbox"
               className="accent-primary"
               checked={!!editingHere.textOnly}
-              onChange={e => useChannelEdit.getState().setTextOnly(e.target.checked)}
+              onChange={e => acct.channelEdit.getState().setTextOnly(e.target.checked)}
             />
             Text only
           </label>

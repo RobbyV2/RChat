@@ -1,8 +1,11 @@
 import { createStore } from 'zustand/vanilla'
 import type { PaletteUi } from '../palette_store'
+import type { PollTarget } from '../polls_store'
+import type { AccountSession } from './session'
 
 export function createPaletteControls() {
-  const store = createStore<Pick<PaletteUi, 'open' | 'text' | 'view' | 'poll'>>(() => ({
+  const store = createStore<Pick<PaletteUi, 'open' | 'text' | 'view' | 'poll' | 'actor'>>(() => ({
+    actor: null,
     open: false,
     text: '',
     view: { kind: 'list' },
@@ -27,5 +30,15 @@ export function createPaletteControls() {
     return cancel !== null
   }
 
-  return { store, holdEscape, takeEscape }
+  let nextPoll = 0
+  const openPoll = (target: PollTarget, actor: AccountSession) =>
+    store.setState({
+      actor: null,
+      open: false,
+      text: '',
+      view: { kind: 'list' },
+      poll: { actor, target, key: ++nextPoll },
+    })
+
+  return { store, holdEscape, takeEscape, openPoll }
 }

@@ -217,7 +217,7 @@ function createPreview(owner: AccountSession) {
           slash: a.slash,
           subtitle: () => app.definition.name,
           available: ctx =>
-            ctx.s.openDialog === store.getState().openDialog &&
+            ctx.acct === owner &&
             current(app) &&
             ctx.server === app.server &&
             (ctx.via === 'bar' || (ctx.via === 'palette' && a.palette && canView(app.target))),
@@ -354,11 +354,7 @@ function createPreview(owner: AccountSession) {
     const id = actionId(app, action.name)
     if (competingAlias(slash, id)) return false
     const args = action.args.length ? { [action.args[0].name]: rest ?? '' } : {}
-    void runAction(
-      id,
-      { ...ctxFor(store.getState(), { kind: 'none' }, 'bar'), current: store.getState },
-      args
-    )
+    void runAction(id, ctxFor(store.getState(), { kind: 'none' }, 'bar', owner), args)
     return true
   }
 

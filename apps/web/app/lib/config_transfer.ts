@@ -39,7 +39,7 @@ import {
   type RelayPrefs,
   type RelaysSection,
 } from './relays'
-import { sessionStore, type StorageLike } from './instances'
+import type { StorageLike } from './instances'
 import { isShowSpoilers, type ShowSpoilers } from './spoilers'
 import { cleanP2pSection, type P2pSection } from './p2p/section'
 
@@ -594,19 +594,19 @@ export const describeChanges = (doc: ConfigDoc, src: ConfigSource): Change[] => 
 }
 
 // A config opened from a link before login. The sections to apply wait in sessionStorage for at
-// most 30 minutes. The next login applies them once.
+// most 30 minutes. The login on the originating account consumes them once.
 const STASH = 'rchat_config_stash'
 export const STASH_MS = 30 * 60 * 1000
 
 export const stashConfig = (
   doc: ConfigDoc,
   keys: SectionKey[],
-  store: StorageLike = sessionStore,
+  store: StorageLike,
   now = Date.now()
 ) => store.setItem(STASH, JSON.stringify({ at: now, doc, keys }))
 
 export const takeStashedConfig = (
-  store: StorageLike = sessionStore,
+  store: StorageLike,
   now = Date.now()
 ): { doc: ConfigDoc; keys: SectionKey[] } | null => {
   const raw = store.getItem(STASH)
@@ -625,4 +625,4 @@ export const takeStashedConfig = (
   }
 }
 
-export const hasStashedConfig = (store: StorageLike = sessionStore) => store.getItem(STASH) !== null
+export const hasStashedConfig = (store: StorageLike) => store.getItem(STASH) !== null

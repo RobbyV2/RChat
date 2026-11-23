@@ -13,7 +13,7 @@ import {
   startIndexSync,
   useIndexStatus,
 } from '../palette_sync'
-import { usePaletteUi } from '../palette_store'
+import { openPalette, openPollFromPalette, usePaletteUi } from '../palette_store'
 import { resetSessionCaches, useStore } from '../store'
 import type { Message, WsEvent } from '../types'
 import { advance, me, memoryStorage, msg, serverDetail, user } from './fixtures'
@@ -409,10 +409,11 @@ describe('following the app', () => {
   test('what the palette had open for an account is closed when the account changes', async () => {
     start('loaded')
     await __sync.settled()
-    usePaletteUi.setState({ open: true, text: 'alice', poll: { kind: 'channel', id: 1 } })
+    openPollFromPalette({ kind: 'channel', id: 1 })
+    openPalette('alice')
     useStore.setState({ me: null, token: null })
     expect(usePaletteUi.getState()).toMatchObject({ open: false, text: '', poll: null })
-    usePaletteUi.setState({ poll: { kind: 'channel', id: 1 } })
+    openPollFromPalette({ kind: 'channel', id: 1 })
     useStore.setState({ token: 'tok', me: me('bob') })
     expect(usePaletteUi.getState().poll).toBeNull()
   })

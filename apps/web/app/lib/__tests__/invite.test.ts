@@ -16,7 +16,7 @@ import {
   INVITE_GAP,
   INVITE_MAX_WAIT,
   INVITE_QUIET,
-  inviteVersion,
+  createInviteUpdates,
   invitePath,
   inviteUrl,
   isCode,
@@ -31,9 +31,7 @@ import {
   sameInvite,
   sharedByCode,
   shareLink,
-  staleInvites,
   targetPath,
-  watchInvites,
 } from '../invite'
 
 const ORIGIN = 'https://chat.example.com'
@@ -348,6 +346,7 @@ describe('remote invites', () => {
 
 describe('invite preview freshness', () => {
   test('a server bump changes only that server, a global bump changes all', () => {
+    const { inviteVersion, staleInvites, watchInvites } = createInviteUpdates()
     const a = inviteVersion('a')
     const b = inviteVersion('b')
     let calls = 0

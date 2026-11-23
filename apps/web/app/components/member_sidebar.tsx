@@ -1,4 +1,5 @@
 'use client'
+import { useAccount } from '../lib/client/react'
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { Member, UserRef } from '../lib/types'
@@ -78,6 +79,8 @@ function MemberTimeout({ server, username }: { server: string; username: string 
 }
 
 export default function MemberSidebar() {
+  const acct = useAccount()
+
   const detail = useStore(s => (s.view?.kind === 'channel' ? s.servers[s.view.server] : null))
   const cache = useStore(s => (s.view?.kind === 'channel' ? s.members[s.view.server] : undefined))
   const info = useStore(s => (s.view?.kind === 'channel' ? s.memberInfo[s.view.server] : undefined))
@@ -158,7 +161,13 @@ export default function MemberSidebar() {
         key={m.username}
         {...(me
           ? longPress((x, y) =>
-              openActionMenu(x, y, { kind: 'member', user: m, server: detail.name, where: 'list' })
+              openActionMenu(
+                x,
+                y,
+                { kind: 'member', user: m, server: detail.name, where: 'list' },
+                undefined,
+                acct
+              )
             )
           : {})}
         {...profileTrigger(m, detail.name)}
@@ -185,7 +194,13 @@ export default function MemberSidebar() {
       key={u.username}
       {...(me
         ? longPress((x, y) =>
-            openActionMenu(x, y, { kind: 'member', user: u, server: null, where: 'interacted' })
+            openActionMenu(
+              x,
+              y,
+              { kind: 'member', user: u, server: null, where: 'interacted' },
+              undefined,
+              acct
+            )
           )
         : {})}
       {...profileTrigger(u, detail.name)}

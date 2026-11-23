@@ -1,4 +1,5 @@
 'use client'
+import { useAccount } from '../lib/client/react'
 import { useContext, useEffect, useMemo, useReducer, useRef, useState, type FormEvent } from 'react'
 import { Reply } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
@@ -142,6 +143,8 @@ function ChatRow({
   client: WidgetConnection
   reply: (message: Message) => void
 }) {
+  const acct = useAccount()
+
   const sender = 'widget-author-' + message.id,
     time = 'widget-time-' + message.id
   const date = new Date(message.created_at * 1000)
@@ -169,7 +172,8 @@ function ChatRow({
         canReply: () => !!client.replyTarget(message.id),
         reply: pick,
       },
-      { owner }
+      { owner },
+      acct
     )
   if (isNotice(message)) return <WidgetNotice message={message} />
   return (

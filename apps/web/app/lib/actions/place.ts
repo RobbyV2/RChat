@@ -1,3 +1,4 @@
+import { client } from '../client/client'
 // Commands on the open place: its conversation (the open thread, else the channel or DM), the
 // channel, the DM and the server.
 
@@ -22,7 +23,6 @@ import {
   Webhook,
   X,
 } from 'lucide-react'
-import { api, shareOrigin } from '../instances'
 import {
   LEVELS,
   muteEnd,
@@ -37,7 +37,7 @@ import { openPollFromPalette } from '../palette_store'
 import { sharing } from '../platform'
 import type { PollTarget } from '../polls_store'
 import { dayEndTs } from '../search'
-import { Ended, live } from '../slices/ctx'
+import { Ended } from '../slices/ctx'
 import {
   myPerms,
   scopeMarkTargets,
@@ -45,7 +45,6 @@ import {
   serverNames,
   serversMarkTargets,
   userRefFor,
-  useStore,
 } from '../store'
 import type { RChatState } from '../store_types'
 import { Perm, hasPerm } from '../types'
@@ -55,12 +54,16 @@ import { muteStep, muteUntil } from './notify'
 import { railServer } from './server'
 import type { Action, ActionCtx, ArgChoice, ArgStep, Scope, Target } from './types'
 
-const get = () => useStore.getState()
-
-const copy = (text: string, done: string) =>
+const copy = (text: string, done: string, acct = client.shown()) =>
   void sharing()
     .copyText(text)
-    .then(ok => (ok ? get().showToast(done) : get().setError('Could not copy to the clipboard')))
+    .then(
+      acct.lifetime.inSession(ok =>
+        ok
+          ? acct.store.getState().showToast(done)
+          : acct.store.getState().setError('Could not copy to the clipboard')
+      )
+    )
 
 const what = ({ channel, dm }: ActionCtx) =>
   channel ? `#${channel.name}` : dm ? 'this DM' : 'this conversation'
@@ -153,7 +156,7 @@ const notifyActions = (p: NotifyPlace): Action[] => [
     },
     run: (ctx, { value }) => {
       const scope = p.of(ctx)
-      if (scope) get().muteScope(scope, muteUntil(value))
+      if (scope) ctx.acct.store.getState().muteScope(scope, muteUntil(value))
     },
   },
   {
@@ -174,7 +177,7 @@ const notifyActions = (p: NotifyPlace): Action[] => [
     },
     run: ctx => {
       const scope = p.of(ctx)
-      if (scope) get().muteScope(scope, null)
+      if (scope) ctx.acct.store.getState().muteScope(scope, null)
     },
   },
   {
@@ -189,7 +192,10 @@ const notifyActions = (p: NotifyPlace): Action[] => [
     available: ctx => p.of(ctx) !== null,
     run: (ctx, { value }) => {
       const scope = p.of(ctx)
-      if (scope) get().setNotifyLevel(scope, value === 'default' ? null : (value as Level))
+      if (scope)
+        ctx.acct.store
+          .getState()
+          .setNotifyLevel(scope, value === 'default' ? null : (value as Level))
     },
   },
 ]
@@ -201,22 +207,22 @@ const dateStep: ArgStep = {
   check: t => (dayEndTs(t.trim()) === null ? 'Use a date like 2025-01-31' : null),
 }
 
-const jumpToDate = async ({ s }: ActionCtx, date: string) => {
+const jumpToDate = async ({ acct, s }: ActionCtx, date: string) => {
   const v = s.view
   const end = dayEndTs(date.trim())
   if (v?.kind !== 'channel' || end === null) return
   try {
-    const page = await live(
-      api.search({ server: v.server, channel_id: v.channelId, before_ts: end })
+    const page = await acct.lifetime.live(
+      acct.api.search({ server: v.server, channel_id: v.channelId, before_ts: end })
     )
     const hit = page.items[0]
     if (!hit) {
-      get().showToast('No messages on or before that day')
+      acct.store.getState().showToast('No messages on or before that day')
       return
     }
-    await get().jumpTo(viewKey(v), hit.message.id, true)
+    await acct.store.getState().jumpTo(viewKey(v), hit.message.id, true)
   } catch (e) {
-    if (!(e instanceof Ended)) get().setError("Couldn't search this channel")
+    if (!(e instanceof Ended)) acct.store.getState().setError("Couldn't search this channel")
   }
 }
 
@@ -259,8 +265,8 @@ export const placeActions: Action[] = [
       target.kind === 'channel'
         ? target.channel.kind === 'text' && !!s.me?.servers.some(x => x.name === target.server)
         : list !== null,
-    run: ({ list }) => {
-      if (list) void get().markScopesRead([list])
+    run: ({ acct, list }) => {
+      if (list) void acct.store.getState().markScopesRead([list])
     },
   },
   {
@@ -269,7 +275,7 @@ export const placeActions: Action[] = [
     scope: 'channel',
     icon: AtSign,
     available: ({ list }) => list !== null,
-    run: () => void get().jumpToUnread(),
+    run: ({ acct }) => void acct.store.getState().jumpToUnread(),
   },
   {
     id: 'jump_present',
@@ -278,8 +284,8 @@ export const placeActions: Action[] = [
     icon: CheckCheck,
     keywords: ['latest', 'bottom'],
     available: ({ list }) => list !== null,
-    run: ({ list }) => {
-      if (list) void get().jumpToPresent(list)
+    run: ({ acct, list }) => {
+      if (list) void acct.store.getState().jumpToPresent(list)
     },
   },
   {
@@ -290,8 +296,8 @@ export const placeActions: Action[] = [
     keywords: ['bulk', 'delete', 'export'],
     hint: 'Mod+Shift+S',
     available: ({ s, list }) => list !== null && s.selection === null,
-    run: ({ list }) => {
-      if (list) get().startSelection(list)
+    run: ({ acct, list }) => {
+      if (list) acct.store.getState().startSelection(list)
     },
   },
   {
@@ -300,7 +306,7 @@ export const placeActions: Action[] = [
     scope: 'channel',
     icon: Pin,
     available: ({ list }) => list !== null,
-    run: () => get().openPins(),
+    run: ({ acct }) => acct.store.getState().openPins(),
   },
   {
     id: 'copy_link_here',
@@ -310,8 +316,8 @@ export const placeActions: Action[] = [
     icon: Link,
     keywords: ['share', 'url'],
     available: ({ s }) => s.view !== null,
-    run: ({ s }) => {
-      if (s.view) copy(`${shareOrigin()}${viewPath(s.view)}`, 'Link copied')
+    run: ({ acct, s }) => {
+      if (s.view) copy(`${acct.shareOrigin}${viewPath(s.view)}`, 'Link copied', acct)
     },
   },
   {
@@ -320,7 +326,7 @@ export const placeActions: Action[] = [
     scope: 'channel',
     icon: Search,
     available: textChannel,
-    run: () => get().openSearch(),
+    run: ({ acct }) => acct.store.getState().openSearch(),
   },
   {
     id: 'jump_date',
@@ -354,8 +360,8 @@ export const placeActions: Action[] = [
     disabled: ({ s, server }) => server === null || !serversMarkTargets(s, [server]).length,
     available: ctx =>
       ctx.target.kind === 'server' ? !!ctx.s.me && railServer(ctx) !== null : ctx.server !== null,
-    run: ({ server }) => {
-      if (server) void get().markServerRead(server)
+    run: ({ acct, server }) => {
+      if (server) void acct.store.getState().markServerRead(server)
     },
   },
   ...notifyActions({
@@ -373,8 +379,8 @@ export const placeActions: Action[] = [
     icon: Settings,
     available: ({ s, server }) =>
       signedIn(s) && server !== null && serverAdminPerms(s, server) !== 0,
-    run: ({ server }) => {
-      if (server) get().openDialog({ kind: 'server_settings', server })
+    run: ({ acct, server }) => {
+      if (server) acct.store.getState().openDialog({ kind: 'server_settings', server })
     },
   },
   {
@@ -383,8 +389,8 @@ export const placeActions: Action[] = [
     scope: 'server',
     icon: FileClock,
     available: may(Perm.ViewAuditLog),
-    run: ({ server }) => {
-      if (server) get().openDialog({ kind: 'audit_log', server })
+    run: ({ acct, server }) => {
+      if (server) acct.store.getState().openDialog({ kind: 'audit_log', server })
     },
   },
   {
@@ -394,8 +400,8 @@ export const placeActions: Action[] = [
     icon: Webhook,
     keywords: ['integrations', 'bots'],
     available: may(Perm.ManageWebhooks, Perm.ManageChannels),
-    run: ({ server }) => {
-      if (server) get().openDialog({ kind: 'webhooks', server })
+    run: ({ acct, server }) => {
+      if (server) acct.store.getState().openDialog({ kind: 'webhooks', server })
     },
   },
   {
@@ -407,9 +413,11 @@ export const placeActions: Action[] = [
     keywords: ['mute', 'moderation'],
     args: [usernameStep],
     available: may(Perm.TimeoutMembers),
-    run: ({ s, server }, { value }) => {
+    run: ({ acct, s, server }, { value }) => {
       if (server)
-        get().openDialog({ kind: 'timeout', server, user: userRefFor(s, username(value)) })
+        acct.store
+          .getState()
+          .openDialog({ kind: 'timeout', server, user: userRefFor(s, username(value)) })
     },
   },
   {
@@ -427,9 +435,9 @@ export const placeActions: Action[] = [
             name: true,
             args: { server, user: name },
           })),
-    run: ({ s, server: here }, { server, user }) => {
+    run: ({ acct, s, server: here }, { server, user }) => {
       if (server === here && Object.keys(s.timeouts[server] ?? {}).includes(user))
-        void get().removeTimeout(server, user)
+        void acct.store.getState().removeTimeout(server, user)
     },
   },
   {
@@ -455,8 +463,8 @@ export const placeActions: Action[] = [
       (target.kind === 'server'
         ? serverNames(s).includes(server)
         : signedIn(s) && !!s.me?.servers.some(x => x.name === server)),
-    run: ({ server }) => {
-      if (server) void get().leaveServer(server)
+    run: ({ acct, server }) => {
+      if (server) void acct.store.getState().leaveServer(server)
     },
   },
   {
@@ -469,7 +477,7 @@ export const placeActions: Action[] = [
     available: ctx => pollTarget(ctx) !== null,
     run: ctx => {
       const target = pollTarget(ctx)
-      if (target) openPollFromPalette(target)
+      if (target) openPollFromPalette(target, ctx.acct)
     },
   },
   {
@@ -480,8 +488,8 @@ export const placeActions: Action[] = [
     icon: Phone,
     name: true,
     available: callable,
-    run: ({ dm }) => {
-      if (dm) void get().startCall(dm.id, false)
+    run: ({ acct, dm }) => {
+      if (dm) void acct.store.getState().startCall(dm.id, false)
     },
   },
   {
@@ -492,8 +500,8 @@ export const placeActions: Action[] = [
     icon: Video,
     name: true,
     available: callable,
-    run: ({ dm }) => {
-      if (dm) void get().startCall(dm.id, true)
+    run: ({ acct, dm }) => {
+      if (dm) void acct.store.getState().startCall(dm.id, true)
     },
   },
   {
@@ -506,8 +514,8 @@ export const placeActions: Action[] = [
     order: 310,
     available: ctx =>
       ctx.target.kind === 'dm' ? ctx.target.where === 'sidebar' && signedIn(ctx.s) : inDm(ctx),
-    run: ({ dm }) => {
-      if (dm) void get().closeDm(dm.id)
+    run: ({ acct, dm }) => {
+      if (dm) void acct.store.getState().closeDm(dm.id)
     },
   },
 ]

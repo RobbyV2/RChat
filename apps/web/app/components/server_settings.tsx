@@ -1253,6 +1253,8 @@ export default function ServerSettings() {
 }
 
 function Settings({ server }: { server: string }) {
+  const acct = useAccount()
+
   const {
     store,
     lifetime: { inSession },
@@ -1321,7 +1323,7 @@ function Settings({ server }: { server: string }) {
               where: 'list',
             },
             {},
-            store.getState
+            acct
           )
         }
         className={textBtn}

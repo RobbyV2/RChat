@@ -2,8 +2,11 @@ import { expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import AppShell from '../../[[...slug]]/app_shell'
+import { CallBanner } from '../../components/voice_grid'
 import { ChannelSidebar } from '../../components/channel_sidebar'
 import { client } from '../client/client'
+import { p2pHost, useP2p } from '../p2p/app'
+import { ringing } from '../p2p/app/calls'
 import { AccountProvider } from '../client/react'
 import { member, serverDetail, textChannel } from './fixtures'
 import { testAccount } from './test_account'
@@ -104,6 +107,86 @@ test('the channel sidebar uses the provider’s identity and RTC for a colliding
     expect(html).toContain('title="Sharing their screen"')
     expect(html).toContain('title="Muted"')
   } finally {
+    client.shown = previous
+    a.store.dispose()
+    b.store.dispose()
+  }
+})
+
+test('the shell uses the P2P owner for alerts, quiet calls and runtime preferences', () => {
+  const a = testAccount('reader', 'https://a.test')
+  const b = testAccount('reader', 'https://b.test')
+  const previous = client.shown
+  const previousOwner = p2pHost.account
+  const quiet = useP2p.getState().callQuiet
+  const initial = useP2p.getInitialState()
+  const initialCall = { call: initial.call, callQuiet: initial.callQuiet }
+  try {
+    client.shown = () => a
+    p2pHost.account = b
+    const toasts: string[] = []
+    b.store.setState(s => ({
+      notifyPrefs: { ...s.notifyPrefs, p2p: { room: { level: 'nothing' } } },
+      atBottom: { room: true },
+      typingOn: false,
+      settings: { ...s.settings, asset_uploads: false, p2p_attachments: false },
+      showToast: text => void toasts.push(text),
+    }))
+    const call = {
+      id: 'call',
+      room: 'room',
+      peer: 'peer',
+      dir: 'in',
+      state: 'ringing',
+      video: false,
+      startedAt: 0,
+      since: null,
+    } as const
+    ringing(call)
+    expect(useP2p.getState().callQuiet).toBe(true)
+    Object.assign(initial, { call, callQuiet: useP2p.getState().callQuiet })
+    expect(renderToStaticMarkup(<CallBanner />)).not.toContain('data-p2p-call-card')
+    initial.callQuiet = false
+    expect(renderToStaticMarkup(<CallBanner />)).toContain('data-p2p-call-card')
+    b.store.getInitialState().voice = { server: 'club', channelId: 1 }
+    expect(renderToStaticMarkup(<CallBanner />)).not.toContain('data-p2p-call-card')
+    expect(p2pHost.typingOn()).toBe(false)
+    expect(p2pHost.textOnly()).toBe(true)
+    p2pHost.toast('owner toast')
+    expect(toasts).toEqual(['owner toast'])
+    expect(p2pHost.following('room')).toBe(false)
+    client.shown = () => b
+    expect(p2pHost.following('room')).toBe(true)
+    client.shown = () => a
+
+    let clicks = 0
+    p2pHost.alert({
+      key: 'p2p:room',
+      actor: null,
+      action: '',
+      body: 'hello',
+      server: null,
+      channel: null,
+      dm: true,
+      message: true,
+      name: 'Peer',
+      generic: 'New message',
+      go: () => clicks++,
+    })
+    expect(a.store.getState().notices).toHaveLength(0)
+    const [notice] = b.store.getState().notices
+    notice.go()
+    expect(clicks).toBe(1)
+    p2pHost.account = a
+    notice.go()
+    p2pHost.account = b
+    b.lifetime.endSession()
+    notice.go()
+    expect(clicks).toBe(1)
+  } finally {
+    Object.assign(initial, initialCall)
+    useP2p.setState({ callQuiet: quiet })
+    p2pHost.account = previousOwner
     client.shown = previous
     a.store.dispose()
     b.store.dispose()

@@ -169,6 +169,7 @@ export function createInboxSources(acct: AccountSession) {
 
   return {
     instanceInbox,
+    adapterOf: (id: string) => adapters.find(a => a.id === id),
     inboxAdapters,
     subscribeAdapters,
     adapterCounts,

@@ -1,4 +1,5 @@
 'use client'
+import { useAccount } from '../../lib/client/react'
 
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useStore } from '../../lib/store'
@@ -51,6 +52,7 @@ export function P2pThreadPanel() {
 }
 
 function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
+  const acct = useAccount()
   const me = useP2p(s => s.me)
   const reader = useP2p(s => s.reader)
   const elsewhere = useP2p(s => s.elsewhere)
@@ -76,7 +78,7 @@ function ThreadBody({ t, v }: { t: P2pThread; v: ServerView }) {
   const moderator = v.me === 'join' && (v.perms & P.ManageMessages) !== 0
   const mayDelete = useCallback((p: P2pMessage) => p.sender === me || moderator, [me, moderator])
   const channel = v.channels.find(c => c.id === t.ch)
-  const disabled = sendBlock(v, { reader, elsewhere, status, movedAt, movingAt }, channel)
+  const disabled = sendBlock(v, { reader, elsewhere, status, movedAt, movingAt }, channel, acct)
   const canAct = !disabled
   const replies = t.messages ?? EMPTY
   const all = useMemo(() => (t.head ? [t.head, ...replies] : replies), [t.head, replies])

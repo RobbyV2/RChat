@@ -1,3 +1,4 @@
+import { createChannelEdit } from '../channel_edit'
 import { createApiDoc } from '../api_console'
 import { createTextPreviews } from '../code'
 import { createHomeStore } from '../home_store'
@@ -8,6 +9,8 @@ import { createPalettePrefs } from '../palette_store'
 import { createPaletteIndexer } from '../palette_sync'
 import { P2pManager, p2p as homeFiles } from '../p2p'
 import { createRelayBook, relayBook as homeRelays } from '../relays'
+import { createInviteUpdates } from '../invite'
+import { sessionStore, type StorageLike } from '../instances'
 import { createInviteCache } from '../remote_invite'
 import { createRtc, rtc as homeRtc } from '../rtc'
 import { createViewing } from '../viewing'
@@ -20,6 +23,7 @@ import { KeyScope } from './keys'
 export type AccountId = string
 
 export class AccountSession {
+  readonly channelEdit = createChannelEdit()
   readonly renderKey = client.nextSessionKey()
   readonly textPreviews = createTextPreviews()
   readonly keys: KeyScope
@@ -35,6 +39,8 @@ export class AccountSession {
   readonly rtc: ReturnType<typeof createRtc>
   readonly files: P2pManager
   readonly media: ReturnType<typeof createMediaSrc>
+  readonly inviteUpdates = createInviteUpdates()
+  readonly handoff: StorageLike
   readonly invites: ReturnType<typeof createInviteCache>
 
   constructor(
@@ -42,6 +48,27 @@ export class AccountSession {
     readonly viewing = createViewing(conn),
     readonly discovery = lookup()
   ) {
+    // Signed-out links can finish signing in during a handoff. Keep the slot that wrote
+    // each pending value until it is consumed, even if the username has changed.
+    const pending = new Map<string, string>()
+    const pendingKey = (key: string) => JSON.stringify([conn.origin, key])
+    const handoffKey = (key: string) =>
+      this.isHome
+        ? conn.scoped(key)
+        : `${key}@${conn.origin}/${this.username ?? `~guest/${this.renderKey}`}`
+    const readKey = (key: string) => pending.get(pendingKey(key)) ?? handoffKey(key)
+    this.handoff = {
+      getItem: key => sessionStore.getItem(readKey(key)),
+      setItem: (key, value) => {
+        const slot = handoffKey(key)
+        if (!this.isHome && !this.username) pending.set(pendingKey(key), slot)
+        sessionStore.setItem(slot, value)
+      },
+      removeItem: key => {
+        sessionStore.removeItem(readKey(key))
+        pending.delete(pendingKey(key))
+      },
+    }
     this.keys = new KeyScope(conn, () => this.username)
     this.ice = this.isHome ? homeIce : createIceCache(conn)
     this.rtc = this.isHome ? homeRtc : createRtc(conn, this.ice)

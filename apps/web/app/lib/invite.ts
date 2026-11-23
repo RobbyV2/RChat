@@ -1,4 +1,4 @@
-import { sessionStore, shareOrigin } from './instances'
+import type { StorageLike } from './instances'
 import { replaceSpoilers, spoilerParts } from './spoilers'
 import type { Invite, InviteLinkInfo, InviteStatus, JoinMode } from './types'
 
@@ -54,8 +54,7 @@ export const isCode = (raw: string) => CODE.test(raw)
 
 export const codePath = (code: string) => `/i/${code}/`
 
-export const codeUrl = (code: string, origin?: string) =>
-  `${origin ?? shareOrigin()}${codePath(code)}`
+export const codeUrl = (code: string, origin: string) => `${origin}${codePath(code)}`
 
 export const targetPath = (target: InviteTarget) =>
   target.code ? codePath(target.code) : invitePath(target.server)
@@ -72,15 +71,15 @@ export const shareLink = (
   server: string,
   mode: JoinMode | undefined,
   link: InviteLinkInfo | null | undefined,
-  origin?: string
+  origin: string
 ) => {
   if (!sharedByCode(mode)) return inviteUrl(server, null, origin)
   return link ? codeUrl(link.code, origin) : null
 }
 
-export const inviteUrl = (server: string, password?: string | null, origin?: string) => {
+export const inviteUrl = (server: string, password: string | null | undefined, origin: string) => {
   const pw = password?.trim()
-  const base = origin ?? shareOrigin()
+  const base = origin
   return `${base}${invitePath(server)}${pw ? `#password=${queryEncode(pw)}` : ''}`
 }
 
@@ -233,8 +232,10 @@ export const previewParts = (content: string, cut = false) =>
 export const inviteEntry = (
   state: unknown,
   server: string,
-  code: string | null = null
+  code: string | null = null,
+  owner?: string
 ): InviteEntry | null => {
+  if ((state as { rchatInviteOwner?: unknown } | null)?.rchatInviteOwner !== owner) return null
   const saved = (state as { rchatInvite?: Partial<InviteEntry> } | null)?.rchatInvite
   if (!saved || saved.server !== server || (saved.code ?? null) !== code) return null
   const password = typeof saved.password === 'string' ? saved.password : null
@@ -243,7 +244,10 @@ export const inviteEntry = (
     : { server, password, pushed: saved.pushed === true }
 }
 
-export const entryState = (entry: InviteEntry) => ({ rchatInvite: entry })
+export const entryState = (entry: InviteEntry, owner?: string) => ({
+  rchatInvite: entry,
+  ...(owner === undefined ? {} : { rchatInviteOwner: owner }),
+})
 
 export const handoffFor = (
   raw: string | null,
@@ -263,39 +267,46 @@ export const handoffFor = (
   }
 }
 
-export const stashInvite = (target: InviteTarget) =>
-  sessionStore.setItem(STASH, JSON.stringify({ ...target, at: Date.now() }))
+export const stashInvite = (target: InviteTarget, store: StorageLike) =>
+  store.setItem(STASH, JSON.stringify({ ...target, at: Date.now() }))
 
-export const takeStashedInvite = (server: string | null, code: string | null = null) => {
-  const raw = sessionStore.getItem(STASH)
-  if (raw !== null) sessionStore.removeItem(STASH)
+export const takeStashedInvite = (
+  server: string | null,
+  code: string | null,
+  store: StorageLike
+) => {
+  const raw = store.getItem(STASH)
+  if (raw !== null) store.removeItem(STASH)
   return server === null ? null : handoffFor(raw, server, Date.now(), code)
 }
 
-export const dropStashedInvite = () => sessionStore.removeItem(STASH)
+export const dropStashedInvite = (store: StorageLike) => store.removeItem(STASH)
 
 const INVITE_VERSIONS_MAX = 500
-const inviteVersions = new Map<string, number>()
-const inviteWatchers = new Set<() => void>()
-let inviteEpoch = 0
+export function createInviteUpdates() {
+  const inviteVersions = new Map<string, number>()
+  const inviteWatchers = new Set<() => void>()
+  let inviteEpoch = 0
 
-export const inviteVersion = (server: string) => inviteEpoch + (inviteVersions.get(server) ?? 0)
+  const inviteVersion = (server: string) => inviteEpoch + (inviteVersions.get(server) ?? 0)
 
-export const staleInvites = (server: string | null) => {
-  if (server === null || inviteVersions.size >= INVITE_VERSIONS_MAX) {
-    inviteEpoch += 1 + Math.max(0, ...inviteVersions.values())
-    inviteVersions.clear()
-  } else inviteVersions.set(server, (inviteVersions.get(server) ?? 0) + 1)
-  for (const fn of inviteWatchers) fn()
-}
-
-export const watchInvites = (fn: () => void) => {
-  inviteWatchers.add(fn)
-  return () => {
-    inviteWatchers.delete(fn)
+  const staleInvites = (server: string | null) => {
+    if (server === null || inviteVersions.size >= INVITE_VERSIONS_MAX) {
+      inviteEpoch += 1 + Math.max(0, ...inviteVersions.values())
+      inviteVersions.clear()
+    } else inviteVersions.set(server, (inviteVersions.get(server) ?? 0) + 1)
+    for (const fn of inviteWatchers) fn()
   }
-}
 
+  const watchInvites = (fn: () => void) => {
+    inviteWatchers.add(fn)
+    return () => {
+      inviteWatchers.delete(fn)
+    }
+  }
+
+  return { inviteVersion, staleInvites, watchInvites }
+}
 export const INVITE_QUIET = 2_000
 export const INVITE_MAX_WAIT = 10_000
 export const INVITE_GAP = 15_000

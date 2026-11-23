@@ -33,6 +33,7 @@ import {
   readLocal,
   resolveInstance,
   selectHome,
+  sessionStore,
   shareOrigin,
   writeLocal,
 } from '../instances'
@@ -453,7 +454,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     const { me, guest } = get()
     if (!me && !guest) {
       const rest = [...want].filter(k => !sectionOf(k).device)
-      if (rest.length) stashConfig(doc, rest)
+      if (rest.length) stashConfig(doc, rest, acct.handoff)
       return null
     }
     const username = me?.username ?? null
@@ -546,7 +547,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
   }
 
   const applyStashedConfig = async () => {
-    const stashed = takeStashedConfig()
+    const stashed = takeStashedConfig(acct.handoff)
     if (!stashed || !stashed.keys.length) return
     const at = sessionMark()
     const error = await applyConfigDoc(stashed.doc, stashed.keys)
@@ -1035,25 +1036,53 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     if (get().configLink) set({ configLink: null })
   }
 
+  const ownsPage = () => client.shown() === acct
+  // Session storage keeps Back and reload working in the same tab. Ending this login
+  // retires its history entries, including when the next login has the same username.
+  let inviteHistory: { key: string; nonce: string } | null = null
+  const inviteHistoryKey = () => 'rchat_invite_history:' + JSON.stringify([home.origin, acct.id])
+  const inviteHistoryOwner = () => {
+    const key = inviteHistoryKey()
+    if (inviteHistory?.key !== key) {
+      const nonce = sessionStore.getItem(key) || crypto.randomUUID()
+      inviteHistory = { key, nonce }
+      sessionStore.setItem(key, nonce)
+    }
+    return inviteHistory.nonce
+  }
+
   const readConfigLink = () => {
+    if (!ownsPage()) return false
     const id = parseConfigPath(window.location.pathname)
     if (get().configLink !== id) set({ configLink: id })
     return id !== null
   }
 
-  const rememberInvite = (entry: InviteEntry) =>
+  const rememberInvite = (entry: InviteEntry) => {
+    const mark = sessionMark()
+    const owner = inviteHistoryOwner()
+    const currentUrl = window.location.href
     queueMicrotask(() => {
+      if (
+        !ownsPage() ||
+        mark !== sessionMark() ||
+        owner !== inviteHistoryOwner() ||
+        window.location.href !== currentUrl
+      )
+        return
       const origin = shareOrigin(undefined, undefined, home)
       const shown = parseInvite(pageHref(origin), origin)
       if (!shown || !sameInvite(shown, entry)) return
-      window.history.replaceState(entryState(entry), '', targetPath(entry))
+      window.history.replaceState(entryState(entry, owner), '', targetPath(entry))
     })
+  }
 
   const readInvite = () => {
+    if (!ownsPage()) return false
     const origin = shareOrigin(undefined, undefined, home)
     const target = parseInvite(pageHref(origin), origin)
     const code = target?.code ?? null
-    const handoff = takeStashedInvite(target?.server ?? null, code)
+    const handoff = takeStashedInvite(target?.server ?? null, code, acct.handoff)
     if (!target) {
       leaveInvite()
       return false
@@ -1065,7 +1094,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       return true
     }
     const { server } = target
-    const entry = inviteEntry(window.history.state, server)
+    const entry = inviteEntry(window.history.state, server, null, inviteHistoryOwner())
     const password = target.password ?? entry?.password ?? handoff?.password ?? null
     if (target.password !== null || password !== (entry?.password ?? null))
       rememberInvite({ server, password, pushed: entry?.pushed ?? false })
@@ -1104,7 +1133,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       if (nav !== 'push') return
       set({ adminPage: null })
     }
-    if (nav === 'none') return
+    if (nav === 'none' || !ownsPage()) return
     const path = viewPath(view)
     if (window.location.pathname === path) return
     if (nav === 'push') window.history.pushState(null, '', path)
@@ -1113,10 +1142,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   // `retrying`: a boot that tries again after a 429, so it must not fall back yet.
   const resolveUrl = async (nav: 'replace' | 'none', retrying = false) => {
+    if (!ownsPage()) return
     const intent = beginNavigation()
     if (readInvite() || readConfigLink() || (!get().me && !get().guest)) return
     const at = sessionMark()
-    const ended = () => at !== sessionMark() || navigation !== intent
+    const ended = () => !ownsPage() || at !== sessionMark() || navigation !== intent
     const parsed = parsePath(window.location.pathname)
     // Only the site admin has admin paths. For everyone else they are paths nobody knows.
     if (parsed?.kind === 'admin' && get().me?.is_site_admin === true) {
@@ -1147,10 +1177,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }
       const opened = await openMessageAt(target.id, 'replace', () => !ended()).catch(
         (e: unknown) => {
-          fail(e)
+          if (!ended()) fail(e)
           return true
         }
       )
+      if (ended()) return
       if (!opened) toast("You can't open this message")
       const now = get().view
       return now ? syncUrl(now, 'replace') : fallback()
@@ -1214,7 +1245,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     const started = Date.now()
     const at = sessionMark()
     await resolveUrl('replace', attempt < BOOT_RETRY_MS.length)
-    if (at !== sessionMark()) return
+    if (!ownsPage() || at !== sessionMark()) return
     const s = get()
     const stuck = !s.view && !s.home && !s.invite && !s.configLink && (!!s.me || s.guest)
     if (!stuck || limitedAt() < started || attempt >= BOOT_RETRY_MS.length) return
@@ -1233,6 +1264,10 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     writeLocal(LS.guest, null)
     api.setToken(res.token)
     applyMe(res.user, false)
+    // A fresh login gets fresh history even when the expired session ended
+    // before bootstrap could recover its username.
+    sessionStore.removeItem(inviteHistoryKey())
+    inviteHistory = null
     set({
       token: res.token,
       guest: false,
@@ -1310,6 +1345,10 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
   // Drops the timers, queues and caches of the signed-in session.
   const forgetSession = () => {
+    sessionStore.removeItem(inviteHistoryKey())
+    if (inviteHistory && sessionStore.getItem(inviteHistory.key) === inviteHistory.nonce)
+      sessionStore.removeItem(inviteHistory.key)
+    inviteHistory = null
     client.calls.end(acct)
     resetCallEvents()
     acct.invites.clear()
@@ -1610,25 +1649,30 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     openAdmin: (section = null, item = null, row = null) => {
       if (!get().me?.is_site_admin) return
+      beginNavigation()
       const open = get().adminPage !== null
-      const entry = adminEntry()
+      const entry = ownsPage() ? adminEntry() : { depth: 0, from: null }
       const path = adminPath(section, item)
       const url = row === null ? path : `${path}#${encodeURIComponent(row)}`
       leaveInvite()
-      if (open && window.location.pathname === path)
-        window.history.replaceState(window.history.state, '', url)
-      else if (open)
-        window.history.pushState(
-          { rchatAdmin: entry.from === null ? null : { depth: entry.depth + 1, from: entry.from } },
-          '',
-          url
-        )
-      else
-        window.history.pushState(
-          { rchatAdmin: { depth: 1, from: window.location.pathname } },
-          '',
-          url
-        )
+      if (ownsPage()) {
+        if (open && window.location.pathname === path)
+          window.history.replaceState(window.history.state, '', url)
+        else if (open)
+          window.history.pushState(
+            {
+              rchatAdmin: entry.from === null ? null : { depth: entry.depth + 1, from: entry.from },
+            },
+            '',
+            url
+          )
+        else
+          window.history.pushState(
+            { rchatAdmin: { depth: 1, from: window.location.pathname } },
+            '',
+            url
+          )
+      }
       set(
         open
           ? { adminPage: { section, item, row } }
@@ -1638,11 +1682,11 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
 
     closeAdmin: () => {
       if (!get().adminPage) return
-      const { depth, from } = adminEntry()
+      const { depth, from } = ownsPage() ? adminEntry() : { depth: 0, from: null }
       const view = get().view
       if (from !== null && from === viewPath(view)) return window.history.go(-depth)
       set({ adminPage: null })
-      window.history.replaceState(null, '', viewPath(view))
+      if (ownsPage()) window.history.replaceState(null, '', viewPath(view))
       if (!view) set({ home: true })
     },
 
@@ -1689,7 +1733,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       home.ws.setGrants({})
       armIce(null, false)
       clearProfiles(sessionMark())
-      dropStashedInvite()
+      dropStashedInvite(acct.handoff)
       set({
         token: null,
         me: null,
@@ -1888,19 +1932,30 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
       }),
 
     openInvite: (server, password = null, code = null) => {
+      beginNavigation()
       const target = code ? { server: '', password: null, code } : { server, password }
       const invite: OpenInvite = { ...target, join: false }
       set({ invite, contextMenu: null, profile: null, activeDialog: null })
+      if (!ownsPage()) return
       const path = targetPath(target)
+      const owner = inviteHistoryOwner()
       if (window.location.pathname !== path)
-        window.history.pushState(entryState({ ...target, pushed: true }), '', path)
+        window.history.pushState(entryState({ ...target, pushed: true }, owner), '', path)
+      else {
+        const pushed =
+          inviteEntry(window.history.state, target.server, code, owner)?.pushed ?? false
+        window.history.replaceState(entryState({ ...target, pushed }, owner), '', path)
+      }
     },
 
     closeInvite: () => {
+      beginNavigation()
       const { view, invite } = get()
       const pushed =
+        ownsPage() &&
         invite !== null &&
-        inviteEntry(window.history.state, invite.server, invite.code ?? null)?.pushed
+        inviteEntry(window.history.state, invite.server, invite.code ?? null, inviteHistoryOwner())
+          ?.pushed
       leaveInvite()
       if (pushed) window.history.back()
       else if (view) syncUrl(view, 'push')
@@ -1912,6 +1967,7 @@ export const sessionSlice = (set: SetState, get: GetState, deps: SessionDeps) =>
     syncConfigLink: readConfigLink,
 
     closeConfigLink: () => {
+      beginNavigation()
       const { view, me, guest } = get()
       set({ configLink: null })
       if (!me && !guest) return

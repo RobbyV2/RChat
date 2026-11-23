@@ -1,7 +1,8 @@
 import { actionElement } from '../masked_reveal'
 import { memberState, messageServer } from '../selectors'
 import { OPT_BASE } from '../slices/messages'
-import { useStore } from '../store'
+import { client } from '../client/client'
+import type { AccountSession } from '../client/session'
 import type { RChatState } from '../store_types'
 import type { Channel, DmSummary, Message } from '../types'
 import { threadKey, viewKey } from '../view'
@@ -172,11 +173,14 @@ const listOf = (s: RChatState, t: Target) => {
 }
 
 const ctxWith = (
+  acct: AccountSession,
   s: RChatState,
   target: Target,
   via: Via,
   element: Element | null | undefined
 ): ActionCtx => ({
+  acct,
+  mark: acct.lifetime.sessionMark(),
   s,
   via,
   target,
@@ -188,10 +192,11 @@ const ctxWith = (
 })
 
 // A context made while a menu opens or a palette key runs carries the element it is for.
-export const ctxFor = (s: RChatState, target: Target, via: Via): ActionCtx =>
-  ctxWith(s, target, via, actionElement())
+export const ctxFor = (s: RChatState, target: Target, via: Via, acct = client.shown()): ActionCtx =>
+  ctxWith(acct, s, target, via, actionElement())
 
-export const paletteCtx = (s: RChatState) => ctxFor(s, { kind: 'none' }, 'palette')
+export const paletteCtx = (s: RChatState, acct = client.shown()) =>
+  ctxFor(s, { kind: 'none' }, 'palette', acct)
 
 // New messages reach a list only while it is open, attached and caught up.
 const liveList = (s: RChatState, key: string) =>
@@ -271,15 +276,17 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
 // The same context on the store's current state, or null when its target is gone. The element
 // stays only while it is still on the page.
 export const refreshCtx = (ctx: ActionCtx): ActionCtx | null => {
-  const s = ctx.current?.() ?? useStore.getState()
+  if (ctx.mark !== ctx.acct.lifetime.sessionMark()) return null
+  const s = ctx.acct.store.getState()
   const t = freshTarget(s, ctx.target)
   if (!t) return null
-  const fresh = ctxWith(s, t, ctx.via, ctx.element?.isConnected ? ctx.element : null)
-  if (ctx.current) fresh.current = ctx.current
-  return fresh
+  return ctxWith(ctx.acct, s, t, ctx.via, ctx.element?.isConnected ? ctx.element : null)
 }
 
 bindActionHost({
   refresh: refreshCtx,
-  gone: ctx => (ctx?.current?.() ?? useStore.getState()).showToast("That's no longer available"),
+  gone: ctx => {
+    if (ctx.mark === ctx.acct.lifetime.sessionMark())
+      ctx.acct.store.getState().showToast("That's no longer available")
+  },
 })

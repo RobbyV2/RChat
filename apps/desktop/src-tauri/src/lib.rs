@@ -43,12 +43,11 @@ use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 const MAIN: &str = "main";
-const LINKS_MAX: usize = 20;
 
 struct Shell {
     dir: PathBuf,
     settings: Mutex<Settings>,
-    links: Mutex<Vec<String>>,
+    links: Mutex<links::PendingLinks>,
     saves: files::Saves,
     #[cfg(desktop)]
     tray: Mutex<Option<tray::Tray>>,
@@ -67,7 +66,7 @@ impl Shell {
         Shell {
             dir,
             settings: Mutex::new(settings),
-            links: Mutex::new(Vec::new()),
+            links: Mutex::default(),
             saves: files::Saves::default(),
             #[cfg(desktop)]
             tray: Mutex::new(None),
@@ -146,14 +145,9 @@ fn push_links(app: &AppHandle, urls: impl IntoIterator<Item = String>) {
         return;
     }
     let shell = app.state::<Shell>();
-    {
-        let mut queue = lock(&shell.links);
-        queue.extend(found);
-        let extra = queue.len().saturating_sub(LINKS_MAX);
-        queue.drain(..extra);
-    }
+    let batch = lock(&shell.links).push(found);
     show_main(app);
-    let _ = app.emit_to(MAIN, "deep-link", ());
+    let _ = app.emit_to(MAIN, "deep-link", batch);
 }
 
 fn plain(e: impl std::fmt::Display, text: &str) -> String {
@@ -364,8 +358,8 @@ fn open_external(app: AppHandle, url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn take_deep_links(shell: State<'_, Shell>) -> Vec<String> {
-    std::mem::take(&mut *lock(&shell.links))
+fn take_deep_links(shell: State<'_, Shell>, batch: Option<u64>) -> Vec<String> {
+    lock(&shell.links).take(batch)
 }
 
 // The system share sheet; true when shared, false when the user closed it. Phones only.

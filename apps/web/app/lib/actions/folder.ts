@@ -10,9 +10,10 @@ const CUSTOM = 'custom'
 const DEFAULT = 'default'
 
 // The target folder as its rail has it now.
-const folderNow = ({ s, target }: ActionCtx): { folder: Folder; p2p: boolean } | null => {
+const folderNow = ({ acct, s, target }: ActionCtx): { folder: Folder; p2p: boolean } | null => {
   if (target.kind !== 'folder') return null
   const inP2p = target.p2p === true
+  if (inP2p && !acct.isHome) return null
   const entries = inP2p ? useP2p.getState().layout.servers : s.layout.servers
   const folder = entries.find(
     (e): e is Folder => typeof e !== 'string' && e.id === target.folder.id

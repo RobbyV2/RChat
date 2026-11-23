@@ -1,3 +1,4 @@
+import { client } from '../client/client'
 // The menus of P2P conversations, channels and threads: a message, a pin line, the call
 // buttons' chevrons, an account badge and the rail's P2P tile.
 
@@ -29,13 +30,11 @@ import { sharing } from '../platform'
 import { displayHost, hostOf, manualRelays } from '../relays'
 import { plainLine } from '../replies'
 import { downloadName } from '../sniff'
-import { maskOf, useStore } from '../store'
+import { maskOf } from '../store'
 import { messageStampToken } from '../timestamps'
 import type { Message } from '../types'
 import { hidesIp } from './voice'
 import type { Action, ActionCtx, ArgChoice } from './types'
-
-const get = () => useStore.getState()
 
 const copy = (text: string) => void sharing().copyText(text)
 
@@ -54,11 +53,11 @@ export const threadAct = (p: P2pMessage, canAct: boolean) =>
         ? 'Create thread'
         : null
 
-export const confirmDelete = (id: string, skip = false) => {
+export const confirmDelete = (id: string, skip = false, acct = client.shown()) => {
   const run = () => void p2pDm.remove(id)
   if (skip) return run()
   const server = !!useP2p.getState().chat?.ch
-  get().askConfirm({
+  acct.store.getState().askConfirm({
     title: 'Delete Message',
     body: server
       ? 'Delete this message? It is removed here now, and on other members’ devices as they sync.'
@@ -70,7 +69,13 @@ export const confirmDelete = (id: string, skip = false) => {
 
 // Puts a message on the forward clipboard: Send in another conversation forwards it there (a
 // P2P one directly; an instance one after it says the text will be copied there).
-export const copyForP2p = (p: P2pMessage, m: Message, author: string, draftKey: string) => {
+export const copyForP2p = (
+  p: P2pMessage,
+  m: Message,
+  author: string,
+  draftKey: string,
+  acct = client.shown()
+) => {
   const [room, ch] = draftKey.split('#')[0].split('/')
   const clip: ForwardClip = {
     id: 1 + Math.floor(Math.random() * 2 ** 40),
@@ -82,12 +87,17 @@ export const copyForP2p = (p: P2pMessage, m: Message, author: string, draftKey: 
     p2p: true,
     source: ch ? { kind: 'p2p', room, ch } : { kind: 'direct' },
   }
-  get().copyForwardClip(clip)
+  acct.store.getState().copyForwardClip(clip)
 }
 
 // Forwards straight into a P2P conversation with a contact. `author`: the sender's own profile
 // name (profileName), never a display string.
-export const forwardTo = async (ik: string, p: P2pMessage, author: string) => {
+export const forwardTo = async (
+  ik: string,
+  p: P2pMessage,
+  author: string,
+  acct = client.shown()
+) => {
   const fwd = p.fwd ?? {
     name: author,
     ts: p.sentTs,
@@ -97,15 +107,15 @@ export const forwardTo = async (ik: string, p: P2pMessage, author: string) => {
   const target = await p2pDm.ensureRoom(ik)
   if (target && (await p2pDm.forward(target, fwd))) {
     const c = useP2p.getState().contacts.find(x => x.ik === ik)
-    const s = get()
+    const s = acct.store.getState()
     s.showToast('Forwarded to', c ? maskOf(s)(displayName(c)) : 'contact')
   }
 }
 
-export const startDownload = (att: Attachment) => {
+export const startDownload = (att: Attachment, acct = client.shown()) => {
   const run = () => void p2pFiles.download(att)
   if (att.size <= p2p.limits().files.bigFile) return run()
-  get().askConfirm({
+  acct.store.getState().askConfirm({
     title: 'Download a large file',
     body: `This file is ${fmtSize(att.size)}. It is stored on this device and shared with others in this conversation.`,
     confirm: 'Download',
@@ -124,9 +134,9 @@ interface FileRow {
   run(): void
 }
 
-const fileRow = (att: Attachment, canFetch: boolean): FileRow => {
+const fileRow = (att: Attachment, canFetch: boolean, acct = client.shown()): FileRow => {
   const v = useP2p.getState().files[att.h]
-  const name = maskOf(get(), false, true)(downloadName(att.name))
+  const name = maskOf(acct.store.getState(), false, true)(downloadName(att.name))
   if (v?.state === 'done')
     return {
       h: att.h,
@@ -143,7 +153,7 @@ const fileRow = (att: Attachment, canFetch: boolean): FileRow => {
     verb: busy ? 'Cancel download' : 'Download',
     icon: busy ? X : Download,
     disabled: !busy && (!canFetch || !v || v.holders === 0),
-    run: () => (busy ? void p2pFiles.cancel(att.h) : startDownload(att)),
+    run: () => (busy ? void p2pFiles.cancel(att.h) : startDownload(att, acct)),
   }
 }
 
@@ -161,7 +171,7 @@ const actsOf = (ctx: ActionCtx) => {
 
 const filesOf = (ctx: ActionCtx) => {
   const t = rowOf(ctx)
-  return t ? (t.p.fwd?.att ?? t.p.att).map(att => fileRow(att, t.chat.canAct)) : []
+  return t ? (t.p.fwd?.att ?? t.p.att).map(att => fileRow(att, t.chat.canAct, ctx.acct)) : []
 }
 
 const oneFile = (ctx: ActionCtx) => {
@@ -229,8 +239,8 @@ const messageActions: Action[] = [
       const t = rowOf(ctx)
       if (!t) return
       const author = t.chat.ownName(t.p.sender)
-      if (to === COPY) copyForP2p(t.p, t.m, author, t.chat.draftKey)
-      else void forwardTo(to, t.p, author)
+      if (to === COPY) copyForP2p(t.p, t.m, author, t.chat.draftKey, ctx.acct)
+      else void forwardTo(to, t.p, author, ctx.acct)
     },
   },
   {
@@ -295,7 +305,7 @@ const messageActions: Action[] = [
     },
     run: ctx => {
       const t = rowOf(ctx)
-      if (t) confirmDelete(t.p.id)
+      if (t) confirmDelete(t.p.id, undefined, ctx.acct)
     },
   },
   {

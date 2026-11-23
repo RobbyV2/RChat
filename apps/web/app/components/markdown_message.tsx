@@ -29,12 +29,13 @@ import {
   X,
 } from 'lucide-react'
 import { useAccount } from '../lib/client/react'
+import type { AccountSession } from '../lib/client/session'
 import { fmtSize } from '../lib/bytes'
 import { fileLang, fenceTag } from '../lib/code'
 import type { CodeNode } from '../lib/highlight'
 import { relayOnly } from '../lib/ice'
 import { ownTurn } from '../lib/relays'
-import { home, localOrigins, remoteAllowed, shareOrigin } from '../lib/instances'
+import { localOrigins, remoteAllowed } from '../lib/instances'
 import { mentionCandidates, splitKnownMentions } from '../lib/mentions'
 import {
   CANCELED,
@@ -367,48 +368,42 @@ function GroupPill({ group, text }: { group: string; text: string }) {
   )
 }
 
-export function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
-  const widget = useContext(WidgetLinkCards) !== null
-  const invite = !widget && href ? parseInvite(href, shareOrigin()) : null
-  const target = !widget && href && !invite ? parseMessageLink(href, localOrigins()) : null
-  const body = (
-    <InLink.Provider value>
-      <MaskControl>{children}</MaskControl>
-    </InLink.Provider>
-  )
+export function messageLinkAction(account: AccountSession, href: string) {
+  const invite = parseInvite(href, account.shareOrigin)
+  if (invite)
+    return account.lifetime.inSession(() =>
+      account.store.getState().openInvite(invite.server, invite.password, invite.code)
+    )
+  const target = parseMessageLink(href, localOrigins(account.conn))
   if (target)
-    return (
-      <a
-        {...props}
-        href={href}
-        onClick={e => {
-          if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
-          e.preventDefault()
-          void useStore.getState().openMessage(target.id, 'push', target.place)
-        }}
-        className="text-primary underline"
-      >
-        {body}
-      </a>
+    return account.lifetime.inSession(() =>
+      account.store.getState().openMessage(target.id, 'push', target.place)
     )
-  if (!invite)
-    return (
-      <a {...props} href={href} target="_blank" rel="noreferrer" className="text-primary underline">
-        {body}
-      </a>
-    )
+  return null
+}
+
+export function MessageLink({ href, children, ...props }: React.ComponentProps<'a'>) {
+  const acct = useAccount()
+  const widget = useContext(WidgetLinkCards) !== null
+  const open = !widget && href ? messageLinkAction(acct, href) : null
   return (
     <a
       {...props}
       href={href}
-      onClick={e => {
-        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
-        e.preventDefault()
-        useStore.getState().openInvite(invite.server, invite.password, invite.code)
-      }}
+      {...(open
+        ? {
+            onClick: (e: React.MouseEvent<HTMLAnchorElement>) => {
+              if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+              e.preventDefault()
+              void open()
+            },
+          }
+        : { target: '_blank', rel: 'noreferrer' })}
       className="text-primary underline"
     >
-      {body}
+      <InLink.Provider value>
+        <MaskControl>{children}</MaskControl>
+      </InLink.Provider>
     </a>
   )
 }
@@ -1017,6 +1012,8 @@ function EmbedCard({
   message: Message
   canDelete: boolean
 }) {
+  const acct = useAccount()
+
   const { ord, site_name, title, description, image_url, banner_removed } = embed
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const path = banner_removed ? null : previewPath(message.id, ord, image_url)
@@ -1025,7 +1022,7 @@ function EmbedCard({
   const url = useMemo(() => postedUrl(message.content, embed.url), [message.content, embed.url])
 
   const menu = (x: number, y: number) =>
-    openActionMenu(x, y, { kind: 'embed', message, ord, banner: path !== null })
+    openActionMenu(x, y, { kind: 'embed', message, ord, banner: path !== null }, undefined, acct)
 
   return (
     <div
@@ -1195,12 +1192,13 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   )
   const source = useMemo(() => markSpoilers(content), [content])
   const hidden = useMemo(() => spoileredUrls(content), [content])
-  const homePublic = useStore(s => s.instance?.public_url ?? null)
+  const { conn } = useAccount()
+  const publicUrl = useStore(s => s.instance?.public_url ?? conn.info?.public_url)
   const widgetCards = useContext(WidgetLinkCards)
   const widget = widgetCards !== null
   const local = useMemo(
-    () => (widget ? [location.origin] : localOrigins(homePublic)),
-    [widget, homePublic]
+    () => (widget ? [location.origin] : localOrigins(conn, publicUrl)),
+    [widget, conn, conn.origin, publicUrl]
   )
   const invites = useMemo(() => {
     const found = local.flatMap(origin => findInvites(content, origin))
@@ -1208,8 +1206,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   }, [content, local])
   const messageLinks = useMemo(() => findMessageLinks(content, local), [content, local])
   const remotes = useMemo(
-    () => findRemoteInvites(content, local, origin => remoteAllowed(origin, home.origin)),
-    [content, local]
+    () => findRemoteInvites(content, local, origin => remoteAllowed(origin, conn.origin)),
+    [content, local, conn.origin]
   )
   const [remoteOk, setRemoteOk] = useState<Record<string, boolean>>({})
   const onResolved = useCallback(

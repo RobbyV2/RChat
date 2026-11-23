@@ -1,3 +1,4 @@
+import { client } from '../client/client'
 // What muting and "Notification settings" share across the DM, channel, server and folder menus.
 
 import {
@@ -15,7 +16,6 @@ import {
   type NotifyScope,
   type Suppress,
 } from '../notify'
-import { useStore } from '../store'
 import type { Action, ActionCtx, ArgChoice, ArgStep, Scope, Target } from './types'
 
 const SUPPRESS: Suppress[] = ['everyone', 'roles']
@@ -65,8 +65,8 @@ const levelChoices = (p: NotifyPrefs, scope: NotifyScope): ArgChoice[] => {
   ]
 }
 
-const applyLevel = (scope: NotifyScope, value: string) => {
-  const s = useStore.getState()
+const applyLevel = (scope: NotifyScope, value: string, acct = client.shown()) => {
+  const s = acct.store.getState()
   const which = SUPPRESS.find(w => value === `suppress_${w}`)
   if (which && scope.kind === 'server')
     s.setNotifySuppress(scope.name, which, !suppressedOf(s.notifyPrefs, scope.name, which))
@@ -111,6 +111,6 @@ export const notifySettings = (
   available: ctx => of(ctx) !== null,
   run: (ctx, { value }) => {
     const at = of(ctx)
-    if (at) applyLevel(at, value)
+    if (at) applyLevel(at, value, ctx.acct)
   },
 })

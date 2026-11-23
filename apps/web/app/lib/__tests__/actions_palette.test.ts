@@ -700,7 +700,7 @@ const runAll = async (make: () => RChatState, want: string[]) => {
     await row.run(sample(row))
     await drain()
     const ui = usePaletteUi.getState()
-    if (ui.poll) calls.push(['poll', ui.poll])
+    if (ui.poll) calls.push(['poll', ui.poll.target])
     if (ui.open) calls.push(['palette', ui.text])
     out[id] = plain(calls)
   }

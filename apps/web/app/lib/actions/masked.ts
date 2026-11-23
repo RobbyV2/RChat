@@ -1,6 +1,6 @@
+import { client } from '../client/client'
 import { Eye } from 'lucide-react'
 import { hiddenOnScreen, hiddenWords, revealWords, withActionElement } from '../masked_reveal'
-import { useStore } from '../store'
 import { ctxFor } from './ctx'
 import { actionById, isAvailable, runAction } from './registry'
 import type { Action, ActionCtx, Target } from './types'
@@ -63,10 +63,10 @@ export const maskedActions: Action[] = [
 ]
 
 // Alt+Enter in the palette: the action on `el` (the active option) when it shows masked words.
-export const revealMasked = (el: Element | null): boolean =>
+export const revealMasked = (el: Element | null, acct = client.shown()): boolean =>
   withActionElement(el, () => {
     const a = actionById(REVEAL_ACTION)
-    const ctx = ctxFor(useStore.getState(), { kind: 'none' }, 'key')
+    const ctx = ctxFor(acct.store.getState(), { kind: 'none' }, 'key', acct)
     if (!el || !a || !isAvailable(a, ctx)) return false
     void runAction(REVEAL_ACTION, ctx)
     return true

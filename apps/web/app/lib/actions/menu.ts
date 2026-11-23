@@ -1,9 +1,9 @@
 import { useSyncExternalStore } from 'react'
-import { client } from '../client/client'
-import type { AccountSession } from '../client/session'
 import { guestPostingStatus } from '../guest_chat'
 import { openPaletteAt } from '../palette_store'
-import { useStore } from '../store'
+import { useStore } from 'zustand'
+import { useAccount } from '../client/react'
+import { client } from '../client/client'
 import type { ContextMenuItem, ContextMenuOptions, ContextMenuState } from '../store_types'
 import { ctxFor, refreshCtx } from './ctx'
 import {
@@ -37,7 +37,7 @@ const picked = (a: Action, ctx: ActionCtx): Pick<ContextMenuItem, 'action' | 'su
     }
   const [step] = valueSteps(a)
   if (!step) return { action: () => void confirmThenRun(a, ctx, {}) }
-  if (step.kind !== 'choice') return { action: () => openPaletteAt(a.id, ctx.target) }
+  if (step.kind !== 'choice') return { action: () => openPaletteAt(a.id, ctx.target, ctx.acct) }
   return {
     submenu: step.choices(ctx, '').map(c => ({
       label: c.label,
@@ -109,20 +109,24 @@ export const itemFor = (id: string, ctx: ActionCtx): ContextMenuItem | null => {
 
 const idsOf = (built: Built[]) => JSON.stringify(built.map(r => r.id))
 
-interface OpenActionMenu {
-  ctx: ActionCtx
-  store: AccountSession['store']
-  menu: ContextMenuState
-  ids: string
-  unsubscribe: () => void
+let live: { ctx: ActionCtx; menu: ContextMenuState | null; ids: string } | null = null
+
+let unwatch: (() => void) | null = null
+const clearLive = () => {
+  unwatch?.()
+  unwatch = null
+  live = null
 }
-let live: OpenActionMenu | null = null
 
 // Whether the menu of `target` has a row now, as the store and the registry change; none for
 // no target. A button that opens the menu shows only while it does.
 export const useHasMenu = (target: Target | null) => {
   useSyncExternalStore(subscribeActions, actionsVersion, actionsVersion)
-  return useStore(s => target !== null && menuRows(ctxFor(s, target, 'menu')).length > 0)
+  const acct = useAccount()
+  return useStore(
+    acct.store,
+    s => target !== null && menuRows(ctxFor(s, target, 'menu', acct)).length > 0
+  )
 }
 
 // Whether `menu` is the open action menu, which follows the registry by itself.
@@ -133,35 +137,39 @@ export const openActionMenu = (
   y: number,
   target: Target,
   opts: ContextMenuOptions = {},
-  account = client.shown()
+  acct = client.shown()
 ) => {
-  const { store } = account
-  const st = store.getState()
-  const ctx = ctxFor(st, target, 'menu')
-  ctx.current = store.getState
+  const st = acct.store.getState()
+  const ctx = ctxFor(st, target, 'menu', acct)
   const built = menuRows(ctx)
   if (!built.length) return
   const items = built.map(r => r.item)
   st.openContextMenu(x, y, items, opts)
-  const menu = store.getState().contextMenu
+  clearLive()
+  const menu = acct.store.getState().contextMenu
   if (!menu) return
-  live?.unsubscribe()
-  const unsubscribe = store.subscribe((state, previous) => {
-    if (live?.store !== store) return
+  live = { ctx, menu, ids: idsOf(built) }
+  const off = acct.store.subscribe((state, previous) => {
+    if (live?.ctx.acct !== acct) return
     if (state.contextMenu !== live.menu) {
-      live.unsubscribe()
-      live = null
+      clearLive()
       return
     }
-    if (live.ctx.target.kind !== 'message') return
-    const { server, message } = live.ctx
-    const channel = message?.channel_id ?? null
+    if (ctx.target.kind !== 'message') return
+    const channel = ctx.message?.channel_id ?? null
     if (
-      guestPostingStatus(state, server, channel) !== guestPostingStatus(previous, server, channel)
+      guestPostingStatus(state, ctx.server, channel) !==
+      guestPostingStatus(previous, ctx.server, channel)
     )
       refreshOpenMenu()
   })
-  live = { ctx, store, menu, ids: idsOf(built), unsubscribe }
+  const offClient = client.subscribe(() => {
+    if (live?.ctx.acct === acct && !client.live().includes(acct)) clearLive()
+  })
+  unwatch = () => {
+    off()
+    offClient()
+  }
 }
 
 // One action's choices as a menu of their own, as its submenu shows them (a row's Roles button).
@@ -171,11 +179,10 @@ export const openChoiceMenu = (
   id: string,
   target: Target,
   opts: ContextMenuOptions = {},
-  current = useStore.getState
+  acct = client.shown()
 ) => {
-  const st = current()
-  const ctx = ctxFor(st, target, 'menu')
-  ctx.current = current
+  const st = acct.store.getState()
+  const ctx = ctxFor(st, target, 'menu', acct)
   const items = itemFor(id, ctx)?.submenu
   if (items?.length) st.openContextMenu(x, y, items, opts)
 }
@@ -185,17 +192,20 @@ export const openChoiceMenu = (
 const refreshOpenMenu = () => {
   const open = live
   if (!open) return
+  const { acct } = open.ctx
+  const menu = acct.store.getState().contextMenu
+  if (!menu || menu !== open.menu) return
   const ctx = refreshCtx(open.ctx)
   const built = ctx ? menuRows(ctx) : []
   if (!ctx || !built.length) {
-    open.store.getState().closeContextMenu()
+    acct.store.getState().closeContextMenu()
     return
   }
   const ids = idsOf(built)
   if (ids === open.ids) return
-  const next = { ...open.menu, items: built.map(r => r.item) }
-  live = { ...open, ctx, menu: next, ids }
-  open.store.setState({ contextMenu: next })
+  const next = { ...menu, items: built.map(r => r.item) }
+  live = { ctx, menu: next, ids }
+  acct.store.setState({ contextMenu: next })
 }
 
 subscribeActions(refreshOpenMenu)

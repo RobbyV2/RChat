@@ -1,6 +1,6 @@
 {
   "[[...slug]]/app_shell.tsx": {
-    "useStore.getState": 20,
+    "useStore.getState": 14,
     "useStore.setState": 1
   },
   "components/admin/announcements.tsx": {
@@ -48,14 +48,6 @@
   "components/code_block.tsx": {
     "useStore.getState": 1
   },
-  "components/context_menu.tsx": {
-    "useStore.getState": 3,
-    "useStore.setState": 1
-  },
-  "components/desktop_bridge.tsx": {
-    "import home": 1,
-    "useStore.getState": 2
-  },
   "components/display_name.tsx": {
     "useStore.getState": 1
   },
@@ -65,15 +57,6 @@
   "components/forwards.tsx": {
     "useStore.getState": 3
   },
-  "components/invite_card.tsx": {
-    "import api": 1,
-    "import home": 1,
-    "useStore.getState": 4
-  },
-  "components/markdown_message.tsx": {
-    "import home": 1,
-    "useStore.getState": 2
-  },
   "components/message_editor.tsx": {
     "useStore.getState": 2
   },
@@ -81,9 +64,6 @@
     "useStore.getState": 2
   },
   "components/message_pane.tsx": {
-    "useStore.getState": 4
-  },
-  "components/mobile_bridge.tsx": {
     "useStore.getState": 1
   },
   "components/p2p/add_contact.tsx": {
@@ -95,8 +75,7 @@
     "useStore.getState": 7
   },
   "components/p2p/p2p_home.tsx": {
-    "useP2p.getState": 2,
-    "useStore.getState": 1
+    "useP2p.getState": 2
   },
   "components/p2p/p2p_invite_dialog.tsx": {
     "useStore.getState": 3
@@ -105,13 +84,10 @@
     "useStore.getState": 1
   },
   "components/p2p/p2p_server_roles.tsx": {
-    "useStore.getState": 3
+    "useStore.getState": 1
   },
   "components/p2p/p2p_server_settings.tsx": {
     "useStore.getState": 3
-  },
-  "components/p2p/p2p_server_view.tsx": {
-    "useStore.getState": 1
   },
   "components/pins.tsx": {
     "useStore.getState": 4
@@ -124,9 +100,6 @@
   },
   "components/search_panel.tsx": {
     "useStore.getState": 2
-  },
-  "components/selection.tsx": {
-    "useStore.getState": 11
   },
   "components/server_access.tsx": {
     "import api": 1,
@@ -141,9 +114,6 @@
   "components/text_assist.tsx": {
     "import api": 1
   },
-  "components/thread_panel.tsx": {
-    "useStore.getState": 3
-  },
   "components/upload_expiry.tsx": {
     "import api": 1,
     "useStore.setState": 1
@@ -156,82 +126,23 @@
     "import api": 1,
     "import home": 1
   },
-  "lib/actions/admin.ts": {
-    "useStore.getState": 8
-  },
-  "lib/actions/channel.ts": {
-    "useStore.getState": 1
-  },
-  "lib/actions/ctx.ts": {
-    "useStore.getState": 2
-  },
-  "lib/actions/dm.ts": {
-    "useStore.getState": 1
-  },
   "lib/actions/folder.ts": {
     "useP2p.getState": 1
   },
-  "lib/actions/friends.ts": {
-    "useStore.getState": 1
-  },
-  "lib/actions/global.ts": {
-    "useStore.getState": 1
-  },
-  "lib/actions/guest_voice.ts": {
-    "useStore.getState": 1
-  },
-  "lib/actions/header.ts": {
-    "useStore.getState": 1
-  },
-  "lib/actions/index.ts": {
-    "useStore.getState": 1
-  },
-  "lib/actions/masked.ts": {
-    "useStore.getState": 1
-  },
-  "lib/actions/member.ts": {
-    "useStore.getState": 1
-  },
-  "lib/actions/menu.ts": {
-    "useStore.getState": 1
-  },
-  "lib/actions/message.ts": {
-    "import api": 1,
-    "useStore.getState": 1
-  },
-  "lib/actions/notify.ts": {
-    "useStore.getState": 1
-  },
   "lib/actions/p2p_chat.ts": {
-    "useP2p.getState": 5,
-    "useStore.getState": 1
+    "useP2p.getState": 5
   },
   "lib/actions/p2p_contact.ts": {
-    "useP2p.getState": 1,
-    "useStore.getState": 1
+    "useP2p.getState": 1
   },
   "lib/actions/p2p_limits.ts": {
-    "useP2p.getState": 1,
-    "useStore.getState": 2
+    "useP2p.getState": 1
   },
   "lib/actions/p2p_server.ts": {
-    "useP2p.getState": 5,
-    "useStore.getState": 1
-  },
-  "lib/actions/place.ts": {
-    "import api": 1,
-    "useStore.getState": 1
-  },
-  "lib/actions/server.ts": {
-    "import api": 1,
-    "useStore.getState": 1
+    "useP2p.getState": 5
   },
   "lib/actions/settings.ts": {
-    "useP2p.getState": 1,
-    "useStore.getState": 1
-  },
-  "lib/actions/steps.ts": {
-    "useStore.getState": 1
+    "useP2p.getState": 1
   },
   "lib/forward_access.ts": {
     "useStore.getState": 3
@@ -319,9 +230,7 @@
     "let unwatch": 1
   },
   "lib/p2p/inbox_source.ts": {
-    "useP2p.getState": 6,
-    "useStore.getState": 3,
-    "useStore.subscribe": 1
+    "useP2p.getState": 6
   },
   "lib/p2p/palette_source.ts": {
     "useP2p.getState": 7

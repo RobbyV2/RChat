@@ -24,8 +24,8 @@ export const restoreStreamer = () => {
 }
 
 // A session kept in this browser for the home instance: a token or a guest visit.
-export const keptSession = () =>
-  !!(readLocal(home.scoped('rchat_token')) || readLocal(home.scoped('rchat_guest')))
+export const keptSession = (conn = home) =>
+  !!(readLocal(conn.scoped('rchat_token')) || readLocal(conn.scoped('rchat_guest')))
 
 // The first step of every app page: a session of this tab or kept in this browser starts, an
 // invite or config link opens signed out, and anything else goes to `toLogin`.

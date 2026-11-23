@@ -433,7 +433,7 @@ export const selectionSlice = (d: SelectionDeps) => {
     copySelectionLinks: () => {
       const s = get()
       const links = pickedMessages(s)
-        .map(m => messageLinkUrl(m, messageServer(s, m)))
+        .map(m => messageLinkUrl(m, messageServer(s, m), acct.shareOrigin))
         .filter((l): l is string => !!l)
       if (!links.length) return
       void sharing()

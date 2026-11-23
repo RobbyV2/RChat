@@ -5,13 +5,10 @@ import { ArrowDownUp, AtSign, ExternalLink, ListFilter, PinOff, X } from 'lucide
 import { DM_SORTS, clearDmFilters, dmListPrefs, filtersOn, type DmListPrefs } from '../dm_list'
 import type { NotifyScope } from '../notify'
 import { sharing } from '../platform'
-import { useStore } from '../store'
 import type { DmSummary } from '../types'
 import { signedIn } from './global'
 import { notifySettings } from './notify'
 import type { Action, ActionCtx } from './types'
-
-const get = () => useStore.getState()
 
 const dmAt = ({ s, target }: ActionCtx, where: 'sidebar' | 'home' | null): DmSummary | null =>
   signedIn(s) && target.kind === 'dm' && (where === null || target.where === where)
@@ -56,7 +53,7 @@ const sortActions: Action[] = DM_SORTS.map(({ sort, label }) => ({
   radio: true,
   checked: ctx => listPrefs(ctx).sort === sort,
   available: ctx => signedIn(ctx.s) && (onList(ctx) || listPrefs(ctx).sort !== sort),
-  run: () => get().setDmList({ sort }),
+  run: ({ acct }) => acct.store.getState().setDmList({ sort }),
 }))
 
 const toggle = (
@@ -73,7 +70,7 @@ const toggle = (
   keywords: LIST_KEYWORDS,
   checked: ctx => listPrefs(ctx)[key],
   available: ctx => signedIn(ctx.s),
-  run: ctx => get().setDmList({ [key]: !listPrefs(ctx)[key] }),
+  run: ctx => ctx.acct.store.getState().setDmList({ [key]: !listPrefs(ctx)[key] }),
 })
 
 export const dmListActions: Action[] = [
@@ -90,7 +87,7 @@ export const dmListActions: Action[] = [
     iconFor: ctx => (onList(ctx) ? X : ListFilter),
     keywords: LIST_KEYWORDS,
     available: ctx => signedIn(ctx.s) && filtersOn(listPrefs(ctx)) > 0,
-    run: ctx => get().setDmList(clearDmFilters(listPrefs(ctx))),
+    run: ctx => ctx.acct.store.getState().setDmList(clearDmFilters(listPrefs(ctx))),
   },
 ]
 
@@ -102,8 +99,8 @@ export const dmActions: Action[] = [
     ...onDm,
     order: 100,
     available: ctx => dmAt(ctx, 'home') !== null,
-    run: ({ dm }) => {
-      if (dm) void get().openDm(dm.id)
+    run: ({ acct, dm }) => {
+      if (dm) void acct.store.getState().openDm(dm.id)
     },
   },
   notifySettings('dm_notify', 'dm', ['dm'], notifyScope),
@@ -116,8 +113,8 @@ export const dmActions: Action[] = [
       const dm = dmAt(ctx, 'sidebar')
       return dm !== null && !pinned(ctx, dm)
     },
-    run: ({ dm }) => {
-      if (dm) get().pinDm(dm.id)
+    run: ({ acct, dm }) => {
+      if (dm) acct.store.getState().pinDm(dm.id)
     },
   },
   {
@@ -127,8 +124,8 @@ export const dmActions: Action[] = [
     ...onDm,
     order: 300,
     available: ctx => pinned(ctx, dmAt(ctx, null)),
-    run: ({ dm }) => {
-      if (dm) get().unpinDm(dm.id)
+    run: ({ acct, dm }) => {
+      if (dm) acct.store.getState().unpinDm(dm.id)
     },
   },
   {

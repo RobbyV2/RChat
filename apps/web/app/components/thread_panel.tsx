@@ -1,4 +1,5 @@
 'use client'
+import { useAccount } from '../lib/client/react'
 
 import { useEffect, useMemo, useRef, type ReactNode, type RefObject } from 'react'
 import { MessageSquareText, Trash2 } from 'lucide-react'
@@ -117,6 +118,8 @@ export function ThreadPanelView({
 }
 
 export default function ThreadPanel() {
+  const acct = useAccount()
+
   const root = useStore(s => {
     if (s.panel?.kind !== 'thread') return null
     const r = s.panel.root
@@ -170,7 +173,7 @@ export default function ThreadPanel() {
   )
   const selecting = useStore(s => key !== null && s.selection?.scope === key)
   useEscape(e => {
-    if (useStore.getState().selection) useStore.getState().exitSelection()
+    if (acct.store.getState().selection) acct.store.getState().exitSelection()
     else if (!e.defaultPrevented) closePanel()
   }, 'panel')
 
@@ -248,13 +251,14 @@ export default function ThreadPanel() {
   }
 
   const rowMenu = (m: Message) => (x: number, y: number) => {
-    if (m.id !== root.id && openSelectionMenu(key, m, x, y)) return
-    const react = messageRights(useStore.getState(), m, key).react
+    if (m.id !== root.id && openSelectionMenu(key, m, x, y, acct)) return
+    const react = messageRights(acct.store.getState(), m, key).react
     openActionMenu(
       x,
       y,
       { kind: 'message', message: m, list: key },
-      react ? reactHeader(m, x, y) : undefined
+      react ? reactHeader(m, x, y) : undefined,
+      acct
     )
   }
 

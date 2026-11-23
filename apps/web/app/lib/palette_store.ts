@@ -29,13 +29,14 @@ export type PaletteView =
   | { kind: 'api'; op: string; values?: unknown }
 
 export interface PaletteUi {
+  actor: AccountSession | null
   open: boolean
   text: string
   view: PaletteView
   owner: string | null
   prefs: PalettePrefs
   // "Create poll" from the palette opens the poll dialog here.
-  poll: PollTarget | null
+  poll: { actor: AccountSession; target: PollTarget; key: number } | null
 }
 
 const emptyPrefs = (): PalettePrefs => ({ ...EMPTY_PALETTE, used: {} })
@@ -49,15 +50,33 @@ export function createPalettePrefs(acct: AccountSession) {
   }))
   const off = client.palette.store.subscribe(next => usePaletteUi.setState(next))
   const mirror = usePaletteUi.subscribe(state => {
-    const { open, text, view, poll } = state
+    const { actor, open, text, view, poll } = state
     const current = client.palette.store.getState()
     if (
+      actor !== current.actor ||
       open !== current.open ||
       text !== current.text ||
       view !== current.view ||
       poll !== current.poll
     )
-      client.palette.store.setState({ open, text, view, poll })
+      client.palette.store.setState({ actor, open, text, view, poll })
+  })
+  // Close only overlays opened by the identity that just left this session.
+  let origin = home.origin
+  const closeOwned = () => {
+    const { actor, poll } = client.palette.store.getState()
+    if (actor === acct) closePalette()
+    if (poll?.actor === acct) closePalettePoll(poll)
+  }
+  const offOwner = acct.store.subscribe((state, previous) => {
+    if (
+      origin !== home.origin ||
+      state.me?.username !== previous.me?.username ||
+      state.guest !== previous.guest
+    ) {
+      origin = home.origin
+      closeOwned()
+    }
   })
   const read = (owner: string | null): PalettePrefs => {
     try {
@@ -94,6 +113,8 @@ export function createPalettePrefs(acct: AccountSession) {
     clearUsage,
     setIndexMode,
     dispose() {
+      offOwner()
+      closeOwned()
       off()
       mirror()
     },
@@ -106,36 +127,40 @@ export const reloadPalettePrefs = () => client.shown().palettePrefs.reloadPalett
 export const noteUsed = (id: string, now?: number) => client.shown().palettePrefs.noteUsed(id, now)
 export const clearUsage = () => client.shown().palettePrefs.clearUsage()
 export const setIndexMode = (mode: IndexMode) => client.shown().palettePrefs.setIndexMode(mode)
-export const openPalette = (text = '') =>
-  client.palette.store.setState({ open: true, text, view: { kind: 'list' } })
+export const openPalette = (text = '', acct = client.shown()) =>
+  client.palette.store.setState({ actor: acct, open: true, text, view: { kind: 'list' } })
 
 export const closePalette = () =>
-  client.palette.store.setState({ open: false, text: '', view: { kind: 'list' } })
+  client.palette.store.setState({ actor: null, open: false, text: '', view: { kind: 'list' } })
 
 // Opens the palette at the action's argument for `target`.
-export const openPaletteAt = (id: string, target: Target) => {
+export const openPaletteAt = (id: string, target: Target, acct = client.shown()) => {
   const a = actionById(id)
-  const ctx = ctxFor(client.shown().store.getState(), target, 'palette')
+  const ctx = ctxFor(acct.store.getState(), target, 'palette', acct)
   const item = a ? guardAction(a, () => (askable(a, ctx) ? paletteRow(a, ctx) : null), null) : null
   if (item)
     client.palette.store.setState({
+      actor: acct,
       open: true,
       text: '',
       view: item.arg ? { kind: 'arg', item } : { kind: 'list' },
     })
 }
 
-export const togglePalette = () =>
-  client.palette.store.getState().open ? closePalette() : openPalette()
+export const togglePalette = (acct = client.shown()) =>
+  client.palette.store.getState().open ? closePalette() : openPalette('', acct)
 
 export const setPaletteText = (text: string) => client.palette.store.setState({ text })
 
 export const setPaletteView = (view: PaletteView) => client.palette.store.setState({ view })
 
-export const openPollFromPalette = (target: PollTarget) =>
-  client.palette.store.setState({ open: false, text: '', view: { kind: 'list' }, poll: target })
+export const openPollFromPalette = (target: PollTarget, acct = client.shown()) =>
+  client.palette.openPoll(target, acct)
 
-export const closePalettePoll = () => client.palette.store.setState({ poll: null })
+export const closePalettePoll = (poll = client.palette.store.getState().poll) => {
+  if (poll && client.palette.store.getState().poll === poll)
+    client.palette.store.setState({ poll: null })
+}
 
 export const holdEscape = (cancel: () => void) => client.palette.holdEscape(cancel)
 export const takeEscape = () => client.palette.takeEscape()

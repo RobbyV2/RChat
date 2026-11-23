@@ -1,4 +1,5 @@
 'use client'
+import { useAccount } from '../../lib/client/react'
 
 import { useLayoutEffect, useRef, useState } from 'react'
 import { Ban, Check, Menu, QrCode as QrIcon, UserPlus, Waypoints, X } from 'lucide-react'
@@ -77,6 +78,8 @@ const count = (n: number, one: string, many: string) => (n ? `${n} ${n === 1 ? o
 // requests, server invites, co-owner and transfer asks) shows as its badge; conversation pings
 // count on the DM tile.
 export function P2pRailTile() {
+  const acct = useAccount()
+
   const open = useP2p(s => s.home && !s.dmList)
   const enabled = useP2p(s => s.enabled)
   const pending = useP2p(s => requestsOf(s.contacts).length)
@@ -98,7 +101,9 @@ export function P2pRailTile() {
       aria-label="Peer-to-peer"
       aria-pressed={open}
       onClick={() => (open ? p2p.closeHome() : p2p.openHome())}
-      {...(enabled ? longPress((x, y) => openActionMenu(x, y, { kind: 'p2p_home' })) : {})}
+      {...(enabled
+        ? longPress((x, y) => openActionMenu(x, y, { kind: 'p2p_home' }, undefined, acct))
+        : {})}
       className={`${tile} relative ${
         open
           ? 'bg-tertiary text-on-tertiary'
@@ -368,6 +373,8 @@ export function ContactRow({
   active?: boolean
   where?: 'home' | 'dms'
 }) {
+  const acct = useAccount()
+
   const me = useP2p(s => s.me)
   const room = me && c.state === 'mutual' ? dmRoomId(me, c.ik) : null
   const summary = useP2p(s => (room ? s.rooms[room] : undefined))
@@ -390,7 +397,7 @@ export function ContactRow({
           closeDrawer()
           void p2pDm.openDm(c.ik, where)
         }}
-        {...longPress((x, y) => openContactMenu(x, y, c, me))}
+        {...longPress((x, y) => openContactMenu(x, y, c, me, acct))}
         className={
           where === 'dms'
             ? `flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm ${
@@ -713,6 +720,8 @@ function P2pContacts({ onMenu }: { onMenu: () => void }) {
 }
 
 function ContactDialog({ ik }: { ik: string }) {
+  const acct = useAccount()
+
   const c = useP2p(s => s.contacts.find(x => x.ik === ik))
   const presence = useP2p(s => s.presence[ik] ?? 'offline')
   if (!c) return null
@@ -770,9 +779,10 @@ function ContactDialog({ ik }: { ik: string }) {
         <div className="flex flex-wrap justify-end gap-2">
           {menuItems(
             ctxFor(
-              useStore.getState(),
+              acct.store.getState(),
               { kind: 'p2p_contact', c, me: useP2p.getState().me },
-              'menu'
+              'menu',
+              acct
             )
           )
             .filter(item => item.action && !item.submenu)

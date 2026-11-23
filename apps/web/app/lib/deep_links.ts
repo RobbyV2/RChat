@@ -37,6 +37,8 @@ export const deepLinkTarget = (
 
 export interface LinkEnv {
   homeOrigin: string
+  canSwitch?: () => boolean
+  canLoad?: (origin: string) => boolean
   // `https://` app links are accepted (mobile only).
   appLinks: boolean
   // Signed in or a guest on the current instance.
@@ -61,9 +63,10 @@ export const openDeepLink = async (raw: string, env: LinkEnv) => {
   if (target.kind === 'home') return env.live ? env.push(target.path) : env.load(target.path)
   if (env.signedIn) return env.openOutside(target.url)
   if (!(await env.confirmSwitch(new URL(target.origin).host))) return
+  if (env.canSwitch && !env.canSwitch()) return
   const failed = await env.switchTo(target.origin)
   if (failed) return env.fail(failed)
-  env.load(target.path)
+  if (!env.canLoad || env.canLoad(target.origin)) env.load(target.path)
 }
 
 export const confirmGate = (

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ChatSourceProvider, type ChatSource } from '../../components/chat_source'
-import { MarkdownMessage } from '../../components/markdown_message'
+import { MarkdownMessage, messageLinkAction } from '../../components/markdown_message'
 import { AccountProvider } from '../client/react'
 import { api } from '../instances'
 import { testAccount } from './test_account'
@@ -133,5 +133,42 @@ describe('inline images follow the account rendering the message', () => {
         owner.store.dispose()
       }
     })
+  }
+})
+
+test('inline links classify and dispatch for the rendering account', async () => {
+  const owner = testAccount('reader', 'https://secondary.test')
+  try {
+    const calls: unknown[] = []
+    owner.store.setState({
+      openInvite: (...args) => void calls.push(args),
+      openMessage: async (...args) => void calls.push(args),
+    })
+    for (const path of ['/invite/club/', '/dm/3/91/']) {
+      const renderLink = (href: string) =>
+        withWindow(() =>
+          renderToStaticMarkup(
+            <AccountProvider session={owner}>
+              <MarkdownMessage
+                message={{ ...message(`[open](${href})`), embeds: [], no_previews: true }}
+              />
+            </AccountProvider>
+          )
+        )
+      const local = owner.shareOrigin + path
+      expect(renderLink(local)).not.toContain('target="_blank"')
+      expect(renderLink(ORIGIN + path)).toContain('target="_blank"')
+      await messageLinkAction(owner, local)!()
+    }
+    expect(calls).toEqual([
+      ['club', null, undefined],
+      [91, 'push', { kind: 'dm', dmId: 3 }],
+    ])
+    const stale = messageLinkAction(owner, '/invite/club/')
+    owner.lifetime.endSession()
+    stale!()
+    expect(calls).toHaveLength(2)
+  } finally {
+    owner.store.dispose()
   }
 })

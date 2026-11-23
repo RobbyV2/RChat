@@ -1,7 +1,6 @@
 // Site admin actions. They show only in the hidden site admin's own session.
 
 import { KeyRound, LogOut, Shield, UserPlus, UserRound } from 'lucide-react'
-import { useStore } from '../store'
 import { isNotice } from '../system_messages'
 import type { UserRef } from '../types'
 import { isWebhookAuthor, isWebhookMessage } from '../webhooks'
@@ -46,7 +45,7 @@ export const adminActions: Action[] = [
     icon: Shield,
     keywords: ['admin', 'features', 'users', 'servers', 'audit'],
     available: ({ s }) => signedIn(s) && s.me?.is_site_admin === true,
-    run: () => useStore.getState().openAdmin(),
+    run: ({ acct }) => acct.store.getState().openAdmin(),
   },
   {
     id: 'admin_ban_site_wide',
@@ -58,7 +57,7 @@ export const adminActions: Action[] = [
     available: ctx => banned(ctx) !== null,
     run: ctx => {
       const u = banned(ctx)
-      if (u) useStore.getState().openDialog({ kind: 'ban_confirm', username: u.username })
+      if (u) ctx.acct.store.getState().openDialog({ kind: 'ban_confirm', username: u.username })
     },
   },
   {
@@ -71,7 +70,7 @@ export const adminActions: Action[] = [
     available: ctx => listed(ctx) !== null,
     run: ctx => {
       const u = listed(ctx)
-      if (u) useStore.getState().openAdmin('users', u.username)
+      if (u) ctx.acct.store.getState().openAdmin('users', u.username)
     },
   },
   {
@@ -84,7 +83,8 @@ export const adminActions: Action[] = [
     available: ctx => other(ctx) !== null,
     run: ctx => {
       const u = other(ctx)
-      if (u) useStore.getState().openDialog({ kind: 'new_password_confirm', username: u.username })
+      if (u)
+        ctx.acct.store.getState().openDialog({ kind: 'new_password_confirm', username: u.username })
     },
   },
   {
@@ -97,7 +97,8 @@ export const adminActions: Action[] = [
     available: ctx => other(ctx) !== null,
     run: ctx => {
       const u = other(ctx)
-      if (u) useStore.getState().openDialog({ kind: 'sign_out_confirm', username: u.username })
+      if (u)
+        ctx.acct.store.getState().openDialog({ kind: 'sign_out_confirm', username: u.username })
     },
   },
   {
@@ -110,7 +111,8 @@ export const adminActions: Action[] = [
     available: ctx => listed(ctx) !== null,
     run: ctx => {
       const u = listed(ctx)
-      if (u) useStore.getState().openDialog({ kind: 'admin_add_to_server', username: u.username })
+      if (u)
+        ctx.acct.store.getState().openDialog({ kind: 'admin_add_to_server', username: u.username })
     },
   },
   {
@@ -123,7 +125,8 @@ export const adminActions: Action[] = [
     available: ctx => other(ctx) !== null,
     run: ctx => {
       const u = other(ctx)
-      if (u) useStore.getState().openDialog({ kind: 'delete_user_confirm', username: u.username })
+      if (u)
+        ctx.acct.store.getState().openDialog({ kind: 'delete_user_confirm', username: u.username })
     },
   },
   {
@@ -137,7 +140,10 @@ export const adminActions: Action[] = [
     available: ctx => banned(ctx) !== null,
     run: ctx => {
       const u = banned(ctx)
-      if (u) useStore.getState().openDialog({ kind: 'remove_phrase_confirm', username: u.username })
+      if (u)
+        ctx.acct.store
+          .getState()
+          .openDialog({ kind: 'remove_phrase_confirm', username: u.username })
     },
   },
 ]

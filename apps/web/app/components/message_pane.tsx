@@ -1,4 +1,5 @@
 'use client'
+import { useAccount } from '../lib/client/react'
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
@@ -699,6 +700,8 @@ export const HEADER_MORE = 'header-more'
 
 // The header actions that fold into one menu when the header is narrow.
 export function HeaderMore({ scope, search }: { scope: string | null; search: boolean }) {
+  const acct = useAccount()
+
   const target: Target = { kind: 'header', list: scope, search }
   const open = useStore(s => s.contextMenu?.owner === HEADER_MORE)
   const has = useHasMenu(target)
@@ -711,7 +714,7 @@ export function HeaderMore({ scope, search }: { scope: string | null; search: bo
       aria-expanded={open}
       onClick={e => {
         const r = e.currentTarget.getBoundingClientRect()
-        openActionMenu(r.right, r.bottom + 4, target, { owner: HEADER_MORE })
+        openActionMenu(r.right, r.bottom + 4, target, { owner: HEADER_MORE }, acct)
       }}
       className="rounded-full p-1.5 hover:bg-surface-container-high @sm:hidden"
     >
@@ -721,6 +724,8 @@ export function HeaderMore({ scope, search }: { scope: string | null; search: bo
 }
 
 export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembers: () => void }) {
+  const acct = useAccount()
+
   const me = useStore(s => s.me)
   const guest = useStore(s => s.guest)
   const view = useStore(s => s.view)
@@ -829,8 +834,8 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const selecting = useStore(s => scope !== null && s.selection?.scope === scope)
   const wide = useMedia('(min-width: 768px)')
   useEscape(e => {
-    if (useStore.getState().selection) {
-      useStore.getState().exitSelection()
+    if (acct.store.getState().selection) {
+      acct.store.getState().exitSelection()
       return
     }
     if (guest || !escapeMarksRead(e)) return
@@ -861,13 +866,14 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   }
 
   const messageMenu = (msg: Message, x: number, y: number) => {
-    if (!scope || openSelectionMenu(scope, msg, x, y)) return
-    const react = !isNotice(msg) && messageRights(useStore.getState(), msg, scope).react
+    if (!scope || openSelectionMenu(scope, msg, x, y, acct)) return
+    const react = !isNotice(msg) && messageRights(acct.store.getState(), msg, scope).react
     openActionMenu(
       x,
       y,
       { kind: 'message', message: msg, list: scope },
-      react ? reactHeader(msg, x, y) : undefined
+      react ? reactHeader(msg, x, y) : undefined,
+      acct
     )
   }
 

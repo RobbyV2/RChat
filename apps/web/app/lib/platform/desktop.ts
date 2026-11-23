@@ -61,9 +61,9 @@ export const invoke: Invoke = async (cmd, args, options) => {
   return core.invoke(cmd, args, options)
 }
 
-export const listen = async (event: string, cb: () => void) => {
+export const listen = async (event: string, cb: (payload?: unknown) => void) => {
   const events = await import('@tauri-apps/api/event')
-  return events.listen(event, () => cb())
+  return events.listen(event, ev => cb(ev.payload))
 }
 
 export type Channel = 'stable' | 'weekly'
@@ -126,7 +126,7 @@ export interface Shell {
   setAutostart: (on: boolean) => Promise<void>
   checkUpdate: () => Promise<FoundUpdate | null>
   installUpdate: () => Promise<void>
-  takeLinks: () => Promise<string[]>
+  takeLinks: (batch?: number) => Promise<string[]>
   openExternal: (url: string) => Promise<void>
 }
 
@@ -137,7 +137,7 @@ export const shellOf = (call: Invoke): Shell => ({
   setAutostart: on => call('set_autostart', { on }),
   checkUpdate: () => call('update_check'),
   installUpdate: () => call('update_install'),
-  takeLinks: () => call('take_deep_links'),
+  takeLinks: batch => call('take_deep_links', batch === undefined ? undefined : { batch }),
   openExternal: url => call('open_external', { url }),
 })
 

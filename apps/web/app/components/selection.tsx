@@ -1,4 +1,6 @@
 'use client'
+import { useAccount } from '../lib/client/react'
+import type { AccountSession } from '../lib/client/session'
 
 import { useEffect, useMemo, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react'
 import { Check, Ellipsis, ListChecks, SquareCheckBig, X } from 'lucide-react'
@@ -42,22 +44,30 @@ const useRowState = (scope: string | null, m: Message) =>
 
 // The selection actions for the current selection, recomputed when it or its rows change.
 export function useSelectionActions(author?: UserRef | null): SelectionAction[] {
+  const acct = useAccount()
+
   const selection = useStore(s => s.selection)
   const list = useStore(s => (s.selection ? s.messages[s.selection.scope] : undefined))
   const me = useStore(s => s.me)
   const servers = useStore(s => s.servers)
   const actions = useSyncExternalStore(subscribeActions, actionsVersion, actionsVersion)
   return useMemo(
-    () => selectionActions(useStore.getState(), author),
-    [selection, list, me, servers, author, actions]
+    () => selectionActions(acct.store.getState(), author, acct),
+    [acct, selection, list, me, servers, author, actions]
   )
 }
 
 // Opens the selection menu instead of the message menu for a picked row; false otherwise.
-export const openSelectionMenu = (scope: string | null, m: Message, x: number, y: number) => {
-  const s = useStore.getState()
+export const openSelectionMenu = (
+  scope: string | null,
+  m: Message,
+  x: number,
+  y: number,
+  acct: AccountSession
+) => {
+  const s = acct.store.getState()
   if (!scope || s.selection?.scope !== scope || !isSelected(s.selection, m)) return false
-  openActionMenu(x, y, { kind: 'selection', list: scope, author: m.author })
+  openActionMenu(x, y, { kind: 'selection', list: scope, author: m.author }, undefined, acct)
   return true
 }
 
@@ -72,6 +82,7 @@ export function Selectable({
   scope: string | null
   children: ReactNode
 }) {
+  const acct = useAccount()
   const state = useRowState(scope, m)
   const allowed = useStore(
     s => scope !== null && s.me !== null && !s.guest && selectable(m, canDeleteIn(s, scope, m))
@@ -80,7 +91,7 @@ export function Selectable({
   if (!scope || !allowed) return children
 
   const pick = (e: MouseEvent, viaBox: boolean) => {
-    const s = useStore.getState()
+    const s = acct.store.getState()
     if (e.shiftKey) s.selectRangeTo(scope, m)
     else if (wide || viaBox) s.toggleSelect(scope, m)
     else s.tapSelect(scope, m)
@@ -89,7 +100,7 @@ export function Selectable({
   const onClickCapture = (e: MouseEvent<HTMLDivElement>) => {
     const t = e.target
     if (!(t instanceof Element) || t.closest(INTERACTIVE) || textPicked(e.currentTarget)) return
-    const s = useStore.getState()
+    const s = acct.store.getState()
     if (state) {
       e.preventDefault()
       e.stopPropagation()
@@ -109,7 +120,7 @@ export function Selectable({
 
   const onMouseDown = (e: MouseEvent) => {
     if (!e.shiftKey) return
-    if (state || (!onText(e.target) && useStore.getState().selectAnchor?.scope === scope))
+    if (state || (!onText(e.target) && acct.store.getState().selectAnchor?.scope === scope))
       e.preventDefault()
   }
 
@@ -163,6 +174,7 @@ export function SelectButton({
   scope: string | null
   className?: string
 }) {
+  const acct = useAccount()
   const on = useStore(s => scope !== null && s.selection?.scope === scope)
   const signedIn = useStore(s => s.me !== null && !s.guest)
   if (!scope || !signedIn) return null
@@ -173,7 +185,7 @@ export function SelectButton({
       aria-label={label}
       aria-pressed={on}
       onClick={() => {
-        const s = useStore.getState()
+        const s = acct.store.getState()
         if (on) s.exitSelection()
         else s.startSelection(scope)
       }}
@@ -192,14 +204,15 @@ export function useSelectionKeys(
   scopes: (string | null)[],
   thread: string | null = null
 ) {
+  const acct = useAccount()
   const key = scopes.join(',')
   useEffect(() => {
-    const s = useStore.getState()
+    const s = acct.store.getState()
     if (s.selection && !key.split(',').includes(s.selection.scope)) s.exitSelection()
-  }, [key])
+  }, [acct, key])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const s = useStore.getState()
+      const s = acct.store.getState()
       if (!s.me || s.guest || e.isComposing) return
       if (selectKey(e)) {
         e.preventDefault()
@@ -217,7 +230,7 @@ export function useSelectionKeys(
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [scope, thread])
+  }, [acct, scope, thread])
 }
 
 const barBtn =
@@ -235,6 +248,8 @@ export function SelectionBar({
   // Icons only (the thread panel).
   compact?: boolean
 }) {
+  const acct = useAccount()
+
   const selection = useStore(s => (scope && s.selection?.scope === scope ? s.selection : null))
   const list = useStore(s => (scope ? s.messages[scope] : undefined))
   const busy = useStore(s => s.selectionBusy)
@@ -251,18 +266,24 @@ export function SelectionBar({
   const more = actions.filter(a => !a.primary && a.id !== 'exit')
   const openMore = (e: MouseEvent) => {
     const r = e.currentTarget.getBoundingClientRect()
-    openActionMenu(r.left, r.bottom, {
-      kind: 'selection',
-      list: scope,
-      author: anchorAuthor,
-      more: true,
-    })
+    openActionMenu(
+      r.left,
+      r.bottom,
+      {
+        kind: 'selection',
+        list: scope,
+        author: anchorAuthor,
+        more: true,
+      },
+      undefined,
+      acct
+    )
   }
   const exit = (
     <button
       title="Stop selecting"
       aria-label="Stop selecting"
-      onClick={() => useStore.getState().exitSelection()}
+      onClick={() => acct.store.getState().exitSelection()}
       className="shrink-0 rounded-full p-1.5 hover:bg-surface-container-highest"
     >
       <X size={18} />
@@ -310,7 +331,7 @@ export function SelectionBar({
           <button
             aria-pressed={selection.ranging}
             title="Select range: tap the first and the last message"
-            onClick={() => useStore.getState().toggleSelectRange()}
+            onClick={() => acct.store.getState().toggleSelectRange()}
             className={`${barBtn} px-3 ${selection.ranging ? 'bg-secondary-container text-on-secondary-container' : ''}`}
           >
             <ListChecks size={16} />
@@ -344,6 +365,7 @@ export function SelectionBar({
 
 // Progress of the viewer's background delete in `scope`, with Cancel.
 export function BulkJobBar({ scope }: { scope: string | null }) {
+  const acct = useAccount()
   const job = useStore(s => (scope ? s.bulkJobs[scope] : undefined))
   if (!scope || !job || job.status !== 'running') return null
   const done = job.deleted.toLocaleString('en-US')
@@ -357,7 +379,7 @@ export function BulkJobBar({ scope }: { scope: string | null }) {
         Deleting messages: {done} of about {of}
       </span>
       <button
-        onClick={() => void useStore.getState().cancelBulkJob(scope)}
+        onClick={() => void acct.store.getState().cancelBulkJob(scope)}
         className="shrink-0 rounded-full px-3 py-1 font-medium hover:bg-on-secondary-container/10"
       >
         Cancel

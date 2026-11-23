@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import { useShallow } from 'zustand/react/shallow'
 import { Check, Copy, Eye, QrCode as QrIcon, Share2, Trash2 } from 'lucide-react'
 import { encode } from 'uqr'
-import { useAccount, useApi } from '../lib/client/react'
+import { client } from '../lib/client/client'
+import { useAccount } from '../lib/client/react'
 import { errorText, useStore } from '../lib/store'
 import { accountPrompt } from '../lib/features'
 import { sharing } from '../lib/platform'
@@ -853,8 +854,10 @@ type LinkState =
   | { kind: 'ready'; doc: ConfigDoc; expiresAt: number }
 
 function LinkCard({ id }: { id: string }) {
+  const account = useAccount()
+  const { api, handoff } = account
+  const mark = account.lifetime.sessionMark()
   const router = useRouter()
-  const api = useApi()
   const showToast = useStore(s => s.showToast)
   const authed = useStore(s => s.me !== null || s.guest)
   const closeConfigLink = useStore(s => s.closeConfigLink)
@@ -867,7 +870,7 @@ function LinkCard({ id }: { id: string }) {
     api.configShare(id).then(
       async res => {
         const decoded = await decodeLink(res.blob)
-        if (!live) return
+        if (!live || mark !== account.lifetime.sessionMark()) return
         setState(
           decoded.ok
             ? { kind: 'ready', doc: decoded.doc, expiresAt: res.expires_at }
@@ -875,7 +878,7 @@ function LinkCard({ id }: { id: string }) {
         )
       },
       (e: unknown) => {
-        if (!live) return
+        if (!live || mark !== account.lifetime.sessionMark()) return
         const status = (e as { status?: number }).status
         setState(status === 404 ? { kind: 'missing' } : { kind: 'error', message: errorText(e) })
       }
@@ -883,9 +886,13 @@ function LinkCard({ id }: { id: string }) {
     return () => {
       live = false
     }
-  }, [id, api])
+  }, [id, api, account, mark])
 
-  const logIn = () => router.push('/login/')
+  const current = () =>
+    mark === account.lifetime.sessionMark() && account.store.getState().configLink === id
+  const logIn = () => {
+    if (current() && client.shown() === account) router.push('/login/')
+  }
 
   return (
     <div className="w-full max-w-md rounded-3xl bg-surface-container p-6 shadow-elevation-2">
@@ -912,12 +919,13 @@ function LinkCard({ id }: { id: string }) {
               doc={state.doc}
               loggedOut={!authed}
               onDone={(applied, err) => {
+                if (!current()) return
                 setError(err)
                 if (!applied) return
                 if (authed) {
                   showToast('Config applied')
                   closeConfigLink()
-                } else if (hasStashedConfig()) logIn()
+                } else if (hasStashedConfig(handoff)) logIn()
                 else setDone('Applied on this device')
               }}
             />

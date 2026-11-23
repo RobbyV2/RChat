@@ -1,4 +1,3 @@
-import { shareOrigin } from './instances'
 import { visibleLinks } from './invite'
 import type { Message, MessageLocation } from './types'
 import { messagePath, parsePath, type MessageTarget } from './view'
@@ -8,7 +7,7 @@ import { messagePath, parsePath, type MessageTarget } from './view'
 export const messageLinkUrl = (
   m: Pick<Message, 'id' | 'channel_id' | 'dm_id' | 'thread_root_id'>,
   server: string | null,
-  origin = shareOrigin()
+  origin: string
 ) => {
   const { id, channel_id, dm_id, thread_root_id } = m
   if (dm_id !== null)

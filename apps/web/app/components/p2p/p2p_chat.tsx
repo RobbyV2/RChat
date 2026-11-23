@@ -1,4 +1,5 @@
 'use client'
+import { useAccount } from '../../lib/client/react'
 
 import {
   memo,
@@ -30,7 +31,7 @@ import { useStore } from '../../lib/store'
 import { openActionMenu } from '../../lib/actions/menu'
 import { confirmDelete, copyForP2p, threadAct } from '../../lib/actions/p2p_chat'
 import { noticeOpen } from '../../lib/home'
-import { hideTip, useHome } from '../../lib/home_store'
+import { useHome } from '../../lib/home_store'
 import {
   chatKey,
   chatScope,
@@ -166,6 +167,7 @@ export const noteBarCls =
 // The note at the top of a conversation. Once closed it stays closed for the account, in every
 // tab.
 export function P2pIntro({ id, children }: { id: string; children: ReactNode }) {
+  const acct = useAccount()
   const account = useP2p(s => s.account)
   const open = useHome(s => noticeOpen(s.owner, account, s.prefs, id))
   if (!open) return null
@@ -179,7 +181,7 @@ export function P2pIntro({ id, children }: { id: string; children: ReactNode }) 
       <button
         title="Dismiss"
         aria-label="Dismiss"
-        onClick={() => hideTip(id)}
+        onClick={() => acct.home.hideTip(id)}
         className="shrink-0 rounded-full p-1 hover:bg-surface-container-highest"
       >
         <X size={16} />
@@ -231,6 +233,8 @@ export const P2pRow = memo(function P2pRow({
   onCopy,
   onJump,
 }: RowProps) {
+  const acct = useAccount()
+
   const actions: ToolbarAction[] = []
   // From the old copy: read-only here.
   const act = canAct && !p.archived
@@ -258,7 +262,7 @@ export const P2pRow = memo(function P2pRow({
       label: 'Delete message (hold Shift to skip confirmation)',
       icon: Trash2,
       danger: true,
-      onClick: e => confirmDelete(p.id, e.shiftKey),
+      onClick: e => confirmDelete(p.id, e.shiftKey, acct),
     })
   const status = mine ? (
     p.failed ? (
@@ -271,7 +275,7 @@ export const P2pRow = memo(function P2pRow({
               Retry
             </button>
             <button
-              onClick={e => confirmDelete(p.id, e.shiftKey)}
+              onClick={e => confirmDelete(p.id, e.shiftKey, acct)}
               className="font-medium hover:underline"
             >
               Delete
@@ -859,6 +863,8 @@ export function useP2pList({
   forwardSkip,
   threads,
 }: ListOpts) {
+  const acct = useAccount()
+
   const me = useP2p(s => s.me)
   const editingState = useP2p(s => (s.editing?.room === draftKey ? s.editing : null))
   const [picker, setPicker] = useState<{ m: Message; anchor: HTMLElement | null } | null>(null)
@@ -972,7 +978,8 @@ export function useP2pList({
   )
 
   const menu = (p: P2pMessage, m: Message, x: number, y: number) => {
-    if (p.system?.kind === 'pin') return openActionMenu(x, y, { kind: 'p2p_pin_line', p, m })
+    if (p.system?.kind === 'pin')
+      return openActionMenu(x, y, { kind: 'p2p_pin_line', p, m }, undefined, acct)
     const chat = { draftKey, canAct, mayPin, mayDelete, forwardSkip, threads, ownName }
     openActionMenu(
       x,
@@ -986,7 +993,8 @@ export function useP2pList({
               </ChatSourceProvider>
             ),
           }
-        : undefined
+        : undefined,
+      acct
     )
   }
   const menuRef = useRef(menu)
@@ -998,7 +1006,7 @@ export function useP2pList({
     []
   )
   const copyRow = useCallback(
-    (p: P2pMessage, m: Message) => copyForP2p(p, m, ownName(p.sender), draftKey),
+    (p: P2pMessage, m: Message) => copyForP2p(p, m, ownName(p.sender), draftKey, acct),
     [ownName, draftKey]
   )
   return {

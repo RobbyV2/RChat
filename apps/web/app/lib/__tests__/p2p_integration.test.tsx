@@ -5,7 +5,13 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactElement } from 'react'
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { AppRouterInstance } from 'next/dist/shared/lib/app-router-context.shared-runtime'
-import { maskOf, resetSessionCaches, useStore, type ContextMenuItem } from '../store'
+import {
+  getHomeSession,
+  maskOf,
+  resetSessionCaches,
+  useStore,
+  type ContextMenuItem,
+} from '../store'
 import { resetMasking, setMasking } from '../profanity'
 import { DEFAULT_VIEW, type InboxView } from '../inbox'
 import { addInboxAdapter, removeInboxAdapter } from '../inbox_source'
@@ -57,7 +63,7 @@ import {
   listedIn,
   pingInputsChanged,
   pingNotifies,
-  p2pInbox,
+  createP2pInbox,
   p2pPingCount,
   worldOf,
 } from '../p2p/inbox_source'
@@ -1285,7 +1291,7 @@ describe('P2P inbox in the app', () => {
     expect(p2pPingCount(st, EMPTY_NOTIFY, new Map([[ROOM, 9]]))).toBe(2)
     expect(p2pPingCount(st, EMPTY_NOTIFY, new Map())).toBe(0)
     Object.assign(initial, { me: me('bob') })
-    addInboxAdapter({ ...p2pInbox, id: 'counted', count: () => 4 })
+    addInboxAdapter({ ...createP2pInbox(getHomeSession()), id: 'counted', count: () => 4 })
     try {
       expect(render(<InboxButton />)).toContain('title="Inbox, 4 notifications"')
     } finally {
@@ -1394,7 +1400,10 @@ describe('P2P inbox in the app', () => {
 
   test('without P2P the source lists nothing', async () => {
     p2pState({ enabled: false })
-    expect(await p2pInbox.load(DEFAULT_VIEW, null)).toEqual({ entries: [], next: null })
+    expect(await createP2pInbox(getHomeSession()).load(DEFAULT_VIEW, null)).toEqual({
+      entries: [],
+      next: null,
+    })
   })
 })
 
@@ -1519,7 +1528,7 @@ describe('P2P in the palette index', () => {
       p2pDoc(ROOM, null, msg('pd', 'private words'), 'Alice')!,
     ])
     const read: string[] = []
-    const stop = startP2pIndex({
+    const stop = startP2pIndex(getHomeSession(), {
       recent: async (room: string, ch: string | null) => {
         read.push(p2pBucket(room, ch))
         return ch === CH ? [msg('pa', 'kept words')] : []

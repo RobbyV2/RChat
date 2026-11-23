@@ -450,9 +450,9 @@ export const uiSlice = (set: SetState, get: GetState, deps: UiDeps) => {
     system.show({
       title: maskProfanity(title),
       body: notice.file ? maskFileName(body) : maskOutsideCode(body, maskProfanity),
-      tag: notice.key,
+      tag: acct.isHome ? notice.key : JSON.stringify([acct.id, notice.key]),
       renotify: true,
-      onClick: notice.go,
+      onClick: acct.lifetime.inSession(notice.go),
     })
   }
 

@@ -1,4 +1,5 @@
 'use client'
+import { useAccount } from '../../lib/client/react'
 
 import { useMemo } from 'react'
 import { minidenticon } from 'minidenticons'
@@ -196,6 +197,8 @@ export function AccountChip({
   ik: string
   size?: 'full' | 'short' | 'icon'
 }) {
+  const acct = useAccount()
+
   const slot = useP2p(s => s.badges[ik])
   const streamer = useStore(s => s.streamer)
   const state = badgeState(slot, Date.now())
@@ -208,7 +211,8 @@ export function AccountChip({
       x,
       y,
       { kind: 'p2p_badge', ik, sub: sub ?? null, stale: state === 'unchecked' },
-      { header: <BadgeSheet state={state} slot={slot} /> }
+      { header: <BadgeSheet state={state} slot={slot} /> },
+      acct
     )
   return (
     <span

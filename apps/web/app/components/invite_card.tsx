@@ -18,14 +18,13 @@ import { ExternalLink, Globe, Hash, Link2Off, Lock, Paperclip } from 'lucide-rea
 import { ApiError } from '../lib/api'
 import type { InviteAccess } from '../lib/remote_invite'
 import { useAccount } from '../lib/client/react'
-import { InstanceError, api, home, type InstanceConnection } from '../lib/instances'
+import { InstanceError, type InstanceConnection } from '../lib/instances'
 import { useForwardAccess } from '../lib/forward_access'
 import { carriedTarget } from '../lib/forward_viewing'
 import { errorText, useStore, type Nav } from '../lib/store'
 import {
   autoStep,
   hostParts,
-  inviteVersion,
   pinnedPreview,
   previewParts,
   remoteInviteUrl,
@@ -35,7 +34,6 @@ import {
   sharedByCode,
   stashInvite,
   targetPath,
-  watchInvites,
   type RemoteInvite,
 } from '../lib/invite'
 import { channelTarget } from '../lib/viewing'
@@ -60,15 +58,21 @@ type InviteVariant = 'embed' | 'page'
 const TTL = 30_000
 const FRESH = 1_000
 const CACHE_MAX = 100
-const cache = new Map<string, { at: number; promise: Promise<Invite> }>()
+type InviteResults = Map<string, { at: number; promise: Promise<Invite> }>
+const results = new WeakMap<object, InviteResults>()
 
 const fetchInvite = (
+  owner: ReturnType<typeof useAccount>,
   key: string,
   server: string,
   password: string | null,
   code: string | null,
   maxAge: number
 ) => {
+  const mark = owner.lifetime.sessionMark()
+  const cache = results.get(mark) ?? new Map<string, { at: number; promise: Promise<Invite> }>()
+  results.set(mark, cache)
+  const api = owner.api
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < maxAge) return hit.promise
   const promise = code ? api.inviteByCode(code) : api.getInvite(server, password, 'metadata')
@@ -137,9 +141,11 @@ function useInvite(
   root: RefObject<HTMLElement | null>,
   always: boolean
 ) {
+  const owner = useAccount()
+  const { watchInvites, inviteVersion } = owner.inviteUpdates
   const viewer = useStore(s => s.me?.username ?? '')
   const epoch = useStore(s => s.channelLabelEpoch)
-  const scope = `${home.origin}\n${epoch}\n${viewer}`
+  const scope = `${owner.renderKey}\n${owner.conn.origin}\n${epoch}\n${viewer}`
   const key = code ? `${scope}\n\n\n${code}` : `${scope}\n${server}\n${password ?? ''}`
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const watched = code ? (loaded?.data?.server.name ?? '') : server
@@ -154,12 +160,14 @@ function useInvite(
   const maxAge = useRef(TTL)
   useEffect(() => {
     let live = true
-    fetchInvite(`${key}\n${version}`, server, password, code, maxAge.current).then(
+    const mark = owner.lifetime.sessionMark()
+    const current = () => live && mark === owner.lifetime.sessionMark()
+    fetchInvite(owner, `${key}\n${version}`, server, password, code, maxAge.current).then(
       data => {
-        if (live) setLoaded({ key, data, error: null })
+        if (current()) setLoaded({ key, data, error: null })
       },
       (error: unknown) => {
-        if (!live) return
+        if (!current()) return
         setLoaded(prev =>
           prev?.key === key && prev.data && transient(error)
             ? { key, data: prev.data, error: null }
@@ -171,7 +179,7 @@ function useInvite(
     return () => {
       live = false
     }
-  }, [key, server, password, code, tick, version])
+  }, [owner, key, server, password, code, tick, version])
   const reload = useCallback(() => {
     maxAge.current = FRESH
     setTick(t => t + 1)
@@ -691,6 +699,7 @@ export function InviteCard({
 }) {
   const router = useRouter()
   const root = useRef<HTMLDivElement>(null)
+  const owner = useAccount()
   const big = variant === 'page'
   const [unlocked, setUnlocked] = useState<string | null>(null)
   const given = code ?? unlocked ?? password
@@ -732,7 +741,7 @@ export function InviteCard({
     setBusy(true)
     setNote(null)
     try {
-      const s = useStore.getState()
+      const s = owner.store.getState()
       if (asGuest) await s.guestJoinServer(name, sent, nav)
       else await s.joinServer(name, sent, nav)
       return { ok: true }
@@ -770,25 +779,25 @@ export function InviteCard({
 
   const go = () => {
     consume()
-    if (data) void useStore.getState().openServer(data.server.name, undefined, nav)
+    if (data) void owner.store.getState().openServer(data.server.name, undefined, nav)
   }
 
   const logIn = () => {
     consume()
     const target = code ? { server: '', password: null, code } : { server, password }
-    stashInvite(target)
+    stashInvite(target, owner.handoff)
     router.push(`/login/?next=${encodeURIComponent(targetPath(target))}`)
   }
 
   const continueAsGuest = async () => {
     consume()
-    await useStore.getState().enterGuest()
+    await owner.store.getState().enterGuest()
     await join(true)
   }
 
   const unlock = async (pw: string) => {
     try {
-      await api.getInvite(server, pw, 'metadata')
+      await owner.api.getInvite(server, pw, 'metadata')
       setUnlocking(false)
       setUnlocked(pw)
       return null
@@ -863,7 +872,7 @@ export function InviteCard({
         ),
         actions: big && (
           <button
-            onClick={() => (authed ? useStore.getState().closeInvite() : router.push('/login'))}
+            onClick={() => (authed ? owner.store.getState().closeInvite() : router.push('/login'))}
             className={`${filledBtn} ${btn}`}
           >
             {authed ? 'Continue to RChat' : 'Log in'}

@@ -11,7 +11,6 @@ import {
   useSyncExternalStore,
   type KeyboardEvent,
 } from 'react'
-import { useViewing } from '../lib/viewing'
 import { AtSign, Bell, Check, CheckCheck, Hash, MessageSquare, UserPlus, X } from 'lucide-react'
 import { openActionMenu } from '../lib/actions/menu'
 import { useMask, useStore } from '../lib/store'
@@ -297,10 +296,11 @@ function Row({
   onOpen: (e: InboxEntry) => void
   onRead: (e: InboxEntry) => void
 }) {
+  const acct = useAccount()
+
   const streamer = useStore(s => s.streamer)
-  useViewing(s => s.revision)
+  acct.viewing.useViewing(s => s.revision)
   useStore(s => s.servers)
-  const account = useAccount()
   if (!adapter) return null
   if (adapter.canPreview?.(entry) === false) {
     const target = adapter.previewTarget?.(entry)
@@ -328,7 +328,7 @@ function Row({
         read: () => onRead(entry),
       },
       {},
-      account
+      acct
     )
   )
   return (

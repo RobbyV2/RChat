@@ -18,7 +18,6 @@ import {
 import { UNAVAILABLE } from '../capabilities'
 import { capabilities } from '../platform'
 import { filterSwitch } from '../profanity'
-import { useStore } from '../store'
 import type { RChatState } from '../store_types'
 import { canEditDisplayName } from '../display_name'
 import { p2p, useP2p } from '../p2p/app'
@@ -27,8 +26,6 @@ import { signedIn } from './global'
 import { p2pLimitActions } from './p2p_limits'
 import type { Action } from './types'
 
-const get = () => useStore.getState()
-
 // Settings that guests keep on this device too.
 const local = (s: RChatState) => s.me !== null || s.guest
 
@@ -36,10 +33,12 @@ const filterNow = (s: RChatState) =>
   filterSwitch(capabilities().wasm, s.profanityOn, s.profanityFailed)
 
 // The entries the settings nav shows for this account.
-export const shownSections = (s: RChatState) =>
+export const shownSections = (s: RChatState, hasP2p = true) =>
   settingsSections({
     signedIn: signedIn(s),
-    p2p: useP2p.getState().account !== null || (s.me !== null && p2p.hasData(s.me.username)),
+    p2p:
+      hasP2p &&
+      (useP2p.getState().account !== null || (s.me !== null && p2p.hasData(s.me.username))),
   })
 
 const KEYWORDS: Partial<Record<SettingsSection, string[]>> = {
@@ -55,8 +54,8 @@ const section = (id: SettingsSection, title: string, icon: LucideIcon): Action =
   group: 'settings',
   icon,
   keywords: KEYWORDS[id] ?? ['preferences'],
-  available: ({ s }) => shownSections(s).includes(id),
-  run: () => get().openDialog({ kind: 'settings', section: id }),
+  available: ({ acct, s }) => shownSections(s, acct.isHome).includes(id),
+  run: ({ acct }) => acct.store.getState().openDialog({ kind: 'settings', section: id }),
 })
 
 export const settingsActions: Action[] = [
@@ -68,7 +67,8 @@ export const settingsActions: Action[] = [
     icon: UserPen,
     keywords: ['name', 'nickname', 'profile'],
     available: ({ s }) => canEditDisplayName(s),
-    run: () => get().openDialog({ kind: 'settings', focus: 'display_name' }),
+    run: ({ acct }) =>
+      acct.store.getState().openDialog({ kind: 'settings', focus: 'display_name' }),
   },
   {
     id: 'theme',
@@ -79,7 +79,8 @@ export const settingsActions: Action[] = [
     icon: Moon,
     keywords: ['theme', 'appearance', 'dark', 'light'],
     available: () => true,
-    run: () => get().setTheme(get().theme === 'light' ? 'dark' : 'light'),
+    run: ({ acct }) =>
+      acct.store.getState().setTheme(acct.store.getState().theme === 'light' ? 'dark' : 'light'),
   },
   {
     id: 'streamer',
@@ -91,7 +92,7 @@ export const settingsActions: Action[] = [
     iconFor: ({ s }) => (s.streamer ? Eye : EyeOff),
     keywords: ['blur', 'privacy'],
     available: () => true,
-    run: () => get().setStreamer(!get().streamer),
+    run: ({ acct }) => acct.store.getState().setStreamer(!acct.store.getState().streamer),
   },
   {
     id: 'typing',
@@ -101,7 +102,7 @@ export const settingsActions: Action[] = [
     group: 'settings',
     icon: Type,
     available: ({ s }) => local(s),
-    run: () => get().setTypingOn(!get().typingOn),
+    run: ({ acct }) => acct.store.getState().setTypingOn(!acct.store.getState().typingOn),
   },
   {
     id: 'profanity',
@@ -114,10 +115,10 @@ export const settingsActions: Action[] = [
     icon: EyeOff,
     keywords: ['filter', 'mask'],
     available: ({ s }) => local(s),
-    run: () => {
-      const { usable, on, note } = filterNow(get())
-      if (usable) get().setProfanityOn(!on)
-      else get().setError(note)
+    run: ({ acct }) => {
+      const { usable, on, note } = filterNow(acct.store.getState())
+      if (usable) acct.store.getState().setProfanityOn(!on)
+      else acct.store.getState().setError(note)
     },
   },
   {
@@ -129,7 +130,10 @@ export const settingsActions: Action[] = [
     group: 'settings',
     icon: Eye,
     available: ({ s }) => local(s),
-    run: () => get().setShowSpoilers(get().showSpoilers === 'always' ? 'click' : 'always'),
+    run: ({ acct }) =>
+      acct.store
+        .getState()
+        .setShowSpoilers(acct.store.getState().showSpoilers === 'always' ? 'click' : 'always'),
   },
   {
     id: 'appear_offline',
@@ -140,7 +144,8 @@ export const settingsActions: Action[] = [
     icon: EyeOff,
     keywords: ['status', 'invisible', 'presence'],
     available: ({ s }) => signedIn(s),
-    run: () => void get().setAppearOffline(!get().me?.appear_offline),
+    run: ({ acct }) =>
+      void acct.store.getState().setAppearOffline(!acct.store.getState().me?.appear_offline),
   },
   ...p2pLimitActions,
   {
@@ -151,7 +156,7 @@ export const settingsActions: Action[] = [
     icon: Settings,
     keywords: ['preferences'],
     available: () => true,
-    run: () => get().openDialog({ kind: 'settings' }),
+    run: ({ acct }) => acct.store.getState().openDialog({ kind: 'settings' }),
   },
   section('profile', 'Settings: Profile', UserRound),
   section('general', 'Settings: General', SlidersHorizontal),

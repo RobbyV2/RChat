@@ -100,11 +100,13 @@ const friendAt = (user: UserRef): Target => ({
 })
 
 export function FriendRow({ friend }: { friend: Friend }) {
+  const acct = useAccount()
+
   const { user, online } = friend
   return (
     <div
       data-friend={user.username}
-      {...longPress((x, y) => openActionMenu(x, y, friendAt(user)))}
+      {...longPress((x, y) => openActionMenu(x, y, friendAt(user), undefined, acct))}
       className={rowCls}
     >
       <div {...profileTrigger(user, null)} className="flex min-w-0 flex-1 items-center gap-3">
@@ -114,7 +116,7 @@ export function FriendRow({ friend }: { friend: Friend }) {
       <button
         title="Message"
         aria-label={`Message ${user.display_name}`}
-        onClick={() => messageFriend(user)}
+        onClick={() => messageFriend(user, acct)}
         className={iconBtn}
       >
         <MessageCircle size={18} />
@@ -124,7 +126,7 @@ export function FriendRow({ friend }: { friend: Friend }) {
         aria-label={`More for ${user.display_name}`}
         onClick={e => {
           const r = e.currentTarget.getBoundingClientRect()
-          openActionMenu(r.left, r.bottom, friendAt(user))
+          openActionMenu(r.left, r.bottom, friendAt(user), undefined, acct)
         }}
         className={iconBtn}
       >
@@ -135,6 +137,8 @@ export function FriendRow({ friend }: { friend: Friend }) {
 }
 
 export function RequestRow({ request }: { request: FriendRequest }) {
+  const acct = useAccount()
+
   const acceptFriend = useStore(s => s.acceptFriend)
   const denyFriend = useStore(s => s.denyFriend)
   const cancelFriendRequest = useStore(s => s.cancelFriendRequest)
@@ -143,7 +147,13 @@ export function RequestRow({ request }: { request: FriendRequest }) {
     <div
       data-request={user.username}
       {...longPress((x, y) =>
-        openActionMenu(x, y, { kind: 'member', user, server: null, where: 'request' })
+        openActionMenu(
+          x,
+          y,
+          { kind: 'member', user, server: null, where: 'request' },
+          undefined,
+          acct
+        )
       )}
       className={rowCls}
     >

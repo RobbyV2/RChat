@@ -17,7 +17,8 @@ import {
   type PollDraft,
 } from '../lib/polls'
 import type { PollTarget } from '../lib/polls_store'
-import { inSession, useStore } from '../lib/store'
+import { useAccount } from '../lib/client/react'
+import { useStore } from '../lib/store'
 import type { PollKind, ShowResults } from '../lib/types'
 import { EmojiPicker } from './emoji_picker'
 import { Chips, Dialog, FieldError, fieldCls, filledBtn, textBtn } from './ui'
@@ -67,6 +68,7 @@ function Toggle({
 }
 
 export function CreatePollDialog({ target, onClose }: { target: PollTarget; onClose: () => void }) {
+  const { inSession } = useAccount().lifetime
   const createPoll = useStore(s => s.createPoll)
   const [d, setD] = useState<PollDraft>(emptyDraft)
   const [error, setError] = useState<string | null>(null)

@@ -1,3 +1,4 @@
+import { client } from './client/client'
 // What can be done with the current message selection. The selection bar, the right-click
 // selection menu and the command palette all read the registry's `selection_*` actions, so they
 // offer the same actions in the same order. `selectionActions(useStore.getState())` is empty while
@@ -24,9 +25,13 @@ export const PRIMARY: ReadonlySet<string> = new Set(['select_all', 'clear', 'del
 
 const PREFIX = 'selection_'
 
-export const selectionActions = (s: RChatState, author?: UserRef | null): SelectionAction[] => {
+export const selectionActions = (
+  s: RChatState,
+  author?: UserRef | null,
+  acct = client.shown()
+): SelectionAction[] => {
   if (!s.selection) return []
-  const ctx = ctxFor(s, { kind: 'selection', list: s.selection.scope, author }, 'bar')
+  const ctx = ctxFor(s, { kind: 'selection', list: s.selection.scope, author }, 'bar', acct)
   return targetActions(ctx).map(a => {
     const id = a.id.startsWith(PREFIX) ? a.id.slice(PREFIX.length) : a.id
     return {

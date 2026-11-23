@@ -1,4 +1,5 @@
 'use client'
+import { useAccount } from '../../lib/client/react'
 
 import { useEffect, useState } from 'react'
 import {
@@ -95,6 +96,8 @@ function useFileUrl(h: string, ready: boolean) {
 }
 
 function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own: boolean }) {
+  const acct = useAccount()
+
   // Shown cleaned like the saved name: no direction overrides or control characters.
   const clean = downloadName(att.name)
   const name = useMask(own)(clean)
@@ -138,7 +141,7 @@ function Tile({ att, canFetch, own }: { att: Attachment; canFetch: boolean; own:
           title={`Download ${fmtSize(att.size)}`}
           aria-label="Download"
           disabled={!v || v.holders === 0}
-          onClick={() => startDownload(att)}
+          onClick={() => startDownload(att, acct)}
           className={iconBtn}
         >
           {kind === null && claimKind(att) === 'video' ? (

@@ -1,3 +1,4 @@
+import type { AccountSession } from '../client/session'
 import type { LucideIcon } from 'lucide-react'
 import type { InboxEntry } from '../inbox'
 import type { Folder } from '../nav_layout'
@@ -100,8 +101,8 @@ export type Target =
   | { kind: 'voice_guest'; server: string; name: string }
 
 export interface ActionCtx {
-  // A menu opened inside an account-owned layer rechecks its target in that store.
-  current?: () => RChatState
+  acct: AccountSession
+  mark: object
   s: RChatState
   via: Via
   target: Target

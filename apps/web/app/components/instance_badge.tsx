@@ -59,6 +59,8 @@ export function InstanceChip({ host, className = '' }: { host: string; className
 }
 
 export function RailInstance() {
+  const acct = useAccount()
+
   const { label, host } = useInstanceLabel()
   const openDialog = useStore(s => s.openDialog)
   const streamer = useStore(s => s.streamer)
@@ -69,7 +71,9 @@ export function RailInstance() {
       title={streamer ? 'Instance' : named ? `${label} (${host})` : host}
       aria-label={`Instance ${label}${named ? ` on ${host}` : ''}`}
       onClick={() => openDialog({ kind: 'settings' })}
-      {...(signedIn ? longPress((x, y) => openActionMenu(x, y, { kind: 'home' })) : {})}
+      {...(signedIn
+        ? longPress((x, y) => openActionMenu(x, y, { kind: 'home' }, undefined, acct))
+        : {})}
       className="flex w-15 shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface"
     >
       <Globe size={16} className="shrink-0" />

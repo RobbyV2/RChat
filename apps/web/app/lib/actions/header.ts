@@ -2,11 +2,8 @@
 
 import { Pin, Search, SquareCheckBig } from 'lucide-react'
 import { PINS_TITLE } from '../pins'
-import { useStore } from '../store'
 import { signedIn } from './global'
 import type { Action, ActionCtx } from './types'
-
-const get = () => useStore.getState()
 
 const headerOf = ({ target }: ActionCtx) => (target.kind === 'header' ? target : null)
 
@@ -25,7 +22,7 @@ export const headerActions: Action[] = [
     available: ctx => listOf(ctx) !== null && signedIn(ctx.s),
     run: ctx => {
       const list = listOf(ctx)
-      if (list) get().startSelection(list)
+      if (list) ctx.acct.store.getState().startSelection(list)
     },
   },
   {
@@ -35,7 +32,7 @@ export const headerActions: Action[] = [
     ...onHeader,
     order: 110,
     available: ctx => listOf(ctx) !== null,
-    run: () => get().openPins(),
+    run: ({ acct }) => acct.store.getState().openPins(),
   },
   {
     id: 'header_search',
@@ -44,6 +41,6 @@ export const headerActions: Action[] = [
     ...onHeader,
     order: 120,
     available: ctx => headerOf(ctx)?.search === true,
-    run: () => get().openSearch(),
+    run: ({ acct }) => acct.store.getState().openSearch(),
   },
 ]

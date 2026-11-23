@@ -2,18 +2,15 @@
 // Marking read, muting and leaving a server are the server's palette commands (place.ts).
 
 import { Bell, BellOff, CheckCheck } from 'lucide-react'
-import { api } from '../instances'
 import { inviteUrl, sharedByCode, shareLink } from '../invite'
 import { muteEnd, mutedText } from '../notify'
 import { sharing } from '../platform'
-import { myPerms, previewServer, serverNames, serversMarkTargets, useStore } from '../store'
+import { myPerms, previewServer, serverNames, serversMarkTargets } from '../store'
 import type { RChatState } from '../store_types'
 import { Perm, hasPerm } from '../types'
 import { signedIn } from './global'
 import { muteStep, muteUntil, notifySettings } from './notify'
 import type { Action, ActionCtx } from './types'
-
-const get = () => useStore.getState()
 
 const copy = (text: string) => void sharing().copyText(text)
 
@@ -75,7 +72,7 @@ export const serverActions: Action[] = [
     },
     run: ctx => {
       const server = railServer(ctx)
-      if (server) get().openDialog({ kind: 'category', server })
+      if (server) ctx.acct.store.getState().openDialog({ kind: 'category', server })
     },
   },
   {
@@ -87,15 +84,20 @@ export const serverActions: Action[] = [
     run: ctx => {
       const server = railServer(ctx)
       if (!server) return
-      const mode = get().servers[server]?.join_mode
-      if (!sharedByCode(mode)) return copy(inviteUrl(server))
-      void api.standingInvite(server).then(
-        link => {
-          const url = shareLink(server, mode, link)
+      const mode = ctx.acct.store.getState().servers[server]?.join_mode
+      if (!sharedByCode(mode)) return copy(inviteUrl(server, null, ctx.acct.shareOrigin))
+      void ctx.acct.api.standingInvite(server).then(
+        ctx.acct.lifetime.inSession(link => {
+          const url = shareLink(server, mode, link, ctx.acct.shareOrigin)
           if (url) copy(url)
-          else get().setError('This server has no invite link. Its managers can make one.')
-        },
-        () => get().setError("Couldn't get the invite link. Try again.")
+          else
+            ctx.acct.store
+              .getState()
+              .setError('This server has no invite link. Its managers can make one.')
+        }),
+        ctx.acct.lifetime.inSession(() =>
+          ctx.acct.store.getState().setError("Couldn't get the invite link. Try again.")
+        )
       )
     },
   },
@@ -119,7 +121,8 @@ export const serverActions: Action[] = [
       railServer(ctx) !== null && ctx.target.kind === 'server' && ctx.target.folder !== null,
     run: ctx => {
       const server = railServer(ctx)
-      if (server && ctx.target.kind === 'server') get().moveServer(server, ctx.target.at + 1)
+      if (server && ctx.target.kind === 'server')
+        ctx.acct.store.getState().moveServer(server, ctx.target.at + 1)
     },
   },
   {
@@ -130,7 +133,7 @@ export const serverActions: Action[] = [
     available: ctx => previewed(ctx) !== null,
     run: ctx => {
       const server = previewed(ctx)
-      if (server) void get().joinPreview(server)
+      if (server) void ctx.acct.store.getState().joinPreview(server)
     },
   },
   {
@@ -154,7 +157,7 @@ export const serverActions: Action[] = [
     disabled: ctx => !serversMarkTargets(ctx.s, folderOf(ctx)?.servers ?? []).length,
     run: ctx => {
       const folder = folderOf(ctx)
-      if (folder) void get().markServersRead(folder.servers)
+      if (folder) void ctx.acct.store.getState().markServersRead(folder.servers)
     },
   },
   {
@@ -167,7 +170,7 @@ export const serverActions: Action[] = [
     available: ctx => !!folderOf(ctx)?.servers.length && !allMuted(ctx),
     run: (ctx, { value }) => {
       const folder = folderOf(ctx)
-      if (folder) get().muteServers(folder.servers, muteUntil(value))
+      if (folder) ctx.acct.store.getState().muteServers(folder.servers, muteUntil(value))
     },
   },
   {
@@ -186,7 +189,7 @@ export const serverActions: Action[] = [
     available: allMuted,
     run: ctx => {
       const folder = folderOf(ctx)
-      if (folder) get().muteServers(folder.servers, null)
+      if (folder) ctx.acct.store.getState().muteServers(folder.servers, null)
     },
   },
   {
@@ -197,7 +200,7 @@ export const serverActions: Action[] = [
     available: ctx => folderOf(ctx) !== null,
     run: ctx => {
       const folder = folderOf(ctx)
-      if (folder) get().openDialog({ kind: 'rename_folder', id: folder.id })
+      if (folder) ctx.acct.store.getState().openDialog({ kind: 'rename_folder', id: folder.id })
     },
   },
   {
@@ -208,7 +211,7 @@ export const serverActions: Action[] = [
     available: ctx => folderOf(ctx) !== null,
     run: ctx => {
       const folder = folderOf(ctx)
-      if (folder) get().ungroupFolder(folder.id)
+      if (folder) ctx.acct.store.getState().ungroupFolder(folder.id)
     },
   },
 ]

@@ -4,16 +4,13 @@
 import { viewingActions } from './viewing'
 import { channelTarget } from '../viewing'
 import { channelGroups } from '../categories'
-import { useChannelEdit } from '../channel_edit'
 import { sharing } from '../platform'
 import { canDeleteChannel } from '../rules'
-import { myPerms, useStore } from '../store'
+import { myPerms } from '../store'
 import { Perm, hasPerm } from '../types'
 import { signedIn } from './global'
 import { notifySettings } from './notify'
 import type { Action, ActionCtx } from './types'
-
-const get = () => useStore.getState()
 
 const copy = (text: string) => void sharing().copyText(text)
 
@@ -34,7 +31,8 @@ const categoryIds = (ctx: ActionCtx, server: string) => {
 
 const collapse = (ctx: ActionCtx, shut: boolean) => {
   const at = categoryOf(ctx)
-  if (at) get().setCategoriesCollapsed(at.server, categoryIds(ctx, at.server), shut)
+  if (at)
+    ctx.acct.store.getState().setCategoriesCollapsed(at.server, categoryIds(ctx, at.server), shut)
 }
 
 const onChannel = { scope: 'channel', targets: ['channel'] } as const
@@ -45,7 +43,10 @@ export const channelActions: Action[] = [
     'channel',
     ctx => {
       const at = channelOf(ctx)
-      return at && channelTarget(ctx.s.me?.username ?? null, 'instance', at.server, at.channel)
+      return (
+        at &&
+        channelTarget(ctx.s.me?.username ?? null, 'instance', at.server, at.channel, ctx.acct.conn)
+      )
     },
     ctx => {
       const at = channelOf(ctx)
@@ -53,7 +54,8 @@ export const channelActions: Action[] = [
     },
     (ctx, sensitive) => {
       const at = channelOf(ctx)
-      if (at) void get().setChannelSensitive(at.server, at.channel.id, sensitive)
+      if (at)
+        void ctx.acct.store.getState().setChannelSensitive(at.server, at.channel.id, sensitive)
     }
   ),
   notifySettings('channel_notify', 'channel', ['channel'], ctx => {
@@ -74,7 +76,10 @@ export const channelActions: Action[] = [
     },
     run: ctx => {
       const at = channelOf(ctx)
-      if (at) void get().setChannelTextOnly(at.server, at.channel.id, !at.channel.text_only)
+      if (at)
+        void ctx.acct.store
+          .getState()
+          .setChannelTextOnly(at.server, at.channel.id, !at.channel.text_only)
     },
   },
   {
@@ -100,7 +105,7 @@ export const channelActions: Action[] = [
     run: ctx => {
       const at = channelOf(ctx)
       if (at)
-        useChannelEdit
+        ctx.acct.channelEdit
           .getState()
           .start({ mode: 'rename', server: at.server, id: at.channel.id }, at.channel.name)
     },
@@ -132,7 +137,7 @@ export const channelActions: Action[] = [
     },
     run: ctx => {
       const at = channelOf(ctx)
-      if (at) void get().deleteChannel(at.channel.id)
+      if (at) void ctx.acct.store.getState().deleteChannel(at.channel.id)
     },
   },
   {
@@ -148,8 +153,8 @@ export const channelActions: Action[] = [
       const at = categoryOf(ctx)
       if (!at) return
       const category = at.category.id
-      get().setCategoriesCollapsed(at.server, [category], false)
-      useChannelEdit
+      ctx.acct.store.getState().setCategoriesCollapsed(at.server, [category], false)
+      ctx.acct.channelEdit
         .getState()
         .start({ mode: 'create', server: at.server, kind: 'text', category }, '')
     },
@@ -165,7 +170,10 @@ export const channelActions: Action[] = [
     },
     run: ctx => {
       const at = categoryOf(ctx)
-      if (at) get().openDialog({ kind: 'category', server: at.server, id: at.category.id })
+      if (at)
+        ctx.acct.store
+          .getState()
+          .openDialog({ kind: 'category', server: at.server, id: at.category.id })
     },
   },
   {
@@ -189,7 +197,7 @@ export const channelActions: Action[] = [
     },
     run: ctx => {
       const at = categoryOf(ctx)
-      if (at) void get().deleteCategory(at.category.id)
+      if (at) void ctx.acct.store.getState().deleteCategory(at.category.id)
     },
   },
   {

@@ -1,4 +1,5 @@
 'use client'
+import { useAccount } from '../../lib/client/react'
 
 import { useCallback, useState, type ReactNode } from 'react'
 import { Clock, Crown, Hash, Lock, Trash2, Volume2 } from 'lucide-react'
@@ -402,6 +403,8 @@ function MemberLine({ v, m, children }: { v: ServerView; m: MemberView; children
 }
 
 function Members({ v }: { v: ServerView }) {
+  const acct = useAccount()
+
   const me = useP2p(s => s.me)
   const ask = useStore(s => s.askConfirm)
   const kick = can(v, P.Kick)
@@ -417,7 +420,7 @@ function Members({ v }: { v: ServerView }) {
       <ul data-p2p-members-tab className="flex flex-col">
         {paged.items.map(m => (
           <MemberLine key={m.ik} v={v} m={m}>
-            {m.m === 'join' && roleMenuItems(v, m).length > 0 && (
+            {m.m === 'join' && roleMenuItems(v, m, acct).length > 0 && (
               <button
                 onClick={e =>
                   openChoiceMenu(
@@ -425,7 +428,8 @@ function Members({ v }: { v: ServerView }) {
                     e.clientY,
                     'p2p_member_roles',
                     { kind: 'p2p_member', v, m },
-                    { header: <MemberCard room={v.id} ik={m.ik} /> }
+                    { header: <MemberCard room={v.id} ik={m.ik} /> },
+                    acct
                   )
                 }
                 className={textBtn}

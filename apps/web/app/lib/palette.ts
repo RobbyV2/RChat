@@ -1,15 +1,16 @@
+import type { AccountSession } from './client/session'
 import { create } from 'zustand'
 import type { LucideIcon } from 'lucide-react'
 import { fuzzy } from './fuzzy'
 
 // The command palette registers its opener here; Home and the mobile headers offer it once it did.
 interface PaletteState {
-  open: (() => void) | null
+  open: ((account: AccountSession) => void) | null
 }
 
 export const usePalette = create<PaletteState>(() => ({ open: null }))
 
-export const registerPalette = (open: (() => void) | null) => usePalette.setState({ open })
+export const registerPalette = (open: PaletteState['open']) => usePalette.setState({ open })
 
 export const paletteShortcut = (mac: boolean) => (mac ? '⌘K' : 'Ctrl+K')
 

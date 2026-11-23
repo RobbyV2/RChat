@@ -680,6 +680,23 @@ describe('desktop notifications', () => {
     ])
   })
 
+  test('an outstanding notification cannot navigate a replacement session', () => {
+    const opened: unknown[][] = []
+    const original = st().openDm
+    useStore.setState({ openDm: (...args: unknown[]) => void opened.push(args) } as never)
+    try {
+      dispatch(inDm(11))
+      const click = fake.shown[0].onClick
+      click()
+      expect(opened.length).toBe(1)
+      resetSessionCaches()
+      click()
+      expect(opened.length).toBe(1)
+    } finally {
+      useStore.setState({ openDm: original })
+    }
+  })
+
   test('streamer mode leaves out names and text; muted scopes stay quiet', () => {
     useStore.setState({ streamer: true })
     dispatch(inDm(11))

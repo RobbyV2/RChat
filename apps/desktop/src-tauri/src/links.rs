@@ -39,12 +39,48 @@ pub fn is_external(url: &Url) -> bool {
     }
 }
 
+// Each wakeup names only the links that arrived together. Startup may still
+// have older links waiting when a different account receives the wakeup.
+#[derive(Default)]
+pub struct PendingLinks {
+    batch: u64,
+    links: Vec<(u64, String)>,
+}
+
+impl PendingLinks {
+    pub fn push(&mut self, links: Vec<String>) -> u64 {
+        self.batch += 1;
+        self.links
+            .extend(links.into_iter().map(|url| (self.batch, url)));
+        let extra = self.links.len().saturating_sub(20);
+        self.links.drain(..extra);
+        self.batch
+    }
+
+    pub fn take(&mut self, batch: Option<u64>) -> Vec<String> {
+        self.links
+            .extract_if(.., |(id, _)| batch.is_none_or(|batch| batch == *id))
+            .map(|(_, url)| url)
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn url(s: &str) -> Url {
         Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn a_wakeup_can_take_its_batch_before_startup_drains_older_links() {
+        let mut queue = PendingLinks::default();
+        queue.push(vec!["old".into()]);
+        let new = queue.push(vec!["first".into(), "second".into()]);
+        assert_eq!(queue.take(Some(new)), ["first", "second"]);
+        assert_eq!(queue.take(None), ["old"]);
+        assert!(queue.take(Some(new)).is_empty());
     }
 
     #[test]

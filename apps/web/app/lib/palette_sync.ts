@@ -25,7 +25,6 @@ import {
   messageDocId,
   type IndexDoc,
 } from './palette_index'
-import { closePalette, closePalettePoll } from './palette_store'
 import type { RChatState } from './store_types'
 import type { Channel, Member, Message, UserRef, WsEvent } from './types'
 
@@ -603,15 +602,11 @@ export function createPaletteIndexer(acct: AccountSession) {
   }
 
   // A new account (or none, after logout): the previous account's device copy is removed, never
-  // saved again, and what it had open in the palette is closed. Runs at once, so changes that
+  // saved again. Runs at once, so changes that
   // follow each other can't interleave.
   const switchOwner = (who: string | null, guest: boolean) => {
     const before = ownerPrefix
     const hadAccount = owner !== null && owner !== 'guest'
-    if (idOf(who) !== ownerId && acct === client.shown()) {
-      closePalette()
-      closePalettePoll()
-    }
     reset()
     if (before && hadAccount) void wipeDevice(before)
     owner = who

@@ -1,3 +1,4 @@
+import { client } from '../client/client'
 // A P2P contact's menu: on the P2P page, in the contact's dialog and on Home's P2P card.
 
 import { Ban, Bell, BellOff, MessageCircle, Pencil, ShieldCheck, Trash2 } from 'lucide-react'
@@ -5,12 +6,9 @@ import { muteEnd, mutedText, type NotifyScope } from '../notify'
 import { p2p, p2pDm, useP2p } from '../p2p/app'
 import { displayName, type Contact } from '../p2p/contacts'
 import { dmRoomId } from '../p2p/dm'
-import { useStore } from '../store'
 import { openActionMenu } from './menu'
 import { muteStep, muteUntil, notifySettings } from './notify'
 import type { Action, ActionCtx } from './types'
-
-const get = () => useStore.getState()
 
 // The contact as it is now; none once it is gone.
 const contactOf = ({ target }: ActionCtx): Contact | null =>
@@ -40,8 +38,8 @@ const mutedUntil = (ctx: ActionCtx) => {
   return scope ? muteEnd(ctx.s.notifyPrefs, scope, Date.now()) : null
 }
 
-const asked = (verb: string, c: Contact) =>
-  `${verb} ${get().streamer ? 'this contact' : displayName(c)}?`
+const asked = (verb: string, c: Contact, acct = client.shown()) =>
+  `${verb} ${acct.store.getState().streamer ? 'this contact' : displayName(c)}?`
 
 const onContact = { scope: 'p2p', targets: ['p2p_contact'] } as const
 
@@ -68,7 +66,7 @@ export const p2pContactActions: Action[] = [
     available: ctx => dmScope(ctx) !== null && mutedUntil(ctx) === null,
     run: (ctx, { value }) => {
       const scope = dmScope(ctx)
-      if (scope) get().muteScope(scope, muteUntil(value))
+      if (scope) ctx.acct.store.getState().muteScope(scope, muteUntil(value))
     },
   },
   {
@@ -84,7 +82,7 @@ export const p2pContactActions: Action[] = [
     available: ctx => mutedUntil(ctx) !== null,
     run: ctx => {
       const scope = dmScope(ctx)
-      if (scope) get().muteScope(scope, null)
+      if (scope) ctx.acct.store.getState().muteScope(scope, null)
     },
   },
   notifySettings('p2p_contact_notify', 'p2p', ['p2p_contact'], dmScope),
@@ -123,8 +121,8 @@ export const p2pContactActions: Action[] = [
     run: ctx => {
       const c = unblocked(ctx)
       if (!c) return
-      get().askConfirm({
-        title: asked('Block', c),
+      ctx.acct.store.getState().askConfirm({
+        title: asked('Block', c, ctx.acct),
         body: 'They can no longer reach you over P2P. You can remove the block later.',
         confirm: 'Block',
         action: () => void p2p.block(c.ik),
@@ -147,8 +145,8 @@ export const p2pContactActions: Action[] = [
         void p2p.remove(c.ik)
         return
       }
-      get().askConfirm({
-        title: asked('Remove', c),
+      ctx.acct.store.getState().askConfirm({
+        title: asked('Remove', c, ctx.acct),
         body: 'They stay able to send you a new request.',
         confirm: 'Remove',
         action: () => void p2p.remove(c.ik),
@@ -157,5 +155,10 @@ export const p2pContactActions: Action[] = [
   },
 ]
 
-export const openContactMenu = (x: number, y: number, c: Contact, me: string | null) =>
-  openActionMenu(x, y, { kind: 'p2p_contact', c, me })
+export const openContactMenu = (
+  x: number,
+  y: number,
+  c: Contact,
+  me: string | null,
+  acct = client.shown()
+) => openActionMenu(x, y, { kind: 'p2p_contact', c, me }, undefined, acct)

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { accountBoundStore } from './client/react'
 import type { ChannelKind } from './types'
 
 // The sidebar's inline channel name field: a new channel (in a category or none) or a rename.
@@ -22,16 +23,19 @@ interface ChannelEdit {
   stop(): void
 }
 
-export const useChannelEdit = create<ChannelEdit>(set => ({
-  editing: null,
-  name: '',
-  start: (editing, name) => set({ editing, name }),
-  setName: name => set({ name }),
-  setKind: kind =>
-    set(s => (s.editing?.mode === 'create' ? { editing: { ...s.editing, kind } } : {})),
-  setTextOnly: enabled =>
-    set(s =>
-      s.editing?.mode === 'create' ? { editing: { ...s.editing, textOnly: enabled } } : {}
-    ),
-  stop: () => set({ editing: null, name: '' }),
-}))
+export const createChannelEdit = () =>
+  create<ChannelEdit>(set => ({
+    editing: null,
+    name: '',
+    start: (editing, name) => set({ editing, name }),
+    setName: name => set({ name }),
+    setKind: kind =>
+      set(s => (s.editing?.mode === 'create' ? { editing: { ...s.editing, kind } } : {})),
+    setTextOnly: enabled =>
+      set(s =>
+        s.editing?.mode === 'create' ? { editing: { ...s.editing, textOnly: enabled } } : {}
+      ),
+    stop: () => set({ editing: null, name: '' }),
+  }))
+
+export const useChannelEdit = accountBoundStore<ChannelEdit>(acct => acct.channelEdit)

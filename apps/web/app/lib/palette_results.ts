@@ -368,7 +368,7 @@ export const helpItems = (guest = false, acct = client.shown()): PaletteItem[] =
     group: 'help' as const,
     icon: p.mode === 'help' ? CircleHelp : Command,
     keepOpen: true,
-    run: () => openPalette(p.prefix),
+    run: () => openPalette(p.prefix, acct),
   })),
   ...SHORTCUTS.filter(sc => sc.where === 'anywhere').map(sc => ({
     id: `help_key_${sc.keys}`,
@@ -424,7 +424,7 @@ export const buildSections = (
   const { mode, q } = parseQuery(text)
   const { usage, now } = ctx
   const out: Section[] = []
-  const commands = paletteCommands(paletteCtx(s))
+  const commands = paletteCommands(paletteCtx(s, acct))
   const selection = commands.filter(c => c.group === 'selection')
   const others = commands.filter(c => c.group !== 'selection')
   const r = <T extends PaletteItem>(items: T[], query = q) => rank(items, query, usage, now)

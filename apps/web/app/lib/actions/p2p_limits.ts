@@ -4,7 +4,6 @@
 import { HardDrive, RotateCcw } from 'lucide-react'
 import { useP2p } from '../p2p/app'
 import { LIMITS_LATER, readUserLimits, writeUserLimits } from '../p2p/user_limits'
-import { useStore } from '../store'
 import { signedIn } from './global'
 import type { Action, ActionCtx } from './types'
 
@@ -27,8 +26,8 @@ export const p2pLimitActions: Action[] = [
     icon: HardDrive,
     keywords,
     available: ctx => p2pAccount(ctx) !== null,
-    run: () =>
-      useStore.getState().openDialog({ kind: 'settings', section: 'p2p', focus: 'p2p_limits' }),
+    run: ({ acct }) =>
+      acct.store.getState().openDialog({ kind: 'settings', section: 'p2p', focus: 'p2p_limits' }),
   },
   {
     id: 'p2p_limits_reset',
@@ -46,7 +45,7 @@ export const p2pLimitActions: Action[] = [
       const account = p2pAccount(ctx)
       if (!account) return
       writeUserLimits(account, { v: 1 })
-      useStore.getState().showToast(LIMITS_RESET_TEXT)
+      ctx.acct.store.getState().showToast(LIMITS_RESET_TEXT)
     },
   },
 ]

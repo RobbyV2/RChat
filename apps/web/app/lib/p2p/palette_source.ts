@@ -1,17 +1,10 @@
 import type { IndexDoc, PaletteIndex } from '../palette_index'
 import { peerVisible } from './app/viewing'
-import {
-  dropIndexBucket,
-  dropIndexIn,
-  dropIndexWhere,
-  indexDocs,
-  paletteIndex,
-  registerIndexSource,
-  useIndexStatus,
-  type IndexSource,
-} from '../palette_sync'
+import type { AccountSession } from '../client/session'
+import type { IndexSource } from '../palette_sync'
 import { replaceSpoilers } from '../spoilers'
 import { memberName, p2p, p2pOpenAt, p2pRecent, useP2p, type P2pState } from './app'
+import { p2pHost } from './app/store'
 import { displayName } from './contacts'
 import type { P2pMessage } from './dm'
 
@@ -103,7 +96,8 @@ const docsOf = (st: P2pState, room: string, ch: string | null, list: readonly P2
 
 // A run of a place's messages replaces what the index has in that time range: deleted messages,
 // and those edited to nothing, go.
-export const reconcilePlace = (
+const reconcilePlace = (
+  indexer: AccountSession['indexer'],
   st: P2pState,
   room: string,
   ch: string | null,
@@ -116,9 +110,9 @@ export const reconcilePlace = (
     const lo = Math.floor(shown[0].ts / 1000)
     const hi = Math.floor(shown[shown.length - 1].ts / 1000)
     const keep = new Set(docs.map(d => d.id))
-    dropIndexIn(bucket, d => d.at >= lo && d.at <= hi && !keep.has(d.id))
+    indexer.dropIndexIn(bucket, d => d.at >= lo && d.at <= hi && !keep.has(d.id))
   }
-  indexDocs(docs)
+  indexer.indexDocs(docs)
 }
 
 export const p2pIndexSource: IndexSource = {
@@ -130,8 +124,6 @@ export const p2pIndexSource: IndexSource = {
   },
   place: d => p2pDocPlace(useP2p.getState(), d),
 }
-
-const dropAll = () => dropIndexWhere(d => d.source === P2P_SOURCE)
 
 // The places to fill in "Full" mode: conversations with contacts and text channels of servers
 // the user is in.
@@ -170,10 +162,14 @@ export const changedRooms = (
 
 // Follows P2P and the palette index; returns the cleanup. Stored pages are read `misc.paletteGapMs`
 // apart, and changed places again `misc.paletteRefreshMs` after a change.
-export const startP2pIndex = ({
-  recent = p2pRecent,
-  refreshMs,
-}: { recent?: typeof p2pRecent; refreshMs?: number } = {}) => {
+export const startP2pIndex = (
+  account: AccountSession,
+  { recent = p2pRecent, refreshMs }: { recent?: typeof p2pRecent; refreshMs?: number } = {}
+) => {
+  const active = () => (p2pHost.account ? p2pHost.account === account : account.isHome)
+  const { indexer } = account
+  const { dropIndexBucket, dropIndexWhere, paletteIndex, registerIndexSource, useIndexStatus } =
+    indexer
   let ix: PaletteIndex | null = null
   let run = 0
   // The message list of the open place last indexed, and the places filled from storage.
@@ -184,19 +180,20 @@ export const startP2pIndex = ({
 
   const indexChat = (st: P2pState) => {
     const chat = st.chat
-    if (!ix || !chat || chat.loading || chat.messages === seen) return
+    if (!active() || !ix || !chat || chat.loading || chat.messages === seen) return
     seen = chat.messages
-    reconcilePlace(st, chat.room, chat.ch ?? null, chat.messages)
+    reconcilePlace(indexer, st, chat.room, chat.ch ?? null, chat.messages)
   }
 
   // Stored pages of places, one at a time.
   const fill = async (places: { room: string; ch: string | null }[]) => {
     const mine = run
+    const mark = account.lifetime.sessionMark()
     for (const p of places) {
-      if (mine !== run || !ix) return
+      if (!active() || mine !== run || mark !== account.lifetime.sessionMark() || !ix) return
       const list = await recent(p.room, p.ch)
-      if (mine !== run || !ix) return
-      if (list) reconcilePlace(useP2p.getState(), p.room, p.ch, list)
+      if (!active() || mine !== run || mark !== account.lifetime.sessionMark() || !ix) return
+      if (list) reconcilePlace(indexer, useP2p.getState(), p.room, p.ch, list)
       await wait(p2p.limits().misc.paletteGapMs)
     }
   }
@@ -204,7 +201,7 @@ export const startP2pIndex = ({
   // "Full" mode: every place not filled yet.
   const backfill = () => {
     const st = useP2p.getState()
-    if (!ix || useIndexStatus.getState().mode !== 'full' || !st.me) return
+    if (!active() || !ix || useIndexStatus.getState().mode !== 'full' || !st.me) return
     const todo = placesOf(st).filter(p => !filled.has(p2pBucket(p.room, p.ch)))
     for (const p of todo) filled.add(p2pBucket(p.room, p.ch))
     if (todo.length) void fill(todo)
@@ -259,9 +256,9 @@ export const startP2pIndex = ({
       (prev.me !== null && st.me !== null && prev.me !== st.me)
     if (removed) {
       reset()
-      dropAll()
+      dropIndexWhere(d => d.source === P2P_SOURCE)
     }
-    if (!ix) return
+    if (!active() || !ix) return
     // Left, removed, banned or forgotten here (not a tab handing P2P over).
     const same = st.me !== null && prev.me !== null && st.reader === prev.reader
     for (const [room, v] of same ? Object.entries(prev.servers) : []) {
@@ -295,7 +292,13 @@ export const startP2pIndex = ({
       backfill()
   })
 
-  const offSource = registerIndexSource(p2pIndexSource)
+  const offSource = registerIndexSource({
+    ...p2pIndexSource,
+    visible: (doc, state) => active() && p2pIndexSource.visible(doc, state),
+    open: doc => {
+      if (active()) p2pIndexSource.open(doc)
+    },
+  })
   ix = paletteIndex()
   if (ix) indexChat(useP2p.getState())
   backfill()

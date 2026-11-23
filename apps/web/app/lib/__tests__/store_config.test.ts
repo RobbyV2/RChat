@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { configSourceOf, useStore, resetSessionCaches } from '../store'
-import { home } from '../instances'
+import { home, sessionStore } from '../instances'
 import { emptyLayout, layoutKey } from '../nav_layout'
 import { EMPTY_NOTIFY, notifyKey, setLevel, setMute } from '../notify'
 import { EMPTY_PREFS, emojiKey, noteUse } from '../emoji'
@@ -332,7 +332,7 @@ describe('applying', () => {
     expect(st().streamer).toBe(true)
     expect(st().layout).toBe(emptyLayout)
     expect(requests).toEqual([])
-    expect(hasStashedConfig()).toBe(true)
+    expect(hasStashedConfig(sessionStore)).toBe(true)
     const saved = JSON.parse(session.get('rchat_config_stash') ?? 'null') as { keys: string[] }
     expect(saved.keys.sort()).toEqual(['appearOffline', 'layout', 'notify'])
   })

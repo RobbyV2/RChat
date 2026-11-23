@@ -17,6 +17,7 @@ import type {
   TouchEvent as ReactTouchEvent,
 } from 'react'
 import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
+import { client } from '../lib/client/client'
 import { ctxFor } from '../lib/actions/ctx'
 import { REVEAL_ACTION } from '../lib/actions/masked'
 import { isActionMenu, itemFor } from '../lib/actions/menu'
@@ -53,12 +54,16 @@ const onScroll = () => void drive({ kind: 'cancel', now: Date.now() })
 // too; action menus list it themselves.
 const openFor = (el: Element | null, open: () => void) =>
   withActionElement(el, () => {
-    const before = useStore.getState().contextMenu
+    const before = client.overlayOwner()?.store.getState().contextMenu
     open()
-    const menu = useStore.getState().contextMenu
-    if (!menu || menu === before || isActionMenu(menu)) return
-    const row = itemFor(REVEAL_ACTION, ctxFor(useStore.getState(), { kind: 'none' }, 'menu'))
-    if (row) useStore.setState({ contextMenu: { ...menu, items: [...menu.items, row] } })
+    const acct = client.overlayOwner()
+    const menu = acct?.store.getState().contextMenu
+    if (!acct || !menu || menu === before || isActionMenu(menu)) return
+    const row = itemFor(
+      REVEAL_ACTION,
+      ctxFor(acct.store.getState(), { kind: 'none' }, 'menu', acct)
+    )
+    if (row) acct.store.setState({ contextMenu: { ...menu, items: [...menu.items, row] } })
   })
 
 const clearPress = () => {

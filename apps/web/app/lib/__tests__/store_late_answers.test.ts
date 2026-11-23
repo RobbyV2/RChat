@@ -6,7 +6,7 @@ import { type ConfigDoc, stashConfig } from '../config_transfer'
 import { loadApiHistory, noteRequest, sendRequest, useApiDoc } from '../api_console'
 import type { InboxView } from '../inbox'
 import { instanceInbox } from '../inbox_source'
-import { home, api } from '../instances'
+import { home, api, sessionStore } from '../instances'
 import { saveMedia } from '../media_src'
 import { EMPTY_NOTIFY, notifyKey, notifyValue, setLevel } from '../notify'
 import { EMPTY_HISTORY, historyKey, type HistoryEntry } from '../openapi'
@@ -2108,7 +2108,7 @@ describe('flows that wait on a step that drops a late answer', () => {
       setItem: (k: string, v: string) => void kept.set(k, v),
       removeItem: (k: string) => void kept.delete(k),
     }
-    stashConfig(doc(), ['layout'])
+    stashConfig(doc(), ['layout'], sessionStore)
     return kept
   }
 

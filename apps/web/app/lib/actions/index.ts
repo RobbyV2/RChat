@@ -1,4 +1,4 @@
-import { useStore } from '../store'
+import { client } from '../client/client'
 import { adminActions } from './admin'
 import { cardActions } from './cards'
 import { channelActions } from './channel'
@@ -58,7 +58,7 @@ export const registerAppActions = () => {
 }
 
 // The home menus' "Mark all as read" row (`mark_all_read`), for a signed-in account.
-export const markAllReadItem = () => {
+export const markAllReadItem = (acct = client.shown()) => {
   registerAppActions()
-  return itemFor('mark_all_read', ctxFor(useStore.getState(), { kind: 'home' }, 'menu'))!
+  return itemFor('mark_all_read', ctxFor(acct.store.getState(), { kind: 'home' }, 'menu', acct))!
 }

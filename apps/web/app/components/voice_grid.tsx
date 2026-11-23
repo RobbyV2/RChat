@@ -39,6 +39,7 @@ import {
   p2p as p2pApp,
   p2pCall,
   p2pDm,
+  p2pHost,
   p2pServer,
   p2pUser,
   p2pVoice,
@@ -1346,7 +1347,10 @@ function CallBannerBody() {
   const other = useStore(s =>
     call && me ? userRefFor(s, call.dmUsers.find(u => u !== me.username) ?? me.username) : null
   )
-  if (!call) return account.isHome ? <ContactCallBanner /> : null
+  if (!call) {
+    const hostsP2p = p2pHost.account ? account === p2pHost.account : account.isHome
+    return hostsP2p ? <ContactCallBanner /> : null
+  }
   if (!ringing || !other || (!incoming && watching)) return null
   const go = () => void openDm(call.dmId, shown ? 'push' : 'none')
   const p2pCall = call.kind === 'p2p'
