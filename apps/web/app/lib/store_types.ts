@@ -586,7 +586,8 @@ export interface RChatState {
     server: string,
     name: string,
     kind?: ChannelKind,
-    category?: number | null
+    category?: number | null,
+    textOnly?: boolean
   ) => Promise<void>
   createCategory: (server: string, name: string) => Promise<void>
   renameCategory: (id: number, name: string) => Promise<void>
@@ -595,6 +596,7 @@ export interface RChatState {
   moveCategory: (server: string, id: number, index: number) => void
   setCategoriesCollapsed: (server: string, ids: number[], collapsed: boolean) => void
   renameChannel: (id: number, name: string) => Promise<void>
+  setChannelTextOnly: (server: string, id: number, enabled: boolean) => Promise<void>
   setChannelSensitive: (server: string, id: number, sensitive: boolean) => Promise<void>
   setSlowmode: (id: number, seconds: number) => Promise<void>
   setChannelTopic: (server: string, id: number, topic: string) => Promise<string | null>

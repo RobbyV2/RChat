@@ -186,6 +186,35 @@ describe('a send the server confirms', () => {
     expect(st().messages.c77?.map(m => m.id)).toEqual([9, 49])
   })
 
+  for (const key of ['c77', 't9']) {
+    test(`a text-only destination rejects new and pending files in ${key}`, async () => {
+      setup()
+      const file = new File(['a'], 'note.txt')
+      useStore.setState({
+        servers: {
+          s: serverDetail('s', {
+            channels: [
+              { id: 77, name: 'general', kind: 'text', slowmode_seconds: 0, text_only: true },
+            ],
+          }),
+        },
+        panel: { kind: 'thread', root: sent(9) },
+      })
+      st().uploadFile(key, file)
+      expect(st().pending[key]).toBeUndefined()
+      useStore.setState({
+        pending: { [key]: { file, spoiler: false, mode: 'server', scope: 'c77' } },
+      })
+      if (key === 'c77') st().sendMessage('https://example.org')
+      else st().sendThreadMessage('https://example.org')
+      await tick()
+      expect(st().outbox[key]?.[0]?.msg.no_previews).toBe(true)
+      expect(st().outbox[key]?.[0]?.pending).toBeNull()
+      open()
+      await tick()
+    })
+  }
+
   test('a thread reply swaps in one step', async () => {
     setup()
     useStore.setState({

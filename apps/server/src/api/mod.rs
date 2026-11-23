@@ -433,6 +433,9 @@ pub struct Channel {
     /// Shared sensitive-content label. Defaults to false.
     #[serde(default)]
     pub sensitive: bool,
+    /// New messages in this channel may contain text only.
+    #[serde(default)]
+    pub text_only: bool,
     /// Channel topic: plain text, links are shown as links. At most 1024 characters, no
     /// control characters other than newlines; `null` when the channel has none.
     #[serde(default)]
@@ -839,6 +842,9 @@ pub struct Message {
     /// Link previews; empty until they are fetched, then delivered by the `embeds_resolved`
     /// WebSocket event and included in later reads.
     pub embeds: Vec<Embed>,
+    /// Suppress generated link cards for this message.
+    #[serde(default)]
+    pub no_previews: bool,
     /// `user` for a normal message, `poll` for a poll (`poll`; `content` is the question),
     /// `call` for a direct-message call log, `pin` when someone pinned a message
     /// (`pin_message_id`; empty `content`), or `join` / `leave` when the author joined or left

@@ -1176,7 +1176,7 @@ impl ServerAccess {
             return Err(not_found());
         }
         let row = sqlx::query(
-            "SELECT server, kind, name, slowmode_seconds, sensitive FROM channels WHERE id = $1 AND server = $2",
+            "SELECT server, kind, name, slowmode_seconds, sensitive, text_only FROM channels WHERE id = $1 AND server = $2",
         )
         .bind(id)
         .bind(self.name())
@@ -1193,6 +1193,7 @@ impl ServerAccess {
             name: row.try_get(2)?,
             slowmode: row.try_get(3)?,
             sensitive: row.try_get::<i64, _>(4)? != 0,
+            text_only: row.try_get::<i64, _>(5)? != 0,
             rights,
             server: self,
         })
@@ -1231,6 +1232,7 @@ pub struct ResolvedChannel {
     kind: ChannelKind,
     name: String,
     slowmode: i64,
+    text_only: bool,
     sensitive: bool,
     rights: ChannelAccess,
 }
@@ -1295,7 +1297,7 @@ async fn configured_channel(
     rights: ChannelAccess,
 ) -> Result<ResolvedChannel, ApiError> {
     let r = sqlx::query(
-        "SELECT c.kind, c.name, c.slowmode_seconds, c.sensitive, s.name, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice_opt_in, s.members_visible, s.guest_chat_opt_in, s.join_mode, s.listed FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
+        "SELECT c.kind, c.name, c.slowmode_seconds, c.sensitive, s.name, s.display_name, s.creator, s.password_hash, s.banner_color, s.name_color, s.public_read, s.guest_voice_opt_in, s.members_visible, s.guest_chat_opt_in, s.join_mode, s.listed, c.text_only FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND COALESCE(s.password_hash, '') <> '!purging'",
     )
     .bind(id)
     .fetch_optional(db)
@@ -1313,6 +1315,7 @@ async fn configured_channel(
         name: r.try_get(1)?,
         slowmode: r.try_get(2)?,
         sensitive: r.try_get::<i64, _>(3)? != 0,
+        text_only: r.try_get::<i64, _>(16)? != 0,
         rights,
     })
 }
@@ -1353,6 +1356,13 @@ impl ResolvedChannel {
 
     pub fn kind(&self) -> ChannelKind {
         self.kind
+    }
+
+    pub(crate) fn allow_payload(&self, rich: bool) -> Result<(), ApiError> {
+        if self.text_only && rich {
+            return Err(crate::api::bad("This channel only accepts text"));
+        }
+        Ok(())
     }
 
     pub fn sensitive(&self) -> bool {
@@ -2550,7 +2560,7 @@ where
 /// client.
 pub(crate) async fn ws_channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(String, Channel)>> {
     let row =
-        sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive FROM channels WHERE id = $1")
+        sqlx::query("SELECT server, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only FROM channels WHERE id = $1")
             .bind(id)
             .fetch_optional(db)
             .await?;
@@ -2568,6 +2578,7 @@ pub(crate) async fn ws_channel_now(db: &Db, id: i64) -> sqlx::Result<Option<(Str
                 category_id: r.try_get(7)?,
                 position: r.try_get(8)?,
                 sensitive: r.try_get::<i64, _>(9)? != 0,
+                text_only: r.try_get::<i64, _>(10)? != 0,
             },
         ))),
         None => Ok(None),

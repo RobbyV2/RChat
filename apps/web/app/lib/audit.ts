@@ -50,6 +50,7 @@ const FIELD_LABELS: Record<string, string> = {
   name: 'Name',
   topic: 'Topic',
   slowmode_seconds: 'Slow mode',
+  text_only: 'Text only',
   restrict_view: 'Require roles to view',
   restrict_send: 'Require roles to send',
   color: 'Color',

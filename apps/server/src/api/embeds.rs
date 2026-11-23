@@ -493,7 +493,7 @@ async fn resolve_once(db: &Db, url: &str, policy: &Policy) -> anyhow::Result<Opt
 
 async fn live_server(db: &Db, message_id: i64) -> sqlx::Result<Option<Option<String>>> {
     sqlx::query(
-        "SELECT c.server FROM messages m LEFT JOIN channels c ON c.id = m.channel_id WHERE m.id = $1",
+        "SELECT c.server FROM messages m LEFT JOIN channels c ON c.id = m.channel_id WHERE m.id = $1 AND m.no_previews = 0 AND COALESCE(c.text_only, 0) = 0",
     )
     .bind(message_id)
     .fetch_optional(db)
@@ -519,7 +519,7 @@ async fn store_embeds(
     embeds: &[Embed],
 ) -> sqlx::Result<Option<Stored>> {
     let mut tx = db.begin().await?;
-    let locked = sqlx::query("UPDATE messages SET edited_at = edited_at WHERE id = $1")
+    let locked = sqlx::query("UPDATE messages SET edited_at = edited_at WHERE id = $1 AND no_previews = 0 AND NOT EXISTS (SELECT 1 FROM channels c WHERE c.id = messages.channel_id AND c.text_only != 0)")
         .bind(message_id)
         .execute(&mut *tx)
         .await?;

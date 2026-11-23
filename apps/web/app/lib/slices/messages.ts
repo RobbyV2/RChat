@@ -1,6 +1,7 @@
 // Messages and DMs: the loaded windows with their tails and heads, live appends, quotes and
 // edits, pins, link cards, the outbox, embeds, P2P availability and the DM list.
 
+import { textOnlyDestination } from '../channel_content'
 import { canView, instanceTarget, requestViewing } from '../viewing'
 import { ApiError, type PageOpts, type SearchParams, type SendOpts } from '../api'
 import {
@@ -821,6 +822,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         reply_count: 0,
         media: null,
         embeds: [],
+        no_previews: textOnlyDestination(get(), viewKey(view)),
         kind: 'user',
         call: null,
         reply_to: reply ? quoteOf(reply, me.username) : null,
@@ -1337,6 +1339,8 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         let real: Message
         let sentAt = 0
         try {
+          if (head.pending && textOnlyDestination(get(), head.pending.scope))
+            throw new Error('This channel only accepts text')
           const built = await buildSendOpts(head.pending, head.p2pExpiresIn)
           if (mine !== draining) return
           if (head.pending) stampOutgoing(key, head.tempId)
@@ -1588,7 +1592,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       const { view, me } = get()
       if (!view || !me) return
       const key = viewKey(view)
-      const held = get().pending[key] ?? null
+      const held = textOnlyDestination(get(), key) ? null : (get().pending[key] ?? null)
       const pending = held && p2pRelay !== undefined ? { ...held, relay: p2pRelay } : held
       if (!content.trim() && !pending) return
       const reply = get().replying[key] ?? null
@@ -1693,6 +1697,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
         guest ||
         !clip ||
         !clipAllowed(get(), clip) ||
+        (textOnlyDestination(get(), key) && !clip.p2p && (clip.has_media || clip.has_poll)) ||
         forwardPending(get().outbox[key], clip.id)
       )
         return
@@ -1987,6 +1992,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       }),
 
     uploadFile: (key, file) => {
+      if (file && textOnlyDestination(get(), key)) return
       const max = limitsOf(get().instance).upload_bytes
       const mode = file ? startMode(get().settings, file.size, max) : null
       if (file && mode === null) return
@@ -2037,7 +2043,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
       if (panel?.kind !== 'thread' || !me) return
       const rootId = panel.root.id
       const key = threadKey(rootId)
-      const held = get().pending[key] ?? null
+      const held = textOnlyDestination(get(), key) ? null : (get().pending[key] ?? null)
       const pending = held && p2pRelay !== undefined ? { ...held, relay: p2pRelay } : held
       if (!content.trim() && !pending) return
       const tempId = nextTempId()
@@ -2061,6 +2067,7 @@ export const messagesSlice = (set: SetState, get: GetState, deps: MessagesDeps) 
           reply_count: 0,
           media: null,
           embeds: [],
+          no_previews: textOnlyDestination(get(), key),
           kind: 'user',
           call: null,
           reply_to: reply ? quoteOf(reply, me.username) : null,

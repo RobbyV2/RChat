@@ -7719,6 +7719,31 @@ async fn guest_participation_requires_explicit_choices_across_restarts() {
 }
 
 #[tokio::test]
+async fn text_only_preserves_channels_and_existing_messages() {
+    on_each_database("text_only_upgrade", |url| async move {
+        let db = open_started(Some(&url)).await.expect("open");
+        let cid = general_id(&db).await;
+        let mid: i64 = sqlx::query("INSERT INTO messages(channel_id, author, content, created_at) VALUES($1, 'alice', 'history', 1) RETURNING id")
+            .bind(cid).fetch_one(&db).await.expect("message").get(0);
+        for sql in [
+            "ALTER TABLE channels DROP COLUMN text_only",
+            "ALTER TABLE messages DROP COLUMN no_previews",
+            "UPDATE settings SET value = '41' WHERE key = 'schema_version'",
+        ] {
+            sqlx::query(sql).execute(&db).await.expect("old schema");
+        }
+        close(&db).await;
+        for expected in 0..=1 {
+            let db = open_started(Some(&url)).await.expect("upgrade");
+            assert_eq!(count(&db, &format!("SELECT text_only FROM channels WHERE id = {cid}")).await, expected);
+            assert_eq!(count(&db, &format!("SELECT no_previews FROM messages WHERE id = {mid} AND content = 'history'")).await, 0);
+            sqlx::query("UPDATE channels SET text_only = 1 WHERE id = $1").bind(cid).execute(&db).await.expect("set");
+            close(&db).await;
+        }
+    }).await;
+}
+
+#[tokio::test]
 async fn channel_labels_preserve_topics_and_channel_ids() {
     on_each_database("channel_labels", |url| async move {
         let db = open_started(Some(&url)).await.expect("open");

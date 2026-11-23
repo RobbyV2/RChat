@@ -66,6 +66,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("messages", "call_kind TEXT"),
     ("messages", "call_video {INT}"),
     ("channels", "topic TEXT"),
+    ("messages", "no_previews {INT} NOT NULL DEFAULT 0"),
+    ("channels", "text_only {INT} NOT NULL DEFAULT 0"),
     ("channels", "sensitive {INT} NOT NULL DEFAULT 0"),
     ("channels", "category_id {INT}"),
     ("channels", "position {INT} NOT NULL DEFAULT 0"),
@@ -240,7 +242,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// for it and that its owner has not replaced.
 /// 40: brand images (`brand_assets`), the logo and the mark an instance uploads.
 /// 41: scheduled announcements and account dismissals.
-pub const SCHEMA_VERSION: i64 = 41;
+/// 42: text-only channels.
+pub const SCHEMA_VERSION: i64 = 42;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 17] {

@@ -611,6 +611,22 @@ export function ChannelControls({
           />
           Sensitive channel
         </label>
+        {channel.kind === 'text' && (
+          <label className="flex min-h-11 cursor-pointer items-center gap-1.5 text-sm">
+            <input
+              type="checkbox"
+              className="cursor-pointer accent-primary"
+              checked={channel.text_only === true}
+              onChange={() =>
+                void useStore
+                  .getState()
+                  .setChannelTextOnly(server, channel.id, !channel.text_only)
+                  .then(inSession(() => refresh?.()))
+              }
+            />
+            Text only
+          </label>
+        )}
         {channel.kind === 'text' && <ChannelSlowmode channel={channel} refresh={refresh} />}
         <button
           onClick={() => setTopicOpen(!topicOpen)}

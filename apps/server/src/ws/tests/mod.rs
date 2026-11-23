@@ -58,6 +58,7 @@ fn message() -> Message {
         reply_count: 0,
         media: None,
         embeds: Vec::new(),
+        no_previews: false,
         kind: "user".to_string(),
         call: None,
         reactions: Vec::new(),

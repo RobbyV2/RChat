@@ -1003,6 +1003,7 @@ mod tests {
             kind: crate::db::ChannelKind::Text,
             slowmode_seconds: 5,
             sensitive: false,
+            text_only: false,
             restrict_view: false,
             restrict_send: false,
             topic: None,

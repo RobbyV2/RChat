@@ -28,7 +28,7 @@ Browsers: current Chrome, Edge and Firefox. Safari and iOS need version 16.4 or 
 - Voice, video and screen share, in channels and in DMs
 - P2P contacts, DMs, servers, calls and files, kept on the members' devices
 - Replies, mentions, reactions, pins, forwarding, polls and link previews
-- Uploads, or a text only mode
+- File uploads, instance-wide text-only mode, and text-only settings for individual channels. Links in text-only channels stay readable as text, and earlier messages keep their original content.
 - Restricted channels, slow mode, server passwords and invite links
 - Moderation, a profanity filter and a site admin panel
 - Guests who read public servers without an account, and post or talk where the site and server allow it

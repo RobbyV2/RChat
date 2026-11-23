@@ -63,6 +63,21 @@ export const channelActions: Action[] = [
       : null
   }),
   {
+    id: 'channel_text_only',
+    title: 'Enable text only',
+    label: ctx => (channelOf(ctx)?.channel.text_only ? 'Disable text only' : 'Enable text only'),
+    ...onChannel,
+    order: 890,
+    available: ctx => {
+      const at = channelOf(ctx)
+      return at?.channel.kind === 'text' && manages(ctx, at.server)
+    },
+    run: ctx => {
+      const at = channelOf(ctx)
+      if (at) void get().setChannelTextOnly(at.server, at.channel.id, !at.channel.text_only)
+    },
+  },
+  {
     id: 'channel_copy_id',
     title: 'Copy Channel ID',
     ...onChannel,

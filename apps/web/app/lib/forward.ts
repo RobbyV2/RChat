@@ -14,6 +14,7 @@ export interface ForwardClip {
   author: UserRef | null
   snippet: string
   has_media: boolean
+  has_poll?: true
   created_at: number
   // The whole text, for forwards into P2P conversations (which copy it).
   body?: string
@@ -36,6 +37,7 @@ export const clipOf = (m: Message, server?: string): ForwardClip => ({
   id: m.id,
   author: m.forward ? m.forward.author : m.author,
   snippet: plainLine(m.content),
+  ...(m.poll || m.kind === 'poll' ? { has_poll: true as const } : {}),
   has_media: (m.media !== null && !m.media.removed) || !!m.forward?.dropped,
   created_at: m.forward?.created_at ?? m.created_at,
   body: [...m.content].slice(0, BODY_MAX).join(''),
@@ -117,6 +119,7 @@ export function parseForward(raw: string | null): ForwardClip | null {
           },
     snippet: [...snippet].slice(0, 200).join(''),
     has_media,
+    ...((clip as Record<string, unknown>).has_poll === true ? { has_poll: true as const } : {}),
     created_at,
   }
 }

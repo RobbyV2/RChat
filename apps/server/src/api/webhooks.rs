@@ -1352,6 +1352,7 @@ async fn post(
     if channel.kind() != ChannelKind::Text {
         return Err(bad("Voice channels cannot receive messages"));
     }
+    channel.allow_payload(file.is_some() || poll.is_some() || !cards.is_empty())?;
     let place = match thread_id {
         Some(root) => {
             let sql = format!(
@@ -1494,15 +1495,17 @@ async fn post(
         .execute(db)
         .await?;
     let server = Some(hook.server.clone());
-    embeds::spawn_unfurl(
-        state,
-        server.clone(),
-        Some(hook.channel_id),
-        None,
-        None,
-        message.id,
-        &message.content,
-    );
+    if !message.no_previews {
+        embeds::spawn_unfurl(
+            state,
+            server.clone(),
+            Some(hook.channel_id),
+            None,
+            None,
+            message.id,
+            &message.content,
+        );
+    }
     store_group_pings(state, &channel, &message).await;
     state.hub.broadcast(WsEvent::Message {
         server,
@@ -1643,21 +1646,33 @@ pub(crate) async fn edit_hook_message(
     let hook = hook_for(db, &id, &token).await?;
     paced(&state, &hook)?;
     let mid = own_message(db, &hook, &message_id).await?;
-    let row = sqlx::query(
-        "SELECT content, kind, media_id, media_removed, webhook_embeds FROM messages WHERE id = $1",
-    )
-    .bind(mid)
-    .fetch_one(db)
-    .await?;
+    let settings = Settings::cached(db).await;
+    let (mut tx, text_only) =
+        crate::api::messages::begin_message_write(db, Some(hook.channel_id), false).await?;
+    let read = "SELECT content, kind, media_id, media_removed, webhook_embeds FROM messages WHERE id = $1 AND channel_id = $2 AND webhook_id = $3";
+    let lock = if crate::db::is_sqlite(db) {
+        ""
+    } else {
+        " FOR UPDATE"
+    };
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!("{read}{lock}")))
+        .bind(mid)
+        .bind(hook.channel_id)
+        .bind(hook.id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(unknown_message)?;
     let (old, kind): (String, String) = (row.try_get(0)?, row.try_get(1)?);
     if kind != "user" {
         return Err(bad("Cannot edit this message"));
     }
     let attached = row.try_get::<Option<String>, _>(2)?.is_some() && row.try_get::<i64, _>(3)? == 0;
     let old_cards = parse_embeds(row.try_get::<Option<String>, _>(4)?.as_deref());
-    let settings = Settings::cached(db).await;
     let content = content.unwrap_or_else(|| old.clone());
     let cards = cards.unwrap_or(old_cards.clone());
+    if text_only && !cards.is_empty() && cards != old_cards {
+        return Err(bad("This channel only accepts text"));
+    }
     check_len(&content, state.limits.message_max_chars, "Message")?;
     settings.check_profanity(ProfanityTarget::Messages, &content)?;
     validate_embeds(&cards, &settings)?;
@@ -1666,17 +1681,17 @@ pub(crate) async fn edit_hook_message(
     }
     if content != old || cards != old_cards {
         let relink = embeds::extract_urls(&content) != embeds::extract_urls(&old);
-        let mut tx = db.begin().await?;
         sqlx::query(
-            "UPDATE messages SET content = $1, webhook_embeds = $2, edited_at = $3 WHERE id = $4",
+            "UPDATE messages SET content = $1, webhook_embeds = $2, edited_at = $3, no_previews = $5 WHERE id = $4",
         )
         .bind(&content)
         .bind(stored_embeds(&cards))
         .bind(now())
         .bind(mid)
+        .bind(i64::from(text_only))
         .execute(&mut *tx)
         .await?;
-        if relink {
+        if relink || text_only {
             sqlx::query("DELETE FROM message_embeds WHERE message_id = $1")
                 .bind(mid)
                 .execute(&mut *tx)
@@ -1684,7 +1699,7 @@ pub(crate) async fn edit_hook_message(
         }
         tx.commit().await?;
         let server = Some(hook.server.clone());
-        if relink {
+        if relink && !text_only {
             embeds::spawn_unfurl(
                 &state,
                 server.clone(),
@@ -1703,6 +1718,8 @@ pub(crate) async fn edit_hook_message(
                 dm_users: Vec::new(),
             });
         }
+    } else {
+        tx.commit().await?;
     }
     let message = load_message(db, mid, Quotes::Since(None))
         .await?
@@ -4206,6 +4223,85 @@ mod tests {
             (
                 StatusCode::BAD_REQUEST,
                 "Error parsing `multipart/form-data` request".to_string()
+            )
+        );
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn webhooks_in_text_only_channels_post_links_and_reject_cards_and_polls() {
+        let (state, path, cid) = setup("text_only_hooks").await;
+        let made = create(&state, "owner", cid, "Deploys")
+            .await
+            .expect("create");
+        let id = made.webhook.id.to_string();
+        let previous = run(
+            &state,
+            &id,
+            &made.token,
+            json!({"content":"history", "embeds":[{"title":"Before"}]}),
+        )
+        .await
+        .expect("card before text only");
+        sqlx::query("UPDATE channels SET text_only = 1 WHERE id = $1")
+            .bind(cid)
+            .execute(&state.db)
+            .await
+            .expect("enable");
+        let posted = run(
+            &state,
+            &id,
+            &made.token,
+            json!({"content":"See https://example.org"}),
+        )
+        .await
+        .expect("link text");
+        assert!(posted.no_previews);
+        for body in [
+            json!({"content":"card","thread_id":posted.id,"embeds":[{"title":"Card"}]}),
+            json!({"content":"poll","poll":{"kind":"yes_no","question":"Ready?"}}),
+        ] {
+            assert_eq!(
+                code(run(&state, &id, &made.token, body).await),
+                (
+                    StatusCode::BAD_REQUEST,
+                    "This channel only accepts text".to_string()
+                )
+            );
+        }
+        let patch_previous = |body| {
+            edit_hook_message(
+                State(state.clone()),
+                Path((id.clone(), made.token.clone(), previous.id.to_string())),
+                Json(serde_json::from_value(body).expect("edit")),
+            )
+        };
+        HOOK_PACE.forget_prefix(&format!("{}\n", crate::db::pool_key(&state.db)));
+        let (clear, edit) = tokio::join!(
+            patch_previous(json!({"embeds":[]})),
+            patch_previous(json!({"content":"edited text"})),
+        );
+        let _ = clear.expect("remove cards");
+        let _ = edit.expect("edit text concurrently");
+        let refreshed = patch_previous(json!({"content":"after removal"}))
+            .await
+            .expect("edit after removal")
+            .0;
+        assert!(refreshed.webhook.expect("webhook").embeds.is_empty());
+        HOOK_PACE.forget_prefix(&format!("{}\n", crate::db::pool_key(&state.db)));
+        let patch = serde_json::from_value(json!({"embeds":[{"title":"Card"}]})).expect("patch");
+        assert_eq!(
+            code(
+                edit_hook_message(
+                    State(state.clone()),
+                    Path((id, made.token, posted.id.to_string())),
+                    Json(patch)
+                )
+                .await
+            ),
+            (
+                StatusCode::BAD_REQUEST,
+                "This channel only accepts text".to_string()
             )
         );
         done(state, path).await;

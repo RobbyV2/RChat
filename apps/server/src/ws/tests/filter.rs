@@ -462,6 +462,7 @@ fn every_event() -> Vec<WsEvent> {
         kind: ChannelKind::Text,
         slowmode_seconds: 0,
         sensitive: false,
+        text_only: false,
         restrict_view: false,
         restrict_send: false,
         topic: None,

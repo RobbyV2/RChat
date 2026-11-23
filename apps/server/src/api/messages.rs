@@ -38,7 +38,7 @@ use crate::limits::shared::Rate;
 use crate::state::AppState;
 use crate::ws::{Updated, WsEvent};
 
-const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions, m.webhook_id, m.webhook_name, m.webhook_avatar, m.webhook_embeds";
+const COLS: &str = "m.id, m.channel_id, m.dm_id, m.thread_root_id, m.author, m.content, m.media_id, m.media_filename, m.media_removed, m.media_spoiler, m.created_at, (SELECT COUNT(*) FROM messages r WHERE r.thread_root_id = m.id), m.media_kind, m.media_hoster, m.media_expires_at, m.media_size, m.media_mime, m.kind, m.call_answered_at, m.call_ended_at, m.call_outcome, m.reply_to, m.reply_mention, m.edited_at, CASE WHEN EXISTS(SELECT 1 FROM users fu WHERE fu.username = m.fwd_author AND fu.password_hash = '!purging') THEN NULL ELSE m.fwd_author END, m.fwd_created_at, m.fwd_source_id, m.fwd_origin, m.fwd_dropped, m.pinned_at / 1000, m.pin_message_id, (SELECT pm.created_at FROM messages pm WHERE pm.id = m.pin_message_id), m.media_sha256, m.call_kind, m.call_video, m.group_mentions, m.webhook_id, m.webhook_name, m.webhook_avatar, m.webhook_embeds, m.no_previews";
 const SNIPPET_MAX: usize = 200;
 
 /// Message-id paging for message lists. Give at most one of `before`, `after` and `around`;
@@ -408,6 +408,7 @@ fn row_message(r: &AnyRow, refs: &HashMap<String, UserRef>) -> Result<Message, A
         reply_count: r.try_get(11)?,
         media,
         embeds: Vec::new(),
+        no_previews: r.try_get::<i64, _>(40)? != 0,
         kind,
         call,
         reactions: Vec::new(),
@@ -1231,6 +1232,35 @@ pub(crate) fn replied(quote: &Option<Quoted>) -> Option<&str> {
         .map(|q| q.author.as_str())
 }
 
+pub(crate) async fn begin_message_write(
+    db: &Db,
+    channel_id: Option<i64>,
+    rich: bool,
+) -> Result<(sqlx::Transaction<'_, sqlx::Any>, bool), ApiError> {
+    let mut tx = if is_sqlite(db) && channel_id.is_some() {
+        db.begin_with("BEGIN IMMEDIATE").await?
+    } else {
+        db.begin().await?
+    };
+    let Some(id) = channel_id else {
+        return Ok((tx, false));
+    };
+    let sql = if crate::db::is_sqlite(db) {
+        "SELECT text_only FROM channels WHERE id = $1"
+    } else {
+        "SELECT text_only FROM channels WHERE id = $1 FOR SHARE"
+    };
+    let flag: i64 = sqlx::query(sql)
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?
+        .try_get(0)?;
+    if flag != 0 && rich {
+        return Err(bad("This channel only accepts text"));
+    }
+    Ok((tx, flag != 0))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn insert_message(
     state: &AppState,
@@ -1272,7 +1302,15 @@ pub(crate) async fn insert_message(
     check_len(&content, state.limits.message_max_chars, "Message")?;
     let spoiler = media_spoiler.unwrap_or(false);
     attachments_allowed(&settings, media_id.is_some(), p2p.is_some())?;
-    let mut tx = db.begin().await?;
+    let (mut tx, text_only) = begin_message_write(
+        db,
+        channel_id,
+        media_id.is_some()
+            || p2p.is_some()
+            || poll.is_some()
+            || hook.is_some_and(|h| !h.embeds.is_empty()),
+    )
+    .await?;
     let media = match (&media_id, p2p) {
         (Some(_), Some(_)) => {
             return Err(bad("Choose server or P2P attachment, not both"));
@@ -1308,7 +1346,7 @@ pub(crate) async fn insert_message(
     }
     let t = now();
     let id: i64 = sqlx::query(
-        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, group_mentions, created_at, kind, webhook_id, webhook_name, webhook_avatar, webhook_embeds) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23) RETURNING id",
+        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, media_sha256, reply_to, reply_mention, group_mentions, created_at, kind, webhook_id, webhook_name, webhook_avatar, webhook_embeds, no_previews) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24) RETURNING id",
     )
     .bind(channel_id)
     .bind(dm_id)
@@ -1336,6 +1374,7 @@ pub(crate) async fn insert_message(
     .bind(hook.map(|h| h.name.clone()))
     .bind(hook.map(|h| h.avatar.clone()))
     .bind(hook.and_then(|h| crate::api::webhooks::stored_embeds(&h.embeds)))
+    .bind(i64::from(text_only))
     .fetch_one(&mut *tx)
     .await?
     .try_get(0)?;
@@ -1354,6 +1393,7 @@ pub(crate) async fn insert_message(
         reply_count: 0,
         media,
         embeds: Vec::new(),
+        no_previews: text_only,
         kind: match poll {
             Some(_) => "poll",
             None => "user",
@@ -1540,7 +1580,12 @@ async fn insert_forward(
         }
     }
     let t = now();
-    let mut tx = db.begin().await?;
+    let (mut tx, text_only) = begin_message_write(
+        db,
+        channel_id,
+        media.is_some() || dropped.is_some() || snapshot.is_some(),
+    )
+    .await?;
     let (media, dropped) = match media {
         Some(media)
             if !crate::api::media::may_carry(
@@ -1556,7 +1601,7 @@ async fn insert_forward(
         media => (media, dropped),
     };
     let id: i64 = sqlx::query(
-        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, fwd_author, fwd_created_at, fwd_source_id, fwd_origin, fwd_dropped, created_at) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, 'server', NULL, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id",
+        "INSERT INTO messages(channel_id, dm_id, thread_root_id, author, content, media_id, media_filename, media_removed, media_spoiler, media_kind, media_hoster, media_expires_at, media_size, media_mime, fwd_author, fwd_created_at, fwd_source_id, fwd_origin, fwd_dropped, created_at, no_previews) VALUES($1, $2, $3, $4, $5, $6, $7, 0, $8, 'server', NULL, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id",
     )
     .bind(channel_id)
     .bind(dm_id)
@@ -1575,12 +1620,14 @@ async fn insert_forward(
     .bind(origin.as_ref().map(Origin::stored))
     .bind(&dropped)
     .bind(t)
+    .bind(i64::from(text_only))
     .fetch_one(&mut *tx)
     .await?
     .try_get(0)?;
-    let previews = sqlx::query("INSERT INTO message_embeds(message_id, ord, url, banner_removed, removed) SELECT $1, ord, url, banner_removed, removed FROM message_embeds WHERE message_id = $2")
+    let previews = sqlx::query("INSERT INTO message_embeds(message_id, ord, url, banner_removed, removed) SELECT $1, ord, url, banner_removed, removed FROM message_embeds WHERE message_id = $2 AND CAST($3 AS BIGINT) = 0")
         .bind(id)
         .bind(source_id)
+        .bind(i64::from(text_only))
         .execute(&mut *tx)
         .await?
         .rows_affected();
@@ -1600,6 +1647,7 @@ async fn insert_forward(
         reply_count: 0,
         media,
         embeds: Vec::new(),
+        no_previews: text_only,
         kind: "user".to_string(),
         call: None,
         reactions: Vec::new(),
@@ -1719,7 +1767,7 @@ async fn deliver(
     if let Some(server) = &server {
         touch_interaction(db, server, &user.username).await?;
     }
-    if !previews {
+    if !previews && !message.no_previews {
         embeds::spawn_unfurl(
             state,
             server.clone(),
@@ -2440,14 +2488,18 @@ pub(crate) async fn edit_message(
     };
     if content != old {
         let relink = embeds::extract_urls(&content) != embeds::extract_urls(&old);
-        let mut tx = state.db.begin().await?;
-        sqlx::query("UPDATE messages SET content = $1, edited_at = $2 WHERE id = $3")
-            .bind(&content)
-            .bind(now())
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        if relink {
+        let (mut tx, text_only) =
+            begin_message_write(&state.db, message.scope().channel_id, false).await?;
+        sqlx::query(
+            "UPDATE messages SET content = $1, edited_at = $2, no_previews = $4 WHERE id = $3",
+        )
+        .bind(&content)
+        .bind(now())
+        .bind(id)
+        .bind(i64::from(text_only))
+        .execute(&mut *tx)
+        .await?;
+        if relink || text_only {
             sqlx::query("DELETE FROM message_embeds WHERE message_id = $1")
                 .bind(id)
                 .execute(&mut *tx)
@@ -2466,7 +2518,7 @@ pub(crate) async fn edit_message(
             server,
             dm_users,
         } = message.into_scope();
-        if relink {
+        if relink && !text_only {
             embeds::spawn_unfurl(
                 &state,
                 server.clone(),
@@ -3433,7 +3485,7 @@ async fn search_results(db: &Db, rows: &[AnyRow]) -> Result<Vec<SearchResult>, A
     let mut msgs = rows_messages(db, rows, Quotes::Skip).await?;
     let mut ctx: Vec<(String, String)> = Vec::with_capacity(rows.len());
     for r in rows {
-        ctx.push((r.try_get(40)?, r.try_get(41)?));
+        ctx.push((r.try_get("server")?, r.try_get("name")?));
     }
     attach_embeds(db, &mut msgs).await?;
     Ok(msgs
@@ -4605,6 +4657,48 @@ mod tests {
         )
         .await
         .map(|j| j.0)
+    }
+
+    #[tokio::test]
+    async fn text_only_channels_allow_text_and_block_rich_posts_in_threads_and_forwards() {
+        let (state, path) = temp_state("channel_text_only_posts").await;
+        let db = &state.db;
+        let cid = general_id(db).await;
+        add_user(db, "alice", "Alice").await;
+        add_member(db, "rchat", "alice", 0, 0, 1).await;
+        let target = (Some(cid), None, None);
+        let old = say(&state, target, "alice", "A link").await;
+        assert!(!old.no_previews);
+        sqlx::query("UPDATE channels SET text_only = 1 WHERE id = $1")
+            .bind(cid)
+            .execute(db)
+            .await
+            .expect("enable");
+        let link = say(&state, target, "alice", "See https://example.org").await;
+        assert!(link.no_previews);
+        let reply = say(&state, (None, None, Some(old.id)), "alice", "**Reply**").await;
+        assert!(reply.no_previews);
+        let copy = forward(&state, target, "alice", old.id)
+            .await
+            .expect("forward text");
+        assert!(copy.no_previews);
+        for request in [
+            serde_json::json!({"content":"file","media_id":"unclaimed"}),
+            serde_json::json!({"content":"poll","poll":{"kind":"single","question":"Choose","options":[{"text":"A"},{"text":"B"}]}}),
+        ] {
+            let req = serde_json::from_value(request).expect("request");
+            assert!(
+                matches!(send_req(&state, cid, req).await, Err(ApiError(StatusCode::BAD_REQUEST, message, _)) if message == "This channel only accepts text")
+            );
+        }
+        assert!(
+            matches!(send_req(&state, cid, p2p_req(&"12".repeat(16), 1, None)).await, Err(ApiError(StatusCode::BAD_REQUEST, message, _)) if message == "This channel only accepts text")
+        );
+        let edited = edit(&state, old.id, "alice", "See https://example.org")
+            .await
+            .expect("edit");
+        assert!(edited.no_previews);
+        done(state, path).await;
     }
 
     fn refused(res: Result<Message, ApiError>, text: &str) -> bool {

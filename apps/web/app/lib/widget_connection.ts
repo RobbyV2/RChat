@@ -204,6 +204,7 @@ export class WidgetConnection {
     const token = this.token
     const ids = new Set<number>()
     for (const message of room.messages) {
+      if (message.no_previews) continue
       for (const { id, place } of findMessageLinks(message.content, [location.origin])) {
         if (
           place.kind === 'channel' &&

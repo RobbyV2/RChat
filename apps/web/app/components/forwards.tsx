@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Forward, Image as ImageIcon, SendHorizontal } from 'lucide-react'
 import { useStore } from '../lib/store'
+import { textOnlyDestination } from '../lib/channel_content'
 import { clipAllowed, sourceAccess } from '../lib/forward_viewing'
 import { useForwardAccess } from '../lib/forward_access'
 import { useP2p } from '../lib/p2p/app/store'
@@ -60,6 +61,8 @@ export const useForwardClip = () => {
 // `onSend` sends it somewhere other than an instance conversation (a P2P one).
 export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: () => void }) {
   const clip = useForwardClip()
+  const textOnly = useStore(s => !onSend && textOnlyDestination(s, draftKey))
+  const blocked = textOnly && !clip?.p2p && (clip?.has_media || clip?.has_poll)
   const busy = useStore(s => (clip ? forwardPending(s.outbox[draftKey], clip.id) : false))
   const sendForward = useStore(s => s.sendForward)
   const clearForward = useStore(s => s.clearForward)
@@ -86,8 +89,8 @@ export function ForwardBar({ draftKey, onSend }: { draftKey: string; onSend?: ()
       actions={
         <button
           type="button"
-          title="Forward here"
-          disabled={busy}
+          title={blocked ? 'This channel only accepts text' : 'Forward here'}
+          disabled={busy || blocked}
           onClick={send}
           className="flex shrink-0 items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-xs font-medium text-on-primary hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-40 pointer-coarse:min-h-10"
         >

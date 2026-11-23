@@ -277,7 +277,7 @@ impl Stored<'_> {
     ) -> Result<Option<i64>, ApiError> {
         let public = reading.readable_sql();
         let insert = format!(
-            "INSERT INTO messages(channel_id, thread_root_id, author, content, reply_to, created_at) SELECT $1, $2, $3, $4, $5, $6 FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND s.name = $7 AND ($8 = 1 OR ({public})) AND COALESCE(s.password_hash, '') <> '!purging' AND c.kind = 'text' AND c.restrict_view = 0 AND c.restrict_send = 0 AND s.guest_chat_opt_in = 1 AND (SELECT COUNT(*) FROM settings WHERE key IN ('guests_enabled', 'guest_chat_enabled') AND value = '1') = 2 RETURNING id"
+            "INSERT INTO messages(channel_id, thread_root_id, author, content, reply_to, created_at, no_previews) SELECT $1, $2, $3, $4, $5, $6, c.text_only FROM channels c JOIN servers s ON s.name = c.server WHERE c.id = $1 AND s.name = $7 AND ($8 = 1 OR ({public})) AND COALESCE(s.password_hash, '') <> '!purging' AND c.kind = 'text' AND c.restrict_view = 0 AND c.restrict_send = 0 AND s.guest_chat_opt_in = 1 AND (SELECT COUNT(*) FROM settings WHERE key IN ('guests_enabled', 'guest_chat_enabled') AND value = '1') = 2 RETURNING id"
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(insert))
             .bind(self.channel)

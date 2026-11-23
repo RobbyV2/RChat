@@ -642,7 +642,13 @@ export function ChannelSidebar() {
     if (!current || !trimmed) return
     switch (current.mode) {
       case 'create':
-        void createChannel(current.server, trimmed, current.kind, current.category)
+        void createChannel(
+          current.server,
+          trimmed,
+          current.kind,
+          current.category,
+          current.kind === 'text' && current.textOnly
+        )
         return
       case 'rename':
         void renameChannel(current.id, trimmed)
@@ -715,7 +721,7 @@ export function ChannelSidebar() {
         if (enterKey(e)) submit()
         if (e.key === 'Escape') useChannelEdit.getState().stop()
       }}
-      onBlur={submit}
+      onBlur={editingHere?.mode === 'rename' ? submit : undefined}
       placeholder="channel name"
       className="mx-2 my-0.5 min-w-0 flex-1 rounded-lg border border-primary bg-transparent px-2 py-1.5 text-base outline-none md:text-sm"
     />
@@ -723,7 +729,12 @@ export function ChannelSidebar() {
 
   const createRow = (category: number | null) =>
     editingHere?.mode === 'create' && editingHere.category === category ? (
-      <span className="flex items-center">
+      <span
+        className="flex flex-wrap items-center"
+        onBlur={e => {
+          if (!e.currentTarget.contains(e.relatedTarget)) submit()
+        }}
+      >
         <span className="flex shrink-0 gap-0.5 pl-2">
           <button
             title="Text channel"
@@ -753,6 +764,20 @@ export function ChannelSidebar() {
           </button>
         </span>
         {editInput}
+        {editingHere.kind === 'text' && (
+          <label
+            onMouseDown={e => e.preventDefault()}
+            className="mx-2 flex basis-full items-center gap-2 py-1 text-sm"
+          >
+            <input
+              type="checkbox"
+              className="accent-primary"
+              checked={!!editingHere.textOnly}
+              onChange={e => useChannelEdit.getState().setTextOnly(e.target.checked)}
+            />
+            Text only
+          </label>
+        )}
       </span>
     ) : null
 

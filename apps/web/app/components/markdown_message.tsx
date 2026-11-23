@@ -208,16 +208,20 @@ const markStamps = (node: MdNode) => {
 const remarkStamps = () => (tree: unknown) => markStamps(tree as MdNode)
 
 const InLink = createContext(false)
+const PlainLinks = createContext(false)
 
 function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const previews = useStore(s => s.settings.asset_previews)
+  const plain = useContext(PlainLinks)
   const inLink = useContext(InLink)
   // A P2P message never loads anything by itself: an image from the instance would tell it what
   // was said and when it was read.
   const chat = useChatSource()
   const server = useStore(s => (s.view?.kind === 'channel' ? s.view.server : undefined))
   const local =
-    !chat && sameOriginImage(src, window.location.href, [window.location.origin, api.origin()])
+    !plain &&
+    !chat &&
+    sameOriginImage(src, window.location.href, [window.location.origin, api.origin()])
   const shown = useLinkedSrc(src, server, previews && local)
   if (previews && local && shown === undefined)
     return (
@@ -1159,7 +1163,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   editor?: ReactNode
 }) {
   const deleteMedia = useStore(s => s.deleteMedia)
-  const previews = useStore(s => s.settings.asset_previews)
+  const previews = useStore(s => s.settings.asset_previews) && !message.no_previews
   const uploads = useStore(s => s.settings.asset_uploads)
   const p2pOn = useStore(s => s.settings.p2p_attachments)
   const attachmentsOff = (m: MessageMedia) =>
@@ -1236,9 +1240,11 @@ export const MarkdownMessage = memo(function MarkdownMessage({
           <MaskPlain>
             <MaskedWords>
               <SpoilerPieces>
-                <ReactMarkdown remarkPlugins={plugins} components={components}>
-                  {source}
-                </ReactMarkdown>
+                <PlainLinks.Provider value={!!message.no_previews}>
+                  <ReactMarkdown remarkPlugins={plugins} components={components}>
+                    {source}
+                  </ReactMarkdown>
+                </PlainLinks.Provider>
               </SpoilerPieces>
             </MaskedWords>
           </MaskPlain>
@@ -1275,7 +1281,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
       {message.webhook && message.webhook.embeds.length > 0 && (
         <RichEmbeds embeds={message.webhook.embeds} text={card.text} line={card.line} />
       )}
-      {!src &&
+      {!message.no_previews &&
+        !src &&
         messageLinks.map(l =>
           widgetCards ? (
             <WidgetMessageLinkCard key={l.id} link={l} card={widgetCards.get(l.id)} />
@@ -1283,7 +1290,8 @@ export const MarkdownMessage = memo(function MarkdownMessage({
             <MessageLinkCard key={l.id} link={l} />
           )
         )}
-      {!src &&
+      {!message.no_previews &&
+        !src &&
         !widget &&
         invites.map(i => (
           <InviteCard

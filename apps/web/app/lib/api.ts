@@ -598,12 +598,14 @@ export const endpoints = (c: ApiClient) => ({
     server: string,
     name: string,
     kind: ChannelKind = 'text',
-    category: number | null = null
+    category: number | null = null,
+    textOnly = false
   ) =>
     c.req<Channel>('POST', `/servers/${seg(server)}/channels`, {
       name,
       kind,
       category_id: category,
+      ...(textOnly ? { text_only: true } : {}),
     }),
   createCategory: (server: string, name: string) =>
     c.req<Category>('POST', `/servers/${seg(server)}/categories`, { name }),
@@ -617,6 +619,7 @@ export const endpoints = (c: ApiClient) => ({
     patch: {
       name?: string
       sensitive?: boolean
+      text_only?: boolean
       slowmode_seconds?: number
       restrict_view?: boolean
       restrict_send?: boolean

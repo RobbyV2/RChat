@@ -774,6 +774,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     | 'setSlowmode'
     | 'setChannelRestrict'
     | 'setChannelSensitive'
+    | 'setChannelTextOnly'
     | 'setChannelTopic'
     | 'deleteChannel'
     | 'kickMember'
@@ -892,8 +893,8 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     renameServer: async (name, newName) =>
       void (await live(api.updateServer(name, { name: newName }))),
     deleteServer: name => act(async () => void (await api.deleteServer(name))),
-    createChannel: (server, name, kind = 'text', category = null) =>
-      act(async () => void (await api.createChannel(server, name, kind, category))),
+    createChannel: (server, name, kind = 'text', category = null, textOnly = false) =>
+      act(async () => void (await api.createChannel(server, name, kind, category, textOnly))),
     createCategory: (server, name) =>
       act(async () => void (await api.createCategory(server, name))),
     renameCategory: (id, name) => act(async () => void (await api.renameCategory(id, name))),
@@ -912,6 +913,11 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     setSlowmode: (id, seconds) =>
       act(async () => void (await api.updateChannel(id, { slowmode_seconds: seconds }))),
     setChannelRestrict: (id, patch) => act(async () => void (await api.updateChannel(id, patch))),
+    setChannelTextOnly: (server, id, text_only) =>
+      act(async () => {
+        const channel = await live(api.updateChannel(id, { text_only }))
+        onChannelChange({ type: 'channel_updated', server, channel })
+      }),
     setChannelSensitive: (server, id, sensitive) =>
       act(async () => {
         const channel = await live(api.updateChannel(id, { sensitive }))

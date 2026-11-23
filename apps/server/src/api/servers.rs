@@ -63,6 +63,9 @@ pub struct CreateChannelReq {
     /// until rules are added. Optional; omitted means off.
     #[serde(default)]
     restrict_view: bool,
+    /// Start a text channel with text-only messages.
+    #[serde(default)]
+    text_only: bool,
     /// Category to list the channel under, at its end. Optional; omitted or `null` lists it
     /// at the end of the channels without a category.
     #[serde(default)]
@@ -262,6 +265,8 @@ pub struct ChannelPatch {
     restrict_send: Option<bool>,
     /// Set the shared sensitive-content label. Omit to keep it.
     sensitive: Option<bool>,
+    /// Disable new attachments, previews, rich embeds and polls in a text channel.
+    text_only: Option<bool>,
     /// Channel topic, plain text where links show as links. At most 1024 characters (code
     /// points) after cleanup: trimmed, control characters other than newlines dropped, runs of
     /// 3 or more newlines cut to 2. Checked by the profanity filter (`channel_topics` target).
@@ -1036,6 +1041,7 @@ fn channel_row(r: &sqlx::any::AnyRow) -> Result<Channel, ApiError> {
         category_id: r.try_get(7)?,
         position: r.try_get(8)?,
         sensitive: r.try_get::<i64, _>(9)? != 0,
+        text_only: r.try_get::<i64, _>(10)? != 0,
     })
 }
 
@@ -1071,7 +1077,7 @@ async fn server_detail(
         listed,
     } = access.lite().clone();
     let rows = sqlx::query(
-        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive FROM channels WHERE server = $1 ORDER BY position, id",
+        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only FROM channels WHERE server = $1 ORDER BY position, id",
     )
     .bind(&name)
     .fetch_all(db)
@@ -3812,6 +3818,9 @@ pub(crate) async fn create_channel(
     .await?;
     let access = resolve_server(&state.db, &key, Some(&user), &Proof::none()).await?;
     access.require_perm(&state.db, Perm::ManageChannels).await?;
+    if kind == ChannelKind::Voice && req.text_only {
+        return Err(bad("Text only applies to text channels"));
+    }
     let key = access.name().to_string();
     let actor = access.audit_actor(&state.db, Perm::ManageChannels).await?;
     let mut tx = state.db.begin().await?;
@@ -3840,10 +3849,10 @@ pub(crate) async fn create_channel(
     }
     let sql = match req.category_id {
         Some(_) => {
-            "INSERT INTO channels(server, name, kind, created_at, restrict_view, category_id, position) SELECT $1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(position) + 1, 0) FROM channels WHERE server = $1) WHERE EXISTS(SELECT 1 FROM channel_categories WHERE id = $6 AND server = $1) RETURNING id"
+            "INSERT INTO channels(server, name, kind, created_at, restrict_view, category_id, text_only, position) SELECT $1, $2, $3, $4, $5, $6, $7, (SELECT COALESCE(MAX(position) + 1, 0) FROM channels WHERE server = $1) WHERE EXISTS(SELECT 1 FROM channel_categories WHERE id = $6 AND server = $1) RETURNING id"
         }
         None => {
-            "INSERT INTO channels(server, name, kind, created_at, restrict_view, category_id, position) SELECT $1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(position) + 1, 0) FROM channels WHERE server = $1) RETURNING id"
+            "INSERT INTO channels(server, name, kind, created_at, restrict_view, category_id, text_only, position) SELECT $1, $2, $3, $4, $5, $6, $7, (SELECT COALESCE(MAX(position) + 1, 0) FROM channels WHERE server = $1) RETURNING id"
         }
     };
     let Some(row) = sqlx::query(sql)
@@ -3853,6 +3862,7 @@ pub(crate) async fn create_channel(
         .bind(now())
         .bind(i64::from(req.restrict_view))
         .bind(req.category_id)
+        .bind(i64::from(req.text_only))
         .fetch_optional(&mut *tx)
         .await?
     else {
@@ -3870,6 +3880,7 @@ pub(crate) async fn create_channel(
             Details::new()
                 .channel(&created)
                 .set("kind", kind.as_str())
+                .set("text_only", req.text_only)
                 .set("restrict_view", req.restrict_view),
         ),
     )
@@ -3886,6 +3897,7 @@ pub(crate) async fn create_channel(
         kind,
         slowmode_seconds: 0,
         sensitive: false,
+        text_only: req.text_only,
         restrict_view: req.restrict_view,
         restrict_send: false,
         topic: None,
@@ -3941,6 +3953,7 @@ pub(crate) async fn update_channel(
         restrict_view,
         restrict_send,
         sensitive,
+        text_only,
         topic,
     } = req;
     let channel = resolve_channel(&state.db, id, Some(&user), &Proof::none()).await?;
@@ -3962,6 +3975,9 @@ pub(crate) async fn update_channel(
         if kind == ChannelKind::Voice && secs != 0 {
             return Err(bad("Slow mode only applies to text channels"));
         }
+    }
+    if kind == ChannelKind::Voice && text_only == Some(true) {
+        return Err(bad("Text only applies to text channels"));
     }
     if kind == ChannelKind::Voice && restrict_send == Some(true) {
         return Err(bad("Require roles to send only applies to text channels"));
@@ -3995,7 +4011,7 @@ pub(crate) async fn update_channel(
         .audit_actor(&state.db, Perm::ManageChannels)
         .await?;
     let mut tx = state.db.begin().await?;
-    let old = sqlx::query("SELECT name, topic, slowmode_seconds, restrict_view, restrict_send, CASE WHEN EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = channels.id) THEN 1 ELSE 0 END, sensitive FROM channels WHERE id = $1")
+    let old = sqlx::query("SELECT name, topic, slowmode_seconds, restrict_view, restrict_send, CASE WHEN EXISTS(SELECT 1 FROM channel_perms cp WHERE cp.channel_id = channels.id) THEN 1 ELSE 0 END, sensitive, text_only FROM channels WHERE id = $1")
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?
@@ -4004,6 +4020,7 @@ pub(crate) async fn update_channel(
     let (was_name, was_topic, was_slow): (String, Option<String>, i64) =
         (old.try_get(0)?, old.try_get(1)?, old.try_get(2)?);
     let ruled = old.try_get::<i64, _>(5)? != 0;
+    let was_text_only = old.try_get::<i64, _>(7)? != 0;
     let was_sensitive = old.try_get::<i64, _>(6)? != 0;
     if let Some(channel_name) = &channel_name {
         let taken =
@@ -4039,6 +4056,7 @@ pub(crate) async fn update_channel(
     }
     for (column, value) in [
         ("sensitive", sensitive),
+        ("text_only", text_only),
         ("restrict_view", restrict_view),
         ("restrict_send", restrict_send),
     ] {
@@ -4053,6 +4071,11 @@ pub(crate) async fn update_channel(
         }
     }
     let changes = Details::new()
+        .change(
+            "text_only",
+            was_text_only,
+            text_only.unwrap_or(was_text_only),
+        )
         .change(
             "name",
             was_name.as_str(),
@@ -4098,7 +4121,7 @@ pub(crate) async fn update_channel(
     }
     tx.commit().await?;
     let row = sqlx::query(
-        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive FROM channels WHERE id = $1",
+        "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only FROM channels WHERE id = $1",
     )
     .bind(id)
     .fetch_one(&state.db)
@@ -6312,6 +6335,7 @@ mod tests {
             Json(CreateChannelReq {
                 name: name.to_string(),
                 kind: None,
+                text_only: false,
                 restrict_view: false,
                 category_id: None,
             }),
@@ -6774,6 +6798,7 @@ mod tests {
                     Json(CreateChannelReq {
                         name,
                         kind: Some(kind),
+                        text_only: false,
                         restrict_view: false,
                         category_id: None,
                     }),
@@ -9595,6 +9620,7 @@ mod tests {
             Json(CreateChannelReq {
                 name: "staff".into(),
                 kind: None,
+                text_only: false,
                 restrict_view: true,
                 category_id: None,
             }),
@@ -10281,6 +10307,7 @@ mod tests {
             Json(CreateChannelReq {
                 name: "extra".to_string(),
                 kind: None,
+                text_only: false,
                 restrict_view: false,
                 category_id: None,
             }),
@@ -11351,6 +11378,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn channel_managers_can_toggle_text_only_for_their_server() {
+        let (state, path) = temp_state("text_only_managers").await;
+        club_with(&state, &["pat", "bob"]).await;
+        give_role(&state.db, "club", "pat", Perm::ManageChannels as i64).await;
+        let cid: i64 =
+            sqlx::query("SELECT id FROM channels WHERE server = 'club' AND kind = 'text'")
+                .fetch_one(&state.db)
+                .await
+                .expect("text channel")
+                .get(0);
+        let patch = |who: &str, text_only| {
+            update_channel(
+                State(state.clone()),
+                Authed(mem_user(who, false)),
+                Path(cid),
+                Json(ChannelPatch {
+                    text_only: Some(text_only),
+                    ..Default::default()
+                }),
+            )
+        };
+        assert!(patch("alice", true).await.expect("owner").text_only);
+        assert!(patch("bob", false).await.is_err());
+        assert!(
+            !patch("pat", false)
+                .await
+                .expect("channel manager")
+                .text_only
+        );
+        let create = |kind| {
+            create_channel(
+                State(state.clone()),
+                Authed(mem_user("pat", false)),
+                Path("club".to_string()),
+                Json(CreateChannelReq {
+                    name: "quiet".to_string(),
+                    kind: Some(kind),
+                    text_only: true,
+                    restrict_view: false,
+                    category_id: None,
+                }),
+            )
+        };
+        assert!(matches!(
+            create(ChannelKind::Voice).await,
+            Err(ApiError(StatusCode::BAD_REQUEST, _, _))
+        ));
+        let created = create(ChannelKind::Text).await.expect("create text only").0;
+        assert!(created.text_only);
+        let flag: i64 = sqlx::query("SELECT text_only FROM channels WHERE id = $1")
+            .bind(created.id)
+            .fetch_one(&state.db)
+            .await
+            .expect("stored channel")
+            .get(0);
+        assert_eq!(flag, 1);
+        done(state, path).await;
+    }
+
+    #[tokio::test]
     async fn rename_events_only_for_real_renames() {
         let (state, path) = temp_state("rename_events").await;
         let db = &state.db;
@@ -11581,6 +11668,7 @@ mod tests {
                 kind: ChannelKind::Text,
                 slowmode_seconds: 0,
                 sensitive: false,
+                text_only: false,
                 restrict_view: false,
                 restrict_send: false,
                 topic: None,
@@ -12060,6 +12148,7 @@ mod tests {
             Json(CreateChannelReq {
                 name: "staff".to_string(),
                 kind: None,
+                text_only: false,
                 restrict_view: true,
                 category_id: None,
             }),

@@ -757,7 +757,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
   const askMarkAllRead = useStore(s => s.askMarkAllRead)
   const openSearch = useStore(s => s.openSearch)
   const uploadFile = useStore(s => s.uploadFile)
-  const canAttach = useStore(s => s.settings.asset_uploads || s.settings.p2p_attachments)
+  const attachmentsEnabled = useStore(s => s.settings.asset_uploads || s.settings.p2p_attachments)
   const call = useStore(s => s.call)
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
@@ -767,6 +767,7 @@ export function MessagePane({ onMenu, onMembers }: { onMenu: () => void; onMembe
 
   const channel =
     view?.kind === 'channel' ? detail?.channels.find(c => c.id === view.channelId) : undefined
+  const canAttach = attachmentsEnabled && !channel?.text_only
   const channelName = channel?.name
   const isVoice = channel?.kind === 'voice'
   const scope = view && !isVoice ? viewKey(view) : null

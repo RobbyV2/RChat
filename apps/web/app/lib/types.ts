@@ -89,6 +89,7 @@ export interface Channel {
   name: string
   kind: ChannelKind
   slowmode_seconds: number
+  text_only?: boolean
   sensitive?: boolean
   restrict_view?: boolean
   restrict_send?: boolean
@@ -340,6 +341,7 @@ export interface Message {
   reply_count: number
   media: MessageMedia | null
   embeds: Embed[]
+  no_previews?: boolean
   kind: MessageKind
   call: CallLog | null
   reactions?: Reaction[]

@@ -33,6 +33,7 @@ import { loadEmojiData } from '../lib/emoji'
 import { hasInviteCode, INVITE_POST_TEXT } from '../lib/p2p/flows'
 import { parseSed } from '../lib/sed'
 import { readOnly } from '../lib/reactions'
+import { textOnlyDestination } from '../lib/channel_content'
 import { clock } from '../lib/slowmode'
 import { useCountdown } from '../lib/countdown'
 import { Dialog, FieldError, fieldCls, filledBtn, Masked, useOwnServer } from './ui'
@@ -271,12 +272,14 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     return !s.me || v?.kind !== 'channel' || s.me.servers.some(x => x.name === v.server)
   })
   const draftKey = thread ? (rootId !== null ? `t${rootId}` : null) : view ? viewKey(view) : null
-  const pending = useStore(s => (draftKey ? s.pending[draftKey] : undefined)) ?? null
+  const textOnly = useStore(s => textOnlyDestination(s, draftKey))
+  const held = useStore(s => (draftKey ? s.pending[draftKey] : undefined)) ?? null
+  const pending = textOnly ? null : held
   const uploadsOn = useStore(s => s.settings.asset_uploads)
   const p2pOn = useStore(s => s.settings.p2p_attachments)
   const uploadMax = useStore(s => limitsOf(s.instance).upload_bytes)
   const max = useStore(s => limitsOf(s.instance).message_chars)
-  const canAttach = uploadsOn || p2pOn
+  const canAttach = !textOnly && (uploadsOn || p2pOn)
   const uploadFile = useStore(s => s.uploadFile)
   const toggleSpoiler = useStore(s => s.toggleSpoiler)
   const toggleUploadMode = useStore(s => s.toggleUploadMode)
@@ -466,15 +469,17 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
     if (draftKey) setDraft(draftKey, value)
   }
 
-  const pollTarget: PollTarget | null = thread
-    ? rootId !== null
-      ? { kind: 'thread', id: rootId }
-      : null
-    : view?.kind === 'channel'
-      ? { kind: 'channel', id: view.channelId }
-      : view?.kind === 'dm'
-        ? { kind: 'dm', id: view.dmId }
+  const pollTarget: PollTarget | null = textOnly
+    ? null
+    : thread
+      ? rootId !== null
+        ? { kind: 'thread', id: rootId }
         : null
+      : view?.kind === 'channel'
+        ? { kind: 'channel', id: view.channelId }
+        : view?.kind === 'dm'
+          ? { kind: 'dm', id: view.dmId }
+          : null
 
   const switchable = pending !== null && uploadsOn && p2pOn && pending.file.size <= uploadMax
 
@@ -539,7 +544,7 @@ export function MessageComposer({ thread = false }: { thread?: boolean }) {
       {pollOpen && pollTarget && (
         <CreatePollDialog target={pollTarget} onClose={() => setPollOpen(false)} />
       )}
-      {expiryOpen && (
+      {expiryOpen && !textOnly && (
         <ExpiryDialog
           onPick={(seconds, relay) => {
             setExpiryOpen(false)
