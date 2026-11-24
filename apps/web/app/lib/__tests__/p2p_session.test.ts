@@ -405,16 +405,16 @@ describe('session', () => {
 
   test('a full 1 MiB message and a burst of two arrive without strikes', async () => {
     const { sa, sb, got, clock } = pair()
-    await settle()
+    await waitFor(() => sa.state === 'ready' && sb.state === 'ready', 'both sessions ready')
     const body = 'x'.repeat(MESSAGE_MAX - 64)
     await sa.send({ t: 'text', body })
-    await settle()
+    await waitFor(() => got.b.length === 1, 'the first full message received')
     expect(got.b).toHaveLength(1)
     expect(got.b[0]).toHaveLength(body.length)
     // The bucket refills; then two at once still fit the burst, with no time passing.
     await clock.advance(5000)
     await Promise.all([sa.send({ t: 'text', body }), sa.send({ t: 'text', body })])
-    await settle()
+    await waitFor(() => got.b.length === 3, 'both burst messages received')
     expect(got.b).toHaveLength(3)
     expect(sb.state).toBe('ready')
     expect(sb.strikes).toBe(0)

@@ -1,216 +1,18 @@
 'use client'
-
-import { AccountProvider, useAccount } from '../lib/client/react'
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowRight, Globe } from 'lucide-react'
-import { DEFAULT_INSTANCE_NAME, knownInstances, normalizeOrigin } from '../lib/instances'
-import { hostOf } from '../lib/qualified'
-import { useStore } from '../lib/store'
-import { keptSession, restoreStreamer } from '../lib/start'
-import { shellInfo } from '../lib/platform'
-import { safeNext } from '../lib/invite'
+import { AccountProvider, useAccount, useStore } from '../lib/client/react'
 import { client } from '../lib/client/client'
 import { routeOwnerFor, selectPageAccount } from '../lib/client/account_paths'
 import type { AccountSession } from '../lib/client/session'
 import { accountPath, parseAccountPath, type RouteOwner } from '../lib/view'
+import { safeNext } from '../lib/invite'
+import { shellInfo } from '../lib/platform'
 import { UnavailableAccount } from './account_login'
-import { passwordSignup } from '../lib/features'
-import { NAME_MAX, charCount } from '../lib/rules'
-import type { AvatarKind } from '../lib/types'
-import type { PassKind } from '../lib/password'
-import { AvatarPicker } from '../components/avatar_picker'
-import { PassSwitch, WordGrid } from '../components/word_grid'
+import { AddInstanceFlow, useAddingAllowed } from '../components/add_instance'
+import { SignInStep } from '../components/sign_in_step'
 import StatusClock, { ThemeToggle } from '../components/status_clock'
-import { FieldError } from '../components/ui'
 import { InstallButton, IosInstallHint } from '../components/pwa_register'
-
-type Mode = 'login' | 'register'
-
-const inputBase = 'rounded-lg border bg-transparent px-3 py-2 outline-none'
-const inputCls = `${inputBase} border-outline focus:border-primary`
-
-function blurHosts(text: string, hosts: (string | null)[]): ReactNode {
-  const wanted = [...new Set(hosts.filter((h): h is string => !!h))].sort(
-    (a, b) => b.length - a.length
-  )
-  if (wanted.length === 0) return text
-  const escaped = wanted.map(h => h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  return text.split(new RegExp(`(${escaped.join('|')})`)).map((part, at) =>
-    at % 2 === 1 ? (
-      <span key={at} className="streamer">
-        {part}
-      </span>
-    ) : (
-      part
-    )
-  )
-}
-
-function InstancePicker({
-  onSwitched,
-  onMissing,
-  pinned,
-}: {
-  pinned: boolean
-  onSwitched: () => void
-  onMissing: (missing: boolean) => void
-}) {
-  const { conn: home, store } = useAccount()
-  const info = useStore(s => s.instance)
-  const host = useStore(s => s.instanceHost)
-  const loadInstance = useStore(s => s.loadInstance)
-  const switchInstance = useStore(s => s.switchInstance)
-  const streamer = useStore(s => s.streamer)
-  const [open, setOpen] = useState(false)
-  const [address, setAddress] = useState('')
-  const [error, setError] = useState<ReactNode>(null)
-  const [busy, setBusy] = useState(false)
-  const [known, setKnown] = useState<{ origin: string; name: string }[]>([])
-  const listId = useId()
-  const mounted = useRef(false)
-
-  useEffect(() => {
-    mounted.current = true
-    let live = true
-    void loadInstance().then(found => {
-      if (!live || found === null) return
-      onMissing(!found)
-      if (found) {
-        void store.getState().loadSettings()
-        return
-      }
-      setOpen(!pinned)
-      setError(
-        shellInfo() && home.isDefault ? (
-          'Enter the instance to use.'
-        ) : (
-          <>
-            No RChat instance answered at <span className="streamer">{home.host}</span>. Enter the
-            instance to use.
-          </>
-        )
-      )
-    })
-    setKnown(knownInstances().map(({ origin, info }) => ({ origin, name: info.name })))
-    return () => {
-      mounted.current = false
-      live = false
-    }
-  }, [home, store, loadInstance, onMissing, pinned])
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (busy) return
-    setBusy(true)
-    setError(null)
-    const failed = await switchInstance(address || home.origin)
-    if (!mounted.current) return
-    setBusy(false)
-    if (failed) {
-      const typed = normalizeOrigin(address)
-      setError(blurHosts(failed, [home.host, typed ? hostOf(typed) : null, address.trim()]))
-      return
-    }
-    setOpen(false)
-    setAddress('')
-    onMissing(false)
-    if (keptSession(home)) onSwitched()
-  }
-
-  const name = info?.name || DEFAULT_INSTANCE_NAME
-  if (!open)
-    return (
-      <div className="flex min-w-0 items-center gap-3 rounded-xl bg-surface-container px-3 py-2">
-        <Globe size={18} className="shrink-0 text-on-surface-variant" />
-        <div className="min-w-0 flex-1">
-          <p className="text-xs text-on-surface-variant">Instance</p>
-          <p
-            className="truncate text-sm"
-            title={
-              streamer ? 'The RChat instance you sign in to' : host ? `${name} (${host})` : name
-            }
-          >
-            <span className="streamer font-medium text-on-surface">{name}</span>
-            {host && <span className="streamer ml-1.5 text-on-surface-variant">{host}</span>}
-          </p>
-        </div>
-        {!pinned && (
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(true)
-              setError(null)
-            }}
-            className="shrink-0 rounded-full px-3 py-1.5 text-sm font-medium text-primary hover:bg-surface-container-high"
-          >
-            Change
-          </button>
-        )}
-      </div>
-    )
-  return (
-    <form onSubmit={submit} className="flex flex-col gap-1 rounded-xl bg-surface-container p-3">
-      <label htmlFor={`${listId}-input`} className="text-sm text-on-surface-variant">
-        Instance
-      </label>
-      <div className="flex min-w-0 gap-2">
-        <input
-          id={`${listId}-input`}
-          value={address}
-          onChange={e => setAddress(e.target.value)}
-          list={streamer ? undefined : listId}
-          placeholder={
-            streamer || (shellInfo() && home.isDefault) ? 'chat.example.com' : home.origin
-          }
-          inputMode="url"
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-          aria-invalid={error !== null}
-          className={`${inputCls} streamer min-w-0 flex-1`}
-        />
-        <button
-          disabled={busy}
-          className="shrink-0 rounded-full bg-secondary-container px-4 text-sm font-medium text-on-secondary-container hover:opacity-90 disabled:opacity-50"
-        >
-          {busy ? 'Checking…' : 'Connect'}
-        </button>
-      </div>
-      {!streamer && (
-        <datalist id={listId}>
-          {known.map(k => (
-            <option key={k.origin} value={k.origin}>
-              {k.name}
-            </option>
-          ))}
-        </datalist>
-      )}
-      {error ? (
-        <p role="alert" className="text-xs text-error">
-          {error}
-        </p>
-      ) : (
-        <p className="text-xs text-on-surface-variant">
-          The RChat server your account lives on, for example chat.example.com.
-        </p>
-      )}
-      {info !== null && (
-        <button
-          type="button"
-          onClick={() => {
-            setOpen(false)
-            setError(null)
-          }}
-          className="self-end rounded-full px-3 py-1 text-sm text-on-surface-variant hover:bg-surface-container-high"
-        >
-          Cancel
-        </button>
-      )}
-    </form>
-  )
-}
-
 export default function LoginPage() {
   const [destination, setDestination] = useState<
     | {
@@ -255,236 +57,85 @@ export default function LoginPage() {
 
 function LoginForm({ next, owner }: { next: string; owner: RouteOwner | null }) {
   const account = useAccount()
-  const { api } = account
   const router = useRouter()
-  const host = useStore(s => s.instanceHost)
+  const info = useStore(s => s.instance)
   const authed = useStore(s => !!s.token || s.guest)
-  const error = useStore(s => s.error)
-  const setError = useStore(s => s.setError)
-  const login = useStore(s => s.login)
-  const register = useStore(s => s.register)
-  const enterGuest = useStore(s => s.enterGuest)
-  const guestsEnabled = useStore(s => s.settings.guests_enabled)
+  const allowed = useAddingAllowed()
   const [missing, setMissing] = useState(false)
-
-  const [picked, setMode] = useState<Mode>('login')
-  const signup = useStore(s => passwordSignup(s.settings))
-  const mode: Mode = signup ? picked : 'login'
-  const [username, setUsername] = useState(owner?.username ?? '')
-  const [passKind, setPassKind] = useState<PassKind>('text')
-  const [password, setPassword] = useState('')
-  const [words, setWords] = useState<string[]>([])
-  const [selected, setSelected] = useState<string[]>([])
-  const [avatarKind, setAvatarKind] = useState<AvatarKind>('identicon')
-  const [avatarColor, setAvatarColor] = useState('#6750a4')
-  const [busy, setBusy] = useState(false)
-  const [nameError, setNameError] = useState<string | null>(null)
-  const nameId = useId()
-
+  const [adding, setAdding] = useState(false)
+  const welcome =
+    !owner &&
+    (missing ||
+      (!!shellInfo() && !client.book.getState().instances.some(i => i.accounts.length || i.guest)))
   useEffect(() => {
-    restoreStreamer(account)
-    if (!owner && new URLSearchParams(window.location.search).get('mode') === 'register')
-      setMode('register')
-  }, [account, owner])
-
-  useEffect(() => {
-    if (!authed || !client.canWritePage(account)) return
-    router.replace(accountPath(next, parseAccountPath(next)?.owner ?? routeOwnerFor(account)))
-  }, [account, authed, next, owner, router])
-
-  useEffect(() => {
-    if (passKind !== 'words') return
-    const name = username.trim()
-    if (!name) {
-      setWords([])
-      setSelected([])
-      return
-    }
     let live = true
-    const timer = setTimeout(() => {
-      api
-        .words(name)
-        .then(res => {
-          if (!live) return
-          setWords(res.words)
-          setSelected(sel => sel.filter(w => res.words.includes(w)))
-        })
-        .catch(e => live && setError(e instanceof Error ? e.message : String(e)))
-    }, 300)
+    void account.store
+      .getState()
+      .loadInstance()
+      .then(ok => {
+        if (!live) return
+        setMissing(ok === false)
+        if (ok) void account.store.getState().loadSettings()
+      })
     return () => {
       live = false
-      clearTimeout(timer)
     }
-  }, [api, host, username, passKind, setError])
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (missing) {
-      setError('Connect to an RChat instance first')
-      return
-    }
-    setError(null)
-    setNameError(null)
-    const name = username.trim()
-    if (owner && owner.username !== name.toLowerCase()) return
-    if (!name) {
-      setNameError('Enter a username')
-      return
-    }
-    if (mode === 'register' && charCount(name) > NAME_MAX) {
-      setNameError(`Usernames can be at most ${NAME_MAX} characters`)
-      return
-    }
-    if (mode === 'register' && name.includes('@')) {
-      setNameError("Usernames can't contain @")
-      return
-    }
-    if (passKind === 'words' && selected.length !== 7) {
-      setError('Pick 7 words in order')
-      return
-    }
-    if (mode === 'register' && passKind === 'text' && !password) {
-      setError('Enter a password')
-      return
-    }
-    setBusy(true)
-    const cred = passKind === 'text' ? { password } : { words: selected }
-    if (mode === 'login') {
-      await login({ username: name, ...cred })
-    } else {
-      const failed = await register({
-        username: name,
-        ...cred,
-        avatar_kind: avatarKind,
-        ...(avatarKind === 'color' ? { avatar_color: avatarColor } : {}),
-      })
-      if (failed?.field === 'username') setNameError(failed.message)
-      else if (failed) setError(failed.message)
-    }
-    setBusy(false)
-  }
-
-  const tab = (value: Mode, label: string) => (
-    <button
-      type="button"
-      onClick={() => {
-        setMode(value)
-        setError(null)
-        setNameError(null)
-      }}
-      className={`flex-1 rounded-full py-2 text-sm font-medium transition-colors ${
-        mode === value
-          ? 'bg-primary-container text-on-primary-container'
-          : 'text-on-surface-variant hover:bg-surface-container-high'
-      }`}
-    >
-      {label}
-    </button>
-  )
-
+  }, [account])
+  useEffect(() => {
+    if (authed && client.canWritePage(account) && !adding)
+      router.replace(accountPath(next, parseAccountPath(next)?.owner ?? routeOwnerFor(account)))
+  }, [authed, account, adding, next, owner, router])
   return (
-    <div className="flex min-h-app flex-col items-center px-safe-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-safe-4">
+    <div className="flex min-h-app flex-col items-center px-safe-3 sm:px-safe-4">
       <header className="flex w-full shrink-0 items-center justify-between py-2">
         <ThemeToggle />
         <StatusClock />
       </header>
-      <div className="my-auto flex w-full max-w-md flex-col gap-5 rounded-2xl bg-surface-container-low p-4 shadow-elevation-2 sm:p-6">
+      <main className="my-auto flex w-full max-w-md flex-col gap-5 rounded-2xl bg-surface-container-low p-4 shadow-elevation-2 sm:p-6">
         <h1 className="flex justify-center">
           <img src="/rchat_logo.png" alt="RChat" className="h-16 w-auto" />
         </h1>
-        <InstancePicker
-          pinned={!!owner}
-          onMissing={setMissing}
-          onSwitched={() => {
-            if (client.canWritePage(account))
-              router.replace(
-                accountPath(next, parseAccountPath(next)?.owner ?? routeOwnerFor(account))
-              )
-          }}
-        />
-        {signup && !owner && (
-          <div className="flex gap-1 rounded-full bg-surface-container p-1">
-            {tab('login', 'Log in')}
-            {tab('register', 'Create account')}
-          </div>
-        )}
-        {(!owner || owner.username !== null) && (
-          <form onSubmit={submit} className="flex flex-col gap-4">
-            <div className="flex flex-col">
-              <label className="flex flex-col gap-1">
-                <span className="text-sm text-on-surface-variant">Username</span>
-                <input
-                  readOnly={!!owner}
-                  value={username}
-                  onChange={e => {
-                    setUsername(e.target.value)
-                    setNameError(null)
-                  }}
-                  autoFocus
-                  autoComplete="username"
-                  aria-invalid={nameError !== null}
-                  aria-describedby={nameError ? nameId : undefined}
-                  className={nameError ? `${inputBase} border-error` : inputCls}
-                />
-              </label>
-              <FieldError id={nameId} message={nameError} />
+        {adding || welcome ? (
+          <>
+            {welcome && (
+              <>
+                <h2 className="text-xl font-medium">Connect to an RChat instance</h2>
+                <p>Instances are run by different people. You can add more later.</p>
+              </>
+            )}
+            <AddInstanceFlow
+              onCancel={welcome ? undefined : () => setAdding(false)}
+              onDone={session => {
+                client.show(session, 'none')
+                router.replace(accountPath('/', routeOwnerFor(session)))
+              }}
+            />
+          </>
+        ) : (
+          <>
+            <div className="rounded-xl bg-surface-container px-3 py-2">
+              <p className="text-xs">Instance</p>
+              <span className="streamer">
+                {info?.name ?? account.conn.name} · {account.conn.host}
+              </span>
             </div>
-            <PassSwitch value={passKind} onChange={setPassKind} />
-            {passKind === 'text' ? (
-              <label className="flex flex-col gap-1">
-                <span className="text-sm text-on-surface-variant">Password</span>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                  className={inputCls}
-                />
-              </label>
-            ) : words.length ? (
-              <WordGrid words={words} selected={selected} onChange={setSelected} />
-            ) : (
-              <p className="text-sm text-on-surface-variant">
-                Type a username to see its 20 words, then pick 7 in order.
-              </p>
+            {!owner && allowed && (
+              <button
+                type="button"
+                onClick={() => setAdding(true)}
+                className="self-start text-sm text-primary"
+              >
+                Use another instance
+              </button>
             )}
-            {mode === 'register' && (
-              <AvatarPicker
-                username={username}
-                kind={avatarKind}
-                color={avatarColor}
-                onKind={setAvatarKind}
-                onColor={setAvatarColor}
-              />
-            )}
-            {error && (
-              <p className="rounded-lg bg-error-container px-3 py-2 text-sm text-on-error-container">
-                {error}
-              </p>
-            )}
-            <button
-              type="submit"
-              disabled={busy}
-              className="rounded-full bg-primary py-2.5 text-sm font-medium text-on-primary transition-opacity hover:opacity-90 disabled:opacity-50"
-            >
-              {mode === 'login' ? 'Log in' : 'Create account'}
-            </button>
-          </form>
-        )}
-        {(!owner || owner.username === null) && guestsEnabled && !missing && (
-          <button
-            type="button"
-            onClick={() => void enterGuest()}
-            className="flex flex-wrap items-center justify-center gap-x-1 rounded-full px-3 py-2 text-sm text-primary hover:bg-surface-container-high"
-          >
-            Continue as a guest <ArrowRight size={16} />
-          </button>
+            <SignInStep owner={owner} missing={missing} onSuccess={() => {}} />
+          </>
         )}
         <div className="flex flex-col items-center gap-1">
           <InstallButton />
           <IosInstallHint />
         </div>
-      </div>
+      </main>
     </div>
   )
 }

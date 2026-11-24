@@ -1,4 +1,6 @@
 'use client'
+import { useAddingAllowed } from './add_instance'
+import { Globe } from 'lucide-react'
 import { useP2pApp, useP2p } from '../lib/client/p2p_react'
 
 import type { CSSProperties } from 'react'
@@ -319,6 +321,7 @@ function DmTile({ active }: { active: boolean }) {
 }
 
 export function ServerRail() {
+  const canAdd = useAddingAllowed()
   const identity = useP2pApp()
   const p2pView = identity?.p2p
 
@@ -384,6 +387,17 @@ export function ServerRail() {
         >
           <Plus size={22} />
         </button>
+        {canAdd && (
+          <button
+            type="button"
+            title="Add an instance"
+            aria-label="Add an instance"
+            className={`${tile} ${idle}`}
+            onClick={() => openDialog({ kind: 'add_instance' })}
+          >
+            <Globe size={22} />
+          </button>
+        )}
         {p2pOn && (
           <div
             data-rail="p2p"

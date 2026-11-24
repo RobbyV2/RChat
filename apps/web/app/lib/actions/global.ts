@@ -1,3 +1,4 @@
+import { canAddInstance } from '../client/adding'
 import {
   Check,
   CheckCheck,
@@ -123,6 +124,15 @@ export const globalActions: Action[] = [
     available: ({ s }) => signedIn(s),
     run: ({ acct }) => acct.store.getState().openDialog({ kind: 'add_server', tab: 'create' }),
   },
+  {
+    id: 'add_instance',
+    title: 'Add an instance',
+    scope: 'global',
+    icon: Plus,
+    available: () => canAddInstance(),
+    run: ({ acct }) => acct.store.getState().openDialog({ kind: 'add_instance' }),
+  },
+
   {
     id: 'join_server',
     title: 'Join a server',
