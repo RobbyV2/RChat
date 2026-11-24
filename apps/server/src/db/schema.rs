@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS announcement_dismissals(username TEXT NOT NULL REFERE
 CREATE INDEX IF NOT EXISTS idx_announcement_dismissals_announcement ON announcement_dismissals(announcement_id);
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY, username_key TEXT, username_key_alt TEXT);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at INTEGER NOT NULL, claimed_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
-CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count INTEGER NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id INTEGER, join_messages INTEGER NOT NULL DEFAULT 1, leave_messages INTEGER NOT NULL DEFAULT 1, layout_version INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, upload_expiry INTEGER, upload_expiry_by TEXT, public_read INTEGER, guest_voice INTEGER NOT NULL DEFAULT 1, guest_voice_opt_in INTEGER NOT NULL DEFAULT 0, guest_chat_opt_in INTEGER NOT NULL DEFAULT 0, members_visible INTEGER NOT NULL DEFAULT 1, join_mode TEXT, listed INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count INTEGER NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id INTEGER, join_messages INTEGER NOT NULL DEFAULT 1, leave_messages INTEGER NOT NULL DEFAULT 1, layout_version INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, upload_expiry INTEGER, upload_expiry_by TEXT, public_read INTEGER, guest_voice INTEGER NOT NULL DEFAULT 1, guest_voice_opt_in INTEGER NOT NULL DEFAULT 0, guest_chat_opt_in INTEGER NOT NULL DEFAULT 0, members_visible INTEGER NOT NULL DEFAULT 1, join_mode TEXT, listed INTEGER NOT NULL DEFAULT 1, profiles_mode TEXT NOT NULL DEFAULT 'all' CHECK(profiles_mode IN ('all','no_names','off')));
 CREATE TABLE IF NOT EXISTS sso_links(issuer TEXT NOT NULL, subject TEXT NOT NULL, provider TEXT NOT NULL, username TEXT NOT NULL, linked_at INTEGER NOT NULL, last_login_at INTEGER NOT NULL, PRIMARY KEY(issuer,subject), UNIQUE(username,issuer));
 CREATE TABLE IF NOT EXISTS sso_pending(id TEXT NOT NULL PRIMARY KEY, kind TEXT NOT NULL, provider TEXT NOT NULL, data TEXT NOT NULL, expires_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS scim_users(id TEXT NOT NULL PRIMARY KEY, username TEXT NOT NULL UNIQUE, user_name_key TEXT NOT NULL UNIQUE, external_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER);
@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS group_pings_read(username TEXT NOT NULL, message_id I
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, actor TEXT, staff INTEGER NOT NULL DEFAULT 0, action TEXT NOT NULL, target_kind TEXT, target_id INTEGER, target_name TEXT, target_staff INTEGER NOT NULL DEFAULT 0, details TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS audit_channels(entry_id INTEGER NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE, channel_id INTEGER NOT NULL, private INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(entry_id, channel_id));
 CREATE TABLE IF NOT EXISTS member_timeouts(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, until INTEGER NOT NULL, reason TEXT, set_by TEXT, created_at INTEGER NOT NULL, PRIMARY KEY(server, username));
+CREATE TABLE IF NOT EXISTS member_profiles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, name TEXT, bio TEXT, avatar_kind TEXT CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, banner_color TEXT, locked_until INTEGER, updated_at INTEGER NOT NULL, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS blocks(blocker TEXT NOT NULL, blocked TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(blocker, blocked));
 CREATE TABLE IF NOT EXISTS friends(username TEXT NOT NULL, friend TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(username, friend));
 CREATE TABLE IF NOT EXISTS friend_requests(sender TEXT NOT NULL, recipient TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(sender, recipient));
@@ -154,6 +155,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(server, action, cre
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(server, actor, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_member_timeouts_until ON member_timeouts(until);
+CREATE INDEX IF NOT EXISTS idx_member_profiles_name ON member_profiles(server, lower(name)) WHERE name IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_member_profiles_username ON member_profiles(username);
 CREATE INDEX IF NOT EXISTS idx_blocks_recent ON blocks(blocker, created_at, blocked);
 CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked);
 CREATE INDEX IF NOT EXISTS idx_friends_friend ON friends(friend);
@@ -197,7 +200,7 @@ CREATE TABLE IF NOT EXISTS announcement_dismissals(username TEXT NOT NULL REFERE
 CREATE INDEX IF NOT EXISTS idx_announcement_dismissals_announcement ON announcement_dismissals(announcement_id);
 CREATE TABLE IF NOT EXISTS banned_usernames(username TEXT PRIMARY KEY, username_key TEXT, username_key_alt TEXT);
 CREATE TABLE IF NOT EXISTS pending_purges(kind TEXT NOT NULL, key TEXT NOT NULL, created_at BIGINT NOT NULL, claimed_at BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(kind, key));
-CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count BIGINT NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id BIGINT, join_messages BIGINT NOT NULL DEFAULT 1, leave_messages BIGINT NOT NULL DEFAULT 1, layout_version BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, upload_expiry BIGINT, upload_expiry_by TEXT, public_read BIGINT, guest_voice BIGINT NOT NULL DEFAULT 1, guest_voice_opt_in BIGINT NOT NULL DEFAULT 0, guest_chat_opt_in BIGINT NOT NULL DEFAULT 0, members_visible BIGINT NOT NULL DEFAULT 1, join_mode TEXT, listed BIGINT NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS servers(name TEXT PRIMARY KEY, display_name TEXT NOT NULL, creator TEXT, password_hash TEXT, member_count BIGINT NOT NULL DEFAULT 0, banner_color TEXT, name_color TEXT, system_channel_id BIGINT, join_messages BIGINT NOT NULL DEFAULT 1, leave_messages BIGINT NOT NULL DEFAULT 1, layout_version BIGINT NOT NULL DEFAULT 0, created_at BIGINT NOT NULL, upload_expiry BIGINT, upload_expiry_by TEXT, public_read BIGINT, guest_voice BIGINT NOT NULL DEFAULT 1, guest_voice_opt_in BIGINT NOT NULL DEFAULT 0, guest_chat_opt_in BIGINT NOT NULL DEFAULT 0, members_visible BIGINT NOT NULL DEFAULT 1, join_mode TEXT, listed BIGINT NOT NULL DEFAULT 1, profiles_mode TEXT NOT NULL DEFAULT 'all' CHECK(profiles_mode IN ('all','no_names','off')));
 CREATE TABLE IF NOT EXISTS sso_links(issuer TEXT NOT NULL, subject TEXT NOT NULL, provider TEXT NOT NULL, username TEXT NOT NULL, linked_at BIGINT NOT NULL, last_login_at BIGINT NOT NULL, PRIMARY KEY(issuer,subject), UNIQUE(username,issuer));
 CREATE TABLE IF NOT EXISTS sso_pending(id TEXT NOT NULL PRIMARY KEY, kind TEXT NOT NULL, provider TEXT NOT NULL, data TEXT NOT NULL, expires_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS scim_users(id TEXT NOT NULL PRIMARY KEY, username TEXT NOT NULL UNIQUE, user_name_key TEXT NOT NULL UNIQUE, external_id TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, deleted_at BIGINT);
@@ -249,6 +252,7 @@ CREATE TABLE IF NOT EXISTS group_pings_read(username TEXT NOT NULL, message_id B
 CREATE TABLE IF NOT EXISTS audit_log(id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, actor TEXT, staff BIGINT NOT NULL DEFAULT 0, action TEXT NOT NULL, target_kind TEXT, target_id BIGINT, target_name TEXT, target_staff BIGINT NOT NULL DEFAULT 0, details TEXT NOT NULL DEFAULT '{}', created_at BIGINT NOT NULL);
 CREATE TABLE IF NOT EXISTS audit_channels(entry_id BIGINT NOT NULL REFERENCES audit_log(id) ON DELETE CASCADE, channel_id BIGINT NOT NULL, private BIGINT NOT NULL DEFAULT 0, PRIMARY KEY(entry_id, channel_id));
 CREATE TABLE IF NOT EXISTS member_timeouts(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, until BIGINT NOT NULL, reason TEXT, set_by TEXT, created_at BIGINT NOT NULL, PRIMARY KEY(server, username));
+CREATE TABLE IF NOT EXISTS member_profiles(server TEXT NOT NULL REFERENCES servers(name) ON DELETE CASCADE ON UPDATE CASCADE, username TEXT NOT NULL, name TEXT, bio TEXT, avatar_kind TEXT CHECK(avatar_kind IN ('identicon','color')), avatar_color TEXT, banner_color TEXT, locked_until BIGINT, updated_at BIGINT NOT NULL, PRIMARY KEY(server, username));
 CREATE TABLE IF NOT EXISTS blocks(blocker TEXT NOT NULL, blocked TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(blocker, blocked));
 CREATE TABLE IF NOT EXISTS friends(username TEXT NOT NULL, friend TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(username, friend));
 CREATE TABLE IF NOT EXISTS friend_requests(sender TEXT NOT NULL, recipient TEXT NOT NULL, created_at BIGINT NOT NULL, PRIMARY KEY(sender, recipient));
@@ -328,6 +332,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(server, action, cre
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(server, actor, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_member_timeouts_until ON member_timeouts(until);
+CREATE INDEX IF NOT EXISTS idx_member_profiles_name ON member_profiles(server, (lower(name) COLLATE \"C\")) WHERE name IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_member_profiles_username ON member_profiles(username);
 CREATE INDEX IF NOT EXISTS idx_blocks_recent ON blocks(blocker, created_at, blocked);
 CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked);
 CREATE INDEX IF NOT EXISTS idx_friends_friend ON friends(friend);

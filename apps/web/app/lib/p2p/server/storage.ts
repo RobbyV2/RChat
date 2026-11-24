@@ -1,5 +1,14 @@
 import { signDeviceCert2 } from '../acl/binding'
 import { knownRules } from '../acl/rules'
+import {
+  memberExtras,
+  recentWrites,
+  roomExtras,
+  sameExtras,
+  writeFits,
+  type RoomExtras,
+} from '../../profile_fields'
+import type { ProfilesMode } from '../../types'
 import type { Plan } from '../acl_room'
 import {
   dropServer,
@@ -11,10 +20,10 @@ import {
 } from '../dag'
 import { serverWire, type RoomRecord } from '../db'
 import { signRevocation2, headerOk, type WireV2 } from '../event_v2'
-import { VOUCH_WAIT_TEXT } from '../flows'
+import { CANT_TEXT, VOUCH_WAIT_TEXT } from '../flows'
 import { memberBindingDue } from '../badge'
-import { keyId } from '../keys'
-import { memberOf } from '../state'
+import { cleanName, keyId } from '../keys'
+import { can, memberOf, P } from '../state'
 import { MOVED_TEXT } from '../dm'
 import type { ServerCtx } from './context'
 import { ServerError, sizeOfWire } from './types'
@@ -364,20 +373,69 @@ export async function refreshMe(cx: ServerCtx, room: string) {
         },
         { to: old }
       )
-  const name = cx.deps.node.name
-  if (m.profile && m.profile.name !== name)
-    await cx.emit(room, 'profile', () => cx.profileContent())
+  // The whole content counts, not the name alone: a device that doesn't know the extras
+  // writes them away, and this one puts them back. So does a new membership (a new copy, a
+  // join again), where what we wrote before shows nothing.
+  const want = cx.profileContent(room)
+  if (
+    (m.profile && m.profile.name !== want.name) ||
+    !sameExtras(memberExtras(m, cleanName), roomExtras(want, cleanName))
+  )
+    await writeProfile(cx, room).catch(() => {})
 }
 
-export function profileContent(cx: ServerCtx) {
+// Our `profile` content in a server: the global name and badge, and what we set for ourselves
+// there with the join it counts for.
+export function profileContent(cx: ServerCtx, room?: string) {
   const c: Record<string, unknown> = { name: cx.deps.node.name }
   const binding = cx.deps.node.binding
   if (binding) c.binding = binding
-  return c
+  if (!room) return c
+  const extras = roomExtras(cx.rooms.get(room)?.profile, cleanName)
+  const join = memberOf(cx.sumOf(room), cx.me)?.joinId
+  return join && Object.keys(extras).length ? { ...c, ...extras, in: join } : c
+}
+
+export const PROFILE_OFTEN_TEXT = 'You changed your server profile too often. Try again later.'
+
+// Our `profile` write in a server, at most `writes_per_hour` an hour from this device.
+export async function writeProfile(cx: ServerCtx, room: string) {
+  const now = cx.clock.now()
+  if (!writeFits(cx.rooms.get(room)?.profileAt, now)) throw new ServerError(PROFILE_OFTEN_TEXT)
+  await cx.updateRoom(room, cur => ({
+    ...cur,
+    profileAt: [...recentWrites(cur.profileAt, now), now],
+  }))
+  return cx.emit(room, 'profile', () => cx.profileContent(room))
+}
+
+// What we show in one server: a nickname, a description, an avatar and a banner color. An
+// empty intent goes back to the global profile.
+export async function setRoomProfile(cx: ServerCtx, room: string, intent: RoomExtras) {
+  const m = memberOf(cx.sumOf(room), cx.me)
+  if (m?.m !== 'join') throw new ServerError(CANT_TEXT)
+  const next = roomExtras(intent, cleanName)
+  if (!writeFits(cx.rooms.get(room)?.profileAt, cx.clock.now()))
+    throw new ServerError(PROFILE_OFTEN_TEXT)
+  await cx.updateRoom(room, cur => {
+    const { profile: _, ...rest } = cur
+    return Object.keys(next).length ? { ...rest, profile: next } : rest
+  })
+  await writeProfile(cx, room)
+  cx.changed(room)
+}
+
+// What members may set in their profile here (`profile_mode`).
+export async function setProfileMode(cx: ServerCtx, room: string, mode: ProfilesMode) {
+  // Admitted by the generic rule: one we may not make would show nothing.
+  const s = cx.sumOf(room)
+  if (!can(s, cx.me, P.ManageServer)) throw new ServerError(CANT_TEXT)
+  return cx.emit(room, 'profile_mode', () => ({ mode }))
 }
 
 // Our account badge was turned on or renewed: once it is due (badge.ts) every server where it
-// is gets a profile write with it.
+// is gets a profile write with it. These writes are not ours to space out: they don't count
+// against the profile writes of an hour.
 export async function refreshBadge(cx: ServerCtx) {
   const binding = cx.deps.node.binding
   const now = cx.clock.now()
@@ -387,5 +445,5 @@ export async function refreshBadge(cx: ServerCtx) {
   })
   if (!due.length || !cx.deps.node.author()) return
   await cx.deps.node.touchProfile()
-  for (const id of due) await cx.emit(id, 'profile', () => cx.profileContent()).catch(() => {})
+  for (const id of due) await cx.emit(id, 'profile', () => cx.profileContent(id)).catch(() => {})
 }

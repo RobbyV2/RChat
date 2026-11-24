@@ -62,6 +62,8 @@ export interface ServerSummaryLite {
   join_mode?: JoinMode
   // Whether search lists it. Absent on older servers: listed.
   listed?: boolean
+  // What members may set in their server profile. Absent on older servers: nothing.
+  profiles_mode?: ProfilesMode
 }
 
 export type JoinMode = 'name' | 'invite' | 'password' | 'closed'
@@ -130,6 +132,34 @@ export interface ChannelPerm {
   can_read_history: boolean
 }
 
+// What a member set for one server: each field null when they use the account's.
+export interface MemberLook {
+  name: string | null
+  avatar_kind: AvatarKind | null
+  avatar_color: string | null
+}
+
+export type ProfilesMode = 'all' | 'no_names' | 'off'
+
+export interface ServerProfile {
+  look: MemberLook
+  bio: string | null
+  banner_color: string | null
+  effective: UserRef
+  effective_banner: string | null
+  effective_bio: string | null
+  mode: ProfilesMode
+  locked_until: number | null
+}
+
+export interface ServerProfilePatch {
+  name?: string | null
+  bio?: string | null
+  avatar_kind?: AvatarKind | null
+  avatar_color?: string | null
+  banner_color?: string | null
+}
+
 export interface Member extends UserRef {
   is_admin: boolean
   is_creator: boolean
@@ -138,6 +168,7 @@ export interface Member extends UserRef {
   role_ids: number[]
   joined_via?: JoinedVia
   timeout?: TimeoutWire
+  profile?: MemberLook
 }
 
 export interface JoinedVia {
@@ -239,6 +270,9 @@ export interface ServerDetail {
   guest_chat?: boolean
   // "Members can be seen by people outside this server". Absent on older servers: on.
   members_visible?: boolean
+  // What members may set in their server profile. Absent on older servers: nothing.
+  profiles_mode?: ProfilesMode
+  my_profile?: ServerProfile
   // How people join. Absent on older servers: `name` without a password, else `password`.
   join_mode?: JoinMode
   // Whether search lists it. Absent on older servers: listed.
@@ -545,6 +579,7 @@ export interface ProfileMember {
   joined_at: number
   online: boolean
   timeout?: TimeoutWire
+  profile?: MemberLook
 }
 
 export interface Profile {
@@ -553,6 +588,9 @@ export interface Profile {
   bio: string | null
   created_at: number
   member: ProfileMember | null
+  // The description and banner the account set for the server the card was opened in.
+  server_bio?: string | null
+  server_banner?: string | null
 }
 
 export interface Me extends UserRef {
@@ -624,6 +662,7 @@ export interface SiteSettings {
   sfu: boolean
   p2p: boolean
   client_other_instances: boolean
+  server_profiles: boolean
   registration: Registration
   // Days; 0 or absent: no cap.
   upload_expiry_max_days?: number
@@ -1063,6 +1102,13 @@ export type WsEvent =
   | { type: 'channel_perms_changed'; server: string; channel_id: number }
   | { type: 'layout_changed'; server: string; layout: ChannelLayout }
   | { type: 'user_updated'; user: UserRef }
+  | {
+      type: 'member_profile'
+      server: string
+      username: string
+      profile: MemberLook | null
+      bio: boolean
+    }
   | { type: 'user_registered'; user: UserRef }
   | {
       type: 'presence_changed'

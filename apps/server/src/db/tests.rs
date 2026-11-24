@@ -1291,6 +1291,39 @@ async fn scim_alias_upgrade_preserves_v45_directory_and_claims() {
 }
 
 #[tokio::test]
+async fn server_profiles_upgrade_keeps_servers_and_adds_the_mode() {
+    on_each_database("server_profiles_upgrade", |url| async move {
+        let db = open(Some(&url)).await.unwrap();
+        let before = SCHEMA_VERSION - 1;
+        for sql in [
+            "DROP TABLE member_profiles".to_string(),
+            "ALTER TABLE servers DROP COLUMN profiles_mode".to_string(),
+            "INSERT INTO users(username,display_name,password_hash,password_kind,avatar_kind,created_at) VALUES('alice','Alice','fixture','text','identicon',12)".to_string(),
+            "INSERT INTO servers(name, display_name, creator, created_at) VALUES('old', 'Old', 'alice', 7)".to_string(),
+            "INSERT INTO members(server, username, is_admin, perms, joined_at) VALUES('old', 'alice', 1, 0, 8)".to_string(),
+            format!("UPDATE settings SET value='{before}' WHERE key='schema_version'"),
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&db).await.unwrap();
+        }
+        close(&db).await;
+        for round in 0..2 {
+            let db = open(Some(&url)).await.unwrap();
+            assert_eq!(count(&db, STORED_SCHEMA).await, SCHEMA_VERSION);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM servers WHERE name = 'old' AND display_name = 'Old' AND creator = 'alice' AND created_at = 7 AND profiles_mode = 'all'").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM members WHERE server = 'old' AND username = 'alice' AND joined_at = 8").await, 1);
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM member_profiles").await, round);
+            if round == 0 {
+                sqlx::query("INSERT INTO member_profiles(server, username, name, updated_at) VALUES('old', 'alice', 'Ally', 9)").execute(&db).await.unwrap();
+                assert!(sqlx::query("UPDATE servers SET profiles_mode = 'some' WHERE name = 'old'").execute(&db).await.is_err());
+                assert!(sqlx::query("INSERT INTO member_profiles(server, username, avatar_kind, updated_at) VALUES('old', 'bob', 'photo', 9)").execute(&db).await.is_err());
+            }
+            assert_eq!(count(&db, "SELECT COUNT(*) FROM member_profiles WHERE server = 'old' AND lower(name) = 'ally' AND bio IS NULL AND avatar_kind IS NULL AND locked_until IS NULL").await, 1);
+            close(&db).await;
+        }
+    }).await;
+}
+
+#[tokio::test]
 async fn sso_tables_migrate_onto_an_old_database() {
     let path = crate::db::temp_db_path("sso_schema_upgrade");
     let tables = [

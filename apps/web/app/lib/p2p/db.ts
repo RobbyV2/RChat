@@ -1,6 +1,7 @@
 import { deleteDB, openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb'
 import type { Contact } from './contacts'
 import type { Summary } from './acl/summary'
+import type { RoomExtras } from '../profile_fields'
 import type { PackedRec } from './acl_room'
 import type { Core, Wire } from './event_v1'
 import type { WireV2 } from './event_v2'
@@ -104,6 +105,10 @@ export interface ChanCounts {
 export interface RoomRecord {
   id: string
   kind: 'dm' | 'server'
+  // P2P servers: what we set for ourselves in this server, written into our `profile` there.
+  profile?: RoomExtras
+  // When this device sent its `profile` writes of the last hour there.
+  profileAt?: number[]
   // The other member of a DM ('' for a server).
   peer: string
   // Events without known children, deepest first.

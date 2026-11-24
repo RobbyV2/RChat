@@ -137,6 +137,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("server_passwords", "code TEXT"),
     ("server_passwords", "code_lookup TEXT"),
     ("tokens", "last_used_at {INT} NOT NULL DEFAULT 0"),
+    (
+        "servers",
+        "profiles_mode TEXT NOT NULL DEFAULT 'all' CHECK(profiles_mode IN ('all','no_names','off'))",
+    ),
 ];
 
 const BACKFILLS: &[(&str, &str, &str)] = &[
@@ -253,7 +257,8 @@ const CREATOR_CLEANUP: &str = "creator_cleanup_v1";
 /// 44: account suspension, sign-in providers and provisioning.
 /// 45: configured group responsible for each managed membership or role.
 /// 46: provider ownership of directory group aliases and indexed claim digests.
-pub const SCHEMA_VERSION: i64 = 46;
+/// 47: server profiles (`member_profiles`, `servers.profiles_mode`).
+pub const SCHEMA_VERSION: i64 = 47;
 
 /// Indexes on columns that `MIGRATIONS` may add, created after `reconcile_columns`.
 pub(super) fn late_indexes(is_sqlite: bool) -> [&'static str; 18] {

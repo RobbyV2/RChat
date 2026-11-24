@@ -204,6 +204,7 @@ export const actParts = (t: string, to?: string): { act: string; who?: string } 
     role_bits: 'Change what a role may do',
     role_del: 'Delete a role',
     role_meta: 'Rename or recolor a role',
+    profile_mode: 'Change what server profiles may hold',
     channel: 'Change a channel',
     chperm: 'Change who may use a channel',
     settings: 'Change the server settings',
@@ -283,6 +284,8 @@ export const effectHolds = (
     }
     case 'settings':
       return same(s.settings, c)
+    case 'profile_mode':
+      return (s.profiles ?? 'all') === c.mode
     case 'profile':
       return same(s.members[me]?.profile, c)
     default:

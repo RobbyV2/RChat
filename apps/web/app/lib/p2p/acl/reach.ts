@@ -123,6 +123,7 @@ export class Ix {
   introBy = new Map<string, number[]>()
   roleNamed = new Map<string, number[]>()
   roleMetaEv = new Map<string, number[]>()
+  profileModeEv: number[] = []
   profileBy = new Map<string, number[]>()
   settingsEv: number[] = []
   upgradeEv: number[] = []
@@ -228,6 +229,9 @@ export class Ix {
         break
       case 'role_meta':
         if (typeof c.role === 'string') pushM(this.roleMetaEv, c.role, i)
+        break
+      case 'profile_mode':
+        this.profileModeEv.push(i)
         break
       case 'assign':
         pushM(this.assignEv, `${c.to}|${c.role}`, i)

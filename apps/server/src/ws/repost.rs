@@ -363,6 +363,24 @@ pub(crate) async fn current(state: &AppState, ev: WsEvent) -> Option<WsEvent> {
                 perms,
             })
         }
+        WsEvent::MemberProfile {
+            server,
+            username,
+            profile: _,
+            bio,
+            view_only,
+        } => {
+            let profile = crate::api::profiles::look_of(db, &server, &username)
+                .await
+                .ok()?;
+            Some(WsEvent::MemberProfile {
+                server,
+                username,
+                profile,
+                bio,
+                view_only,
+            })
+        }
         WsEvent::UserUpdated { user, scope } => {
             let user = get_user(db, &user.username).await.ok().flatten()?;
             Some(WsEvent::UserUpdated {

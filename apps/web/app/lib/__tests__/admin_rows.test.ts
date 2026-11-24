@@ -43,6 +43,7 @@ const SETTINGS: Record<keyof SiteSettings, true> = {
   sfu: true,
   p2p: true,
   client_other_instances: true,
+  server_profiles: true,
   registration: true,
   upload_expiry_max_days: true,
   server_joining: true,

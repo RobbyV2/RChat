@@ -461,7 +461,7 @@ fn wait_between() -> ApiError {
     ApiError::rate("Wait 3 seconds between attempts", Some(3))
 }
 
-fn check_avatar(
+pub(crate) fn check_avatar(
     avatar_kind: AvatarKind,
     avatar_color: Option<String>,
 ) -> Result<Option<String>, ApiError> {
@@ -850,6 +850,7 @@ pub(crate) async fn announce_account(state: &AppState, user: &User, joined: Join
                 role_ids: Vec::new(),
                 joined_via: None,
                 timeout: None,
+                profile: None,
             },
         });
         announce_system(state, &server, notice).await;
@@ -1362,12 +1363,20 @@ pub(crate) async fn clean_display_name(
     user: &User,
     raw: &str,
 ) -> Result<String, ApiError> {
+    clean_name_for(state, user, raw, &user.display_name).await
+}
+
+/// `raw` as a name `user` shows somewhere, under the rules of `clean_display_name`, where
+/// `current` is the name they have there now.
+pub(crate) async fn clean_name_for(
+    state: &AppState,
+    user: &User,
+    raw: &str,
+    current: &str,
+) -> Result<String, ApiError> {
     let db = &state.db;
     let name = shaped_display_name(db, raw).await?;
-    let refused = match (
-        name == user.display_name,
-        name.to_lowercase() == user.username,
-    ) {
+    let refused = match (name == current, name.to_lowercase() == user.username) {
         (true, _) => false,
         (false, false) => {
             rare::take(state, Rare::DisplayName, Some(user))?;
@@ -1411,7 +1420,7 @@ pub fn clean_multiline(text: &str, max: usize, what: &str) -> Result<Option<Stri
     }
 }
 
-fn check_banner(color: Option<String>) -> Result<Option<String>, ApiError> {
+pub(crate) fn check_banner(color: Option<String>) -> Result<Option<String>, ApiError> {
     match color {
         None => Ok(None),
         Some(color) if valid_color(&color) => Ok(Some(color.to_lowercase())),

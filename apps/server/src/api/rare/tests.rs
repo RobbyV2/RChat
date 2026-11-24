@@ -219,6 +219,7 @@ async fn quiet(db: &Db) {
 #[derive(Clone, Copy, Debug)]
 enum Route {
     DisplayName,
+    ServerName,
     SignUp,
     Password,
     SetPhrase,
@@ -244,8 +245,9 @@ enum Route {
 }
 
 impl Route {
-    const ALL: [Route; 23] = [
+    const ALL: [Route; 24] = [
         Route::DisplayName,
+        Route::ServerName,
         Route::SignUp,
         Route::Password,
         Route::SetPhrase,
@@ -274,6 +276,7 @@ impl Route {
     fn of(self) -> (Rare, &'static str, &'static str) {
         match self {
             Route::DisplayName => (Rare::DisplayName, "patch", "/api/v1/me"),
+            Route::ServerName => (Rare::DisplayName, "patch", "/api/v1/servers/{name}/profile"),
             Route::SignUp => (Rare::SignUp, "post", "/api/v1/auth/register"),
             Route::Password => (Rare::Password, "post", "/api/v1/me/password"),
             Route::SetPhrase => (Rare::Phrase, "put", "/api/v1/me/recovery"),
@@ -340,6 +343,15 @@ impl Route {
                     state(),
                     me(),
                     body(json!({ "display_name": format!("Name {n}") })),
+                )
+                .await,
+            ),
+            Route::ServerName => answer(
+                crate::api::profiles::patch_profile(
+                    state(),
+                    me(),
+                    Path(server),
+                    body(json!({ "name": format!("Nick {n}") })),
                 )
                 .await,
             ),
@@ -709,7 +721,11 @@ async fn the_operations_of_one_kind_share_its_count() {
             let answer = route.call(&w, actor, n + 2).await;
             assert!(refused(&answer), "{kind:?} {route:?} shares: {answer:?}");
         }
-        let answer = Route::DisplayName.call(&w, actor, 9).await;
+        let apart = match kind {
+            Rare::DisplayName => Route::ConfigLink,
+            _ => Route::DisplayName,
+        };
+        let answer = apart.call(&w, actor, 9).await;
         assert!(
             !refused(&answer),
             "{kind:?}: another kind counts apart: {answer:?}"

@@ -222,6 +222,7 @@ fn self_grants_are_recognized() {
             role_ids: Vec::new(),
             joined_via: None,
             timeout: None,
+            profile: None,
         },
     };
     assert_eq!(self_grant(&joined, Some("alice")), Some("vault"));
@@ -240,6 +241,7 @@ fn self_grants_are_recognized() {
             members_visible: true,
             join_mode: Default::default(),
             listed: true,
+            profiles_mode: Default::default(),
         },
     };
     assert_eq!(

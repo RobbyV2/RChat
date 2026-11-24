@@ -42,6 +42,7 @@ export const ALL = 0x7fffffff
 export const MODBITS = KICK | BAN | ROLES | CHANNELS | SERVER | MESSAGES
 export const EVERYONE = 'everyone'
 export const RULES_VERSION = 4
+export const RULES_NEXT = 5
 export const knownRules = (rules: unknown) => rules === 2 || rules === RULES_VERSION
 export function textOnlyChannel(rules: unknown, channel: AclContent | undefined) {
   return (
@@ -502,6 +503,14 @@ export const roleMetaOk = (e: AclEv, St: FactsQ) =>
   St.roles.has(e.c.role) &&
   (St.owners.has(e.a) ||
     (St.mem.has(e.a) && (permsQ(St, e.a) & ROLES) !== 0 && gt(rank(St, e.a), rankOf(St, e.c.role))))
+
+// profile_mode is a register on the role_meta pattern: admitted, cut and live by the generic
+// rule, with its Authority read only at display. A write counts when its mode is one of the
+// three and its author, in St(w), is an owner or holds Manage server. A malformed one is not
+// read.
+export const profileModeOk = (e: AclEv, St: FactsQ) =>
+  (e.c.mode === 'all' || e.c.mode === 'no_names' || e.c.mode === 'off') &&
+  (St.owners.has(e.a) || (St.mem.has(e.a) && (permsQ(St, e.a) & SERVER) !== 0))
 
 export function classify(e: AclEv, F: FactsQ): { cls: Cls; self: boolean } {
   switch (e.t) {

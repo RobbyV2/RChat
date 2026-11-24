@@ -46,6 +46,7 @@ const SWITCHES = [
   'sfu',
   'p2p',
   'client_other_instances',
+  'server_profiles',
 ]
 
 describe('feature switches', () => {

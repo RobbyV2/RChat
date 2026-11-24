@@ -896,6 +896,13 @@ pub(super) fn wants(
             remaining: _,
             reason: _,
         } => Some(username.as_str()) == me || (me.is_some() && in_server(server)),
+        WsEvent::MemberProfile {
+            server,
+            username,
+            profile: _,
+            bio: _,
+            view_only: _,
+        } => Some(username.as_str()) == me || in_server(server),
         WsEvent::ReportsChanged {
             server: Some(server),
             about,

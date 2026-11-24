@@ -47,6 +47,10 @@ pub struct ProfileMember {
     /// running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<crate::api::timeouts::MemberTimeout>,
+    /// The name and avatar the user set for the server; absent when they use the account's,
+    /// and while server profiles are off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<crate::api::profiles::MemberLook>,
 }
 
 /// A user's mini profile.
@@ -63,6 +67,13 @@ pub struct Profile {
     /// Membership in the server given by `server`; null when `server` was omitted, the server
     /// does not exist, the viewer may not view it, or the user is not a member.
     pub member: Option<ProfileMember>,
+    /// The description the user set for the server given by `server`; absent when they have
+    /// none there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_bio: Option<String>,
+    /// The `#rrggbb` banner color the user set for that server; absent like `server_bio`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_banner: Option<String>,
 }
 
 /// The part of a card that an account shows only to people it has a relationship with.
@@ -74,6 +85,13 @@ pub struct ProfileFacts {
     pub banner_color: Option<String>,
     /// When the account was created, Unix seconds.
     pub created_at: i64,
+    /// The description the account set for the server named with `server`; absent when it has
+    /// none there or is not shown as a member of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_bio: Option<String>,
+    /// The `#rrggbb` banner color the account set for that server; absent like `server_bio`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_banner: Option<String>,
 }
 
 /// A user's membership in the server asked for with `server`.
@@ -100,6 +118,10 @@ pub struct MemberFacts {
     /// running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<crate::api::timeouts::MemberTimeout>,
+    /// The name and avatar the user set for the server; absent when they use the account's,
+    /// and while server profiles are off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<crate::api::profiles::MemberLook>,
 }
 
 impl From<MemberFacts> for ProfileMember {
@@ -113,6 +135,7 @@ impl From<MemberFacts> for ProfileMember {
             joined_at,
             online,
             timeout,
+            profile,
         } = facts;
         ProfileMember {
             is_admin,
@@ -123,6 +146,7 @@ impl From<MemberFacts> for ProfileMember {
             joined_at,
             online,
             timeout,
+            profile,
         }
     }
 }
@@ -220,6 +244,7 @@ async fn member_facts(
                 joined_at: r.try_get(2)?,
                 online: state.hub.is_online(&lite.name, username),
                 timeout,
+                profile: crate::api::profiles::look_of(db, &lite.name, username).await?,
             }))
         }
         None => Ok(None),
@@ -246,14 +271,25 @@ async fn card_of(
             .and_then(|v| v.to_str().ok()),
     };
     let UserView { user, seen, member } = view_user(state, &caller, username).await?;
-    let member = match member {
-        Some(access) => member_facts(state, &access, &user.username).await?,
-        None => None,
+    let (member, in_server) = match member {
+        Some(access) => (
+            member_facts(state, &access, &user.username).await?,
+            Some(access.name().to_string()),
+        ),
+        None => (None, None),
+    };
+    let (server_bio, server_banner) = match (&seen, &member, &in_server) {
+        (Some(_), Some(_), Some(server)) => {
+            crate::api::profiles::bio_and_banner(&state.read(), server, &user.username).await?
+        }
+        (_, _, _) => (None, None),
     };
     let profile = seen.map(|_| ProfileFacts {
         bio: user.bio.clone(),
         banner_color: user.banner_color.clone(),
         created_at: user.created_at,
+        server_bio,
+        server_banner,
     });
     match profile.is_some() || member.is_some() {
         true => Ok(UserCard {
@@ -356,6 +392,8 @@ pub(crate) async fn profile(
         bio,
         banner_color,
         created_at,
+        server_bio,
+        server_banner,
     } = profile.ok_or_else(not_found)?;
     Ok(Json(Profile {
         user,
@@ -363,6 +401,8 @@ pub(crate) async fn profile(
         bio,
         created_at,
         member: member.map(ProfileMember::from),
+        server_bio,
+        server_banner,
     }))
 }
 
@@ -853,6 +893,74 @@ mod tests {
         }
         assert!(view(&state, by("alice"), "bob").await.is_ok());
         assert!(card_for(&state, by("alice"), "bob").await.is_ok());
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn server_bios_follow_profile_visibility() {
+        let (state, path) = temp_state("card_server_bio").await;
+        let state = state.with_limits(std::sync::Arc::new(crate::limits::Limits {
+            lookup_profile_per_minute: 10_000,
+            lookup_misses_per_hour: 0,
+            ..crate::limits::Limits::default()
+        }));
+        let db = &state.db;
+        world(&state).await;
+        exec(db, "INSERT INTO servers(name, display_name, creator, public_read, created_at) VALUES('open', 'Open', 'bob', 1, 0)").await;
+        add_member(db, "open", "bob", 1, 0, 400).await;
+        exec(db, "INSERT INTO member_profiles(server, username, name, bio, banner_color, updated_at) VALUES('open', 'bob', 'Robert', 'bob in open', '#222222', 1)").await;
+        exec(
+            db,
+            "INSERT INTO privacy(username, profile) VALUES('bob', 'friends')",
+        )
+        .await;
+        let look = Some(crate::api::profiles::MemberLook {
+            name: Some("Robert".to_string()),
+            avatar_kind: None,
+            avatar_color: None,
+        });
+        let reader = card_for(&state, in_server(by("carol"), "open"), "bob")
+            .await
+            .unwrap_or_else(|e| panic!("a reader: {}", e.1));
+        assert!(
+            reader.profile.is_none(),
+            "bob shows his profile to friends only"
+        );
+        assert_eq!(reader.member.expect("membership").profile, look);
+        exec(db, "DELETE FROM privacy WHERE username = 'bob'").await;
+        let shown = card_for(&state, in_server(by("carol"), "open"), "bob")
+            .await
+            .unwrap_or_else(|e| panic!("a reader: {}", e.1));
+        let facts = shown.profile.expect("profile");
+        assert_eq!(
+            (facts.server_bio.as_deref(), facts.server_banner.as_deref()),
+            (Some("bob in open"), Some("#222222"))
+        );
+        assert_eq!(facts.bio.as_deref(), Some("about bob"));
+        assert_eq!(shown.member.expect("membership").profile, look);
+        let other = card_for(&state, in_server(by("alice"), "vault"), "bob")
+            .await
+            .unwrap_or_else(|e| panic!("another server: {}", e.1));
+        assert_eq!(other.profile.expect("profile").server_bio, None);
+        assert_eq!(other.member.expect("membership").profile, None);
+        let plain = card_for(&state, by("alice"), "bob")
+            .await
+            .unwrap_or_else(|e| panic!("without a server: {}", e.1));
+        let facts = plain.profile.expect("profile");
+        assert_eq!((facts.server_bio, facts.server_banner), (None, None));
+        exec(
+            db,
+            "UPDATE servers SET members_visible = 0 WHERE name = 'open'",
+        )
+        .await;
+        assert!(
+            card_for(&state, in_server(by("carol"), "open"), "bob")
+                .await
+                .ok()
+                .and_then(|card| card.profile)
+                .is_none_or(|facts| facts.server_bio.is_none()),
+            "a server that keeps its members shows no server description outside it"
+        );
         done(state, path).await;
     }
 

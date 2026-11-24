@@ -382,6 +382,17 @@ pub enum WsEvent {
         remaining: i64,
         reason: Option<String>,
     },
+    /// The name or avatar `username` shows in `server` changed: `profile` is the look now, null
+    /// when they use the account's. `bio` says their description or banner color there changed:
+    /// ask for the card again. To the server and to that user.
+    MemberProfile {
+        server: String,
+        username: String,
+        profile: Option<crate::api::profiles::MemberLook>,
+        bio: bool,
+        #[serde(default, skip_serializing_if = "routing_only")]
+        view_only: bool,
+    },
     /// The reports of `server` changed, or without one the reports to the instance: ask for the
     /// open count again. Only to the members of the server who hold Manage reports, or to
     /// whoever handles the instance's reports. It never says what changed, and it never goes

@@ -1152,3 +1152,25 @@ async fn deleted_notices_skip_outsiders(state: AppState) {
         );
     }
 }
+
+#[test]
+fn server_looks_stay_inside_a_server_that_keeps_its_members() {
+    let look = |username: &str| WsEvent::MemberProfile {
+        server: s("club"),
+        username: s(username),
+        profile: None,
+        bio: false,
+        view_only: false,
+    };
+    let mut reader = Access::new(Some(s("dave")), false, HashSet::new());
+    reader.subs = set(&["club"]);
+    assert!(reader.wants(&look("bob")));
+    reader.note_option("club", false);
+    assert!(!reader.wants(&look("bob")));
+    assert!(reader.wants(&look("dave")));
+    let member = Access::new(Some(s("carol")), false, set(&["club"]));
+    assert!(member.wants(&look("bob")));
+    let elsewhere = Access::new(Some(s("erin")), false, HashSet::new());
+    assert!(!elsewhere.wants(&look("bob")));
+    assert!(elsewhere.wants(&look("erin")));
+}

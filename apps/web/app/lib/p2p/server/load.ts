@@ -302,6 +302,15 @@ export async function afterState(cx: ServerCtx, room: string, before: Summary, c
       joining: null,
       since: cur.since ?? cx.clock.now(),
     }))
+  // Out by a removal (our leave, a kick, a ban): what we set for ourselves here ends with the
+  // membership. In with it kept (a new copy, back after a cascade): it is written again.
+  if (was === 'join' && now !== 'join' && mine?.rem && cx.rooms.get(room)?.profile)
+    await cx.updateRoom(room, cur => {
+      const { profile: _, ...rest } = cur
+      return rest
+    })
+  if (now === 'join' && was !== 'join' && cx.rooms.get(room)?.profile)
+    void cx.refreshMe(room).catch(() => {})
   // We are in now: everything the gates held back may come.
   if (now === 'join' && was !== 'join') cx.sync.loadOlder(room)
   // A new copy: links are drawn again soon, once we know more of who is in.

@@ -1128,7 +1128,8 @@ const merge = async (
     }
     before.set(room.id, cur)
     theirs.set(room.id, room)
-    // A server room comes as it is: its events are admitted again when P2P starts.
+    // A server room comes as it is: its events are admitted again when P2P starts. What we
+    // set for ourselves there comes along, so this device writes the same room profile.
     if (!cur)
       await roomStore.put(
         room.kind === 'server'
@@ -1137,9 +1138,12 @@ const merge = async (
               kind: 'server',
               name: room.name,
               server: null,
+              ...(room.profile ? { profile: room.profile } : {}),
             }
           : blankRoom(room.id, room.peer, room.created)
       )
+    else if (room.kind === 'server' && room.profile && !cur.profile)
+      await roomStore.put({ ...cur, profile: room.profile })
   }
 
   const evStore = tx.objectStore('events')

@@ -23,13 +23,15 @@ use crate::limits::Limits;
 use crate::state::AppState;
 
 /// What only zed's own records hold: none of it may reach a caller without a relationship.
-const MARKERS: [&str; 6] = [
+const MARKERS: [&str; 8] = [
     "ZedMark",
     "zed-bio-7f3a",
     "#7f3a11",
     "1234567",
     "zedrole",
     "HushMark",
+    "zed-nick-5c2e",
+    "zed-sbio-5c2e",
 ];
 
 /// Routes the walk leaves out, with the reason (`subjects_allowlist.json`).
@@ -638,6 +640,11 @@ async fn world(db: &Db) -> (Side, Side) {
         .execute(db)
         .await
         .expect("role");
+    exec(
+        db,
+        "INSERT INTO member_profiles(server, username, name, bio, updated_at) VALUES('hush', 'zed', 'zed-nick-5c2e', 'zed-sbio-5c2e', 1)",
+    )
+    .await;
     let message = id_of(db, &format!("INSERT INTO messages(channel_id, author, content, created_at) VALUES({channel}, 'zed', 'hush words', 2) RETURNING id")).await;
     exec(db, &format!("INSERT INTO polls(message_id, kind, question, created_at) VALUES({message}, 'single', 'pick', 2)")).await;
     exec(db, &format!("INSERT INTO poll_options(message_id, position, text, created_at) VALUES({message}, 0, 'one', 2), ({message}, 1, 'two', 2)")).await;

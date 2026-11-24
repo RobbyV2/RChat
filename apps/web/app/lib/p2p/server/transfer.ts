@@ -225,15 +225,18 @@ export async function followTo(cx: ServerCtx, room: string, g: WireV2) {
   await cx.updateRoom(room, cur => ({ ...cur, next }))
   const now = cx.clock.now()
   const owner = g.ev.a === cx.me
+  const old = cx.rooms.get(room)
+  // What we set for ourselves in the old copy is written into the new one once we are in.
   if (!cx.rooms.has(next))
     await cx.putRoom({
       ...blankRoom(next, '', now),
       kind: 'server',
-      name: cx.rooms.get(room)?.name ?? 'P2P server',
+      name: old?.name ?? 'P2P server',
       chans: {},
       server: null,
       since: now,
       prev: room,
+      ...(old?.profile ? { profile: old.profile } : {}),
       ...(owner
         ? { carry: { from: room, roles: {}, state: 'running' as const } }
         : { joining: { at: now, via: 'invite' as const } }),

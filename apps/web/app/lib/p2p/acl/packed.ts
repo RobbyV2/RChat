@@ -329,6 +329,9 @@ class SnapFacts implements Facts {
       )
     )
   }
+  get profileMode() {
+    return this.V.profileModeOf()
+  }
   get overwrites() {
     return this.one('overwrites', () => {
       const of = (ch: string) => this.full().overwrites.get(ch)

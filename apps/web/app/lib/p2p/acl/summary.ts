@@ -1,5 +1,7 @@
 import type { EvalResult } from './facts'
 import type { Ix } from './reach'
+import { roomMode } from '../../profile_fields'
+import type { ProfilesMode } from '../../types'
 import { EVERYONE, gt, permsQ, poster, rank, evalLimits, type AclContent, type Rank } from './rules'
 
 // The page's summary of one P2P server's current state: its types, its codec (stored form, diff,
@@ -7,7 +9,7 @@ import { EVERYONE, gt, permsQ, poster, rank, evalLimits, type AclContent, type R
 // (acl_room.ts) is a SummarySource.
 
 // The shape of the page's summary: a cached one of another shape is not used.
-export const SUM_SHAPE = 4
+export const SUM_SHAPE = 5
 
 export type Membership = 'invite' | 'join' | 'leave' | 'ban'
 
@@ -27,8 +29,9 @@ export interface MemberSum {
   // Pending invites (add event ids), and who made them.
   adds?: string[]
   inviters?: string[]
-  // The time of the live join (or genesis) that started a member's membership.
+  // The time and id of the live join (or genesis) that started a member's membership.
   joinTs?: number
+  joinId?: string
   // The account binding a member posted last: its profile's, else its join's (badge.ts).
   binding?: string
   // Who let a member in: the author of the invite its live join used (for one out with no removal
@@ -75,6 +78,8 @@ export interface Summary {
   // Overwrites by channel, then subject (`r:<role>`, `u:<ik>`).
   overwrites: Record<string, Record<string, OverSum>>
   settings: AclContent | null
+  // What members may set in their room profile; null (no write counts) reads as everything.
+  profiles: ProfilesMode | null
   codes: Record<string, CodeSum>
   upgraded: boolean
   // Admitted upgrades, and devices with a fork point (evidence against them).
@@ -109,6 +114,7 @@ export const emptySummary = (): Summary => ({
   channels: dict(),
   overwrites: dict(),
   settings: null,
+  profiles: null,
   codes: dict(),
   upgraded: false,
   upgrades: [],
@@ -332,6 +338,7 @@ export function buildSummary(
       channels,
       overwrites,
       settings: F.setting ?? null,
+      profiles: roomMode(F.profileMode) ?? null,
       codes,
       upgraded: F.upgraded.length > 0,
       upgrades: [...F.upgraded],
@@ -396,7 +403,10 @@ function memberSum(src: SummarySource, ik: string): MemberSum | undefined {
   if (m === 'join') {
     let j = -1
     for (const g of ix.memEv.get(ik) ?? []) if (fe.inS(g) && !fe.isVoidI(g) && g > j) j = g
-    if (j >= 0) sum.joinTs = ix.ev[j].ts
+    if (j >= 0) {
+      sum.joinTs = ix.ev[j].ts
+      sum.joinId = ix.ids[j]
+    }
     if (j >= 0 && ix.ev[j].t === 'join') letIn(src, sum, ik, j)
     const b = sum.profile?.binding ?? (j >= 0 ? ix.ev[j].c.binding : undefined)
     if (typeof b === 'string') sum.binding = b

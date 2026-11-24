@@ -454,4 +454,48 @@ describe('the member privacy option', () => {
     expect(turned(false, true)).toBe('Alice showed the members to people outside the server')
     expect(fieldLabel('members_visible')).toBe('Members can be seen by people outside this server')
   })
+
+  test('server profiles: the mode a server sets, and the names members give themselves', () => {
+    const mode = (before: string, after: string) =>
+      sentenceText(
+        entry({
+          action: 'server.update',
+          details: { changes: [{ field: 'profiles_mode', before, after }] },
+        })
+      )
+    expect(mode('all', 'no_names')).toBe('Alice set server profiles to everything but names')
+    expect(mode('no_names', 'off')).toBe('Alice set server profiles to off')
+    expect(fieldLabel('profiles_mode')).toBe('Server profiles')
+    expect(['all', 'no_names', 'off'].map(v => valueText('profiles_mode', v))).toEqual([
+      'Everything',
+      'Everything but names',
+      'Off',
+    ])
+    const named = (old: string | null, next: string | null) =>
+      entry({
+        action: 'member.profile_name',
+        target: {
+          kind: 'user',
+          id: null,
+          name: 'alice',
+          user: user('alice', 'Alice'),
+          staff: false,
+          deleted: false,
+        },
+        details: { old, new: next },
+      })
+    expect(sentence(named('Ali', 'Al'))).toEqual([
+      { text: 'Alice', name: true, by: 'alice' },
+      { text: ' changed their server name from ' },
+      { text: 'Ali', name: true, by: 'alice' },
+      { text: ' to ' },
+      { text: 'Al', name: true, by: 'alice' },
+    ])
+    expect(sentenceText(named(null, 'Ali'))).toBe('Alice set their server name to Ali')
+    expect(sentenceText(named('Ali', null))).toBe('Alice removed their server name Ali')
+    expect(sentenceText({ ...named('Ali', 'Al'), hidden: true })).toBe(
+      'Alice changed their server name'
+    )
+    expect(factsOf(named('Ali', 'Al'))).toEqual([])
+  })
 })

@@ -779,6 +779,7 @@ fn indexes_follow_every_op() {
                     members_visible: true,
                     join_mode: Default::default(),
                     listed: true,
+                    profiles_mode: Default::default(),
                 },
             },
         },
@@ -1510,6 +1511,7 @@ fn renamed(old_name: &str, name: &str) -> Op {
                 members_visible: true,
                 join_mode: Default::default(),
                 listed: true,
+                profiles_mode: Default::default(),
             },
         },
     }

@@ -11,7 +11,9 @@ import {
   introduces,
   NEG,
   roleMetaOk,
+  profileModeOk,
   ROLES,
+  SERVER,
   TOP,
   type AclContent,
   type Ctx,
@@ -93,6 +95,8 @@ export interface Facts extends FactsQ {
   overwrites: RMap<string, ReadonlyMap<string, AclContent>>
   // A role's name and color (`role_meta`, a cosmetic register).
   roleMeta: RMap<string, AclContent>
+  // What members may set in their room profile (`profile_mode`, a display register).
+  profileMode: AclContent | undefined
   addsTo: RMap<string, readonly Pend[]>
   consumed: RSet<string>
   codeOk: RSet<string>
@@ -744,7 +748,19 @@ export abstract class View {
     const r = this.register(ws)
     return r && ix.ev[r.win].c
   }
-  private metaDenied(w: number): boolean {
+  // ProfileMode: the register over the live `profile_mode` writes whose Authority holds in
+  // their own admission state and after the denies concurrent with them, as for RoleMeta.
+  profileModeOf(): AclContent | undefined {
+    const ix = this.ix
+    const ws = ix.profileModeEv.filter(
+      x => profileModeOk(ix.ev[x], ix.rec[x].local.facts) && !this.metaDenied(x, SERVER, false)
+    )
+    const r = this.register(ws)
+    return r && ix.ev[r.win].c
+  }
+  // Whether the denies concurrent with the write `w` take from its author what its Authority
+  // needs: the permission `bit`, and with `ranked` a rank above the role it names.
+  private metaDenied(w: number, bit: number = ROLES, ranked = true): boolean {
     const ix = this.ix
     const e = ix.ev[w]
     const St = ix.rec[w].local.facts
@@ -773,7 +789,7 @@ export abstract class View {
       const r: Rank = [Math.min(St.pos.get(X) ?? -1, down.get(X) ?? Infinity), X]
       if (gt(r, me)) me = r
     }
-    return (perms & ROLES) === 0 || !gt(me, [St.pos.get(e.c.role) ?? -1, e.c.role])
+    return (perms & bit) === 0 || (ranked && !gt(me, [St.pos.get(e.c.role) ?? -1, e.c.role]))
   }
   overwrite(ch: string, subj: string): AclContent | undefined {
     const r = this.register(this.ix.chpermEv.get(`${ch}|${subj}`) ?? EMPTY)
@@ -935,6 +951,7 @@ export function fullFacts(V: View): Facts {
     channels,
     overwrites,
     roleMeta,
+    profileMode: V.profileModeOf(),
     addsTo,
     consumed,
     codeOk,
@@ -1002,6 +1019,7 @@ const EMPTY_FACTS: Facts = {
   channels: new Map(),
   overwrites: new Map(),
   roleMeta: new Map(),
+  profileMode: undefined,
   addsTo: new Map(),
   consumed: new Set(),
   codeOk: new Set(),

@@ -29,7 +29,8 @@ import {
 } from '../lists'
 import { type Layout, forgetServer, keepCollapsed, renameServer, setCollapsed } from '../nav_layout'
 import { type NotifyPrefs, renameServerRule, resetScope } from '../notify'
-import { forgetProfiles } from '../profile'
+import { forgetProfile, forgetProfiles, profileKey } from '../profile'
+import { shownParts, showsMore, withLook } from '../server_profile'
 import { myPerms, previewServer } from '../selectors'
 import type { Paged, RChatState } from '../store_types'
 import { localUntil, type TimeoutWire } from '../timeouts'
@@ -140,6 +141,7 @@ export const applyServerChange = (
       members_visible: server.members_visible ?? detail.members_visible,
       join_mode: server.join_mode ?? detail.join_mode,
       listed: server.listed ?? detail.listed,
+      profiles_mode: server.profiles_mode ?? detail.profiles_mode,
     }
   }
   const members = renameKey(s.members, old_name, server.name)
@@ -687,10 +689,18 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
     }))
   }
 
+  // Member rows fetched while a server's mode or the site's switches left a part of the looks out:
+  // fetched again once that part shows.
+  const refreshLooks = (server: string) => {
+    if (get().members[server]) void get().loadMembers(server, true)
+    refreshMemberInfo(server)
+  }
+
   const onServerChange = (ev: Extract<WsEvent, { type: 'server_renamed' | 'server_updated' }>) => {
     const { server } = ev
     const old_name = ev.type === 'server_renamed' ? ev.old_name : server.name
     acct.inviteUpdates.staleInvites(old_name)
+    const shownBefore = shownParts(get(), old_name)
     set(s => applyServerChange(s, ev))
     saveLayout(renameServer(get().layout, old_name, server.name))
     saveNotify(renameServerRule(get().notifyPrefs, old_name, server.name))
@@ -701,6 +711,7 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       memberGen[old_name] = (memberGen[old_name] ?? 0) + 1
       memberGen[server.name] = (memberGen[server.name] ?? 0) + 1
     }
+    if (showsMore(shownBefore, shownParts(get(), server.name))) refreshLooks(server.name)
     if (serverPager.removed()) void get().loadMoreServers()
     if (get().guest && get().guestServers.includes(old_name)) {
       persistGuestServers(get().guestServers.map(n => (n === old_name ? server.name : n)))
@@ -1352,6 +1363,25 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       patchServer(ev.server, d => applyLayout(d, ev.layout))
       if (known.channels.some(c => !listed.has(c.id))) refetchServer(ev.server)
     },
+    member_profile: ev => {
+      const theirs = (m: Member) => m.username === ev.username
+      set(s => {
+        const page = s.members[ev.server]
+        return page
+          ? {
+              members: {
+                ...s.members,
+                [ev.server]: {
+                  ...page,
+                  list: mapWhere(page.list, theirs, m => withLook(m, ev.profile)),
+                },
+              },
+            }
+          : {}
+      })
+      patchMemberInfo(ev.server, ev.username, m => withLook(m, ev.profile))
+      if (ev.bio) forgetProfile(profileKey(ev.username, ev.server), sessionMark())
+    },
     user_updated: ev => {
       const u = ev.user
       const wrote = (m: Message) => m.author.username === u.username
@@ -1486,7 +1516,14 @@ export const serversSlice = (set: SetState, get: GetState, deps: ServersDeps) =>
       const settings = siteSettings(ev.settings)
       acceptHostedPolicy(home.origin, settings.client_other_instances)
       const p2pFlip = settings.p2p_attachments !== get().settings.p2p_attachments
+      const looksBefore = get()
       set({ settings, ...(p2pFlip ? { p2pAvailability: {} } : {}) })
+      for (const server of new Set([
+        ...Object.keys(looksBefore.members),
+        ...Object.keys(looksBefore.memberInfo),
+      ]))
+        if (showsMore(shownParts(looksBefore, server), shownParts(get(), server)))
+          refreshLooks(server)
       const { view } = get()
       if (p2pFlip && view) askP2p(get().messages[viewKey(view)] ?? [])
     },

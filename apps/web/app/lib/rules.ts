@@ -12,6 +12,7 @@ import {
   type SiteSettings,
 } from './types'
 import { plural } from './bytes'
+import { cleanBio } from './profile_fields'
 
 export const PERM_ITEMS: { label: string; bit: number; hint?: string }[] = [
   { label: 'Manage channels', bit: Perm.ManageChannels },
@@ -103,11 +104,7 @@ export const BIO_MAX = 190
 
 const BIO_WARN = 20
 
-export const cleanBio = (text: string) =>
-  text
-    .replace(/\p{Cc}/gu, c => (c === '\n' ? c : ''))
-    .replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
-    .replace(/\n{3,}/g, '\n\n')
+export { cleanBio }
 
 export const bioError = (text: string) =>
   charCount(cleanBio(text)) > BIO_MAX ? `Description must be at most ${BIO_MAX} characters` : null

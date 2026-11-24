@@ -756,6 +756,13 @@ impl Access {
                 username,
                 online: _,
                 online_count: _,
+            }
+            | WsEvent::MemberProfile {
+                server,
+                username,
+                profile: _,
+                bio: _,
+                view_only: _,
             } => (server, Some(username)),
             WsEvent::MembersPurged { server, usernames } => {
                 (server, usernames.iter().find(|u| Some(u.as_str()) == me))

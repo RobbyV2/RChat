@@ -85,7 +85,10 @@ impl Rare {
     /// The operations that count as this kind, by method and path in the API document.
     pub fn routes(self) -> &'static [(&'static str, &'static str)] {
         match self {
-            Rare::DisplayName => &[("patch", "/api/v1/me")],
+            Rare::DisplayName => &[
+                ("patch", "/api/v1/me"),
+                ("patch", "/api/v1/servers/{name}/profile"),
+            ],
             Rare::SignUp => &[("post", "/api/v1/auth/register")],
             Rare::Password => &[("post", "/api/v1/me/password")],
             Rare::Phrase => &[

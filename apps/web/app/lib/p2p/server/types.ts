@@ -2,6 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { isRecord } from '../../bytes'
 import type { Rank } from '../acl/rules'
 import type { OverSum } from '../acl/summary'
+import type { RoomExtras } from '../../profile_fields'
 import type { Disowned, Reapply } from '../acl_room'
 import { b64u, bytesOf, canonical, fromB64u, randomBytes, utf8 } from '../canonical'
 import { storedSize } from '../dag'
@@ -181,6 +182,9 @@ export interface MemberView {
   ik: string
   m: Membership
   name: string
+  // The nickname and avatar they set for this server, when its mode shows them.
+  nick?: string
+  av?: RoomExtras['av']
   owner: boolean
   online: boolean
   contact: boolean
@@ -405,6 +409,7 @@ export const RESIGN_ACL = [
   'chperm',
   'settings',
   'role_meta',
+  'profile_mode',
   'code',
   'code_revoke',
 ]

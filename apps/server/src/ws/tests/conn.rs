@@ -59,6 +59,7 @@ async fn an_overflowed_inbox_drops_stale_events_and_resyncs() {
             role_ids: Vec::new(),
             joined_via: None,
             timeout: None,
+            profile: None,
         },
     });
     let first = inbox.rx.recv().await.unwrap();

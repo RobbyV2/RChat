@@ -260,6 +260,8 @@ pub struct SettingsPatch {
     sfu: Option<bool>,
     p2p: Option<bool>,
     client_other_instances: Option<bool>,
+    /// Server profiles: a name, avatar, banner and description per server.
+    server_profiles: Option<bool>,
     registration: Option<Registration>,
     upload_expiry_max_days: Option<i64>,
     server_creation: Option<ServerCreation>,
@@ -355,6 +357,7 @@ pub(crate) async fn patch_settings(
         sfu,
         p2p,
         client_other_instances,
+        server_profiles,
         registration,
         upload_expiry_max_days,
         server_creation,
@@ -482,6 +485,7 @@ pub(crate) async fn patch_settings(
         Feature::Sfu => sfu,
         Feature::P2p => p2p,
         Feature::ClientOtherInstances => client_other_instances,
+        Feature::ServerProfiles => server_profiles,
     };
     let switches = [
         ("profanity_filter", profanity_filter),
@@ -1180,6 +1184,7 @@ pub(crate) async fn remove_server_in(
         "interactions",
         "server_bans",
         "member_timeouts",
+        "member_profiles",
     ] {
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {table} WHERE server = $1"
@@ -1306,6 +1311,7 @@ pub(crate) async fn hide_user_in(
         "DELETE FROM interactions WHERE username = $1",
         "DELETE FROM server_bans WHERE username = $1",
         "DELETE FROM member_timeouts WHERE username = $1",
+        "DELETE FROM member_profiles WHERE username = $1",
         "DELETE FROM here_pings WHERE username = $1",
         "DELETE FROM bulk_delete_jobs WHERE username = $1",
         "UPDATE server_passwords SET created_by = NULL WHERE created_by = $1",
@@ -1627,6 +1633,7 @@ async fn drop_user_rows(tx: &mut sqlx::Transaction<'_, sqlx::Any>, key: &str) ->
         "DELETE FROM interactions WHERE username = $1",
         "DELETE FROM server_bans WHERE username = $1",
         "DELETE FROM member_timeouts WHERE username = $1",
+        "DELETE FROM member_profiles WHERE username = $1",
         "DELETE FROM tokens WHERE username = $1",
         "DELETE FROM config_shares WHERE owner = $1",
         "DELETE FROM pings WHERE username = $1",

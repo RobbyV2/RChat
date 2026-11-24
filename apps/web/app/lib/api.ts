@@ -58,6 +58,8 @@ import type {
   ServerBan,
   ServerDetail,
   ServerMatch,
+  ServerProfile,
+  ServerProfilePatch,
   ServerSummary,
   ServerSummaryLite,
   ServerUpdated,
@@ -566,6 +568,11 @@ export const endpoints = (c: ApiClient) => ({
       'GET',
       `/users/${seg(username)}/profile${server ? `?server=${seg(server)}` : ''}`
     ),
+  serverProfile: (server: string) => c.req<ServerProfile>('GET', `/servers/${seg(server)}/profile`),
+  setServerProfile: (server: string, patch: ServerProfilePatch) =>
+    c.req<ServerProfile>('PATCH', `/servers/${seg(server)}/profile`, patch),
+  resetServerProfile: (server: string) =>
+    c.req<ServerProfile>('DELETE', `/servers/${seg(server)}/profile`),
   createServer: (name: string, password?: string) =>
     c.req<ServerDetail>('POST', '/servers', { name, password }),
   getServer: (name: string) => c.req<ServerDetail>('GET', `/servers/${seg(name)}`),

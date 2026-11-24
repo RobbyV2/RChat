@@ -10,7 +10,9 @@ import type { WireV2 } from '../event_v2'
 import { CANT_TEXT, cutOut, TOO_OFTEN_TEXT, type Reached } from '../flows'
 import type { Message } from '../frames'
 import { Gossip, type LinkKind } from '../gossip'
-import { keyId, verifyProfile, liveCerts, type Cert, type Profile } from '../keys'
+import { cleanName, keyId, verifyProfile, liveCerts, type Cert, type Profile } from '../keys'
+import { memberExtras, roomProfile, type PlaceProfile, type RoomExtras } from '../../profile_fields'
+import type { ProfilesMode } from '../../types'
 import { mergeCerts, mergeRevocations, displayName } from '../contacts'
 import { LOCAL, type Local } from '../limits'
 import { RateWindow, clip } from '../rate'
@@ -871,6 +873,8 @@ export class Servers {
     const c = this.deps.node.contact(ik)
     if (c && (c.petname || c.name)) return displayName(c)
     if (room) {
+      const nick = this.roomProfileOf(room, ik).look?.name
+      if (nick) return nick
       const n = memberOf(this.sumOf(room), ik)?.profile?.name
       if (typeof n === 'string' && n.trim()) return clip(n, this.local.server.memberNameMax)
     }
@@ -982,8 +986,24 @@ export class Servers {
     return storage.refreshMe(ctx(this), room)
   }
 
-  private profileContent() {
-    return storage.profileContent(ctx(this))
+  private profileContent(room?: string) {
+    return storage.profileContent(ctx(this), room)
+  }
+
+  // What we show in one server, over our global profile.
+  setRoomProfile(room: string, intent: RoomExtras) {
+    return storage.setRoomProfile(ctx(this), room, intent)
+  }
+
+  // What members may set in their profile in a server.
+  setProfileMode(room: string, mode: ProfilesMode) {
+    return storage.setProfileMode(ctx(this), room, mode)
+  }
+
+  // A member's room profile as the room shows it under its mode.
+  roomProfileOf(room: string, ik: string): PlaceProfile {
+    const s = this.sumOf(room)
+    return roomProfile(memberExtras(memberOf(s, ik), cleanName), s.profiles)
   }
 
   refreshBadge() {

@@ -124,6 +124,7 @@ fn lite(name: &str) -> ServerSummaryLite {
         members_visible: true,
         join_mode: Default::default(),
         listed: true,
+        profiles_mode: Default::default(),
     }
 }
 
@@ -153,6 +154,7 @@ fn joined(server: &str, username: &str) -> WsEvent {
             role_ids: Vec::new(),
             joined_via: None,
             timeout: None,
+            profile: None,
         },
     }
 }

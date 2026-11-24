@@ -40,6 +40,7 @@ pub mod pins;
 pub mod policy;
 pub mod polls;
 pub mod preview_images;
+pub mod profiles;
 pub mod rare;
 pub mod reactions;
 pub mod reauth;
@@ -409,6 +410,9 @@ pub struct ServerSummaryLite {
     /// by its name. Only servers people join by name (`name` and `password`) are ever listed.
     #[serde(default = "yes")]
     pub listed: bool,
+    /// What members may set in their server profile: `all`, `no_names` or `off`.
+    #[serde(default)]
+    pub profiles_mode: profiles::ProfilesMode,
 }
 
 /// A channel in a server.
@@ -580,6 +584,10 @@ pub struct Member {
     /// the Timeout members permission; absent otherwise and when none is running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<timeouts::MemberTimeout>,
+    /// The name and avatar the member set for this server; absent when they use the account's,
+    /// and while server profiles are off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<profiles::MemberLook>,
 }
 
 /// The extra server password a member joined with.
@@ -651,6 +659,13 @@ pub struct ServerDetail {
     pub member_count: i64,
     /// Number of members of this server who are online right now (anywhere on the site).
     pub online_count: i64,
+    /// What members may set in their server profile: `all`, `no_names` or `off`. Set with
+    /// `PATCH /api/v1/servers/{name}`.
+    pub profiles_mode: profiles::ProfilesMode,
+    /// The caller's profile in this server; absent for non-members and while the
+    /// `server_profiles` switch is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub my_profile: Option<profiles::ServerProfile>,
     /// How long files uploaded here stay (`PUT /api/v1/servers/{name}/upload_expiry`).
     pub upload_expiry: upload_expiry::UploadExpiry,
     /// Seconds a new file stays after upload, after the instance cap; `null` when files are kept
@@ -1350,6 +1365,11 @@ pub struct Settings {
     /// the desktop and mobile apps and other web apps ignore it, and it gates no endpoint.
     #[serde(default = "yes")]
     pub client_other_instances: bool,
+    /// Server profiles: a name, avatar, banner color and description a member sets for one
+    /// server. While off, the `/api/v1/servers/{name}/profile` endpoints answer 404 and no
+    /// response carries a server profile; stored profiles are kept.
+    #[serde(default = "yes")]
+    pub server_profiles: bool,
     /// Who may create an account with a password: `open`, `sso` (only through single
     /// sign-on) or `closed`. `POST /api/v1/auth/register` answers 404 unless it is `open` and
     /// `password_login` is on.
@@ -1531,6 +1551,7 @@ impl Settings {
         sfu: false,
         p2p: false,
         client_other_instances: false,
+        server_profiles: false,
         registration: Registration::Closed,
         upload_expiry_max_days: 1,
         server_creation: ServerCreation::Nobody,
@@ -1610,6 +1631,7 @@ impl Settings {
             sfu: feature(Feature::Sfu),
             p2p: feature(Feature::P2p),
             client_other_instances: feature(Feature::ClientOtherInstances),
+            server_profiles: feature(Feature::ServerProfiles),
             registration: value(Registration::KEY)
                 .map_or(Some(Registration::Open), |v| Registration::parse(&v))
                 .unwrap_or(Registration::Closed),
@@ -1696,6 +1718,7 @@ impl Settings {
             sfu,
             p2p,
             client_other_instances,
+            server_profiles,
             registration: _,
             upload_expiry_max_days: _,
             server_creation: _,
@@ -1731,6 +1754,7 @@ impl Settings {
             Feature::Sfu => sfu,
             Feature::P2p => p2p,
             Feature::ClientOtherInstances => client_other_instances,
+            Feature::ServerProfiles => server_profiles,
         }
     }
 
@@ -2317,6 +2341,12 @@ fn api_routes(
         .route(
             "/servers/{name}/timeouts/{username}",
             put(timeouts::set_timeout).delete(timeouts::remove_timeout),
+        )
+        .route(
+            "/servers/{name}/profile",
+            get(profiles::get_profile)
+                .patch(profiles::patch_profile)
+                .delete(profiles::delete_profile),
         )
         .route(
             "/servers/{name}/voice/{guest}/disconnect",

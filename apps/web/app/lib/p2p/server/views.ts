@@ -1,5 +1,7 @@
 import { RULES_VERSION, gt, restricts, type Rank } from '../acl/rules'
-import type { Summary } from '../acl/summary'
+import type { MemberSum, Summary } from '../acl/summary'
+import { cleanName } from '../keys'
+import { memberExtras, roomProfile } from '../../profile_fields'
 import type { Shown } from '../acl_room'
 import { getEvents } from '../dag'
 import { serverWire, type EventRecord, type OutboxRecord, type RoomRecord } from '../db'
@@ -76,6 +78,18 @@ export function view(cx: ServerCtx, room: string): ServerView | null {
   })
 }
 
+// The nickname and avatar a member set for this server, as its mode shows them.
+const nickOf = (s: Summary, m: MemberSum): Pick<MemberView, 'nick' | 'av'> => {
+  const look = roomProfile(memberExtras(m, cleanName), s.profiles).look
+  if (!look) return {}
+  return {
+    ...(look.name ? { nick: look.name } : {}),
+    ...(look.avatar_kind
+      ? { av: { kind: look.avatar_kind, ...(look.avatar_color ? { bg: look.avatar_color } : {}) } }
+      : {}),
+  }
+}
+
 // A server's view: a pure function of its room record, summary and runtime record.
 export function serverView(
   room: string,
@@ -96,6 +110,7 @@ export function serverView(
       ik: m.ik,
       m: m.m,
       name: env.name(m.ik),
+      ...nickOf(s, m),
       owner: owners.includes(m.ik),
       online: m.m === 'join' && online.has(m.ik),
       contact: env.contact(m.ik),

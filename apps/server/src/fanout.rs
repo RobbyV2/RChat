@@ -284,6 +284,19 @@ pub fn route(ev: &WsEvent) -> Route<'_> {
             remaining: _,
             reason: _,
         } => to(vec![Target::Server(server), Target::User(username)]),
+        WsEvent::MemberProfile {
+            server,
+            username,
+            profile: _,
+            bio: _,
+            view_only,
+        } => to(vec![
+            match view_only {
+                true => Target::View(server),
+                false => Target::Server(server),
+            },
+            Target::User(username),
+        ]),
         WsEvent::ReportsChanged {
             server: Some(server),
             about: _,
@@ -928,6 +941,29 @@ mod tests {
     }
 
     #[test]
+    fn server_looks_reach_the_server_or_only_its_viewers() {
+        let router = Router::default();
+        let mut member = router.open(1, &topics(&[Topic::Server(s("club"))]));
+        let mut viewer = router.open(2, &topics(&[Topic::View(s("club"))]));
+        let mut own = router.open(3, &topics(&[Topic::User(s("bob"))]));
+        let look = |view_only: bool| WsEvent::MemberProfile {
+            server: s("club"),
+            username: s("bob"),
+            profile: None,
+            bio: false,
+            view_only,
+        };
+        router.deliver(look(false));
+        assert_eq!(drain(&mut member).len(), 1);
+        assert_eq!(drain(&mut viewer).len(), 0);
+        assert_eq!(drain(&mut own).len(), 1);
+        router.deliver(look(true));
+        assert_eq!(drain(&mut member).len(), 0);
+        assert_eq!(drain(&mut viewer).len(), 1);
+        assert_eq!(drain(&mut own).len(), 1);
+    }
+
+    #[test]
     fn joins_are_heard_before_the_connection_catches_up() {
         let router = Router::default();
         let mut alice = router.open(1, &topics(&[Topic::User(s("alice"))]));
@@ -948,6 +984,7 @@ mod tests {
                 role_ids: Vec::new(),
                 joined_via: None,
                 timeout: None,
+                profile: None,
             },
         });
         router.deliver(roles("club"));
@@ -980,6 +1017,7 @@ mod tests {
                 members_visible: true,
                 join_mode: Default::default(),
                 listed: true,
+                profiles_mode: Default::default(),
             },
         });
         router.deliver(WsEvent::PresenceChanged {
@@ -1025,6 +1063,7 @@ mod tests {
                 members_visible: true,
                 join_mode: Default::default(),
                 listed: true,
+                profiles_mode: Default::default(),
             },
         });
         router.deliver(WsEvent::ChannelUpdated {

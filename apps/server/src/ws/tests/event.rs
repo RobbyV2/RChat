@@ -51,6 +51,7 @@ fn routing_fields_stay_off_the_client_wire() {
             role_ids: vec![3],
             joined_via: None,
             timeout: None,
+            profile: None,
         },
     };
     let back: WsEvent = serde_json::from_str(&to_bus_json(&member).unwrap()).unwrap();

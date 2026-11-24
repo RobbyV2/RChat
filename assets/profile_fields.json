@@ -1,0 +1,10 @@
+{
+  "name": { "max": 32 },
+  "bio": { "max": 190 },
+  "color": { "pattern": "^#[0-9a-fA-F]{6}$" },
+  "avatar_kinds": ["identicon", "color"],
+  "modes": ["all", "no_names", "off"],
+  "reset_fields": ["name", "bio", "avatar", "banner"],
+  "lock_secs": [86400, 604800, 2592000, -1],
+  "writes_per_hour": 10
+}

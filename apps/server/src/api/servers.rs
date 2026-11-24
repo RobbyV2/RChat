@@ -232,6 +232,11 @@ pub struct ServerPatch {
     /// unchanged.
     #[serde(default)]
     listed: Option<bool>,
+    /// What members may set in their server profile: `all` (the default), `no_names` or `off`.
+    /// Stored profiles are kept and not shown while a mode leaves them out. Omit to leave it
+    /// unchanged.
+    #[serde(default)]
+    profiles_mode: Option<crate::api::profiles::ProfilesMode>,
 }
 
 /// The server after an update, plus how many members a password change removed.
@@ -599,8 +604,8 @@ pub const SUGGEST_MAX: usize = 10;
 /// Rows each kind of match reads before the lookup rule leaves out who the caller may not find.
 const SUGGEST_ROWS: i64 = 50;
 
-/// Members of `server` whose username, then whose display name, starts with `q`, each
-/// alphabetical, at most `SUGGEST_ROWS` of each.
+/// Members of `server` whose username, then whose display name, then whose name in the server,
+/// starts with `q`, each alphabetical, at most `SUGGEST_ROWS` of each.
 async fn suggested_members(db: &Db, server: &str, q: &str) -> Result<Vec<MemberRow>, ApiError> {
     let (mut rows, _) =
         filtered_members(db, server, Some(q), false, Some(SUGGEST_ROWS), None).await?;
@@ -628,14 +633,24 @@ async fn suggested_members(db: &Db, server: &str, q: &str) -> Result<Vec<MemberR
             rows.push(row);
         }
     }
+    let named =
+        crate::api::profiles::named_like(db, server, q, prefix_end(q).as_deref(), SUGGEST_ROWS)
+            .await?;
+    let by_profile: Vec<String> = named
+        .into_iter()
+        .filter(|name| !rows.iter().any(|(listed, _, _)| listed == name))
+        .collect();
+    let mut found = members_by_names(db, server, &by_profile).await?;
+    found.sort_by_key(|(name, _, _)| by_profile.iter().position(|n| n == name));
+    rows.extend(found);
     Ok(rows)
 }
 
 /// Mention suggestions in the server `access` opened: at most `SUGGEST_MAX` of its members
-/// whose username or display name starts with `q`, username matches first, only ones the
-/// caller may find by name (the lookup rule with the server named). Only signed-in members and
-/// signed-in readers of a server anyone can read get any, and the readers only while the server
-/// lists its members to them.
+/// whose username, display name or name in the server starts with `q`, username matches first,
+/// only ones the caller may find by name (the lookup rule with the server named). Only signed-in
+/// members and signed-in readers of a server anyone can read get any, and the readers only while
+/// the server lists its members to them.
 async fn mentionable(
     state: &AppState,
     access: &ServerAccess,
@@ -987,6 +1002,7 @@ pub(crate) async fn build_member(
         role_ids: role_ids(db, server, username).await?,
         joined_via: None,
         timeout: None,
+        profile: crate::api::profiles::look_of(db, server, username).await?,
     })
 }
 
@@ -1078,6 +1094,7 @@ async fn server_detail(
         members_visible,
         join_mode,
         listed,
+        profiles_mode,
     } = access.lite().clone();
     let rows = sqlx::query(
         "SELECT id, name, kind, slowmode_seconds, restrict_view, restrict_send, topic, category_id, position, sensitive, text_only FROM channels WHERE server = $1 ORDER BY position, id",
@@ -1157,6 +1174,8 @@ async fn server_detail(
         role_limits: role_limits(db, access).await?,
         member_count,
         online_count,
+        profiles_mode,
+        my_profile: crate::api::profiles::mine(db, access).await?,
         upload_expiry: choice,
         upload_ttl: choice.lifetime(settings.upload_expiry_max_days),
     })
@@ -1446,9 +1465,11 @@ pub(crate) async fn list_members(
         true => running_timeouts(db, &key, &names).await?,
         false => HashMap::new(),
     };
+    let mut looks = crate::api::profiles::looks_of(db, &key, &names).await?;
     let members = rows
         .into_iter()
         .map(|(username, is_admin, perms)| Member {
+            profile: looks.remove(&username),
             timeout: timeouts.remove(&username),
             online: online.contains(username.as_str()),
             is_admin: is_admin != 0,
@@ -1499,9 +1520,9 @@ pub struct MentionQuery {
 
 /// Suggest mentions
 ///
-/// At most 10 members of the server whose username or display name starts with `q`
-/// (case-insensitive), username matches first, each alphabetical, with only what a suggestion
-/// shows. Members the caller may not find by name are left out: members see each other, and
+/// At most 10 members of the server whose username, display name or server profile name starts
+/// with `q` (case-insensitive), username matches first, each alphabetical, with only what a
+/// suggestion shows: the name and avatar of their server profile over the account's. Members the caller may not find by name are left out: members see each other, and
 /// people who read the server without being a member see its members while its
 /// `members_visible` is on; each member's own choice (`profile` in `PATCH
 /// /api/v1/me/privacy`) applies, so one who keeps their profile to friends is suggested only to
@@ -1546,7 +1567,19 @@ pub(crate) async fn mentions(
         .map(|(name, _, _)| name)
         .collect();
     let refs = user_refs(db, &names).await;
-    Ok(Names(names.iter().map(|n| user_from(&refs, n)).collect()))
+    let looks = crate::api::profiles::looks_of(db, access.name(), &names).await?;
+    Ok(Names(
+        names
+            .iter()
+            .map(|n| {
+                let user = user_from(&refs, n);
+                match looks.get(n) {
+                    Some(look) => look.over(&user),
+                    None => user,
+                }
+            })
+            .collect(),
+    ))
 }
 
 fn pair_cursor(raw: Option<&str>) -> Result<Option<(i64, String)>, ApiError> {
@@ -2100,6 +2133,7 @@ async fn found_server(
             members_visible: true,
             join_mode: mode,
             listed,
+            profiles_mode: Default::default(),
         },
     });
     Ok((key, link.map(|link| link.info())))
@@ -3073,6 +3107,7 @@ pub(crate) async fn end_membership(
         .bind(username)
         .execute(&mut *conn)
         .await?;
+    crate::api::profiles::forget(conn, server, username).await?;
     forget_server_pings(conn, server, username).await?;
     if removed == 0 {
         return Ok(None);
@@ -3200,6 +3235,7 @@ pub(crate) async fn update_server(
         members_visible,
         join,
         listed: list,
+        profiles_mode,
     } = req;
     let guest_voice = guest_voice_opt_in.or(guest_voice.filter(|v| !v));
     let builtin = is_builtin(&state.db, &key).await;
@@ -3401,6 +3437,13 @@ pub(crate) async fn update_server(
             .execute(&mut *tx)
             .await?;
     }
+    if let Some(mode) = profiles_mode {
+        sqlx::query("UPDATE servers SET profiles_mode = $1 WHERE name = $2")
+            .bind(mode.as_str())
+            .bind(&new_key)
+            .execute(&mut *tx)
+            .await?;
+    }
     if stored_after != stored {
         sqlx::query("UPDATE servers SET join_mode = $1 WHERE name = $2")
             .bind(stored_after.map(JoinMode::as_str))
@@ -3474,7 +3517,12 @@ pub(crate) async fn update_server(
             lite.members_visible,
             members_visible.unwrap_or(lite.members_visible),
         )
-        .change("listed", lite.listed, list.unwrap_or(lite.listed));
+        .change("listed", lite.listed, list.unwrap_or(lite.listed))
+        .change(
+            "profiles_mode",
+            lite.profiles_mode.as_str(),
+            profiles_mode.unwrap_or(lite.profiles_mode).as_str(),
+        );
     if changed.has_changes() {
         let changed = match passwords_revoked && password_hash.is_none() {
             true => changed.set("passwords_revoked", true),
@@ -6838,6 +6886,7 @@ mod tests {
                 members_visible: None,
                 join: None,
                 listed: None,
+                profiles_mode: None,
             }),
         )
         .await
@@ -7965,6 +8014,7 @@ mod tests {
                 members_visible: None,
                 join: None,
                 listed: None,
+                profiles_mode: None,
             }),
         )
         .await
@@ -8414,6 +8464,7 @@ mod tests {
                 members_visible: None,
                 join: None,
                 listed: None,
+                profiles_mode: None,
             }),
         )
         .await
@@ -8536,6 +8587,60 @@ mod tests {
                 Err(ApiError(StatusCode::FORBIDDEN, _, _))
             ));
         }
+        done(state, path).await;
+    }
+
+    #[tokio::test]
+    async fn the_profiles_mode_reaches_clients_with_the_server() {
+        use crate::api::profiles::ProfilesMode;
+        let (state, path) = temp_state("server_profiles_mode").await;
+        let db = &state.db;
+        let _ = make_server(&state, "club").await.expect("club");
+        add_user(db, "bob", "bob").await;
+        join(&state, "bob", "club").await.expect("join");
+        let mut rx = state.hub.subscribe();
+        assert_eq!(
+            patch_server(
+                &state,
+                mem_user("bob", false),
+                "club",
+                r#"{"profiles_mode":"off"}"#
+            )
+            .await
+            .err()
+            .map(|e| e.0),
+            Some(StatusCode::FORBIDDEN)
+        );
+        let set = patch_server(
+            &state,
+            mem_user("alice", false),
+            "club",
+            r#"{"profiles_mode":"no_names"}"#,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("mode: {}", e.1));
+        assert_eq!(set.server.profiles_mode, ProfilesMode::NoNames);
+        let mut sent = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let WsEvent::ServerUpdated { server } = ev {
+                sent.push(server.profiles_mode);
+            }
+        }
+        assert_eq!(sent, [ProfilesMode::NoNames]);
+        let detail = detail_as(&state, "club", None).await.expect("detail");
+        assert_eq!(detail.profiles_mode, ProfilesMode::NoNames);
+        let logged: String = sqlx::query(
+            "SELECT details FROM audit_log WHERE action = 'server.update' ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(db)
+        .await
+        .expect("audit")
+        .get(0);
+        let logged: serde_json::Value = serde_json::from_str(&logged).expect("details");
+        assert_eq!(
+            logged["changes"],
+            serde_json::json!([{"field": "profiles_mode", "before": "all", "after": "no_names"}])
+        );
         done(state, path).await;
     }
 
@@ -9250,6 +9355,20 @@ mod tests {
         server: &str,
         q: Option<&str>,
     ) -> Result<Vec<String>, ApiError> {
+        Ok(mention_rows(state, who, server, q)
+            .await?
+            .iter()
+            .map(|r| r["username"].as_str().expect("name").to_string())
+            .collect())
+    }
+
+    /// The rows `GET /servers/{server}/mentions?q=` answers `who`, with each row's keys checked.
+    async fn mention_rows(
+        state: &AppState,
+        who: Option<&str>,
+        server: &str,
+        q: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, ApiError> {
         let res = mentions(
             State(state.clone()),
             MaybeAuthed(who.map(|w| mem_user(w, false))),
@@ -9283,10 +9402,7 @@ mod tests {
                 "only what a suggestion shows"
             );
         }
-        Ok(rows
-            .iter()
-            .map(|r| r["username"].as_str().expect("name").to_string())
-            .collect())
+        Ok(rows)
     }
 
     /// A 400 whose reason says the request value `field` is wrong.
@@ -9319,6 +9435,68 @@ mod tests {
         rows.iter()
             .map(|r| r["username"].as_str().expect("name").to_string())
             .collect()
+    }
+
+    #[tokio::test]
+    async fn mentions_match_server_names() {
+        let (state, path) = temp_state("mentions_server_names").await;
+        let db = &state.db;
+        for (name, display) in [("alice", "Alice"), ("bob", "Bob"), ("dan", "Dan")] {
+            add_user(db, name, display).await;
+            add_member(db, "rchat", name, 0, 0, 0).await;
+        }
+        add_user(db, "erin", "Erin").await;
+        for (server, who, nick) in [("rchat", "alice", "Zorro"), ("rchat", "bob", "ZEbra")] {
+            sqlx::query("INSERT INTO member_profiles(server, username, name, updated_at) VALUES($1, $2, $3, 1)")
+                .bind(server)
+                .bind(who)
+                .bind(nick)
+                .execute(db)
+                .await
+                .expect("server name");
+        }
+        let dan = Some("dan");
+        assert_eq!(
+            suggested(&state, dan, "rchat", "z").await,
+            ["bob", "alice"],
+            "in the order of the server names"
+        );
+        assert_eq!(suggested(&state, dan, "rchat", "ZO").await, ["alice"]);
+        assert_eq!(suggested(&state, dan, "rchat", "bo").await, ["bob"]);
+        let shown = |rows: Vec<serde_json::Value>| -> Vec<(String, String)> {
+            rows.iter()
+                .map(|r| {
+                    (
+                        r["username"].as_str().expect("name").to_string(),
+                        r["display_name"].as_str().expect("shown").to_string(),
+                    )
+                })
+                .collect()
+        };
+        let rows = mention_rows(&state, dan, "rchat", Some("z"))
+            .await
+            .unwrap_or_else(|e| panic!("mentions: {}", e.1));
+        assert_eq!(
+            shown(rows),
+            [
+                ("bob".to_string(), "ZEbra".to_string()),
+                ("alice".to_string(), "Zorro".to_string())
+            ]
+        );
+        sqlx::query("UPDATE servers SET profiles_mode = 'no_names' WHERE name = 'rchat'")
+            .execute(db)
+            .await
+            .expect("mode");
+        assert!(suggested(&state, dan, "rchat", "z").await.is_empty());
+        let rows = mention_rows(&state, dan, "rchat", Some("bo"))
+            .await
+            .unwrap_or_else(|e| panic!("mentions: {}", e.1));
+        assert_eq!(
+            shown(rows),
+            [("bob".to_string(), "Bob".to_string())],
+            "no server names under no_names"
+        );
+        done(state, path).await;
     }
 
     #[tokio::test]
@@ -12557,6 +12735,7 @@ mod tests {
                 members_visible: None,
                 join: None,
                 listed: None,
+                profiles_mode: None,
             }),
         )
         .await

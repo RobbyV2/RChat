@@ -251,6 +251,11 @@ describe('P2P server flows: what a lost device removal signs again', () => {
     expect(holds('role_meta', { role: 'r1', name: 'Mods', color: 7 }, s)).toBe(true)
     expect(holds('role_meta', { role: 'r1', name: 'Staff', color: 7 }, s)).toBe(false)
     expect(holds('role_meta', { role: 'gone', name: 'Mods' }, s)).toBe(false)
+    expect(holds('profile_mode', { mode: 'all' }, s)).toBe(true)
+    expect(holds('profile_mode', { mode: 'off' }, s)).toBe(false)
+    const named = { ...s, profiles: 'no_names' as const }
+    expect(holds('profile_mode', { mode: 'no_names' }, named)).toBe(true)
+    expect(holds('profile_mode', { mode: 'all' }, named)).toBe(false)
     // What the summary can't show is never signed again.
     expect(holds('mark', {}, s)).toBe(false)
   })

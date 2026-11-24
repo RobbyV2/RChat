@@ -1,4 +1,5 @@
 import { guestLabel } from './guest_voice'
+import { MODE_LABELS, isProfilesMode } from './profile_fields'
 import { PERM_ITEMS } from './rules'
 import { slowLabel } from './slowmode'
 import { durationText } from './timeouts'
@@ -87,6 +88,7 @@ const FIELD_LABELS: Record<string, string> = {
   thread: 'Thread replies',
   owner: 'Owner',
   upload_expiry: 'File expiry',
+  profiles_mode: 'Server profiles',
 }
 
 export const fieldLabel = (field: string) => FIELD_LABELS[field] ?? field.replaceAll('_', ' ')
@@ -139,6 +141,7 @@ export function valueText(field: string, v: unknown): string {
     if (field === 'upload_expiry') return v === 'never' ? 'Never' : 'Default'
     if (field === 'kind') return v === 'voice' ? 'Voice' : 'Text'
     if (field === 'permanent_password') return PASSWORD_MODES[v] ?? v
+    if (field === 'profiles_mode' && isProfilesMode(v)) return MODE_LABELS[v]
     return v
   }
   const o = obj(v)
@@ -292,6 +295,18 @@ function systemMessages(entry: AuditEntry, actor: Part[]): Part[] {
   return [...actor, t(' changed the join and leave messages')]
 }
 
+// What a member did to their own name in a server: the names are theirs (streamer blur).
+function serverName(entry: AuditEntry): Part[] {
+  const by = entry.target?.user?.username ?? entry.actor?.username
+  const name = (v: unknown): Part => ({ text: str(v) ?? '', name: true, by })
+  const old = entry.hidden ? null : str(entry.details.old)
+  const next = entry.hidden ? null : str(entry.details.new)
+  if (old && next) return [t(' changed their server name from '), name(old), t(' to '), name(next)]
+  if (next) return [t(' set their server name to '), name(next)]
+  if (old) return [t(' removed their server name '), name(old)]
+  return [t(' changed their server name')]
+}
+
 // Whether a details value is a server name (streamer blur).
 export const isNameValue = (entry: AuditEntry, field: string) =>
   (entry.action === 'server.update' && field === 'name') || field === 'owner'
@@ -341,6 +356,8 @@ export function sentence(entry: AuditEntry): Part[] {
       return [...actor, t(' handed admin to '), ...user]
     case 'member.admin_perms':
       return [...actor, t(' changed the admin permissions of '), ...user]
+    case 'member.profile_name':
+      return [...actor, ...serverName(entry)]
     case 'role.create':
       return [...actor, t(` created ${roleText(entry)}`)]
     case 'role.update': {
@@ -385,6 +402,11 @@ export function sentence(entry: AuditEntry): Part[] {
         return [...actor, t(' renamed the server to '), { text: String(only.after), name: true }]
       if (only?.field === 'guest_voice')
         return [...actor, t(` turned voice ${only.after === 'off' ? 'off' : 'on'} for guests`)]
+      if (only?.field === 'profiles_mode')
+        return [
+          ...actor,
+          t(` set server profiles to ${valueText(only.field, only.after).toLowerCase()}`),
+        ]
       if (only?.field === 'members_visible')
         return [
           ...actor,
