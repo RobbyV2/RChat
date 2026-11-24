@@ -238,6 +238,12 @@ describe('server folders', () => {
     expect(folderLabel(st(), f, null)).toBe('Alpha, b')
   })
 
+  test('a cold signed-in account has no guest memberships or folder labels', () => {
+    useStore.setState({ me: null, guest: false, guestServers: ['rchat', 'guest-only'] })
+    expect(railServers(st())).toEqual([])
+    expect(railOrder(st())).toEqual([])
+  })
+
   test('guests keep folders under the guest key', () => {
     useStore.setState({ me: null, guest: true, guestServers: ['rchat', 'x', 'y'] })
     st().mergeServers('y', 'rchat')

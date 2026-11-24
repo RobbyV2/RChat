@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { openAccountNotice } from '../client/notice_owner'
 import { ApiError } from '../api'
-import { me } from './fixtures'
+import { me, memoryStorage } from './fixtures'
 import { accountPath } from '../view'
 import { routeOwnerFor } from '../client/account_paths'
 import { client } from '../client/client'
@@ -13,6 +13,7 @@ function historyFixture() {
   const b = testAccount('reader', 'https://second.test')
   const real = Object.getOwnPropertyDescriptor(globalThis, 'window')
   const original = client.shown
+  const book = client.book.getState()
   const location = new URL('https://client.test/')
   const storage = new Map<string, string>()
   const previous: { state: unknown; href: string }[] = []
@@ -58,6 +59,8 @@ function historyFixture() {
       b.store.dispose()
       if (real) Object.defineProperty(globalThis, 'window', real)
       else Reflect.deleteProperty(globalThis, 'window')
+      client.book.setState(book, true)
+      memoryStorage.clear()
     },
   }
 }

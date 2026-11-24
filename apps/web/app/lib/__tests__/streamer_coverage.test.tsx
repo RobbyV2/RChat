@@ -19,6 +19,7 @@ import { uncheckable } from '../p2p/badge'
 import { squatted } from '../p2p/node'
 import type { RChatState } from '../store_types'
 import { me, msg, user } from './fixtures'
+import { pinEmptyBook } from './home_instance'
 
 // Server rendering reads the store's initial state, so the test state goes there.
 const initial = useStore.getInitialState()
@@ -32,6 +33,7 @@ afterEach(() => {
   shownPeer().useP2p.setState(p2pSaved)
   resetSessionCaches()
 })
+pinEmptyBook()
 
 const router = {
   push: () => {},

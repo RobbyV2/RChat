@@ -28,6 +28,7 @@ const ROWS: Record<Target['kind'], boolean> = {
   category: true,
   dm: true,
   home: false,
+  rail_account: true,
   dm_list: false,
   embed: true,
   timestamp: false,

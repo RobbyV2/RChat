@@ -294,7 +294,8 @@ function P2pJoinTileBody() {
 }
 
 // The P2P servers and folders, last in the rail under a dashed line.
-function P2pServerRailBody() {
+function P2pServerRailBody({ actorLabel }: { actorLabel?: string }) {
+  const identity = useP2pApp()!
   const enabled = useP2p(s => s.enabled)
   const servers = useP2p(s => s.servers)
   const layout = useP2p(s => s.layout)
@@ -307,7 +308,18 @@ function P2pServerRailBody() {
   return (
     <>
       <div className="my-1 h-px w-8 shrink-0 border-t border-dashed border-tertiary" />
+      {actorLabel && (
+        <span
+          data-peer-section
+          title={actorLabel}
+          aria-label={actorLabel}
+          className="streamer rounded-full outline-2 outline-offset-1 outline-dashed outline-tertiary"
+        >
+          <KeyAvatar ik={identity.useP2p.getState().ik ?? identity.localId} size={24} />
+        </span>
+      )}
       <div
+        data-peer-section
         data-rail="p2p-servers"
         data-drop-zone="p2p"
         data-drop-label="Remove from folder"

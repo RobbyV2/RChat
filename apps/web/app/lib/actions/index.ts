@@ -6,6 +6,7 @@ import { ctxFor } from './ctx'
 import { dmActions, dmListActions } from './dm'
 import { folderActions } from './folder'
 import { friendActions } from './friends'
+import { railAccountActions } from './rail_account'
 import { globalActions, goActions } from './global'
 import { guestVoiceMenuActions } from './guest_voice'
 import { headerActions } from './header'
@@ -34,6 +35,7 @@ export const registerAppActions = () => {
     goActions,
     placeActions,
     globalActions,
+    railAccountActions,
     friendActions,
     folderActions,
     settingsActions,

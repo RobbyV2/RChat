@@ -73,6 +73,7 @@ const placeOf = (s: RChatState, t: Target): Place => {
     case 'none':
     case 'selection':
     case 'folder':
+    case 'rail_account':
     case 'home':
     case 'dm_list':
     case 'timestamp':
@@ -109,6 +110,7 @@ const memberOf = (s: RChatState, t: Target) => {
     case 'folder':
     case 'channel':
     case 'category':
+    case 'rail_account':
     case 'home':
     case 'dm_list':
     case 'embed':
@@ -152,6 +154,7 @@ const listOf = (s: RChatState, t: Target) => {
     case 'server':
     case 'folder':
     case 'category':
+    case 'rail_account':
     case 'home':
     case 'dm_list':
     case 'timestamp':
@@ -259,6 +262,7 @@ const freshTarget = (s: RChatState, t: Target): Target | null => {
     case 'selection':
     case 'server':
     case 'folder':
+    case 'rail_account':
     case 'home':
     case 'dm_list':
     case 'timestamp':

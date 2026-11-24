@@ -76,6 +76,7 @@ test('the actions marked as danger', () => {
     'hangup',
     'leave_voice',
     'logout',
+    'rail_sign_out',
     'block',
     'unfriend',
     'member_kick',

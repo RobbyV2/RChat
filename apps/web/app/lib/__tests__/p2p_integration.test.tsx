@@ -42,7 +42,7 @@ import { blankRoom } from '../p2p/dag'
 
 import { P2pStore } from '../p2p/db'
 import { createP2pApp } from '../p2p/app/runtime'
-import { home } from './home_instance'
+import { home, pinEmptyBook } from './home_instance'
 import { P2pOffSection, P2pSection } from '../../components/p2p/p2p_settings'
 import type { Fwd } from '../p2p/content'
 import { useP2pList } from '../../components/p2p/p2p_chat'
@@ -111,6 +111,7 @@ import { readText } from './masked_text'
 
 beforeAll(registerAppActions)
 afterAll(() => peerOwner.store.dispose())
+pinEmptyBook()
 
 const NOW = 1_800_000_000_000
 const ROOM = 'dm-room'

@@ -59,6 +59,7 @@ export type Target =
   | { kind: 'dm'; dm: DmSummary; where: 'sidebar' | 'home' }
   // The rail's home button and the instance badge.
   | { kind: 'home' }
+  | { kind: 'rail_account'; origin: string; username: string | null }
   // The DM list's sort and filter button.
   | { kind: 'dm_list' }
   // A link preview under a message; `banner`: it shows an image.

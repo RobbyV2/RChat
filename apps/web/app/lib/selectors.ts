@@ -87,7 +87,7 @@ const isUnread = (s: RChatState, scope: string): boolean => {
 }
 
 export const serverNames = (s: RChatState) =>
-  s.me ? s.me.servers.map(x => x.name) : s.guestServers
+  s.me ? s.me.servers.map(x => x.name) : s.guest ? s.guestServers : []
 
 export const configSourceOf = (s: RChatState): ConfigSource => ({
   theme: s.theme,
@@ -111,7 +111,7 @@ export interface RailServer {
   creator: string | null
 }
 
-type RailSource = Pick<RChatState, 'me' | 'guestServers' | 'guestNames' | 'servers'>
+type RailSource = Pick<RChatState, 'me' | 'guest' | 'guestServers' | 'guestNames' | 'servers'>
 
 // The server a signed-in user previews: open without membership (only public servers; the
 // server enforces it). It has a temporary rail icon and a join bar. It is forgotten when the view
@@ -125,7 +125,7 @@ export const previewServer = (s: RChatState): string | null => {
 export const railServers = (s: RailSource): RailServer[] =>
   s.me
     ? s.me.servers.map(({ name, display_name, creator }) => ({ name, display_name, creator }))
-    : s.guestServers.map(name => ({
+    : (s.guest ? s.guestServers : []).map(name => ({
         name,
         display_name: s.servers[name]?.display_name ?? s.guestNames[name] ?? name,
         creator: s.servers[name]?.creator ?? null,

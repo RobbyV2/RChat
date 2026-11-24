@@ -1,7 +1,7 @@
 'use client'
 import { useAddingAllowed } from './add_instance'
 import { Globe } from 'lucide-react'
-import { useP2pApp, useP2p } from '../lib/client/p2p_react'
+import { P2pProvider, useP2pApp, useP2p } from '../lib/client/p2p_react'
 
 import type { CSSProperties } from 'react'
 import { logoutForLogin } from '../login/account_login'
@@ -13,12 +13,12 @@ import {
   House,
   LogOut,
   MessageCircle,
+  Play,
   Plus,
   Settings,
   Shield,
 } from 'lucide-react'
 import {
-  dmTile,
   folderLabel,
   previewServer,
   type RailServer,
@@ -29,7 +29,21 @@ import {
   useMask,
   useStore,
 } from '../lib/store'
-import { useAccount } from '../lib/client/react'
+import { AccountProvider, useAccount, useLiveSessions } from '../lib/client/react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { ownInstance } from '../lib/instances'
+import { client } from '../lib/client/client'
+import { railBlocks } from '../lib/client/rail_blocks'
+import {
+  createSwitcherSource,
+  signOutSwitcherAccount,
+  type SwitcherRow,
+} from '../lib/client/switcher_rows'
+import { switchActor, switcherSession } from '../lib/client/switch_actor'
+import { ActorAvatar } from './account_tag'
+import type { AccountSession } from '../lib/client/session'
+import type { P2pApp } from '../lib/p2p/app/runtime'
+import { railActivity } from '../lib/client/rail_activity'
 import type { RChatState } from '../lib/store_types'
 import { openActionMenu } from '../lib/actions/menu'
 import { folderKey, railItems, serverKey, type Folder } from '../lib/nav_layout'
@@ -119,7 +133,11 @@ function ServerTile({
   return (
     <button
       title={`${mine ? `${shown} (Creator)` : shown}${muted ? ', muted' : ''}${pings ? `, ${pingLabel(pings)}` : ''}`}
-      onClick={() => void openServer(name)}
+      onClick={() => {
+        if (client.shown() !== account) client.show(account)
+        account.identities.viewed()?.p2p.closeHome()
+        void openServer(name)
+      }}
       {...longPress(
         (x, y) => openActionMenu(x, y, { kind: 'server', server: name, folder, at }, {}, account),
         {
@@ -174,7 +192,11 @@ function PreviewTile() {
       title={label}
       aria-label={label}
       aria-current="page"
-      onClick={() => void openServer(name)}
+      onClick={() => {
+        if (client.shown() !== account) client.show(account)
+        account.identities.viewed()?.p2p.closeHome()
+        void openServer(name)
+      }}
       {...longPress((x, y) =>
         openActionMenu(x, y, { kind: 'server', server: name, folder: null, at: -1 }, {}, account)
       )}
@@ -299,12 +321,9 @@ export function FolderEntry({
 
 // Direct messages: the badge counts the instance's DM and friend pings and the P2P
 // conversations' pings, the dot an unread DM in either.
-function DmTile({ active }: { active: boolean }) {
+function DmTile({ active, pings, unread }: { active: boolean; pings: number; unread: boolean }) {
   const account = useAccount()
   const openLastDm = useStore(s => s.openLastDm)
-  const rooms = useP2p(s => s.rooms)
-  const contacts = useP2p(s => s.contacts)
-  const { pings, unread } = useStore(s => dmTile(s, { rooms, contacts }))
   return (
     <button
       data-rail="dms"
@@ -320,36 +339,183 @@ function DmTile({ active }: { active: boolean }) {
   )
 }
 
+const column = 'flex shrink-0 flex-col items-center gap-2'
+function ResumeAccount({ row }: { row: SwitcherRow }) {
+  const streamer = useStore(s => s.streamer)
+  const label = streamer
+    ? 'Show paused account'
+    : 'Show ' + row.display + ' on ' + new URL(row.origin).host
+  return (
+    <button
+      title={label}
+      aria-label={label}
+      className={tile + ' ' + idle}
+      onClick={() => void switchActor(row, client.shown())}
+    >
+      <Play size={18} />
+    </button>
+  )
+}
+
+function AccountServers({ row }: { row?: SwitcherRow }) {
+  const me = useStore(s => s.me)
+  const saved = useStore(s => s.layout.servers)
+  const guest = useStore(s => s.guest)
+  const guestServers = useStore(s => s.guestServers)
+  const guestNames = useStore(s => s.guestNames)
+  const servers = useStore(s => (s.me ? NO_DETAILS : s.servers))
+  const serversMore = useStore(s => s.serversMore)
+  const loadMoreServers = useStore(s => s.loadMoreServers)
+  if (row?.username && !me) return <ResumeAccount row={row} />
+  const items = railItems(
+    railServers({ me, guest, guestServers, guestNames, servers }),
+    x => x.name,
+    saved
+  )
+
+  return (
+    <div ref={dragScope} className={column}>
+      {me && <PreviewTile />}
+      <div
+        data-rail="servers"
+        data-drop-zone="servers"
+        data-drop-label="Remove from folder"
+        className="flex shrink-0 flex-col items-center gap-2"
+      >
+        {items.map((item, at) =>
+          item.kind === 'server' ? (
+            <ServerTile key={item.key} server={item.server} folder={null} at={at} />
+          ) : (
+            <FolderEntry key={item.key} folder={item.folder} servers={item.servers} at={at} />
+          )
+        )}
+      </div>
+      {me && serversMore && <Sentinel key={me.servers.length} onVisible={loadMoreServers} />}
+    </div>
+  )
+}
+type PeerBlock = { account: AccountSession; app: P2pApp; label: string }
+function selectPeer({ account, app }: PeerBlock) {
+  if (client.shown() !== account) client.show(account)
+  if (account.identities.viewed() !== app) account.identities.show(app)
+}
+function PeerBlockView({ peer, children }: { peer: PeerBlock; children: React.ReactNode }) {
+  return (
+    <AccountProvider session={peer.account}>
+      <P2pProvider identity={peer.app}>
+        <div
+          ref={dragScope}
+          className={column}
+          onClickCapture={e => {
+            if (!(e.target as HTMLElement).closest('[data-peer-home]')) selectPeer(peer)
+          }}
+        >
+          {children}
+        </div>
+      </P2pProvider>
+    </AccountProvider>
+  )
+}
 export function ServerRail() {
   const canAdd = useAddingAllowed()
+  const [source] = useState(createSwitcherSource)
+  const rows = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
+  const model = railBlocks(rows.groups, canAdd ? undefined : ownInstance()?.origin)
+  const streamer = useStore(s => s.streamer)
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set())
+  const toggle = (key: string) =>
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   const identity = useP2pApp()
   const p2pView = identity?.p2p
 
   const router = useRouter()
   const me = useStore(s => s.me)
-  const guestServers = useStore(s => s.guestServers)
-  const guestNames = useStore(s => s.guestNames)
-  const servers = useStore(s => (s.me ? NO_DETAILS : s.servers))
   const view = useStore(s => s.view)
   const goHome = useStore(s => s.goHome)
-  const serversMore = useStore(s => s.serversMore)
-  const loadMoreServers = useStore(s => s.loadMoreServers)
   const openDialog = useStore(s => s.openDialog)
   const openAdmin = useStore(s => s.openAdmin)
   const loginAccount = useAccount()
-  const saved = useStore(s => s.layout.servers)
+  const live = useLiveSessions()
+  const accounts = useMemo(() => {
+    const ordered = model.blocks.flatMap(g => g.accounts.flatMap(r => switcherSession(r) ?? []))
+    return model.accountCount || (!canAdd && !loginAccount.conn.isDefault)
+      ? ordered
+      : [loginAccount]
+  }, [rows, live, loginAccount, canAdd])
+  const activity = useMemo(() => railActivity(accounts), [accounts])
+  const activityRows = useSyncExternalStore(
+    activity.subscribe,
+    activity.snapshot,
+    activity.snapshot
+  )
+  const peerTiles: { key: string; label: string; live?: PeerBlock; row?: SwitcherRow }[] = []
+  const peers: PeerBlock[] = []
+  for (const group of model.blocks) {
+    for (const parent of group.accounts) {
+      if (!parent.username) continue
+      const owner = switcherSession(parent)
+      const activity = activityRows.find(a => a.account === owner)
+      if (activity && !activity.p2pAvailable) continue
+      const running = new Map(activity?.peers.map(p => [p.app.localId, p]))
+      const saved = group.peers.filter(row => row.username === parent.username)
+      const locals = new Set([...saved.map(row => row.local!), ...running.keys()])
+      for (const local of locals) {
+        const row = saved.find(r => r.local === local)
+        const app = running.get(local)
+        const label = streamer
+          ? 'P2P identity'
+          : (app?.name || row?.display || local) +
+            ', P2P as ' +
+            parent.username +
+            ' on ' +
+            group.name
+        const live = owner && app ? { account: owner, app: app.app, label } : undefined
+        if (live) peers.push(live)
+        peerTiles.push({
+          key: JSON.stringify([group.origin, parent.username, local]),
+          label,
+          live,
+          row,
+        })
+      }
+    }
+  }
+  const joined = peers.filter(p => p.app.useP2p.getState().enabled)
+  const groupedPeers =
+    peerTiles.length > 1 ||
+    peerTiles.some(p => !p.live) ||
+    model.accountCount > 1 ||
+    !accounts.includes(loginAccount)
+  const scroller = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const rail = scroller.current
+    if (
+      !rail ||
+      !window.matchMedia('(max-width: 767px)').matches ||
+      (!model.instanceHeaders && model.accountCount < 2)
+    )
+      return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        const block = rail.querySelector<HTMLElement>('[data-shown-block="true"]')
+        if (block)
+          rail.scrollTop += block.getBoundingClientRect().top - rail.getBoundingClientRect().top
+      }
+    })
+    observer.observe(rail)
+    return () => observer.disconnect()
+  }, [loginAccount, model.accountCount, model.instanceHeaders])
   const p2pHome = useP2p(s => s.home || s.server !== null)
   const p2pBeside = useP2p(s => s.home && s.dmList)
   // Set only while the instance has P2P on for this account.
   const p2pOn = useP2p(s => s.account !== null)
   const p2pEnabled = useP2p(s => s.enabled)
   const atHome = useStore(s => s.home && s.view === null) && !p2pHome
-
-  const items = railItems(
-    railServers({ me, guestServers, guestNames, servers }),
-    x => x.name,
-    saved
-  )
 
   return (
     <nav className="flex h-full w-18 shrink-0 flex-col bg-surface-container-lowest">
@@ -358,11 +524,15 @@ export function ServerRail() {
         <div className="h-px w-8 bg-outline-variant" />
       </div>
       <div
-        ref={dragScope}
+        ref={scroller}
         onClickCapture={e => {
           // Opening a DM, server or folder leaves the P2P home.
           const t = e.target as HTMLElement
-          if (t.closest('button') && !t.closest('[data-p2p-tile]')) p2pView?.closeHome()
+          if (
+            t.closest('button') &&
+            !t.closest('[data-p2p-tile],[data-peer-section],[data-account-section]')
+          )
+            p2pView?.closeHome()
         }}
         className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto pt-2 pb-2"
       >
@@ -377,7 +547,13 @@ export function ServerRail() {
         >
           <House size={22} />
         </button>
-        {me && <DmTile active={view?.kind === 'dm' && (!p2pHome || p2pBeside)} />}
+        {me && (
+          <DmTile
+            pings={activityRows.reduce((sum, row) => sum + row.pings, 0)}
+            unread={activityRows.some(row => row.unread)}
+            active={view?.kind === 'dm' && (!p2pHome || p2pBeside)}
+          />
+        )}
         <button
           data-rail="add-server"
           title="Add a server"
@@ -398,33 +574,168 @@ export function ServerRail() {
             <Globe size={22} />
           </button>
         )}
-        {p2pOn && (
+        {(groupedPeers ? peerTiles.length > 0 : p2pOn) && (
           <div
             data-rail="p2p"
             className="flex shrink-0 flex-col items-center gap-2 rounded-[1.25rem] border-2 border-dashed border-tertiary/70 p-[3px]"
           >
-            <P2pRailTile />
-            {p2pEnabled && <P2pJoinTile />}
+            {groupedPeers ? (
+              <>
+                {peerTiles.map(({ key, live, row, label }) =>
+                  live ? (
+                    <PeerBlockView key={key} peer={live}>
+                      <P2pRailTile actorLabel={label} />
+                    </PeerBlockView>
+                  ) : (
+                    row && (
+                      <button
+                        key={key}
+                        data-p2p-tile
+                        data-peer-home
+                        title={label + ' (paused)'}
+                        aria-label={label}
+                        aria-pressed={false}
+                        className={tile + ' relative ' + idle}
+                        onClick={() => void switchActor(row, client.shown())}
+                      >
+                        <ActorAvatar row={row} size={28} />
+                        {row.badge > 0 && <RailPingBadge count={row.badge} />}
+                      </button>
+                    )
+                  )
+                )}
+                {joined.length === 1 && (
+                  <PeerBlockView peer={joined[0]}>
+                    <P2pJoinTile />
+                  </PeerBlockView>
+                )}
+                {joined.length > 1 && (
+                  <label
+                    data-p2p-tile
+                    data-p2p-join
+                    title="Create or join a P2P server"
+                    className={tile + ' relative ' + idle}
+                  >
+                    <Plus size={22} />
+                    <select
+                      aria-label="Create or join a P2P server as"
+                      value=""
+                      className="absolute inset-0 cursor-pointer opacity-0"
+                      onChange={e => {
+                        const peer = joined.find(
+                          p => p.account.renderKey + ':' + p.app.localId === e.target.value
+                        )
+                        if (peer) {
+                          selectPeer(peer)
+                          peer.app.p2p.openDialog({ kind: 'server_new' })
+                        }
+                      }}
+                    >
+                      <option value="" disabled>
+                        As
+                      </option>
+                      {joined.map(peer => (
+                        <option
+                          key={peer.account.renderKey + ':' + peer.app.localId}
+                          value={peer.account.renderKey + ':' + peer.app.localId}
+                        >
+                          {peer.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </>
+            ) : (
+              <>
+                <P2pRailTile />
+                {p2pEnabled && <P2pJoinTile />}
+              </>
+            )}
           </div>
         )}
         <div className="my-1 h-px w-8 shrink-0 bg-outline-variant" />
-        {me && <PreviewTile />}
-        <div
-          data-rail="servers"
-          data-drop-zone="servers"
-          data-drop-label="Remove from folder"
-          className="flex shrink-0 flex-col items-center gap-2"
-        >
-          {items.map((item, at) =>
-            item.kind === 'server' ? (
-              <ServerTile key={item.key} server={item.server} folder={null} at={at} />
-            ) : (
-              <FolderEntry key={item.key} folder={item.folder} servers={item.servers} at={at} />
-            )
-          )}
-        </div>
-        {me && serversMore && <Sentinel key={me.servers.length} onVisible={loadMoreServers} />}
-        {p2pOn && <P2pServerRail />}
+        {model.accountCount > 1 || model.instanceHeaders ? (
+          model.blocks.map(group => (
+            <div key={group.origin} className={column}>
+              {model.instanceHeaders && (
+                <button
+                  title={streamer ? 'Instance' : group.name + ' (' + group.host + ')'}
+                  aria-expanded={!collapsed.has(group.origin)}
+                  onClick={() => toggle(group.origin)}
+                  className="relative h-5 w-10 rounded bg-surface-container-high text-xs"
+                >
+                  <span className="streamer">{group.name.slice(0, 1)}</span>
+                  {collapsed.has(group.origin) && group.pings > 0 && (
+                    <RailPingBadge count={group.pings} />
+                  )}
+                </button>
+              )}
+              {!collapsed.has(group.origin) &&
+                group.accounts.map(row => {
+                  const account = switcherSession(row)
+                  const key = JSON.stringify([row.origin, row.username])
+                  return (
+                    <div
+                      key={key}
+                      data-account-section
+                      data-shown-block={account === loginAccount}
+                      className={
+                        column + (account === loginAccount ? ' border-l-[3px] border-primary' : '')
+                      }
+                    >
+                      {group.accounts.length > 1 && (
+                        <button
+                          aria-expanded={!collapsed.has(key)}
+                          title={
+                            streamer ? 'Account' : (row.username ?? 'Guest') + ' on ' + group.name
+                          }
+                          className="relative"
+                          onClick={() => toggle(key)}
+                          {...longPress((x, y) =>
+                            openActionMenu(
+                              x,
+                              y,
+                              { kind: 'rail_account', origin: row.origin, username: row.username },
+                              {},
+                              account &&
+                                (account.store.getState().me || account.store.getState().guest)
+                                ? account
+                                : loginAccount
+                            )
+                          )}
+                        >
+                          <ActorAvatar row={row} size={28} />
+                          {row.badge > 0 && <RailPingBadge count={row.badge} />}
+                        </button>
+                      )}
+                      {!collapsed.has(key) &&
+                        (account ? (
+                          <AccountProvider session={account}>
+                            <AccountServers row={row} />
+                          </AccountProvider>
+                        ) : (
+                          <ResumeAccount row={row} />
+                        ))}
+                    </div>
+                  )
+                })}
+            </div>
+          ))
+        ) : accounts[0] ? (
+          <AccountProvider session={accounts[0]}>
+            <AccountServers row={model.blocks[0]?.accounts[0]} />
+          </AccountProvider>
+        ) : model.blocks[0]?.accounts[0] ? (
+          <ResumeAccount row={model.blocks[0].accounts[0]} />
+        ) : null}
+        {groupedPeers
+          ? peers.map(peer => (
+              <PeerBlockView key={peer.account.renderKey + ':' + peer.app.localId} peer={peer}>
+                <P2pServerRail actorLabel={peers.length > 1 ? peer.label : undefined} />
+              </PeerBlockView>
+            ))
+          : p2pOn && <P2pServerRail />}
       </div>
       <div className="flex shrink-0 flex-col items-center gap-2 border-t border-outline-variant pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <PaletteButton className={iconBtn} />
@@ -448,8 +759,18 @@ export function ServerRail() {
           </button>
         )}
         <button
-          title={me ? 'Log out' : 'Exit guest mode'}
+          title={
+            me
+              ? model.accountCount > 1 && !streamer
+                ? 'Log out of ' + me.username + ' on ' + loginAccount.conn.name
+                : 'Log out'
+              : 'Exit guest mode'
+          }
           onClick={() => {
+            if (model.accountCount > 1) {
+              signOutSwitcherAccount(loginAccount.conn.origin, me?.username ?? null)
+              return
+            }
             logoutForLogin(loginAccount)
             router.replace('/login')
           }}

@@ -1,11 +1,11 @@
 'use client'
 import { IdentityEnrollment } from './identity_enrollment'
-import { client } from '../../lib/client/client'
 import { withP2pIdentity } from '../../lib/client/p2p_react'
 
 import { useP2pApp, useP2p } from '../../lib/client/p2p_react'
 import type { P2pApp } from '../../lib/p2p/app/runtime'
 
+import { client } from '../../lib/client/client'
 import { useAccount } from '../../lib/client/react'
 
 import { useLayoutEffect, useRef, useSyncExternalStore, useState } from 'react'
@@ -83,7 +83,7 @@ const count = (n: number, one: string, many: string) => (n ? `${n} ${n === 1 ? o
 // The P2P tile in the rail's P2P frame: opens the contacts. What waits for an answer (message
 // requests, server invites, co-owner and transfer asks) shows as its badge; conversation pings
 // count on the DM tile.
-function P2pRailTileBody() {
+function P2pRailTileBody({ actorLabel }: { actorLabel?: string }) {
   const identity = useP2pApp()!
   const { p2p } = identity
 
@@ -96,7 +96,7 @@ function P2pRailTileBody() {
   const asks = useP2p(s => s.coOwnerAsks.length + s.transferAsks.length)
   const badge = useP2p(p2pTileCount)
   const label = [
-    'Peer-to-peer',
+    actorLabel ?? 'Peer-to-peer',
     count(pending, 'message request', 'message requests'),
     count(invites, 'server invite', 'server invites'),
     count(asks, 'request to answer', 'requests to answer'),
@@ -106,10 +106,19 @@ function P2pRailTileBody() {
   return (
     <button
       data-p2p-tile
+      data-peer-home
       title={label}
-      aria-label="Peer-to-peer"
+      aria-label={actorLabel ?? 'Peer-to-peer'}
       aria-pressed={open}
-      onClick={() => (open ? p2p.closeHome() : p2p.openHome())}
+      onClick={() => {
+        const alreadyShown = client.shown() === acct && acct.identities.viewed() === identity
+        if (!alreadyShown && actorLabel) {
+          client.show(acct)
+          acct.identities.show(identity)
+        }
+        if (open && (alreadyShown || !actorLabel)) p2p.closeHome()
+        else p2p.openHome()
+      }}
       {...(enabled
         ? longPress((x, y) => openActionMenu(x, y, { kind: 'p2p_home' }, undefined, acct, identity))
         : {})}
@@ -119,7 +128,13 @@ function P2pRailTileBody() {
           : 'bg-surface-container-high text-tertiary hover:bg-tertiary-container hover:text-on-tertiary-container'
       }`}
     >
-      <Waypoints size={22} />
+      {actorLabel ? (
+        <span className="streamer rounded-full outline-2 outline-dashed outline-tertiary">
+          <KeyAvatar ik={identity.useP2p.getState().ik ?? identity.localId} size={28} />
+        </span>
+      ) : (
+        <Waypoints size={22} />
+      )}
       {badge > 0 && <RailPingBadge count={badge} />}
     </button>
   )
