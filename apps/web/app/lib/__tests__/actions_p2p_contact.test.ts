@@ -125,6 +125,7 @@ describe("a P2P contact's menu", () => {
   })
 
   test('block and remove ask first, naming the contact unless streamer mode is on', async () => {
+    useStore.setState({ streamer: false })
     const calls = recorder()
     const run = async (label: string) => {
       menu(contact(DANA)).find(i => i.label === label)!.action!()

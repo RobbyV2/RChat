@@ -6,6 +6,7 @@ import { hasStashedConfig, takeStashedConfig } from '../config_transfer'
 import { useStore, resetSessionCaches } from '../store'
 import { keptSession, restoreStreamer, restoreTheme, startApp } from '../start'
 import { drain, me, memoryStorage } from './fixtures'
+import { client } from '../client/client'
 
 afterAll(resetSessionCaches)
 
@@ -83,6 +84,9 @@ const reply = (url: string): Response => {
   return Response.json([])
 }
 
+// Picking a theme or streamer mode changes the device for every later test file.
+const device = { theme: client.device.theme, streamer: client.device.streamer }
+
 beforeEach(() => {
   resetSessionCaches()
   path = '/'
@@ -102,6 +106,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  Object.assign(client.device, device)
   home.ws.stop()
   api.setToken(null)
   useStore.setState({

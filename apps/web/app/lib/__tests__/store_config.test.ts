@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { configSourceOf, useStore, resetSessionCaches } from '../store'
 import { sessionStore } from '../instances'
 import { home } from './home_instance'
+import { client } from '../client/client'
 import { emptyLayout, layoutKey } from '../nav_layout'
 import { EMPTY_NOTIFY, notifyKey, setLevel, setMute } from '../notify'
 import { EMPTY_PREFS, emojiKey, noteUse } from '../emoji'
@@ -61,6 +62,9 @@ const inflate = async (text: string) => {
   return new Response(stream).text()
 }
 
+// Applied theme and streamer sections change the device for every later test file.
+const device = { theme: client.device.theme, streamer: client.device.streamer }
+
 beforeEach(() => {
   local.clear()
   session.clear()
@@ -88,6 +92,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = realFetch
+  Object.assign(client.device, device)
   Object.assign(globalThis, { localStorage: memoryStorage })
   ;(globalThis as { window?: unknown }).window = realWindow
   ;(globalThis as { document?: unknown }).document = realDocument
